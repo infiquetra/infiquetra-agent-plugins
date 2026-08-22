@@ -2,6 +2,41 @@
 
 ## 2026-08-22
 
+### A byte-copied README describes the source package, not the derived one
+
+**Author.** Jeff Cox
+
+**Context.** Consensus C5 (Cursor F-07, OpenCode F-07): the portable UniFi
+package's own README introduced the tree as a Claude Code plugin and told
+readers to run `pytest tests/test_unifi_network_client.py` and
+`tests/test_unifi_protect_client.py`, neither of which exists in this
+repository.
+
+**Evidence.**
+`plugins/unifi/README.md` at the reviewed commit opened "Claude Code plugin
+for managing…". `plugins/unifi/PROVENANCE.json` classified that file as
+`upstream-byte-copy` with digest `a3b3b056…`, matching the Claude plugin
+README at the pinned source. The plan labelled the same path "portable core,
+rewritten site-neutral". The two statements cannot both be true of one file.
+Fixed in this repair: the README is rewritten for this package, the provenance
+entry is `target-owned`, and `tests/test_unifi_readme.py` reads the shipped
+file the way a consumer does.
+
+**Mechanism.** Synchronization treats an upstream byte copy as a success when
+the bytes match the source. That is the right rule for a skill or a client.
+It is the wrong rule for package documentation whose subject is the derived
+tree: the client extension directory, the Fleet Core bundle, the site-profile
+contract, and the commands that run here. Copying the source README faithfully
+is how the portable package documented a plugin it is not, and named tests it
+does not ship.
+
+**Generalizable rule.** A derived package whose identity differs from its
+source cannot keep the source README as a byte copy. Package documentation is
+about the assembled artifact; if that artifact is not the source, the README
+is target-owned (or a named transform), not a digest match.
+
+---
+
 ### A package can satisfy every structural check and still have no working entrypoint
 
 **Author.** Jeff Cox and Claude

@@ -2,6 +2,46 @@
 
 ## 2026-08-22
 
+### The portable UniFi README is target-owned, rewritten site-neutral
+
+**Author.** Jeff Cox
+
+**Decision.** `plugins/unifi/README.md` is target-owned portable source. It
+describes this package: the Agent Plugins 1.0 layout, the
+`com.infiquetra.claude/` client extension directory, the Fleet Core bundle,
+site-profile resolution, and commands that run in this repository. It is not
+an upstream byte copy of the Claude plugin README, and it is not produced by a
+deterministic transform of that file.
+
+**Rejected alternatives.** Keeping the file as `upstream-byte-copy`, because
+that is the classification that shipped Cursor F-07: a consumer opening the
+portable package's own documentation was told it was a Claude Code plugin and
+was given pytest paths this repository does not contain. Authoring a
+`portable-readme` transform in `scripts/sync_vendor_source.py`, because that
+script is owned by the concurrent C8 repair (path-safety) and a transform
+would still be defined over a Claude-specific source document whose subject is
+the wrong package. Repairing the upstream README so a byte copy becomes
+portable, because this run must not edit another repository.
+
+**Rationale.** The pilot plan already assigned the README "portable core,
+rewritten site-neutral". Claude-only installation belongs in the adapter
+directory. A later `synchronize()` that still lists `README.md` in
+`PORTABLE_BYTE_COPIES` would restore the Claude lede; `tests/test_unifi_readme.py`
+fails closed on that restoration (lede identity, absent test modules, and the
+provenance classification). Dropping the path from the sync table is queued
+rather than taken here, because that tuple lives in a file this unit does not
+own.
+
+**Revisit when.** The next UniFi synchronization is authorized, or the C8 unit
+(or a follow-up) removes `README.md` from `PORTABLE_BYTE_COPIES` so a
+deliberate resync preserves the portable README instead of fighting the test.
+
+**Refs.** [Queued sync-table residual](QUEUED.md#drop-readme-from-the-unifi-byte-copy-table-so-a-resync-keeps-the-portable-docs),
+[byte-copy README learning](LEARNINGS.md#a-byte-copied-readme-describes-the-source-package-not-the-derived-one),
+[pilot plan custody table](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md)
+
+---
+
 ### Pause the pilot at the compatibility matrix and take no client-specific remediation
 
 **Author.** Jeff Cox and Claude
