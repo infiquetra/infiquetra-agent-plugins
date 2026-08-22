@@ -30,9 +30,7 @@
     },
     {
       "path": "README.md",
-      "classification": "upstream-byte-copy",
-      "source_path": "plugins/unifi/README.md",
-      "sha256": "a3b3b05642072c0e7d5e66bf288745f6cb2eccb1d89ddc4b0679c568d557032f"
+      "classification": "target-owned"
     },
     {
       "path": "com.infiquetra.claude/agents/unifi-network-ops.md",

@@ -1,201 +1,171 @@
-# UniFi Plugin
+# UniFi portable package
 
-Claude Code plugin for managing UniFi Network infrastructure and UniFi Protect cameras via the UniFi OS API. Follows the PagerDuty/Slack CLI pattern for full auditability — no MCP server, no third-party dependencies beyond `requests`.
+Portable Agent Plugins 1.0 package for UniFi Network and UniFi Protect. It
+ships two Agent Skills with their bundled Python clients, an operator site
+profile contract, and credential-safe discovery and drift tools. Claude-only
+files live under the client extension directory
+[`com.infiquetra.claude/`](com.infiquetra.claude/plugin.json); they are an
+adapter, not the identity of this package.
 
-## Skills
+This tree is a derived artifact of `infiquetra-claude-plugins` at the commit
+recorded in [`PROVENANCE.json`](PROVENANCE.json). Custody has not moved.
+Existing vendor repositories remain the runtime sources of truth.
 
-| Skill | Script | Purpose |
-|---|---|---|
-| `unifi-network` | `unifi_network_client.py` | Devices, clients, VLANs, firewall, traffic routes, port forwards, WLANs, VPN, DNS, DHCP, stats, backup |
-| `unifi-protect` | `unifi_protect_client.py` | Cameras, liveviews, lights, sensors, chimes, viewers |
+## What is in the package
 
-## Setup
+| Path | What it is |
+|---|---|
+| [`plugin.json`](plugin.json) | Agent Plugins 1.0 manifest |
+| [`PROVENANCE.json`](PROVENANCE.json) | Source repository, pinned commit, and per-path custody |
+| [`CHANGELOG.md`](CHANGELOG.md) | Version history |
+| [`fleet-bundle.json`](fleet-bundle.json) | Build declaration: which Fleet Core modules this package consumes |
+| [`skills/unifi-network/`](skills/unifi-network/SKILL.md) | Network skill, API reference, and client |
+| [`skills/unifi-protect/`](skills/unifi-protect/SKILL.md) | Protect skill, API reference, and client |
+| [`scripts/`](scripts/site_profile.py) | Site-profile loader, first setup, discovery, and drift |
+| [`references/site-profile.md`](references/site-profile.md) | Operator site-profile contract |
+| [`schemas/site-profile.schema.json`](schemas/site-profile.schema.json) | Schema the loader validates against |
+| [`com.infiquetra.claude/`](com.infiquetra.claude/plugin.json) | Claude adapter: manifest, slash command, agent definition |
 
-### 1. Generate API Key
+The network client covers twelve resource groups: devices, clients, networks,
+firewall, traffic routes, port forwards, WLANs, VPN, DNS, DHCP, stats, and
+backup. The Protect client covers six: cameras, liveviews, lights, sensors,
+chimes, and viewers. The command catalog lives in the skills; this README
+does not duplicate it.
 
-In UniFi OS → Settings → API Keys, generate a new key with appropriate scope.
+## Client extension directory
 
-### 2. Set Environment Variables
+Agent Plugins 1.0 section 8.2 puts client-specific files in an explicit
+extension directory rather than at the package root. This package's Claude
+adapter is [`com.infiquetra.claude/`](com.infiquetra.claude/plugin.json):
 
-```bash
-export UNIFI_API_KEY="your-api-key"    # required
-export UNIFI_HOST="192.0.2.1"          # required, no default
-export UNIFI_SITE="default"            # optional, default: default (network only)
-```
+| Path | What it is |
+|---|---|
+| [`plugin.json`](com.infiquetra.claude/plugin.json) | Claude Code manifest, relocated from upstream `.claude-plugin/` |
+| [`commands/unifi.md`](com.infiquetra.claude/commands/unifi.md) | Slash command |
+| [`agents/unifi-network-ops.md`](com.infiquetra.claude/agents/unifi-network-ops.md) | Agent definition |
+| [`site_profile_loader.py`](com.infiquetra.claude/skills/unifi-network/scripts/site_profile_loader.py) | Claude-side profile loader |
 
-### 3. Install Dependencies
+The portable manifest, skills, schemas, and scripts beside that directory
+carry no Claude loading convention.
 
-```bash
-pip install requests
-```
+## Fleet Core bundle
 
-## Safety: Dry-Run by Default
+The clients need one shared primitive, `retry_backoff`. Agent Plugins 1.0 has
+no dependency field, so this package does not install Fleet Core at runtime.
+[`fleet-bundle.json`](fleet-bundle.json) declares the module and its
+destinations, and
+[`scripts/bundle_fleet_module.py`](../../scripts/bundle_fleet_module.py)
+copies it into each skill as a generated, digest-stamped file:
 
-**All write operations preview without executing.** Pass `--confirm` to execute:
+- [`skills/unifi-network/scripts/_bundled/retry_backoff.py`](skills/unifi-network/scripts/_bundled/retry_backoff.py)
+- [`skills/unifi-protect/scripts/_bundled/retry_backoff.py`](skills/unifi-protect/scripts/_bundled/retry_backoff.py)
 
-```bash
-# Shows what WOULD happen (safe to run anytime)
-python unifi_network_client.py firewall create --json '{"name":"Block IoT","action":"drop"}'
+Each client inserts that `_bundled/` directory on `sys.path` and imports
+`retry_backoff` directly. The dropped `fleet_commons_shim` used Claude-specific
+runtime discovery; this package does not ship it.
 
-# Actually creates the rule
-python unifi_network_client.py firewall create --json '{"name":"Block IoT","action":"drop"}' --confirm
-```
-
-Dry-run output:
-```json
-{
-  "dry_run": true,
-  "action": "POST",
-  "endpoint": "https://<UNIFI_HOST>/proxy/network/api/s/default/rest/firewallrule",
-  "message": "Pass --confirm to execute this operation",
-  "payload": {"name": "Block IoT", "action": "drop"}
-}
-```
-
-## Network Client
-
-```bash
-# Devices
-python unifi_network_client.py devices list
-python unifi_network_client.py devices get --mac aa:bb:cc:dd:ee:ff
-python unifi_network_client.py devices restart --mac aa:bb:cc:dd:ee:ff --confirm
-python unifi_network_client.py devices adopt --mac aa:bb:cc:dd:ee:ff --confirm
-python unifi_network_client.py devices forget --mac aa:bb:cc:dd:ee:ff --confirm
-python unifi_network_client.py devices upgrade --mac aa:bb:cc:dd:ee:ff --confirm
-python unifi_network_client.py devices locate --mac aa:bb:cc:dd:ee:ff --confirm
-
-# Clients
-python unifi_network_client.py clients list
-python unifi_network_client.py clients list-history --limit 200
-python unifi_network_client.py clients get --mac aa:bb:cc:dd:ee:ff
-python unifi_network_client.py clients block --mac aa:bb:cc:dd:ee:ff --confirm
-python unifi_network_client.py clients unblock --mac aa:bb:cc:dd:ee:ff --confirm
-python unifi_network_client.py clients kick --mac aa:bb:cc:dd:ee:ff --confirm
-
-# Networks (VLANs)
-python unifi_network_client.py networks list
-python unifi_network_client.py networks get --id <id>
-python unifi_network_client.py networks create --json '{"name":"IoT","purpose":"corporate","vlan":30}' --confirm
-python unifi_network_client.py networks update --id <id> --json '{"name":"IoT-Updated"}' --confirm
-python unifi_network_client.py networks delete --id <id> --confirm
-
-# Firewall Rules
-python unifi_network_client.py firewall list
-python unifi_network_client.py firewall get --id <id>
-python unifi_network_client.py firewall create --json '{"name":"Block IoT","action":"drop","ruleset":"LAN_IN"}' --confirm
-python unifi_network_client.py firewall update --id <id> --json '{"enabled":false}' --confirm
-python unifi_network_client.py firewall delete --id <id> --confirm
-
-# Traffic Routes
-python unifi_network_client.py traffic-routes list
-python unifi_network_client.py traffic-routes get --id <id>
-python unifi_network_client.py traffic-routes create --json '{"name":"IoT via VPN","enabled":true}' --confirm
-python unifi_network_client.py traffic-routes update --id <id> --json '{"enabled":false}' --confirm
-python unifi_network_client.py traffic-routes delete --id <id> --confirm
-
-# Port Forwards
-python unifi_network_client.py port-forwards list
-python unifi_network_client.py port-forwards get --id <id>
-python unifi_network_client.py port-forwards create --json '{"name":"Plex","fwd":"192.0.2.50","fwd_port":32400,"dst_port":32400,"proto":"tcp"}' --confirm
-python unifi_network_client.py port-forwards update --id <id> --json '{"enabled":false}' --confirm
-python unifi_network_client.py port-forwards delete --id <id> --confirm
-
-# WLANs
-python unifi_network_client.py wlans list
-python unifi_network_client.py wlans get --id <id>
-python unifi_network_client.py wlans update --id <id> --json '{"enabled":false}' --confirm
-
-# VPN
-python unifi_network_client.py vpn list-clients
-python unifi_network_client.py vpn list-servers
-python unifi_network_client.py vpn get --id <id>
-
-# DNS (Static Records)
-python unifi_network_client.py dns list
-python unifi_network_client.py dns get --id <id>
-python unifi_network_client.py dns create --json '{"key":"proxmox.home","value":"192.0.2.7","record_type":"A"}' --confirm
-python unifi_network_client.py dns update --id <id> --json '{"value":"192.0.2.8"}' --confirm
-python unifi_network_client.py dns delete --id <id> --confirm
-
-# DHCP Leases
-python unifi_network_client.py dhcp list-leases
-
-# Stats & Health
-python unifi_network_client.py stats health
-python unifi_network_client.py stats sysinfo
-python unifi_network_client.py stats dpi
-python unifi_network_client.py stats alarms
-python unifi_network_client.py stats events --limit 20
-
-# Backup
-python unifi_network_client.py backup list
-python unifi_network_client.py backup create --confirm
-```
-
-## Protect Client
+Verify the stamps without writing:
 
 ```bash
-# Cameras
-python unifi_protect_client.py cameras list
-python unifi_protect_client.py cameras get --id <camera_id>
-python unifi_protect_client.py cameras snapshot --id <camera_id> --output /tmp/snap.jpg
-python unifi_protect_client.py cameras snapshot --id <camera_id>   # base64 JSON output
-python unifi_protect_client.py cameras update --id <camera_id> --json '{"name":"Driveway"}' --confirm
-
-# Liveviews
-python unifi_protect_client.py liveviews list
-python unifi_protect_client.py liveviews get --id <id>
-python unifi_protect_client.py liveviews create --json '{"name":"Security","slots":[]}' --confirm
-python unifi_protect_client.py liveviews update --id <id> --json '{"name":"Renamed"}' --confirm
-python unifi_protect_client.py liveviews delete --id <id> --confirm
-
-# Lights
-python unifi_protect_client.py lights list
-python unifi_protect_client.py lights get --id <id>
-python unifi_protect_client.py lights update --id <id> --json '{"lightModeSettings":{"mode":"motion"}}' --confirm
-
-# Sensors
-python unifi_protect_client.py sensors list
-python unifi_protect_client.py sensors get --id <id>
-python unifi_protect_client.py sensors update --id <id> --json '{"name":"Garage Door"}' --confirm
-
-# Chimes
-python unifi_protect_client.py chimes list
-python unifi_protect_client.py chimes get --id <id>
-python unifi_protect_client.py chimes update --id <id> --json '{"volume":50}' --confirm
-
-# Viewers
-python unifi_protect_client.py viewers list
-python unifi_protect_client.py viewers get --id <id>
-python unifi_protect_client.py viewers update --id <id> --json '{"liveview":"<liveview_id>"}' --confirm
+python3 scripts/bundle_fleet_module.py --check
 ```
 
-## API Notes
+The Fleet Core source is the sibling package
+[`plugins/fleet-core/`](../fleet-core/README.md). Only `retry_backoff` is
+ported; everything else is named in [`DEFERRED.md`](../fleet-core/DEFERRED.md).
 
-- **Auth**: `X-Api-Key` header bypasses CSRF token requirement on UniFi OS 3.x+
-- **SSL**: UDM uses a self-signed certificate; SSL verification is disabled by default with warnings suppressed
-- **Site**: Network API uses site-scoped endpoints (`/api/s/{site}/`); Protect API is site-agnostic
-- **API versions**: Most network endpoints use v1 (`/proxy/network/api/s/{site}/`); traffic routes and static DNS use v2 (`/proxy/network/v2/api/site/{site}/`). Protect uses the Integration API (`/proxy/protect/integration/v1`)
+## Operator site profile
 
-## Testing
+The site profile is how an operator states intent a controller cannot report:
+trust role, criticality, ownership, intended policies, and operational
+constraints. It is optional. With no profile anywhere, the package loads in
+discovery-only mode and infers none of those fields.
+
+Resolution order, highest first, from
+[`references/site-profile.md`](references/site-profile.md):
+
+1. The `UNIFI_SITE_PROFILE` environment variable.
+2. The path remembered in
+   `${XDG_CONFIG_HOME:-~/.config}/infiquetra/unifi/config.json`.
+3. No profile at all.
+
+A missing file named by the environment variable does not fall back. A
+configured path that has gone missing is reported as missing, not as
+discovery-only. The documented default runtime path
+`${XDG_CONFIG_HOME:-~/.config}/infiquetra/unifi/site-profile.json` is a
+default *path*, not a default *profile*, and is not itself a resolution rung.
+
+The profile never carries a credential. Validation is against
+[`schemas/site-profile.schema.json`](schemas/site-profile.schema.json).
+
+First-setup and inspection commands, from the repository root. None of them
+opens a controller session:
 
 ```bash
-# Run all UniFi tests
-pytest tests/test_unifi_network_client.py tests/test_unifi_protect_client.py -v
-
-# Run with coverage
-pytest tests/test_unifi_network_client.py tests/test_unifi_protect_client.py --cov=plugins/unifi
+python3 plugins/unifi/scripts/site_profile_setup.py --list
+python3 plugins/unifi/scripts/site_profile.py --help
+python3 plugins/unifi/scripts/discover.py --help
+python3 plugins/unifi/scripts/drift.py --help
 ```
 
-## Smoke Tests (requires live UDM)
+`--list` prints the three setup paths: existing profile, discovery proposal,
+and discovery-only. Discovery is read-only and does not accept `--confirm`.
+Drift compares an inventory to a profile; with no profile it reports
+discovery-only and no findings.
+
+## Running the clients
+
+`UNIFI_API_KEY` and `UNIFI_HOST` are required; there is no default host.
+`UNIFI_SITE` defaults to `default` for Network API calls. The clients live at:
+
+- [`unifi_network_client.py`](skills/unifi-network/scripts/unifi_network_client.py)
+- [`unifi_protect_client.py`](skills/unifi-protect/scripts/unifi_protect_client.py)
+
+They import `requests` and `urllib3`. Write operations preview unless
+`--confirm` is passed; do not pass `--confirm` unless you intend to mutate the
+controller. The command surface is in the skills above.
+
+This repository verifies both entrypoints without credentials or a network
+call. That check is [`tests/test_client_entrypoints.py`](../../tests/test_client_entrypoints.py):
 
 ```bash
-export UNIFI_API_KEY="your-key"
-
-# Network
-python plugins/unifi/skills/unifi-network/scripts/unifi_network_client.py stats health
-python plugins/unifi/skills/unifi-network/scripts/unifi_network_client.py devices list
-
-# Protect
-python plugins/unifi/skills/unifi-protect/scripts/unifi_protect_client.py cameras list
+python3 -m unittest tests.test_client_entrypoints -v
 ```
+
+## Validation in this repository
+
+These commands run from the repository root. They install nothing and make no
+network call:
+
+```bash
+python3 scripts/bundle_fleet_module.py --check
+python3 scripts/check_repo.py
+python3 plugins/unifi/scripts/site_profile.py --help
+python3 plugins/unifi/scripts/site_profile_setup.py --list
+python3 plugins/unifi/scripts/discover.py --help
+python3 plugins/unifi/scripts/drift.py --help
+python3 -m unittest tests.test_client_entrypoints tests.test_site_profile tests.test_site_profile_setup tests.test_unifi_readme -v
+```
+
+`python3 -m unittest discover -s tests -v` runs the full suite, including the
+test that this README's relative links resolve and that every `python3`
+command in a `bash` fence here actually runs.
+
+## Live environment
+
+Required for a live controller session; unused by the validation commands
+above.
+
+- `UNIFI_API_KEY` — UniFi OS API key (required)
+- `UNIFI_HOST` — controller address (required; no default)
+- `UNIFI_SITE` — Network API site slug (optional; default `default`)
+
+Generate an API key in UniFi OS → Settings → API Keys. Addresses in this
+document are RFC 5737 documentation addresses.
+
+## Further reading
+
+- [Site-profile contract](references/site-profile.md)
+- [Portable Fleet Core](../fleet-core/README.md)
+- [Repository commands](../../AGENTS.md)
+- [Pilot plan](../../docs/plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md)

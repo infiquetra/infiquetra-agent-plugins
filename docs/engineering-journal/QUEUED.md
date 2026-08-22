@@ -98,6 +98,31 @@ changes what an existing host resolves, so it is a contract change and not a pat
 
 ## P2
 
+### Drop README.md from the UniFi byte-copy table so a resync keeps the portable docs
+
+**Author.** Jeff Cox
+
+**Priority.** P2
+
+**Effort.** One line in `scripts/sync_vendor_source.py`
+(`PORTABLE_BYTE_COPIES`) plus the fixture expectations in
+`tests/test_sync_vendor_source.py`. The live `PROVENANCE.json` entry is already
+`target-owned`.
+
+**Worth it when.** Before the next authorized `synchronize()` of the UniFi
+package. Until then, `tests/test_unifi_readme.py` fails closed if a resync
+restores the Claude README, so the defect cannot return unnoticed; a
+deliberate sync would still have to fight that test.
+
+**Context.** Consensus C5 rewrote `plugins/unifi/README.md` for the portable
+package. The sync script still lists `README.md` as an upstream byte copy, and
+that tuple is owned by the C8 path-safety repair running concurrently, so this
+unit did not edit it. `target_owned_paths()` would record the rewritten README
+as target-owned automatically once it is no longer in the managed set.
+
+**Refs.** [README custody decision](DECISIONS.md#the-portable-unifi-readme-is-target-owned-rewritten-site-neutral),
+[byte-copy README learning](LEARNINGS.md#a-byte-copied-readme-describes-the-source-package-not-the-derived-one)
+
 ### Make code-review lens selection an operator-approved planning contract
 
 **Author.** Jeff Cox and Codex
