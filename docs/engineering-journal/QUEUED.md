@@ -17,7 +17,19 @@ No items.
 **Worth it when.** Before any existing vendor plugin is migrated or generated
 from this repository.
 
-**Context.** The architecture research recommends `home-lab-ops`,
+**Status update, 2026-08-21.** The design session is complete and its output is the
+[UniFi and portable Fleet Core portability pilot plan](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md). The pilot is `unifi`
+plus a one-module portable Fleet Core slice; the client matrix is all ten installed
+clients as mandatory coverage rather than a pass gate; and the source-custody rule is
+that the Claude repository stays authoritative, is repaired and released first, and is
+then synchronized from by a digest-verified derivation. This item stays queued until the
+pilot itself is executed and its compatibility matrix reaches the operator pause.
+
+**Still open.** The Herdr execution boundary is untouched by this pilot, and the
+custody-transfer question remains deliberately unanswered until the pilot produces
+evidence.
+
+**Original context.** The architecture research recommends `home-lab-ops`,
 `mission-control`, or `unifi` as the first pilot. The work still needs a chosen
 pilot, required client matrix, Herdr boundary, source-custody rule, and semantic
 parity evidence.
