@@ -582,8 +582,26 @@ class FingerprintTest(unittest.TestCase):
         cache.mkdir()
         (cache / "client.cpython-312.pyc").write_bytes(b"\x00\x01")
         (self.package / ".DS_Store").write_bytes(b"\x00")
-        (self.package / "scripts" / "stray.pyc").write_bytes(b"\x00")
         self.assertEqual(ccm.package_fingerprint(self.package), self.baseline)
+
+    def test_bytecode_outside_the_interpreter_cache_moves_the_digest(self) -> None:
+        """A fingerprint that ignores a file cannot notice the file was added.
+
+        A blanket `.pyc`/`.pyo` suffix exclusion used to sit beside the
+        directory exclusion, so a file at any depth carrying that suffix — and
+        holding whatever its author liked — left this digest untouched. Only
+        the interpreter's own cache directory is checkout noise.
+        """
+        smuggled = self.package / "skills" / "unifi-network" / "scripts" / "smuggled.pyo"
+        smuggled.parent.mkdir(parents=True, exist_ok=True)
+        smuggled.write_text(
+            "this is not bytecode, it is arbitrary smuggled content", encoding="utf-8"
+        )
+
+        moved = ccm.package_fingerprint(self.package)
+
+        self.assertEqual(moved[0], self.baseline[0] + 1)
+        self.assertNotEqual(moved[1], self.baseline[1])
 
     def test_the_digest_is_stable_across_runs(self) -> None:
         self.assertEqual(ccm.package_fingerprint(self.package), self.baseline)

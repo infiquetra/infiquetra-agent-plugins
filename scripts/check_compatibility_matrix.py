@@ -98,10 +98,16 @@ PACKAGE_MANIFEST = "plugin.json"
 #: the fingerprint reproducible: running the test suite leaves ``__pycache__``
 #: beside the package's scripts, and a fingerprint that moved when tests ran
 #: would be abandoned within a week.
+#:
+#: The exclusion is by *directory*, never by suffix. A blanket ``.pyc``/``.pyo``
+#: suffix exclusion used to sit here too, and it meant this fingerprint could
+#: not notice ``skills/unifi-network/scripts/smuggled.pyo`` being added to the
+#: assessed tree — a file a fingerprint ignores is a file it cannot bind. The
+#: reproducibility argument only ever covered the interpreter's own cache
+#: directory, and the directory exclusion below already delivers exactly that.
 FINGERPRINT_EXCLUDED_DIRECTORIES = frozenset(
     {"__pycache__", ".git", ".mypy_cache", ".pytest_cache", ".ruff_cache"}
 )
-FINGERPRINT_EXCLUDED_SUFFIXES = (".pyc", ".pyo")
 FINGERPRINT_EXCLUDED_NAMES = frozenset({".DS_Store"})
 
 #: The ten installed clients the assessment must cover. Set equality against
@@ -305,8 +311,6 @@ def read_directives(text: str) -> dict[str, str]:
 def _fingerprint_includes(path: Path, package_root: Path) -> bool:
     if path.name in FINGERPRINT_EXCLUDED_NAMES:
         return False
-    if path.suffix in FINGERPRINT_EXCLUDED_SUFFIXES:
-        return False
     relative = path.relative_to(package_root)
     return not any(part in FINGERPRINT_EXCLUDED_DIRECTORIES for part in relative.parts)
 
@@ -318,7 +322,10 @@ def package_fingerprint(package_root: Path = PACKAGE_ROOT) -> tuple[int, str]:
     third party has to be able to recompute it from the published bytes:
 
     1. Walk the package root and keep every regular file, excluding checkout
-       noise (``__pycache__``, compiled bytecode, ``.DS_Store``).
+       noise: anything under a tool cache directory (``__pycache__``, ``.git``,
+       ``.mypy_cache``, ``.pytest_cache``, ``.ruff_cache``) and ``.DS_Store``.
+       Nothing is excluded for its suffix alone, so compiled bytecode outside
+       those directories counts as a package file and moves this digest.
     2. Sort the surviving paths by their POSIX form, relative to the root.
     3. For each, emit ``"<sha256 of the file's bytes>  <relative path>\\n"``.
     4. The tree digest is the SHA-256 of those lines concatenated, UTF-8.

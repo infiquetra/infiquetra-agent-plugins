@@ -410,17 +410,64 @@ class ProvenanceClosedSetTests(unittest.TestCase):
             self.assertEqual(check_repo.check_provenance_manifests(root), [])
 
     def test_interpreter_artifacts_are_exempt(self) -> None:
+        """Bytecode in the two places the interpreter writes it (PEP 3147)."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            write_provenance(
+                plugin,
+                [{"path": "scripts/client.py", "classification": check_repo.TARGET_OWNED}],
+            )
+            write(plugin / "scripts" / "client.py", "print(1)\n")
+            write(
+                plugin / "scripts" / "__pycache__" / "client.cpython-312.pyc",
+                "not source",
+            )
+            # The legacy sourceless layout: bytecode beside the .py it came from.
+            write(plugin / "scripts" / "client.pyc", "not source")
+
+            self.assertEqual(check_repo.check_provenance_manifests(root), [])
+
+    def test_bytecode_with_no_source_beside_it_is_an_unlisted_package_file(self) -> None:
+        """The closed set is closed against a file merely wearing a .pyo suffix.
+
+        Before this, `PROVENANCE_UNMANAGED_SUFFIXES` exempted `.pyc`/`.pyo`
+        anywhere in the tree at any depth, so a file holding arbitrary text
+        passed this gate without appearing in any provenance manifest.
+        """
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             plugin = make_plugin(root)
             write_provenance(plugin, [])
             write(
-                plugin / "scripts" / "__pycache__" / "client.cpython-312.pyc",
-                "not source",
+                plugin / "skills" / "unifi-network" / "scripts" / "smuggled.pyo",
+                "this is not bytecode, it is arbitrary smuggled content",
             )
-            write(plugin / "scripts" / "client.pyc", "not source")
 
-            self.assertEqual(check_repo.check_provenance_manifests(root), [])
+            errors = check_repo.check_provenance_manifests(root)
+
+            self.assertEqual(len(errors), 1, errors)
+            self.assertIn("unlisted package file", errors[0])
+            self.assertIn(
+                "plugins/example/skills/unifi-network/scripts/smuggled.pyo", errors[0]
+            )
+
+    def test_bytecode_beside_a_differently_named_source_is_not_exempt(self) -> None:
+        """The sibling has to be *the* source: `client.py` does not cover `other.pyo`."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            write_provenance(
+                plugin,
+                [{"path": "scripts/client.py", "classification": check_repo.TARGET_OWNED}],
+            )
+            write(plugin / "scripts" / "client.py", "print(1)\n")
+            write(plugin / "scripts" / "other.pyo", "smuggled")
+
+            errors = check_repo.check_provenance_manifests(root)
+
+            self.assertEqual(len(errors), 1, errors)
+            self.assertIn("plugins/example/scripts/other.pyo", errors[0])
 
     def test_an_unsafe_listed_path_does_not_satisfy_the_closed_set(self) -> None:
         """A traversal entry is reported once, and never counts as a classification."""
