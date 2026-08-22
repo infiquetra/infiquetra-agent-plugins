@@ -1,0 +1,134 @@
+{
+  "source_repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+  "source_commit": "0eb1fe04236d975d4b13cbabe7b976eae8599992",
+  "source_version": "2.0.0",
+  "source_package_path": "plugins/unifi",
+  "generated_by": "scripts/sync_vendor_source.py",
+  "notes": [
+    "The portable copy is a derived artifact, never a second writable source. The pinned commit is the corrected upstream revision: the documentation repair, the topology relocation, and the removal of the hard-coded controller default are all included at it. Synchronizing from an earlier revision would re-import the defects that repair removed.",
+    "Paths in `files` are relative to this package root, which is what the repository validator resolves. `source_path` is relative to the upstream repository root.",
+    "Every path carries exactly one classification. An upstream byte copy is overwritten on each synchronization and its digest must equal its source digest exactly; where the portable tree would need a different byte, the repair is authored upstream first. Target-owned portable source has no upstream counterpart, records no digest, and is never overwritten and never removed here.",
+    "The client extension directory com.infiquetra.claude/ mirrors the upstream package root path for path, so every Claude-custody file's origin is readable from its portable path and every one of them stays a byte copy. The Claude Code manifest is the single exception and the single transform: it is lifted out of .claude-plugin/, whose name is a loading convention with no meaning inside the extension directory, and whose portable counterpart already occupies the package root.",
+    "Both fleet_commons_shim.py copies are dropped rather than copied, because the build-time Fleet Core bundle replaces them and their resolution ladder is Claude-specific discovery the portable package must not retain. Neither client was edited to match: both are byte copies, and both still carry the upstream `import fleet_commons_shim` at module scope, so a portable client cannot be executed until that import is repaired upstream and re-synchronized here. Editing it downstream would create exactly the divergence the byte-copy rule forbids."
+  ],
+  "removed_from_source": [
+    {
+      "source_path": "plugins/unifi/skills/unifi-network/scripts/fleet_commons_shim.py",
+      "reason": "Replaced by the build-time Fleet Core bundle; its resolution ladder is Claude-specific runtime discovery, which the portable package must not retain."
+    },
+    {
+      "source_path": "plugins/unifi/skills/unifi-protect/scripts/fleet_commons_shim.py",
+      "reason": "Replaced by the build-time Fleet Core bundle; its resolution ladder is Claude-specific runtime discovery, which the portable package must not retain."
+    }
+  ],
+  "files": [
+    {
+      "path": "CHANGELOG.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/unifi/CHANGELOG.md",
+      "sha256": "c5fa8ca58f7fa0596f92d1dee615645b2bb883c45bea5be9a4d4d1d23a175adc"
+    },
+    {
+      "path": "README.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/unifi/README.md",
+      "sha256": "a3b3b05642072c0e7d5e66bf288745f6cb2eccb1d89ddc4b0679c568d557032f"
+    },
+    {
+      "path": "com.infiquetra.claude/agents/unifi-network-ops.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/unifi/agents/unifi-network-ops.md",
+      "sha256": "f33a0d2f0afed5323eda232ad265b6129b0e253260b38f6f95f14cfca7c246c7"
+    },
+    {
+      "path": "com.infiquetra.claude/commands/unifi.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/unifi/commands/unifi.md",
+      "sha256": "02b902d967e68c7488ace5ab4617ee4d5a5d7f57613b3ed5795fed0e78bcf15b"
+    },
+    {
+      "path": "com.infiquetra.claude/plugin.json",
+      "classification": "deterministic-transform",
+      "source_path": "plugins/unifi/.claude-plugin/plugin.json",
+      "source_sha256": "49ee2fb1e69c97571b882df6938565dcd419fe98d6979b92a03d6ea2ae9b93e4",
+      "sha256": "49ee2fb1e69c97571b882df6938565dcd419fe98d6979b92a03d6ea2ae9b93e4",
+      "transform": "relocate-claude-manifest",
+      "transform_version": "1",
+      "transform_rule": "Re-emit the Claude Code manifest under the client extension directory the Agent Plugins 1.0 specification's section 8.2 defines. Version 1 preserves the bytes and derives only the output path, because the source directory name .claude-plugin/ is a Claude Code loading convention with no meaning inside the extension directory, and the portable Agent Plugins manifest already occupies the package root the Claude manifest would otherwise claim."
+    },
+    {
+      "path": "com.infiquetra.claude/skills/unifi-network/scripts/site_profile_loader.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/unifi/skills/unifi-network/scripts/site_profile_loader.py",
+      "sha256": "f074306bc88c239c1c82681231a4372c0737fdc50d86857277085084d90a5312"
+    },
+    {
+      "path": "skills/unifi-network/SKILL.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/unifi/skills/unifi-network/SKILL.md",
+      "sha256": "63d7caefa193244c21ef996f4db00235edebe25d3efe8328abf131147ff5be4b"
+    },
+    {
+      "path": "skills/unifi-network/references/udm-api-endpoints.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/unifi/skills/unifi-network/references/udm-api-endpoints.md",
+      "sha256": "307ce8106f2a281c7346681deaf9da655740af1ab86b343754835ec615337bb4"
+    },
+    {
+      "path": "skills/unifi-network/scripts/unifi_network_client.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/unifi/skills/unifi-network/scripts/unifi_network_client.py",
+      "sha256": "8b414a0ef77c293248d39f93697b397a0fe45f954525d12339bb1f71fac9bb4e"
+    },
+    {
+      "path": "skills/unifi-protect/SKILL.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/unifi/skills/unifi-protect/SKILL.md",
+      "sha256": "0c39dcabedb744f05b6802688e04cbba54ae6b0631bf82247692e8d954406136"
+    },
+    {
+      "path": "skills/unifi-protect/references/protect-api-endpoints.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/unifi/skills/unifi-protect/references/protect-api-endpoints.md",
+      "sha256": "2a0ad0facc6aad2e2b24ca7b730adcb6db5a71254e76b5e4e68c45500306cfcd"
+    },
+    {
+      "path": "skills/unifi-protect/scripts/unifi_protect_client.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/unifi/skills/unifi-protect/scripts/unifi_protect_client.py",
+      "sha256": "e80865568cf48db034c055fad6117f73014f2ae366e197d2e8ddc74ac2137bbb"
+    },
+    {
+      "path": "fleet-bundle.json",
+      "classification": "target-owned"
+    },
+    {
+      "path": "plugin.json",
+      "classification": "target-owned"
+    },
+    {
+      "path": "references/site-profile.md",
+      "classification": "target-owned"
+    },
+    {
+      "path": "schemas/site-profile.schema.json",
+      "classification": "target-owned"
+    },
+    {
+      "path": "scripts/discover.py",
+      "classification": "target-owned"
+    },
+    {
+      "path": "scripts/drift.py",
+      "classification": "target-owned"
+    },
+    {
+      "path": "scripts/site_profile.py",
+      "classification": "target-owned"
+    },
+    {
+      "path": "scripts/site_profile_setup.py",
+      "classification": "target-owned"
+    }
+  ]
+}
