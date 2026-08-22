@@ -15,8 +15,12 @@ Three classifications, and every path in the derived tree is exactly one of them
   authored upstream first; a downstream edit is a defect, not a transform.
 * **deterministic transform** — derived from a source file by a versioned,
   repeatable rule, recording the source digest, the output digest, and the
-  transform version. There is exactly one: the Claude manifest, lifted out of
-  `.claude-plugin/` into the client extension directory.
+  transform version. There are two rules. `relocate-claude-manifest` lifts the
+  Claude manifest out of `.claude-plugin/` into the client extension directory.
+  `resolve-bundled-fleet-module` rewrites each client's module-scope import of
+  the dropped `fleet_commons_shim` into an import of the build-time Fleet Core
+  bundle this package ships, which is what gives the portable package a working
+  entrypoint at all.
 * **target-owned portable source** — authored here, with no upstream
   counterpart. It is never overwritten and never removed by synchronization,
   which is what stops this script from silently destroying the portable
@@ -35,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -56,8 +61,11 @@ SOURCE_MANIFEST_PATH = ".claude-plugin/plugin.json"
 #: 8.2 defines for one client's own files. Claude-custody files live under it.
 CLIENT_EXTENSION_DIR = "com.infiquetra.claude"
 
-TRANSFORM_NAME = "relocate-claude-manifest"
-TRANSFORM_VERSION = "1"
+MANIFEST_TRANSFORM_NAME = "relocate-claude-manifest"
+MANIFEST_TRANSFORM_VERSION = "1"
+
+BUNDLED_TRANSFORM_NAME = "resolve-bundled-fleet-module"
+BUNDLED_TRANSFORM_VERSION = "1"
 
 GENERATED_BY = "scripts/sync_vendor_source.py"
 
@@ -73,9 +81,18 @@ PORTABLE_BYTE_COPIES = (
     "CHANGELOG.md",
     "skills/unifi-network/SKILL.md",
     "skills/unifi-network/references/udm-api-endpoints.md",
-    "skills/unifi-network/scripts/unifi_network_client.py",
     "skills/unifi-protect/SKILL.md",
     "skills/unifi-protect/references/protect-api-endpoints.md",
+)
+
+# The two executable entrypoints. They keep their upstream-relative path, but
+# they are not byte copies: upstream reaches the shared retry primitive through
+# `fleet_commons_shim`, which this package deliberately drops, so a byte copy of
+# either client cannot be executed at all. The `resolve-bundled-fleet-module`
+# transform rewrites that one module-scope import to the build-time Fleet Core
+# bundle the package already ships.
+PORTABLE_ENTRYPOINT_TRANSFORMS = (
+    "skills/unifi-network/scripts/unifi_network_client.py",
     "skills/unifi-protect/scripts/unifi_protect_client.py",
 )
 
@@ -175,7 +192,108 @@ def read_source_file(source: Path, commit: str, package_relative: str) -> bytes:
     return _git(source, "show", f"{commit}:{SOURCE_PACKAGE_PATH}/{package_relative}")
 
 
-# --- the one transform --------------------------------------------------------
+# --- the transforms -----------------------------------------------------------
+
+
+#: The directory name a generated Fleet Core bundle is written into. Read from
+#: the validator that owns the name rather than restated here, so the rule that
+#: rewrites the client import and the rule that writes the bundle cannot drift
+#: apart into a package that imports a path nothing generates. Which directories
+#: actually receive a bundle is the consumer's fleet-bundle.json declaration to
+#: say; this rule only requires one beside each client, which is where the
+#: pilot plan's assembled-package tree puts it.
+BUNDLE_DIRECTORY_NAME = check_repo.BUNDLE_DIRECTORY_NAME
+
+#: The upstream module-scope block that reaches the shared retry primitive
+#: through the Claude-specific shim. Matched as a whole so a partial or
+#: reworded upstream block fails loudly instead of being half-rewritten.
+UPSTREAM_SHIM_IMPORT = re.compile(
+    r"^sys\.path\.insert\(0, str\(Path\(__file__\)\.resolve\(\)\.parent\)\)\n"
+    r"import fleet_commons_shim\b[^\n]*\n"
+    r"\n"
+    r"(?P<binding>_[A-Za-z0-9_]*) = fleet_commons_shim\.load\("
+    r"\"(?P<module>[A-Za-z_][A-Za-z0-9_]*)\"\)\n",
+    re.MULTILINE,
+)
+
+BUNDLED_TRANSFORM_RULE = (
+    "Rewrite the client's module-scope import of the dropped fleet_commons_shim into an "
+    "import of the build-time Fleet Core bundle this package already ships. Version 1 "
+    "matches the single upstream block that inserts the client's own directory on sys.path "
+    "and calls fleet_commons_shim.load(NAME), and re-emits it as an insertion of the "
+    f"{BUNDLE_DIRECTORY_NAME}/ directory beside the client -- the location the pilot plan's "
+    "assembled-package tree gives the generated bundle, and the smallest possible change "
+    "to the upstream line -- followed by a direct import of NAME under the same binding. "
+    "The rule reads the module name and the binding out of the source rather than assuming "
+    "them, changes no other byte, and fails loudly when the block is absent or appears more "
+    "than once, because a synchronization that silently restored the shim import would ship "
+    "a package with no working entrypoint. The consumer's fleet-bundle.json must declare a "
+    "destination there; scripts/check_repo.py rejects a declared bundle that is missing and "
+    "tests/test_client_entrypoints.py runs the shipped scripts, so the two halves cannot "
+    "drift apart unnoticed."
+)
+
+
+class TransformRule:
+    """One versioned, repeatable rule and the metadata a manifest entry records."""
+
+    __slots__ = ("name", "version", "rule")
+
+    def __init__(self, name: str, version: str, rule: str) -> None:
+        self.name = name
+        self.version = version
+        self.rule = rule
+
+
+def bundled_module_transform(payload: bytes, *, target_path: str) -> bytes:
+    """Transform `resolve-bundled-fleet-module`, version 1.
+
+    The rule: find the one upstream block that puts the client's own directory
+    on `sys.path`, imports `fleet_commons_shim`, and loads a module through it,
+    and re-emit it as an insertion of the generated bundle directory beside the
+    client, followed by a direct import of that module.
+
+    This is a transform rather than a byte copy because the portable package
+    does not carry `fleet_commons_shim` at all: its resolution ladder is
+    Claude-specific runtime discovery, and dropping it while copying the import
+    verbatim leaves a client that raises `ModuleNotFoundError` before it parses
+    a single argument. The bundle is written at build time by
+    `scripts/bundle_fleet_module.py`, so the module is on disk when the package
+    is installed and Fleet Core is never installed separately.
+
+    The rewritten line stays relative to the client's own file, so it holds
+    wherever in the package the client sits and however the package is
+    installed. The consumer's `fleet-bundle.json` is what puts a bundle there;
+    `scripts/check_repo.py` rejects a declared bundle that was never generated,
+    and `tests/test_client_entrypoints.py` runs the shipped scripts, so a
+    declaration that stops writing beside a client fails loudly.
+    """
+    try:
+        body = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SyncError(f"{target_path} is not UTF-8: {exc}") from exc
+
+    matches = list(UPSTREAM_SHIM_IMPORT.finditer(body))
+    if len(matches) != 1:
+        raise SyncError(
+            f"{target_path}: expected exactly one fleet_commons_shim import block to rewrite, "
+            f"found {len(matches)}; the portable package drops the shim, so a client whose "
+            "block this rule cannot find would ship with no working entrypoint"
+        )
+
+    match = matches[0]
+    replacement = (
+        "sys.path.insert(0, str(Path(__file__).resolve().parent / "
+        f'"{BUNDLE_DIRECTORY_NAME}"))\n'
+        "# The build-time Fleet Core bundle replaces the upstream fleet_commons_shim, whose\n"
+        "# resolution ladder is Claude-specific runtime discovery this package must not\n"
+        "# retain. scripts/bundle_fleet_module.py writes the bundle, so the module is on\n"
+        "# disk at install time and Fleet Core is never installed separately.\n"
+        f"import {match.group('module')} as {match.group('binding')}"
+        "  # noqa: E402  (after the sys.path shim, by design)\n"
+    )
+    rewritten = body[: match.start()] + replacement + body[match.end() :]
+    return rewritten.encode("utf-8")
 
 
 def relocate_claude_manifest(payload: bytes) -> bytes:
@@ -208,6 +326,25 @@ def relocate_claude_manifest(payload: bytes) -> bytes:
     return payload
 
 
+RELOCATE_MANIFEST_RULE = TransformRule(
+    MANIFEST_TRANSFORM_NAME,
+    MANIFEST_TRANSFORM_VERSION,
+    "Re-emit the Claude Code manifest under the client extension directory "
+    "the Agent Plugins 1.0 specification's section 8.2 defines. Version 1 "
+    "preserves the bytes and derives only the output path, because the "
+    "source directory name .claude-plugin/ is a Claude Code loading "
+    "convention with no meaning inside the extension directory, and the "
+    "portable Agent Plugins manifest already occupies the package root the "
+    "Claude manifest would otherwise claim.",
+)
+
+BUNDLED_MODULE_RULE = TransformRule(
+    BUNDLED_TRANSFORM_NAME,
+    BUNDLED_TRANSFORM_VERSION,
+    BUNDLED_TRANSFORM_RULE,
+)
+
+
 # --- planning -----------------------------------------------------------------
 
 
@@ -221,12 +358,19 @@ class PlannedFile:
         classification: str,
         source_bytes: bytes,
         output_bytes: bytes,
+        transform: "TransformRule | None" = None,
     ) -> None:
         self.target_path = target_path
         self.source_path = source_path
         self.classification = classification
         self.source_bytes = source_bytes
         self.output_bytes = output_bytes
+        if (classification == TRANSFORM) != (transform is not None):
+            raise SyncError(
+                f"{target_path}: a deterministic transform records its rule and nothing "
+                "else does"
+            )
+        self.transform = transform
 
     @property
     def source_digest(self) -> str:
@@ -243,19 +387,12 @@ class PlannedFile:
             "source_path": f"{SOURCE_PACKAGE_PATH}/{self.source_path}",
         }
         if self.classification == TRANSFORM:
+            assert self.transform is not None
             entry["source_sha256"] = self.source_digest
             entry["sha256"] = self.output_digest
-            entry["transform"] = TRANSFORM_NAME
-            entry["transform_version"] = TRANSFORM_VERSION
-            entry["transform_rule"] = (
-                "Re-emit the Claude Code manifest under the client extension directory "
-                "the Agent Plugins 1.0 specification's section 8.2 defines. Version 1 "
-                "preserves the bytes and derives only the output path, because the "
-                "source directory name .claude-plugin/ is a Claude Code loading "
-                "convention with no meaning inside the extension directory, and the "
-                "portable Agent Plugins manifest already occupies the package root the "
-                "Claude manifest would otherwise claim."
-            )
+            entry["transform"] = self.transform.name
+            entry["transform_version"] = self.transform.version
+            entry["transform_rule"] = self.transform.rule
         else:
             entry["sha256"] = self.output_digest
         return entry
@@ -270,6 +407,7 @@ def classify_source_tree(present: list[str]) -> None:
     """
     declared = (
         *PORTABLE_BYTE_COPIES,
+        *PORTABLE_ENTRYPOINT_TRANSFORMS,
         *CLIENT_BYTE_COPIES,
         *DROPPED_FROM_SOURCE,
         SOURCE_MANIFEST_PATH,
@@ -303,6 +441,18 @@ def plan_sync(source: Path, commit: str) -> list[PlannedFile]:
     for relative in PORTABLE_BYTE_COPIES:
         payload = read_source_file(source, commit, relative)
         planned.append(PlannedFile(relative, relative, BYTE_COPY, payload, payload))
+    for relative in PORTABLE_ENTRYPOINT_TRANSFORMS:
+        payload = read_source_file(source, commit, relative)
+        planned.append(
+            PlannedFile(
+                relative,
+                relative,
+                TRANSFORM,
+                payload,
+                bundled_module_transform(payload, target_path=relative),
+                BUNDLED_MODULE_RULE,
+            )
+        )
     for relative in CLIENT_BYTE_COPIES:
         payload = read_source_file(source, commit, relative)
         target = f"{CLIENT_EXTENSION_DIR}/{relative}"
@@ -316,6 +466,7 @@ def plan_sync(source: Path, commit: str) -> list[PlannedFile]:
             TRANSFORM,
             manifest_payload,
             relocate_claude_manifest(manifest_payload),
+            RELOCATE_MANIFEST_RULE,
         )
     )
     planned.sort(key=lambda item: item.target_path)
@@ -425,16 +576,23 @@ def build_manifest(
             "The client extension directory com.infiquetra.claude/ mirrors the upstream package "
             "root path for path, so every Claude-custody file's origin is readable from its "
             "portable path and every one of them stays a byte copy. The Claude Code manifest is "
-            "the single exception and the single transform: it is lifted out of .claude-plugin/, "
+            "the single exception inside that directory: it is lifted out of .claude-plugin/, "
             "whose name is a loading convention with no meaning inside the extension directory, "
             "and whose portable counterpart already occupies the package root.",
             "Both fleet_commons_shim.py copies are dropped rather than copied, because the "
             "build-time Fleet Core bundle replaces them and their resolution ladder is "
-            "Claude-specific discovery the portable package must not retain. Neither client was "
-            "edited to match: both are byte copies, and both still carry the upstream "
-            "`import fleet_commons_shim` at module scope, so a portable client cannot be "
-            "executed until that import is repaired upstream and re-synchronized here. Editing "
-            "it downstream would create exactly the divergence the byte-copy rule forbids.",
+            "Claude-specific discovery the portable package must not retain. Dropping the shim "
+            "while copying the clients verbatim is what left this package with no working "
+            "entrypoint: both clients import fleet_commons_shim at module scope, so `--help` "
+            "raised ModuleNotFoundError before any argument was parsed. The two clients are "
+            "therefore deterministic transforms rather than byte copies. The "
+            "resolve-bundled-fleet-module rule rewrites that one import to the generated "
+            "bundle in the " + BUNDLE_DIRECTORY_NAME + "/ directory beside each client, "
+            "records the source digest, the output digest, and the transform version here, "
+            "and is re-applied on every "
+            "synchronization, so a later run cannot silently restore the broken import. This "
+            "is not a downstream edit smuggled past the byte-copy rule: it is a versioned rule "
+            "over the pinned source, reproducible from the source bytes alone.",
         ],
         "removed_from_source": [
             {

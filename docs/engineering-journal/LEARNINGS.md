@@ -63,6 +63,45 @@ unit-level green. The union of green units is not evidence that the capability w
 
 ---
 
+### Two correct halves and no owner for the join ships a package that cannot run
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The assembled portable UniFi package had no working entrypoint on any
+client, while every validator in the repository reported success.
+
+**Evidence.**
+`python3 plugins/unifi/skills/unifi-network/scripts/unifi_network_client.py --help`
+exited 1 with `ModuleNotFoundError: No module named 'fleet_commons_shim'`, raised at
+module scope before argparse ran; `unifi_protect_client.py` failed identically. The
+ten-client compatibility matrix in
+[`docs/evidence/2026-08-22-unifi-compatibility-matrix.md`](../evidence/2026-08-22-unifi-compatibility-matrix.md)
+recorded the same abort for every client that reached the execution stage. Fixed by
+`scripts/sync_vendor_source.py` transform `resolve-bundled-fleet-module`, the
+per-client destinations in `plugins/unifi/fleet-bundle.json`, and
+`check_repo.check_fleet_bundle_outputs`.
+
+**Mechanism.** Two pieces of tooling each did their own job correctly. The bundler
+(`scripts/bundle_fleet_module.py`) generates a Fleet Core module into the consuming
+package and rejects a tampered or stale copy. The synchronization
+(`scripts/sync_vendor_source.py`) reproduces upstream bytes exactly and refuses a
+downstream edit. Between them sat one fact neither owned: the clients import
+`fleet_commons_shim`, and the package deliberately ships no such module. The
+synchronization classified both clients as upstream byte copies, so copying the broken
+import verbatim was not merely permitted but required by its own rule; the bundler was
+never asked to write anything the clients actually resolve, so no bundle was generated
+at all. Each validator was correct about its half. Nothing asserted that the assembled
+result would start.
+
+The blind spot had a precise shape. `check_repo.check_bundled_files` reads the bundles
+that are on disk, so a bundle that was never generated is invisible to it -- absence of
+evidence read as evidence of absence of a problem. No test executed a shipped
+entrypoint, so the one signal that would have caught it in a second was missing.
+
+**Generalizable rule.** When two tools each own one half of an artifact, the join is
+not covered by testing both halves. Add one test that runs the assembled thing the way
+a user runs it, and one validator assertion that the two halves name the same files.
+
 ### Neutralizing an environment variable does not neutralize a fallback that reads a file
 
 **Author.** Jeff Cox and Claude

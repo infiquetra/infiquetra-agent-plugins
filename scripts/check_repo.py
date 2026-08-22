@@ -450,6 +450,40 @@ def check_fleet_bundle_declarations(root: Path) -> list[str]:
     return errors
 
 
+def check_fleet_bundle_outputs(root: Path) -> list[str]:
+    """Verify the build declaration and the generated tree name the same files.
+
+    ``check_bundled_files`` reads the bundles that are on disk, so it cannot see
+    a bundle that was never generated at all. That blind spot is what let this
+    package ship two client scripts importing a module nothing had written: the
+    declaration named it, the tree did not carry it, and every validator passed.
+    A declared module with no generated bundle, and a generated bundle no
+    declaration accounts for, are both reported here.
+    """
+    # Lazy import for the same reason as the declaration check above: the
+    # bundler imports this module for its stamp helpers.
+    from bundle_fleet_module import BundleError, plan_copies, presence_errors
+    from bundle_fleet_module import validate_declaration_file
+
+    errors: list[str] = []
+    for plugin_dir in plugin_directories(root):
+        declaration = plugin_dir / FLEET_BUNDLE_FILENAME
+        if not declaration.is_file():
+            continue
+        relative = str(declaration.relative_to(root))
+        if validate_declaration_file(declaration, origin=relative):
+            # A payload that fails its own schema cannot be planned from, and
+            # check_fleet_bundle_declarations has already named the field.
+            continue
+        try:
+            planned = plan_copies(root, plugin_dir)
+        except BundleError as exc:
+            errors.append(f"unusable fleet-bundle declaration {relative}: {exc}")
+            continue
+        errors.extend(presence_errors(root, plugin_dir, planned))
+    return errors
+
+
 def read_frontmatter(text: str) -> dict[str, str] | None:
     """Read the top-level scalar keys of a YAML frontmatter block.
 
@@ -530,6 +564,7 @@ def check_repo(root: Path) -> list[str]:
         *check_provenance_manifests(root),
         *check_bundled_files(root),
         *check_fleet_bundle_declarations(root),
+        *check_fleet_bundle_outputs(root),
         *check_skill_frontmatter(root),
     ]
 

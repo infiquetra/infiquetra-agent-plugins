@@ -382,10 +382,43 @@ def _relative(root: Path, path: Path) -> str:
         return str(path)
 
 
+def presence_errors(root: Path, consumer: Path, planned: list[PlannedCopy]) -> list[str]:
+    """Report the declaration and the generated tree disagreeing on which files exist.
+
+    Two directions, and both are real failures. A declared module with no
+    generated bundle is the seam that leaves a package importing something
+    nothing wrote; an undeclared file under the bundle directory is a generated
+    copy no declaration accounts for. Neither is visible to a check that reads
+    only the bundles already on disk, which is why this lives beside the
+    stamp checks rather than inside them.
+    """
+    errors: list[str] = []
+    for copy in planned:
+        if not copy.destination.is_file():
+            errors.append(
+                f"missing generated bundle: {_relative(root, copy.destination)} "
+                f"(module {copy.name})"
+            )
+
+    # Every generated bundle under the consumer, not just the default directory:
+    # a declaration may place a copy beside each consumer of it, and a scan of
+    # one fixed directory would leave the others unaccounted for.
+    declared = {copy.destination.resolve() for copy in planned}
+    for path in sorted(consumer.rglob("*")):
+        if not path.is_file() or "__pycache__" in path.parts:
+            continue
+        if check_repo.BUNDLE_DIRECTORY_NAME not in path.relative_to(consumer).parts:
+            continue
+        if path.resolve() not in declared:
+            errors.append(f"undeclared generated bundle: {_relative(root, path)}")
+    return errors
+
+
 def check_copy(root: Path, copy: PlannedCopy) -> list[str]:
+    """Verify one generated bundle's stamp. Presence is ``presence_errors``' job."""
     relative = _relative(root, copy.destination)
     if not copy.destination.is_file():
-        return [f"missing generated bundle: {relative} (module {copy.name})"]
+        return []
 
     try:
         text = copy.destination.read_text(encoding="utf-8")
@@ -417,21 +450,10 @@ def check_copy(root: Path, copy: PlannedCopy) -> list[str]:
 
 def check_consumer(root: Path, consumer: Path) -> list[str]:
     read_pin(root / "plugins" / FLEET_CORE_PLUGIN)
-    errors: list[str] = []
     planned = plan_copies(root, consumer)
-    declared_destinations = {copy.destination.resolve() for copy in planned}
+    errors = presence_errors(root, consumer, planned)
     for copy in planned:
         errors.extend(check_copy(root, copy))
-
-    bundled_root = consumer / DEFAULT_BUNDLE_DIR
-    if bundled_root.is_dir():
-        for path in sorted(bundled_root.rglob("*")):
-            if not path.is_file() or "__pycache__" in path.parts:
-                continue
-            if path.resolve() not in declared_destinations:
-                errors.append(
-                    f"undeclared generated bundle: {_relative(root, path)}"
-                )
     return errors
 
 

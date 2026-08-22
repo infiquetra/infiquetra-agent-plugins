@@ -23,6 +23,7 @@ import contextlib
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -46,6 +47,12 @@ import sync_vendor_source as svs  # noqa: E402
 CORRECTED_REVISION = "0eb1fe04236d975d4b13cbabe7b976eae8599992"
 FORBIDDEN_REVISION_PREFIX = "995a475b"
 
+#: A client actually reaching for the dropped shim, as opposed to a comment
+#: naming the shim the rewrite replaced. The rewritten block keeps that comment
+#: on purpose: it is the sentence that stops a later reader putting the import
+#: back, so the guard has to match code rather than the whole file.
+SHIM_USE = re.compile(r"^[ \t]*(?:import|from)[ \t]+fleet_commons_shim\b|fleet_commons_shim[ \t]*\.", re.MULTILINE)
+
 NETWORK_RESOURCE_GROUPS = 12
 NETWORK_ACTIONS = 52
 PROTECT_RESOURCE_GROUPS = 6
@@ -57,6 +64,25 @@ PROTECT_ACTIONS = 21
 
 FIXTURE_MANIFEST = json.dumps({"name": "unifi", "version": "9.9.9"}, indent=2) + "\n"
 
+# The upstream module-scope block both clients carry at the pinned commit. The
+# fixture reproduces it verbatim because it is the input the
+# `resolve-bundled-fleet-module` transform is defined over: a fixture client
+# without it would exercise the classification bookkeeping and none of the
+# rewrite that gives the portable package a working entrypoint.
+FIXTURE_SHIM_BLOCK = (
+    "import sys\n"
+    "from pathlib import Path\n"
+    "\n"
+    "# Shared 429 retry/backoff primitive via fleet-commons (#348).\n"
+    "sys.path.insert(0, str(Path(__file__).resolve().parent))\n"
+    "import fleet_commons_shim  # noqa: E402  (after the sys.path shim, by design)\n"
+    "\n"
+    '_retry_backoff = fleet_commons_shim.load("retry_backoff")\n'
+)
+
+FIXTURE_NETWORK_CLIENT = FIXTURE_SHIM_BLOCK + "NETWORK = 1\n"
+FIXTURE_PROTECT_CLIENT = FIXTURE_SHIM_BLOCK + "PROTECT = 1\n"
+
 FIXTURE_SOURCE: dict[str, str] = {
     ".claude-plugin/plugin.json": FIXTURE_MANIFEST,
     "README.md": "# fixture readme\n",
@@ -65,12 +91,12 @@ FIXTURE_SOURCE: dict[str, str] = {
     "agents/unifi-network-ops.md": "fixture agent\n",
     "skills/unifi-network/SKILL.md": "---\nname: unifi-network\ndescription: fixture\n---\n",
     "skills/unifi-network/references/udm-api-endpoints.md": "fixture network reference\n",
-    "skills/unifi-network/scripts/unifi_network_client.py": "NETWORK = 1\n",
+    "skills/unifi-network/scripts/unifi_network_client.py": FIXTURE_NETWORK_CLIENT,
     "skills/unifi-network/scripts/site_profile_loader.py": "LOADER = 1\n",
     "skills/unifi-network/scripts/fleet_commons_shim.py": "SHIM = 1\n",
     "skills/unifi-protect/SKILL.md": "---\nname: unifi-protect\ndescription: fixture\n---\n",
     "skills/unifi-protect/references/protect-api-endpoints.md": "fixture protect reference\n",
-    "skills/unifi-protect/scripts/unifi_protect_client.py": "PROTECT = 1\n",
+    "skills/unifi-protect/scripts/unifi_protect_client.py": FIXTURE_PROTECT_CLIENT,
     "skills/unifi-protect/scripts/fleet_commons_shim.py": "SHIM = 1\n",
 }
 
@@ -106,6 +132,11 @@ def write(path: Path, text: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def bundle_beside(client: Path, module: str = "retry_backoff") -> str:
+    """The package-relative bundle path a rewritten client resolves."""
+    return (client.parent / svs.BUNDLE_DIRECTORY_NAME / f"{module}.py").as_posix()
 
 
 def make_source_checkout(directory: Path, files: dict[str, str] | None = None) -> str:
@@ -163,7 +194,13 @@ class SynchronizedTreeTests(SyncFixture):
                 continue
             recorded += 1
             self.assertEqual(check_repo.sha256_path(target), entry["sha256"], entry["path"])
-        self.assertEqual(recorded, len(svs.PORTABLE_BYTE_COPIES) + len(svs.CLIENT_BYTE_COPIES) + 1)
+        self.assertEqual(
+            recorded,
+            len(svs.PORTABLE_BYTE_COPIES)
+            + len(svs.PORTABLE_ENTRYPOINT_TRANSFORMS)
+            + len(svs.CLIENT_BYTE_COPIES)
+            + 1,
+        )
         self.assertEqual(check_repo.check_provenance_manifests(self.target), [])
 
     def test_every_path_carries_exactly_one_classification(self) -> None:
@@ -182,21 +219,41 @@ class SynchronizedTreeTests(SyncFixture):
             set(paths), present, "the manifest and the tree disagree on which paths exist"
         )
 
-    def test_the_one_transform_records_source_output_and_version(self) -> None:
+    def test_every_transform_records_source_output_rule_and_version(self) -> None:
         self.synchronize()
         manifest = json.loads((self.package / "PROVENANCE.json").read_text(encoding="utf-8"))
-        transforms = [
-            entry
+        transforms = {
+            entry["path"]: entry
             for entry in manifest["files"]
             if entry["classification"] == check_repo.TRANSFORM
-        ]
-        self.assertEqual(len(transforms), 1, "the plan declares exactly one transform")
-        transform = transforms[0]
-        self.assertEqual(transform["path"], f"{svs.CLIENT_EXTENSION_DIR}/plugin.json")
-        self.assertEqual(transform["source_path"], "plugins/unifi/.claude-plugin/plugin.json")
-        self.assertEqual(transform["transform_version"], svs.TRANSFORM_VERSION)
-        for field in ("source_sha256", "sha256"):
-            self.assertRegex(transform[field], r"^[0-9a-f]{64}$")
+        }
+        self.assertEqual(
+            sorted(transforms),
+            sorted([f"{svs.CLIENT_EXTENSION_DIR}/plugin.json", *svs.PORTABLE_ENTRYPOINT_TRANSFORMS]),
+        )
+        for path, entry in transforms.items():
+            with self.subTest(path=path):
+                for field in ("source_sha256", "sha256"):
+                    self.assertRegex(entry[field], r"^[0-9a-f]{64}$")
+                self.assertTrue(entry["transform_rule"].strip())
+                self.assertTrue(entry["transform_version"].strip())
+
+        manifest_entry = transforms[f"{svs.CLIENT_EXTENSION_DIR}/plugin.json"]
+        self.assertEqual(
+            manifest_entry["source_path"], "plugins/unifi/.claude-plugin/plugin.json"
+        )
+        self.assertEqual(manifest_entry["transform"], svs.MANIFEST_TRANSFORM_NAME)
+        self.assertEqual(manifest_entry["transform_version"], svs.MANIFEST_TRANSFORM_VERSION)
+
+        for relative in svs.PORTABLE_ENTRYPOINT_TRANSFORMS:
+            entry = transforms[relative]
+            self.assertEqual(entry["transform"], svs.BUNDLED_TRANSFORM_NAME)
+            self.assertEqual(entry["transform_version"], svs.BUNDLED_TRANSFORM_VERSION)
+            self.assertNotEqual(
+                entry["source_sha256"],
+                entry["sha256"],
+                "the rewrite changed no byte, so the client still imports the dropped shim",
+            )
 
     def test_rerunning_against_the_same_commit_changes_nothing(self) -> None:
         self.synchronize()
@@ -229,6 +286,45 @@ class SynchronizedTreeTests(SyncFixture):
         # The plugin root belongs to the portable Agent Plugins manifest, and
         # synchronization never writes it, so nothing collides there.
         self.assertFalse((self.package / "plugin.json").exists())
+
+    def test_each_client_resolves_the_bundled_module_instead_of_the_dropped_shim(self) -> None:
+        """The defect this transform exists to close.
+
+        The package drops ``fleet_commons_shim`` but the upstream clients import
+        it at module scope, so a byte copy of either one raises
+        ``ModuleNotFoundError`` before it parses a single argument. After the
+        rewrite each client resolves the generated Fleet Core bundle the package
+        itself ships.
+        """
+        self.synchronize()
+        expected = (
+            "sys.path.insert(0, str(Path(__file__).resolve().parent / "
+            f'"{svs.BUNDLE_DIRECTORY_NAME}"))'
+        )
+        for relative in svs.PORTABLE_ENTRYPOINT_TRANSFORMS:
+            with self.subTest(client=relative):
+                body = (self.package / relative).read_text(encoding="utf-8")
+                self.assertIsNone(SHIM_USE.search(body))
+                self.assertIn("import retry_backoff as _retry_backoff", body)
+                self.assertIn(expected, body)
+
+    def test_resynchronizing_re_applies_the_rule_rather_than_restoring_the_shim(self) -> None:
+        """A later synchronization must not silently put the broken import back."""
+        self.synchronize()
+        relative = svs.PORTABLE_ENTRYPOINT_TRANSFORMS[0]
+        client = self.package / relative
+        transformed = client.read_text(encoding="utf-8")
+
+        client.write_text(FIXTURE_NETWORK_CLIENT, encoding="utf-8")
+        errors, _ = self.synchronize(check_only=True)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("does not match its planned output", errors[0])
+        self.assertIn(relative, errors[0])
+
+        written, _ = self.synchronize()
+        self.assertIn(relative, written)
+        self.assertEqual(client.read_text(encoding="utf-8"), transformed)
+        self.assertIsNone(SHIM_USE.search(client.read_text(encoding="utf-8")))
 
     def test_client_custody_files_keep_their_upstream_relative_path(self) -> None:
         self.synchronize()
@@ -267,30 +363,59 @@ class RefusalTests(SyncFixture):
         self.assertIn("no custody assignment", message)
         self.assertIn("plugins/unifi/hooks/hooks.json", message)
 
+    def test_a_client_without_the_rewritable_block_is_refused(self) -> None:
+        """A rule that cannot find its input fails loudly instead of shipping a stub.
+
+        Silently leaving the client alone is the failure mode that produced the
+        defect in the first place: the package looked synchronized and had no
+        working entrypoint.
+        """
+        source = dict(FIXTURE_SOURCE)
+        source["skills/unifi-network/scripts/unifi_network_client.py"] = "NETWORK = 1\n"
+        base = Path(self._temporary.name) / "upstream-without-shim"
+        commit = make_source_checkout(base, source)
+        with self.assertRaises(svs.SyncError) as caught:
+            svs.synchronize(base, commit, root=self.target)
+        message = str(caught.exception)
+        self.assertIn("skills/unifi-network/scripts/unifi_network_client.py", message)
+        self.assertIn("found 0", message)
+        self.assertFalse((self.package / "README.md").exists(), "the plan wrote before it failed")
+
+    def test_a_client_with_the_block_twice_is_refused(self) -> None:
+        source = dict(FIXTURE_SOURCE)
+        source["skills/unifi-network/scripts/unifi_network_client.py"] = (
+            FIXTURE_NETWORK_CLIENT + "\n" + FIXTURE_SHIM_BLOCK
+        )
+        base = Path(self._temporary.name) / "upstream-twice"
+        commit = make_source_checkout(base, source)
+        with self.assertRaises(svs.SyncError) as caught:
+            svs.synchronize(base, commit, root=self.target)
+        self.assertIn("found 2", str(caught.exception))
+
     def test_a_missing_commit_is_refused(self) -> None:
         with self.assertRaises(svs.SyncError):
             svs.synchronize(self.source, "0" * 40, root=self.target)
 
     def test_a_byte_copy_that_differs_from_its_source_fails_and_is_never_a_transform(self) -> None:
         self.synchronize()
-        client = self.package / "skills" / "unifi-network" / "scripts" / "unifi_network_client.py"
-        client.write_text("NETWORK = 2  # edited downstream\n", encoding="utf-8")
+        relative = "skills/unifi-network/SKILL.md"
+        document = self.package / relative
+        document.write_text("# edited downstream\n", encoding="utf-8")
         errors, _ = self.synchronize(check_only=True)
         self.assertEqual(len(errors), 1, errors)
         self.assertIn("byte copy diverged from its source", errors[0])
-        self.assertIn("skills/unifi-network/scripts/unifi_network_client.py", errors[0])
+        self.assertIn(relative, errors[0])
         manifest = json.loads((self.package / "PROVENANCE.json").read_text(encoding="utf-8"))
-        entry = next(
-            item
-            for item in manifest["files"]
-            if item["path"] == "skills/unifi-network/scripts/unifi_network_client.py"
-        )
+        entry = next(item for item in manifest["files"] if item["path"] == relative)
         self.assertEqual(entry["classification"], check_repo.BYTE_COPY)
         # A byte copy is repaired by re-copying from the source, never by
         # recording the downstream edit as a derivation.
         written, _ = self.synchronize()
-        self.assertIn("skills/unifi-network/scripts/unifi_network_client.py", written)
-        self.assertEqual(client.read_text(encoding="utf-8"), "NETWORK = 1\n")
+        self.assertIn(relative, written)
+        self.assertEqual(
+            document.read_text(encoding="utf-8"),
+            FIXTURE_SOURCE[relative],
+        )
 
     def test_check_mode_writes_nothing(self) -> None:
         self.synchronize()
@@ -413,6 +538,61 @@ class ShippedPackageTests(unittest.TestCase):
     def test_no_fleet_commons_shim_is_shipped(self) -> None:
         self.assertEqual([str(p) for p in self.package.rglob("fleet_commons_shim.py")], [])
 
+    def test_no_shipped_client_still_imports_the_dropped_shim(self) -> None:
+        """The file being absent is not the guarantee; nothing importing it is.
+
+        Matched against code rather than against the whole file, because the
+        rewritten block keeps a comment naming the shim it replaced, and that
+        sentence is the reason a later reader will not put the import back.
+        """
+        for relative in svs.PORTABLE_ENTRYPOINT_TRANSFORMS:
+            with self.subTest(client=relative):
+                body = (self.package / relative).read_text(encoding="utf-8")
+                self.assertIsNone(SHIM_USE.search(body), f"{relative} still reaches for the shim")
+
+    def test_shipped_clients_are_transforms_and_the_bundle_they_import_exists(self) -> None:
+        manifest = json.loads((self.package / "PROVENANCE.json").read_text(encoding="utf-8"))
+        entries = {entry["path"]: entry for entry in manifest["files"]}
+        for relative in svs.PORTABLE_ENTRYPOINT_TRANSFORMS:
+            with self.subTest(client=relative):
+                entry = entries[relative]
+                self.assertEqual(entry["classification"], check_repo.TRANSFORM)
+                self.assertEqual(entry["transform"], svs.BUNDLED_TRANSFORM_NAME)
+        for relative in svs.PORTABLE_ENTRYPOINT_TRANSFORMS:
+            with self.subTest(client=relative):
+                bundled = bundle_beside(Path(relative))
+                self.assertTrue(
+                    (self.package / bundled).is_file(),
+                    f"{relative} imports a bundle nothing wrote: {bundled}",
+                )
+                self.assertEqual(entries[bundled]["classification"], check_repo.TARGET_OWNED)
+
+    def test_the_declaration_writes_a_bundle_beside_every_client_that_imports_one(self) -> None:
+        """The join U3's bundler and U10's synchronization each own one half of.
+
+        The rewrite points every client at a sibling ``_bundled`` directory. The
+        build declaration is what puts a module there. When the two sets differ,
+        the package ships a client importing a path nothing generates -- which
+        is the defect this whole transform exists to close -- so they are
+        compared directly rather than left to be noticed at run time.
+        """
+        declaration = json.loads(
+            (self.package / "fleet-bundle.json").read_text(encoding="utf-8")
+        )
+        declared = {
+            destination
+            for module in declaration["modules"]
+            for destination in module["destinations"]
+        }
+        resolved = {
+            bundle_beside(Path(relative)) for relative in svs.PORTABLE_ENTRYPOINT_TRANSFORMS
+        }
+        self.assertTrue(
+            resolved <= declared,
+            f"clients resolve {sorted(resolved - declared)}, which fleet-bundle.json "
+            "does not declare",
+        )
+
 
 # --- parser-to-parser command surface ------------------------------------------
 
@@ -435,12 +615,18 @@ def _client_import_environment():
     """Make both clients importable without third-party packages or the shim.
 
     The clients import ``requests`` and ``urllib3`` for transport and reach the
-    shared retry primitive through ``fleet_commons_shim``, which the portable
-    package deliberately does not carry. None of that participates in building
-    the argument parser, so standing in inert modules lets the command surface
-    be read on both sides of the comparison under one rule.
+    shared retry primitive two different ways: upstream through
+    ``fleet_commons_shim``, and here through the generated Fleet Core bundle the
+    ``resolve-bundled-fleet-module`` transform points at. Both names are stood
+    in, because this comparison copies each client to a temporary directory,
+    where neither the shim nor the package's bundle directory is reachable.
+    None of it participates in building the argument parser, so inert modules
+    let the command surface be read on both sides under one rule. That the real
+    bundled import resolves from the real package path is a different question,
+    and ``tests/test_client_entrypoints.py`` answers it by running the shipped
+    scripts where they actually live.
     """
-    names = ("requests", "urllib3", "urllib3.exceptions", "fleet_commons_shim")
+    names = ("requests", "urllib3", "urllib3.exceptions", "fleet_commons_shim", "retry_backoff")
     saved_modules = {name: sys.modules.get(name) for name in names}
     saved_path = list(sys.path)
     exceptions = _stub(
@@ -459,6 +645,7 @@ def _client_import_environment():
         exceptions=_stub("requests.exceptions"),
     )
     sys.modules["fleet_commons_shim"] = _stub("fleet_commons_shim", load=lambda name: retry)
+    sys.modules["retry_backoff"] = retry
     try:
         yield
     finally:
