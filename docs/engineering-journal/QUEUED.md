@@ -163,7 +163,49 @@ No items.
 
 ## Maybe
 
-No items.
+### Keep the matrix binding an identity check; do not add an execution-proof gate
+
+**Author.** Jeff Cox
+
+**Priority.** Maybe
+
+**Effort.** None. Recording only.
+
+**Worth it when.** Only if a later operator separately decides that
+proving stage execution needs a new evidence mode. Not as a repair of
+cycle-two open item O7.
+
+**Recording only.** This entry records an operator ruling. No repair has
+begun, and none is authorized. The finding is a non-blocking evidence
+limitation, not a new gate. Do not add a blocking check. Do not weaken
+the existing matrix binding.
+
+**Context.** Ox Alpha finding F6, consensus O7: the matrix binding proves
+the recorded digest identifies the shipped tree. It does not prove the
+forty stages were actually executed against that tree — identity is not
+execution. The approved plan already requires real runtime execution and
+readback in specific places, so a new validator would duplicate intent
+the machine still could not enforce:
+
+- Plan unit U11, with requirements R22 and R43: the operator-run
+  ten-client, forty-stage assessment (placement, discovery, load,
+  invocation) recorded in
+  [`docs/evidence/2026-08-22-unifi-compatibility-matrix.md`](../evidence/2026-08-22-unifi-compatibility-matrix.md).
+- Plan unit U9, requirement R40: post-activation installed-version and
+  digest readback.
+- Plan unit U9, requirement R41: a fresh client session proving the
+  three profile states, recorded in
+  [`docs/evidence/2026-08-22-unifi-post-activation-readback.md`](../evidence/2026-08-22-unifi-post-activation-readback.md).
+
+**Guardrail.** Do not invent a broader new gate. Do not add a blocking
+check. Do not weaken `check_package_binding`.
+
+**Refs.**
+[identity-is-not-execution learning](LEARNINGS.md#a-bound-digest-names-the-tree-not-the-forty-stages-that-assessed-it),
+[binding decision](DECISIONS.md#bind-a-current-matrix-to-the-tree-it-assessed-and-make-supersession-the-only-exemption),
+[pilot plan](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md),
+[Ox Alpha F6](../reviews/2026-08-22-code-review-cycle2-ox-alpha-max.md),
+[cycle-two consensus O7](../reviews/2026-08-22-code-review-cycle2-consensus.md).
 
 When work ships or is rejected, move the complete entry to
 [ARCHIVE.md](ARCHIVE.md); do not silently delete it.

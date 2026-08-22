@@ -2,6 +2,75 @@
 
 ## 2026-08-22
 
+### A bound digest names the tree, not the forty stages that assessed it
+
+**Author.** Jeff Cox
+
+**Context.** Cycle-two code review finding F6 from Ox Alpha, reconciled as
+consensus open item O7. The matrix binding proves the recorded digest
+identifies the shipped tree. The operator ruled the rest a
+non-blocking evidence limitation, not a new gate. This unit records that
+limitation. It does not add a blocking check, and the identity check is not weakened.
+
+**Evidence.** The Ox Alpha review
+([`docs/reviews/2026-08-22-code-review-cycle2-ox-alpha-max.md`](../reviews/2026-08-22-code-review-cycle2-ox-alpha-max.md),
+finding F6) is exact: the fingerprint check makes accidental drift
+impossible to miss, and it cannot prove the forty stages were actually
+executed against the bound tree. Hand-editing the record's count and
+digest after a package edit still passes every check. Ox Alpha's finding
+is that identity is not execution. The same review
+notes the code is honest about intent —
+`scripts/check_compatibility_matrix.py` refuses a rewrite flag, "re-run,
+not renumbered" — and that the guarantee is one-directional. The
+cycle-two consensus records this as O7, advisory, routed to the operator
+([`docs/reviews/2026-08-22-code-review-cycle2-consensus.md`](../reviews/2026-08-22-code-review-cycle2-consensus.md)).
+
+The binding itself still bites. `check_package_binding` recomputes file
+count and tree digest from `plugins/unifi/` and fails on mismatch.
+Accidental drift remains a validation failure. What remains
+undetectable is copying `--print-fingerprint` into the JSON record
+without running a client.
+
+**Mechanism.** Two claims were being read as one. Matching a digest says
+which bytes the evidence names. It does not say that placement,
+discovery, load, and invocation ran against those bytes. The approved
+plan already split those claims. The binding is the identity half.
+Runtime execution and readback already live in named plan places. This
+record does not replace them with a broader gate.
+
+**The plan already requires real runtime execution and readback here.**
+
+1. Plan unit U11, with requirements R22 and R43: an operator-run
+   ten-client assessment. Each of the ten clients has four stages —
+   placement, discovery, load, and invocation — which is the forty
+   stages. Continuous integration does not run that assessment. Record:
+   [`docs/evidence/2026-08-22-unifi-compatibility-matrix.md`](../evidence/2026-08-22-unifi-compatibility-matrix.md).
+
+2. Plan unit U9, requirement R40: after upstream release activation, an
+   installed-version and digest readback confirms the running client is
+   those bytes. Record:
+   [`docs/evidence/2026-08-22-unifi-post-activation-readback.md`](../evidence/2026-08-22-unifi-post-activation-readback.md).
+
+3. Plan unit U9, requirement R41: a fresh client session proves all
+   three profile states (present, absent, unreadable). Source-tree
+   evidence alone does not satisfy R41, because a running client can
+   hold a cached earlier version.
+
+**Generalizable rule.** A fingerprint check proves identity. It does not
+prove the process that produced the evidence ran against that artifact.
+Keep the identity check; keep execution evidence in the places that
+actually run and read back. Do not invent a gate that still cannot see
+the clients.
+
+**Refs.**
+[Binding decision](DECISIONS.md#bind-a-current-matrix-to-the-tree-it-assessed-and-make-supersession-the-only-exemption),
+[queued recording](QUEUED.md#keep-the-matrix-binding-an-identity-check-do-not-add-an-execution-proof-gate),
+[pilot plan](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md)
+(U9, U11, R22, R40, R41, R43),
+`scripts/check_compatibility_matrix.py` (`check_package_binding`).
+
+---
+
 ### A path a manifest names is untrusted input, even when the manifest is ours
 
 **Author.** Jeff Cox and Claude
