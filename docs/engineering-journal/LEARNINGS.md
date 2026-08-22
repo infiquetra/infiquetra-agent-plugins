@@ -42,7 +42,20 @@ floor is part of the synchronization contract and has to be checked against the
 source on every re-synchronization; a digest that matches proves nothing about
 whether the new bytes still run where the package says they run.
 
-**Refs.** [Queued floor decision](QUEUED.md#decide-the-python-floor-the-fleet-core-resync-raised),
+**Outcome, 2026-08-22.** The operator answered this by making the floor the
+source's floor rather than a separately maintained one. The catalog's minimum
+supported Python is now `python>=3.12`, which is what
+`infiquetra-claude-plugins` declares and tests, so there are no longer two
+support floors to fall out of step. Everything recorded above stayed true as
+written: the interpreter pin quoted here, `.github/workflows/ci.yml` at Python
+3.10, was the configuration at the time and has since moved to the new floor.
+The generalizable rule holds in a stronger form — a derived catalog should not
+maintain a platform floor of its own at all, because the only floor it can
+actually keep is the one its source keeps. See
+[the decision](DECISIONS.md#the-portable-catalogs-minimum-supported-python-is-python312).
+
+**Refs.** [The floor decision](DECISIONS.md#the-portable-catalogs-minimum-supported-python-is-python312),
+[the archived queue item](ARCHIVE.md#decide-the-python-floor-the-fleet-core-resync-raised),
 [the 0.25.1 changelog entry](../../plugins/fleet-core/CHANGELOG.md)
 
 ### Regenerating a build artifact retires the observational evidence bound to it

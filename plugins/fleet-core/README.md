@@ -45,9 +45,14 @@ drawn.
 
 ## Requirements
 
-The portable catalog targets Python 3.10 or newer. The module itself is standard
-library only and carries `from __future__ import annotations`, so it needs no
-third-party package at run time and no network access.
+The portable catalog requires `python>=3.12`. That is a minimum, not a pin: any
+later interpreter is in contract. The floor is the one the authoritative source
+repository, `infiquetra-claude-plugins`, declares and tests, and a derived
+catalog does not promise more compatibility than the source it is derived from.
+
+The module itself is standard library only and carries
+`from __future__ import annotations`, so it needs no third-party package at run
+time and no network access.
 
 ## How a consumer gets it
 

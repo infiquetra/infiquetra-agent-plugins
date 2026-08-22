@@ -2,6 +2,98 @@
 
 ## 2026-08-22
 
+### The portable catalog's minimum supported Python is `python>=3.12`
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** The portable catalog declares a minimum supported Python of
+`python>=3.12`. This is a minimum, not a pin: every later interpreter is in
+contract, and nothing here promises 3.10 or 3.11 any more. Raising the floor
+above 3.12 is a separate operator decision and is not taken here.
+
+The floor is stated once, as the constant in
+[`tests/test_python_floor.py`](../../tests/test_python_floor.py), and every
+place the catalog declares it is checked against that constant: the
+continuous-integration interpreter pin in
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), the repository
+[`README.md`](../../README.md), the
+[pilot plan](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md),
+the Fleet Core package [README](../../plugins/fleet-core/README.md) and
+[changelog](../../plugins/fleet-core/CHANGELOG.md), and this entry. A portable
+skill that declares a `compatibility` value must declare this one. The gate also
+fails when any of those files stops stating a floor at all, so the check cannot
+be defeated by deleting a declaration, and it fails on any `python>=` version
+token anywhere in the repository that names a different version.
+
+The ported-plugin continuous-integration job now pins `3.12` rather than `3.10`,
+because a floor that is never exercised is not a floor and the only interpreter
+that job can usefully prove is the lowest one the contract admits.
+
+**Rejected alternatives.** *Keeping a 3.10 floor and repairing the import
+upstream.* The one-line upstream repair is real and available, but it answers
+the wrong question. Nothing ever proved a 3.10 floor: the ten-client
+compatibility assessment ran every stage on an interpreter well above it, so the
+3.10 case was never observed, and the claim rested on reading the lowest
+interpreter the ported bytes happened to parse under. Repairing this import
+would restore a promise the catalog still could not keep and would leave the
+next 3.12-era API to break it again.
+
+*Pinning exactly 3.12.* That would refuse interpreters the authoritative source
+supports and would turn every later Python release into a catalog-wide edit.
+
+*Moving the floor to 3.11, the minimum the broken import actually required.*
+That is a floor derived from one accident of one byte copy rather than from the
+source's own contract, and it would have to move again on the next one.
+
+*Leaving the declarations as separate hand-maintained strings.* The floor was
+already stated in at least five places and had already fallen out of agreement
+with the code it described. Prose that is not checked is not a contract.
+
+**Rationale.** The authoritative source repository,
+`infiquetra-claude-plugins`, declares `requires-python = ">=3.12"` in its
+project file and pins `python-version: "3.12"` in every one of its
+continuous-integration jobs. Both statements were read at commit `ed72f439`,
+the revision both packages in this catalog are derived from, and at the head of
+that repository's default branch. A derived catalog must not promise more
+compatibility than the source it is derived from. Where it does, the promise is
+not merely unproven, it is unprovable: this repository does not own the bytes,
+cannot test them on the interpreter it advertises, and inherits whatever
+interpreter requirement upstream adopts on the next synchronization.
+
+This cycle demonstrated the failure end to end. Re-synchronizing the Fleet Core
+slice to 0.25.1 brought in `from datetime import UTC`, which exists only on
+Python 3.11 and newer. The digest check passed, because the bytes really were
+identical to their source; the derived package silently stopped running on the
+floor its own documentation advertised. Aligning the floor with the source
+removes the class of failure rather than the one instance of it.
+
+**Supersedes.** The plan's KTD7 in its original form, which derived a 3.10 floor
+from a bare union annotation evaluated at definition time. That reasoning is
+preserved in the plan rather than deleted. It established a lower bound on what
+the ported code parses under; it was never a statement of what the catalog
+supports, and the two came apart on the first re-synchronization.
+
+**Known gap, recorded rather than closed.** KTD7 also claimed the floor is
+declared in the skills' `compatibility` frontmatter. It never was, and it cannot
+be added here: both portable `SKILL.md` documents are classified
+`upstream-byte-copy`, so an added field would break digest equality with their
+source and would move the assessed package's tree fingerprint, retiring the
+ten-client matrix bound to it. Nothing under `plugins/unifi/` was touched by
+this decision for that reason. The declaration is
+[queued as upstream work](QUEUED.md).
+
+**Revisit when.** The authoritative source raises or lowers its own
+`requires-python`, or this catalog acquires a package whose source declares a
+different floor from the rest — at which point one catalog-wide floor stops
+being the right shape and the check has to become per-package.
+
+**Refs.** [Pilot plan KTD7](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md),
+[the floor gate](../../tests/test_python_floor.py),
+[the learning this decision answers](LEARNINGS.md#a-byte-copy-imports-the-upstream-platform-floor-along-with-the-upstream-fix),
+[the archived queue item](ARCHIVE.md#decide-the-python-floor-the-fleet-core-resync-raised)
+
+---
+
 ### The ported test's pytest guard raises SkipTest instead of binding pytest to None
 
 **Author.** Jeff Cox and Claude
@@ -227,8 +319,8 @@ proves awkward, or a generated artifact appears that has no stable stamp locatio
 **Decision.** Continuous integration runs two jobs. The repository validation job installs
 nothing and runs `python3 scripts/check_repo.py`, the unittest suite, and `git diff
 --check`, so the repository's own baseline uses the standard library alone. A second job
-installs Python 3.10 with `requests`, `urllib3`, and `pytest`, and runs the ported plugin
-tests. Neither job ever contacts a UniFi controller, and the compatibility matrix is
+pins the catalog's declared floor, `python>=3.12`, installs `requests`, `urllib3`, and
+`pytest` on it, and runs the ported plugin tests. Neither job ever contacts a UniFi controller, and the compatibility matrix is
 produced by an operator-run assessment rather than by continuous integration.
 
 **Rejected alternatives.** Rewriting the existing pytest tests into unittest so a single
@@ -240,6 +332,11 @@ outage able to break validation of documentation-only changes.
 guarantee: it answers whether this repository is internally consistent, using nothing it
 has to download. The ported plugin tests answer a different question and legitimately need
 third-party packages, so they get a job whose failures mean what they say.
+
+**Amended 2026-08-22.** The second job's interpreter was pinned to 3.10 when this decision
+was written. It now pins the catalog's declared floor, `python>=3.12`, under
+[the floor decision](#the-portable-catalogs-minimum-supported-python-is-python312). The
+two-job structure this entry decided is unchanged; only the pinned version moved.
 
 **Revisit when.** The ported packages acquire a dependency the second job cannot install,
 or the repository grows a project file that makes a single job hermetic again.

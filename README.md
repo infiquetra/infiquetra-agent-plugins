@@ -106,8 +106,12 @@ Agent Plugin manifests under `plugins/`, each package's provenance manifest, the
 build declarations and generated bundle stamps, and the portable skills'
 frontmatter. It installs nothing and makes no network call, so this baseline
 cannot be broken by a package index outage. A second continuous integration job
-installs Python 3.10 with `requests`, `urllib3`, and `pytest` and runs the ported
-plugin tests.
+pins the catalog's declared floor, `python>=3.12`, installs `requests`,
+`urllib3`, and `pytest`, and runs the ported plugin tests. The pin is the floor
+itself rather than the newest interpreter, because a floor that is never
+exercised is not a floor. The floor is a single value with a single owner,
+[`tests/test_python_floor.py`](tests/test_python_floor.py), and every place the
+catalog states it is checked against that owner.
 
 ## Development
 

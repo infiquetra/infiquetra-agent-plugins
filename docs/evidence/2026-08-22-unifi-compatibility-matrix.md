@@ -215,6 +215,16 @@ above that floor. What this matrix therefore does not show is the 3.10 case; it
 is [queued as an open decision](../engineering-journal/QUEUED.md) rather than
 answered here.
 
+**Superseding note, added 2026-08-22 after this assessment ran.** The decision
+that paragraph defers is now made, and the paragraph is left standing because it
+records what was true when the stages ran. The catalog's minimum supported
+Python is `python>=3.12`, so the 3.10 case this matrix does not show is no
+longer a case the catalog claims to support, and the gap it names is closed by
+narrowing the claim rather than by any result below changing. Every stage
+result, status, and digest on this page is untouched and still describes the
+assessment as it was run. See
+[the floor decision](../engineering-journal/DECISIONS.md#the-portable-catalogs-minimum-supported-python-is-python312).
+
 ## Per-client detail
 
 ### Claude Code — works directly
@@ -709,4 +719,7 @@ is recorded here rather than left as an open item. What the re-synchronization
 did open — the Python floor the corrected upstream module raised — is a
 different decision, tracked in
 [the engineering journal's queue](../engineering-journal/QUEUED.md) and not
-answered by any compatibility result above.
+answered by any compatibility result above. That decision was taken later the
+same day and is recorded in
+[the engineering journal](../engineering-journal/DECISIONS.md#the-portable-catalogs-minimum-supported-python-is-python312);
+it moved the catalog's floor to `python>=3.12` and changed nothing on this page.
