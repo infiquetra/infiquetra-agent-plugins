@@ -202,6 +202,45 @@ tests had been exercising by accident.
 pinning every rung, not the first one; a rung that ends in a filesystem default is the
 one that will silently read the developer's machine.
 
+### A validator that only inspects what a manifest already declares cannot detect a deletion
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Closing three of the seven findings that two independent reviewers reached
+about commit `95de0d5` (pull request #3), recorded in
+[the two-reviewer consensus](../reviews/2026-08-22-code-review-consensus.md) as C3, C4,
+and C6. All three are validator gates in `scripts/check_repo.py` that report green in
+the situation they exist to catch.
+
+**Evidence.** Three repairs, and each one has a scenario that the pre-repair validator
+let through. C3: `check_provenance_manifests` iterated `payload["files"]` and recomputed
+the digest of each listed file, so adding `plugins/example/scripts/extra.py` to a package
+returned no errors, and so did deleting a file's entry from the manifest while leaving
+the file on disk, and so did listing one path twice with two different classifications.
+C4: `_check_bundle_source_freshness` opened with `if not source_rel or not recorded:
+return []`, so deleting the `source-path` and `source-sha256` lines from a generated
+bundle's stamp removed the comparison with Fleet Core and returned no errors; the same
+held for `generated-by`, `source-version`, and `source-commit`, none of which were read
+at all. C6: no value-level credential check existed, so a package file containing
+`"notes": "controller password=hunter2"` passed the whole gate. Ten of the eleven
+scenarios came back with an empty error list against the validator at `95de0d5`.
+
+**Mechanism.** Each of the three gates took its input from the artifact it was supposed
+to be judging. The provenance check asked the manifest which files to verify, so a file
+the manifest omitted was outside the question being asked. The bundle check asked the
+stamp which comparisons to run, so a deleted stamp line deleted the comparison rather
+than failing it. The secret check asked the schema which field *names* were forbidden, so
+a credential written into a permitted field's *value* was never a candidate. In all three
+the artifact under test controlled the scope of its own test, which means the defect and
+the thing that would have reported it are removed by the same edit. The repairs close the
+loop against a source the artifact does not control: the package tree on disk, a fixed
+tuple of required stamp fields, and the byte content of the value itself.
+
+**Generalizable rule.** A check that derives its own scope from the artifact it is
+checking can only ever detect corruption, never omission. Enumerate the required set
+independently — from the filesystem, from a constant, from the bytes — and compare, or
+the guarantee disappears with whatever line an editor deletes.
+
 ## 2026-08-21
 
 ### A plugin's tracked file list does not reveal what it needs to run
