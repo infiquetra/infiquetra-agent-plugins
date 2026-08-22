@@ -206,11 +206,13 @@ Every path is one of three kinds, and the provenance manifest records which.
 
 | Kind | Meaning | Examples | Synchronization behavior |
 |---|---|---|---|
-| Upstream byte copy | Identical to its source at the pinned commit | both clients, both skill files, both reference documents, README, CHANGELOG | Overwritten from source; digest must match exactly |
-| Deterministic transform | Derived from a source file by a versioned, repeatable rule | the Claude manifest relocated under the client extension directory | Regenerated; records source digest, output digest, and transform version |
+| Upstream byte copy | Identical to its source at the pinned commit | both skill files, both reference documents, README, CHANGELOG | Overwritten from source; digest must match exactly |
+| Deterministic transform | Derived from a source file by a versioned, repeatable rule | the Claude manifest relocated under the client extension directory; both clients, whose import of the dropped shim is rewritten to the generated bundle | Regenerated; records source digest, output digest, and transform version |
 | Target-owned portable source | No upstream counterpart; authored here | the profile library, schema, and reference; discovery and drift; the build declaration; the generated bundle | Never overwritten and never removed by synchronization |
 
 The skill frontmatter is deliberately **not** a transform. The disallowed `triggers` and `script` fields are corrected upstream in U6, so the portable skill files remain byte copies. This is what keeps the repair-upstream-first decision and the no-divergence rule consistent with each other.
+
+The two clients were originally planned as byte copies, and that was wrong for a reason worth stating rather than quietly correcting. Both reach the shared retry primitive through `fleet_commons_shim`, which this package drops because its resolution ladder is Claude-specific runtime discovery. A byte copy of a client that imports a module the package does not carry raises `ModuleNotFoundError` at module scope, before parsing a single argument, which left the assembled package with no working entrypoint on any client. Repairing it upstream is not available either: upstream is a Claude package, where the shim is correct. The clients are therefore the second transform, `resolve-bundled-fleet-module`, implemented in `scripts/sync_vendor_source.py` and recorded in [the engineering journal](../engineering-journal/DECISIONS.md).
 
 ### Public evidence schema
 

@@ -3,7 +3,11 @@
   "schema_version": "1",
   "modules": [
     {
-      "name": "retry_backoff"
+      "name": "retry_backoff",
+      "destinations": [
+        "skills/unifi-network/scripts/_bundled/retry_backoff.py",
+        "skills/unifi-protect/scripts/_bundled/retry_backoff.py"
+      ]
     }
   ]
 }

@@ -327,6 +327,46 @@ class CheckRepoIntegrationTests(unittest.TestCase):
             self.assertIn("stale bundle", errors[0])
             self.assertNotIn("stale source", errors[0])
 
+    def test_a_declared_module_that_was_never_generated_fails_check_repo(self) -> None:
+        """The blind spot that let a package ship with no working entrypoint.
+
+        ``check_bundled_files`` reads the bundles on disk, so a bundle that was
+        never generated is invisible to it. The declaration says the package
+        carries the module and consumers import it on that basis, so the
+        declaration and the tree disagreeing is a repository defect.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(Path(tmp))
+
+            self.assertEqual(check_repo.check_bundled_files(root), [])
+            errors = check_repo.check_fleet_bundle_outputs(root)
+
+            self.assertEqual(len(errors), 1, msg=errors)
+            self.assertIn("missing generated bundle", errors[0])
+            self.assertIn("retry_backoff", errors[0])
+
+            bfm.generate_consumer(root, root / "plugins" / "unifi")
+            self.assertEqual(check_repo.check_fleet_bundle_outputs(root), [])
+
+    def test_a_generated_bundle_no_declaration_accounts_for_fails_check_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(Path(tmp))
+            bfm.generate_consumer(root, root / "plugins" / "unifi")
+            write(bundled_path(root, name="stowaway"), "STOWAWAY = 1\n")
+
+            errors = check_repo.check_fleet_bundle_outputs(root)
+
+            self.assertEqual(len(errors), 1, msg=errors)
+            self.assertIn("undeclared generated bundle", errors[0])
+            self.assertIn("stowaway", errors[0])
+
+    def test_a_schema_violation_is_reported_once_not_twice(self) -> None:
+        """A declaration that cannot be planned from is named by one check, not both."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(Path(tmp), extra_declaration={"dependencies": ["fleet-core"]})
+            self.assertTrue(check_repo.check_fleet_bundle_declarations(root))
+            self.assertEqual(check_repo.check_fleet_bundle_outputs(root), [])
+
     def test_declaration_without_a_plugin_manifest_is_not_a_missing_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(Path(tmp), plugin_manifest=False)
@@ -428,16 +468,31 @@ class LiveTreeTests(unittest.TestCase):
     def test_live_declaration_plans_retry_backoff_from_fleet_core(self) -> None:
         consumer = ROOT / "plugins" / "unifi"
         planned = bfm.plan_copies(ROOT, consumer)
-        self.assertEqual([copy.name for copy in planned], ["retry_backoff"])
-        self.assertTrue(planned[0].source.is_file())
-        self.assertEqual(
-            planned[0].source,
-            ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "retry_backoff.py",
-        )
-        self.assertEqual(
-            planned[0].destination,
-            ROOT / "plugins" / "unifi" / "scripts" / "_bundled" / "retry_backoff.py",
-        )
+        self.assertEqual({copy.name for copy in planned}, {"retry_backoff"})
+        source = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "retry_backoff.py"
+        self.assertTrue(source.is_file())
+        for copy in planned:
+            self.assertEqual(copy.source, source)
+
+    def test_live_declaration_writes_a_bundle_beside_every_client_that_imports_one(self) -> None:
+        """The declaration must land a copy where each rewritten client looks for it.
+
+        The clients resolve a sibling ``_bundled`` directory, so a declaration
+        that writes anywhere else leaves the package with no working entrypoint
+        -- which is exactly the defect the transform was added to close.
+        """
+        consumer = ROOT / "plugins" / "unifi"
+        planned = bfm.plan_copies(ROOT, consumer)
+        written = {copy.destination.resolve() for copy in planned}
+        for relative in (
+            "skills/unifi-network/scripts/unifi_network_client.py",
+            "skills/unifi-protect/scripts/unifi_protect_client.py",
+        ):
+            client = consumer / relative
+            expected = (
+                client.parent / check_repo.BUNDLE_DIRECTORY_NAME / "retry_backoff.py"
+            ).resolve()
+            self.assertIn(expected, written, f"nothing writes the bundle {relative} imports")
 
 
 if __name__ == "__main__":

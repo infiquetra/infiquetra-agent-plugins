@@ -45,10 +45,12 @@ except ImportError:
 
 
 # Shared 429 retry/backoff primitive via fleet-commons (#348 / DECISIONS {#fleet-commons-mechanism-463}).
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import fleet_commons_shim  # noqa: E402  (after the sys.path shim, by design)
-
-_retry_backoff = fleet_commons_shim.load("retry_backoff")
+sys.path.insert(0, str(Path(__file__).resolve().parent / "_bundled"))
+# The build-time Fleet Core bundle replaces the upstream fleet_commons_shim, whose
+# resolution ladder is Claude-specific runtime discovery this package must not
+# retain. scripts/bundle_fleet_module.py writes the bundle, so the module is on
+# disk at install time and Fleet Core is never installed separately.
+import retry_backoff as _retry_backoff  # noqa: E402  (after the sys.path shim, by design)
 
 
 class _RateLimited(Exception):  # noqa: N818 - a sentinel, not an error surface
