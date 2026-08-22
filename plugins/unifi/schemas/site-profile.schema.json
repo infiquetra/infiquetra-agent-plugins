@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:infiquetra:unifi:site-profile:1.0",
+  "title": "UniFi operator site profile",
+  "description": "Operator-supplied intent a UniFi controller cannot report about itself: trust roles, criticality, ownership, intended policies, and operational constraints. The profile is optional; a package with no profile runs in discovery-only mode and infers none of these. Credentials are excluded by this schema rather than by convention: every object is closed and every property name is checked against credential-shaped names.",
+  "type": "object",
+  "required": ["schema_version", "site"],
+  "additionalProperties": false,
+  "propertyNames": { "$ref": "#/$defs/nonCredentialPropertyName" },
+  "properties": {
+    "schema_version": {
+      "description": "Contract version of this document. An unrecognized version is rejected outright rather than partially applied.",
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "site": { "$ref": "#/$defs/site" },
+    "subjects": {
+      "description": "Things at the site the operator has an intent about. A subject absent from this list has no known intent; that absence is reported as unknown and is never filled in from observation.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/subject" }
+    },
+    "intended_policies": {
+      "description": "Policies the operator means to hold. Comparing them to controller state is a drift report, not an enforcement action.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/intendedPolicy" }
+    },
+    "operational_constraints": {
+      "description": "Standing constraints on how the site may be operated.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/operationalConstraint" }
+    }
+  },
+  "$defs": {
+    "nonCredentialPropertyName": {
+      "description": "Property names are lower snake case and may not be credential-shaped. A site profile carries intent; a secret in it would be a secret in whatever repository or backup the profile reaches.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "not": {
+        "pattern": "(apikey|api_key|authorization|bearer|credential|passphrase|passwd|password|private_key|privatekey|secret|token)"
+      }
+    },
+    "identifier": {
+      "description": "A stable operator-chosen name. Not required to match any controller-assigned identifier.",
+      "type": "string",
+      "minLength": 1
+    },
+    "nonEmptyText": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trustRole": {
+      "description": "How much the operator intends to trust a subject. The literal unknown is permitted and means the same as omitting the field.",
+      "type": "string",
+      "enum": ["trusted", "restricted", "untrusted", "unknown"]
+    },
+    "criticality": {
+      "description": "How much the operator intends a subject to matter. The literal unknown is permitted and means the same as omitting the field.",
+      "type": "string",
+      "enum": ["critical", "important", "routine", "unknown"]
+    },
+    "site": {
+      "type": "object",
+      "required": ["identifier"],
+      "additionalProperties": false,
+      "propertyNames": { "$ref": "#/$defs/nonCredentialPropertyName" },
+      "properties": {
+        "identifier": { "$ref": "#/$defs/identifier" },
+        "description": { "$ref": "#/$defs/nonEmptyText" }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "required": ["kind", "identifier"],
+      "additionalProperties": false,
+      "propertyNames": { "$ref": "#/$defs/nonCredentialPropertyName" },
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["site", "network", "host", "device", "client"]
+        },
+        "identifier": { "$ref": "#/$defs/identifier" },
+        "trust_role": { "$ref": "#/$defs/trustRole" },
+        "criticality": { "$ref": "#/$defs/criticality" },
+        "ownership": { "$ref": "#/$defs/nonEmptyText" },
+        "notes": { "$ref": "#/$defs/nonEmptyText" }
+      }
+    },
+    "intendedPolicy": {
+      "type": "object",
+      "required": ["identifier", "description"],
+      "additionalProperties": false,
+      "propertyNames": { "$ref": "#/$defs/nonCredentialPropertyName" },
+      "properties": {
+        "identifier": { "$ref": "#/$defs/identifier" },
+        "description": { "$ref": "#/$defs/nonEmptyText" },
+        "applies_to": {
+          "description": "Subject identifiers this policy is meant to cover.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/identifier" }
+        }
+      }
+    },
+    "operationalConstraint": {
+      "type": "object",
+      "required": ["identifier", "description"],
+      "additionalProperties": false,
+      "propertyNames": { "$ref": "#/$defs/nonCredentialPropertyName" },
+      "properties": {
+        "identifier": { "$ref": "#/$defs/identifier" },
+        "description": { "$ref": "#/$defs/nonEmptyText" }
+      }
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "unifi",
+  "version": "0.1.0-dev",
+  "description": "Portable UniFi network and Protect package. Unreleased: this manifest currently carries only the target-owned site-profile contract, and the synchronized upstream surface has not landed yet."
+}
