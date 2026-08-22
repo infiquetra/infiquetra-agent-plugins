@@ -359,6 +359,61 @@ class PersistenceTest(DiscoveryTest):
         self.assertEqual(result.written_path, output.resolve())
         self.assertTrue(output.is_file())
 
+    def gitless_working_directory(self) -> Path:
+        """Return a nested directory whose ancestor walk finds no ``.git``.
+
+        ``tempfile.gettempdir()`` is not that location on this machine: the
+        developer TMPDIR contains a ``.git`` entry, so a default
+        TemporaryDirectory would take the working-tree branch and this test
+        would never see the None the C10 repair depends on.
+        """
+        original_cwd = Path.cwd()
+        gitless_root: Path | None = None
+        for candidate in (Path("/tmp"), Path("/private/tmp"), Path("/var/tmp")):
+            if (
+                candidate.is_dir()
+                and discover.repository_root_from(candidate) is None
+            ):
+                gitless_root = candidate
+                break
+        if gitless_root is None:
+            raise AssertionError(
+                "no POSIX temp root is free of a .git ancestor; cannot pin "
+                "the gitless-walk negative case on this machine"
+            )
+        temporary = tempfile.TemporaryDirectory(
+            dir=str(gitless_root),
+            prefix="unifi-discover-gitless-",
+        )
+        self.addCleanup(temporary.cleanup)
+        self.addCleanup(os.chdir, original_cwd)
+        nested = Path(temporary.name) / "outer" / "mid" / "inner"
+        nested.mkdir(parents=True)
+        self.assertIsNone(discover.repository_root_from(nested))
+        os.chdir(nested)
+        return nested
+
+    def test_gitless_walk_refuses_persistence_and_names_repository_root(
+        self,
+    ) -> None:
+        """The walk's own None-return, not a monkeypatched stand-in.
+
+        Cycle-two Ox Alpha F5: the existing undeterminable-tree tests
+        neutralize ``repository_root_from`` rather than driving a real
+        directory with no ``.git`` in any parent. The persistence decision
+        must still raise ``DiscoveryPersistenceError`` naming
+        ``--repository-root``.
+        """
+        nested = self.gitless_working_directory()
+        self.assertIsNone(discover.repository_root_from())
+        output = nested / "inventory.json"
+        with self.assertRaises(discover.DiscoveryPersistenceError) as raised:
+            discover.refuse_repository_output(output)
+        message = str(raised.exception)
+        self.assertIn("no repository working tree", message)
+        self.assertIn("--repository-root", message)
+        self.assertFalse(output.exists())
+
     def test_cli_rejects_confirm_rather_than_honoring_it(self) -> None:
         completed = subprocess.run(
             [sys.executable, str(UNIFI_SCRIPTS / "discover.py"), "--confirm"],
