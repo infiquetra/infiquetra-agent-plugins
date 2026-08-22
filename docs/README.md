@@ -6,6 +6,15 @@
   records the research, proposed boundaries, compatibility observations, and
   decisions that remain open.
 
+## Plans and reviews
+
+- [UniFi and portable Fleet Core portability pilot plan](plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md)
+  is the first portability pilot: decision-complete, planning only, and not yet executed.
+- [Document review of that plan](reviews/2026-08-22-unifi-fleet-core-portability-pilot-plan-doc-review.md)
+  is preserved unmodified as incoming evidence, with its
+  [validation and repair record](reviews/2026-08-22-unifi-fleet-core-portability-pilot-plan-doc-review-disposition.md)
+  alongside it.
+
 ## Repository guidance
 
 - [Public-safe Infiquetra summary](public-safe-summary.md) gives contributors
