@@ -1,0 +1,62 @@
+{
+  "source_repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+  "source_commit": "13b02343369fdd19ec3ce3a036009bd1023962ad",
+  "source_version": "0.25.0",
+  "source_package_path": "plugins/fleet-core",
+  "notes": [
+    "Custody does not move. This package is a derived artifact, never a second writable source for retry_backoff. A future retry fix lands in infiquetra-claude-plugins first and reaches this repository by re-synchronization.",
+    "The pinned commit is the revision at which the upstream plugins/fleet-core subtree last changed. It is an ancestor of the upstream default branch, and the subtree is byte-identical between the two, so the pin names the exact revision these bytes came from rather than an unrelated later head.",
+    "The upstream default branch was read at commit 995a475ba78757f2f62df2bbd6e0078d8523eaf4. The plan's requirement R3, which forbids pinning that revision, governs the UniFi port, whose documentation defects are repaired upstream before synchronization. It does not reach this manifest: the UniFi repair touches no path under plugins/fleet-core, and this slice carries no UniFi content.",
+    "Paths in `files` are relative to this package root, which is what the repository validator resolves. Paths in `derived_files` and `release_surface` are relative to the repository root, because the ported test lives outside the package tree and cannot be expressed as a package-relative path."
+  ],
+  "files": [
+    {
+      "path": "plugin.json",
+      "classification": "target-owned"
+    },
+    {
+      "path": "README.md",
+      "classification": "target-owned"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "classification": "target-owned"
+    },
+    {
+      "path": "DEFERRED.md",
+      "classification": "target-owned"
+    },
+    {
+      "path": "scripts/fleet_commons/retry_backoff.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/fleet-core/scripts/fleet_commons/retry_backoff.py",
+      "sha256": "06cac3dbe32900f73bcfdf19ef8c02bfeaab3596c4368144df68a27f53bc757e"
+    }
+  ],
+  "derived_files": [
+    {
+      "path": "tests/test_retry_backoff.py",
+      "classification": "deterministic-transform",
+      "source_path": "tests/test_retry_backoff.py",
+      "source_sha256": "9233752087e40f2ec8e3d05db96eaa619c2179e24cc2065deaefcfd702c7002e",
+      "sha256": "b86e3c6a663b1ac84b1c15fabb1e8a1ea141aed4a90be4324f4e6ac862a8b712",
+      "transform": "guard-pytest-import",
+      "transform_version": "1",
+      "transform_rule": "Replace the upstream module docstring with one recording the port, and replace the unconditional `import pytest` with a ModuleNotFoundError-guarded import. Every line from `class RateError(Exception):` to end of file is copied byte for byte, so all ten upstream test functions are unchanged. The guard exists because this repository's hermetic baseline job runs `python3 -m unittest discover -s tests` with no dependencies installed and imports every test module it finds, while the ported plugin job runs `python -m pytest tests` with pytest installed."
+    }
+  ],
+  "release_surface": {
+    "declared_by": "R33",
+    "items": [
+      "plugins/fleet-core/plugin.json",
+      "plugins/fleet-core/PROVENANCE.json",
+      "plugins/fleet-core/CHANGELOG.md",
+      "plugins/fleet-core/scripts/fleet_commons/retry_backoff.py",
+      "tests/test_retry_backoff.py"
+    ],
+    "package_documentation": [
+      "plugins/fleet-core/README.md",
+      "plugins/fleet-core/DEFERRED.md"
+    ]
+  }
+}
