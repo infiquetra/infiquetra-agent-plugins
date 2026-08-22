@@ -285,6 +285,54 @@ checking can only ever detect corruption, never omission. Enumerate the required
 independently — from the filesystem, from a constant, from the bytes — and compare, or
 the guarantee disappears with whatever line an editor deletes.
 
+### A digest in an evidence record proves nothing until something recomputes it
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Repairing findings C1 and C9 of the 2026-08-22 code review of the portable
+UniFi package. C1 was raised independently by both reviewers (Cursor F-01, OpenCode F-01
+and F-02); C9 came from Cursor F-02 and matched the controller's own record.
+
+**Evidence.** The ten-client compatibility matrix bound itself to `file_count: 21` and tree
+digest `92ed5032…`. The package this repository ships holds 23 files, and both entrypoints
+exit 0 and print usage where the matrix reported `ModuleNotFoundError` at all ten
+invocation slots. `python3 scripts/check_compatibility_matrix.py` passed anyway, because
+`check_public_evidence_rules` skipped `$.package.tree_sha256` as a non-leak and the schema
+only asserted `^[0-9a-f]{64}$`. Nothing in the repository ever computed that digest. The
+recomputed value for the shipped tree is `6e6b57c1…8415`.
+
+**Mechanism.** A digest field creates the *appearance* of binding without the binding. The
+schema constrains its shape, the leak scanner exempts it, the eye reads 64 hex characters
+as proof — and no code path ever compares it with anything. The evidence and the artifact
+then drift apart silently, and the failure does not present as a missing check. It presents
+as a passing one. This is the same shape as the other eight findings in the review: a
+guarantee that exists but does not bite.
+
+**The escape hatch matters as much as the check.** Preserving the pre-repair matrix required
+a way to exempt a retired document from the binding. That exemption is a second trap if it
+is not itself constrained: anyone could mark the live matrix superseded and switch its
+binding off. So a superseded document whose fingerprint *still* identifies the shipped tree
+is rejected, and `matrix-status` defaults to `current` when absent, which makes the binding
+fail-closed.
+
+**One more trap, found while writing the fix.** The directive parser read
+`<!-- matrix-status: superseded -->` out of the fenced code block that *documented* the
+format, and the current matrix marked itself superseded. A document has to be able to
+describe its own metadata language without the description taking effect, so fenced blocks
+are blanked before directives are read.
+
+**Generalizable rule.** A recorded fingerprint is inert unless a check recomputes it from
+the live artifact and fails on mismatch; if an evidence field can only be validated for
+shape, it is decoration, not evidence.
+
+**Refs.** [Binding decision](DECISIONS.md#bind-a-current-matrix-to-the-tree-it-assessed-and-make-supersession-the-only-exemption),
+`scripts/check_compatibility_matrix.py` (`package_fingerprint`, `check_package_binding`,
+`check_document_status`), `tests/test_check_compatibility_matrix.py`
+(`PackageBindingTest`, `DocumentStatusTest`, `FingerprintTest`),
+[`docs/evidence/2026-08-22-unifi-compatibility-matrix.md`](../evidence/2026-08-22-unifi-compatibility-matrix.md),
+[`docs/evidence/2026-08-22-unifi-compatibility-matrix-pre-repair.md`](../evidence/2026-08-22-unifi-compatibility-matrix-pre-repair.md),
+[`docs/evidence/2026-08-22-unifi-post-activation-readback.md`](../evidence/2026-08-22-unifi-post-activation-readback.md).
+
 ## 2026-08-21
 
 ### A plugin's tracked file list does not reveal what it needs to run

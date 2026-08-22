@@ -30,6 +30,31 @@ What this validator exists to enforce, which prose cannot:
 * **The public boundary holds.** This repository is public. No command,
   evidence, or reason string may carry an address, a hardware address, a
   site-identifying hostname, or a credential value.
+* **A current matrix identifies the tree it assessed.** The record names a file
+  count and a tree digest. Checking that the digest is *shaped* like a digest
+  proves nothing: a matrix can carry a well-formed digest of a package that no
+  longer exists and pass every other check while describing a different
+  artifact. So the file count, the tree digest, and the package name and version
+  are recomputed from ``plugins/unifi/`` on every run and compared. A matrix
+  whose fingerprint does not identify this revision's tree fails.
+* **Retiring a matrix is explicit, and cannot be used to dodge the binding.** A
+  document may declare itself superseded, which exempts it from the binding and
+  requires it to name its successor and the reason. A superseded document whose
+  fingerprint *does* still identify the tree fails, because that would be the
+  current matrix wearing a label that switches the binding off.
+
+Document status directives
+--------------------------
+
+A matrix document declares its role with HTML comment directives placed before
+its record::
+
+    <!-- matrix-status: superseded -->
+    <!-- superseded-by: 2026-08-22-unifi-compatibility-matrix.md -->
+    <!-- superseded-reason: Re-run against the repaired package. -->
+
+``matrix-status`` defaults to ``current`` when absent, so the binding is
+fail-closed: a document has to say something to be let off it.
 
 On the public evidence schema: the plan's unit assigns
 ``schemas/public-evidence.schema.json`` to a different unit, which has not
@@ -49,6 +74,7 @@ Exits 0 when the record is clean, 1 with one line per problem otherwise.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
@@ -57,8 +83,26 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DOCUMENT = ROOT / "docs" / "evidence" / "2026-08-22-unifi-compatibility-matrix.md"
+EVIDENCE_DIRECTORY = ROOT / "docs" / "evidence"
+DEFAULT_DOCUMENT = EVIDENCE_DIRECTORY / "2026-08-22-unifi-compatibility-matrix.md"
 SCHEMA_PATH = ROOT / "schemas" / "compatibility-matrix.schema.json"
+
+#: The package every matrix in this repository assesses. The binding check
+#: recomputes this tree's fingerprint and compares it with what the record
+#: claims, which is the difference between a digest that is well formed and a
+#: digest that identifies the artifact under assessment.
+PACKAGE_ROOT = ROOT / "plugins" / "unifi"
+PACKAGE_MANIFEST = "plugin.json"
+
+#: Checkout noise that is not part of the package. Excluding it is what makes
+#: the fingerprint reproducible: running the test suite leaves ``__pycache__``
+#: beside the package's scripts, and a fingerprint that moved when tests ran
+#: would be abandoned within a week.
+FINGERPRINT_EXCLUDED_DIRECTORIES = frozenset(
+    {"__pycache__", ".git", ".mypy_cache", ".pytest_cache", ".ruff_cache"}
+)
+FINGERPRINT_EXCLUDED_SUFFIXES = (".pyc", ".pyo")
+FINGERPRINT_EXCLUDED_NAMES = frozenset({".DS_Store"})
 
 #: The ten installed clients the assessment must cover. Set equality against
 #: this tuple is the coverage assertion; a count is not, because a renamed or
@@ -178,6 +222,21 @@ CREDENTIAL_ASSIGNMENT = re.compile(
 REDACTED_VALUES = ("<redacted>", "redacted", "***", "<unset>", "unset", "none", "")
 
 
+#: Document status directives, written as HTML comments so they survive
+#: Markdown rendering without becoming prose a reader has to trust.
+DIRECTIVE = re.compile(
+    r"^<!--\s*(?P<key>[a-z][a-z0-9-]*)\s*:\s*(?P<value>.*?)\s*-->\s*$",
+    re.MULTILINE,
+)
+STATUS_DIRECTIVE = "matrix-status"
+SUPERSEDED_BY_DIRECTIVE = "superseded-by"
+SUPERSEDED_REASON_DIRECTIVE = "superseded-reason"
+STATUS_CURRENT = "current"
+STATUS_SUPERSEDED = "superseded"
+DOCUMENT_STATUSES = (STATUS_CURRENT, STATUS_SUPERSEDED)
+SUPERSESSION_DIRECTIVES = (SUPERSEDED_BY_DIRECTIVE, SUPERSEDED_REASON_DIRECTIVE)
+
+
 class MatrixError(Exception):
     """The document could not be read far enough to validate it."""
 
@@ -204,6 +263,231 @@ def extract_record(text: str) -> dict[str, Any]:
     if not isinstance(record, dict):
         raise MatrixError("the fenced json block must hold a JSON object")
     return record
+
+
+def _strip_fenced_blocks(text: str) -> str:
+    """The document with every fenced code block blanked, line count preserved.
+
+    A matrix document has to be able to *document* the directive format without
+    the documentation being read as a directive. Blanking fenced blocks is what
+    makes the example in the prose an example.
+    """
+    lines = text.split("\n")
+    fence = re.compile(r"^\s*(?P<marker>`{3,}|~{3,})")
+    kept: list[str] = []
+    closing: str | None = None
+    for line in lines:
+        match = fence.match(line)
+        if closing is None:
+            if match is not None:
+                closing = match.group("marker")[0] * 3
+                kept.append("")
+                continue
+            kept.append(line)
+            continue
+        kept.append("")
+        if match is not None and match.group("marker").startswith(closing):
+            closing = None
+    return "\n".join(kept)
+
+
+def read_directives(text: str) -> dict[str, str]:
+    """Every ``<!-- key: value -->`` directive in the document, keyed by name.
+
+    Directives inside a fenced code block are examples, not declarations, and
+    are ignored. A later directive with the same key overwrites an earlier one,
+    so the document cannot carry two different answers to the same question.
+    """
+    stripped = _strip_fenced_blocks(text)
+    return {match.group("key"): match.group("value") for match in DIRECTIVE.finditer(stripped)}
+
+
+def _fingerprint_includes(path: Path, package_root: Path) -> bool:
+    if path.name in FINGERPRINT_EXCLUDED_NAMES:
+        return False
+    if path.suffix in FINGERPRINT_EXCLUDED_SUFFIXES:
+        return False
+    relative = path.relative_to(package_root)
+    return not any(part in FINGERPRINT_EXCLUDED_DIRECTORIES for part in relative.parts)
+
+
+def package_fingerprint(package_root: Path = PACKAGE_ROOT) -> tuple[int, str]:
+    """The assessed tree's ``(file_count, tree_sha256)``, recomputed from disk.
+
+    The digest is defined here rather than inherited from a tool, because a
+    third party has to be able to recompute it from the published bytes:
+
+    1. Walk the package root and keep every regular file, excluding checkout
+       noise (``__pycache__``, compiled bytecode, ``.DS_Store``).
+    2. Sort the surviving paths by their POSIX form, relative to the root.
+    3. For each, emit ``"<sha256 of the file's bytes>  <relative path>\\n"``.
+    4. The tree digest is the SHA-256 of those lines concatenated, UTF-8.
+
+    Naming each path inside the hashed text is deliberate: hashing the file
+    digests alone would leave a pure rename invisible, and a rename is exactly
+    the kind of drift a binding is supposed to catch.
+    """
+    if not package_root.is_dir():
+        raise MatrixError(f"{package_root}: the assessed package directory does not exist")
+    files = sorted(
+        (path for path in package_root.rglob("*") if path.is_file()),
+        key=lambda path: path.relative_to(package_root).as_posix(),
+    )
+    lines: list[str] = []
+    for path in files:
+        if not _fingerprint_includes(path, package_root):
+            continue
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        lines.append(f"{digest}  {path.relative_to(package_root).as_posix()}\n")
+    tree = hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
+    return len(lines), tree
+
+
+def package_identity(package_root: Path = PACKAGE_ROOT) -> tuple[str, str]:
+    """The assessed package's ``(name, version)``, read from its manifest."""
+    manifest_path = package_root / PACKAGE_MANIFEST
+    if not manifest_path.is_file():
+        raise MatrixError(f"{manifest_path}: the assessed package has no manifest")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise MatrixError(f"{manifest_path}: not valid JSON: {error}") from error
+    if not isinstance(manifest, dict):
+        raise MatrixError(f"{manifest_path}: the manifest must hold a JSON object")
+    name = manifest.get("name")
+    version = manifest.get("version")
+    if not isinstance(name, str) or not isinstance(version, str):
+        raise MatrixError(f"{manifest_path}: the manifest names no package name and version")
+    return name, version
+
+
+def check_package_binding(
+    record: dict[str, Any],
+    package_root: Path = PACKAGE_ROOT,
+) -> list[str]:
+    """The record's package fingerprint must identify the tree on disk.
+
+    This is the check whose absence let a matrix describe a package that no
+    longer existed: every other rule here was satisfied by a well-formed digest
+    of the wrong artifact.
+    """
+    package = record.get("package")
+    if not isinstance(package, dict):
+        return ["$.package: missing or not an object, so nothing binds the record to a tree"]
+
+    try:
+        file_count, tree_sha256 = package_fingerprint(package_root)
+        name, version = package_identity(package_root)
+    except MatrixError as error:
+        return [f"$.package: {error}"]
+
+    problems: list[str] = []
+    recorded_count = package.get("file_count")
+    if recorded_count != file_count:
+        problems.append(
+            f"$.package.file_count: the record says {recorded_count!r} but "
+            f"{package_root.name}/ holds {file_count} files; the assessment describes a "
+            "package that is not the one in this revision, so it must be re-run rather "
+            "than renumbered"
+        )
+    recorded_tree = package.get("tree_sha256")
+    if recorded_tree != tree_sha256:
+        problems.append(
+            f"$.package.tree_sha256: the record says {recorded_tree!r} but "
+            f"{package_root.name}/ fingerprints to {tree_sha256!r}; a digest that is merely "
+            "well formed identifies nothing, so this matrix does not describe the shipped tree"
+        )
+    recorded_name = package.get("name")
+    if recorded_name != name:
+        problems.append(
+            f"$.package.name: the record says {recorded_name!r} but the package manifest "
+            f"names {name!r}"
+        )
+    recorded_version = package.get("version")
+    if recorded_version != version:
+        problems.append(
+            f"$.package.version: the record says {recorded_version!r} but the package "
+            f"manifest declares {version!r}"
+        )
+    return problems
+
+
+def check_document_status(
+    text: str,
+    record: dict[str, Any],
+    document: Path,
+    package_root: Path = PACKAGE_ROOT,
+) -> list[str]:
+    """Bind a current matrix to the tree; hold a superseded one to its notice.
+
+    Supersession is the only exemption from the binding, so it carries its own
+    obligations: name the successor, say why, and prove the exemption is not
+    being used to switch the binding off for the live matrix.
+    """
+    directives = read_directives(text)
+    status = directives.get(STATUS_DIRECTIVE, STATUS_CURRENT)
+    if status not in DOCUMENT_STATUSES:
+        return [
+            f"{document.name}: {STATUS_DIRECTIVE} is {status!r}, which is neither "
+            f"{STATUS_CURRENT!r} nor {STATUS_SUPERSEDED!r}"
+        ]
+
+    problems: list[str] = []
+    if status == STATUS_CURRENT:
+        for directive in SUPERSESSION_DIRECTIVES:
+            if directive in directives:
+                problems.append(
+                    f"{document.name}: carries {directive!r} while its {STATUS_DIRECTIVE} is "
+                    f"{STATUS_CURRENT!r}; a document is either the current matrix or a "
+                    "superseded one, never both"
+                )
+        problems.extend(check_package_binding(record, package_root))
+        return problems
+
+    successor = directives.get(SUPERSEDED_BY_DIRECTIVE, "").strip()
+    if not successor:
+        problems.append(
+            f"{document.name}: declares itself superseded but names no {SUPERSEDED_BY_DIRECTIVE}; "
+            "superseded evidence that does not say what replaced it is a dead end"
+        )
+    elif ".." in Path(successor).parts or Path(successor).is_absolute():
+        problems.append(
+            f"{document.name}: {SUPERSEDED_BY_DIRECTIVE} {successor!r} must be a plain relative "
+            "name inside the evidence directory"
+        )
+    else:
+        target = document.parent / successor
+        if target.resolve() == document.resolve():
+            problems.append(f"{document.name}: names itself as its own successor")
+        elif not target.is_file():
+            problems.append(
+                f"{document.name}: {SUPERSEDED_BY_DIRECTIVE} names {successor!r}, which does "
+                "not exist"
+            )
+        else:
+            successor_status = read_directives(target.read_text(encoding="utf-8")).get(
+                STATUS_DIRECTIVE, STATUS_CURRENT
+            )
+            if successor_status != STATUS_CURRENT:
+                problems.append(
+                    f"{document.name}: {SUPERSEDED_BY_DIRECTIVE} names {successor!r}, which is "
+                    f"itself {successor_status!r}; a supersession chain has to end at a current "
+                    "matrix"
+                )
+
+    if not directives.get(SUPERSEDED_REASON_DIRECTIVE, "").strip():
+        problems.append(
+            f"{document.name}: declares itself superseded but records no "
+            f"{SUPERSEDED_REASON_DIRECTIVE}"
+        )
+
+    if not check_package_binding(record, package_root):
+        problems.append(
+            f"{document.name}: is marked {STATUS_SUPERSEDED!r} yet its fingerprint still "
+            "identifies the package in this revision; supersession exempts a document from the "
+            "binding, so marking the live matrix superseded would switch that binding off"
+        )
+    return problems
 
 
 def _type_matches(value: object, expected: str) -> bool:
@@ -497,12 +781,16 @@ def check_public_evidence_rules(record: dict[str, Any]) -> list[str]:
     return problems
 
 
-def check_matrix(document: Path = DEFAULT_DOCUMENT) -> list[str]:
+def check_matrix(
+    document: Path = DEFAULT_DOCUMENT,
+    package_root: Path = PACKAGE_ROOT,
+) -> list[str]:
     """Every problem with the matrix, or an empty list when it is clean."""
     if not document.is_file():
         return [f"{document}: the evidence document does not exist"]
+    text = document.read_text(encoding="utf-8")
     try:
-        record = extract_record(document.read_text(encoding="utf-8"))
+        record = extract_record(text)
     except MatrixError as error:
         return [f"{document}: {error}"]
 
@@ -511,7 +799,42 @@ def check_matrix(document: Path = DEFAULT_DOCUMENT) -> list[str]:
     problems.extend(check_coverage(record))
     problems.extend(check_safety_rules(record))
     problems.extend(check_public_evidence_rules(record))
+    problems.extend(check_document_status(text, record, document, package_root))
     return problems
+
+
+def is_matrix_document(text: str) -> bool:
+    """Whether a document embeds a compatibility-matrix record.
+
+    Other evidence documents live in the same directory and embed records of
+    their own, so membership is decided by the record's shape rather than by
+    the file's name.
+    """
+    try:
+        record = extract_record(text)
+    except MatrixError:
+        return False
+    return isinstance(record.get("package"), dict) and isinstance(record.get("clients"), list)
+
+
+def matrix_documents(directory: Path = EVIDENCE_DIRECTORY) -> list[Path]:
+    """Every matrix document in the evidence directory, current or superseded.
+
+    A superseded matrix stays under validation. Retiring a document withdraws
+    its claim about the current tree; it does not withdraw the public-evidence
+    and coverage rules it was published under.
+    """
+    if not directory.is_dir():
+        return []
+    found = []
+    for path in sorted(directory.glob("*.md")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if is_matrix_document(text):
+            found.append(path)
+    return found
 
 
 def summarize(record: dict[str, Any]) -> str:
@@ -537,18 +860,53 @@ def summarize(record: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+FINGERPRINT_FLAG = "--print-fingerprint"
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    document = Path(arguments[0]) if arguments else DEFAULT_DOCUMENT
-    problems = check_matrix(document)
-    if problems:
-        for problem in problems:
-            print(problem)
-        print(f"\n{len(problems)} problem(s) found in {document}.")
+
+    if FINGERPRINT_FLAG in arguments:
+        # Read-only on purpose. There is no flag that rewrites the record from
+        # the tree, because refreshing the numbers without re-running the
+        # assessment is exactly the failure this binding exists to catch: it
+        # would make a stale matrix pass by editing the evidence to match.
+        try:
+            file_count, tree_sha256 = package_fingerprint()
+            name, version = package_identity()
+        except MatrixError as error:
+            print(str(error))
+            return 1
+        print(f"name: {name}")
+        print(f"version: {version}")
+        print(f"file_count: {file_count}")
+        print(f"tree_sha256: {tree_sha256}")
+        return 0
+
+    documents = [Path(argument) for argument in arguments] or matrix_documents()
+    if not documents:
+        print(f"{EVIDENCE_DIRECTORY}: no compatibility matrix document found")
         return 1
-    record = extract_record(document.read_text(encoding="utf-8"))
-    print(summarize(record))
-    print("\nCompatibility matrix validation passed.")
+
+    failed = 0
+    for document in documents:
+        problems = check_matrix(document)
+        if problems:
+            failed += 1
+            print(f"{document}:")
+            for problem in problems:
+                print(f"  {problem}")
+            print(f"\n{len(problems)} problem(s) found in {document}.\n")
+            continue
+        status = read_directives(document.read_text(encoding="utf-8")).get(
+            STATUS_DIRECTIVE, STATUS_CURRENT
+        )
+        print(f"{document.name} ({status}):")
+        print(summarize(extract_record(document.read_text(encoding="utf-8"))))
+        print()
+    if failed:
+        return 1
+    print("Compatibility matrix validation passed.")
     return 0
 
 
