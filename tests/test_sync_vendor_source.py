@@ -485,6 +485,113 @@ class TargetOwnedTests(SyncFixture):
         self.assertTrue(owned.is_file(), "target-owned source was removed")
 
 
+# --- a hostile provenance manifest ---------------------------------------------
+
+
+class ManifestPathSafetyTests(SyncFixture):
+    """`PROVENANCE.json` is untrusted input, and stale cleanup unlinks what it names.
+
+    A manifest arrives on disk from an earlier run, a merge, a patch, or an
+    attacker with write access to the tree, and synchronization deletes every
+    managed path it records that the current plan no longer produces. Without a
+    containment check, `plugin_dir / "/etc/hosts"` is `/etc/hosts` and
+    `../../..` climbs out, so the cleanup step deletes any user-writable file
+    the manifest names. Each test below plants a victim file outside the package
+    and proves that the victim survives, that synchronization refuses, and that
+    nothing was written before the refusal.
+    """
+
+    def plant_victim(self, name: str) -> Path:
+        """A file outside the package that no synchronization may ever touch."""
+        return write(Path(self._temporary.name) / "outside" / name, "DO NOT DELETE\n")
+
+    def record_managed_path(self, path_value: str) -> None:
+        """Add one managed entry to the manifest on disk, as a hostile writer would."""
+        manifest_path = self.package / "PROVENANCE.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["files"].append(
+            {
+                "path": path_value,
+                "classification": check_repo.BYTE_COPY,
+                "source_path": f"{svs.SOURCE_PACKAGE_PATH}/retired.py",
+                "sha256": check_repo.sha256_text("DO NOT DELETE\n"),
+            }
+        )
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    def assert_refused(self, victim: Path) -> str:
+        """Both commands refuse, the victim survives, and no byte was written first."""
+        # A managed file removed from the tree is the write the run would make
+        # first. It must still be missing afterwards: the refusal has to land
+        # before any write, not part-way through one.
+        rewritten = self.package / "README.md"
+        rewritten.unlink()
+
+        with self.assertRaises(svs.SyncError) as caught:
+            self.synchronize()
+        self.assertTrue(victim.is_file(), "synchronization deleted a file outside the package")
+        self.assertFalse(rewritten.exists(), "the refusal landed after a write, not before one")
+
+        with self.assertRaises(svs.SyncError):
+            self.synchronize(check_only=True)
+        self.assertTrue(victim.is_file(), "check mode deleted a file outside the package")
+        return str(caught.exception)
+
+    def test_an_absolute_managed_path_is_refused_and_deletes_nothing(self) -> None:
+        self.synchronize()
+        victim = self.plant_victim("absolute-victim.txt")
+        self.record_managed_path(str(victim))
+        message = self.assert_refused(victim)
+        self.assertIn("unsafe managed path", message)
+        self.assertIn(str(victim), message)
+
+    def test_a_traversing_managed_path_is_refused_and_deletes_nothing(self) -> None:
+        self.synchronize()
+        victim = self.plant_victim("traversal-victim.txt")
+        traversal = "../../../outside/traversal-victim.txt"
+        self.assertEqual((self.package / traversal).resolve(), victim.resolve())
+        self.record_managed_path(traversal)
+        message = self.assert_refused(victim)
+        self.assertIn("unsafe managed path", message)
+        self.assertIn(traversal, message)
+
+    def test_a_symlinked_managed_path_is_refused_and_deletes_nothing(self) -> None:
+        """The escape a lexical check cannot see: no `..`, no leading slash, still outside."""
+        self.synchronize()
+        victim = self.plant_victim("symlink-victim.txt")
+        link = self.package / "skills" / "escape"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(victim.parent, target_is_directory=True)
+        escaping = "skills/escape/symlink-victim.txt"
+        self.assertFalse(Path(escaping).is_absolute())
+        self.assertNotIn("..", Path(escaping).parts)
+        self.record_managed_path(escaping)
+        message = self.assert_refused(victim)
+        self.assertIn("resolves outside the package", message)
+        self.assertIn(escaping, message)
+
+    def test_the_package_directory_itself_is_not_a_managed_path(self) -> None:
+        """`.` resolves to the package root, which is a directory no cleanup may name."""
+        self.synchronize()
+        with self.assertRaises(svs.SyncError) as caught:
+            svs.resolve_managed_path(self.package, ".")
+        self.assertIn("resolves outside the package", str(caught.exception))
+        self.assertTrue(self.package.is_dir())
+
+    def test_a_blank_managed_path_is_refused(self) -> None:
+        for value in ("", "   ", None, 7):
+            with self.subTest(value=value):
+                with self.assertRaises(svs.SyncError):
+                    svs.resolve_managed_path(self.package, value)  # type: ignore[arg-type]
+
+    def test_an_ordinary_package_relative_path_still_resolves(self) -> None:
+        """The guard refuses escapes without narrowing what synchronization may write."""
+        self.assertEqual(
+            svs.resolve_managed_path(self.package, "skills/unifi-network/SKILL.md"),
+            self.package / "skills" / "unifi-network" / "SKILL.md",
+        )
+
+
 # --- the shipped package -------------------------------------------------------
 
 

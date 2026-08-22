@@ -2,6 +2,40 @@
 
 ## 2026-08-22
 
+### A path a manifest names is untrusted input, even when the manifest is ours
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Repairing finding F-06 of the 2026-08-22 code review of the portable UniFi
+package, raised independently by the Cursor reviewer and confirmed by the controller.
+
+**Evidence.** `previously_managed()` in
+[`scripts/sync_vendor_source.py`](../../scripts/sync_vendor_source.py) accepted any
+non-blank `path` string recorded in `plugins/unifi/PROVENANCE.json`, and the stale-cleanup
+step in `apply_plan()` then evaluated `plugin_dir / path` and called `unlink()` on it.
+Replaying the three attack shapes against the pre-repair script deleted a file planted
+outside the package in all three cases: an absolute path, `../../../outside/victim.txt`,
+and `skills/escape/victim.txt` reached through a symlink inside the package. The
+[Cursor review](../reviews/2026-08-22-code-review-cursor-gpt-5.6-sol-xhigh.md) records the
+finding at `scripts/sync_vendor_source.py:635`.
+
+**Mechanism.** Two separate assumptions failed together. First, `pathlib` join is not
+containment: `Path("/a/b") / "/etc/hosts"` is `/etc/hosts`, so an absolute string silently
+discards the prefix that was supposed to confine it. Second, the repository already
+carried the lexical half of the rule — `check_repo.py` rejects absolute and `..`-bearing
+provenance paths when it validates a manifest — but that check runs in a different command
+than the one that deletes, so the deleting path had no guard at all. A rule enforced by a
+validator nobody calls before the dangerous operation is not enforcement. The lexical half
+would also not have been enough on its own: a symlink inside the package makes
+`skills/escape/victim.txt` lexically innocent and still land outside, which only resolving
+the path and comparing it against the resolved package root can see.
+
+**Generalizable rule.** Validate untrusted paths at the operation that acts on them, not
+only where they are authored, and validate them twice: lexically, then by resolving and
+proving containment. A validator in a different command is documentation, not a control.
+
+---
+
 ### A package can satisfy every structural check and still have no working entrypoint
 
 **Author.** Jeff Cox and Claude

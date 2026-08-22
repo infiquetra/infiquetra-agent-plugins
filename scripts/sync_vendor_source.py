@@ -518,8 +518,65 @@ def target_owned_paths(plugin_dir: Path, managed: set[str]) -> list[str]:
 # --- writing ------------------------------------------------------------------
 
 
+def _managed_path_violation(plugin_dir: Path, path_value: object) -> str | None:
+    """Why ``path_value`` may not be written or deleted, or ``None`` if it is safe.
+
+    ``PROVENANCE.json`` is untrusted input the moment a corrupt or hostile
+    manifest reaches the tree, and the paths it records are the ones stale
+    cleanup unlinks. ``Path`` resolves ``plugin_dir / "/etc/hosts"`` to
+    ``/etc/hosts`` and lets ``../../..`` climb out of the package, so an
+    unvalidated manifest path turns stale cleanup into arbitrary deletion of any
+    user-writable file. Two independent checks, both required:
+
+    * **lexical** — the value has to be a non-blank, package-relative path with
+      no ``..`` component. This is the same rule ``check_repo.py`` applies when
+      it validates a manifest, restated here rather than imported because that
+      helper is private to that module, reports in manifest-entry terms, and
+      belongs to a file this repair does not own.
+    * **containment** — the resolved path has to stay strictly under the
+      resolved package directory. Resolution is what closes the escape a
+      lexical check cannot see: a symlink inside the package pointing out of it
+      makes ``skills/link/victim`` lexically innocent and still land outside.
+    """
+    if not isinstance(path_value, str) or not path_value.strip():
+        return "a managed path that is not a non-empty string"
+    candidate = Path(path_value)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        return f"an unsafe managed path: {path_value}"
+    package = plugin_dir.resolve()
+    target = (plugin_dir / candidate).resolve()
+    if target == package or not target.is_relative_to(package):
+        return f"a managed path that resolves outside the package: {path_value} -> {target}"
+    return None
+
+
+def resolve_managed_path(plugin_dir: Path, path_value: str) -> Path:
+    """Return the in-package path ``path_value`` names, or refuse to name one.
+
+    The single chokepoint every write and every deletion goes through. It fails
+    closed: an unsafe path raises rather than being skipped, because skipping
+    would let a manifest that names one real stale file and one hostile path
+    still complete a partial synchronization.
+    """
+    violation = _managed_path_violation(plugin_dir, path_value)
+    if violation is not None:
+        raise SyncError(
+            f"{PROVENANCE_FILENAME} records {violation}; synchronization writes and deletes "
+            "only inside the package, so a manifest that names a path outside it is refused "
+            "before anything on disk is touched"
+        )
+    return plugin_dir / path_value
+
+
 def previously_managed(plugin_dir: Path) -> set[str]:
-    """Sync-managed paths recorded by an earlier run, read from the manifest on disk."""
+    """Sync-managed paths recorded by an earlier run, read from the manifest on disk.
+
+    Every returned path has passed `resolve_managed_path`, so no caller can be
+    handed a string that escapes the package. An unreadable or non-conforming
+    manifest still yields an empty set — that is a tree with nothing to clean up,
+    not an attack — but a manifest that names a path outside the package raises,
+    because that is the one shape a caller must never act on.
+    """
     manifest = plugin_dir / PROVENANCE_FILENAME
     if not manifest.is_file():
         return set()
@@ -537,6 +594,7 @@ def previously_managed(plugin_dir: Path) -> set[str]:
         if entry.get("classification") in (BYTE_COPY, TRANSFORM):
             path_value = entry.get("path")
             if isinstance(path_value, str) and path_value.strip():
+                resolve_managed_path(plugin_dir, path_value)
                 managed.add(path_value)
     return managed
 
@@ -614,10 +672,17 @@ def manifest_text(manifest: dict[str, Any]) -> str:
 
 
 def apply_plan(planned: list[PlannedFile], plugin_dir: Path) -> list[str]:
-    """Write every managed path, verify each byte copy, and drop stale managed paths."""
+    """Write every managed path, verify each byte copy, and drop stale managed paths.
+
+    The stale set is read and validated first, before a single byte is written:
+    a manifest naming a path outside the package aborts the whole run rather
+    than leaving a half-synchronized tree behind.
+    """
+    managed = {item.target_path for item in planned}
+    stale_paths = sorted(previously_managed(plugin_dir) - managed)
     written: list[str] = []
     for item in planned:
-        destination = plugin_dir / item.target_path
+        destination = resolve_managed_path(plugin_dir, item.target_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
         if not destination.is_file() or destination.read_bytes() != item.output_bytes:
             destination.write_bytes(item.output_bytes)
@@ -631,9 +696,8 @@ def apply_plan(planned: list[PlannedFile], plugin_dir: Path) -> list[str]:
                     "recorded as a transform, so the repair belongs upstream"
                 )
 
-    managed = {item.target_path for item in planned}
-    for stale in sorted(previously_managed(plugin_dir) - managed):
-        path = plugin_dir / stale
+    for stale in stale_paths:
+        path = resolve_managed_path(plugin_dir, stale)
         if path.is_file():
             path.unlink()
             written.append(stale)
@@ -661,7 +725,7 @@ def verify_plan(planned: list[PlannedFile], plugin_dir: Path) -> list[str]:
                 f"(planned {item.output_digest}, content {actual})"
             )
     for stale in sorted(previously_managed(plugin_dir) - {item.target_path for item in planned}):
-        if (plugin_dir / stale).is_file():
+        if resolve_managed_path(plugin_dir, stale).is_file():
             errors.append(f"stale synchronized file no longer in the plan: {stale}")
     return errors
 
