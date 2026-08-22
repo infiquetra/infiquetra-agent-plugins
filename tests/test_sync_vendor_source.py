@@ -45,7 +45,13 @@ import sync_vendor_source as svs  # noqa: E402
 # topology relocation landed, because synchronizing from it would re-import the
 # defects that repair removed. The constant is pinned here on purpose: moving
 # the pin is a deliberate act that has to change a test, not a silent drift.
-CORRECTED_REVISION = "0eb1fe04236d975d4b13cbabe7b976eae8599992"
+#
+# It moved once, from 0eb1fe04 to its immediate child, when Fleet Core 0.25.1
+# repaired RFC 7231 `Retry-After` HTTP-date handling in the shared backoff
+# primitive. The upstream `plugins/unifi` subtree is byte-identical across that
+# step, so re-synchronizing changed no UniFi byte; the pin moved so that one
+# revision names the corrected state of the whole port rather than two.
+CORRECTED_REVISION = "ed72f439ba01f2e20d94be074e5612c5641c0c8e"
 FORBIDDEN_REVISION_PREFIX = "995a475b"
 
 #: A client actually reaching for the dropped shim, as opposed to a comment

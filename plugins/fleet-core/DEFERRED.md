@@ -27,8 +27,8 @@ ever porting it.
 | Field | Value |
 |---|---|
 | Source repository | `https://github.com/infiquetra/infiquetra-claude-plugins` |
-| Source commit | `13b02343369fdd19ec3ce3a036009bd1023962ad` |
-| Fleet Core version | `0.25.0` |
+| Source commit | `ed72f439ba01f2e20d94be074e5612c5641c0c8e` |
+| Fleet Core version | `0.25.1` |
 
 Custody does not move. A future change to any module below lands upstream
 first and reaches this repository by re-synchronization.

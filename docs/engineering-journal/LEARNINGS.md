@@ -2,6 +2,92 @@
 
 ## 2026-08-22
 
+### A byte copy imports the upstream platform floor along with the upstream fix
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Re-synchronizing the portable Fleet Core slice from Fleet Core
+0.25.1, the upstream release that repairs RFC 7231 `Retry-After` HTTP-date
+handling in the shared backoff primitive.
+
+**Evidence.** The corrected module at
+[`plugins/fleet-core/scripts/fleet_commons/retry_backoff.py:28`](../../plugins/fleet-core/scripts/fleet_commons/retry_backoff.py)
+adds `from datetime import UTC`. `datetime.UTC` is an alias introduced in
+Python 3.11; on Python 3.10 that line raises
+`ImportError: cannot import name 'UTC' from 'datetime'`, verified directly
+against a 3.10.20 interpreter. The repository's ported-plugin job pins Python
+3.10 on purpose, at
+[`.github/workflows/ci.yml:48`](../../.github/workflows/ci.yml), "because the
+portable packages target Python 3.10 or newer and a floor that is never
+exercised is not a floor."
+
+**Mechanism.** A byte copy is a promise about bytes, not about behavior on the
+consumer's platform. The two repositories do not share a support floor: the
+upstream Claude Code plugin runs wherever Claude Code runs, while this catalog
+publishes a declared floor of its own. Nothing in the synchronization contract
+compares them, so an upstream author can raise the interpreter requirement in a
+patch release and the derived package inherits it silently. The digest check
+still passes, because the bytes really are identical; that is exactly the
+property that makes the break invisible to every check the repository owns.
+
+**The custody rule is what stops the obvious repair.** Replacing `UTC` with
+`timezone.utc` here would fix the floor and destroy the guarantee: the path
+would no longer equal its source, and `retry_backoff` would have a second
+writable source, which is the failure the whole slice was designed to prevent.
+So the choice is upstream repair or a moved floor, and both are decisions, not
+edits.
+
+**Generalizable rule.** When a derived package declares a platform floor, the
+floor is part of the synchronization contract and has to be checked against the
+source on every re-synchronization; a digest that matches proves nothing about
+whether the new bytes still run where the package says they run.
+
+**Refs.** [Queued floor decision](QUEUED.md#decide-the-python-floor-the-fleet-core-resync-raised),
+[the 0.25.1 changelog entry](../../plugins/fleet-core/CHANGELOG.md)
+
+### Regenerating a build artifact retires the observational evidence bound to it
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The same re-synchronization. It had to regenerate both
+`skills/*/scripts/_bundled/retry_backoff.py` bundles so every consumer carries
+the new Fleet Core stamp, and it re-pinned
+`plugins/unifi/PROVENANCE.json` to the corrected revision.
+
+**Evidence.** Those three files are inside `plugins/unifi/`, so the package's
+tree digest moved from `6e6b57c1…` to `da46ca77…`. Eight tests in
+[`tests/test_check_compatibility_matrix.py`](../../tests/test_check_compatibility_matrix.py)
+went red at once: four holding the ten-client matrix at
+[`docs/evidence/2026-08-22-unifi-compatibility-matrix.md`](../evidence/2026-08-22-unifi-compatibility-matrix.md)
+to the tree it assessed, and four holding the post-activation readback at
+[`docs/evidence/2026-08-22-unifi-post-activation-readback.md`](../evidence/2026-08-22-unifi-post-activation-readback.md)
+to the release it read back. The file count did not change; only the digest did.
+
+**Mechanism.** A Fleet Core release and a UniFi assessment look unrelated, and
+the build step is what couples them: bundling puts a stamped copy of the Fleet
+Core module inside the UniFi package, so any Fleet Core release changes the
+UniFi tree digest even when no UniFi source byte moves. The matrix binding then
+fires correctly. It is not a false alarm and it is not this unit's bug — it is
+the binding doing the one job it was added to do, saying that the document no
+longer describes what ships.
+
+**The cheap fix is the exact failure the binding exists to catch.** The matrix
+says so itself: "There is deliberately no flag that writes that fingerprint back
+into this document. Refreshing the numbers without re-running the assessment is
+precisely the failure this binding exists to catch." Editing `tree_sha256` by
+hand is that same act with more keystrokes, and it would convert forty real
+stage results into forty claims about bytes nobody ran. So the resync left both
+documents untouched and the eight tests red, and queued the re-run.
+
+**Generalizable rule.** A build-time bundle makes every upstream release a
+change to the consuming package's identity. Any evidence document bound to that
+identity has to be re-earned by re-running the assessment, so schedule the
+re-run as part of the release, and never let a red binding be closed by editing
+the number it compares.
+
+**Refs.** [Queued evidence re-run](QUEUED.md#re-run-the-ten-client-matrix-and-the-readback-against-the-resynced-package),
+[identity is not execution](LEARNINGS.md#a-bound-digest-names-the-tree-not-the-forty-stages-that-assessed-it)
+
 ### A bound digest names the tree, not the forty stages that assessed it
 
 **Author.** Jeff Cox
