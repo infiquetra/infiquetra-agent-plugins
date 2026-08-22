@@ -5,7 +5,19 @@ An operator site profile carries *intended* meaning that a UniFi controller
 cannot report about itself: which subjects are trusted, which are critical, who
 owns them, which policies are meant to hold, and which operational constraints
 apply. Everything a controller can already report is deliberately out of scope,
-and credentials are excluded by validation rather than by convention.
+and credentials are excluded by validation rather than by convention -- by *value*
+as well as by field name.
+
+That guarantee has a precise shape, and it is worth stating exactly rather than
+generously. A credential-shaped field *name* is rejected wherever it appears in
+the document. A credential written as a *value* inside an ordinary field such as
+``notes``, ``description``, or ``ownership`` is rejected too, by two narrow
+families: literal well-known credential formats, and a credential-shaped key
+assigned a value that clears an entropy floor. There is deliberately no bare
+high-entropy scan, because a profile legitimately carries digests and long
+identifiers and a check that fires on those gets switched off. Value detection is
+therefore defense in depth against an accident, not a proof of absence: a short,
+low-entropy secret in a free-text value still passes.
 
 Three rules shape this module, and each is enforced in code rather than
 described in prose:
@@ -31,7 +43,9 @@ in a friendlier format and render JSON at deployment time.
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -57,12 +71,25 @@ DEFAULT_PROFILE_FILENAME = "site-profile.json"
 #: JSON Schema ``$id`` of the profile contract. A URN rather than a URL,
 #: because nothing here ever resolves a schema over the network and a
 #: fetchable identifier would imply otherwise.
-SCHEMA_IDENTIFIER = "urn:infiquetra:unifi:site-profile:1.0"
+SCHEMA_IDENTIFIER = "urn:infiquetra:unifi:site-profile:1.1"
 SCHEMA_FILENAME = "site-profile.schema.json"
 
-#: Profile document versions this loader understands. An unrecognized version
-#: is rejected outright rather than partially applied.
-SUPPORTED_SCHEMA_VERSIONS = ("1.0",)
+#: Profile document versions this loader understands, oldest first. An
+#: unrecognized version is rejected outright rather than partially applied.
+#:
+#: ``1.1`` adds no field and removes none. It records that the secret-free
+#: guarantee now covers values as well as names, which is a change to the set of
+#: documents the contract calls valid and therefore to the contract. A ``1.0``
+#: document still loads, and the value rule is applied to it, because a
+#: credential in a ``1.0`` profile is exactly as exposed as one in a ``1.1``
+#: profile; refusing to read ``1.0`` would strand every deployed profile without
+#: protecting anything.
+#:
+#: Ordered oldest first, which is what ``discover.py`` indexes into when it
+#: stamps a generated proposal, so a proposal written today still declares
+#: ``1.0``. That is valid and loads, and moving the generator to the newest
+#: version it can produce is a change to that file rather than a reorder here.
+SUPPORTED_SCHEMA_VERSIONS = ("1.0", "1.1")
 
 #: Version of the configuration file this module reads and writes.
 CONFIG_VERSION = 1
@@ -102,6 +129,64 @@ CREDENTIAL_NAME_FRAGMENTS = (
     "privatekey",
     "secret",
     "token",
+)
+
+# Credential detection by *value*, which is the other half of the same promise.
+# The fragment list above rejects a field called ``password``; it says nothing
+# about a password pasted into a field called ``notes``. These two families close
+# that gap, and they are deliberately the same two the repository's own gate uses
+# in ``scripts/check_repo.py``.
+#
+# They are re-stated here rather than imported. This module is portable package
+# source: it is copied onto an operator's machine and loaded with the standard
+# library alone, where the repository's validator does not exist and never will.
+# Importing it would make the portable loader depend on a development-time script
+# and break the standard-library-only guarantee this module is built around.
+# ``tests/test_site_profile.py`` pins the two copies to each other instead, so a
+# rule added to one and not the other fails the suite rather than drifting into a
+# second dialect.
+#
+# Family one: literal formats that are credentials wherever they appear.
+CREDENTIAL_VALUE_FORMATS = (
+    ("AWS access key id", re.compile(r"\b(?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b")),
+    ("GitHub token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
+    ("GitHub fine-grained token", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{40,}\b")),
+    ("Slack token", re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{10,}\b")),
+    ("Stripe secret key", re.compile(r"\bsk_(?:live|test)_[A-Za-z0-9]{16,}\b")),
+    ("Google API key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
+    ("Anthropic API key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{24,}\b")),
+    ("OpenAI API key", re.compile(r"\bsk-[A-Za-z0-9]{32,}\b")),
+    (
+        "JSON web token",
+        re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
+    ),
+    ("private key block", re.compile(r"-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----")),
+    ("credential embedded in a URL", re.compile(r"://[^/\s:@]+:[^/\s@]{3,}@")),
+)
+
+# Family two: a credential-shaped key assigned a value that carries real entropy,
+# which is what ``notes: "controller password=..."`` looks like.
+CREDENTIAL_VALUE_ASSIGNMENT = re.compile(
+    r"(?i)(?:^|[^A-Za-z0-9_-])("
+    r"pass(?:word|wd|phrase)|secret|token|api[_-]?key|apikey|authorization|auth|"
+    r"bearer|credentials?|private[_-]?key|client[_-]?secret|access[_-]?key"
+    r")[\"']?\s*[:=]\s*[\"']?([^\s\"',;)}\]]{6,})"
+)
+
+# An assigned value has to clear this many bits of entropy per character before
+# it counts as a credential. It is deliberately low, because the key name has
+# already supplied most of the signal.
+CREDENTIAL_VALUE_MIN_ENTROPY = 2.5
+
+# Values that name a secret rather than being one. A profile is expected to say
+# where the credential lives, so these must never be reported.
+CREDENTIAL_VALUE_PLACEHOLDER = re.compile(
+    r"(?i)^(?:redacted|removed|omitted|none|null|true|false|unset|empty|"
+    r"change[_-]?me|example|placeholder|your[_-].*|my[_-].*|"
+    r"x{3,}|\*{3,}|\.{3,}|-{3,}|_{3,})$"
+)
+CREDENTIAL_VALUE_REFERENCE_PREFIX = re.compile(
+    r"(?i)^(?:env|vault|op|aws|gcp|azure|secretref|ref)[:/]"
 )
 
 TOP_LEVEL_FIELDS = (
@@ -328,6 +413,74 @@ def _credential_field(value: object, trail: str = "") -> str | None:
     return None
 
 
+def _value_entropy(value: str) -> float:
+    """Bits of entropy per character. Grades an already-suspect value only."""
+    if not value:
+        return 0.0
+    total = len(value)
+    counts: dict[str, int] = {}
+    for character in value:
+        counts[character] = counts.get(character, 0) + 1
+    return -sum((count / total) * math.log2(count / total) for count in counts.values())
+
+
+def _names_a_secret(value: str) -> bool:
+    """True when the value points at where a credential lives instead of being one."""
+    if CREDENTIAL_VALUE_PLACEHOLDER.match(value):
+        return True
+    if CREDENTIAL_VALUE_REFERENCE_PREFIX.match(value):
+        return True
+    if value.startswith(("$", "<", "{{", "{%", "%(")) or value.endswith(">"):
+        return True
+    if "${" in value or "{{" in value:
+        return True
+    if len(set(value)) <= 2 or value.isdigit():
+        return True
+    return False
+
+
+def _credential_in_text(text: str) -> str | None:
+    """Describe the credential in ``text``, or ``None`` when there is none."""
+    for label, pattern in CREDENTIAL_VALUE_FORMATS:
+        if pattern.search(text):
+            return label
+    for match in CREDENTIAL_VALUE_ASSIGNMENT.finditer(text):
+        key, assigned = match.group(1), match.group(2)
+        if _names_a_secret(assigned):
+            continue
+        if _value_entropy(assigned) < CREDENTIAL_VALUE_MIN_ENTROPY:
+            continue
+        return f"{key!r} is assigned a credential-shaped value"
+    return None
+
+
+def _credential_value(value: object, trail: str = "") -> tuple[str, str] | None:
+    """Return ``(property path, what fired)`` for the first credential value.
+
+    Every string in the document is inspected, at any depth, because the point of
+    the check is that a credential does not become acceptable by being written
+    into a field whose name is innocent. Mapping *keys* are not inspected here:
+    a credential-shaped key is :func:`_credential_field`'s job, and every object
+    in the contract is closed, so a key that is itself a literal credential is
+    rejected as an unknown field.
+    """
+    if isinstance(value, str):
+        finding = _credential_in_text(value)
+        return None if finding is None else (trail or "profile", finding)
+    if isinstance(value, dict):
+        for key in value:
+            location = f"{trail}.{key}" if trail else str(key)
+            found = _credential_value(value[key], location)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            found = _credential_value(item, f"{trail}[{index}]")
+            if found is not None:
+                return found
+    return None
+
+
 def _require_object(value: object, location: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ProfileInvalidError(f"{location} must be an object")
@@ -375,9 +528,12 @@ def _optional_choice(
 def validate_profile(document: object) -> dict[str, Any]:
     """Validate a parsed profile document against the contract.
 
-    The credential rule is checked first so a profile that leaked a secret is
-    reported as a credential violation naming the offending field, rather than
-    as a generic unknown-field error that reads like a typo.
+    The credential rules are checked first, both of them, so a profile that
+    leaked a secret is reported as a credential violation naming the offending
+    property, rather than as a generic unknown-field or version error that reads
+    like a typo. The name rule runs before the value rule only so that a field
+    called ``password`` is reported as a forbidden field even when what was put
+    in it is inert.
     """
     payload = _require_object(document, "profile")
 
@@ -385,6 +541,15 @@ def validate_profile(document: object) -> dict[str, Any]:
     if offending is not None:
         raise ProfileInvalidError(
             f"credential-shaped field is not permitted in a site profile: {offending}"
+        )
+
+    leaked = _credential_value(payload)
+    if leaked is not None:
+        location, reason = leaked
+        raise ProfileInvalidError(
+            f"credential value is not permitted in a site profile: {location} "
+            f"({reason}); a profile states intent and points at where a secret "
+            f"lives, it never carries one"
         )
 
     version = payload.get("schema_version")

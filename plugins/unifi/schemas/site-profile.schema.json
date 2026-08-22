@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:infiquetra:unifi:site-profile:1.0",
+  "$id": "urn:infiquetra:unifi:site-profile:1.1",
   "title": "UniFi operator site profile",
-  "description": "Operator-supplied intent a UniFi controller cannot report about itself: trust roles, criticality, ownership, intended policies, and operational constraints. The profile is optional; a package with no profile runs in discovery-only mode and infers none of these. Credentials are excluded by this schema rather than by convention: every object is closed and every property name is checked against credential-shaped names.",
+  "description": "Operator-supplied intent a UniFi controller cannot report about itself: trust roles, criticality, ownership, intended policies, and operational constraints. The profile is optional; a package with no profile runs in discovery-only mode and infers none of these. Credentials are excluded by this schema rather than by convention, by value as well as by name: every object is closed, every property name is checked against credential-shaped names, and every free-text value is checked against literal credential formats. Version 1.1 adds no field and removes none; it records that the secret-free guarantee now covers values. A 1.0 document remains readable and is held to the same value rule, because a credential in a 1.0 profile is exactly as exposed. The entropy-graded half of the value rule - a credential-shaped key assigned a high-entropy value - is expressible in code but not in JSON Schema, and is enforced by the loader in ../scripts/site_profile.py; see ../references/site-profile.md for the exact wording of the guarantee.",
   "type": "object",
   "required": ["schema_version", "site"],
   "additionalProperties": false,
@@ -11,7 +11,7 @@
     "schema_version": {
       "description": "Contract version of this document. An unrecognized version is rejected outright rather than partially applied.",
       "type": "string",
-      "enum": ["1.0"]
+      "enum": ["1.0", "1.1"]
     },
     "site": { "$ref": "#/$defs/site" },
     "subjects": {
@@ -41,12 +41,25 @@
     },
     "identifier": {
       "description": "A stable operator-chosen name. Not required to match any controller-assigned identifier.",
-      "type": "string",
-      "minLength": 1
+      "$ref": "#/$defs/credentialFreeText"
     },
-    "nonEmptyText": {
+    "credentialFreeText": {
+      "description": "Non-empty free text that is not itself a credential. Property names are guarded separately; this guards the value, so a secret does not become acceptable by being written into a field whose name is innocent. Each rejected pattern is a literal well-known credential format. There is deliberately no bare high-entropy rejection: a profile legitimately carries digests and long identifiers, and a check that fires on those is a check an operator turns off.",
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "allOf": [
+        { "not": { "pattern": "\\b(?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\\b" } },
+        { "not": { "pattern": "\\bgh[pousr]_[A-Za-z0-9]{36,}\\b" } },
+        { "not": { "pattern": "\\bgithub_pat_[A-Za-z0-9_]{40,}\\b" } },
+        { "not": { "pattern": "\\bxox[abposr]-[A-Za-z0-9-]{10,}\\b" } },
+        { "not": { "pattern": "\\bsk_(?:live|test)_[A-Za-z0-9]{16,}\\b" } },
+        { "not": { "pattern": "\\bAIza[0-9A-Za-z_-]{35}\\b" } },
+        { "not": { "pattern": "\\bsk-ant-[A-Za-z0-9_-]{24,}\\b" } },
+        { "not": { "pattern": "\\bsk-[A-Za-z0-9]{32,}\\b" } },
+        { "not": { "pattern": "\\beyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\b" } },
+        { "not": { "pattern": "-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----" } },
+        { "not": { "pattern": "://[^/\\s:@]+:[^/\\s@]{3,}@" } }
+      ]
     },
     "trustRole": {
       "description": "How much the operator intends to trust a subject. The literal unknown is permitted and means the same as omitting the field.",
@@ -65,7 +78,7 @@
       "propertyNames": { "$ref": "#/$defs/nonCredentialPropertyName" },
       "properties": {
         "identifier": { "$ref": "#/$defs/identifier" },
-        "description": { "$ref": "#/$defs/nonEmptyText" }
+        "description": { "$ref": "#/$defs/credentialFreeText" }
       }
     },
     "subject": {
@@ -81,8 +94,8 @@
         "identifier": { "$ref": "#/$defs/identifier" },
         "trust_role": { "$ref": "#/$defs/trustRole" },
         "criticality": { "$ref": "#/$defs/criticality" },
-        "ownership": { "$ref": "#/$defs/nonEmptyText" },
-        "notes": { "$ref": "#/$defs/nonEmptyText" }
+        "ownership": { "$ref": "#/$defs/credentialFreeText" },
+        "notes": { "$ref": "#/$defs/credentialFreeText" }
       }
     },
     "intendedPolicy": {
@@ -92,7 +105,7 @@
       "propertyNames": { "$ref": "#/$defs/nonCredentialPropertyName" },
       "properties": {
         "identifier": { "$ref": "#/$defs/identifier" },
-        "description": { "$ref": "#/$defs/nonEmptyText" },
+        "description": { "$ref": "#/$defs/credentialFreeText" },
         "applies_to": {
           "description": "Subject identifiers this policy is meant to cover.",
           "type": "array",
@@ -107,7 +120,7 @@
       "propertyNames": { "$ref": "#/$defs/nonCredentialPropertyName" },
       "properties": {
         "identifier": { "$ref": "#/$defs/identifier" },
-        "description": { "$ref": "#/$defs/nonEmptyText" }
+        "description": { "$ref": "#/$defs/credentialFreeText" }
       }
     }
   }
