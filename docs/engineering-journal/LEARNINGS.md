@@ -2,6 +2,67 @@
 
 ## 2026-08-22
 
+### A package can satisfy every structural check and still have no working entrypoint
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Running the ten-client compatibility matrix against the assembled portable
+UniFi package, after every preceding unit of the pilot had reported green.
+
+**Evidence.** Every client that reached the invocation stage produced the same failure:
+both `unifi_network_client.py` and `unifi_protect_client.py` abort during module import
+with `ModuleNotFoundError` for `fleet_commons_shim`, before any argument is parsed. The
+import is at `plugins/unifi/skills/unifi-network/scripts/unifi_network_client.py:49`, and
+no file of that name exists anywhere in the assembled package. The full record is in the
+[ten-client compatibility matrix](../evidence/2026-08-22-unifi-compatibility-matrix.md).
+
+**Mechanism.** Synchronization deliberately drops both copies of `fleet_commons_shim.py`,
+because build-time bundling is meant to replace them, and
+[`plugins/unifi/fleet-bundle.json`](../../plugins/unifi/fleet-bundle.json) duly declares
+the `retry_backoff` module the package needs. Nothing ever emitted it. The repository
+validator did not catch this, because its two bundle checks both validate
+correctness-when-present rather than presence: `check_bundled_files` walks the bundle
+files that exist and verifies their stamps, and `check_fleet_bundle_declarations`
+validates the declaration's shape against a closed schema. A declaration naming a module
+that was never written is well formed, so every gate stayed green while the package had
+no runnable entrypoint at all.
+
+**Generalizable rule.** A declaration that names a required artifact must be checked for
+that artifact's presence, not only for its correctness when present. An absent file
+produces no violation to report, so absence has to be asserted deliberately or it is
+never noticed. This is a second instance of the seam defect recorded below, found the
+same way: at the first end-to-end run.
+
+---
+
+### Every unit passed its own tests and the defect lived in the seam between two correct units
+
+**Author.** Jeff Cox and Claude
+
+**Context.** A correctly deployed operator site profile produced `mode=discovery-only`
+with zero subjects during the pilot, on a machine where the profile file was present at
+the documented path.
+
+**Evidence.** The pilot's Run C follow-up commit. The deployment unit wrote a valid
+profile to the documented runtime path, and the loader unit read the resolution contract
+exactly as that contract is written. Neither unit was wrong, and both unit test suites
+were green.
+
+**Mechanism.** The contract resolves the `UNIFI_SITE_PROFILE` environment variable first,
+then the path remembered in `config.json`, then no profile at all. Deploying a file to
+the documented default runtime path registers it with neither rung. One unit owned
+writing the file and another owned reading the contract; no unit owned making the
+deployed path reachable by the resolution order. The capability was split across units,
+and the seam between them belonged to nobody, so the end-to-end path did not work while
+every unit-level check passed. The portable half of this gap remains open and is recorded
+in [queued work](QUEUED.md#the-documented-default-site-profile-runtime-path-is-never-read).
+
+**Generalizable rule.** A plan that splits a capability across units must name which unit
+owns the seam, and gate the release on an end-to-end check rather than on the union of
+unit-level green. The union of green units is not evidence that the capability works.
+
+---
+
 ### Neutralizing an environment variable does not neutralize a fallback that reads a file
 
 **Author.** Jeff Cox and Claude
