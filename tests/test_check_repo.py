@@ -13,11 +13,15 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import check_repo  # noqa: E402
 
 
+# The compatibility value is the catalog's declared Python floor, held by
+# tests/test_python_floor.py. A fixture is a declaration like any other: the
+# floor gate scans this file too, so a stale value here fails that test rather
+# than sitting in the suite contradicting the contract it helps validate.
 CONFORMANT_SKILL = """---
 name: unifi-network
 description: Manage UniFi network infrastructure.
 license: Apache-2.0
-compatibility: python>=3.10
+compatibility: python>=3.12
 ---
 
 # UniFi network

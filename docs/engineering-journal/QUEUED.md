@@ -67,35 +67,43 @@ together: emit the bundle, and make an unemitted declared module a validation fa
 
 ## P1
 
-### Decide the Python floor the Fleet Core resync raised
+### Declare the catalog's Python floor in the UniFi skills' frontmatter, upstream
 
 **Author.** Jeff Cox and Claude
 
-**Priority.** P1
+**Priority.** P2
 
-**Effort.** One operator decision, then either an upstream repair released and
-re-synchronized, or a floor change across the catalog's documentation and the ported-plugin
-continuous-integration job.
+**Effort.** One upstream change in `infiquetra-claude-plugins`: add
+`compatibility: python>=3.12` to both UniFi `SKILL.md` documents, release it, and take it
+here by re-synchronization. Downstream, nothing but a re-sync and a matrix re-run.
 
-**Worth it when.** Before the portable catalog is offered to anyone running Python 3.10,
-and before the ported-plugin job is trusted as a floor check.
+**Worth it when.** Whenever the next UniFi re-synchronization happens for another reason.
+It is not worth a re-synchronization of its own, because the floor is already declared and
+checked in five other places and a consuming client that reads only frontmatter is a
+hypothetical, not an observed one.
 
-**Context.** Fleet Core 0.25.1 added `from datetime import UTC` at
-[`plugins/fleet-core/scripts/fleet_commons/retry_backoff.py:28`](../../plugins/fleet-core/scripts/fleet_commons/retry_backoff.py).
-`datetime.UTC` exists only in Python 3.11 and newer; under 3.10 that line raises
-`ImportError`, verified against a 3.10.20 interpreter. The catalog documents a 3.10 floor
-and [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) pins Python 3.10 for the
-ported-plugin job precisely so the floor is exercised. The byte-copy rule forbids repairing
-this downstream, because an edit here would make the path diverge from its source and give
-`retry_backoff` a second writable source.
+**Context.** The pilot plan's KTD7 claimed the floor is declared in the skills'
+`compatibility` frontmatter field. It never was. Both
+[`plugins/unifi/skills/unifi-network/SKILL.md`](../../plugins/unifi/skills/unifi-network/SKILL.md)
+and
+[`plugins/unifi/skills/unifi-protect/SKILL.md`](../../plugins/unifi/skills/unifi-protect/SKILL.md)
+carry only `name` and `description`, and both are classified `upstream-byte-copy` in
+[`plugins/unifi/PROVENANCE.json`](../../plugins/unifi/PROVENANCE.json).
 
-**The two options.** Author the repair upstream — `timezone.utc` is available on every
-supported version and the change is one line — release it, and re-synchronize. Or move the
-declared floor to 3.11, which means the changelog note, the ported-plugin job's pinned
-interpreter, and any other place the catalog states 3.10, all moving together.
+**Why it cannot be fixed downstream.** Two independent reasons, either one sufficient.
+Adding a field would break digest equality with the source, which is the byte-copy rule the
+whole port rests on. And any byte change under `plugins/unifi/` moves the assessed package's
+tree fingerprint, which retires the ten-client matrix and the post-activation readback bound
+to it — the same eight-test failure the 0.25.1 re-synchronization caused, and one that can
+only be cleared honestly by re-running an operator-run ten-client assessment.
 
-**Refs.** [learning](LEARNINGS.md#a-byte-copy-imports-the-upstream-platform-floor-along-with-the-upstream-fix),
-[the 0.25.1 changelog entry](../../plugins/fleet-core/CHANGELOG.md)
+**What is enforced meanwhile.** [`tests/test_python_floor.py`](../../tests/test_python_floor.py)
+does not require a portable skill to declare `compatibility`, but it does require that one
+which declares it declares the catalog floor. So the upstream change can land without a
+downstream edit, and it cannot land at the wrong value.
+
+**Refs.** [The floor decision](DECISIONS.md#the-portable-catalogs-minimum-supported-python-is-python312),
+[pilot plan KTD7](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md)
 
 ### Decide, per client, what follows the compatibility matrix
 

@@ -10,6 +10,23 @@ in `infiquetra-claude-plugins` and a parallel numbering would imply a second
 writable source. When upstream releases a Fleet Core version that changes a
 ported module, this package is re-synchronized and takes that version.
 
+## Unreleased
+
+No release tag, because nothing in the ported bytes moved. This section records
+a catalog-level contract change that this package's own documentation states.
+
+### Changed
+
+- **The catalog's minimum supported Python is `python>=3.12`.** It is a minimum
+  and not a pin: every later interpreter stays in contract. The floor is now the
+  one the authoritative source declares and tests. `infiquetra-claude-plugins`
+  sets `requires-python = ">=3.12"` in its project file and pins `3.12` in every
+  continuous-integration job, at the same commit `ed72f439` this package is
+  derived from. A derived catalog must not promise more compatibility than the
+  source it is derived from, so the lower floor this catalog used to document
+  was a promise nothing upstream was keeping. The decision and its reasoning are
+  recorded in the repository's engineering journal.
+
 ## [0.25.1] - 2026-08-22
 
 Re-synchronized from Fleet Core 0.25.1 in `infiquetra-claude-plugins` at commit
@@ -56,14 +73,21 @@ the first time that rule has been exercised.
 
 ### Known issues
 
-- **This release needs Python 3.11 or newer, which is above the Python 3.10
-  floor this catalog documents.** The corrected module imports `UTC` from
-  `datetime`, an alias that exists only in Python 3.11 and newer, so importing it
-  under Python 3.10 raises `ImportError`. The byte-copy rule forbids repairing
-  that here: a downstream edit would make this path diverge from its source and
-  would give `retry_backoff` a second writable source. Either the repair is
-  authored upstream or the declared floor moves to 3.11. The decision is open and
-  recorded in the repository's engineering journal.
+- **Resolved on 2026-08-22, after this release.** The catalog's floor moved to
+  `python>=3.12`, which is above what this release needs, so this release is no
+  longer out of contract with the catalog that carries it. The floor moved for a
+  reason larger than this one import: it now matches the floor the authoritative
+  source declares and tests. See the Unreleased section above. The entry is
+  preserved as written:
+
+  > **This release needs Python 3.11 or newer, which is above the Python 3.10
+  > floor this catalog documents.** The corrected module imports `UTC` from
+  > `datetime`, an alias that exists only in Python 3.11 and newer, so importing
+  > it under Python 3.10 raises `ImportError`. The byte-copy rule forbids
+  > repairing that here: a downstream edit would make this path diverge from its
+  > source and would give `retry_backoff` a second writable source. Either the
+  > repair is authored upstream or the declared floor moves to 3.11. The
+  > decision is open and recorded in the repository's engineering journal.
 
 ## [0.25.0] - 2026-08-22
 
@@ -103,9 +127,11 @@ Initial portable slice, derived from Fleet Core 0.25.0 in
 - This package is one vertical slice and claims no Fleet Core parity. Consuming
   plugins receive the module as a generated, stamped, read-only bundle produced
   at build time, so no user installs Fleet Core separately.
-- The portable catalog targets Python 3.10 or newer. The ported module itself
-  carries `from __future__ import annotations` and needs nothing beyond the
-  standard library.
+- The portable catalog documented a 3.10 floor at this release. That floor was
+  superseded on 2026-08-22; the catalog's contract is now `python>=3.12`, as the
+  Unreleased section above records. The ported module itself carries
+  `from __future__ import annotations` and needs nothing beyond the standard
+  library.
 
 [0.25.1]: https://github.com/infiquetra/infiquetra-claude-plugins/releases/tag/fleet-core-0.25.1
 [0.25.0]: https://github.com/infiquetra/infiquetra-claude-plugins/releases/tag/fleet-core-0.25.0

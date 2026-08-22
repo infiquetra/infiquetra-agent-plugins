@@ -153,6 +153,14 @@ interpreter above the catalog's documented Python floor, so nothing here
 addresses the floor question the 0.25.1 re-synchronization raised; that is
 tracked in [the engineering journal's queue](../engineering-journal/QUEUED.md).
 
+**Superseding note, added 2026-08-22 after this readback ran.** The floor
+question is now decided: the catalog's minimum supported Python is
+`python>=3.12`, recorded in
+[the engineering journal](../engineering-journal/DECISIONS.md#the-portable-catalogs-minimum-supported-python-is-python312).
+The paragraph above stands as written because it describes the readback as it
+was run. Nothing about that decision re-runs, revalidates, or alters any command,
+digest, or claim on this page.
+
 ## The machine-readable record
 
 ```json
