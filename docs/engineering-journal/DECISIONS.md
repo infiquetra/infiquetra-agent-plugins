@@ -2,6 +2,83 @@
 
 ## 2026-08-22
 
+### The ported test's pytest guard raises SkipTest instead of binding pytest to None
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** The `guard-pytest-import` deterministic transform over
+`tests/test_retry_backoff.py` moves to version 2. Where version 1 bound the name
+`pytest` to `None` when the dependency was absent, version 2 raises
+`unittest.SkipTest`. Everything else about the rule is unchanged: the upstream
+module docstring is still replaced with one recording the port, and every line
+from `class RateError(Exception):` to end of file is still copied byte for byte.
+
+**Rejected alternatives.** Keeping version 1, because Fleet Core 0.25.1 brought
+two tests carrying `@pytest.mark.parametrize` and a decorator is evaluated when
+the module is imported: against `None` it raises `AttributeError`, so the
+dependency-free baseline job would fail on a module it never intended to run.
+Substituting a hand-written stub object exposing `mark.parametrize` and
+`raises`, because a fake that silently absorbs whatever the upstream suite
+reaches for is a lie in a file whose entire purpose is to be a faithful copy,
+and it would need extending every time upstream uses one more pytest feature.
+Dropping the ported test from the hermetic job by renaming it out of the
+`test*.py` pattern, because the discovery pattern is not this package's to
+redefine and a test nothing collects is a test nobody notices breaking.
+
+**Rationale.** `unittest` catches `SkipTest` raised during module import and
+records the module as one skipped test, so the baseline job stays green, exits
+0, and says out loud why it collected nothing there — verified directly rather
+than assumed. The plugin job, where pytest is installed, runs all eighteen test
+functions unchanged, which pytest expands to twenty-five cases. The guard also
+stops being a maintenance liability: it no longer has to be revisited each time
+upstream reaches for another pytest feature at module scope.
+
+**Revisit when.** The hermetic baseline job gains pytest, which would make the
+guard dead code, or upstream splits its suite so the ported half no longer needs
+pytest at all.
+
+**Refs.** [`plugins/fleet-core/PROVENANCE.json`](../../plugins/fleet-core/PROVENANCE.json),
+[the 0.25.1 changelog entry](../../plugins/fleet-core/CHANGELOG.md)
+
+### A re-synchronization does not renumber the evidence it invalidates
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** The Fleet Core 0.25.1 re-synchronization left
+[`docs/evidence/2026-08-22-unifi-compatibility-matrix.md`](../evidence/2026-08-22-unifi-compatibility-matrix.md)
+and
+[`docs/evidence/2026-08-22-unifi-post-activation-readback.md`](../evidence/2026-08-22-unifi-post-activation-readback.md)
+untouched, and shipped with the eight binding tests over them failing. The
+recorded fingerprints still name the tree those assessments actually ran
+against.
+
+**Rejected alternatives.** Writing the new tree digest into both documents,
+because the matrix states the rule in its own text — "Refreshing the numbers
+without re-running the assessment is precisely the failure this binding exists
+to catch" — and doing it by hand rather than by a flag does not make it a
+different act. It would turn forty observed stage results and ten client
+readbacks into claims about bytes nobody ran. Marking the current matrix
+superseded, because the supersession contract requires a named successor that is
+itself current, and no successor exists until someone re-runs the ten clients.
+Reverting the bundle regeneration to keep the digest still, because a consumer
+carrying a stale copy of a repaired rate-limit primitive is the actual defect
+this whole re-synchronization exists to remove.
+
+**Rationale.** The binding is not misfiring. Bundling puts a stamped Fleet Core
+module inside the UniFi package, so a Fleet Core release necessarily changes the
+UniFi tree digest, and the document correctly reports that it no longer
+describes what ships. Red is the accurate state, and a red check that names real
+work still owed is worth more than a green one bought by editing the number
+under comparison.
+
+**Revisit when.** The operator authorizes the ten-client re-run and the
+post-activation readback; the new matrix is published as current and the present
+one is marked superseded by it, which is the only path that clears these eight
+tests honestly.
+
+**Refs.** [Queued evidence re-run](QUEUED.md#re-run-the-ten-client-matrix-and-the-readback-against-the-resynced-package),
+[the learning](LEARNINGS.md#regenerating-a-build-artifact-retires-the-observational-evidence-bound-to-it)
+
 ### The portable UniFi README is target-owned, rewritten site-neutral
 
 **Author.** Jeff Cox

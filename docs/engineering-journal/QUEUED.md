@@ -2,6 +2,41 @@
 
 ## P0
 
+### Re-run the ten-client matrix and the readback against the resynced package
+
+**Author.** Jeff Cox and Claude
+
+**Priority.** P0
+
+**Effort.** One operator-run session: re-run the four stages against all ten clients,
+re-read the installed bytes back in each client, publish the new matrix as current, and
+mark the present one superseded by it.
+
+**Worth it when.** Now. Eight tests in
+[`tests/test_check_compatibility_matrix.py`](../../tests/test_check_compatibility_matrix.py)
+are failing, and they stay failing until this runs. This is the only honest way to clear
+them.
+
+**Context.** Re-synchronizing the portable Fleet Core slice to 0.25.1 regenerated both
+`skills/*/scripts/_bundled/retry_backoff.py` bundles and re-pinned
+`plugins/unifi/PROVENANCE.json`. All three files live inside `plugins/unifi/`, so the
+package tree digest moved from `6e6b57c1…` to `da46ca77…` and the two evidence documents
+stopped identifying the shipped tree. The file count is unchanged at 23; only the digest
+moved, and no UniFi source byte changed. The binding is working exactly as designed: it is
+reporting that the record describes a package that no longer ships.
+
+**Do not close this by editing the number.** The matrix says so in its own text —
+"There is deliberately no flag that writes that fingerprint back into this document.
+Refreshing the numbers without re-running the assessment is precisely the failure this
+binding exists to catch." Marking the current matrix superseded does not work either: the
+supersession contract requires a named successor that is itself current, and there is none
+until the re-run produces one.
+
+**Refs.** [Compatibility matrix](../evidence/2026-08-22-unifi-compatibility-matrix.md),
+[post-activation readback](../evidence/2026-08-22-unifi-post-activation-readback.md),
+[decision](DECISIONS.md#a-re-synchronization-does-not-renumber-the-evidence-it-invalidates),
+[learning](LEARNINGS.md#regenerating-a-build-artifact-retires-the-observational-evidence-bound-to-it)
+
 ### Emit the declared Fleet Core bundle so the package has a working entrypoint
 
 **Author.** Jeff Cox and Claude
@@ -31,6 +66,36 @@ together: emit the bundle, and make an unemitted declared module a validation fa
 [learning](LEARNINGS.md#a-package-can-satisfy-every-structural-check-and-still-have-no-working-entrypoint)
 
 ## P1
+
+### Decide the Python floor the Fleet Core resync raised
+
+**Author.** Jeff Cox and Claude
+
+**Priority.** P1
+
+**Effort.** One operator decision, then either an upstream repair released and
+re-synchronized, or a floor change across the catalog's documentation and the ported-plugin
+continuous-integration job.
+
+**Worth it when.** Before the portable catalog is offered to anyone running Python 3.10,
+and before the ported-plugin job is trusted as a floor check.
+
+**Context.** Fleet Core 0.25.1 added `from datetime import UTC` at
+[`plugins/fleet-core/scripts/fleet_commons/retry_backoff.py:28`](../../plugins/fleet-core/scripts/fleet_commons/retry_backoff.py).
+`datetime.UTC` exists only in Python 3.11 and newer; under 3.10 that line raises
+`ImportError`, verified against a 3.10.20 interpreter. The catalog documents a 3.10 floor
+and [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) pins Python 3.10 for the
+ported-plugin job precisely so the floor is exercised. The byte-copy rule forbids repairing
+this downstream, because an edit here would make the path diverge from its source and give
+`retry_backoff` a second writable source.
+
+**The two options.** Author the repair upstream — `timezone.utc` is available on every
+supported version and the change is one line — release it, and re-synchronize. Or move the
+declared floor to 3.11, which means the changelog note, the ported-plugin job's pinned
+interpreter, and any other place the catalog states 3.10, all moving together.
+
+**Refs.** [learning](LEARNINGS.md#a-byte-copy-imports-the-upstream-platform-floor-along-with-the-upstream-fix),
+[the 0.25.1 changelog entry](../../plugins/fleet-core/CHANGELOG.md)
 
 ### Decide, per client, what follows the compatibility matrix
 
@@ -97,6 +162,37 @@ changes what an existing host resolves, so it is a contract change and not a pat
 [pilot plan](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md)
 
 ## P2
+
+### Give the synchronization script a Fleet Core target
+
+**Author.** Jeff Cox and Claude
+
+**Priority.** P2
+
+**Effort.** One implementation unit: generalize the script's single-package constants into a
+per-package target, add the Fleet Core target with its one byte copy and its one derived
+test, and extend [`tests/test_sync_vendor_source.py`](../../tests/test_sync_vendor_source.py)
+to cover it.
+
+**Worth it when.** Before the next Fleet Core release has to be re-synchronized, so the
+second package goes through the same contract as the first rather than beside it.
+
+**Context.** [`scripts/sync_vendor_source.py`](../../scripts/sync_vendor_source.py) derives
+only `plugins/unifi/`: `SOURCE_PACKAGE_PATH` and `TARGET_PACKAGE` are module-level constants
+naming that one package, and there is no Fleet Core target anywhere in the file. The plan's
+requirement R32 says the Fleet Core slice is derived "under the same synchronization rule as
+UniFi", and today that rule is enforced by the provenance digest check rather than by a
+shared code path.
+
+**How the 0.25.1 resync worked around it.** The module was extracted with
+`git show <commit>:<source_path>` and the ported test was re-derived by applying the recorded
+`guard-pytest-import` rule to the same source bytes — the same primitive the script itself
+uses internally to read a source byte, so the copy was a mechanical extraction from the
+pinned revision rather than a hand edit. `scripts/check_repo.py` then recomputed and matched
+every digest. That is sound but unshared: the next person has to know to do it the same way.
+
+**Refs.** [`plugins/fleet-core/PROVENANCE.json`](../../plugins/fleet-core/PROVENANCE.json),
+[the pilot plan's requirement R32](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md)
 
 ### Drop README.md from the UniFi byte-copy table so a resync keeps the portable docs
 

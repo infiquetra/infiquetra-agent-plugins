@@ -10,6 +10,61 @@ in `infiquetra-claude-plugins` and a parallel numbering would imply a second
 writable source. When upstream releases a Fleet Core version that changes a
 ported module, this package is re-synchronized and takes that version.
 
+## [0.25.1] - 2026-08-22
+
+Re-synchronized from Fleet Core 0.25.1 in `infiquetra-claude-plugins` at commit
+`ed72f439`. Custody did not move. The repair was authored, reviewed, and
+released upstream, and this package took it by re-synchronization rather than by
+an edit to the ported bytes, which is the rule this slice was created under and
+the first time that rule has been exercised.
+
+### Fixed
+
+- **A `Retry-After` HTTP-date now backs the request off instead of killing the
+  call.** RFC 7231 section 7.1.3 allows the header in two forms, a count of
+  seconds and an absolute date, and real controllers send the date form.
+  `scripts/fleet_commons/retry_backoff.py` understood only the number, so a
+  caller that converted the header with `int()` raised `ValueError` inside the
+  retried call. A `ValueError` carries no status code, so the primitive judged
+  it non-retryable and re-raised it on the first attempt: one request, no
+  backoff, and a generic error in place of a rate-limit error. The new public
+  `parse_retry_after(value, *, now=time.time)` reduces either form to a
+  non-negative delay in seconds, and returns `None` for an absent, empty, or
+  unparseable value, which the caller reads as "no usable hint" and answers with
+  computed jittered backoff. A date already in the past parses to `0.0`, never a
+  negative delay. Clamping and jitter are untouched, so an absurd date and an
+  absurd number are bounded identically. `retry_with_backoff` gains a
+  keyword-only `now` seam so a date resolves deterministically under test, and
+  the `retry_after` callable's type widens to `float | str | None`, which is
+  additive.
+
+### Changed
+
+- **The pinned source revision.** `PROVENANCE.json` and `DEFERRED.md` now name
+  commit `ed72f439` and Fleet Core `0.25.1`. The portable UniFi package pins the
+  same revision, so one commit names the corrected state of the whole port.
+- **The ported test suite grew from ten test functions to eighteen**, and its
+  `guard-pytest-import` transform moved to version 2. Upstream's new coverage
+  includes two tests carrying `@pytest.mark.parametrize`, and a decorator is
+  evaluated when the module is imported. Version 1 bound `pytest` to `None` when
+  the dependency was absent, which would have made the dependency-free baseline
+  job raise `AttributeError` on a module it never runs. Version 2 raises
+  `unittest.SkipTest` instead, which `unittest` records as one skipped test, so
+  the baseline job stays green and says out loud why it collected nothing here.
+- **The bundled copies shipped to consuming plugins** carry the new stamp:
+  source version `0.25.1`, source commit `ed72f439`, and the new source digest.
+
+### Known issues
+
+- **This release needs Python 3.11 or newer, which is above the Python 3.10
+  floor this catalog documents.** The corrected module imports `UTC` from
+  `datetime`, an alias that exists only in Python 3.11 and newer, so importing it
+  under Python 3.10 raises `ImportError`. The byte-copy rule forbids repairing
+  that here: a downstream edit would make this path diverge from its source and
+  would give `retry_backoff` a second writable source. Either the repair is
+  authored upstream or the declared floor moves to 3.11. The decision is open and
+  recorded in the repository's engineering journal.
+
 ## [0.25.0] - 2026-08-22
 
 Initial portable slice, derived from Fleet Core 0.25.0 in
@@ -52,4 +107,5 @@ Initial portable slice, derived from Fleet Core 0.25.0 in
   carries `from __future__ import annotations` and needs nothing beyond the
   standard library.
 
+[0.25.1]: https://github.com/infiquetra/infiquetra-claude-plugins/releases/tag/fleet-core-0.25.1
 [0.25.0]: https://github.com/infiquetra/infiquetra-claude-plugins/releases/tag/fleet-core-0.25.0
