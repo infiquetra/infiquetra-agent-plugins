@@ -1,0 +1,9 @@
+{
+  "$schema": "../../schemas/fleet-bundle.schema.json",
+  "schema_version": "1",
+  "modules": [
+    {
+      "name": "retry_backoff"
+    }
+  ]
+}

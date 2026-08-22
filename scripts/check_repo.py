@@ -82,6 +82,10 @@ BUNDLE_DIRECTORY_NAME = "_bundled"
 BUNDLE_STAMP_BEGIN = "# --- generated bundle stamp: do not edit ---"
 BUNDLE_STAMP_END = "# --- end generated bundle stamp ---"
 BUNDLE_OUTPUT_DIGEST_FIELD = "output-sha256"
+BUNDLE_SOURCE_DIGEST_FIELD = "source-sha256"
+BUNDLE_SOURCE_PATH_FIELD = "source-path"
+FLEET_CORE_PLUGIN_NAME = "fleet-core"
+FLEET_BUNDLE_FILENAME = "fleet-bundle.json"
 
 # The open Agent Skills specification permits exactly these six frontmatter
 # fields, and requires a skill's `name` to match its parent directory name.
@@ -157,6 +161,12 @@ def check_plugin_manifests(root: Path) -> list[str]:
         manifest = plugin_dir / "plugin.json"
         relative = manifest.relative_to(root)
         if not manifest.is_file():
+            # A consumer may land its build declaration (U3) before the
+            # portable Agent Plugins manifest is synchronized (U10). That
+            # directory is not yet a plugin package, so a missing manifest
+            # is not a defect while the declaration is present.
+            if (plugin_dir / FLEET_BUNDLE_FILENAME).is_file():
+                continue
             errors.append(f"missing plugin manifest: {relative}")
             continue
         try:
@@ -340,12 +350,14 @@ def _bundled_files(root: Path) -> list[Path]:
 
 
 def check_bundled_files(root: Path) -> list[str]:
-    """Reject a generated bundle whose content no longer matches its stamp.
+    """Reject a generated bundle that is stale against its source or hand-edited.
 
-    A generated bundle is read-only by convention, so a content digest that
-    disagrees with the stamped one means the bundle is stale against its source
-    or was edited by hand. Either way the file is no longer what its stamp
-    claims and must be regenerated.
+    Two digest domains, because a stamp cannot hash the bytes that contain it.
+    The generated-output digest (``output-sha256``) covers the file with the
+    stamp excluded and fails as ``stale bundle`` when the body was edited. The
+    source-payload digest (``source-sha256``) covers the live Fleet Core module
+    and fails as ``stale source`` when that module moved and the bundle was not
+    regenerated. The two signals are independent.
     """
     errors: list[str] = []
     for path in _bundled_files(root):
@@ -365,12 +377,76 @@ def check_bundled_files(root: Path) -> list[str]:
             errors.append(
                 f"generated bundle stamp missing {BUNDLE_OUTPUT_DIGEST_FIELD}: {relative}"
             )
+        else:
+            actual = sha256_text(payload)
+            if actual != recorded:
+                errors.append(
+                    f"stale bundle: {relative} (stamp {recorded}, content {actual})"
+                )
+        errors.extend(_check_bundle_source_freshness(root, relative, stamp))
+    return errors
+
+
+def _check_bundle_source_freshness(
+    root: Path,
+    relative: Path,
+    stamp: dict[str, str],
+) -> list[str]:
+    """Compare the stamp's source-payload digest to the live Fleet Core module.
+
+    Skipped when this tree has no portable Fleet Core package, or when the
+    stamp does not name a source path: those are the U1 fixture shape, which
+    only asserted the generated-output digest. The two domains are independent,
+    so a hand-edited body still reports as a stale bundle even when the source
+    digest still matches.
+    """
+    source_rel = stamp.get(BUNDLE_SOURCE_PATH_FIELD)
+    recorded = stamp.get(BUNDLE_SOURCE_DIGEST_FIELD)
+    if not source_rel or not recorded:
+        return []
+
+    candidate = Path(source_rel)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        return [f"generated bundle stamp has an unsafe source-path: {relative}"]
+
+    fleet_core = root / "plugins" / FLEET_CORE_PLUGIN_NAME
+    if not fleet_core.is_dir():
+        return []
+
+    module = candidate.stem
+    source_file = fleet_core / candidate
+    if not source_file.is_file():
+        return [
+            f"stale source: {module} in {relative}: source file missing: "
+            f"{source_file.relative_to(root)}"
+        ]
+
+    actual = sha256_path(source_file)
+    if actual == recorded:
+        return []
+    return [
+        f"stale source: {module} in {relative} (stamp {recorded}, source {actual})"
+    ]
+
+
+def check_fleet_bundle_declarations(root: Path) -> list[str]:
+    """Validate each consumer's closed Fleet Core build declaration.
+
+    The declaration cannot live in the Agent Plugins manifest, whose schema
+    forbids assigning semantics to unrecognized top-level fields. Checking it
+    here keeps continuous integration hermetic: no network, no extra tool.
+    """
+    errors: list[str] = []
+    # Lazy import: the bundler imports this module for stamp helpers, so a
+    # top-level import would cycle while this file is still loading.
+    from bundle_fleet_module import validate_declaration_file
+
+    for plugin_dir in plugin_directories(root):
+        declaration = plugin_dir / FLEET_BUNDLE_FILENAME
+        if not declaration.is_file():
             continue
-        actual = sha256_text(payload)
-        if actual != recorded:
-            errors.append(
-                f"stale bundle: {relative} (stamp {recorded}, content {actual})"
-            )
+        relative = str(declaration.relative_to(root))
+        errors.extend(validate_declaration_file(declaration, origin=relative))
     return errors
 
 
@@ -453,6 +529,7 @@ def check_repo(root: Path) -> list[str]:
         *check_plugin_manifests(root),
         *check_provenance_manifests(root),
         *check_bundled_files(root),
+        *check_fleet_bundle_declarations(root),
         *check_skill_frontmatter(root),
     ]
 
