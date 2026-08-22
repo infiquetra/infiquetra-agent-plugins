@@ -2,40 +2,99 @@
 
 ## P0
 
-No items.
+### Emit the declared Fleet Core bundle so the package has a working entrypoint
+
+**Author.** Jeff Cox and Claude
+
+**Priority.** P0
+
+**Effort.** One implementation unit: emit the declared module into the package, add a
+presence check to the repository validator, and re-run the invocation stage.
+
+**Worth it when.** Before anyone installs or uses the portable UniFi package, and before
+any client-specific remediation is considered. This blocks real use on every client and
+is independent of all of them.
+
+**Recording only.** This entry records a finding. No repair has begun, and none may begin
+without a separate operator decision, under the
+[operator pause](DECISIONS.md#pause-the-pilot-at-the-compatibility-matrix-and-take-no-client-specific-remediation).
+
+**Context.** Both skill entrypoints import `fleet_commons_shim` at module import time and
+abort with `ModuleNotFoundError` before parsing any argument.
+[`plugins/unifi/fleet-bundle.json`](../../plugins/unifi/fleet-bundle.json) declares the
+`retry_backoff` module that would replace the dropped shim, but no bundle was ever written
+into the package. Every repository check passes anyway, because the bundle checks validate
+correctness-when-present rather than presence. The fix has two halves that must ship
+together: emit the bundle, and make an unemitted declared module a validation failure.
+
+**Refs.** [Compatibility matrix](../evidence/2026-08-22-unifi-compatibility-matrix.md),
+[learning](LEARNINGS.md#a-package-can-satisfy-every-structural-check-and-still-have-no-working-entrypoint)
 
 ## P1
 
-### Choose the first portability pilot and custody gate
+### Decide, per client, what follows the compatibility matrix
 
-**Author.** Jeff Cox and Codex
+**Author.** Jeff Cox and Claude
 
 **Priority.** P1
 
-**Effort.** One focused design session followed by a separately approved pilot.
+**Effort.** One operator decision session; any resulting repair is separately scoped work.
 
-**Worth it when.** Before any existing vendor plugin is migrated or generated
-from this repository.
+**Worth it when.** After the operator has read the matrix and before any remediation is
+attempted. The pilot is paused here on purpose.
 
-**Status update, 2026-08-21.** The design session is complete and its output is the
-[UniFi and portable Fleet Core portability pilot plan](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md). The pilot is `unifi`
-plus a one-module portable Fleet Core slice; the client matrix is all ten installed
-clients as mandatory coverage rather than a pass gate; and the source-custody rule is
-that the Claude repository stays authoritative, is repaired and released first, and is
-then synchronized from by a digest-verified derivation. This item stays queued until the
-pilot itself is executed and its compatibility matrix reaches the operator pause.
+**Context.** Ten clients were assessed identically across placement, discovery, load, and
+invocation. Eight consumed the portable package or its skill units directly. OpenAI Codex
+is recorded as works through an adapter: it needs a marketplace manifest to be reachable
+at all, and building that adapter is remediation. Cursor Agent is recorded as failed: it
+could not be assessed credential-free, and its marketplace accepts only a git repository
+URL, so a local directory is not a path there under any credentials. Each of those two
+clients needs its own decision among repair, an adapter, a different distribution path, or
+an explicitly unsupported status.
 
-**Still open.** The Herdr execution boundary is untouched by this pilot, and the
-custody-transfer question remains deliberately unanswered until the pilot produces
-evidence.
+**Guardrail.** Coverage was mandatory and passing was not. No failing client blocks the
+pilot, and no client-specific remediation has begun or may begin without a separate
+operator decision.
 
-**Original context.** The architecture research recommends `home-lab-ops`,
-`mission-control`, or `unifi` as the first pilot. The work still needs a chosen
-pilot, required client matrix, Herdr boundary, source-custody rule, and semantic
-parity evidence.
+**Refs.** [Compatibility matrix](../evidence/2026-08-22-unifi-compatibility-matrix.md),
+[operator pause decision](DECISIONS.md#pause-the-pilot-at-the-compatibility-matrix-and-take-no-client-specific-remediation),
+[pilot plan](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md)
 
-**Refs.** [Architecture brief](../cross-vendor-plugin-architecture-brief.md),
-[repository decision](DECISIONS.md#establish-a-public-cross-vendor-plugin-source-repository)
+### The documented default site-profile runtime path is never read
+
+**Author.** Jeff Cox and Claude
+
+**Priority.** P1
+
+**Effort.** One implementation unit spanning the portable profile contract, the discovery
+and drift reporting that consume it, and the Claude adapter's loader, with their tests.
+
+**Worth it when.** Before a second operator deploys a site profile on a host this
+repository does not control. The Infiquetra instance is already covered by its deployment;
+every other operator is not.
+
+**Context.** The portable contract resolves a profile in this order: the
+`UNIFI_SITE_PROFILE` environment variable, then the path remembered in `config.json`, then
+no profile at all. The same contract separately documents
+`${XDG_CONFIG_HOME:-~/.config}/infiquetra/unifi/site-profile.json` as the deployed runtime
+default. Nothing reads that default directly. An operator who deploys a profile there
+without also setting the environment variable silently gets discovery-only mode. This was
+found during the pilot, when a correctly deployed profile produced `mode=discovery-only`
+with zero subjects.
+
+**Status update, 2026-08-22.** Closed for Infiquetra in the private `home-lab` repository
+by having the Ansible deployment also write `config.json`, so the remembered rung resolves
+the deployed file. The portable resolution order was deliberately left unchanged by
+operator decision, which is what keeps this item open rather than shipped.
+
+**Still open.** The general fix adds the default runtime path as a final resolution rung,
+touching the portable site-profile module, the discovery and drift reporting that read it,
+and the Claude adapter's `site_profile_loader.py`, each with its tests. Adding a rung
+changes what an existing host resolves, so it is a contract change and not a patch.
+
+**Refs.** [Resolution-order decision](DECISIONS.md#leave-the-portable-profile-resolution-order-at-two-rungs-and-close-the-infiquetra-gap-in-deployment),
+[seam learning](LEARNINGS.md#every-unit-passed-its-own-tests-and-the-defect-lived-in-the-seam-between-two-correct-units),
+[pilot plan](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md)
 
 ## P2
 
@@ -69,7 +128,7 @@ vendor Saga plugins or transfer their custody until the relevant portability
 pilot and custody decision authorize that work.
 
 **Refs.** [Architecture brief](../cross-vendor-plugin-architecture-brief.md),
-[queued pilot decision](#choose-the-first-portability-pilot-and-custody-gate),
+[archived pilot decision](ARCHIVE.md#choose-the-first-portability-pilot-and-custody-gate),
 [current Saga Plan](https://github.com/infiquetra/infiquetra-claude-plugins/blob/main/plugins/saga/skills/plan/SKILL.md),
 [current Saga Code Review](https://github.com/infiquetra/infiquetra-claude-plugins/blob/main/plugins/saga/skills/code-review/SKILL.md).
 
