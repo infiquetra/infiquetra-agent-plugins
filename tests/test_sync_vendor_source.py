@@ -29,6 +29,7 @@ import sys
 import tempfile
 import types
 import unittest
+import unittest.mock
 from pathlib import Path
 
 
@@ -99,6 +100,16 @@ FIXTURE_SOURCE: dict[str, str] = {
     "skills/unifi-protect/scripts/unifi_protect_client.py": FIXTURE_PROTECT_CLIENT,
     "skills/unifi-protect/scripts/fleet_commons_shim.py": "SHIM = 1\n",
 }
+
+
+#: A stand-in for the site-neutral README this repository authors for the
+#: portable package. Its only requirement is that it is not the upstream text:
+#: every assertion below is that synchronization leaves these bytes alone.
+PORTABLE_README = (
+    "# portable fixture readme\n"
+    "\n"
+    "Describes the portable package, not the source plugin.\n"
+)
 
 
 def git(source: Path, *arguments: str) -> str:
@@ -340,17 +351,19 @@ class SynchronizedTreeTests(SyncFixture):
 
 class RefusalTests(SyncFixture):
     def test_a_dirty_checkout_is_refused(self) -> None:
-        client = self.source / svs.SOURCE_PACKAGE_PATH / "README.md"
-        client.write_text("# edited after the commit\n", encoding="utf-8")
+        # The witness is a path synchronization actually writes. README.md is
+        # target-owned and is never written, so its absence would prove nothing.
+        dirtied = self.source / svs.SOURCE_PACKAGE_PATH / "CHANGELOG.md"
+        dirtied.write_text("# edited after the commit\n", encoding="utf-8")
         with self.assertRaises(svs.SyncError) as caught:
             self.synchronize()
         self.assertIn("dirty checkout", str(caught.exception))
-        self.assertFalse((self.package / "README.md").exists())
+        self.assertFalse((self.package / "CHANGELOG.md").exists())
 
     def test_an_untracked_file_is_not_a_dirty_checkout(self) -> None:
         write(self.source / "scratch.txt", "not tracked\n")
         written, _ = self.synchronize()
-        self.assertIn("README.md", written)
+        self.assertIn("CHANGELOG.md", written)
 
     def test_an_unclassified_upstream_path_is_refused(self) -> None:
         write(self.source / svs.SOURCE_PACKAGE_PATH / "hooks" / "hooks.json", "{}\n")
@@ -379,7 +392,9 @@ class RefusalTests(SyncFixture):
         message = str(caught.exception)
         self.assertIn("skills/unifi-network/scripts/unifi_network_client.py", message)
         self.assertIn("found 0", message)
-        self.assertFalse((self.package / "README.md").exists(), "the plan wrote before it failed")
+        self.assertFalse(
+            (self.package / "CHANGELOG.md").exists(), "the plan wrote before it failed"
+        )
 
     def test_a_client_with_the_block_twice_is_refused(self) -> None:
         source = dict(FIXTURE_SOURCE)
@@ -420,11 +435,11 @@ class RefusalTests(SyncFixture):
     def test_check_mode_writes_nothing(self) -> None:
         self.synchronize()
         before = tree_snapshot(self.package)
-        (self.package / "README.md").write_text("# edited\n", encoding="utf-8")
+        (self.package / "CHANGELOG.md").write_text("# edited\n", encoding="utf-8")
         errors, _ = self.synchronize(check_only=True)
         self.assertTrue(errors)
         after = tree_snapshot(self.package)
-        after["README.md"] = before["README.md"]
+        after["CHANGELOG.md"] = before["CHANGELOG.md"]
         self.assertEqual(after, before)
 
 
@@ -461,6 +476,102 @@ class TargetOwnedTests(SyncFixture):
             if entry["classification"] == check_repo.TARGET_OWNED
         }
         self.assertEqual(recorded, set(owned))
+
+    def test_a_synchronization_leaves_the_portable_readme_untouched(self) -> None:
+        """The portable README is target-owned, so a resync must not restore upstream bytes.
+
+        `plugins/unifi/README.md` documents this package; the upstream README
+        documents the Claude Code plugin. While `README.md` sat in
+        `PORTABLE_BYTE_COPIES` the next `synchronize()` would have copied the
+        upstream text over the portable file, contradicting both the manifest
+        classification and the recorded custody decision.
+        """
+        portable = write(self.package / "README.md", PORTABLE_README)
+        self.assertNotEqual(
+            PORTABLE_README,
+            FIXTURE_SOURCE["README.md"],
+            "the fixture cannot detect an overwrite it would not change",
+        )
+
+        written, _ = self.synchronize()
+
+        self.assertNotIn("README.md", written, "synchronization wrote a target-owned path")
+        self.assertEqual(
+            portable.read_text(encoding="utf-8"),
+            PORTABLE_README,
+            "synchronization overwrote the portable README with upstream bytes",
+        )
+
+        manifest = json.loads((self.package / "PROVENANCE.json").read_text(encoding="utf-8"))
+        entry = next(item for item in manifest["files"] if item["path"] == "README.md")
+        self.assertEqual(entry["classification"], check_repo.TARGET_OWNED)
+        self.assertNotIn("sha256", entry)
+        self.assertNotIn("source_path", entry)
+
+        errors, _ = self.synchronize(check_only=True)
+        self.assertEqual(errors, [], "check mode disagrees with the tree the write path produced")
+
+    def test_a_manifest_from_before_the_custody_change_does_not_delete_the_readme(self) -> None:
+        """The hazard the custody change introduces, and the guard that closes it.
+
+        A tree synchronized before `README.md` became target-owned still carries
+        a manifest recording it as an upstream byte copy. Stale cleanup deletes
+        every managed path the current plan no longer produces, so without the
+        superseded set being subtracted from that stale set, the first run after
+        the change unlinks the portable README instead of preserving it.
+        """
+        portable = write(self.package / "README.md", PORTABLE_README)
+        self.synchronize()
+
+        manifest_path = self.package / "PROVENANCE.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["files"] = [
+            entry for entry in manifest["files"] if entry["path"] != "README.md"
+        ]
+        manifest["files"].append(
+            {
+                "path": "README.md",
+                "classification": check_repo.BYTE_COPY,
+                "source_path": f"{svs.SOURCE_PACKAGE_PATH}/README.md",
+                "sha256": check_repo.sha256_text(FIXTURE_SOURCE["README.md"]),
+            }
+        )
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+        self.synchronize()
+
+        self.assertTrue(portable.is_file(), "stale cleanup deleted the portable README")
+        self.assertEqual(portable.read_text(encoding="utf-8"), PORTABLE_README)
+
+        errors, _ = self.synchronize(check_only=True)
+        self.assertEqual(
+            [error for error in errors if "README.md" in error],
+            [],
+            "check mode reports the target-owned README as a stale synchronized file",
+        )
+
+    def test_the_superseded_readme_is_classified_rather_than_dropped(self) -> None:
+        """Removing a path from the byte-copy table must not make it unclassified.
+
+        `classify_source_tree` refuses an upstream path no rule names, because a
+        dropped path is how a derived tree quietly stops being a copy of
+        anything. The superseded set is what keeps that refusal honest after the
+        custody change.
+        """
+        self.assertNotIn("README.md", svs.PORTABLE_BYTE_COPIES)
+        self.assertIn("README.md", svs.SUPERSEDED_BY_TARGET_OWNED)
+        svs.classify_source_tree(sorted(FIXTURE_SOURCE))
+
+        without_supersession = tuple(
+            name for name in svs.SUPERSEDED_BY_TARGET_OWNED if name != "README.md"
+        )
+        with unittest.mock.patch.object(
+            svs, "SUPERSEDED_BY_TARGET_OWNED", without_supersession
+        ):
+            with self.assertRaises(svs.SyncError) as caught:
+                svs.classify_source_tree(sorted(FIXTURE_SOURCE))
+        self.assertIn("no custody assignment", str(caught.exception))
+        self.assertIn("plugins/unifi/README.md", str(caught.exception))
 
     def test_a_stale_synchronized_path_is_removed_but_target_owned_source_is_not(self) -> None:
         self.synchronize()
@@ -524,7 +635,7 @@ class ManifestPathSafetyTests(SyncFixture):
         # A managed file removed from the tree is the write the run would make
         # first. It must still be missing afterwards: the refusal has to land
         # before any write, not part-way through one.
-        rewritten = self.package / "README.md"
+        rewritten = self.package / "CHANGELOG.md"
         rewritten.unlink()
 
         with self.assertRaises(svs.SyncError) as caught:
@@ -616,6 +727,41 @@ class ShippedPackageTests(unittest.TestCase):
         )
         self.assertEqual(commit, CORRECTED_REVISION)
         self.assertEqual(manifest["source_repository"], svs.SOURCE_REPOSITORY)
+
+    def test_the_custody_table_agrees_with_the_recorded_classification(self) -> None:
+        """The generator and the shipped manifest must not disagree about custody.
+
+        A path the manifest records `target-owned` while the table still lists
+        it as an upstream byte copy is a package whose own derivation tool would
+        revert it on the next run. This compares every entry in the table
+        against the classification the shipped `PROVENANCE.json` records, so the
+        contradiction cannot come back at any path, not just this one.
+        """
+        manifest = json.loads((self.package / "PROVENANCE.json").read_text(encoding="utf-8"))
+        recorded = {entry["path"]: entry["classification"] for entry in manifest["files"]}
+        expected: dict[str, str] = {}
+        for relative in svs.PORTABLE_BYTE_COPIES:
+            expected[relative] = check_repo.BYTE_COPY
+        for relative in svs.CLIENT_BYTE_COPIES:
+            expected[f"{svs.CLIENT_EXTENSION_DIR}/{relative}"] = check_repo.BYTE_COPY
+        for relative in svs.PORTABLE_ENTRYPOINT_TRANSFORMS:
+            expected[relative] = check_repo.TRANSFORM
+        expected[f"{svs.CLIENT_EXTENSION_DIR}/plugin.json"] = check_repo.TRANSFORM
+        for relative in svs.SUPERSEDED_BY_TARGET_OWNED:
+            expected[relative] = check_repo.TARGET_OWNED
+
+        for path, classification in expected.items():
+            with self.subTest(path=path):
+                self.assertEqual(
+                    recorded.get(path),
+                    classification,
+                    f"the custody table in {svs.GENERATED_BY} and PROVENANCE.json disagree "
+                    f"about {path}",
+                )
+
+        for relative in svs.DROPPED_FROM_SOURCE:
+            with self.subTest(dropped=relative):
+                self.assertNotIn(relative, recorded)
 
     def test_portable_manifest_carries_the_canonical_schema_and_a_conformant_name(self) -> None:
         manifest = json.loads((self.package / "plugin.json").read_text(encoding="utf-8"))
