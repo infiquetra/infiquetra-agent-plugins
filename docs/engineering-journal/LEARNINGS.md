@@ -1,5 +1,40 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-08-22
+
+### Neutralizing an environment variable does not neutralize a fallback that reads a file
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Two tests in `tests/test_drift.py` began failing on a branch whose
+production code had not changed, once a real operator site profile was deployed on the
+developer's machine.
+
+**Evidence.** `tests/test_drift.py::PersistenceAndCliTest` called
+`drift.main(..., environ={})` intending a run with no site profile.
+`test_cli_writes_a_report_outside_the_tree` expected mode `discovery-only` and got
+`profile`; `test_cli_with_injected_inventory_writes_nothing_inside_the_tree` expected
+zero findings and got nine, the first being an `unprofiled-host` finding against a real
+host. The same suite was green earlier in the same pilot, before any profile existed on
+the machine.
+
+**Mechanism.** The site-profile contract in
+`plugins/unifi/scripts/site_profile.py:262` resolves a profile from two rungs: the
+`UNIFI_SITE_PROFILE` environment variable first, and the path remembered in
+`${XDG_CONFIG_HOME:-~/.config}/infiquetra/unifi/config.json` second. An empty `environ`
+mapping suppresses only the first rung. The second is read from the real filesystem
+through `Path.home()`, which no `environ` argument reaches. The tests were therefore
+asserting a property of the developer's machine, not of the code. The fix pins
+`XDG_CONFIG_HOME` into the test's temporary directory and passes the `--config-path`
+seam the command line already offers, so both rungs land inside the temporary tree.
+A companion test now deploys a profile through the configured rung on purpose and
+asserts profile mode with the two findings it implies, which is the case the failing
+tests had been exercising by accident.
+
+**Generalizable rule.** When a lookup has more than one rung, isolating a test means
+pinning every rung, not the first one; a rung that ends in a filesystem default is the
+one that will silently read the developer's machine.
+
 ## 2026-08-21
 
 ### A plugin's tracked file list does not reveal what it needs to run
