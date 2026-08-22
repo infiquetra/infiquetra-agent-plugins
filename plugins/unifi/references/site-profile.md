@@ -24,13 +24,67 @@ A profile carries five things and nothing else:
 | `schema_version` | The contract version of the document. |
 
 A profile **never** carries a credential. This is enforced rather than asked
-for. Every object in [`../schemas/site-profile.schema.json`](../schemas/site-profile.schema.json)
-is closed, and every property name is additionally checked against
-credential-shaped names, so a field such as `password`, `api_token`,
-`client_secret`, or `private_key` is rejected wherever it appears in the
-document. The portable loader in
-[`../scripts/site_profile.py`](../scripts/site_profile.py) applies the same rule
+for, and it is enforced on what a field *holds* as well as on what it is
+*called*. Two rules do the work, both of them in the portable loader
+[`../scripts/site_profile.py`](../scripts/site_profile.py), which is the code
+that actually runs when a profile is read.
+
+**The name rule.** Every object in
+[`../schemas/site-profile.schema.json`](../schemas/site-profile.schema.json) is
+closed, and every property name is checked against credential-shaped names, so a
+field such as `password`, `api_token`, `client_secret`, or `private_key` is
+rejected wherever it appears in the document. The loader applies the same rule
 and reports the offending field by name.
+
+**The value rule.** A credential written into an ordinary field is rejected too.
+This is the half that used to be missing: the field name `notes` is innocent, so
+a secret pasted into it satisfied every guard the contract had. Every string in
+the document is now inspected, at any depth, by two narrow families:
+
+1. **Literal credential formats.** AWS access key ids, GitHub, Slack and Stripe
+   tokens, Google, Anthropic and OpenAI API keys, JSON web tokens, private key
+   blocks, and credentials embedded in a URL. These are credentials wherever
+   they appear, so they are rejected on sight.
+2. **A credential-shaped key assigned a high-entropy value.** A `notes` string
+   that sets `password`, `secret`, `token`, `api_key`, `bearer`,
+   `client_secret`, or a near neighbour to a value of at least six characters
+   that clears 2.5 bits of entropy per character is rejected.
+
+The loader names the property and says which family fired, so the report is
+actionable rather than a bare refusal.
+
+### What the value rule deliberately does not do
+
+Stating this precisely matters more than stating it generously, because an
+operator who is told "credentials are excluded" will act on it.
+
+- **It does not scan for bare high-entropy strings.** A profile legitimately
+  carries sha256 digests, long identifiers, and generated names. A rule that
+  fires on those is a rule that gets switched off within a day, and a switched
+  off rule protects nothing. A digest in a `notes` or `description` value is
+  accepted, and there is a test that keeps it accepted.
+- **It accepts a value that merely names a secret.** Pointing at where a
+  credential lives is one of the things a profile is *for*. A note saying the
+  controller password is held in the operator's vault is accepted, as is a
+  reference such as `vault:` or `env:`, a redacted marker, and an unexpanded
+  variable.
+- **A short, low-entropy secret in a free-text value still passes.** A value of
+  `secret` assigned to a `password` key is six characters of about 2.25 bits and
+  sits below the floor by design, because raising the floor to catch it would
+  start rejecting ordinary prose.
+
+So the accurate wording of the guarantee is this: **a profile is validated to be
+free of credential-shaped field names, and of credentials written as values in
+the two families above. That is defense in depth against an accident, not a
+proof of absence.** Nothing in this contract can stop an operator who is
+determined to write a secret into a free-text field, and no operator should read
+this validation as permission to stop being careful.
+
+The same two families are what the repository's own validation gate applies to
+every file under `plugins/`. The loader re-states them rather than importing
+them, because it is portable package source that has to load on a host where
+that gate does not exist; the repository's test suite pins the two copies to
+each other so they cannot drift into two different rules.
 
 A profile also carries no observed inventory. Raw discovery output — addresses,
 hostnames, hardware addresses, camera names — belongs outside any repository, in
@@ -132,10 +186,23 @@ A profile declares `schema_version`. A version this package does not recognize
 is rejected outright rather than partially applied, because a half-understood
 statement of intent is worse than none.
 
-The current contract version is `1.0`, published under the schema identifier
-`urn:infiquetra:unifi:site-profile:1.0`. The identifier is a URN rather than a
+The current contract version is `1.1`, published under the schema identifier
+`urn:infiquetra:unifi:site-profile:1.1`. The identifier is a URN rather than a
 URL because nothing here ever resolves a schema over the network, and a
 fetchable identifier would imply otherwise.
+
+Version `1.1` adds no field and removes none. What changed is the value rule
+above: the set of documents this contract calls valid is now smaller, and that
+is a change to the contract even though the document shape is identical. The
+identifier moved with it, because leaving the same identifier on a document that
+now means something different is the kind of silent drift this package refuses
+everywhere else.
+
+A `1.0` document still loads, and the value rule is applied to it. A credential
+in a `1.0` profile is exactly as exposed as one in a `1.1` profile, and refusing
+to read `1.0` would strand every profile already deployed without protecting
+anything. An operator with a valid `1.0` profile has nothing to do; changing
+`schema_version` to `1.1` is an accurate relabelling, not a migration.
 
 ## Custody is the operator's, and is not part of this contract
 
