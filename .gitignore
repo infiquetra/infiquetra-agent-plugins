@@ -11,6 +11,9 @@ vault_pass.txt
 .vault_pass.txt
 
 # Local agent runtime state
+.claude/
+.saga/
+.serena/
 .hermes/
 memories/
 sessions/
