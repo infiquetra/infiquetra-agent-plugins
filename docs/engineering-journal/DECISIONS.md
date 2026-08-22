@@ -306,6 +306,50 @@ stops being zero on the live tree.
 a `notes` value at runtime, and `scripts/check_compatibility_matrix.py`, whose redaction
 check is name-shaped. Neither file is owned by this unit and neither is changed here.
 
+### Bind a current matrix to the tree it assessed, and make supersession the only exemption
+
+**Author.** Jeff Cox
+
+**Decision.** `scripts/check_compatibility_matrix.py` recomputes the fingerprint of
+`plugins/unifi/` on every run — package name, version, file count, and a tree digest over
+the sorted per-file digests *with their relative paths* — and fails when the record does
+not match. A document may exempt itself only by declaring `<!-- matrix-status: superseded -->`
+alongside a `superseded-by` naming an existing current matrix and a `superseded-reason`.
+A superseded document whose fingerprint still identifies the shipped tree is rejected.
+`matrix-status` defaults to `current`, so the binding is fail-closed. The no-argument run
+validates every matrix document in `docs/evidence/`, superseded ones included.
+
+**Rejected alternatives.** *Refreshing the numbers only*, because that leaves the identical
+trap armed for the next package change and the review named this explicitly. *Adding a
+`superseded` field to the record*, because `schemas/compatibility-matrix.schema.json` is
+closed and owned by no unit in this run; HTML comment directives carry document-level
+metadata without a schema change. *Dropping the JSON fence in the retired document so the
+validator skips it*, because retiring a document withdraws its claim about the current
+package, not the coverage and redaction rules it was published under. *Overwriting the
+original matrix in place*, because the assessment happened and its record is evidence.
+*A `--update` flag that rewrites the record from the tree*, because a one-keystroke refresh
+would let a stale matrix pass by editing the evidence to match; there is a read-only
+`--print-fingerprint` and nothing that writes. A test asserts no such flag is added.
+
+**Rationale.** Hashing the per-file digests alone would leave a pure rename invisible, and
+a rename is exactly the drift a binding exists to catch, so relative paths are inside the
+hashed text. Checkout noise — `__pycache__`, `.pyc`, `.DS_Store` — is excluded, because a
+fingerprint that moved when the test suite ran would be abandoned within a week. The digest
+is defined in prose in the matrix itself so a third party can reproduce it from published
+bytes.
+
+**Consequence to expect.** Any future change under `plugins/unifi/` fails
+`python3 scripts/check_compatibility_matrix.py` and the test suite until the assessment is
+re-run and the record refreshed. That is the intended cost: the check is meant to be
+noticed, and re-running forty credential-free stages is roughly an hour.
+
+**Revisit when.** `schemas/public-evidence.schema.json` lands and can carry document status
+as a schema field, or a second package joins the catalog and the single `PACKAGE_ROOT`
+constant needs to become per-record.
+
+**Refs.** [Digest learning](LEARNINGS.md#a-digest-in-an-evidence-record-proves-nothing-until-something-recomputes-it),
+`scripts/check_compatibility_matrix.py`, `tests/test_check_compatibility_matrix.py`.
+
 ## 2026-08-21
 
 ### Choose UniFi plus a portable Fleet Core slice as the first portability pilot

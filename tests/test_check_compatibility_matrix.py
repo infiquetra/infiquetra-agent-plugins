@@ -8,13 +8,23 @@ two things that matter and pull in opposite directions:
 * A row that honestly records a bad outcome must pass — ``unsupported`` and
   ``failed`` are results, not defects. Coverage is mandatory; passing is not.
 
+A third pull was added after a review found the matrix describing a package that
+no longer existed while passing every check:
+
+* A record whose fingerprint does not identify the assessed tree must fail, and
+  a well-formed digest of the wrong tree is the case that matters. Declaring a
+  document superseded is the only exemption, and the tests below pin both that
+  the exemption works and that it cannot be turned on the live matrix.
+
 Standard library only, matching the validator and the repository baseline.
 """
 
 from __future__ import annotations
 
+import atexit
 import io
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -28,8 +38,36 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import check_compatibility_matrix as ccm  # noqa: E402
 
 
-LIVE_DOCUMENT = ROOT / "docs" / "evidence" / "2026-08-22-unifi-compatibility-matrix.md"
+EVIDENCE = ROOT / "docs" / "evidence"
+LIVE_DOCUMENT = EVIDENCE / "2026-08-22-unifi-compatibility-matrix.md"
+SUPERSEDED_DOCUMENT = EVIDENCE / "2026-08-22-unifi-compatibility-matrix-pre-repair.md"
+READBACK_DOCUMENT = EVIDENCE / "2026-08-22-unifi-post-activation-readback.md"
 SCHEMA_PATH = ROOT / "schemas" / "compatibility-matrix.schema.json"
+PACKAGE_ROOT = ROOT / "plugins" / "unifi"
+
+
+def _build_fake_package() -> Path:
+    """A throwaway package tree the constructed records can bind themselves to.
+
+    The unit tests must not depend on the real package's file count or digest —
+    that would couple every assertion here to whatever ``plugins/unifi/`` holds
+    this week. They bind to this tree instead; the live documents are checked
+    against the real one further down.
+    """
+    directory = Path(tempfile.mkdtemp())
+    atexit.register(shutil.rmtree, directory, True)
+    package = directory / "unifi"
+    (package / "skills" / "example").mkdir(parents=True)
+    (package / "plugin.json").write_text(
+        json.dumps({"name": "unifi", "version": "2.0.0"}), encoding="utf-8"
+    )
+    (package / "README.md").write_text("Example package.\n", encoding="utf-8")
+    (package / "skills" / "example" / "SKILL.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+    return package
+
+
+FAKE_PACKAGE = _build_fake_package()
+FAKE_FILE_COUNT, FAKE_TREE_SHA256 = ccm.package_fingerprint(FAKE_PACKAGE)
 
 
 def executed_stage(command: str = "client list --json") -> dict:
@@ -63,8 +101,8 @@ def valid_record(**overrides: object) -> dict:
         "package": {
             "name": "unifi",
             "version": "2.0.0",
-            "file_count": 21,
-            "tree_sha256": "0" * 64,
+            "file_count": FAKE_FILE_COUNT,
+            "tree_sha256": FAKE_TREE_SHA256,
         },
         "method": {
             "stages": list(ccm.STAGES),
@@ -83,22 +121,35 @@ def as_document(record: dict, preamble: str = "# Matrix\n\nProse first.\n\n") ->
     return f"{preamble}```json\n{json.dumps(record, indent=2)}\n```\n\nProse after.\n"
 
 
-def write_document(record: dict) -> Path:
+def write_document(record: dict, preamble: str = "# Matrix\n\nProse first.\n\n") -> Path:
     handle = tempfile.NamedTemporaryFile(
         "w", suffix=".md", delete=False, encoding="utf-8"
     )
-    handle.write(as_document(record))
+    handle.write(as_document(record, preamble))
     handle.close()
     return Path(handle.name)
 
 
-def check(record: dict) -> list[str]:
+def check(record: dict, preamble: str = "# Matrix\n\nProse first.\n\n") -> list[str]:
     """Every problem the validator finds in a record, via a real document."""
-    document = write_document(record)
+    document = write_document(record, preamble)
     try:
-        return ccm.check_matrix(document)
+        return ccm.check_matrix(document, FAKE_PACKAGE)
     finally:
         document.unlink()
+
+
+def superseded_preamble(
+    successor: str = "successor.md",
+    reason: str = "Re-run against the repaired package.",
+) -> str:
+    """The directive block a retired matrix carries."""
+    return (
+        f"<!-- {ccm.STATUS_DIRECTIVE}: {ccm.STATUS_SUPERSEDED} -->\n"
+        f"<!-- {ccm.SUPERSEDED_BY_DIRECTIVE}: {successor} -->\n"
+        f"<!-- {ccm.SUPERSEDED_REASON_DIRECTIVE}: {reason} -->\n\n"
+        "# Matrix\n\nProse first.\n\n"
+    )
 
 
 class RecordExtractionTest(unittest.TestCase):
@@ -418,9 +469,12 @@ class PublicEvidenceTest(unittest.TestCase):
         self.assertEqual(check(record), [])
 
     def test_the_package_digest_is_not_read_as_a_leak(self) -> None:
+        # Checked against the redaction rule directly rather than through the
+        # whole validator: a digest of the wrong tree now fails the binding, and
+        # that failure would mask what this test is actually about.
         record = valid_record()
         record["package"]["tree_sha256"] = "ab" * 32
-        self.assertEqual(check(record), [])
+        self.assertEqual(ccm.check_public_evidence_rules(record), [])
 
 
 class SchemaContractTest(unittest.TestCase):
@@ -490,6 +544,267 @@ class SchemaContractTest(unittest.TestCase):
                 self.assertTrue(any(field in problem for problem in problems))
 
 
+class FingerprintTest(unittest.TestCase):
+    """The tree digest has to move when the tree does, and only then."""
+
+    def setUp(self) -> None:
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, directory, True)
+        self.package = directory / "unifi"
+        (self.package / "scripts").mkdir(parents=True)
+        (self.package / "plugin.json").write_text(
+            json.dumps({"name": "unifi", "version": "2.0.0"}), encoding="utf-8"
+        )
+        (self.package / "scripts" / "client.py").write_text("print(1)\n", encoding="utf-8")
+        self.baseline = ccm.package_fingerprint(self.package)
+
+    def test_a_changed_byte_moves_the_digest(self) -> None:
+        (self.package / "scripts" / "client.py").write_text("print(2)\n", encoding="utf-8")
+        self.assertNotEqual(ccm.package_fingerprint(self.package), self.baseline)
+
+    def test_a_rename_moves_the_digest_even_though_the_bytes_are_identical(self) -> None:
+        # The reason relative paths are inside the hashed text: hashing the
+        # file digests alone would leave a pure rename invisible.
+        (self.package / "scripts" / "client.py").rename(self.package / "scripts" / "other.py")
+        moved = ccm.package_fingerprint(self.package)
+        self.assertEqual(moved[0], self.baseline[0])
+        self.assertNotEqual(moved[1], self.baseline[1])
+
+    def test_an_added_file_moves_the_digest_and_the_count(self) -> None:
+        (self.package / "extra.md").write_text("extra\n", encoding="utf-8")
+        self.assertEqual(ccm.package_fingerprint(self.package)[0], self.baseline[0] + 1)
+        self.assertNotEqual(ccm.package_fingerprint(self.package)[1], self.baseline[1])
+
+    def test_checkout_noise_does_not_move_the_digest(self) -> None:
+        # Running the test suite leaves __pycache__ beside the package scripts.
+        # A fingerprint that moved when tests ran would be abandoned in a week.
+        cache = self.package / "scripts" / "__pycache__"
+        cache.mkdir()
+        (cache / "client.cpython-312.pyc").write_bytes(b"\x00\x01")
+        (self.package / ".DS_Store").write_bytes(b"\x00")
+        (self.package / "scripts" / "stray.pyc").write_bytes(b"\x00")
+        self.assertEqual(ccm.package_fingerprint(self.package), self.baseline)
+
+    def test_the_digest_is_stable_across_runs(self) -> None:
+        self.assertEqual(ccm.package_fingerprint(self.package), self.baseline)
+
+    def test_a_missing_package_directory_is_reported_not_crashed(self) -> None:
+        with self.assertRaises(ccm.MatrixError):
+            ccm.package_fingerprint(self.package / "absent")
+
+    def test_a_package_with_no_manifest_is_reported(self) -> None:
+        (self.package / "plugin.json").unlink()
+        with self.assertRaises(ccm.MatrixError):
+            ccm.package_identity(self.package)
+
+
+class PackageBindingTest(unittest.TestCase):
+    """A matrix must identify the tree it assessed, not merely look like it.
+
+    Every case here passed validation before the binding existed. The digest
+    case is the one the review actually hit: a well-formed 64-character digest
+    of a package that had been replaced.
+    """
+
+    def test_a_wellformed_digest_of_the_wrong_tree_fails(self) -> None:
+        record = valid_record()
+        record["package"]["tree_sha256"] = "9" * 64
+        problems = check(record)
+        self.assertTrue(any("tree_sha256" in problem for problem in problems))
+        self.assertTrue(any("does not describe the shipped tree" in p for p in problems))
+
+    def test_a_wrong_file_count_fails(self) -> None:
+        record = valid_record()
+        record["package"]["file_count"] = FAKE_FILE_COUNT + 2
+        problems = check(record)
+        self.assertTrue(any("file_count" in problem for problem in problems))
+
+    def test_the_failure_says_the_assessment_must_be_re_run_not_renumbered(self) -> None:
+        record = valid_record()
+        record["package"]["file_count"] = FAKE_FILE_COUNT + 2
+        problems = check(record)
+        self.assertTrue(any("re-run rather than renumbered" in p for p in problems))
+
+    def test_a_wrong_package_name_fails(self) -> None:
+        record = valid_record()
+        record["package"]["name"] = "unifi-portable"
+        problems = check(record)
+        self.assertTrue(any("$.package.name" in problem for problem in problems))
+
+    def test_a_wrong_package_version_fails(self) -> None:
+        record = valid_record()
+        record["package"]["version"] = "1.9.0"
+        problems = check(record)
+        self.assertTrue(any("$.package.version" in problem for problem in problems))
+
+    def test_a_matching_fingerprint_passes(self) -> None:
+        self.assertEqual(check(valid_record()), [])
+
+    def test_a_record_with_no_package_section_binds_to_nothing_and_fails(self) -> None:
+        record = valid_record()
+        del record["package"]
+        problems = ccm.check_package_binding(record, FAKE_PACKAGE)
+        self.assertTrue(any("nothing binds the record to a tree" in p for p in problems))
+
+    def test_the_fingerprint_flag_reports_the_live_package(self) -> None:
+        with redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(ccm.main([ccm.FINGERPRINT_FLAG]), 0)
+        printed = output.getvalue()
+        file_count, tree_sha256 = ccm.package_fingerprint()
+        self.assertIn(f"file_count: {file_count}", printed)
+        self.assertIn(f"tree_sha256: {tree_sha256}", printed)
+
+    def test_there_is_no_flag_that_rewrites_the_record(self) -> None:
+        # A one-keystroke refresh would let a stale matrix pass by editing the
+        # evidence to match the tree, which is the failure being repaired.
+        source = Path(ccm.__file__).read_text(encoding="utf-8")
+        for forbidden in ("--update", "--fix", "--write", "--refresh"):
+            self.assertNotIn(f'"{forbidden}"', source)
+
+
+class DocumentStatusTest(unittest.TestCase):
+    """Supersession is the only exemption, and it carries obligations."""
+
+    def setUp(self) -> None:
+        self.directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.directory, True)
+
+    def write(self, name: str, record: dict, preamble: str) -> Path:
+        path = self.directory / name
+        path.write_text(as_document(record, preamble), encoding="utf-8")
+        return path
+
+    def stale_record(self) -> dict:
+        record = valid_record()
+        record["package"]["file_count"] = FAKE_FILE_COUNT + 5
+        record["package"]["tree_sha256"] = "1" * 64
+        return record
+
+    def current_successor(self, name: str = "successor.md") -> Path:
+        return self.write(name, valid_record(), "# Current\n\n")
+
+    def test_status_defaults_to_current_so_the_binding_is_fail_closed(self) -> None:
+        path = self.write("no-directive.md", self.stale_record(), "# Matrix\n\n")
+        problems = ccm.check_matrix(path, FAKE_PACKAGE)
+        self.assertTrue(any("tree_sha256" in problem for problem in problems))
+
+    def test_a_superseded_document_is_exempt_from_the_binding(self) -> None:
+        self.current_successor()
+        path = self.write("old.md", self.stale_record(), superseded_preamble())
+        self.assertEqual(ccm.check_matrix(path, FAKE_PACKAGE), [])
+
+    def test_a_superseded_document_still_obeys_coverage_and_redaction(self) -> None:
+        self.current_successor()
+        record = self.stale_record()
+        record["clients"] = record["clients"][:9]
+        path = self.write("old.md", record, superseded_preamble())
+        problems = ccm.check_matrix(path, FAKE_PACKAGE)
+        self.assertTrue(any("has no row" in problem for problem in problems))
+
+    def test_marking_the_live_matrix_superseded_does_not_switch_the_binding_off(self) -> None:
+        # The escape hatch has to be closed, or the repair is cosmetic: anyone
+        # could dodge the binding by relabelling the current matrix.
+        self.current_successor()
+        path = self.write("live.md", valid_record(), superseded_preamble())
+        problems = ccm.check_matrix(path, FAKE_PACKAGE)
+        self.assertTrue(any("still identifies the package" in problem for problem in problems))
+
+    def test_a_superseded_document_must_name_a_successor(self) -> None:
+        preamble = (
+            f"<!-- {ccm.STATUS_DIRECTIVE}: {ccm.STATUS_SUPERSEDED} -->\n"
+            f"<!-- {ccm.SUPERSEDED_REASON_DIRECTIVE}: because -->\n\n# Matrix\n\n"
+        )
+        path = self.write("old.md", self.stale_record(), preamble)
+        problems = ccm.check_matrix(path, FAKE_PACKAGE)
+        self.assertTrue(any("names no superseded-by" in problem for problem in problems))
+
+    def test_a_superseded_document_must_record_a_reason(self) -> None:
+        self.current_successor()
+        preamble = (
+            f"<!-- {ccm.STATUS_DIRECTIVE}: {ccm.STATUS_SUPERSEDED} -->\n"
+            f"<!-- {ccm.SUPERSEDED_BY_DIRECTIVE}: successor.md -->\n\n# Matrix\n\n"
+        )
+        path = self.write("old.md", self.stale_record(), preamble)
+        problems = ccm.check_matrix(path, FAKE_PACKAGE)
+        self.assertTrue(any("superseded-reason" in problem for problem in problems))
+
+    def test_a_successor_that_does_not_exist_fails(self) -> None:
+        path = self.write("old.md", self.stale_record(), superseded_preamble("nowhere.md"))
+        problems = ccm.check_matrix(path, FAKE_PACKAGE)
+        self.assertTrue(any("does not exist" in problem for problem in problems))
+
+    def test_a_successor_that_is_itself_superseded_fails(self) -> None:
+        self.write("middle.md", self.stale_record(), superseded_preamble("further.md"))
+        path = self.write("old.md", self.stale_record(), superseded_preamble("middle.md"))
+        problems = ccm.check_matrix(path, FAKE_PACKAGE)
+        self.assertTrue(any("chain has to end at a current matrix" in p for p in problems))
+
+    def test_a_document_may_not_name_itself_as_its_successor(self) -> None:
+        path = self.write("old.md", self.stale_record(), superseded_preamble("old.md"))
+        problems = ccm.check_matrix(path, FAKE_PACKAGE)
+        self.assertTrue(any("its own successor" in problem for problem in problems))
+
+    def test_a_successor_path_may_not_escape_the_evidence_directory(self) -> None:
+        path = self.write("old.md", self.stale_record(), superseded_preamble("../secrets.md"))
+        problems = ccm.check_matrix(path, FAKE_PACKAGE)
+        self.assertTrue(any("plain relative name" in problem for problem in problems))
+
+    def test_a_current_document_may_not_carry_supersession_directives(self) -> None:
+        preamble = (
+            f"<!-- {ccm.STATUS_DIRECTIVE}: {ccm.STATUS_CURRENT} -->\n"
+            f"<!-- {ccm.SUPERSEDED_BY_DIRECTIVE}: successor.md -->\n\n# Matrix\n\n"
+        )
+        path = self.write("live.md", valid_record(), preamble)
+        problems = ccm.check_matrix(path, FAKE_PACKAGE)
+        self.assertTrue(any("never both" in problem for problem in problems))
+
+    def test_an_unrecognized_status_fails_rather_than_being_ignored(self) -> None:
+        preamble = f"<!-- {ccm.STATUS_DIRECTIVE}: retired -->\n\n# Matrix\n\n"
+        path = self.write("odd.md", valid_record(), preamble)
+        problems = ccm.check_matrix(path, FAKE_PACKAGE)
+        self.assertTrue(any("neither 'current' nor 'superseded'" in p for p in problems))
+
+    def test_a_directive_inside_a_code_fence_is_an_example_not_a_declaration(self) -> None:
+        # A matrix has to be able to document the directive format without the
+        # documentation switching the binding off.
+        fenced = (
+            "# Matrix\n\nHow to retire a matrix:\n\n```\n"
+            f"<!-- {ccm.STATUS_DIRECTIVE}: {ccm.STATUS_SUPERSEDED} -->\n"
+            f"<!-- {ccm.SUPERSEDED_BY_DIRECTIVE}: successor.md -->\n"
+            "```\n\n"
+        )
+        self.assertEqual(ccm.read_directives(fenced), {})
+        path = self.write("live.md", self.stale_record(), fenced)
+        problems = ccm.check_matrix(path, FAKE_PACKAGE)
+        self.assertTrue(any("tree_sha256" in problem for problem in problems))
+
+    def test_the_last_declaration_of_a_key_wins(self) -> None:
+        text = (
+            f"<!-- {ccm.STATUS_DIRECTIVE}: {ccm.STATUS_CURRENT} -->\n"
+            f"<!-- {ccm.STATUS_DIRECTIVE}: {ccm.STATUS_SUPERSEDED} -->\n"
+        )
+        self.assertEqual(ccm.read_directives(text)[ccm.STATUS_DIRECTIVE], ccm.STATUS_SUPERSEDED)
+
+
+class MatrixDiscoveryTest(unittest.TestCase):
+    """Which documents the no-argument run validates."""
+
+    def test_both_committed_matrices_are_discovered(self) -> None:
+        found = {path.name for path in ccm.matrix_documents()}
+        self.assertIn(LIVE_DOCUMENT.name, found)
+        self.assertIn(SUPERSEDED_DOCUMENT.name, found)
+
+    def test_other_evidence_documents_are_not_treated_as_matrices(self) -> None:
+        found = {path.name for path in ccm.matrix_documents()}
+        self.assertNotIn(READBACK_DOCUMENT.name, found)
+
+    def test_a_document_with_no_record_is_not_a_matrix(self) -> None:
+        self.assertFalse(ccm.is_matrix_document("# Notes\n\nNo record here.\n"))
+
+    def test_a_record_without_clients_is_not_a_matrix(self) -> None:
+        self.assertFalse(ccm.is_matrix_document("```json\n{\"package\": {}}\n```\n"))
+
+
 class LiveDocumentTest(unittest.TestCase):
     """The committed matrix, checked as the operator would check it."""
 
@@ -548,6 +863,135 @@ class LiveDocumentTest(unittest.TestCase):
         finally:
             document.unlink()
         self.assertIn("mostly-works", output.getvalue())
+
+    def test_the_committed_matrix_is_current(self) -> None:
+        directives = ccm.read_directives(LIVE_DOCUMENT.read_text(encoding="utf-8"))
+        self.assertEqual(directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_CURRENT)
+
+    def test_the_committed_matrix_identifies_the_shipped_package(self) -> None:
+        file_count, tree_sha256 = ccm.package_fingerprint()
+        name, version = ccm.package_identity()
+        self.assertEqual(self.record["package"]["file_count"], file_count)
+        self.assertEqual(self.record["package"]["tree_sha256"], tree_sha256)
+        self.assertEqual(self.record["package"]["name"], name)
+        self.assertEqual(self.record["package"]["version"], version)
+
+    def test_the_committed_matrix_records_the_repaired_invocation_stage(self) -> None:
+        # The defect this document was re-run to fix: it reported every
+        # invocation aborting at import, against a package whose entrypoints run.
+        invocations = [
+            client["stages"]["invocation"]
+            for client in self.record["clients"]
+            if client["stages"]["invocation"]["result"] == "executed"
+        ]
+        self.assertEqual(len(invocations), 8)
+        for stage in invocations:
+            self.assertNotIn("ModuleNotFoundError", stage["evidence"])
+            self.assertIn("Exit status 0", stage["evidence"])
+
+    def test_the_no_argument_run_validates_every_committed_matrix(self) -> None:
+        with redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(ccm.main([]), 0)
+        printed = output.getvalue()
+        self.assertIn(f"{LIVE_DOCUMENT.name} ({ccm.STATUS_CURRENT})", printed)
+        self.assertIn(f"{SUPERSEDED_DOCUMENT.name} ({ccm.STATUS_SUPERSEDED})", printed)
+
+
+class SupersededDocumentTest(unittest.TestCase):
+    """The pre-repair matrix, kept as history rather than deleted."""
+
+    def setUp(self) -> None:
+        self.text = SUPERSEDED_DOCUMENT.read_text(encoding="utf-8")
+        self.directives = ccm.read_directives(self.text)
+
+    def test_it_exists_and_still_validates(self) -> None:
+        self.assertTrue(SUPERSEDED_DOCUMENT.is_file())
+        self.assertEqual(ccm.check_matrix(SUPERSEDED_DOCUMENT), [])
+
+    def test_it_declares_itself_superseded_and_names_the_current_matrix(self) -> None:
+        self.assertEqual(self.directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_SUPERSEDED)
+        self.assertEqual(
+            self.directives.get(ccm.SUPERSEDED_BY_DIRECTIVE), LIVE_DOCUMENT.name
+        )
+        self.assertTrue(self.directives.get(ccm.SUPERSEDED_REASON_DIRECTIVE, "").strip())
+
+    def test_it_no_longer_describes_the_shipped_package(self) -> None:
+        record = ccm.extract_record(self.text)
+        self.assertNotEqual(ccm.check_package_binding(record), [])
+
+    def test_it_preserves_the_original_record_it_was_published_with(self) -> None:
+        record = ccm.extract_record(self.text)
+        self.assertEqual(record["package"]["file_count"], 21)
+        self.assertEqual(
+            record["package"]["tree_sha256"],
+            "92ed503207ca6eabfc5a70a892d682ee0030ad0d16db2db436abfb83f7fa240b",
+        )
+
+    def test_the_current_matrix_points_back_at_it(self) -> None:
+        self.assertIn(SUPERSEDED_DOCUMENT.name, LIVE_DOCUMENT.read_text(encoding="utf-8"))
+
+
+class ReadbackEvidenceTest(unittest.TestCase):
+    """The post-activation readback evidence, bound the same way the matrix is.
+
+    Capturing a readback once and letting it drift would rebuild the defect the
+    matrix had, so the fingerprint it records is recomputed here too.
+    """
+
+    def setUp(self) -> None:
+        self.text = READBACK_DOCUMENT.read_text(encoding="utf-8")
+        self.record = ccm.extract_record(self.text)
+
+    def test_the_document_exists(self) -> None:
+        self.assertTrue(READBACK_DOCUMENT.is_file())
+
+    def test_the_recorded_release_fingerprint_identifies_the_shipped_package(self) -> None:
+        file_count, tree_sha256 = ccm.package_fingerprint()
+        name, version = ccm.package_identity()
+        release = self.record["release"]
+        self.assertEqual(release["file_count"], file_count)
+        self.assertEqual(release["tree_sha256"], tree_sha256)
+        self.assertEqual(release["name"], name)
+        self.assertEqual(release["version"], version)
+
+    def test_the_recorded_unit_fingerprints_identify_the_shipped_skill_units(self) -> None:
+        for unit, recorded in self.record["release"]["units"].items():
+            with self.subTest(unit=unit):
+                file_count, tree_sha256 = ccm.package_fingerprint(
+                    PACKAGE_ROOT / "skills" / unit
+                )
+                self.assertEqual(recorded["file_count"], file_count)
+                self.assertEqual(recorded["tree_sha256"], tree_sha256)
+
+    def test_the_recorded_upstream_commit_matches_the_synchronization_pin(self) -> None:
+        provenance = json.loads(
+            (PACKAGE_ROOT / "PROVENANCE.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            self.record["release"]["upstream_commit"], provenance["source_commit"]
+        )
+        self.assertEqual(self.record["release"]["version"], provenance["source_version"])
+
+    def test_every_readback_reports_bytes_equal_to_the_release(self) -> None:
+        readbacks = self.record["readbacks"]
+        self.assertTrue(readbacks)
+        for readback in readbacks:
+            with self.subTest(client=readback["client"]):
+                self.assertTrue(readback["matches_release"])
+                self.assertTrue(readback["entrypoints_exit_zero"])
+
+    def test_all_three_profile_states_are_recorded(self) -> None:
+        states = {state["state"]: state for state in self.record["profile_states"]}
+        self.assertEqual(set(states), {"absent", "present", "unreadable"})
+        self.assertEqual(states["absent"]["exit_status"], 0)
+        self.assertEqual(states["absent"]["mode"], "discovery-only")
+        self.assertEqual(states["present"]["exit_status"], 0)
+        self.assertEqual(states["present"]["mode"], "profile")
+        self.assertEqual(states["unreadable"]["exit_status"], 1)
+        self.assertFalse(states["unreadable"]["fell_back_to_discovery_only"])
+
+    def test_the_readback_leaks_nothing(self) -> None:
+        self.assertEqual(ccm.check_public_evidence_rules(self.record), [])
 
 
 if __name__ == "__main__":
