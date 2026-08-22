@@ -353,6 +353,50 @@ class ValidationTest(TemporaryTreeTest):
             site_profile.validate_profile(payload)
         self.assertIn("credential value", str(raised.exception))
 
+    def test_a_credential_behind_an_auth_scheme_word_is_caught(self) -> None:
+        """``authorization: Bearer <token>`` is the shape an operator actually pastes.
+
+        The rule graded only the first token of the assigned value, which here is the
+        word ``Bearer`` -- no entropy, so the credential standing behind it was cleared.
+        ``Basic`` and ``Token`` are shorter than the length floor, so the pattern did not
+        match at all and those values were never examined.
+        """
+        token = "qY7vP2xK9rLm4aZbC8dEfGhJkNpQsTuWxYz1234567890"
+        for value in (
+            f"authorization: Bearer {token}",
+            f"authorization: Basic {token}",
+            f"Authorization: Bearer {token}",
+            f"token: Token {token}",
+            f"authorization: Digest {token}",
+        ):
+            with self.subTest(value=value):
+                payload = json.loads(json.dumps(VALID_PROFILE))
+                payload["subjects"][0]["notes"] = value
+                with self.assertRaises(site_profile.ProfileInvalidError) as raised:
+                    site_profile.validate_profile(payload)
+                self.assertIn("credential value", str(raised.exception))
+
+    def test_prose_after_a_credential_key_is_not_graded(self) -> None:
+        """Only the credential's own span is graded, never the sentence around it.
+
+        Several ordinary English words clear the 2.5-bit floor on their own -- ``runbook``
+        is 2.52 -- so a rule that graded every whitespace-separated token of the value
+        would reject a profile for describing where the credential lives, which is exactly
+        what a profile is supposed to do.
+        """
+        for value in (
+            "auth: see the runbook for the rotation procedure",
+            "authorization: Bearer token is stored in vault",
+            "api_key: vault:infiquetra/unifi#api_key",
+            "password: <redacted>",
+            "api_key: ${UNIFI_API_KEY}",
+            "the site uses certificate authentication end to end",
+        ):
+            with self.subTest(value=value):
+                payload = json.loads(json.dumps(VALID_PROFILE))
+                payload["subjects"][0]["notes"] = value
+                self.assertEqual(site_profile.validate_profile(payload), payload)
+
     def test_a_credential_shaped_name_is_reported_as_a_name_not_a_value(self) -> None:
         """Ordering matters: an inert value in a forbidden field is a field fault."""
         payload = json.loads(json.dumps(VALID_PROFILE))
@@ -647,6 +691,32 @@ class CredentialRuleDriftTest(unittest.TestCase):
             check_repo.CREDENTIAL_REFERENCE_PREFIX.pattern,
             site_profile.CREDENTIAL_VALUE_REFERENCE_PREFIX.pattern,
         )
+        self.assertEqual(
+            check_repo.CREDENTIAL_SCHEME_WORDS,
+            site_profile.CREDENTIAL_SCHEME_WORDS,
+        )
+        self.assertEqual(
+            check_repo.CREDENTIAL_VALUE_MIN_LENGTH,
+            site_profile.CREDENTIAL_VALUE_MIN_LENGTH,
+        )
+
+    def test_both_copies_pick_the_same_candidate_spans(self) -> None:
+        """The scheme-word rule is the newest half, so it is the likeliest to drift."""
+        spans = (
+            "qY7vP2xK9rLm4aZbC8dEfGhJkNpQsTuWxYz1234567890",
+            "Bearer qY7vP2xK9rLm4aZbC8dEfGhJkNpQsTuWxYz1234567890",
+            "Basic  qY7vP2xK9rLm4aZbC8dEfGhJkNpQsTuWxYz1234567890",
+            "Bearer token is stored in vault",
+            "see the runbook for the rotation procedure",
+            "short",
+            "",
+        )
+        for span in spans:
+            with self.subTest(span=span):
+                self.assertEqual(
+                    check_repo._credential_candidates(span),
+                    site_profile._credential_candidates(span),
+                )
 
     def test_both_copies_grade_the_same_values_the_same_way(self) -> None:
         samples = (

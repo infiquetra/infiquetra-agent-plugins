@@ -2,6 +2,54 @@
 
 ## 2026-08-22
 
+### The credential detector read the wrong span, so `Bearer` cleared the token behind it
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The site profile's secret-free guarantee has two families: literal credential
+formats, and a credential-shaped key assigned a high-entropy value. The second family is what
+catches `notes: "controller password=..."`. Two independent reviewers, on the fourth review
+cycle, found the same hole in it at full confidence.
+
+**Evidence.** `plugins/unifi/scripts/site_profile.py:169` and the identical copy at
+`scripts/check_repo.py:184`. Probed live: `api_key=<45-char opaque token>` is REJECTED, while
+`authorization: Bearer <the same token>` is ACCEPTED. Printing the match showed why — the
+captured value group was `'Bearer'`. `authorization: Basic <token>` and `token: Token <token>`
+did not match the pattern **at all**.
+
+**Mechanism.** Two distinct faults from one decision. The value group was
+`([^\s"',;)}\]]{6,})`, which stops at whitespace, so for `authorization: Bearer <token>` it
+captured the scheme word and graded that: `Bearer` carries about 2.25 bits per character,
+under the 2.5 floor, so the value was cleared and the credential after the space was never
+examined. Worse, `Basic` and `Token` are five characters — below the `{6,}` floor — so the
+pattern failed to match at that position and those values went wholly unexamined rather than
+examined and cleared. Detection was pointed at the wrong span of the string.
+
+**Fix.** The captured span now runs across whitespace, and a `_credential_candidates` helper
+returns the first token plus, when that token is an auth scheme word, the one after it. Both
+copies plus the cross-copy pin in one change (`site_profile.py` is `target-owned` and
+`check_repo.py` is repository tooling, so neither needed an upstream trip). The same skew on
+the Claude adapter path was repaired upstream as unifi `2.0.2`.
+
+**What was rejected.** Grading *every* whitespace-separated token of the value. It closes the
+same hole, but `runbook` alone scores 2.52 bits per character, so a profile saying
+`auth: see the runbook for the rotation procedure` would be rejected for describing where the
+credential lives — which is precisely what a profile is for. The rule must widen toward the
+credential, not toward the sentence.
+
+**Validation.** Twelve assertions fail against the pre-repair detector and pass after. A
+must-not-fire set covers prose, `vault:` references, `${VAR}`, and `<redacted>`.
+
+**Generalizable rule.** A detector is only as good as the *span* it grades, and a span
+boundary chosen for one input shape silently mis-frames another. When a rule scores a
+substring, test the shapes where the interesting part is not first — a prefix, a scheme word,
+a wrapper — because those do not fail loudly; they pass, which reads exactly like safety. A
+minimum-length floor applied to the whole span turns "examined and cleared" into "never
+examined", and those two outcomes are indistinguishable from the caller.
+
+**Refs.** [Upstream contract repair](../../../infiquetra-claude-plugins) unifi `2.0.2`,
+cycle-4 reviews in [`docs/reviews/`](../reviews/).
+
 ### Fixing a shared primitive does not fix the callers that pre-parse its input
 
 **Author.** Jeff Cox and Claude

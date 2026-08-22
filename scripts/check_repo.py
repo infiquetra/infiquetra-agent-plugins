@@ -185,8 +185,22 @@ CREDENTIAL_ASSIGNMENT = re.compile(
     r"(?i)(?:^|[^A-Za-z0-9_-])("
     r"pass(?:word|wd|phrase)|secret|token|api[_-]?key|apikey|authorization|auth|"
     r"bearer|credentials?|private[_-]?key|client[_-]?secret|access[_-]?key"
-    r")[\"']?\s*[:=]\s*[\"']?([^\s\"',;)}\]]{6,})"
+    r")[\"']?\s*[:=]\s*[\"']?([^\"',;)}\]]{6,})"
 )
+
+# Mirrors ``site_profile.CREDENTIAL_SCHEME_WORDS``. An auth scheme word sits
+# between the key and the credential in ``authorization: Bearer <token>``, so
+# the span above runs across whitespace and the token behind the scheme word is
+# graded too. Grading only the first token graded ``Bearer`` and cleared the
+# credential; ``Basic`` and ``Token`` are shorter than the length floor, so the
+# pattern did not even match and those values went wholly unexamined.
+CREDENTIAL_SCHEME_WORDS = frozenset(
+    {"bearer", "basic", "digest", "token", "apikey", "hmac", "negotiate"}
+)
+
+# The floor the pattern used to carry inline, moved onto each candidate now that
+# one match can yield two of them.
+CREDENTIAL_VALUE_MIN_LENGTH = 6
 
 # An assigned value has to clear this many bits of entropy per character before
 # it counts as a credential. It is deliberately low, because the key name has
@@ -778,9 +792,24 @@ def _names_a_secret(value: str) -> bool:
         return True
     if "${" in value or "{{" in value:
         return True
-    if len(set(value)) <= 2 or value.isdigit():
-        return True
-    return False
+    return len(set(value)) <= 2 or value.isdigit()
+
+
+def _credential_candidates(assigned: str) -> list[str]:
+    """The spans of an assigned value that could be the credential itself.
+
+    Mirrors ``site_profile._credential_candidates``. The first token normally is
+    the credential; when it is an auth scheme word the credential is the one
+    after it, so both are graded. Everything past that is prose and is never
+    graded, because ordinary English words clear the entropy floor.
+    """
+    tokens = assigned.split()
+    if not tokens:
+        return []
+    candidates = [tokens[0]]
+    if len(tokens) > 1 and tokens[0].lower() in CREDENTIAL_SCHEME_WORDS:
+        candidates.append(tokens[1])
+    return [token for token in candidates if len(token) >= CREDENTIAL_VALUE_MIN_LENGTH]
 
 
 def credential_findings(text: str, *, include_assignments: bool) -> list[str]:
@@ -799,11 +828,15 @@ def credential_findings(text: str, *, include_assignments: bool) -> list[str]:
             continue
         for match in CREDENTIAL_ASSIGNMENT.finditer(line):
             key, value = match.group(1), match.group(2)
-            if _names_a_secret(value):
-                continue
-            if shannon_entropy(value) < CREDENTIAL_VALUE_MIN_ENTROPY:
-                continue
-            findings.append(f"line {number}: {key!r} is assigned a credential-shaped value")
+            for candidate in _credential_candidates(value):
+                if _names_a_secret(candidate):
+                    continue
+                if shannon_entropy(candidate) < CREDENTIAL_VALUE_MIN_ENTROPY:
+                    continue
+                findings.append(
+                    f"line {number}: {key!r} is assigned a credential-shaped value"
+                )
+                break
     return findings
 
 

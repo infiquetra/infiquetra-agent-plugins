@@ -2,33 +2,9 @@
 
 ## P0
 
-### Emit the declared Fleet Core bundle so the package has a working entrypoint
-
-**Author.** Jeff Cox and Claude
-
-**Priority.** P0
-
-**Effort.** One implementation unit: emit the declared module into the package, add a
-presence check to the repository validator, and re-run the invocation stage.
-
-**Worth it when.** Before anyone installs or uses the portable UniFi package, and before
-any client-specific remediation is considered. This blocks real use on every client and
-is independent of all of them.
-
-**Recording only.** This entry records a finding. No repair has begun, and none may begin
-without a separate operator decision, under the
-[operator pause](DECISIONS.md#pause-the-pilot-at-the-compatibility-matrix-and-take-no-client-specific-remediation).
-
-**Context.** Both skill entrypoints import `fleet_commons_shim` at module import time and
-abort with `ModuleNotFoundError` before parsing any argument.
-[`plugins/unifi/fleet-bundle.json`](../../plugins/unifi/fleet-bundle.json) declares the
-`retry_backoff` module that would replace the dropped shim, but no bundle was ever written
-into the package. Every repository check passes anyway, because the bundle checks validate
-correctness-when-present rather than presence. The fix has two halves that must ship
-together: emit the bundle, and make an unemitted declared module a validation failure.
-
-**Refs.** [Compatibility matrix](../evidence/2026-08-22-unifi-compatibility-matrix.md),
-[learning](LEARNINGS.md#a-package-can-satisfy-every-structural-check-and-still-have-no-working-entrypoint)
+Nothing open. The one P0 this file carried shipped in `4c1d30f` and is recorded in
+[ARCHIVE.md](ARCHIVE.md); it sat here reading "No repair has begun" through four review
+cycles before anyone compared it to the tree.
 
 ## P1
 
@@ -204,31 +180,6 @@ every digest. That is sound but unshared: the next person has to know to do it t
 
 **Refs.** [`plugins/fleet-core/PROVENANCE.json`](../../plugins/fleet-core/PROVENANCE.json),
 [the pilot plan's requirement R32](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md)
-
-### Drop README.md from the UniFi byte-copy table so a resync keeps the portable docs
-
-**Author.** Jeff Cox
-
-**Priority.** P2
-
-**Effort.** One line in `scripts/sync_vendor_source.py`
-(`PORTABLE_BYTE_COPIES`) plus the fixture expectations in
-`tests/test_sync_vendor_source.py`. The live `PROVENANCE.json` entry is already
-`target-owned`.
-
-**Worth it when.** Before the next authorized `synchronize()` of the UniFi
-package. Until then, `tests/test_unifi_readme.py` fails closed if a resync
-restores the Claude README, so the defect cannot return unnoticed; a
-deliberate sync would still have to fight that test.
-
-**Context.** Consensus C5 rewrote `plugins/unifi/README.md` for the portable
-package. The sync script still lists `README.md` as an upstream byte copy, and
-that tuple is owned by the C8 path-safety repair running concurrently, so this
-unit did not edit it. `target_owned_paths()` would record the rewritten README
-as target-owned automatically once it is no longer in the managed set.
-
-**Refs.** [README custody decision](DECISIONS.md#the-portable-unifi-readme-is-target-owned-rewritten-site-neutral),
-[byte-copy README learning](LEARNINGS.md#a-byte-copied-readme-describes-the-source-package-not-the-derived-one)
 
 ### Make code-review lens selection an operator-approved planning contract
 

@@ -170,8 +170,24 @@ CREDENTIAL_VALUE_ASSIGNMENT = re.compile(
     r"(?i)(?:^|[^A-Za-z0-9_-])("
     r"pass(?:word|wd|phrase)|secret|token|api[_-]?key|apikey|authorization|auth|"
     r"bearer|credentials?|private[_-]?key|client[_-]?secret|access[_-]?key"
-    r")[\"']?\s*[:=]\s*[\"']?([^\s\"',;)}\]]{6,})"
+    r")[\"']?\s*[:=]\s*[\"']?([^\"',;)}\]]{6,})"
 )
+
+# An auth scheme word sits between the key and the credential in the shape an
+# operator actually pastes: ``authorization: Bearer <token>``. The captured span
+# above deliberately runs across whitespace so that token is inside it; grading
+# only the first token graded the word ``Bearer``, which carries no entropy, and
+# cleared the credential standing behind it. Scheme words shorter than the
+# length floor (``Basic``, ``Token``) were worse still: the span never reached
+# the floor, so the pattern did not match at all and the value went unexamined.
+CREDENTIAL_SCHEME_WORDS = frozenset(
+    {"bearer", "basic", "digest", "token", "apikey", "hmac", "negotiate"}
+)
+
+# A candidate span has to be at least this long before it is worth grading. This
+# is the floor the pattern used to carry inline, moved onto each candidate now
+# that one match can yield two of them.
+CREDENTIAL_VALUE_MIN_LENGTH = 6
 
 # An assigned value has to clear this many bits of entropy per character before
 # it counts as a credential. It is deliberately low, because the key name has
@@ -434,9 +450,25 @@ def _names_a_secret(value: str) -> bool:
         return True
     if "${" in value or "{{" in value:
         return True
-    if len(set(value)) <= 2 or value.isdigit():
-        return True
-    return False
+    return len(set(value)) <= 2 or value.isdigit()
+
+
+def _credential_candidates(assigned: str) -> list[str]:
+    """The spans of an assigned value that could be the credential itself.
+
+    The first token normally is. When that token is an auth scheme word the
+    credential is the one *after* it, so both are returned: grading ``Bearer``
+    alone let ``authorization: Bearer <token>`` pass every check. Everything
+    past the credential is prose and is never graded, because ordinary English
+    words clear the entropy floor and would fire on a sentence.
+    """
+    tokens = assigned.split()
+    if not tokens:
+        return []
+    candidates = [tokens[0]]
+    if len(tokens) > 1 and tokens[0].lower() in CREDENTIAL_SCHEME_WORDS:
+        candidates.append(tokens[1])
+    return [token for token in candidates if len(token) >= CREDENTIAL_VALUE_MIN_LENGTH]
 
 
 def _credential_in_text(text: str) -> str | None:
@@ -446,11 +478,12 @@ def _credential_in_text(text: str) -> str | None:
             return label
     for match in CREDENTIAL_VALUE_ASSIGNMENT.finditer(text):
         key, assigned = match.group(1), match.group(2)
-        if _names_a_secret(assigned):
-            continue
-        if _value_entropy(assigned) < CREDENTIAL_VALUE_MIN_ENTROPY:
-            continue
-        return f"{key!r} is assigned a credential-shaped value"
+        for candidate in _credential_candidates(assigned):
+            if _names_a_secret(candidate):
+                continue
+            if _value_entropy(candidate) < CREDENTIAL_VALUE_MIN_ENTROPY:
+                continue
+            return f"{key!r} is assigned a credential-shaped value"
     return None
 
 
