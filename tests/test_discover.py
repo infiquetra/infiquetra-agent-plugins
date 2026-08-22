@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -274,6 +275,90 @@ class PersistenceTest(DiscoveryTest):
         self.assertEqual(payload["clients"][0]["identifier"], "example-discovered-host")
         self.assertNotIn("invocations", payload)
 
+    def test_output_path_inside_the_package_directory_is_always_refused(self) -> None:
+        """A refusal that needs no checkout to decide.
+
+        The named repository root here is an unrelated temporary directory, so
+        the working-tree rule cannot be what refuses this path. A package
+        copied out of its checkout keeps this layout and loses the ``.git``
+        entry, and this is the rule that still holds there.
+        """
+        inside = discover.PACKAGE_ROOT / "discovery-output.example.json"
+        self.assertFalse(inside.exists())
+        with self.assertRaises(discover.DiscoveryPersistenceError) as raised:
+            discover.refuse_repository_output(inside, repository_root=self.root)
+        self.assertIn("package directory", str(raised.exception))
+        self.assertFalse(inside.exists())
+
+    def undeterminable_working_tree(self) -> None:
+        """Make the ``.git`` walk find nothing, for the duration of one test.
+
+        The walk starts at the current directory, and whether a real directory
+        has a ``.git`` entry above it is a property of the machine the suite
+        runs on — this developer's ``TMPDIR`` has one. Neutralizing the walk
+        itself is what makes "discovery run from a copy with no checkout"
+        mean the same thing everywhere. The production branch under test is
+        the one that calls it with no argument.
+        """
+        original = discover.repository_root_from
+        discover.repository_root_from = lambda start=None: None
+        self.addCleanup(setattr, discover, "repository_root_from", original)
+        self.assertIsNone(discover.repository_root_from())
+
+    def test_persistence_refuses_when_no_working_tree_can_be_determined(self) -> None:
+        """The deny-list refuses what it cannot evaluate.
+
+        With no root named and none found, there is no tree to compare the
+        output path against. Returning the path here is what let a discovery
+        run from a copy without ``.git`` write an unfiltered controller
+        response next to committable files.
+        """
+        self.undeterminable_working_tree()
+        with self.assertRaises(discover.DiscoveryPersistenceError) as raised:
+            discover.refuse_repository_output(self.root / "inventory.json")
+        message = str(raised.exception)
+        self.assertIn("no repository working tree", message)
+        self.assertIn("--repository-root", message)
+
+    def test_a_discovery_run_with_no_determinable_tree_writes_no_file(self) -> None:
+        """The whole persistence chain, not just its leaf check.
+
+        ``discover`` -> ``persist_payload`` -> ``refuse_repository_output`` is
+        the path a real run takes, and the refusal has to stop the write
+        rather than be reported after it.
+        """
+        self.undeterminable_working_tree()
+        output = self.root / "inventory.json"
+        with self.assertRaises(discover.DiscoveryPersistenceError):
+            discover.discover(
+                RecordingFixture(EXAMPLE_PAYLOADS),
+                host="controller.example",
+                site="default",
+                output=output,
+                environ=self.environ,
+            )
+        self.assertFalse(output.exists())
+
+    def test_a_named_repository_root_lifts_the_undeterminable_refusal(self) -> None:
+        """Fail-closed, not fail-always.
+
+        An operator working outside a checkout says which tree to protect and
+        the write proceeds, so the refusal above is a deny-list that cannot be
+        evaluated rather than a ban on persistence.
+        """
+        self.undeterminable_working_tree()
+        output = self.root / "inventory.json"
+        result = discover.discover(
+            RecordingFixture(EXAMPLE_PAYLOADS),
+            host="controller.example",
+            site="default",
+            output=output,
+            repository_root=ROOT,
+            environ=self.environ,
+        )
+        self.assertEqual(result.written_path, output.resolve())
+        self.assertTrue(output.is_file())
+
     def test_cli_rejects_confirm_rather_than_honoring_it(self) -> None:
         completed = subprocess.run(
             [sys.executable, str(UNIFI_SCRIPTS / "discover.py"), "--confirm"],
@@ -283,6 +368,47 @@ class PersistenceTest(DiscoveryTest):
         )
         self.assertNotEqual(completed.returncode, 0)
         self.assertIn("--confirm", completed.stderr)
+
+
+class PolicyObservationTest(DiscoveryTest):
+    """Discovery says its policy set is unobserved, not empty.
+
+    Nothing in the read-only catalog lists policy objects, so the empty
+    ``policies`` list is absence of evidence. A consumer that read it as
+    controller state reported every intended policy as missing; the
+    declaration is what stops that.
+    """
+
+    def test_no_catalogued_operation_covers_policies(self) -> None:
+        self.assertNotIn(
+            "policies",
+            {operation.resource for operation in discover.READ_ONLY_OPERATIONS},
+        )
+
+    def test_a_discovery_inventory_declares_its_policy_set_unavailable(self) -> None:
+        result = self.run_discovery()
+        self.assertEqual(result.inventory["policies"], [])
+        self.assertEqual(
+            result.inventory[discover.POLICY_OBSERVATION_KEY],
+            discover.POLICY_UNAVAILABLE,
+        )
+
+    def test_an_empty_inventory_declares_the_same_thing(self) -> None:
+        inventory = discover.empty_inventory("default")
+        self.assertEqual(
+            inventory[discover.POLICY_OBSERVATION_KEY],
+            discover.POLICY_UNAVAILABLE,
+        )
+
+    def test_the_declaration_survives_being_written_and_read_back(self) -> None:
+        """``drift --inventory <file>`` is a real path, so the file must carry it."""
+        outside = self.root / "discovery.json"
+        self.run_discovery(output=outside)
+        payload = json.loads(outside.read_text(encoding="utf-8"))
+        self.assertEqual(
+            payload[discover.POLICY_OBSERVATION_KEY],
+            discover.POLICY_UNAVAILABLE,
+        )
 
 
 class ProposalTest(DiscoveryTest):

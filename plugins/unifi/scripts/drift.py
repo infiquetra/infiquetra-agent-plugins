@@ -11,11 +11,13 @@ Two findings this unit must be able to produce when a profile is present:
 - a host present on the controller but absent from the profile
 - a policy expected by the profile but absent on the controller
 
-Discovery does not fetch firewall or other policy objects, so observed
-policies are whatever the inventory carries under ``policies``. An empty
-list is honest: this unit's coverage is networks, VLANs, devices, clients,
-and cameras. A profile policy whose identifier is not in that list is
-absent on the controller.
+Discovery does not fetch firewall or other policy objects. That makes its
+``policies`` list unobserved rather than empty, and the inventory says so
+under ``policy_observation``. Absence of evidence is not evidence of
+absence: this report emits ``missing-policy`` only for an inventory that
+actually observed a policy set, and otherwise names the gap in ``limits``
+instead of reporting every intended policy as missing. An inventory from a
+policy-aware source still gets the full comparison, empty result included.
 
 Output is JSON on standard output. Persistence of a drift report follows
 the same default-deny rule as discovery: write only to an operator-named
@@ -46,6 +48,13 @@ UNPROFILED_HOST = "unprofiled-host"
 MISSING_POLICY = "missing-policy"
 
 FINDING_KINDS = (UNPROFILED_HOST, MISSING_POLICY)
+
+#: What a report may not conclude when the inventory never observed policies.
+#: A report that silently dropped the comparison would read as "no policy
+#: drift", which is the same false statement in the other direction.
+POLICY_UNOBSERVED_LIMIT = (
+    f"No policy is reported missing: {discover.POLICY_UNAVAILABLE_REASON}."
+)
 
 
 class DriftError(Exception):
@@ -83,6 +92,28 @@ def observed_policy_identifiers(inventory: Mapping[str, Any]) -> tuple[str, ...]
     return tuple(seen)
 
 
+def policy_observation(inventory: Mapping[str, Any]) -> str:
+    """Whether this inventory's policy list is an observation at all.
+
+    Returns :data:`discover.POLICY_OBSERVED` only when the inventory earns
+    it: either it carries observed policy identifiers, or it affirmatively
+    declares that it looked. Anything else — the discovery inventory's
+    explicit ``unavailable``, an unrecognized declaration, or a bare
+    ``policies: []`` from a source that never said whether it looked — is
+    unobserved, because reading an unexamined empty list as controller state
+    is what made every intended policy look missing.
+
+    Observed identifiers outrank the declaration. A list with rows in it was
+    observed however the inventory happened to label it.
+    """
+    if observed_policy_identifiers(inventory):
+        return discover.POLICY_OBSERVED
+    declared = inventory.get(discover.POLICY_OBSERVATION_KEY)
+    if isinstance(declared, str) and declared.strip().lower() == discover.POLICY_OBSERVED:
+        return discover.POLICY_OBSERVED
+    return discover.POLICY_UNAVAILABLE
+
+
 def profiled_hosts(context: SiteContext) -> tuple[str, ...]:
     return tuple(
         str(subject["identifier"])
@@ -106,16 +137,22 @@ def report(
     context: SiteContext,
 ) -> dict[str, Any]:
     """Compare actual inventory to intended profile. Never infers intent."""
+    observation = policy_observation(inventory)
+    limits: list[str] = []
+    if observation != discover.POLICY_OBSERVED:
+        limits.append(POLICY_UNOBSERVED_LIMIT)
+
     if not context.has_profile:
         return {
             "mode": DISCOVERY_ONLY_MODE,
             "findings": [],
             "finding_count": 0,
-            "limits": list(DISCOVERY_ONLY_LIMITS),
+            "limits": list(DISCOVERY_ONLY_LIMITS) + limits,
             "actual_hosts": list(actual_hosts(inventory)),
             "profiled_hosts": [],
             "intended_policies": [],
             "observed_policies": list(observed_policy_identifiers(inventory)),
+            "policy_observation": observation,
         }
 
     findings: list[dict[str, Any]] = []
@@ -132,24 +169,27 @@ def report(
                 }
             )
 
-    observed_policies = set(observed_policy_identifiers(inventory))
-    for identifier in intended_policy_identifiers(context):
-        if identifier not in observed_policies:
-            findings.append(
-                {
-                    "kind": MISSING_POLICY,
-                    "identifier": identifier,
-                    "message": (
-                        "policy is expected by the profile but absent on the controller"
-                    ),
-                }
-            )
+    # Only an inventory that observed a policy set can prove a policy absent.
+    if observation == discover.POLICY_OBSERVED:
+        observed_policies = set(observed_policy_identifiers(inventory))
+        for identifier in intended_policy_identifiers(context):
+            if identifier not in observed_policies:
+                findings.append(
+                    {
+                        "kind": MISSING_POLICY,
+                        "identifier": identifier,
+                        "message": (
+                            "policy is expected by the profile but absent on the controller"
+                        ),
+                    }
+                )
 
     return {
         "mode": PROFILE_MODE,
         "findings": findings,
         "finding_count": len(findings),
-        "limits": [],
+        "limits": limits,
+        "policy_observation": observation,
         "actual_hosts": list(actual_hosts(inventory)),
         "profiled_hosts": list(profiled_hosts(context)),
         "intended_policies": list(intended_policy_identifiers(context)),

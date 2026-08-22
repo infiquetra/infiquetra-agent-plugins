@@ -70,6 +70,20 @@ class DriftTest(unittest.TestCase):
         payload.update(overrides)
         return payload
 
+    def observed_inventory(self, *identifiers: str) -> dict:
+        """A live-discovery inventory whose policy set really was observed.
+
+        Discovery composes no policy list operation, so the inventory it
+        produces declares its own policy set unavailable. A policy-aware
+        source declares the opposite, and that declaration is what earns the
+        ``missing-policy`` comparison. Passing no identifier models a source
+        that looked and genuinely found nothing.
+        """
+        return self.inventory(
+            policies=[{"identifier": identifier} for identifier in identifiers],
+            **{discover.POLICY_OBSERVATION_KEY: discover.POLICY_OBSERVED},
+        )
+
     def environment(self, **overrides: str) -> dict[str, str]:
         """An environment whose profile resolution cannot leave ``self.root``.
 
@@ -116,7 +130,11 @@ class NoProfileTest(DriftTest):
         self.assertEqual(report["mode"], site_profile.DISCOVERY_ONLY_MODE)
         self.assertEqual(report["findings"], [])
         self.assertEqual(report["finding_count"], 0)
-        self.assertEqual(report["limits"], list(site_profile.DISCOVERY_ONLY_LIMITS))
+        self.assertEqual(
+            report["limits"],
+            list(site_profile.DISCOVERY_ONLY_LIMITS) + [drift.POLICY_UNOBSERVED_LIMIT],
+        )
+        self.assertEqual(report["policy_observation"], discover.POLICY_UNAVAILABLE)
         # Actual hosts may exist; they are not findings without intended state.
         self.assertIn("example-discovered-host", report["actual_hosts"])
         self.assertEqual(report["profiled_hosts"], [])
@@ -136,10 +154,15 @@ class ProfiledDriftTest(DriftTest):
     ) -> None:
         """The two findings the plan names, in one report.
 
-        The mocked controller has ``example-discovered-host`` and no observed
-        policies. The profile names a different host and an intended policy.
+        The mocked controller has ``example-discovered-host``; the profile
+        names a different host and an intended policy. The inventory declares
+        that it observed the controller's policy set and that the set holds
+        some other policy, which is what makes ``example-policy`` provably
+        absent rather than merely unlooked-for.
         """
-        report = drift.report(self.inventory(), self.profile_context())
+        report = drift.report(
+            self.observed_inventory("example-other-policy"), self.profile_context()
+        )
         self.assertEqual(report["mode"], site_profile.PROFILE_MODE)
         kinds = {finding["kind"] for finding in report["findings"]}
         self.assertEqual(kinds, {drift.UNPROFILED_HOST, drift.MISSING_POLICY})
@@ -183,9 +206,123 @@ class ProfiledDriftTest(DriftTest):
                 "identifier": "example-discovered-host",
             }
         ]
-        inventory = self.inventory(policies=[{"identifier": "example-policy"}])
+        inventory = self.observed_inventory("example-policy")
         report = drift.report(inventory, self.profile_context(payload))
         self.assertEqual(report["findings"], [])
+        self.assertEqual(report["policy_observation"], discover.POLICY_OBSERVED)
+        self.assertEqual(report["limits"], [])
+
+    def test_a_policy_present_on_the_controller_emits_no_finding(self) -> None:
+        """The intended policy exists on the controller, so nothing is wrong.
+
+        The profile names ``example-policy`` and the observed policy set
+        contains it alongside another. Before the repair this still produced a
+        ``missing-policy`` finding for every profile whose inventory came from
+        live discovery, because an unexamined empty list was read as the
+        controller's answer.
+        """
+        payload = json.loads(json.dumps(VALID_PROFILE))
+        payload["subjects"] = [
+            {"kind": "host", "identifier": "example-discovered-host"}
+        ]
+        report = drift.report(
+            self.observed_inventory("example-policy", "example-other-policy"),
+            self.profile_context(payload),
+        )
+        self.assertEqual(report["findings"], [])
+        self.assertEqual(report["finding_count"], 0)
+        self.assertEqual(report["intended_policies"], ["example-policy"])
+        self.assertIn("example-policy", report["observed_policies"])
+
+    def test_a_live_discovery_inventory_reports_no_policy_missing(self) -> None:
+        """The repair for the false ``missing-policy`` finding.
+
+        This is the ordinary live shape: an inventory straight out of
+        discovery, and a profile with an intended policy. Discovery composes
+        no policy list operation, so it has observed nothing about policies
+        and the report may not claim the policy is absent. It says so in
+        ``limits`` rather than dropping the comparison silently.
+        """
+        report = drift.report(self.inventory(), self.profile_context())
+        self.assertEqual(report["mode"], site_profile.PROFILE_MODE)
+        self.assertEqual(report["intended_policies"], ["example-policy"])
+        self.assertEqual(
+            [finding["kind"] for finding in report["findings"]],
+            [drift.UNPROFILED_HOST],
+        )
+        self.assertNotIn(
+            drift.MISSING_POLICY,
+            {finding["kind"] for finding in report["findings"]},
+        )
+        self.assertEqual(report["policy_observation"], discover.POLICY_UNAVAILABLE)
+        self.assertIn(drift.POLICY_UNOBSERVED_LIMIT, report["limits"])
+
+    def test_a_policy_absent_from_an_observed_set_is_still_reported_missing(
+        self,
+    ) -> None:
+        """The guarantee still bites where it is entitled to.
+
+        A repair that stopped emitting ``missing-policy`` at all would pass
+        every other test in this class. Here the inventory observed the
+        controller's policy set, the set does not hold the intended policy,
+        and the finding is required.
+        """
+        payload = json.loads(json.dumps(VALID_PROFILE))
+        payload["subjects"] = [
+            {"kind": "host", "identifier": "example-discovered-host"}
+        ]
+        report = drift.report(
+            self.observed_inventory("example-other-policy"),
+            self.profile_context(payload),
+        )
+        self.assertEqual(
+            [(finding["kind"], finding["identifier"]) for finding in report["findings"]],
+            [(drift.MISSING_POLICY, "example-policy")],
+        )
+        self.assertEqual(report["limits"], [])
+
+    def test_an_observed_but_empty_policy_set_still_reports_the_policy_missing(
+        self,
+    ) -> None:
+        """Observed-and-empty is a real answer; unobserved-and-empty is not.
+
+        A source that looked at the controller and found no policy at all has
+        proved the intended policy absent, so the finding stands even though
+        the list is empty. The declaration is the whole difference between
+        this case and the live-discovery one above.
+        """
+        payload = json.loads(json.dumps(VALID_PROFILE))
+        payload["subjects"] = [
+            {"kind": "host", "identifier": "example-discovered-host"}
+        ]
+        report = drift.report(
+            self.observed_inventory(), self.profile_context(payload)
+        )
+        self.assertEqual(report["observed_policies"], [])
+        self.assertEqual(
+            [(finding["kind"], finding["identifier"]) for finding in report["findings"]],
+            [(drift.MISSING_POLICY, "example-policy")],
+        )
+
+    def test_a_policy_list_that_never_said_whether_it_looked_is_unobserved(
+        self,
+    ) -> None:
+        """An undeclared empty list is read closed, not open.
+
+        A hand-written or older inventory carrying a bare ``policies: []`` and
+        no declaration cannot distinguish "looked and found none" from "never
+        looked". Reading it as the former is what produced the false finding,
+        so it is read as the latter and the limitation is named.
+        """
+        inventory = self.inventory(policies=[])
+        inventory.pop(discover.POLICY_OBSERVATION_KEY, None)
+        report = drift.report(inventory, self.profile_context())
+        self.assertEqual(report["policy_observation"], discover.POLICY_UNAVAILABLE)
+        self.assertNotIn(
+            drift.MISSING_POLICY,
+            {finding["kind"] for finding in report["findings"]},
+        )
+        self.assertIn(drift.POLICY_UNOBSERVED_LIMIT, report["limits"])
 
     def test_drift_does_not_infer_intent_for_an_unprofiled_host(self) -> None:
         context = self.profile_context()
@@ -261,6 +398,13 @@ class PersistenceAndCliTest(DriftTest):
         self.assertEqual(payload["findings"], [])
 
     def test_cli_composes_discovery_through_a_fixture_transport(self) -> None:
+        """The whole chain, transport to report, on the live-shaped path.
+
+        Discovery observes no policy set, so the report the command line
+        prints carries the unprofiled host and no ``missing-policy`` finding
+        for the profile's ``example-policy``, and names the gap in
+        ``limits``.
+        """
         profile = write_json(self.root / "site-profile.json", VALID_PROFILE)
         buffer = io.StringIO()
         with redirect_stdout(buffer):
@@ -274,7 +418,10 @@ class PersistenceAndCliTest(DriftTest):
         self.assertEqual(code, 0)
         payload = json.loads(buffer.getvalue())
         kinds = {finding["kind"] for finding in payload["findings"]}
-        self.assertEqual(kinds, {drift.UNPROFILED_HOST, drift.MISSING_POLICY})
+        self.assertEqual(kinds, {drift.UNPROFILED_HOST})
+        self.assertEqual(payload["intended_policies"], ["example-policy"])
+        self.assertEqual(payload["policy_observation"], discover.POLICY_UNAVAILABLE)
+        self.assertIn(drift.POLICY_UNOBSERVED_LIMIT, payload["limits"])
 
     def test_cli_without_inventory_or_transport_does_not_open_a_controller(self) -> None:
         buffer = io.StringIO()
@@ -324,17 +471,28 @@ class DeployedProfileTest(DriftTest):
         self.assertEqual(report["mode"], site_profile.PROFILE_MODE)
         # The deployed profile is this test's own, not the machine's.
         self.assertEqual(report["site_identifier"], "example-site")
-        self.assertEqual(report["limits"], [])
         self.assertEqual(report["profiled_hosts"], ["example-host"])
         self.assertEqual(report["intended_policies"], ["example-policy"])
+        # Live discovery observes no policy set, so the intended policy is
+        # unlooked-for rather than absent, and the report says which.
+        self.assertEqual(report["limits"], [drift.POLICY_UNOBSERVED_LIMIT])
         self.assertEqual(
             [(finding["kind"], finding["identifier"]) for finding in report["findings"]],
+            [(drift.UNPROFILED_HOST, "example-discovered-host")],
+        )
+        self.assertEqual(report["finding_count"], 1)
+
+        # The same deployed profile against a policy-aware inventory: the
+        # comparison runs and the missing policy is reported.
+        observed = drift.report(self.observed_inventory("example-other-policy"), context)
+        self.assertEqual(observed["limits"], [])
+        self.assertEqual(
+            [(finding["kind"], finding["identifier"]) for finding in observed["findings"]],
             [
                 (drift.UNPROFILED_HOST, "example-discovered-host"),
                 (drift.MISSING_POLICY, "example-policy"),
             ],
         )
-        self.assertEqual(report["finding_count"], 2)
 
     def test_cli_reports_the_drift_a_configured_profile_implies(self) -> None:
         self.deploy_profile()
@@ -349,14 +507,12 @@ class DeployedProfileTest(DriftTest):
         payload = json.loads(buffer.getvalue())
         self.assertEqual(payload["mode"], site_profile.PROFILE_MODE)
         self.assertEqual(payload["site_identifier"], "example-site")
-        self.assertEqual(payload["finding_count"], 2)
+        self.assertEqual(payload["finding_count"], 1)
         self.assertEqual(
             [(finding["kind"], finding["identifier"]) for finding in payload["findings"]],
-            [
-                (drift.UNPROFILED_HOST, "example-discovered-host"),
-                (drift.MISSING_POLICY, "example-policy"),
-            ],
+            [(drift.UNPROFILED_HOST, "example-discovered-host")],
         )
+        self.assertIn(drift.POLICY_UNOBSERVED_LIMIT, payload["limits"])
 
     def test_the_same_run_without_the_configuration_file_is_discovery_only(self) -> None:
         """The one difference between the two modes is the deployed profile.
@@ -384,6 +540,38 @@ class FindingKindContractTest(unittest.TestCase):
         self.assertEqual(
             set(drift.FINDING_KINDS),
             {drift.UNPROFILED_HOST, drift.MISSING_POLICY},
+        )
+
+    def test_policy_observation_reads_a_declaration_it_does_not_recognize_closed(
+        self,
+    ) -> None:
+        """An unknown declaration is not an observation.
+
+        The vocabulary may grow. Until a value is recognized, an inventory
+        that used it has not earned the comparison, and an empty list under an
+        unrecognized label must not be read as controller state.
+        """
+        self.assertEqual(
+            drift.policy_observation(
+                {"policies": [], discover.POLICY_OBSERVATION_KEY: "partial"}
+            ),
+            discover.POLICY_UNAVAILABLE,
+        )
+        self.assertEqual(
+            drift.policy_observation(
+                {"policies": [], discover.POLICY_OBSERVATION_KEY: "OBSERVED"}
+            ),
+            discover.POLICY_OBSERVED,
+        )
+        # Rows outrank the label: a populated list was observed either way.
+        self.assertEqual(
+            drift.policy_observation(
+                {
+                    "policies": [{"identifier": "example-policy"}],
+                    discover.POLICY_OBSERVATION_KEY: discover.POLICY_UNAVAILABLE,
+                }
+            ),
+            discover.POLICY_OBSERVED,
         )
 
 
