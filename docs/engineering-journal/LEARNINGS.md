@@ -1,5 +1,140 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-08-22
+
+### A package can satisfy every structural check and still have no working entrypoint
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Running the ten-client compatibility matrix against the assembled portable
+UniFi package, after every preceding unit of the pilot had reported green.
+
+**Evidence.** Every client that reached the invocation stage produced the same failure:
+both `unifi_network_client.py` and `unifi_protect_client.py` abort during module import
+with `ModuleNotFoundError` for `fleet_commons_shim`, before any argument is parsed. The
+import is at `plugins/unifi/skills/unifi-network/scripts/unifi_network_client.py:49`, and
+no file of that name exists anywhere in the assembled package. The full record is in the
+[ten-client compatibility matrix](../evidence/2026-08-22-unifi-compatibility-matrix.md).
+
+**Mechanism.** Synchronization deliberately drops both copies of `fleet_commons_shim.py`,
+because build-time bundling is meant to replace them, and
+[`plugins/unifi/fleet-bundle.json`](../../plugins/unifi/fleet-bundle.json) duly declares
+the `retry_backoff` module the package needs. Nothing ever emitted it. The repository
+validator did not catch this, because its two bundle checks both validate
+correctness-when-present rather than presence: `check_bundled_files` walks the bundle
+files that exist and verifies their stamps, and `check_fleet_bundle_declarations`
+validates the declaration's shape against a closed schema. A declaration naming a module
+that was never written is well formed, so every gate stayed green while the package had
+no runnable entrypoint at all.
+
+**Generalizable rule.** A declaration that names a required artifact must be checked for
+that artifact's presence, not only for its correctness when present. An absent file
+produces no violation to report, so absence has to be asserted deliberately or it is
+never noticed. This is a second instance of the seam defect recorded below, found the
+same way: at the first end-to-end run.
+
+---
+
+### Every unit passed its own tests and the defect lived in the seam between two correct units
+
+**Author.** Jeff Cox and Claude
+
+**Context.** A correctly deployed operator site profile produced `mode=discovery-only`
+with zero subjects during the pilot, on a machine where the profile file was present at
+the documented path.
+
+**Evidence.** The pilot's Run C follow-up commit. The deployment unit wrote a valid
+profile to the documented runtime path, and the loader unit read the resolution contract
+exactly as that contract is written. Neither unit was wrong, and both unit test suites
+were green.
+
+**Mechanism.** The contract resolves the `UNIFI_SITE_PROFILE` environment variable first,
+then the path remembered in `config.json`, then no profile at all. Deploying a file to
+the documented default runtime path registers it with neither rung. One unit owned
+writing the file and another owned reading the contract; no unit owned making the
+deployed path reachable by the resolution order. The capability was split across units,
+and the seam between them belonged to nobody, so the end-to-end path did not work while
+every unit-level check passed. The portable half of this gap remains open and is recorded
+in [queued work](QUEUED.md#the-documented-default-site-profile-runtime-path-is-never-read).
+
+**Generalizable rule.** A plan that splits a capability across units must name which unit
+owns the seam, and gate the release on an end-to-end check rather than on the union of
+unit-level green. The union of green units is not evidence that the capability works.
+
+---
+
+### Two correct halves and no owner for the join ships a package that cannot run
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The assembled portable UniFi package had no working entrypoint on any
+client, while every validator in the repository reported success.
+
+**Evidence.**
+`python3 plugins/unifi/skills/unifi-network/scripts/unifi_network_client.py --help`
+exited 1 with `ModuleNotFoundError: No module named 'fleet_commons_shim'`, raised at
+module scope before argparse ran; `unifi_protect_client.py` failed identically. The
+ten-client compatibility matrix in
+[`docs/evidence/2026-08-22-unifi-compatibility-matrix.md`](../evidence/2026-08-22-unifi-compatibility-matrix.md)
+recorded the same abort for every client that reached the execution stage. Fixed by
+`scripts/sync_vendor_source.py` transform `resolve-bundled-fleet-module`, the
+per-client destinations in `plugins/unifi/fleet-bundle.json`, and
+`check_repo.check_fleet_bundle_outputs`.
+
+**Mechanism.** Two pieces of tooling each did their own job correctly. The bundler
+(`scripts/bundle_fleet_module.py`) generates a Fleet Core module into the consuming
+package and rejects a tampered or stale copy. The synchronization
+(`scripts/sync_vendor_source.py`) reproduces upstream bytes exactly and refuses a
+downstream edit. Between them sat one fact neither owned: the clients import
+`fleet_commons_shim`, and the package deliberately ships no such module. The
+synchronization classified both clients as upstream byte copies, so copying the broken
+import verbatim was not merely permitted but required by its own rule; the bundler was
+never asked to write anything the clients actually resolve, so no bundle was generated
+at all. Each validator was correct about its half. Nothing asserted that the assembled
+result would start.
+
+The blind spot had a precise shape. `check_repo.check_bundled_files` reads the bundles
+that are on disk, so a bundle that was never generated is invisible to it -- absence of
+evidence read as evidence of absence of a problem. No test executed a shipped
+entrypoint, so the one signal that would have caught it in a second was missing.
+
+**Generalizable rule.** When two tools each own one half of an artifact, the join is
+not covered by testing both halves. Add one test that runs the assembled thing the way
+a user runs it, and one validator assertion that the two halves name the same files.
+
+### Neutralizing an environment variable does not neutralize a fallback that reads a file
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Two tests in `tests/test_drift.py` began failing on a branch whose
+production code had not changed, once a real operator site profile was deployed on the
+developer's machine.
+
+**Evidence.** `tests/test_drift.py::PersistenceAndCliTest` called
+`drift.main(..., environ={})` intending a run with no site profile.
+`test_cli_writes_a_report_outside_the_tree` expected mode `discovery-only` and got
+`profile`; `test_cli_with_injected_inventory_writes_nothing_inside_the_tree` expected
+zero findings and got nine, the first being an `unprofiled-host` finding against a real
+host. The same suite was green earlier in the same pilot, before any profile existed on
+the machine.
+
+**Mechanism.** The site-profile contract in
+`plugins/unifi/scripts/site_profile.py:262` resolves a profile from two rungs: the
+`UNIFI_SITE_PROFILE` environment variable first, and the path remembered in
+`${XDG_CONFIG_HOME:-~/.config}/infiquetra/unifi/config.json` second. An empty `environ`
+mapping suppresses only the first rung. The second is read from the real filesystem
+through `Path.home()`, which no `environ` argument reaches. The tests were therefore
+asserting a property of the developer's machine, not of the code. The fix pins
+`XDG_CONFIG_HOME` into the test's temporary directory and passes the `--config-path`
+seam the command line already offers, so both rungs land inside the temporary tree.
+A companion test now deploys a profile through the configured rung on purpose and
+asserts profile mode with the two findings it implies, which is the case the failing
+tests had been exercising by accident.
+
+**Generalizable rule.** When a lookup has more than one rung, isolating a test means
+pinning every rung, not the first one; a rung that ends in a filesystem default is the
+one that will silently read the developer's machine.
+
 ## 2026-08-21
 
 ### A plugin's tracked file list does not reveal what it needs to run

@@ -10,3 +10,15 @@
 - [Architecture brief](docs/cross-vendor-plugin-architecture-brief.md): Research, proposed architecture, compatibility, and open decisions.
 - [Engineering journal](docs/engineering-journal/README.md): Durable learnings, decisions, queued work, and archive.
 - [Public guidance](docs/public-safe-summary.md): Public-safe Infiquetra development rules.
+
+## Pilot
+
+- [Portability pilot plan](docs/plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md): The approved plan for the first portability pilot, executed and paused for an operator decision.
+- [Ten-client compatibility matrix](docs/evidence/2026-08-22-unifi-compatibility-matrix.md): What every installed coding-agent client did with the portable UniFi package, stage by stage, with evidence. Coverage was mandatory; passing was not.
+
+## Packages
+
+- [UniFi package](plugins/unifi/README.md): Portable UniFi package derived from a pinned upstream revision, with its Claude adapter under `com.infiquetra.claude/`.
+- [Fleet Core package](plugins/fleet-core/README.md): Portable Fleet Core source carrying the `retry_backoff` module only.
+- [Deferred Fleet Core modules](plugins/fleet-core/DEFERRED.md): Every upstream module not ported, named explicitly. No document here claims full Fleet Core parity.
+- [Site profile contract](plugins/unifi/references/site-profile.md): The optional machine-local operator site profile the UniFi package reads. Absent profile means discovery-only mode and no inferred intent.

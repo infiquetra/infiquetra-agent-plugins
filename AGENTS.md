@@ -31,6 +31,12 @@ copies, or Team Mimir profile definitions.
 ## Commands
 
 ```bash
+# Build step. Regenerate the build-time Fleet Core bundles after changing
+# plugins/fleet-core/ or a consumer's fleet-bundle.json. check_repo.py rejects
+# a declared bundle that is missing, stale, or hand-edited, so this runs first
+# when either of those changed.
+python3 scripts/bundle_fleet_module.py
+
 python3 scripts/check_repo.py
 python3 -m unittest discover -s tests -v
 git diff --check
@@ -48,6 +54,10 @@ git diff --check
   decision moves that authority here.
 - Do not edit installed plugin copies as maintained source.
 - Keep changes scoped and add tests for changed script or packaging behavior.
+- A portable package must be runnable, not merely present. When a package ships an
+  executable entrypoint, a test has to run it the way a user runs it; validating the
+  pieces separately is what let the UniFi clients ship importing a module nothing
+  generated. See `tests/test_client_entrypoints.py`.
 - Apply the security and publication rules in
   [`docs/public-safe-summary.md`](docs/public-safe-summary.md). In particular,
   generated validation fixtures must use inert example values.
