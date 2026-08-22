@@ -2,41 +2,6 @@
 
 ## P0
 
-### Re-run the ten-client matrix and the readback against the resynced package
-
-**Author.** Jeff Cox and Claude
-
-**Priority.** P0
-
-**Effort.** One operator-run session: re-run the four stages against all ten clients,
-re-read the installed bytes back in each client, publish the new matrix as current, and
-mark the present one superseded by it.
-
-**Worth it when.** Now. Eight tests in
-[`tests/test_check_compatibility_matrix.py`](../../tests/test_check_compatibility_matrix.py)
-are failing, and they stay failing until this runs. This is the only honest way to clear
-them.
-
-**Context.** Re-synchronizing the portable Fleet Core slice to 0.25.1 regenerated both
-`skills/*/scripts/_bundled/retry_backoff.py` bundles and re-pinned
-`plugins/unifi/PROVENANCE.json`. All three files live inside `plugins/unifi/`, so the
-package tree digest moved from `6e6b57c1…` to `da46ca77…` and the two evidence documents
-stopped identifying the shipped tree. The file count is unchanged at 23; only the digest
-moved, and no UniFi source byte changed. The binding is working exactly as designed: it is
-reporting that the record describes a package that no longer ships.
-
-**Do not close this by editing the number.** The matrix says so in its own text —
-"There is deliberately no flag that writes that fingerprint back into this document.
-Refreshing the numbers without re-running the assessment is precisely the failure this
-binding exists to catch." Marking the current matrix superseded does not work either: the
-supersession contract requires a named successor that is itself current, and there is none
-until the re-run produces one.
-
-**Refs.** [Compatibility matrix](../evidence/2026-08-22-unifi-compatibility-matrix.md),
-[post-activation readback](../evidence/2026-08-22-unifi-post-activation-readback.md),
-[decision](DECISIONS.md#a-re-synchronization-does-not-renumber-the-evidence-it-invalidates),
-[learning](LEARNINGS.md#regenerating-a-build-artifact-retires-the-observational-evidence-bound-to-it)
-
 ### Emit the declared Fleet Core bundle so the package has a working entrypoint
 
 **Author.** Jeff Cox and Claude
@@ -170,6 +135,44 @@ changes what an existing host resolves, so it is a contract change and not a pat
 [pilot plan](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md)
 
 ## P2
+
+### The ported Fleet Core test still pins the pre-2.0.1 caller shape
+
+**Author.** Jeff Cox and Claude
+
+**Priority.** P2
+
+**Effort.** Small, but it is a custody question before it is an edit: decide whether
+`tests/test_retry_backoff.py` may be re-derived without moving the Fleet Core pin, then
+either re-derive it or record why it stays.
+
+**Worth it when.** Before anyone reads that test as a statement about the shipped clients.
+
+**What it is.** [`tests/test_retry_backoff.py`](../../tests/test_retry_backoff.py) is a
+`guard-pytest-import` version 2 transform of the upstream test at `ed72f439`, the revision
+[`plugins/fleet-core/PROVENANCE.json`](../../plugins/fleet-core/PROVENANCE.json) pins. Its
+recorded source digest `7d80f735…` still matches the upstream bytes at that revision
+exactly, so the port is faithful and the suite passes.
+
+Upstream changed that file at `0d81dd9a`. It inverted
+`test_a_caller_that_pre_parses_with_int_still_loses_the_retry` into
+`test_a_caller_that_pre_parses_with_parse_retry_after_keeps_the_retry`, because the UniFi
+clients that test characterized were repaired in `2.0.1`. The ported copy therefore still
+asserts what happens to a caller shape this repository no longer ships.
+
+**Why this is not a defect today.** The assertion is still true of the primitive, which is
+what the test exercises; nothing here is failing or lying about the primitive's behaviour.
+What is stale is the *scenario* it pins, not the result.
+
+**The custody question.** Re-deriving it means reading the file at `0d81dd9a`, which is
+not the revision the Fleet Core slice pins. That slice's own rule is that its pin names the
+revision at which the upstream `plugins/fleet-core` subtree last changed — and that subtree
+did not change at `0d81dd9a`. So either the derived-test entry gets a pin of its own,
+separate from the package pin, or the test waits for the next Fleet Core release. Deciding
+that is the work; it should not be settled by whoever next touches the file.
+
+**Refs.** [`plugins/fleet-core/PROVENANCE.json`](../../plugins/fleet-core/PROVENANCE.json)
+`derived_files`, [learning](LEARNINGS.md#two-portable-slices-of-one-upstream-repository-can-legitimately-pin-two-revisions)
 
 ### Give the synchronization script a Fleet Core target
 
