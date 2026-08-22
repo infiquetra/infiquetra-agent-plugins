@@ -22,6 +22,7 @@ Usage:
 import argparse
 import base64
 import json
+import math
 import os
 import sys
 import time
@@ -57,10 +58,17 @@ import retry_backoff as _retry_backoff  # noqa: E402  (after the sys.path shim, 
 
 
 class _RateLimited(Exception):  # noqa: N818 - a sentinel, not an error surface
-    """A 429 raised inside the retry wrapper so ``retry_with_backoff`` backs off + retries (#348)."""
+    """A 429 raised inside the retry wrapper so ``retry_with_backoff`` backs off + retries (#348).
 
-    def __init__(self, retry_after: int) -> None:
-        super().__init__(f"rate limited; retry after {retry_after}s")
+    ``retry_after`` is the server hint already reduced to seconds by the shared
+    ``parse_retry_after`` (which accepts both RFC 7231 forms), or ``None`` when the response
+    carried no usable hint — the primitive reads ``None`` as "no hint" and answers with its
+    computed jittered backoff.
+    """
+
+    def __init__(self, retry_after: float | None) -> None:
+        hint = "an unspecified delay" if retry_after is None else f"{retry_after}s"
+        super().__init__(f"rate limited; retry after {hint}")
         self.status_code = 429
         self.retry_after = retry_after
 
@@ -170,10 +178,16 @@ class UnifiProtectClient:
                 timeout=30,
                 verify=self.verify_ssl,
             )
-            # A 429 is raised so the shared primitive backs off + retries (#348); a Retry-After hint
-            # is honored. All other statuses flow through unchanged to the handling below.
+            # A 429 is raised so the shared primitive backs off + retries (#348); a Retry-After
+            # hint is honored. The hint goes through the shared ``parse_retry_after`` so BOTH
+            # RFC 7231 forms work: a raw HTTP-date used to raise ValueError inside ``int()``, and
+            # that ValueError carries no 429 status, so the primitive judged it non-retryable and
+            # propagated it — one request, no backoff, a generic "Unexpected error" for the
+            # operator. An absent or unparseable hint parses to None, meaning computed backoff.
+            # All other statuses flow through unchanged to the handling below.
             if resp.status_code == 429:
-                raise _RateLimited(int(resp.headers.get("Retry-After", 60)))
+                hint = _retry_backoff.parse_retry_after(resp.headers.get("Retry-After"))
+                raise _RateLimited(hint)
             return resp
 
         try:
@@ -184,11 +198,13 @@ class UnifiProtectClient:
                     sleep=time.sleep,
                 )
             except _RateLimited as exc:
-                # Retries exhausted — preserve the existing typed-error + exit surface.
+                # Retries exhausted — preserve the existing typed-error + exit surface: whole
+                # seconds, and the long-standing 60 when the controller gave no usable hint.
+                advice = 60 if exc.retry_after is None else math.ceil(exc.retry_after)
                 self._error(
-                    f"Rate limited. Retry after {exc.retry_after} seconds",
+                    f"Rate limited. Retry after {advice} seconds",
                     status_code=429,
-                    retry_after=exc.retry_after,
+                    retry_after=advice,
                 )
                 sys.exit(1)
 

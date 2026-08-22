@@ -46,12 +46,19 @@ import sync_vendor_source as svs  # noqa: E402
 # defects that repair removed. The constant is pinned here on purpose: moving
 # the pin is a deliberate act that has to change a test, not a silent drift.
 #
-# It moved once, from 0eb1fe04 to its immediate child, when Fleet Core 0.25.1
-# repaired RFC 7231 `Retry-After` HTTP-date handling in the shared backoff
-# primitive. The upstream `plugins/unifi` subtree is byte-identical across that
-# step, so re-synchronizing changed no UniFi byte; the pin moved so that one
-# revision names the corrected state of the whole port rather than two.
-CORRECTED_REVISION = "ed72f439ba01f2e20d94be074e5612c5641c0c8e"
+# It has moved twice. First from 0eb1fe04 to its immediate child, when Fleet
+# Core 0.25.1 repaired RFC 7231 `Retry-After` HTTP-date handling in the shared
+# backoff primitive. The upstream `plugins/unifi` subtree is byte-identical
+# across that step, so re-synchronizing changed no UniFi byte; the pin moved so
+# that one revision names the corrected state of the whole port rather than two.
+#
+# Then from ed72f439 to 0d81dd9a, UniFi 2.0.1, which repaired the caller half of
+# the same defect: both clients converted the raw `Retry-After` header with
+# `int()` before raising, so a primitive that had learned to read the HTTP-date
+# form never received one. That move does change UniFi bytes -- both client
+# entrypoints and the upstream changelog -- so the `resolve-bundled-fleet-module`
+# transform is re-applied over new source bytes and records new digests.
+CORRECTED_REVISION = "0d81dd9a48ce4321645fd857d23d749cc23520d1"
 FORBIDDEN_REVISION_PREFIX = "995a475b"
 
 #: A client actually reaching for the dropped shim, as opposed to a comment

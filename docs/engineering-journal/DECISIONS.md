@@ -2,6 +2,42 @@
 
 ## 2026-08-22
 
+### Compatibility evidence is captured on the floor interpreter, by explicit path
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** Every command in the compatibility matrix's invocation stage and in
+the post-activation readback runs on the interpreter the catalog declares as its
+minimum — `python3.12` today — named by explicit path, never as `python3`. The
+recorded commands say `python3.12` so a reader can see which interpreter produced
+the numbers.
+
+**Rationale.** The catalog declares `python>=3.12`. Evidence gathered on a later
+interpreter supports a claim about that later interpreter and nothing about the
+floor. This is not hypothetical here: the two superseded matrices ran on CPython
+3.14 and recorded 29 and 21 lines of usage text, where the floor interpreter
+prints 30 and 22 for the very same bytes. Had a floor break existed, the same
+setup would have reported green.
+
+**Rejected alternatives.**
+
+- *Run on `python3` and note the version in prose.* This is what the earlier
+  matrices did, and both had to add a paragraph saying the floor case was not
+  shown. A limitation that has to be written down every time is a defect in the
+  method, not a caveat.
+- *Run on both the floor and the default interpreter.* Twice the stages for a
+  claim nobody makes. Every later interpreter is in contract by construction; the
+  interesting boundary is the minimum, and only the minimum is promised.
+- *Add a `python_version` field to the matrix schema.* The schema is closed by
+  design and its `method` object is closed too. The interpreter is recorded in
+  `method.isolation` and in every invocation stage's evidence string, which keeps
+  one schema rather than growing one per fact.
+
+**Revisit when.** The declared floor moves. The floor lives in
+`tests/test_python_floor.py` as `PYTHON_FLOOR`; when it changes, the interpreter
+used to capture evidence changes with it, and the evidence has to be re-captured
+rather than re-labelled.
+
 ### The portable catalog's minimum supported Python is `python>=3.12`
 
 **Author.** Jeff Cox and Claude

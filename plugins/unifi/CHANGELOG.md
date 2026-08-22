@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-08-22
+
+Repairs the caller side of the `Retry-After` defect. Fleet Core 0.25.1 taught the shared backoff
+primitive to read both RFC 7231 forms of the header, but both UniFi clients still converted the
+raw header with `int()` before raising, so the primitive only ever saw a hint the caller had
+already failed to parse. Fixing the primitive alone was never sufficient, and the release that
+fixed it said so in a characterization test.
+
+**What went wrong.** A controller that answers a 429 with the HTTP-date form —
+`Retry-After: Fri, 31 Dec 2100 23:59:59 GMT`, which is a form the specification allows and real
+controllers send — made `int()` raise `ValueError` inside the request path. A `ValueError`
+carries no `status_code`, so the shared primitive judged it non-retryable and propagated it
+immediately. The client's `except _RateLimited` never saw it, the bare `except Exception` did,
+and the operator got `Unexpected error: invalid literal for int() with base 10: ...` after
+exactly one request, with no backoff and no retry.
+
+**The fix.** Both clients now hand the raw header to the shared `parse_retry_after`, which
+reduces either RFC 7231 form to seconds, or to `None` when there is no usable hint. The
+`_RateLimited` signalling is unchanged, so a 429 still reaches the backoff primitive carrying its
+status.
+
+- A 429 whose `Retry-After` is an HTTP-date now backs off and retries, honoring the parsed delay
+  (bounded by the primitive's 60-second maximum) instead of raising.
+- A 429 whose `Retry-After` is delta-seconds behaves exactly as before.
+- An absent or unparseable `Retry-After` is now treated as no hint at all and answered with the
+  primitive's computed jittered backoff. This is a **behavior change**: the clients previously
+  substituted a literal 60 for a missing header, which made every hint-less 429 sleep a flat
+  60 seconds per attempt. The operator-facing exit surface is unchanged — when retries are
+  exhausted with no usable hint, the reported `retry_after` is still 60.
+
+The exit surface keeps its shape in every case: `retry_after` remains a whole number of seconds,
+rounded up from a parsed hint.
+
+**Why this is a patch and not a minor.** The one behavior change above is a change in how long the
+client waits between its own retries, and the retry loop is internal — no command signature, no
+output field, and no exit code moves. An installation that worked before works after, and the
+generic `Unexpected error` it used to emit against a date-form `Retry-After` was never a contract
+anyone could depend on. Under semantic versioning that is a bug fix.
+
+Files: `skills/unifi-network/scripts/unifi_network_client.py`,
+`skills/unifi-protect/scripts/unifi_protect_client.py`.
+
 ## [2.0.0] - 2026-08-22
 
 Activates the work Units U6 and U7 authored and deliberately left unreleased. The hold was

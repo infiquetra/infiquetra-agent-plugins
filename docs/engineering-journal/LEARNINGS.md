@@ -2,6 +2,95 @@
 
 ## 2026-08-22
 
+### Fixing a shared primitive does not fix the callers that pre-parse its input
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Re-synchronizing the portable UniFi package from upstream release
+`2.0.1` at commit `0d81dd9a`, one release after the portable Fleet Core slice
+took the `Retry-After` repair from Fleet Core `0.25.1` at `ed72f439`.
+
+**Evidence.** Fleet Core `0.25.1` taught `retry_with_backoff` and
+`parse_retry_after` to read both RFC 7231 forms of the `Retry-After` header,
+including the HTTP-date form. Both UniFi clients still did
+`raise _RateLimited(int(resp.headers.get("Retry-After", 60)))` at their call
+site, so the repaired primitive never saw a raw header at all — it saw whatever
+`int()` produced, and on an HTTP-date `int()` raises `ValueError` before the
+primitive is reached. A `ValueError` carries no `status_code`, so the primitive
+judged it non-retryable and propagated it: one request, no backoff, and an
+`Unexpected error: invalid literal for int()` for the operator. UniFi `2.0.1`
+moved both call sites to `_retry_backoff.parse_retry_after(...)`, visible in
+this repository at
+[`plugins/unifi/skills/unifi-network/scripts/unifi_network_client.py:189`](../../plugins/unifi/skills/unifi-network/scripts/unifi_network_client.py)
+and
+[`plugins/unifi/skills/unifi-protect/scripts/unifi_protect_client.py:189`](../../plugins/unifi/skills/unifi-protect/scripts/unifi_protect_client.py).
+
+**Mechanism.** The primitive's contract is over the *raw* header. A caller that
+normalizes the input before handing it over has silently narrowed that contract
+to the subset it can already parse, and every later widening of the primitive is
+invisible to it. Worse, the failure is not a wrong delay — it is a thrown
+exception of a type the retry machinery cannot recognize, so the repair does not
+degrade the retry, it removes it.
+
+**Generalizable rule.** When a shared primitive is widened, audit the call sites
+that pre-parse its input before declaring the defect fixed; a caller that
+converts before it delegates does not inherit the repair, and its failure will
+look like a different bug entirely.
+
+### Two portable slices of one upstream repository can legitimately pin two revisions
+
+**Author.** Jeff Cox and Claude
+
+**Context.** After the UniFi `2.0.1` re-synchronization,
+[`plugins/unifi/PROVENANCE.json`](../../plugins/unifi/PROVENANCE.json) pins
+`0d81dd9a` while
+[`plugins/fleet-core/PROVENANCE.json`](../../plugins/fleet-core/PROVENANCE.json)
+still pins `ed72f439`. The Fleet Core slice's own notes previously asserted that
+the UniFi package pinned "this same revision", which stopped being true.
+
+**Evidence.** `git diff --name-only ed72f439 0d81dd9a -- plugins/fleet-core`
+returns nothing: the upstream subtree is byte-identical across the step. The
+recorded byte-copy digest `5aea3be1…` matches the on-disk module and the
+upstream bytes at `ed72f439`, and both generated bundles carry that same
+`source-sha256` in their stamps.
+
+**Mechanism.** Each slice pins the revision at which *its own* upstream subtree
+last changed, which is what makes a pin name a derivation rather than an
+unrelated later head. Two slices of one repository therefore diverge in pin
+whenever one subtree moves and the other does not, and the pins are still
+consistent as long as one is an ancestor of the other and the quieter subtree is
+byte-identical between them. That last part is a check, not an assumption.
+
+**Generalizable rule.** Do not treat "both slices pin one commit" as an
+invariant; treat it as a coincidence that holds until one subtree moves. State
+the ancestry and the byte-identity instead, and verify both rather than asserting
+either.
+
+### A default interpreter is not evidence for a declared floor
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Refreshing the compatibility evidence after the catalog's minimum
+supported Python was set to `python>=3.12`.
+
+**Evidence.** On the machine this ran on, `python3` is CPython 3.14.6 and
+`/opt/homebrew/bin/python3.12` is CPython 3.12.13. Both earlier matrices ran
+their invocation stage on the default interpreter and recorded 29 and 21 lines of
+argument-parser usage text. On `python3.12` the *same* 2.0.0 client prints 30 and
+22, because `argparse` wraps its usage block differently there. The line count
+moved without a single package byte changing.
+
+**Mechanism.** A run on a later interpreter proves the later interpreter. It
+cannot prove the floor, and it cannot even be assumed to produce the same
+observable output, because the standard library differs between them. An
+evidence document that records a number gathered above the floor and a floor
+claim in the same page invites the reader to attach one to the other.
+
+**Generalizable rule.** Run floor evidence on the floor interpreter by explicit
+path, never on `python3`; and when a recorded number moves, prove the cause by
+re-measuring the old artifact on the new interpreter before attributing it to the
+change under test.
+
 ### A byte copy imports the upstream platform floor along with the upstream fix
 
 **Author.** Jeff Cox and Claude

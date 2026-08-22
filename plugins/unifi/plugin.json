@@ -1,6 +1,6 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "unifi",
-  "version": "2.0.0",
-  "description": "Portable UniFi Network and Protect package: two Agent Skills with their bundled Python clients, derived from infiquetra-claude-plugins at the corrected 2.0.0 revision. Claude Code files live under the com.infiquetra.claude client extension directory; the operator site-profile contract, discovery, and drift reporting are authored here."
+  "version": "2.0.1",
+  "description": "Portable UniFi Network and Protect package: two Agent Skills with their bundled Python clients, derived from infiquetra-claude-plugins at the corrected 2.0.1 revision. Claude Code files live under the com.infiquetra.claude client extension directory; the operator site-profile contract, discovery, and drift reporting are authored here."
 }

@@ -17,6 +17,19 @@ a catalog-level contract change that this package's own documentation states.
 
 ### Changed
 
+- **The portable UniFi package no longer pins the same upstream revision as this
+  package, and no Fleet Core byte moved.** UniFi `2.0.1`, at upstream commit
+  `0d81dd9a`, repaired the caller half of the `Retry-After` defect this package's
+  `0.25.1` release fixed in the primitive: both UniFi clients converted the raw
+  header with `int()` before raising, so the repaired primitive never received a
+  header it could read. `plugins/unifi/PROVENANCE.json` therefore pins
+  `0d81dd9a`, while this package still pins `ed72f439`. The upstream
+  `plugins/fleet-core` subtree is byte-identical between those two revisions, so
+  the two pins name one consistent upstream state, not two competing answers.
+  The `[0.25.1]` entry below says the two packages pin the same revision; that
+  sentence describes what was true at that release and is left standing rather
+  than rewritten.
+
 - **The catalog's minimum supported Python is `python>=3.12`.** It is a minimum
   and not a pin: every later interpreter stays in contract. The floor is now the
   one the authoritative source declares and tests. `infiquetra-claude-plugins`

@@ -2,6 +2,27 @@
 
 ## 2026-08-22
 
+### Re-run the ten-client matrix and the readback against the resynced package
+
+**Status.** Shipped on 2026-08-22, and then shipped a second time the same day.
+
+**Outcome.** Done twice, for two different re-synchronizations, by the same method both
+times. The first re-run cleared the Fleet Core 0.25.1 resync: the package tree digest had
+moved from `6e6b57c1…` to `da46ca77…`, and forty stage results were executed again rather
+than the digest edited. The second re-run cleared the UniFi 2.0.1 resync, which replaced
+both client entrypoints and moved the tree digest to `cafe8836…` and the manifest version
+to `2.0.1`; forty stage results were executed again against that tree, and the readback
+was re-captured from three fresh installs.
+
+No verdict changed in either re-run: eight clients work directly, OpenAI Codex works
+through an adapter, Cursor Agent failed, 34 executed and 6 blocked stage results both
+times. What changed was digests, one manifest version, and — in the second re-run — the
+interpreter, which is now the catalog's declared floor rather than whatever was default.
+
+**Refs.** [Compatibility matrix](../evidence/2026-08-22-unifi-compatibility-matrix.md),
+[post-activation readback](../evidence/2026-08-22-unifi-post-activation-readback.md),
+[the matrix superseded before the 2.0.1 re-run](../evidence/2026-08-22-unifi-compatibility-matrix-pre-unifi-201.md)
+
 ### Decide the Python floor the Fleet Core resync raised
 
 **Status.** Resolved by operator decision on 2026-08-22.
