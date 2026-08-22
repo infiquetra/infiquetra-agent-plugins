@@ -66,6 +66,50 @@ does not ship.
 source cannot keep the source README as a byte copy. Package documentation is
 about the assembled artifact; if that artifact is not the source, the README
 is target-owned (or a named transform), not a digest match.
+### A check that cannot be evaluated must not return the permissive answer
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Two independent reviews of the portable UniFi package, reconciled in
+[the review consensus](../reviews/2026-08-22-code-review-consensus.md), each found a
+runtime defect in the discovery and drift scripts. The two look unrelated — one is a
+false drift finding, the other a persistence deny-list — and they are the same mistake.
+
+**Evidence.** Both reviewers independently reported the drift defect (consensus item C2,
+Cursor F-03 and OpenCode F-03, both rated P1). `drift.report` compared the profile's
+intended policies against `inventory["policies"]`, which `discover.py` assigned as an
+unconditional empty list because the read-only catalog composes no policy list
+operation. Every intended policy therefore produced a `missing-policy` finding on every
+live run, including for policies that exist on the controller. The persistence defect
+(consensus item C10, OpenCode F-06, P2) is in `refuse_repository_output`: it resolved the
+working tree by walking up for a `.git` entry, and when that walk found nothing it
+returned the output path unrefused, so discovery run from a copy of the package without a
+checkout could write an unfiltered controller response into the package directory.
+
+**Mechanism.** In both places a guard reached a state where it had no answer, and
+returned the answer that permits. Drift asked "is this policy on the controller?" of a
+list nothing had ever looked at, and read the empty list as "no". Persistence asked "is
+this path inside the working tree?" with no working tree to compare against, and read the
+unanswerable question as "no". Neither failure is visible from inside the guard: an empty
+list and a `None` root are both ordinary values, and the permissive branch is the one
+with no error to raise. Both were also locked in by tests, which asserted the false
+`missing-policy` finding as expected output and exercised persistence only with an
+injected repository root, so the defective branch was never reached.
+
+**The repair.** Discovery now declares `policy_observation` alongside `policies`, so an
+inventory says whether its policy set was observed at all; drift emits `missing-policy`
+only for an inventory that observed one, and names the gap in `limits` rather than
+dropping the comparison silently. An inventory from a policy-aware source still gets the
+full comparison, including when it observed an empty set. Persistence refuses a path
+inside the package's own directory with or without a checkout, and refuses outright when
+no working tree can be determined, naming `--repository-root` as the way to say which
+tree to protect.
+
+**Generalizable rule.** A check that cannot be evaluated must refuse, not pass. When a
+guard's input can be absent as well as empty, absence and emptiness need separate values,
+because collapsing them makes the unexamined case indistinguishable from the examined
+one. And a test that asserts a guarantee should be run once against the unfixed code: a
+regression test that passes either way is the same defect in the test suite.
 
 ---
 

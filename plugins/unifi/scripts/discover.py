@@ -9,10 +9,13 @@ here even though it would pass a method-only filter.
 
 Because neither client filters or redacts a controller response, persistence
 is default-deny. The in-memory inventory and a generated proposed profile stay
-in memory unless the operator names an output path, and a path inside the
-repository working tree is refused. Generating a proposal never writes the
-live configured profile: the proposal is a review artifact, not an applied
-one, and every intent field on it is the explicit unknown.
+in memory unless the operator names an output path, and a path inside this
+package's own directory or inside the repository working tree is refused. When
+no working tree can be determined at all, the write is refused rather than
+allowed, because that is the case where the deny-list would otherwise have
+nothing to compare against. Generating a proposal never writes the live
+configured profile: the proposal is a review artifact, not an applied one, and
+every intent field on it is the explicit unknown.
 
 The module imports the standard library only. Live HTTP is an injected
 transport, not an import-time side effect; tests supply a fixture transport
@@ -131,6 +134,28 @@ PROPOSAL_SITE_DESCRIPTION = (
 )
 
 
+# --- policy observation ----------------------------------------------------
+
+#: Whether an inventory's ``policies`` list is an observation at all.
+#:
+#: The catalog above composes no policy list operation, so discovery never
+#: looks at controller policy objects. An empty ``policies`` list is therefore
+#: absence of evidence, not evidence of absence, and a consumer that reads it
+#: as "the controller holds no policy" will report every intended policy as
+#: missing. The inventory says which of the two it means, and a consumer that
+#: wants to derive absence has to find the affirmative ``observed`` value.
+POLICY_OBSERVATION_KEY = "policy_observation"
+POLICY_OBSERVED = "observed"
+POLICY_UNAVAILABLE = "unavailable"
+
+#: Why a discovery inventory reports its policy set as unavailable. Kept next
+#: to the value so a reader does not have to re-derive it from the catalog.
+POLICY_UNAVAILABLE_REASON = (
+    "discovery composes no read-only policy list operation, so controller "
+    "policy state is unobserved rather than empty"
+)
+
+
 # --- errors ---------------------------------------------------------------
 
 
@@ -246,6 +271,15 @@ class LiveTransport:
 # --- persistence ----------------------------------------------------------
 
 
+#: This package's own directory tree, resolved from the module rather than
+#: from the current directory. Persistence refuses it with or without a
+#: repository root: a package copied out of a checkout keeps its committable
+#: layout but loses the ``.git`` entry the walk below looks for, and writing
+#: raw controller responses beside the package source is the exact outcome
+#: default-deny persistence exists to prevent.
+PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+
+
 def repository_root_from(start: Path | None = None) -> Path | None:
     """Walk up from ``start`` (or cwd) until a ``.git`` entry is found."""
     current = (start or Path.cwd()).resolve()
@@ -267,13 +301,41 @@ def refuse_repository_output(
     path: Path,
     repository_root: Path | None = None,
 ) -> Path:
-    """Return a resolved output path, or raise if it is inside the working tree."""
+    """Return a resolved output path, or refuse it as a committable location.
+
+    Two independent refusals, because the second one cannot always be
+    evaluated:
+
+    - inside :data:`PACKAGE_ROOT`, always. This one needs no checkout to
+      decide, so it still holds for a copy of the package taken out of one.
+    - inside the repository working tree, when that tree is known.
+
+    When no root is named and the walk finds none, the deny-list has nothing
+    to evaluate. That is refused rather than allowed. A deny-list that returns
+    the path whenever it cannot decide is not a deny-list, and the case where
+    it cannot decide — a package copied out of its checkout — is exactly the
+    case where an unfiltered controller response would land next to
+    committable files. The operator names ``--repository-root`` to say which
+    tree to protect.
+    """
     resolved = Path(path).expanduser().resolve()
+    if _is_inside(resolved, PACKAGE_ROOT):
+        raise DiscoveryPersistenceError(
+            "refusing to write discovery output inside the package directory: "
+            f"{resolved}"
+        )
     if repository_root is not None:
         root = Path(repository_root).resolve()
     else:
         root = repository_root_from()
-    if root is not None and _is_inside(resolved, root):
+        if root is None:
+            raise DiscoveryPersistenceError(
+                "refusing to write discovery output: no repository working tree "
+                "could be determined from the current directory, so the in-tree "
+                f"deny-list cannot be evaluated for {resolved}. Name the tree to "
+                "protect with --repository-root."
+            )
+    if _is_inside(resolved, root):
         raise DiscoveryPersistenceError(
             "refusing to write discovery output inside the repository working "
             f"tree: {resolved}"
@@ -417,6 +479,7 @@ def empty_inventory(site: str) -> dict[str, Any]:
     inventory: dict[str, Any] = {resource: [] for resource in DISCOVERY_RESOURCES}
     inventory["site"] = {"identifier": site}
     inventory["policies"] = []
+    inventory[POLICY_OBSERVATION_KEY] = POLICY_UNAVAILABLE
     return inventory
 
 
@@ -574,7 +637,9 @@ class DiscoverySession:
             # Re-derive from summarized networks, which still carry vlan.
             inventory["networks"]
         )
+        # Not observed, so not empty. See POLICY_OBSERVATION_KEY.
         inventory["policies"] = []
+        inventory[POLICY_OBSERVATION_KEY] = POLICY_UNAVAILABLE
         return inventory
 
 
