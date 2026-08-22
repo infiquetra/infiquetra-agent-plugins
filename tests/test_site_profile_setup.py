@@ -8,6 +8,7 @@ back instead of asking again.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -31,7 +32,25 @@ class SetupTest(unittest.TestCase):
         self.addCleanup(self._temporary.cleanup)
         self.root = Path(self._temporary.name)
         self.config_path = self.root / "config" / "config.json"
-        self.environ = {"XDG_CONFIG_HOME": str(self.root / "config-home")}
+        self.environ = {site_profile.CONFIG_HOME_VARIABLE: str(self.root / "config-home")}
+
+    def subprocess_environment(self) -> dict[str, str]:
+        """A child environment whose profile resolution stays inside ``self.root``.
+
+        ``site_profile_setup.main`` reads ``os.environ``, so a child process
+        otherwise inherits both rungs of the resolution order from the
+        developer's shell: ``UNIFI_SITE_PROFILE`` and the configuration
+        directory under ``${XDG_CONFIG_HOME:-~/.config}``. Dropping the first
+        and pinning the second keeps these tests independent of whether a
+        profile happens to be deployed on the machine running them.
+        """
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key != site_profile.ENVIRONMENT_VARIABLE
+        }
+        environment.update(self.environ)
+        return environment
 
     def write_profile(self, name: str = "site-profile.json", payload: object | None = None) -> Path:
         return write_json(self.root / name, VALID_PROFILE if payload is None else payload)
@@ -180,6 +199,7 @@ class CommandLineTest(SetupTest):
             capture_output=True,
             text=True,
             check=False,
+            env=self.subprocess_environment(),
         )
         self.assertTrue(completed.stdout.strip(), completed.stderr)
         return completed.returncode, json.loads(completed.stdout)
@@ -219,6 +239,7 @@ class CommandLineTest(SetupTest):
             capture_output=True,
             text=True,
             check=False,
+            env=self.subprocess_environment(),
         )
         self.assertNotEqual(completed.returncode, 0)
         self.assertIn("invalid choice", completed.stderr)
