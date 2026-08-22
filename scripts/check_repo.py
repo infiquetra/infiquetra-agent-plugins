@@ -73,9 +73,14 @@ PROVENANCE_REQUIRED_FIELDS = ("source_repository", "source_commit")
 # classify: the manifest itself, which cannot record its own digest, and
 # interpreter artifacts, which are never committed. Everything else must be
 # accounted for, in both directions.
+#
+# The bytecode exemption is about *placement*, not about the suffix. Keyed on
+# the suffix alone it exempted those suffixes anywhere in the tree at any depth,
+# so `plugins/unifi/skills/unifi-network/scripts/smuggled.pyo` could hold
+# arbitrary text and pass this gate unlisted. See `_is_interpreter_bytecode`.
 PROVENANCE_UNMANAGED_NAMES = (PROVENANCE_FILENAME,)
 PROVENANCE_UNMANAGED_DIRECTORY_NAMES = ("__pycache__",)
-PROVENANCE_UNMANAGED_SUFFIXES = (".pyc", ".pyo")
+PROVENANCE_BYTECODE_SUFFIXES = (".pyc", ".pyo")
 
 # Every path in a derived tree is exactly one of these three kinds.
 BYTE_COPY = "upstream-byte-copy"
@@ -355,6 +360,26 @@ def _check_provenance_entry(
     return errors
 
 
+def _is_interpreter_bytecode(plugin_dir: Path, relative: Path) -> bool:
+    """Compiled bytecode sitting where the interpreter actually writes it.
+
+    CPython writes bytecode in exactly two places (PEP 3147): under a
+    ``__pycache__`` directory, and — in the legacy sourceless layout — beside
+    the ``.py`` file it was compiled from. Those two shapes are checkout noise
+    and stay exempt from the closed set.
+
+    A bytecode suffix anywhere else names an ordinary package file wearing a
+    costume, and the manifest has to classify it. Exempting the suffix at any
+    depth is what let a file named ``smuggled.pyo``, holding plain text, pass
+    this gate without appearing in any provenance manifest.
+    """
+    if relative.suffix not in PROVENANCE_BYTECODE_SUFFIXES:
+        return False
+    if any(part in PROVENANCE_UNMANAGED_DIRECTORY_NAMES for part in relative.parts):
+        return True
+    return (plugin_dir / relative).with_suffix(".py").is_file()
+
+
 def _managed_package_files(plugin_dir: Path) -> list[str]:
     """Every file inside a package that its provenance manifest must classify."""
     found: list[str] = []
@@ -366,7 +391,7 @@ def _managed_package_files(plugin_dir: Path) -> list[str]:
             continue
         if relative.name in PROVENANCE_UNMANAGED_NAMES:
             continue
-        if relative.suffix in PROVENANCE_UNMANAGED_SUFFIXES:
+        if _is_interpreter_bytecode(plugin_dir, relative):
             continue
         found.append(relative.as_posix())
     return found
