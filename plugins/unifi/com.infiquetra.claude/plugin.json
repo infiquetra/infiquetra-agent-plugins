@@ -1,0 +1,21 @@
+{
+  "name": "unifi",
+  "version": "2.0.0",
+  "description": "UniFi Network and Protect CLI for managing UDM devices, clients, VLANs, firewall rules, traffic routes, DNS, cameras, liveviews, lights, sensors, chimes, and viewers",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+  "keywords": [
+    "unifi",
+    "ubiquiti",
+    "network",
+    "protect",
+    "cameras",
+    "home-lab",
+    "udm",
+    "firewall",
+    "vlan"
+  ]
+}
