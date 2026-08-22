@@ -214,6 +214,58 @@ bundler.
 **Revisit when.** A consumer needs a generated bundle outside a `_bundled/` directory,
 which would make the directory name the wrong discriminator.
 
+### Detect credentials by value with two narrow families, and never by bare entropy
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** `scripts/check_repo.py` now rejects a credential written as a *value*
+anywhere under `plugins/`, using exactly two detection families. The first is a list of
+literal credential formats — AWS access key ids, GitHub and Slack and Stripe tokens,
+Google and Anthropic and OpenAI API keys, JSON web tokens, private key blocks, and
+credentials embedded in a URL — matched in every text file of a package including source,
+because a real key committed into source is a leak whatever the surrounding code does with
+it. The second is a credential-shaped key (`password`, `secret`, `token`, `api_key`,
+`bearer`, `client_secret`, and their near neighbours) assigned a value of at least six
+characters that clears 2.5 bits of entropy per character and is not a placeholder or a
+reference to where the secret actually lives. The second family runs only on data and
+documentation files, never on source.
+
+**Rationale.** The reviewers' finding is that every existing guard — the site profile
+loader, its schema, and the compatibility matrix redaction check — inspects field *names*,
+so a password pasted into an allowed `notes`, `description`, or `ownership` value passes
+all of them. Closing that needs value inspection, and value inspection is worth having
+only if it is quiet enough to stay switched on. Measured against the live package tree,
+this rule produces zero false positives while still reporting the reviewer's own example,
+`notes: "controller password=hunter2"`.
+
+**Rejected alternatives.** A third family scanning for bare high-entropy strings, which is
+the usual approach and is unusable here: a provenance manifest is nothing but sha256
+digests, so it would fire on every package in the catalog and the gate would be turned off
+within a day. Running the credential-assignment family on source as well, which was
+measured before being rejected — it produced five false positives on the shipped package,
+every one of them credential-*handling* code such as `api_key = (api_key or "").strip()`
+and `"X-Api-Key": self.api_key`, and none of them a secret. Scanning the whole repository
+rather than `plugins/`, which would make `docs/reviews/` a continuous integration failure
+surface; those two reviewer reports are immutable evidence with recorded digests, they
+quote credential-shaped text on purpose, and a gate no one is allowed to satisfy is a gate
+that gets deleted. `plugins/` is also the scope every other package check here already
+uses, and it is the tree that actually leaves this repository.
+
+**Accepted limits.** A short, low-entropy secret in a free-text value still passes:
+`password: secret` is six characters of 2.25 bits and is below the floor by design. So
+does a secret in a package file that is neither text nor a recognised data suffix. This
+check is defense in depth against an accident, not a proof of absence, and the operator
+guarantee should be worded as such.
+
+**Revisit when.** A credential format in use by the fleet is not on the list, a real
+credential reaches a package and this check does not report it, or the false-positive rate
+stops being zero on the live tree.
+
+**Scope note.** This closes the repository gate only. The same finding also implicates
+`plugins/unifi/scripts/site_profile.py`, whose `validate_profile` accepts a credential in
+a `notes` value at runtime, and `scripts/check_compatibility_matrix.py`, whose redaction
+check is name-shaped. Neither file is owned by this unit and neither is changed here.
+
 ## 2026-08-21
 
 ### Choose UniFi plus a portable Fleet Core slice as the first portability pilot
