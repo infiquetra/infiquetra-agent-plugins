@@ -1,0 +1,12 @@
+# Infiquetra Agent Plugins
+
+> Portable Agent Skills, Agent Plugins, and vendor adapters for Infiquetra engineering workflows.
+
+## Core
+
+- [README](README.md): Human entry point, status, layout, and validation.
+- [Agent instructions](AGENTS.md): Repository boundaries and required behavior.
+- [Documentation index](docs/README.md): Documentation navigation.
+- [Architecture brief](docs/cross-vendor-plugin-architecture-brief.md): Research, proposed architecture, compatibility, and open decisions.
+- [Engineering journal](docs/engineering-journal/README.md): Durable learnings, decisions, queued work, and archive.
+- [Public guidance](docs/public-safe-summary.md): Public-safe Infiquetra development rules.

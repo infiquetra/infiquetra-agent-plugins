@@ -1,0 +1,32 @@
+name: Exploration
+description: Investigate an unknown before committing to implementation.
+title: "[Exploration]: "
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: State the decision or uncertainty this exploration should resolve.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence to gather
+      description: Name clients, standards, repositories, or live behaviors to inspect.
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Boundaries
+      description: State what this exploration must not change.
+    validations:
+      required: true
+  - type: textarea
+    id: completion
+    attributes:
+      label: Completion criteria
+      description: Describe the options and recommendation expected from the work.
+    validations:
+      required: true

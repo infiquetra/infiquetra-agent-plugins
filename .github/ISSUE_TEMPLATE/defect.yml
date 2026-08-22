@@ -1,0 +1,32 @@
+name: Defect
+description: Report behavior that is incorrect, unsafe, or inconsistent.
+title: "[Defect]: "
+body:
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: Describe what happened, including the affected vendor and version.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Describe the contract or evidence that establishes the expectation.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction and evidence
+      description: Provide the smallest safe reproduction, logs, or artifact references.
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact and containment
+      description: Explain affected users or systems and any safe temporary containment.
+    validations:
+      required: true

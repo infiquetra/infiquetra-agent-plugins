@@ -1,0 +1,32 @@
+name: Enhancement
+description: Improve an existing portable capability, adapter, or repository tool.
+title: "[Enhancement]: "
+body:
+  - type: textarea
+    id: current
+    attributes:
+      label: Current behavior
+      description: Describe the existing behavior and its source of truth.
+    validations:
+      required: true
+  - type: textarea
+    id: improvement
+    attributes:
+      label: Proposed improvement
+      description: Describe the desired change and why it is valuable.
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and custody impact
+      description: Name affected vendors, packages, or ownership boundaries.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance evidence
+      description: Describe the checks or live proof that would establish success.
+    validations:
+      required: true

@@ -1,0 +1,32 @@
+name: Context update
+description: Correct or extend durable repository guidance without changing runtime behavior.
+title: "[Context]: "
+body:
+  - type: textarea
+    id: gap
+    attributes:
+      label: Context gap
+      description: Identify the missing, stale, or misleading documentation.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Source evidence
+      description: Link the current behavior, decision, standard, or compatibility proof.
+    validations:
+      required: true
+  - type: textarea
+    id: update
+    attributes:
+      label: Requested update
+      description: Describe the durable change and affected documents.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation
+      description: Describe how the corrected guidance will be checked.
+    validations:
+      required: true
