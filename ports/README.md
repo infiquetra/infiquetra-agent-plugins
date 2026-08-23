@@ -25,7 +25,7 @@ that is still perfectly true.
 
 ```jsonc
 {
-  "schema_version": "1",              // refused rather than read with assumed defaults
+  "schema_version": "2",              // refused rather than read with assumed defaults
   "package": "unifi",                 // must equal the file name
   "package_root": "plugins/unifi",    // must be plugins/<package>
   "package_manifest": "plugin.json",  // optional; this is the default
@@ -34,7 +34,7 @@ that is still perfectly true.
     "repository": "https://github.com/...",   // required
     "package_path": "plugins/unifi",          // required; path inside the upstream repo
     "manifest_path": ".claude-plugin/plugin.json",  // optional; input to relocate-claude-manifest
-    "client_extension_dir": "com.infiquetra.claude" // optional; required by client_byte_copies
+    "client_extension_dir": "com.infiquetra.claude" // required by client_byte_copies and by manifest_path
   },
 
   // Every upstream path falls in exactly one class. A path in two is refused,
@@ -47,11 +47,15 @@ that is still perfectly true.
     "dropped_from_source": []          // not carried; needs provenance.dropped_reason
   },
 
+  // Closed against unknown keys, like every object here. Each safety field
+  // must be stated: absent, every one of them fails open.
   "assessment": {
+    "credential_prefixes": [],   // variables stripped from every assessment subprocess
     "package_scripts": [],       // scopes the mutating-operation rule to this package
     "mutating_operations": [],   // the package's own classification of what writes
-    "credential_prefixes": [],   // variables stripped from every assessment subprocess
-    "skill_units": []            // unit directories skill-scoped clients install
+    "entrypoints": [],           // executables the assessment invokes (see below)
+    "skill_units": [],           // unit directories skill-scoped clients install
+    "declared_none": []          // safety fields this package deliberately leaves empty
   },
 
   "provenance": {
@@ -61,12 +65,36 @@ that is still perfectly true.
 }
 ```
 
-`assessment.package_scripts` and `assessment.mutating_operations` are load
-bearing rather than descriptive. Together they are what scopes the safety rule
-that refuses a recorded — or about-to-run — command naming a write. An empty
-`package_scripts` scopes that rule to nothing, so every command passes;
-`tests/test_port_config.py` asserts the shipped list names files the package
-actually carries.
+## Why every object is closed, and every safety field is stated
+
+An unknown key in a descriptor is not a syntax error. It is a setting that
+silently did not take effect, and the cost is asymmetric: `credential_prefix`
+instead of `credential_prefixes` reads as "strip nothing", and the run that finds
+out is the one that hands the operator's real credentials to ten clients. So
+every object refuses keys it does not define.
+
+The four fields under `assessment` marked as safety declarations fail *open* when
+absent, each in its own way:
+
+| Field | What an empty value means |
+|---|---|
+| `credential_prefixes` | no variable is stripped from any assessment subprocess |
+| `package_scripts` | the mutating-operation rule matches no command, so every command passes |
+| `mutating_operations` | the same rule has no verbs to match |
+| `entrypoints` | the assessment invokes nothing, and a package can be called compatible without any executable having run |
+
+Each must be stated. A package for which one is genuinely empty names it in
+`declared_none` — a decision a reader can see, and one a typo cannot produce.
+
+## Entrypoints are declared, not inferred from custody
+
+`assessment.entrypoints` lists the package's executables, package-relative, and
+is deliberately independent of the `custody` table. What makes a file executable
+is that the package says it is; how its bytes were obtained is a separate
+question. Reading entrypoints out of `custody.entrypoint_transforms` meant a
+package whose executable is an upstream byte copy or target-owned source had no
+assessable entrypoint at all — the harness only ever worked for one custody
+layout.
 
 ## Adding a package
 

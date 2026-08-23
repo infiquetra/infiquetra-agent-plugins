@@ -702,6 +702,67 @@ def check_coverage(record: dict[str, Any]) -> list[str]:
     return problems
 
 
+#: The record versions this validator understands. Version 1 carries one command
+#: per stage. Version 2 additionally carries every command the stage ran beside
+#: its own exit status, because a stage that runs one command per skill unit or
+#: one per entrypoint was otherwise recorded as if it ran only the first -- the
+#: command and status cardinalities disagreed and nobody could tell which command
+#: produced which status.
+RECORD_VERSIONS = ("1", "2")
+COMMANDS_FROM_VERSION = "2"
+
+
+def check_record_version(record: dict[str, Any]) -> list[str]:
+    """Per-command statuses are required from version 2 and refused before it.
+
+    Both directions matter. Without the first, a version-2 record could quietly
+    collapse a multi-command stage again. Without the second, a version-1 record
+    could carry `commands` that no version-1 reader knows to look at, which is a
+    record whose own version does not describe its shape.
+    """
+    version = record.get("schema_version")
+    if version not in RECORD_VERSIONS:
+        return [
+            f"$.schema_version: {version!r} is not one of {', '.join(RECORD_VERSIONS)}"
+        ]
+
+    problems: list[str] = []
+    for client in record.get("clients", []):
+        if not isinstance(client, dict):
+            continue
+        label = str(client.get("name", "?"))
+        stages = client.get("stages")
+        if not isinstance(stages, dict):
+            continue
+        for stage, value in stages.items():
+            if not isinstance(value, dict):
+                continue
+            commands = value.get("commands")
+            if version < COMMANDS_FROM_VERSION:
+                if commands is not None:
+                    problems.append(
+                        f"{label}/{stage}: records per-command statuses, which arrived in "
+                        f"schema version {COMMANDS_FROM_VERSION}, but the record declares "
+                        f"version {version}"
+                    )
+                continue
+            if value.get("result") != "executed":
+                continue
+            if not isinstance(commands, list) or not commands:
+                problems.append(
+                    f"{label}/{stage}: executed but records no per-command statuses; a stage "
+                    "that ran several commands is not reproducible from the first one alone"
+                )
+                continue
+            first = commands[0]
+            if isinstance(first, dict) and first.get("command") != value.get("command"):
+                problems.append(
+                    f"{label}/{stage}: the recorded command is not the first of its "
+                    "per-command statuses, so the two disagree about what ran first"
+                )
+    return problems
+
+
 def _check_stage(label: str, stage: str, value: object) -> list[str]:
     if not isinstance(value, dict):
         return [f"{label}/{stage}: expected an object"]
@@ -732,8 +793,16 @@ def _recorded_commands(record: dict[str, Any]) -> list[tuple[str, str, str]]:
         if not isinstance(stages, dict):
             continue
         for stage, value in stages.items():
-            if isinstance(value, dict) and isinstance(value.get("command"), str):
+            if not isinstance(value, dict):
+                continue
+            if isinstance(value.get("command"), str):
                 found.append((label, str(stage), value["command"]))
+            # Every command, not only the first. A stage that ran a mutating
+            # command second would otherwise pass the safety rule because the
+            # rule only ever read one of them.
+            for entry in value.get("commands") or ():
+                if isinstance(entry, dict) and isinstance(entry.get("command"), str):
+                    found.append((label, str(stage), entry["command"]))
     return found
 
 
@@ -889,6 +958,7 @@ def check_matrix(
     if config is None:
         config, resolution_problems = resolve_config(record, root)
         problems.extend(resolution_problems)
+    problems.extend(check_record_version(record))
     problems.extend(check_coverage(record))
     problems.extend(check_safety_rules(record, config))
     problems.extend(check_public_evidence_rules(record, non_host_dotted_tokens(root)))

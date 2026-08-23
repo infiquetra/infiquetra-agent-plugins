@@ -58,9 +58,11 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -530,6 +532,55 @@ def credential_variables(environ: dict[str, str], config: PortConfig) -> list[st
     return sorted(name for name in environ if name.startswith(tuple(prefixes)))
 
 
+def resolve_real_binary(name: str, path: str | None = None) -> str:
+    """The real executable behind a launcher wrapper of the same name.
+
+    Two clients are launched through a local auto-trust wrapper that resolves
+    its real binary through the client home. Under an isolated home that lookup
+    fails, so each run supplies the wrapper's own documented override naming the
+    real executable.
+
+    Resolving that override with a plain `which` returns *the wrapper*, because
+    the wrapper is what sits on `PATH` under that name. The wrapper then launches
+    itself, and keeps doing so: an unbounded chain of descendants that never
+    reaches the client and consumes the host while it fails. That is the defect
+    this function exists to prevent, so it fails loudly rather than returning
+    something plausible.
+
+    The search walks `PATH` in order and returns the first entry that is a real
+    executable *and* is not the same file as the first match. Same-file is
+    compared by `os.path.samefile`, so a symlink to the wrapper is caught too.
+    """
+    entries = (path if path is not None else os.environ.get("PATH", "")).split(os.pathsep)
+    found: list[Path] = []
+    for entry in entries:
+        if not entry:
+            continue
+        candidate = Path(entry) / name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            found.append(candidate)
+    if not found:
+        raise AssessmentError(
+            f"{name!r} is not on PATH, so its real-binary override cannot be resolved"
+        )
+
+    wrapper = found[0]
+    for candidate in found[1:]:
+        try:
+            if os.path.samefile(candidate, wrapper):
+                continue
+        except OSError:  # pragma: no cover - unreadable candidate
+            continue
+        return str(candidate)
+
+    raise AssessmentError(
+        f"the only {name!r} on PATH is the launcher wrapper at {wrapper}. Pointing that "
+        "wrapper's real-binary override back at itself makes it launch itself recursively, "
+        "never reach the client, and spawn descendants until the host runs out. Put the real "
+        "executable on PATH behind the wrapper, or set the override explicitly in the plan"
+    )
+
+
 def build_environment(
     config: PortConfig,
     *,
@@ -598,10 +649,156 @@ def refuse_unsafe_home(plan: ClientPlan, spec: StageSpec, home_kind: str) -> Non
 # --- running a stage ----------------------------------------------------------
 
 
+#: How much of one command's output the private transcript keeps. Bounded so a
+#: client that prints a megabyte cannot fill the operator's disk, and truncation
+#: is marked rather than silent.
+TRANSCRIPT_LIMIT = 64 * 1024
+
+
+def _bounded(text: str | None) -> str:
+    if not text:
+        return ""
+    if len(text) <= TRANSCRIPT_LIMIT:
+        return text
+    dropped = len(text) - TRANSCRIPT_LIMIT
+    return text[:TRANSCRIPT_LIMIT] + f"\n[... {dropped} more characters not kept ...]"
+
+
+def terminate_process_group(pid: int) -> str:
+    """Kill the timed-out stage's whole process group; say what happened.
+
+    `subprocess.run` kills and waits for the *direct* child. A launcher that
+    spawned the actual client leaves that client running, so without this the
+    deadline bounds the harness's patience and nothing else -- the client keeps
+    installing and writing state after the stage is recorded blocked.
+
+    Started with `start_new_session=True`, the child leads its own group and the
+    group can be signalled as a unit. Returns a sentence for the stage's reason
+    rather than raising: the stage is already blocked, and how thoroughly it was
+    cleaned up is itself evidence.
+    """
+    if not hasattr(os, "killpg"):  # pragma: no cover - non-POSIX fallback
+        return "The direct child was terminated; this platform has no process-group signal."
+    try:
+        group = os.getpgid(pid)
+    except (ProcessLookupError, PermissionError, OSError):
+        return "The process group had already exited."
+    for signal_number in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(group, signal_number)
+        except ProcessLookupError:
+            break
+        except (PermissionError, OSError):  # pragma: no cover - unusual
+            return "The process group could not be signalled; a client descendant may survive."
+        time.sleep(0.2)
+    return "The whole process group was terminated, so no client descendant survived it."
+
+
+def run_contained(
+    argv: list[str],
+    *,
+    capture_output: bool = True,
+    text: bool = True,
+    env: dict[str, str] | None = None,
+    timeout: float | None = None,
+    input: str | None = None,  # noqa: A002 - mirrors subprocess.run's parameter name
+    stdin: int | None = None,
+) -> subprocess.CompletedProcess:
+    """`subprocess.run`, but the deadline kills the whole process group.
+
+    Same signature and return as the standard-library call it replaces, so it
+    drops into the same seam a test can substitute. The difference is the
+    cleanup: this owns the `Popen`, so on a timeout it still has the pid and can
+    signal the session the child leads, rather than only the child itself.
+
+    A `TimeoutExpired` raised from here carries `killed_group`, a sentence
+    describing what the cleanup actually managed.
+    """
+    process = subprocess.Popen(
+        argv,
+        stdout=subprocess.PIPE if capture_output else None,
+        stderr=subprocess.PIPE if capture_output else None,
+        stdin=subprocess.PIPE if input is not None else stdin,
+        text=text,
+        env=env,
+        start_new_session=True,
+    )
+    try:
+        out, err = process.communicate(input=input, timeout=timeout)
+    except subprocess.TimeoutExpired as expired:
+        killed = terminate_process_group(process.pid)
+        try:
+            process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:  # pragma: no cover - group refused to die
+            pass
+        expired.killed_group = killed  # type: ignore[attr-defined]
+        raise
+    return subprocess.CompletedProcess(argv, process.returncode, out, err)
+
+
+class StageCommand:
+    """One executed command and the status it returned.
+
+    A stage may run several commands -- one per skill unit, one per entrypoint.
+    Recording only the first made the command and status cardinalities disagree,
+    so a reader could see `exit status 0, 7` and had no way to tell which command
+    produced the 7, or to reproduce it.
+    """
+
+    __slots__ = ("command", "exit_status")
+
+    def __init__(self, command: str, exit_status: int) -> None:
+        self.command = command
+        self.exit_status = exit_status
+
+    def record(self) -> dict[str, Any]:
+        return {"command": self.command, "exit_status": self.exit_status}
+
+
+class CommandTranscript:
+    """One command's bounded raw output, for the operator and never for the record.
+
+    The public compatibility record carries field names, counts, and comparisons.
+    Raw client output is none of those and is not redacted, so it stays out. But
+    an operator has to fill each row's version, reason, and evidence from
+    *something*, and discarding the output left them nothing to fill it from --
+    the scripted method could not produce the matrix the prose method did.
+
+    So the output is kept, bounded, in a private transcript the operator reads
+    and the record never quotes.
+    """
+
+    __slots__ = ("command", "returncode", "stdout", "stderr")
+
+    def __init__(self, command: str, returncode: int, stdout: str, stderr: str) -> None:
+        self.command = command
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+    def record(self) -> dict[str, Any]:
+        return {
+            "command": self.command,
+            "exit_status": self.returncode,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+        }
+
+
 class StageOutcome:
     """What one stage did, in the vocabulary the matrix record uses."""
 
-    __slots__ = ("stage", "result", "command", "evidence", "reason", "returncodes", "captured")
+    __slots__ = (
+        "stage",
+        "result",
+        "command",
+        "commands",
+        "evidence",
+        "reason",
+        "returncodes",
+        "captured",
+        "transcript",
+    )
 
     def __init__(
         self,
@@ -609,17 +806,23 @@ class StageOutcome:
         result: str,
         *,
         command: str = "",
+        commands: tuple[StageCommand, ...] = (),
         evidence: str = "",
         reason: str = "",
         returncode: int | None = None,
         returncodes: tuple[int, ...] | None = None,
         captured: dict[str, str] | None = None,
+        transcript: tuple[CommandTranscript, ...] = (),
     ) -> None:
         self.stage = stage
         self.result = result
         self.command = command
+        #: Every command this stage ran, each beside its own exit status.
+        self.commands = commands
         self.evidence = evidence
         self.reason = reason
+        #: Bounded raw output per command. Operator-visible, never recorded.
+        self.transcript = transcript
         #: Every process's exit status, in order. A stage may run more than one
         #: -- one per skill unit, one per entrypoint -- and keeping only the
         #: first is how a failing second entrypoint reads as a working package.
@@ -648,6 +851,12 @@ class StageOutcome:
         entry: dict[str, Any] = {"result": self.result}
         if self.command:
             entry["command"] = self.command
+        if self.commands:
+            # Schema version 2. `command` stays the first, so the row still reads
+            # the way version 1 did; `commands` is what makes a multi-command
+            # stage reproducible and tells a reader which one returned which
+            # status.
+            entry["commands"] = [item.record() for item in self.commands]
         if self.result == EXECUTED:
             entry["evidence"] = self.evidence
         else:
@@ -764,7 +973,7 @@ def run_stage(
     values: dict[str, str],
     environment: dict[str, str],
     *,
-    runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+    runner: Callable[..., subprocess.CompletedProcess] = run_contained,
 ) -> StageOutcome:
     """Execute one stage and classify the result honestly.
 
@@ -794,6 +1003,8 @@ def run_stage(
         refuse_unsafe_argv(argv, config)
 
     recorded = redact(" ".join(argvs[0]), values)
+    recorded_commands: list[StageCommand] = []
+    transcript: list[CommandTranscript] = []
 
     for argv in argvs:
         pending = unresolved_placeholders(argv)
@@ -839,22 +1050,41 @@ def run_stage(
                 capture_output=True,
                 text=True,
                 env=environment,
+                # `run_contained` starts each stage in its own session, so
+                # the deadline below is a containment boundary rather than a note
+                # about one process. A launcher that spawned the client and then
+                # timed out used to leave that client running -- still
+                # installing, still writing state -- after the stage was
+                # recorded blocked.
                 timeout=spec.timeout,
                 **streams,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as expired:
+            killed = getattr(expired, "killed_group", "The direct child was terminated.")
             return StageOutcome(
                 spec.stage,
                 BLOCKED,
                 command=recorded,
+                commands=tuple(recorded_commands),
                 reason=(
                     f"No result within the {spec.timeout:g}s deadline. At least one client "
                     "prompts on standard input and hangs rather than declining when it gets no "
                     "answer, so a stage that does not finish is recorded blocked rather than "
-                    "left running."
+                    f"left running. {killed}"
                 ),
             )
         statuses.append(completed.returncode)
+        recorded_commands.append(
+            StageCommand(redact(" ".join(argv), values), completed.returncode)
+        )
+        transcript.append(
+            CommandTranscript(
+                command=redact(" ".join(argv), values),
+                returncode=completed.returncode,
+                stdout=_bounded(completed.stdout),
+                stderr=_bounded(completed.stderr),
+            )
+        )
         if spec.capture is not None and not captured:
             placeholder, pattern = spec.capture
             match = re.search(pattern, f"{completed.stdout or ''}{completed.stderr or ''}")
@@ -866,13 +1096,15 @@ def run_stage(
         spec.stage,
         EXECUTED,
         command=recorded,
+        commands=tuple(recorded_commands),
         evidence=(
             spec.evidence
             or f"Ran {len(argvs)} command(s); exit status {summary}. "
-            "Replace this line with the observation."
+            "Replace this line with the observation from the transcript."
         ),
         returncodes=tuple(statuses),
         captured=captured,
+        transcript=tuple(transcript),
     )
 
 
@@ -899,16 +1131,36 @@ def propose_status(outcomes: dict[str, StageOutcome]) -> str:
     fails the matrix validator, so no proposal here reaches evidence unread.
     """
     results = {stage: outcome.result for stage, outcome in outcomes.items()}
+
+    def succeeded(stage: str) -> bool:
+        """The stage ran *and* its commands all returned zero.
+
+        `executed` means a process completed, not that it worked. Reading it as
+        success let a client that refused the package at every stage -- placement,
+        discovery and load all returning non-zero -- still be proposed
+        `works-directly` because the package's own `--help` happened to exit 0.
+        """
+        outcome = outcomes.get(stage)
+        return outcome is not None and outcome.result == EXECUTED and outcome.returncode == 0
+
+    placed_and_loaded = succeeded("placement") and succeeded("load")
     invocation = outcomes.get("invocation")
+
+    if all(succeeded(stage) for stage in results):
+        return "works-directly"
     if (
-        invocation is not None
+        placed_and_loaded
+        and invocation is not None
         and invocation.result == EXECUTED
         and invocation.returncode not in (None, 0)
     ):
+        # The client took the package and resolved it, and then the package's own
+        # entrypoint did not run. That is the package failing, not the client
+        # declining -- and it is the pilot's own shipped defect.
         return "failed"
-    if all(result == EXECUTED for result in results.values()):
-        return "works-directly"
     if any(result == EXECUTED for result in results.values()):
+        # Something ran, but not everything succeeded: the client engaged with
+        # the package and could not fully consume it. An adapter is the gap.
         return "works-through-an-adapter"
     return "unsupported"
 
@@ -937,12 +1189,18 @@ def entrypoint_paths(config: PortConfig, plan: ClientPlan) -> tuple[str, ...]:
     Both forms are derived from the descriptor's own `skill_units`, so a package
     that names its units differently is handled without editing this file.
     """
-    entrypoints = config.custody.entrypoint_transforms
+    # The descriptor's own entrypoint list, not a custody class. What makes a
+    # file executable is that the package says it is; how its bytes were
+    # obtained is a separate question. Reading them from
+    # `custody.entrypoint_transforms` meant a package whose executable is an
+    # upstream byte copy or target-owned source had no assessable entrypoint at
+    # all -- the harness worked only for UniFi's custody layout.
+    entrypoints = config.assessment.entrypoints
     if not entrypoints:
         raise AssessmentError(
-            f"{config.name}: declares no entrypoint_transforms, so there is nothing to invoke; "
-            "a package with no executable entrypoint needs its invocation stage described "
-            "in the descriptor rather than assumed here"
+            f"{config.name}: declares no assessment.entrypoints, so there is nothing to invoke. "
+            "A package with no executable entrypoint says so by naming 'entrypoints' in "
+            "assessment.declared_none, and then carries no invocation stage"
         )
     if not plan.skill_scoped:
         return tuple(f"{plan.invocation_root}/{relative}" for relative in entrypoints)
@@ -976,6 +1234,11 @@ def invocation_argv(config: PortConfig, plan: ClientPlan, python: str) -> tuple[
     return tuple((python, path, "--help") for path in entrypoint_paths(config, plan))
 
 
+def transcript_path(workspace: Path) -> Path:
+    """Where a run's private operator transcript lives, given its workspace."""
+    return Path(workspace) / "transcript.json"
+
+
 def assess(
     config: PortConfig,
     *,
@@ -983,7 +1246,7 @@ def assess(
     execute: bool,
     only: tuple[str, ...] = (),
     workspace: Path | None = None,
-    runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+    runner: Callable[..., subprocess.CompletedProcess] = run_contained,
 ) -> dict[str, Any]:
     """Run the assessment and return the record, or raise rather than emit a lie."""
     package_root = config.package_directory
@@ -991,19 +1254,23 @@ def assess(
     name, version = ccm.package_identity(package_root, config.package_manifest)
 
     base = Path(workspace) if workspace is not None else Path(tempfile.mkdtemp())
-    scratch = base / "package"
-    if not scratch.exists():
-        shutil.copytree(package_root, scratch)
-    #: The copy actually handed to the clients, fingerprinted separately. The
-    #: source tree is the one nothing can reach; this is the one a client that
-    #: installs in place could add a vendor artifact to, so it is the one whose
-    #: before-and-after equality proves nothing was added to the package.
-    scratch_before = ccm.package_fingerprint(scratch)
 
     plans = [plan for plan in CLIENT_PLANS if not only or plan.name in only]
     clients: list[dict[str, Any]] = []
+    transcripts: dict[str, Any] = {}
+    mutated_by: list[str] = []
 
     for plan in plans:
+        # A fresh copy per client, fingerprinted per client. One shared copy
+        # meant a client that installed in place changed the bytes every later
+        # client was then assessed against, and the record still bound itself to
+        # the original fingerprint -- ten rows describing up to ten different
+        # trees under one digest.
+        scratch = base / plan.name.replace(" ", "-").lower() / "package"
+        if not scratch.exists():
+            scratch.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(package_root, scratch)
+        scratch_before = ccm.package_fingerprint(scratch)
         home = stage_home(base, plan) if plan.home == ISOLATED_HOME else None
         values = {
             PACKAGE: str(scratch),
@@ -1018,14 +1285,20 @@ def assess(
             # reported. Unset, `run_stage` blocks the stage and names the
             # placeholder instead.
         }
-        environment = build_environment(
-            config,
-            home=home,
-            extra={
-                key: (value or shutil.which(plan.binary) or plan.binary)
+        # An empty declared value means "resolve the real executable behind the
+        # launcher wrapper". Resolving it with `which` returns the wrapper, and
+        # a wrapper told to launch itself does exactly that, forever.
+        try:
+            extra = {
+                key: (value or resolve_real_binary(plan.binary))
                 for key, value in plan.environment.items()
-            },
-        )
+            }
+        except AssessmentError as error:
+            unresolved_override = str(error)
+            extra = {}
+        else:
+            unresolved_override = ""
+        environment = build_environment(config, home=home, extra=extra)
 
         outcomes: dict[str, StageOutcome] = {}
         for spec in sorted(plan.stages, key=lambda item: ccm.STAGES.index(item.stage)):
@@ -1034,6 +1307,15 @@ def assess(
             # run, and discovering it mid-way would already have installed
             # something.
             refuse_unsafe_home(plan, spec, plan.home)
+            if execute and unresolved_override:
+                # Every stage of this client is blocked, not failed. The
+                # launcher cannot reach the client at all, which is a property
+                # of the operator's wrapper arrangement and this method's
+                # isolated home -- never a package defect.
+                outcomes[spec.stage] = StageOutcome(
+                    spec.stage, BLOCKED, reason=unresolved_override
+                )
+                continue
             if not execute:
                 if spec.blocked_reason is not None:
                     command = ""
@@ -1053,12 +1335,47 @@ def assess(
             values.update(outcome.captured)
             outcomes[spec.stage] = outcome
 
+        # Did this client change the copy it was handed? Checked per client,
+        # because the answer decides whether *this* client's evidence describes
+        # the package at all.
+        scratch_after = ccm.package_fingerprint(scratch)
+        mutated = scratch_after != scratch_before
+        if mutated:
+            mutated_by.append(plan.name)
+            invalidated = (
+                f"This client changed the package copy it was handed: "
+                f"{scratch_before[0]} files before, {scratch_after[0]} after. Every stage "
+                "result here describes bytes that no longer exist, so the row carries no "
+                "classification. Re-run this client against a fresh copy once the cause is "
+                "understood."
+            )
+            outcomes = {
+                stage: StageOutcome(
+                    stage,
+                    BLOCKED,
+                    command=outcomes[stage].command,
+                    commands=outcomes[stage].commands,
+                    reason=invalidated,
+                )
+                for stage in ccm.STAGES
+            }
+
+        if execute:
+            transcripts[plan.name] = {
+                stage: [item.record() for item in outcomes[stage].transcript]
+                for stage in ccm.STAGES
+                if outcomes[stage].transcript
+            }
+
         clients.append(
             {
                 "name": plan.name,
                 "version": "",
                 "stages": {stage: outcomes[stage].record() for stage in ccm.STAGES},
-                "status": propose_status(outcomes),
+                # A client that mutated the package is not classified at all. It
+                # is `unsupported` only in the sense that nothing about it was
+                # established, and its reason says exactly that.
+                "status": "unsupported" if mutated else propose_status(outcomes),
                 # Left empty on purpose. The validator refuses a client row with
                 # no concrete reason, so a record no one finished reading cannot
                 # be committed as evidence.
@@ -1074,12 +1391,12 @@ def assess(
             "a package that no longer exists and none of it may be published"
         )
 
-    scratch_after = ccm.package_fingerprint(scratch)
-    added_to_package = scratch_after != scratch_before
-
-    return {
+    record = {
         "$schema": "../../schemas/compatibility-matrix.schema.json",
-        "schema_version": "1",
+        # Version 2: a stage records every command it ran beside that command's
+        # own exit status. Version 1 records, which carry one command per stage,
+        # stay valid and are still validated.
+        "schema_version": "2",
         "assessed_on": "",
         "package": {
             "name": name,
@@ -1089,17 +1406,20 @@ def assess(
         },
         "method": {
             "stages": list(ccm.STAGES),
-            # Left empty for the operator, with one exception: whether a client
-            # added anything to the copy it was handed is an observation, not a
-            # claim, so the harness states it rather than leaving it to memory.
+            # Left empty for the operator, with one exception: whether any client
+            # changed the copy it was handed is an observation, not a claim, so
+            # the harness states it rather than leaving it to memory.
             "isolation": (
-                "The package root handed to each client was a scratch copy of the shipped tree, "
-                f"fingerprinted at {scratch_before[0]} files before the run and "
+                f"Each client was handed its own fresh copy of the shipped tree, at "
+                f"{before[0]} files, fingerprinted before and after that client ran. "
                 + (
-                    f"changed to {scratch_after[0]} files after it, so a client added to the "
-                    "copy it was given."
-                    if added_to_package
-                    else "unchanged after it, so no client added a vendor artifact to the package."
+                    "Every copy was unchanged afterwards, so no client added a vendor "
+                    "artifact to the package."
+                    if not mutated_by
+                    else (
+                        "These clients changed the copy they were given and are therefore "
+                        f"recorded without a classification: {', '.join(mutated_by)}."
+                    )
                 )
             ),
             "credentials": "",
@@ -1107,6 +1427,17 @@ def assess(
         },
         "clients": clients,
     }
+    if execute:
+        # Written beside the record and never into it. The transcript holds raw,
+        # unredacted client output -- exactly what a public evidence document
+        # must not carry, and exactly what an operator needs in order to write
+        # each row's version, reason, and evidence. It stays in the run
+        # workspace, which is private to the operator; the record never quotes
+        # it and never names its path.
+        transcript_path(base).write_text(
+            json.dumps(transcripts, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+    return record
 
 
 def describe_plan(config: PortConfig) -> str:
@@ -1118,7 +1449,16 @@ def describe_plan(config: PortConfig) -> str:
         "Nothing below has run. Pass --execute to run it.",
         "",
     ]
-    values = {PACKAGE: PACKAGE, PYTHON: PYTHON, CLIENT_HOME: CLIENT_HOME}
+    # The plan is the safety preview, and it promises the exact argv. A value the
+    # harness already knows is shown; only a value genuinely produced by an
+    # earlier runtime stage stays a placeholder, so the one thing still written
+    # as `<plugin-id>` is the id the client generates at placement.
+    values = {
+        PACKAGE: PACKAGE,
+        PYTHON: PYTHON,
+        CLIENT_HOME: CLIENT_HOME,
+        PLUGIN_NAME: config.name,
+    }
     for plan in CLIENT_PLANS:
         lines.append(f"## {plan.name}  [home: {plan.home}]")
         if plan.quirk:
@@ -1164,6 +1504,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--client", action="append", default=[], help="restrict to one client")
     parser.add_argument("--out", help="write the record as JSON to this path")
+    parser.add_argument(
+        "--workspace",
+        help=(
+            "directory for the run's scratch package copies and its private transcript. "
+            "Defaults to a fresh temporary directory. Keep it out of the repository: the "
+            "transcript holds raw, unredacted client output"
+        ),
+    )
     return parser
 
 
@@ -1179,12 +1527,15 @@ def main(argv: list[str] | None = None) -> int:
         print(describe_plan(config))
         return 0
 
+    workspace = Path(arguments.workspace) if arguments.workspace else Path(tempfile.mkdtemp())
+    workspace.mkdir(parents=True, exist_ok=True)
     try:
         record = assess(
             config,
             python=arguments.python,
             execute=True,
             only=tuple(arguments.client),
+            workspace=workspace,
         )
     except (AssessmentError, ccm.MatrixError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
@@ -1207,6 +1558,11 @@ def main(argv: list[str] | None = None) -> int:
         "\nThe record is deliberately incomplete: assessed_on, each client's version and "
         "reason, and the method prose are empty, and check_compatibility_matrix.py refuses "
         "a record whose reasons are blank. Fill them from what you observed."
+    )
+    print(
+        f"\nThe private transcript is at {transcript_path(workspace)}. It holds each command's "
+        "raw, unredacted output, which is what the record's evidence and reason fields are "
+        "written from. It is operator-only: never commit it and never quote it into the record."
     )
     return 0
 

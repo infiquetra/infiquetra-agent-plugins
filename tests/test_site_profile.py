@@ -1096,7 +1096,7 @@ class MutationProofBindingTest(unittest.TestCase):
         not bound to its bytes is a guard nobody has to re-prove after editing.
         """
         root = self.EVIDENCE.parent.parent
-        recorded = self._recorded("2026-08-23-cycle10-mutation-proof-portable-copies.txt")
+        recorded = self._recorded("2026-08-23-cycle11-mutation-proof-portable-copies.txt")
         self.assertEqual(set(recorded), set(self.GRADED), recorded)
         for relative in self.GRADED:
             with self.subTest(name=relative):

@@ -2,6 +2,99 @@
 
 ## 2026-08-23
 
+### The port descriptor is closed, and its safety fields are stated rather than defaulted
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** Every object in a port descriptor refuses keys the contract does not define, and the
+four `assessment` fields that carry a safety decision — `credential_prefixes`, `package_scripts`,
+`mutating_operations`, `entrypoints` — must each be stated. A package for which one is genuinely
+empty writes it as an empty list *and* names it in `assessment.declared_none`. The descriptor version
+advanced to `2`; version 1 is not accepted, because a descriptor written against it has exactly the
+shape this closes.
+
+`assessment.entrypoints` is also new, and is deliberately independent of the `custody` table: what
+makes a file executable is that the package says it is, not how its bytes were obtained.
+
+**Rationale.** Each of those four fields fails *open* when empty, and "absent" and "empty" were the
+same state. `credential_prefix` for `credential_prefixes` validated, loaded, passed the repository
+gate, and stripped nothing — the cheapest possible mistake buying the most expensive possible
+outcome. Reading entrypoints out of `custody.entrypoint_transforms` had the narrower version of the
+same problem: a package whose executable is an upstream byte copy had no assessable entrypoint, so
+the "package-agnostic" harness only ever worked for one custody layout.
+
+**Rejected alternatives.** *Warning on an unknown key*, because a warning in a tool nobody watches is
+a comment. *Defaulting the safety fields and documenting that they matter*, because documentation is
+not a gate and the failure is silent. *Inferring an empty field as deliberate*, because that is
+indistinguishable from a typo, which is the whole defect. *Accepting version 1 leniently for
+migration*, because the un-migrated package is precisely the one still carrying the hole.
+
+**Consequence to expect.** Adding a package is more verbose: four safety fields must be written even
+when three are empty. That verbosity is the point — the empty case is now something a person decided
+and a reader can see.
+
+**Revisit when.** A safety field is added or retired, or a package needs a per-field exemption the
+`declared_none` list cannot express.
+
+**Refs.** `scripts/port_config.py`, `ports/README.md`, `tests/test_port_config.py`,
+[the learning](LEARNINGS.md#an-optional-safety-setting-is-a-safety-setting-that-is-off).
+
+### A compatibility record stores every command a stage ran, beside its own exit status
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** The compatibility-matrix record advances to `schema_version` 2. An executed stage
+carries `commands`: every argv it ran, redacted, each with its own `exit_status`. `command` remains
+the first of those, so a row still reads as version 1 did. Version 1 records stay valid and keep
+being validated; a version 1 record carrying `commands` is refused, and a version 2 executed stage
+without them is refused.
+
+**Rationale.** A stage runs one command per skill unit, or one per entrypoint. Recording only the
+first made the command and status cardinalities disagree: a reader saw `exit status 0, 7` with one
+command and could neither tell which failed nor reproduce it. The nine committed matrices are
+evidence and are not rewritten, so the version is what separates the two shapes rather than a
+migration.
+
+**Rejected alternatives.** *Keeping one command and listing statuses in prose*, which is the
+disagreement itself. *Rewriting the committed matrices to the new shape*, because editing evidence to
+match a moved tree is the anti-pattern the runbook names. *Making `commands` optional in version 2*,
+because an optional record of what ran is a record that can omit the command that failed.
+
+**Consequence to expect.** The matrix safety rule now grades every recorded command rather than the
+first, so a mutating command in second position is caught.
+
+**Revisit when.** A stage needs to record something per command that `exit_status` cannot carry.
+
+**Refs.** `schemas/compatibility-matrix.schema.json`,
+`scripts/check_compatibility_matrix.py` (`check_record_version`), `scripts/assess_clients.py`.
+
+### Raw client output is kept for the operator and kept out of the record
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** Each command's stdout and stderr are retained, bounded at 64 KiB with truncation marked,
+in a private `transcript.json` written into the run workspace. The public compatibility record never
+quotes it and never names its path. The operator writes each row's `version`, `reason`, and `evidence`
+from that transcript.
+
+**Rationale.** The public record carries field names, counts, and comparisons — raw client output is
+none of those and is not redacted. But discarding it left the operator nothing to write the record
+*from*, which meant the scripted method could not produce the matrix the prose method did. Both
+constraints are real; they are satisfied by two artifacts, not by one compromise.
+
+**Rejected alternatives.** *Putting bounded output in the record*, because it is unredacted by
+construction. *Printing it to the terminal only*, because a ten-client run's output does not survive
+a scrollback. *Keeping it unbounded*, because one loud client should not fill the operator's disk.
+
+**Consequence to expect.** The run workspace holds site-identifying text and must not be committed.
+The runbook and `--workspace` help both say so.
+
+**Revisit when.** A redaction pass over raw output becomes trustworthy enough to put a bounded
+excerpt in the record itself.
+
+**Refs.** `scripts/assess_clients.py` (`CommandTranscript`, `transcript_path`),
+`docs/runbooks/portable-plugin-port.md`.
+
 ### Package identity is a descriptor under `ports/`, not a constant in a tool
 
 **Author.** Jeff Cox and Claude

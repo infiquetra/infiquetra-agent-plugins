@@ -79,6 +79,9 @@ def _build_fake_package() -> tuple[Path, "port_config.PortConfig"]:
             "assessment": {
                 "package_scripts": list(REAL_CONFIG.assessment.package_scripts),
                 "mutating_operations": sorted(REAL_CONFIG.assessment.mutating_operations),
+                "credential_prefixes": list(REAL_CONFIG.assessment.credential_prefixes),
+                "entrypoints": list(REAL_CONFIG.assessment.entrypoints),
+                "declared_none": [],
             },
         },
         root=directory,

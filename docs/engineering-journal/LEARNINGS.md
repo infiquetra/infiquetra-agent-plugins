@@ -2,6 +2,98 @@
 
 ## 2026-08-23
 
+### A wrapper resolved by name resolves to itself
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Two of the ten assessed clients are launched through a local auto-trust wrapper that
+finds its real binary through the client home. Under the assessment's isolated home that lookup
+fails, so each run supplies the wrapper's own documented override naming the real executable.
+
+**Evidence.** `scripts/assess_clients.py` resolved that override as
+`shutil.which(plan.binary)` — which returns **the wrapper**, because the wrapper is what sits on
+`PATH` under that name. The wrapper would then exec the value of its own override, which is itself,
+and keep doing so: an unbounded chain of descendants that never reaches the client. An independent
+review graded it P0 and proved the equality without executing the recursion.
+
+**Mechanism.** "Find the real X" and "find X on `PATH`" are the same call when the thing shadowing
+X is named X. The shadowing is the whole point of a wrapper, so the one lookup that feels obvious is
+the one guaranteed to return the wrong answer — and the wrong answer is not an error, it is a
+plausible path that fails only at runtime, in the most expensive way available.
+
+**Fix.** `resolve_real_binary` walks every `PATH` entry, keeps the executables it finds, and returns
+the first that is not the same file as the first match, comparing by `os.path.samefile` so a symlink
+to the wrapper is caught too. With only the wrapper present it **refuses** — a stage blocked with the
+reason named beats a host spawning processes until it dies.
+
+**Generalizable rule.** When a program resolves a dependency *by the same name it is itself known
+by*, resolution by name is a self-reference. Resolve by identity — compare the file, not the string —
+and refuse when the only candidate is the caller.
+
+**Refs.** `scripts/assess_clients.py` (`resolve_real_binary`),
+`tests/test_assess_clients.py::RealBinaryResolutionTest`, cycle-11 mutation proof.
+
+### A deadline is not a containment boundary unless it signals the group
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Every assessment stage carries a timeout, added after a client that prompts on standard
+input hung a run indefinitely.
+
+**Evidence.** `subprocess.run(timeout=...)` kills and waits for the **direct** child. Several of
+these clients are launched through a wrapper, so the direct child is the wrapper and the client is
+its descendant. A probe confirmed a grandchild alive after the run timed out. The stage was recorded
+`blocked` while the client it started kept installing and writing state.
+
+A second-order detail worth keeping: the first fix reached for
+`subprocess.TimeoutExpired.pid`, which does not exist. The cleanup silently took its
+platform-fallback branch and reported "this platform has no process-group signal" on a platform that
+has one — a guard reporting a reason that was not true.
+
+**Mechanism.** A timeout bounds *the waiting*, not *the work*. Without a new session the child shares
+the caller's process group, so there is no group to signal that would not also signal the harness;
+with `start_new_session=True` the child leads its own group, but only a caller holding the `Popen`
+still has the pid to signal it with. `subprocess.run` gives that pid away.
+
+**Fix.** `run_contained` owns the `Popen`, mirrors `subprocess.run`'s signature so it drops into the
+same injectable seam, and on timeout signals the child's session with `SIGTERM` then `SIGKILL`.
+
+**Generalizable rule.** If a timeout is meant to stop work rather than stop waiting, the process must
+lead its own group and the caller must keep the handle needed to signal it. Prove it with a child
+that outlives its parent, not with the parent's exit.
+
+**Refs.** `scripts/assess_clients.py` (`run_contained`, `terminate_process_group`),
+`tests/test_assess_clients.py::ProcessGroupTest`.
+
+### An optional safety setting is a safety setting that is off
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The port descriptor introduced in this change carries the settings that scope the
+assessment's safety rules: which environment variables to strip, which scripts the mutating-operation
+rule applies to, which operations count as mutating.
+
+**Evidence.** `custody` was closed against unknown keys; `assessment` was not, and every field in it
+defaulted to empty. A descriptor writing `credential_prefix` instead of `credential_prefixes`
+validated, loaded, passed the repository gate — and stripped nothing. The same typo in
+`package_scripts` scoped the mutating-operation rule to no command, so every command passed the
+safety check. An independent review found both, and my own earlier review had found only the narrower
+version of the second.
+
+**Mechanism.** Each of these fields fails **open** when empty, and "absent" and "empty" were the same
+state. So the failure mode of a typo was not an error but a silently disabled control, and the
+cheapest possible mistake bought the most expensive possible outcome.
+
+**Fix.** Every object in the descriptor is closed against unknown keys, every safety field must be
+stated, and a field that is genuinely empty is named in `assessment.declared_none` — a decision a
+reader can see and a typo cannot produce.
+
+**Generalizable rule.** A setting whose empty value disables a control must never be optional, and
+"absent" must never mean "empty". Make the empty case a thing someone had to write down.
+
+**Refs.** `scripts/port_config.py` (`_closed`, `SAFETY_FIELDS`),
+`tests/test_port_config.py::ClosedContractTest`, [`ports/README.md`](../../ports/README.md).
+
 ### A test that asserts on the machine it runs on reports the machine, not the code
 
 **Author.** Jeff Cox and Claude

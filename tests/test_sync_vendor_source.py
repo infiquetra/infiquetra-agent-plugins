@@ -77,6 +77,14 @@ def variant_config(**custody_overrides: object) -> "port_config.PortConfig":
             "package_manifest": CONFIG.package_manifest,
             "source": source,
             "custody": custody,
+            "assessment": {
+                "credential_prefixes": list(CONFIG.assessment.credential_prefixes),
+                "package_scripts": list(CONFIG.assessment.package_scripts),
+                "mutating_operations": sorted(CONFIG.assessment.mutating_operations),
+                "entrypoints": list(CONFIG.assessment.entrypoints),
+                "skill_units": list(CONFIG.assessment.skill_units),
+                "declared_none": list(CONFIG.assessment.declared_none),
+            },
             "provenance": {
                 "notes": list(CONFIG.notes),
                 "dropped_reason": CONFIG.dropped_reason,

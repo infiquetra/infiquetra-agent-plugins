@@ -42,6 +42,16 @@ def minimal(**overrides: object) -> dict:
             "package_path": "plugins/example",
         },
         "custody": {},
+        # Every safety field is stated. A package with none of a given kind says
+        # so in declared_none rather than leaving the field out, because an
+        # absent safety field fails open.
+        "assessment": {
+            "credential_prefixes": ["EXAMPLE_"],
+            "package_scripts": ["example.py"],
+            "mutating_operations": ["delete"],
+            "entrypoints": ["scripts/example.py"],
+            "declared_none": [],
+        },
     }
     document.update(overrides)
     return document
@@ -176,6 +186,134 @@ class CustodyTest(unittest.TestCase):
     def test_declared_preserves_duplicates_so_they_can_be_counted(self) -> None:
         table = port_config.CustodyTable(("a",), ("a",), (), (), ())
         self.assertEqual(table.declared().count("a"), 2)
+
+
+class ClosedContractTest(unittest.TestCase):
+    """Every object is closed, and every safety field is stated.
+
+    An unknown key in a descriptor is not a syntax error -- it is a setting that
+    silently did not take effect. `credential_prefix` for `credential_prefixes`
+    read as "strip nothing", and the run that found out was the one that handed
+    the operator's real credentials to ten clients.
+    """
+
+    def test_an_unknown_key_is_refused_at_every_level(self) -> None:
+        for path, mutate in (
+            ("top level", lambda d: d.update({"pacakge_root": "plugins/example"})),
+            ("source", lambda d: d["source"].update({"repositry": "x"})),
+            ("assessment", lambda d: d["assessment"].update({"credential_prefix": ["X_"]})),
+            ("provenance", lambda d: d.update({"provenance": {"note": ["x"]}})),
+        ):
+            with self.subTest(object=path):
+                document = minimal()
+                mutate(document)
+                with self.assertRaises(port_config.PortConfigError) as caught:
+                    parse(document)
+                self.assertIn("unknown field", str(caught.exception))
+
+    def test_a_misspelled_safety_field_is_refused_rather_than_read_as_empty(self) -> None:
+        """The exact typo that produced the fail-open."""
+        document = minimal()
+        del document["assessment"]["credential_prefixes"]
+        document["assessment"]["credential_prefix"] = ["EXAMPLE_"]
+        with self.assertRaises(port_config.PortConfigError):
+            parse(document)
+
+    def test_every_safety_field_must_be_stated(self) -> None:
+        for field in port_config.SAFETY_FIELDS:
+            with self.subTest(field=field):
+                document = minimal()
+                del document["assessment"][field]
+                with self.assertRaises(port_config.PortConfigError) as caught:
+                    parse(document)
+                self.assertIn(field, str(caught.exception))
+                self.assertIn("declared_none", str(caught.exception))
+
+    def test_an_empty_safety_field_needs_an_explicit_declaration(self) -> None:
+        for field in port_config.SAFETY_FIELDS:
+            with self.subTest(field=field):
+                document = minimal()
+                document["assessment"][field] = []
+                with self.assertRaises(port_config.PortConfigError) as caught:
+                    parse(document)
+                self.assertIn("fails open", str(caught.exception))
+
+    def test_an_explicitly_declared_empty_field_is_accepted(self) -> None:
+        """A package that genuinely has none says so, and a typo cannot say it."""
+        document = minimal()
+        document["assessment"]["mutating_operations"] = []
+        document["assessment"]["declared_none"] = ["mutating_operations"]
+        config = parse(document)
+        self.assertEqual(config.assessment.mutating_operations, frozenset())
+        self.assertIn("mutating_operations", config.assessment.declared_none)
+
+    def test_declaring_a_field_none_while_it_is_populated_is_refused(self) -> None:
+        document = minimal()
+        document["assessment"]["declared_none"] = ["mutating_operations"]
+        with self.assertRaises(port_config.PortConfigError) as caught:
+            parse(document)
+        self.assertIn("not empty", str(caught.exception))
+
+    def test_declared_none_may_only_name_a_safety_field(self) -> None:
+        document = minimal()
+        document["assessment"]["declared_none"] = ["skill_units"]
+        with self.assertRaises(port_config.PortConfigError) as caught:
+            parse(document)
+        self.assertIn("no safety decision", str(caught.exception))
+
+
+class ManifestDestinationTest(unittest.TestCase):
+    """A relocation with no destination plans a path built from a missing value."""
+
+    def test_a_manifest_path_without_an_extension_directory_is_refused(self) -> None:
+        document = minimal()
+        document["source"]["manifest_path"] = ".claude-plugin/plugin.json"
+        with self.assertRaises(port_config.PortConfigError) as caught:
+            parse(document)
+        self.assertIn("client_extension_dir", str(caught.exception))
+
+    def test_the_pair_together_is_accepted(self) -> None:
+        document = minimal()
+        document["source"]["manifest_path"] = ".claude-plugin/plugin.json"
+        document["source"]["client_extension_dir"] = "com.example.client"
+        self.assertEqual(parse(document).source.client_extension_dir, "com.example.client")
+
+    def test_no_synchronization_can_plan_a_path_from_a_missing_value(self) -> None:
+        """The property, not the instance: no accepted descriptor can produce it."""
+        document = minimal()
+        document["source"]["manifest_path"] = ".claude-plugin/plugin.json"
+        document["source"]["client_extension_dir"] = "com.example.client"
+        config = parse(document)
+        self.assertIsNotNone(config.source.client_extension_dir)
+        self.assertNotIn("None", f"{config.source.client_extension_dir}/plugin.json")
+
+
+class EntrypointDeclarationTest(unittest.TestCase):
+    """Entrypoints are declared, not inferred from how the bytes were obtained."""
+
+    def test_entrypoints_are_independent_of_custody(self) -> None:
+        for custody_class in port_config.CUSTODY_FIELDS:
+            with self.subTest(custody=custody_class):
+                document = minimal()
+                document["custody"] = {custody_class: ["scripts/example.py"]}
+                if custody_class == "client_byte_copies":
+                    document["source"]["client_extension_dir"] = "com.example.client"
+                if custody_class == "dropped_from_source":
+                    document["provenance"] = {"dropped_reason": "replaced at build time"}
+                config = parse(document)
+                self.assertEqual(config.assessment.entrypoints, ("scripts/example.py",))
+
+    def test_a_package_with_no_custody_at_all_still_declares_entrypoints(self) -> None:
+        """Target-owned source has no custody entry, and is still runnable."""
+        config = parse(minimal())
+        self.assertEqual(config.custody.declared(), ())
+        self.assertTrue(config.assessment.entrypoints)
+
+    def test_a_traversing_entrypoint_is_refused(self) -> None:
+        document = minimal()
+        document["assessment"]["entrypoints"] = ["../../etc/passwd"]
+        with self.assertRaises(port_config.PortConfigError):
+            parse(document)
 
 
 class NamingTest(unittest.TestCase):

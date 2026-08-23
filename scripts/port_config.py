@@ -54,7 +54,13 @@ CONFIG_SUFFIX = ".json"
 #: Bumped when a descriptor field is added, removed, or reinterpreted. A
 #: descriptor that does not carry the version this module understands is
 #: refused rather than read with assumed defaults.
-SCHEMA_VERSION = "1"
+#:
+#: Version 2 closes every object against unknown keys and requires the
+#: load-bearing safety declarations to be stated rather than defaulted. Version 1
+#: is not accepted: a descriptor written against it has exactly the shape this
+#: change exists to refuse, so reading one leniently would keep the hole open for
+#: whichever package had not been migrated yet.
+SCHEMA_VERSION = "2"
 
 #: Package roots live under this directory. Enforced rather than assumed: the
 #: descriptor is the input that decides which tree a synchronization overwrites
@@ -62,9 +68,48 @@ SCHEMA_VERSION = "1"
 #: is refused before either tool acts on it.
 PACKAGE_PARENT = "plugins"
 
-REQUIRED_TOP_LEVEL = ("schema_version", "package", "package_root", "source", "custody")
+REQUIRED_TOP_LEVEL = (
+    "schema_version",
+    "package",
+    "package_root",
+    "source",
+    "custody",
+    "assessment",
+)
+
+#: Every key the top level may carry. Closed, like every other object here: an
+#: unknown key is a typo, and a typo in a descriptor is a setting that silently
+#: did not take effect.
+TOP_LEVEL_FIELDS = REQUIRED_TOP_LEVEL + ("package_manifest", "provenance")
 
 REQUIRED_SOURCE_FIELDS = ("repository", "package_path")
+
+SOURCE_FIELDS = REQUIRED_SOURCE_FIELDS + ("manifest_path", "client_extension_dir")
+
+PROVENANCE_FIELDS = ("notes", "dropped_reason")
+
+#: The assessment settings that carry a safety decision. Each one must be stated
+#: rather than defaulted, because every one of them fails *open* when absent:
+#:
+#: * `credential_prefixes` empty means no variable is stripped from an assessment
+#:   subprocess, so the operator's real credentials reach every client;
+#: * `package_scripts` empty means the mutating-operation rule matches no command,
+#:   so every recorded or about-to-run command passes the safety check;
+#: * `mutating_operations` empty means the same rule has no verbs to match;
+#: * `entrypoints` empty means the assessment invokes nothing and a package can
+#:   be called compatible without any of its executables having run.
+#:
+#: A package for which one of these is genuinely empty says so in
+#: `declared_none`, which is a decision a reader can see and a typo cannot
+#: produce.
+SAFETY_FIELDS = (
+    "credential_prefixes",
+    "package_scripts",
+    "mutating_operations",
+    "entrypoints",
+)
+
+ASSESSMENT_FIELDS = SAFETY_FIELDS + ("skill_units", "declared_none")
 
 #: The five custody classes. Every upstream path a synchronization sees has to
 #: fall in exactly one of them; the names are the descriptor's field names, and
@@ -94,6 +139,23 @@ def repository_root() -> Path:
 def _require(condition: bool, message: str) -> None:
     if not condition:
         raise PortConfigError(message)
+
+
+def _closed(document: dict[str, Any], allowed: tuple[str, ...], where: str) -> None:
+    """Refuse any key the contract does not define.
+
+    Every object in a descriptor is closed. An unknown key is almost always a
+    typo, and a typo in this file is not a syntax error -- it is a setting that
+    silently did not take effect. The cost of that is asymmetric: a misspelled
+    `credential_prefix` reads as "strip nothing", and the run that finds out is
+    the one that hands the operator's real credentials to ten clients.
+    """
+    unknown = sorted(set(document) - set(allowed))
+    _require(
+        not unknown,
+        f"{where}: unknown field(s): {', '.join(unknown)}. Every object in a port descriptor "
+        f"is closed; the fields here are {', '.join(allowed)}",
+    )
 
 
 def _string_tuple(document: dict[str, Any], key: str, where: str) -> tuple[str, ...]:
@@ -191,7 +253,14 @@ class AssessmentConfig:
     package cannot drift into two different answers.
     """
 
-    __slots__ = ("package_scripts", "mutating_operations", "credential_prefixes", "skill_units")
+    __slots__ = (
+        "package_scripts",
+        "mutating_operations",
+        "credential_prefixes",
+        "skill_units",
+        "entrypoints",
+        "declared_none",
+    )
 
     def __init__(
         self,
@@ -199,11 +268,23 @@ class AssessmentConfig:
         mutating_operations: frozenset[str],
         credential_prefixes: tuple[str, ...],
         skill_units: tuple[str, ...],
+        entrypoints: tuple[str, ...] = (),
+        declared_none: tuple[str, ...] = (),
     ) -> None:
         self.package_scripts = package_scripts
         self.mutating_operations = mutating_operations
         self.credential_prefixes = credential_prefixes
         self.skill_units = skill_units
+        #: The package's executable entrypoints, package-relative. Declared here
+        #: rather than read from a custody class: what makes a file executable is
+        #: that the package says it is, not how its bytes were obtained. A
+        #: package whose entrypoint is an upstream byte copy or target-owned
+        #: source is assessed on it exactly like a transformed one.
+        self.entrypoints = entrypoints
+        #: Safety fields this package deliberately leaves empty. Naming one here
+        #: is what separates "this package has no mutating operations" from
+        #: "somebody misspelled the key".
+        self.declared_none = declared_none
 
 
 class PortConfig:
@@ -273,6 +354,7 @@ def parse(document: object, *, root: Path, path: Path) -> PortConfig:
 
     missing = [key for key in REQUIRED_TOP_LEVEL if key not in document]
     _require(not missing, f"{where}: missing required field(s): {', '.join(missing)}")
+    _closed(document, TOP_LEVEL_FIELDS, where)
 
     version = document["schema_version"]
     _require(
@@ -328,6 +410,7 @@ def parse(document: object, *, root: Path, path: Path) -> PortConfig:
         not source_missing,
         f"{where}.source: missing required field(s): {', '.join(source_missing)}",
     )
+    _closed(source_document, SOURCE_FIELDS, f"{where}.source")
     for key in REQUIRED_SOURCE_FIELDS:
         _require(
             isinstance(source_document[key], str) and source_document[key].strip() != "",
@@ -385,25 +468,77 @@ def parse(document: object, *, root: Path, path: Path) -> PortConfig:
             f"{where}: names client-custody byte copies but no source.client_extension_dir "
             "to place them under"
         )
+    if manifest_path is not None and extension_dir is None:
+        # The relocation transform's whole output path is
+        # `<client_extension_dir>/<manifest name>`. Without the directory,
+        # `sync_vendor_source.plan_sync` interpolates the missing value and
+        # plans a file at the literal path `None/plugin.json` -- a descriptor
+        # that validates and then writes somewhere nobody named.
+        raise PortConfigError(
+            f"{where}: names source.manifest_path but no source.client_extension_dir. The "
+            "manifest relocation has no destination without one, and the synchronization "
+            "would plan it at a path built from the missing value"
+        )
 
-    assessment_document = document.get("assessment", {})
+    assessment_document = document["assessment"]
     _require(isinstance(assessment_document, dict), f"{where}.assessment must be an object")
     assert isinstance(assessment_document, dict)
-    operations = _string_tuple(assessment_document, "mutating_operations", f"{where}.assessment")
+    _closed(assessment_document, ASSESSMENT_FIELDS, f"{where}.assessment")
+
+    declared_none = _string_tuple(assessment_document, "declared_none", f"{where}.assessment")
+    unknown_none = sorted(set(declared_none) - set(SAFETY_FIELDS))
+    _require(
+        not unknown_none,
+        f"{where}.assessment.declared_none names field(s) that carry no safety decision: "
+        f"{', '.join(unknown_none)}. The safety fields are {', '.join(SAFETY_FIELDS)}",
+    )
+
+    # Every safety field is stated, and a field that is genuinely empty says so.
+    # Absent, each one fails open in its own way -- see SAFETY_FIELDS. Requiring
+    # the declaration is what makes "this package has no mutating operations" a
+    # decision a reader can see rather than a typo nobody noticed.
+    for field in SAFETY_FIELDS:
+        stated = field in assessment_document
+        _require(
+            stated or field in declared_none,
+            f"{where}.assessment.{field} is a safety declaration and must be stated. If this "
+            f"package genuinely has none, write it as an empty list and name {field!r} in "
+            "assessment.declared_none",
+        )
+        values = _string_tuple(assessment_document, field, f"{where}.assessment")
+        if field in declared_none:
+            _require(
+                not values,
+                f"{where}.assessment.{field} is named in declared_none but is not empty",
+            )
+        else:
+            _require(
+                bool(values),
+                f"{where}.assessment.{field} is empty. An empty safety declaration fails open, "
+                f"so name {field!r} in assessment.declared_none to say the emptiness is meant",
+            )
+
     assessment = AssessmentConfig(
         package_scripts=_string_tuple(assessment_document, "package_scripts", f"{where}.assessment"),
-        mutating_operations=frozenset(operations),
+        mutating_operations=frozenset(
+            _string_tuple(assessment_document, "mutating_operations", f"{where}.assessment")
+        ),
         credential_prefixes=_string_tuple(
             assessment_document, "credential_prefixes", f"{where}.assessment"
         ),
         skill_units=_string_tuple(assessment_document, "skill_units", f"{where}.assessment"),
+        entrypoints=_string_tuple(assessment_document, "entrypoints", f"{where}.assessment"),
+        declared_none=declared_none,
     )
     for unit in assessment.skill_units:
         _relative_path(unit, f"{where}.assessment.skill_units")
+    for entrypoint in assessment.entrypoints:
+        _relative_path(entrypoint, f"{where}.assessment.entrypoints")
 
     provenance_document = document.get("provenance", {})
     _require(isinstance(provenance_document, dict), f"{where}.provenance must be an object")
     assert isinstance(provenance_document, dict)
+    _closed(provenance_document, PROVENANCE_FIELDS, f"{where}.provenance")
     notes = _string_tuple(provenance_document, "notes", f"{where}.provenance")
     dropped_reason = provenance_document.get("dropped_reason", "")
     _require(

@@ -1,5 +1,5 @@
 {
-  "schema_version": "1",
+  "schema_version": "2",
   "package": "unifi",
   "package_root": "plugins/unifi",
   "package_manifest": "plugin.json",
@@ -35,6 +35,9 @@
     ]
   },
   "assessment": {
+    "credential_prefixes": [
+      "UNIFI_"
+    ],
     "package_scripts": [
       "unifi_network_client.py",
       "unifi_protect_client.py",
@@ -56,13 +59,15 @@
       "update",
       "upgrade"
     ],
-    "credential_prefixes": [
-      "UNIFI_"
+    "entrypoints": [
+      "skills/unifi-network/scripts/unifi_network_client.py",
+      "skills/unifi-protect/scripts/unifi_protect_client.py"
     ],
     "skill_units": [
       "skills/unifi-network",
       "skills/unifi-protect"
-    ]
+    ],
+    "declared_none": []
   },
   "provenance": {
     "notes": [

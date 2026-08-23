@@ -28,6 +28,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -426,6 +427,155 @@ class SafetyRefusalTest(FakeClientFixture):
                         harness.refuse_unsafe_argv(argv, CONFIG)
 
 
+class RealBinaryResolutionTest(FakeClientFixture):
+    """The P0: a wrapper told to launch itself does exactly that, forever.
+
+    Two clients run through a local auto-trust wrapper that needs its real
+    binary named under an isolated home. Resolving that with a plain `which`
+    returns the wrapper, because the wrapper is what sits on PATH under that
+    name. The launcher then relaunches itself, never reaches the client, and
+    spawns descendants until the host gives out.
+    """
+
+    def test_the_wrapper_alone_on_path_is_refused_not_returned(self) -> None:
+        wrappers = self.base / "wrap"
+        wrappers.mkdir()
+        write_executable(wrappers, "grok", 'exec "$GROK_AUTO_TRUST_REAL_BIN" "$@"\n')
+        with self.assertRaises(harness.AssessmentError) as caught:
+            harness.resolve_real_binary("grok", path=str(wrappers))
+        message = str(caught.exception)
+        self.assertIn("launcher wrapper", message)
+        self.assertIn("recursively", message)
+
+    def test_the_real_binary_behind_the_wrapper_is_found(self) -> None:
+        wrappers = self.base / "wrap"
+        real = self.base / "real"
+        wrappers.mkdir()
+        real.mkdir()
+        write_executable(wrappers, "grok", 'exec "$GROK_AUTO_TRUST_REAL_BIN" "$@"\n')
+        write_executable(real, "grok", 'echo "the real client"\nexit 0\n')
+        resolved = harness.resolve_real_binary(
+            "grok", path=os.pathsep.join([str(wrappers), str(real)])
+        )
+        self.assertEqual(Path(resolved).parent, real)
+
+    def test_a_symlink_to_the_wrapper_is_not_mistaken_for_the_real_binary(self) -> None:
+        wrappers = self.base / "wrap"
+        linked = self.base / "linked"
+        wrappers.mkdir()
+        linked.mkdir()
+        wrapper = write_executable(wrappers, "agy", "exit 0\n")
+        (linked / "agy").symlink_to(wrapper)
+        with self.assertRaises(harness.AssessmentError):
+            harness.resolve_real_binary(
+                "agy", path=os.pathsep.join([str(wrappers), str(linked)])
+            )
+
+    def test_an_absent_binary_is_reported_not_guessed(self) -> None:
+        with self.assertRaises(harness.AssessmentError) as caught:
+            harness.resolve_real_binary("no-such-client", path=str(self.base))
+        self.assertIn("not on PATH", str(caught.exception))
+
+    def test_no_override_ever_resolves_to_the_command_on_path(self) -> None:
+        """The property that makes the recursion impossible, over both clients."""
+        wrappers = self.base / "wrap"
+        real = self.base / "real"
+        wrappers.mkdir()
+        real.mkdir()
+        for plan in harness.CLIENT_PLANS:
+            if not plan.environment:
+                continue
+            with self.subTest(client=plan.name):
+                write_executable(wrappers, plan.binary, "exit 0\n")
+                write_executable(real, plan.binary, "exit 0\n")
+                path = os.pathsep.join([str(wrappers), str(real)])
+                resolved = harness.resolve_real_binary(plan.binary, path=path)
+                self.assertFalse(
+                    os.path.samefile(resolved, wrappers / plan.binary),
+                    "the override points back at the wrapper",
+                )
+
+
+class ProcessGroupTest(FakeClientFixture):
+    """A deadline has to be a containment boundary, not a note about one."""
+
+    def test_a_timed_out_launcher_does_not_leave_its_client_running(self) -> None:
+        marker = self.base / "descendant-still-alive"
+        write_executable(
+            self.bin,
+            "spawning-launcher",
+            f'( sleep 5; touch "{marker}" ) &\nsleep 30\n',
+        )
+        outcome = self.outcome(
+            harness.StageSpec("placement", ("spawning-launcher",), timeout=0.6)
+        )
+        self.assertEqual(outcome.result, harness.BLOCKED)
+        self.assertIn("process group", outcome.reason)
+        # The descendant had 5s to appear; the group was killed well before.
+        deadline = time.time() + 8
+        while time.time() < deadline:
+            if marker.exists():
+                break
+            time.sleep(0.2)
+        self.assertFalse(
+            marker.exists(),
+            "a client descendant outlived the deadline and kept writing",
+        )
+
+
+class TranscriptTest(FakeClientFixture):
+    """Raw output is kept for the operator and kept out of the record."""
+
+    def test_a_stage_retains_each_command_output(self) -> None:
+        outcome = self.outcome(harness.StageSpec("discovery", ("ok-client", "list")))
+        self.assertEqual(len(outcome.transcript), 1)
+        self.assertIn("two skills resolved", outcome.transcript[0].stdout)
+
+    def test_the_transcript_is_bounded(self) -> None:
+        write_executable(
+            self.bin, "loud-client", f'python3 -c "print(\'x\' * {harness.TRANSCRIPT_LIMIT * 2})"\n'
+        )
+        outcome = self.outcome(harness.StageSpec("discovery", ("loud-client",)))
+        kept = outcome.transcript[0].stdout
+        self.assertLessEqual(len(kept), harness.TRANSCRIPT_LIMIT + 200)
+        self.assertIn("more characters not kept", kept)
+
+    def test_the_record_never_carries_raw_output(self) -> None:
+        outcome = self.outcome(harness.StageSpec("discovery", ("ok-client", "list")))
+        self.assertNotIn("two skills resolved", json.dumps(outcome.record()))
+
+
+class PerCommandStatusTest(FakeClientFixture):
+    """A stage that ran several commands records each one beside its status."""
+
+    def test_each_command_is_recorded_with_its_own_status(self) -> None:
+        write_executable(self.bin, "second-fails", "exit 7\n")
+        real = harness.stage_argvs
+        harness.stage_argvs = lambda c, p, s, v: (("ok-client",), ("second-fails",))
+        try:
+            outcome = self.outcome(harness.StageSpec("invocation", ("ok-client",)))
+        finally:
+            harness.stage_argvs = real
+        recorded = outcome.record()
+        self.assertEqual(len(recorded["commands"]), 2)
+        self.assertEqual(recorded["commands"][0]["exit_status"], 0)
+        self.assertEqual(recorded["commands"][1]["exit_status"], 7)
+        self.assertEqual(recorded["commands"][0]["command"], recorded["command"])
+
+    def test_a_reader_can_tell_which_command_failed(self) -> None:
+        """The point of the change: the statuses are no longer anonymous."""
+        write_executable(self.bin, "second-fails", "exit 7\n")
+        real = harness.stage_argvs
+        harness.stage_argvs = lambda c, p, s, v: (("ok-client",), ("second-fails",))
+        try:
+            outcome = self.outcome(harness.StageSpec("invocation", ("ok-client",)))
+        finally:
+            harness.stage_argvs = real
+        failing = [e for e in outcome.record()["commands"] if e["exit_status"] != 0]
+        self.assertEqual(len(failing), 1)
+        self.assertIn("second-fails", failing[0]["command"])
+
+
 class HomePolicyTest(unittest.TestCase):
     """Live client configuration is never written to."""
 
@@ -541,8 +691,15 @@ class EntrypointPathTest(unittest.TestCase):
                 "package": "unifi",
                 "package_root": "plugins/unifi",
                 "source": {"repository": "https://example.com/u", "package_path": "plugins/unifi"},
-                "custody": {"entrypoint_transforms": ["tools/orphan.py"]},
-                "assessment": {"skill_units": ["skills/unifi-network"]},
+                "custody": {},
+                "assessment": {
+                    "credential_prefixes": ["UNIFI_"],
+                    "package_scripts": ["unifi_network_client.py"],
+                    "mutating_operations": ["reboot"],
+                    "entrypoints": ["tools/orphan.py"],
+                    "skill_units": ["skills/unifi-network"],
+                    "declared_none": [],
+                },
             },
             root=ROOT,
             path=ROOT / "ports" / "unifi.json",
@@ -636,10 +793,39 @@ class StatusProposalTest(unittest.TestCase):
         `ModuleNotFoundError` before parsing an argument. Every stage executed.
         Reading the exit status is what separates that from a working package.
         """
-        results = dict.fromkeys(ccm.STAGES, harness.EXECUTED)
-        self.assertEqual(
-            harness.propose_status(self.outcomes(returncode=1, **results)), "failed"
+        outcomes = {
+            stage: harness.StageOutcome(stage, harness.EXECUTED, returncode=0)
+            for stage in ("placement", "discovery", "load")
+        }
+        outcomes["invocation"] = harness.StageOutcome(
+            "invocation", harness.EXECUTED, returncode=1
         )
+        self.assertEqual(harness.propose_status(outcomes), "failed")
+
+    def test_a_client_that_refused_every_stage_is_not_works_directly(self) -> None:
+        """`executed` means a process completed, not that it accepted the package.
+
+        Placement, discovery and load all returning non-zero is a client
+        refusing the package at every step. Reading `executed` as success let
+        that be proposed `works-directly` because the package's own `--help`
+        happened to exit 0.
+        """
+        outcomes = {
+            stage: harness.StageOutcome(stage, harness.EXECUTED, returncode=3)
+            for stage in ("placement", "discovery", "load")
+        }
+        outcomes["invocation"] = harness.StageOutcome(
+            "invocation", harness.EXECUTED, returncode=0
+        )
+        self.assertEqual(harness.propose_status(outcomes), "works-through-an-adapter")
+
+    def test_a_failed_entrypoint_without_a_successful_placement_is_not_failed(self) -> None:
+        """Nothing was established, so nothing about the package failed."""
+        outcomes = {
+            stage: harness.StageOutcome(stage, harness.EXECUTED, returncode=2)
+            for stage in ccm.STAGES
+        }
+        self.assertEqual(harness.propose_status(outcomes), "works-through-an-adapter")
 
     def test_a_zero_exit_from_the_entrypoint_does_not_propose_failed(self) -> None:
         results = dict.fromkeys(ccm.STAGES, harness.EXECUTED)
@@ -859,18 +1045,33 @@ class RecordTest(unittest.TestCase):
         """
         record = self.plan_only_record()
         isolation = record["method"]["isolation"]
-        self.assertIn("scratch copy", isolation)
+        self.assertIn("its own fresh copy", isolation)
         self.assertIn("no client added a vendor artifact", isolation)
-        file_count, _ = ccm.package_fingerprint(self.workspace / "package")
+        file_count, _ = ccm.package_fingerprint(CONFIG.package_directory)
         self.assertIn(f"{file_count} files", isolation)
+
+    def test_each_client_is_handed_its_own_copy(self) -> None:
+        """One shared copy let an early client change the bytes a later one saw.
+
+        The record still bound itself to the original fingerprint, so ten rows
+        could describe up to ten different trees under one digest.
+        """
+        self.plan_only_record()
+        copies = sorted(p for p in self.workspace.glob("*/package") if p.is_dir())
+        self.assertEqual(len(copies), len(harness.CLIENT_PLANS))
+        digests = {ccm.package_fingerprint(copy)[1] for copy in copies}
+        self.assertEqual(len(digests), 1, "the copies are not identical to begin with")
+        for copy in copies:
+            self.assertNotEqual(copy.resolve(), CONFIG.package_directory.resolve())
 
     def test_the_assessed_copy_is_a_copy_not_the_shipped_tree(self) -> None:
         """A client that installs in place must not be able to reach the source."""
         before = ccm.package_fingerprint(CONFIG.package_directory)
         self.plan_only_record()
-        scratch = self.workspace / "package"
-        self.assertTrue(scratch.is_dir())
-        self.assertNotEqual(scratch.resolve(), CONFIG.package_directory.resolve())
+        copies = [p for p in self.workspace.glob("*/package") if p.is_dir()]
+        self.assertTrue(copies)
+        for copy in copies:
+            self.assertNotEqual(copy.resolve(), CONFIG.package_directory.resolve())
         self.assertEqual(ccm.package_fingerprint(CONFIG.package_directory), before)
 
 
