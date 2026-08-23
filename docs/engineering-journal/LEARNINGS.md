@@ -2,6 +2,80 @@
 
 ## 2026-08-23
 
+### A test that asserts on the machine it runs on reports the machine, not the code
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The port-readiness change added `scripts/assess_clients.py` and its test file. Three
+separate tests in one change asserted something true of the author's machine rather than of the
+code, and each passed locally while proving nothing, or proving it only there.
+
+**Evidence.** All three, from one pull request:
+
+| Test | Asserted | Actually depended on |
+|---|---|---|
+| `test_a_tree_that_moves_during_the_run_is_refused` | a stage reached the runner and moved the tree | whether `codex` was installed — all ten clients are on the author's machine, none on the continuous integration runner, so it passed locally and failed in CI |
+| `test_a_real_execute_run_produces_a_recordable_row` | the entrypoints exited 0 | whether the interpreter running the tests had `requests` and `urllib3` — true on 3.14 locally, false on the 3.12 floor |
+| `test_without_a_confirmation_the_same_process_reports_the_difference` | a prompting process exits 9 | whether the parent's stdin was a terminal, a pipe, or `/dev/null` |
+
+**Mechanism.** Each test named a real behaviour and then reached for an ambient fact to observe it
+— a binary on `PATH`, a package in the interpreter, a file descriptor inherited from the parent.
+Ambient facts are inputs the test does not control, so the assertion silently becomes *"is this
+machine configured the way I expect"*. When the answer is yes the test is green and mute; when it
+is no the failure looks like a defect in the code under test.
+
+The dangerous half is the passing case. A test that fails on a different machine gets fixed. A test
+that *passes* on the author's machine for the wrong reason ships, and the guard it claims to hold
+is not held anywhere.
+
+**Fix.** Supply the ambient fact instead of assuming it. A fake executable in a scratch directory
+prepended to `PATH`; `stdin=subprocess.DEVNULL` rather than whatever the parent had; an assertion
+on *how many* statuses were recorded rather than on what they were. Where the fact genuinely
+belongs to another test's subject — "do the entrypoints run" is
+`tests/test_client_entrypoints.py`'s question, and it stubs the transport so the answer is the same
+everywhere — assert the part this test actually owns and say so in the docstring.
+
+**Generalizable rule.** Before asserting, ask what on this machine the assertion is reading. If the
+answer is anything the test did not put there, either put it there or assert something else. A test
+whose result changes with the machine is a machine report wearing a test's name.
+
+**Refs.** `tests/test_assess_clients.py` (`RecordTest`, `SubprocessResultTest`), commit
+`e8f342f`, [the code review](../evidence/adhoc-port-readiness-generic-tooling/).
+
+### A guard added to fix one defect can hide the next one
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The code-review gate on the port-readiness change found that an uncaptured client
+install id fell back to the package name, so the assessment invoked a path no client uses and
+blamed the package for the resulting exit status. The repair stopped seeding the placeholder and
+blocked any stage whose command still named an unresolved one.
+
+**Evidence.** Re-running the original probe after the repair returned `blocked`, with the reason
+naming `<client-home>, <plugin-id>`. `<client-home>` was in the probe's own values and should have
+been substituted. `scripts/assess_clients.py` `stage_argvs` substituted placeholders on two of its
+three branches and returned the invocation branch's paths as raw templates, so *every* client's
+invocation stage would have run a literal `<client-home>/…` path. The new guard turned that into a
+clean, permanent, plausible-looking block.
+
+**Mechanism.** The guard and the latent defect produce the same observable. Before the guard, the
+defect showed up as a non-zero exit status that looked like a package failure; after it, as a
+blocked stage that looked like correct caution. Neither reading is "the path was never
+substituted", and the suite agreed with both: every unit test passed throughout, because nothing
+drove `assess(execute=True)` end to end with processes that actually run.
+
+**Fix.** Substitute on every branch, and add the end-to-end test whose absence let it through — one
+client, real processes, asserting what lands in the record. The defect was found by re-running the
+probe that had motivated the repair, which is the cheap habit: after fixing what a probe found,
+run the probe again and read the *whole* output rather than the one field that changed.
+
+**Generalizable rule.** A repair that converts a wrong answer into a refusal has not been verified
+until something proves the refusal is not now the only answer. Re-run the original probe after the
+fix, and cover the path end to end, not just the guard.
+
+**Refs.** `scripts/assess_clients.py` (`stage_argvs`),
+`tests/test_assess_clients.py::RecordTest::test_a_real_execute_run_produces_a_recordable_row`.
+
 ### A harness that inherits stdin behaves differently in a terminal than under a scheduler
 
 **Author.** Jeff Cox and Claude

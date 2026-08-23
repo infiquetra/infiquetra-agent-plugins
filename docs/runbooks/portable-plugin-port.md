@@ -121,8 +121,14 @@ whoever is running the assessment.
 ```bash
 python3 scripts/assess_clients.py --package <package>              # print the plan; runs nothing
 python3 scripts/assess_clients.py --package <package> --execute \
-    --python /opt/homebrew/bin/python3.12 --out <record>.json
+    --python <venv>/bin/python3.12 --out <record>.json
 ```
+
+`--python` must name an interpreter that already has the package's own
+third-party imports — the pilot used a throwaway virtual environment holding
+only `requests` and `urllib3`. The entrypoints import them at module scope, so a
+bare floor interpreter records a non-zero status for every client and proposes
+`failed` for all ten.
 
 The table below is the reference for reading that plan; the harness is what
 executes it.

@@ -601,7 +601,7 @@ def refuse_unsafe_home(plan: ClientPlan, spec: StageSpec, home_kind: str) -> Non
 class StageOutcome:
     """What one stage did, in the vocabulary the matrix record uses."""
 
-    __slots__ = ("stage", "result", "command", "evidence", "reason", "returncode", "captured")
+    __slots__ = ("stage", "result", "command", "evidence", "reason", "returncodes", "captured")
 
     def __init__(
         self,
@@ -612,6 +612,7 @@ class StageOutcome:
         evidence: str = "",
         reason: str = "",
         returncode: int | None = None,
+        returncodes: tuple[int, ...] | None = None,
         captured: dict[str, str] | None = None,
     ) -> None:
         self.stage = stage
@@ -619,8 +620,29 @@ class StageOutcome:
         self.command = command
         self.evidence = evidence
         self.reason = reason
-        self.returncode = returncode
+        #: Every process's exit status, in order. A stage may run more than one
+        #: -- one per skill unit, one per entrypoint -- and keeping only the
+        #: first is how a failing second entrypoint reads as a working package.
+        if returncodes is not None:
+            self.returncodes = returncodes
+        else:
+            self.returncodes = () if returncode is None else (returncode,)
         self.captured = captured or {}
+
+    @property
+    def returncode(self) -> int | None:
+        """The status that decides the stage: the first non-zero, or zero.
+
+        A caller asking "did this stage's commands succeed?" gets one answer
+        that accounts for all of them. `returncodes` is there for a caller that
+        needs each.
+        """
+        if not self.returncodes:
+            return None
+        for status in self.returncodes:
+            if status != 0:
+                return status
+        return 0
 
     def record(self) -> dict[str, Any]:
         entry: dict[str, Any] = {"result": self.result}
@@ -642,17 +664,61 @@ def substitute(argv: tuple[str, ...], values: dict[str, str]) -> tuple[str, ...]
     return tuple(resolved)
 
 
+#: Placeholders whose substituted value is a filesystem path, and so has to come
+#: back out of anything written into a public record. The identity placeholders
+#: are deliberately absent: the package name is already public in the record's
+#: own `$.package.name`, and putting it back would rewrite it wherever it
+#: appears *inside* a path -- turning `skills/unifi-network/…` into
+#: `skills/<plugin-name>-network/…`, which describes a command nobody ran.
+PATH_PLACEHOLDERS = (PACKAGE, CLIENT_HOME, PYTHON)
+
+
+def redaction_values(values: dict[str, str]) -> dict[str, str]:
+    """The subset of `values` that must be put back before anything is recorded.
+
+    Every path, plus a client-generated install id once a stage has actually
+    captured one. An id is only redactable when it was captured: before that it
+    has no value to match, and substituting the package name for it is what
+    corrupts the record.
+    """
+    redactable = {
+        placeholder: values[placeholder]
+        for placeholder in PATH_PLACEHOLDERS
+        if values.get(placeholder)
+    }
+    captured_id = values.get(PLUGIN_ID)
+    if captured_id:
+        redactable[PLUGIN_ID] = captured_id
+    return redactable
+
+
 def redact(text: str, values: dict[str, str]) -> str:
-    """Put the placeholders back, longest concrete value first.
+    """Put the redactable placeholders back, longest concrete value first.
 
     Longest first matters: a scratch home is a prefix of the package copy inside
     it, and replacing the shorter one first would leave half a real path in a
     public document.
     """
-    for placeholder, value in sorted(values.items(), key=lambda item: -len(item[1])):
+    for placeholder, value in sorted(
+        redaction_values(values).items(), key=lambda item: -len(item[1])
+    ):
         if value:
             text = text.replace(value, placeholder)
     return text
+
+
+def unresolved_placeholders(argv: tuple[str, ...]) -> list[str]:
+    """Placeholders still present after substitution, in order.
+
+    A stage whose command still names one is a stage nobody can run: the value
+    was supposed to come from an earlier stage's output and did not. Running it
+    anyway resolves the path to something that does not exist, the entrypoint
+    exits non-zero, and the package is blamed for a value the client never
+    reported.
+    """
+    known = (PACKAGE, SKILL, CLIENT_HOME, PYTHON, PLUGIN_ID, PLUGIN_NAME)
+    joined = " ".join(argv)
+    return [placeholder for placeholder in known if placeholder in joined]
 
 
 def stage_argvs(
@@ -675,7 +741,14 @@ def stage_argvs(
       of them would have called that package working.
     """
     if spec.from_package:
-        return invocation_argv(config, plan, values[PYTHON])
+        # Substituted like every other stage. The entrypoint paths come back
+        # from the descriptor as templates -- `<client-home>/.../<plugin-id>/…`
+        # -- and returning them unsubstituted made the invocation stage run a
+        # literal placeholder path for every client, which is a file that never
+        # exists and an exit status blamed on the package.
+        return tuple(
+            substitute(argv, values) for argv in invocation_argv(config, plan, values[PYTHON])
+        )
     if spec.per_skill:
         return tuple(
             substitute(spec.argv, {**values, SKILL: f"{values[PACKAGE]}/{unit}"})
@@ -721,6 +794,21 @@ def run_stage(
         refuse_unsafe_argv(argv, config)
 
     recorded = redact(" ".join(argvs[0]), values)
+
+    for argv in argvs:
+        pending = unresolved_placeholders(argv)
+        if pending:
+            return StageOutcome(
+                spec.stage,
+                BLOCKED,
+                command=recorded,
+                reason=(
+                    f"The command still names {', '.join(pending)}, which no earlier stage "
+                    "resolved. Running it would invoke a path that does not exist and record "
+                    "the package as failing for a value the client never reported."
+                ),
+            )
+
     statuses: list[int] = []
     captured: dict[str, str] = {}
 
@@ -783,7 +871,7 @@ def run_stage(
             or f"Ran {len(argvs)} command(s); exit status {summary}. "
             "Replace this line with the observation."
         ),
-        returncode=statuses[0],
+        returncodes=tuple(statuses),
         captured=captured,
     )
 
@@ -906,6 +994,11 @@ def assess(
     scratch = base / "package"
     if not scratch.exists():
         shutil.copytree(package_root, scratch)
+    #: The copy actually handed to the clients, fingerprinted separately. The
+    #: source tree is the one nothing can reach; this is the one a client that
+    #: installs in place could add a vendor artifact to, so it is the one whose
+    #: before-and-after equality proves nothing was added to the package.
+    scratch_before = ccm.package_fingerprint(scratch)
 
     plans = [plan for plan in CLIENT_PLANS if not only or plan.name in only]
     clients: list[dict[str, Any]] = []
@@ -917,7 +1010,13 @@ def assess(
             PYTHON: python,
             CLIENT_HOME: str(home) if home is not None else str(Path.home()),
             PLUGIN_NAME: config.name,
-            PLUGIN_ID: config.name,
+            # PLUGIN_ID is deliberately unset. Two clients generate their own
+            # install id at placement and the harness reads it out of that
+            # stage's output. Seeding it with the package name made an
+            # uncaptured id resolve silently to a path the client never uses,
+            # which grades the package as failing for a value it never
+            # reported. Unset, `run_stage` blocks the stage and names the
+            # placeholder instead.
         }
         environment = build_environment(
             config,
@@ -975,6 +1074,9 @@ def assess(
             "a package that no longer exists and none of it may be published"
         )
 
+    scratch_after = ccm.package_fingerprint(scratch)
+    added_to_package = scratch_after != scratch_before
+
     return {
         "$schema": "../../schemas/compatibility-matrix.schema.json",
         "schema_version": "1",
@@ -987,7 +1089,19 @@ def assess(
         },
         "method": {
             "stages": list(ccm.STAGES),
-            "isolation": "",
+            # Left empty for the operator, with one exception: whether a client
+            # added anything to the copy it was handed is an observation, not a
+            # claim, so the harness states it rather than leaving it to memory.
+            "isolation": (
+                "The package root handed to each client was a scratch copy of the shipped tree, "
+                f"fingerprinted at {scratch_before[0]} files before the run and "
+                + (
+                    f"changed to {scratch_after[0]} files after it, so a client added to the "
+                    "copy it was given."
+                    if added_to_package
+                    else "unchanged after it, so no client added a vendor artifact to the package."
+                )
+            ),
             "credentials": "",
             "network": "",
         },
@@ -1041,7 +1155,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--python",
         default=sys.executable,
-        help="the interpreter the invocation stage uses; name the floor explicitly by path",
+        help=(
+            "the interpreter the invocation stage uses. Name the floor explicitly by path, and "
+            "point it at an environment that already has the package's own third-party imports: "
+            "the entrypoints import them at module scope, so an interpreter without them records "
+            "a non-zero status for every client and proposes 'failed' for all ten"
+        ),
     )
     parser.add_argument("--client", action="append", default=[], help="restrict to one client")
     parser.add_argument("--out", help="write the record as JSON to this path")

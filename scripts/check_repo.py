@@ -918,7 +918,9 @@ def check_port_descriptors(root: Path) -> list[str]:
     repository that must stay importable on its own: `sync_vendor_source.py`
     imports *it*, and a module-scope import back would be a cycle.
     """
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    scripts_dir = str(Path(__file__).resolve().parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
     import port_config  # noqa: PLC0415  (local by design; see the docstring)
 
     errors: list[str] = []

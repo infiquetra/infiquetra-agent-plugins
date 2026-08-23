@@ -307,6 +307,25 @@ class CommittedDescriptorTest(unittest.TestCase):
                     relative,
                 )
 
+    def test_the_descriptor_declares_the_credential_variables_to_strip(self) -> None:
+        """An empty prefix list strips nothing, which is a fail-open.
+
+        `scripts/assess_clients.py` removes every variable matching these
+        prefixes from every assessment subprocess. A descriptor that declares
+        none hands the operator's real credentials to every client it runs, and
+        the harness has no other way to know what this package's credentials are
+        called. Same guard, same reason, as the package-scripts test below.
+        """
+        prefixes = self.config.assessment.credential_prefixes
+        self.assertTrue(
+            prefixes,
+            "the descriptor declares no credential_prefixes, so the assessment would strip "
+            "nothing from its subprocess environments",
+        )
+        for prefix in prefixes:
+            with self.subTest(prefix=prefix):
+                self.assertTrue(prefix.strip())
+
     def test_the_declared_package_scripts_are_files_the_package_carries(self) -> None:
         """The safety rule is scoped by these names, so they must name real scripts.
 

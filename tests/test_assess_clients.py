@@ -300,6 +300,43 @@ class SubprocessResultTest(FakeClientFixture):
         )
         self.assertEqual(outcome.result, harness.BLOCKED)
 
+    def test_every_command_status_is_recorded_not_just_the_first(self) -> None:
+        """A failing second entrypoint must not read as a working package.
+
+        The pilot shipped a package whose two clients both failed at import.
+        A stage that runs both and then reports only the first has checked
+        both and learned nothing — the silent green this harness exists to
+        prevent, one level up from where it bit last time.
+        """
+        write_executable(self.bin, "second-fails", 'exit 7\n')
+        spec = harness.StageSpec("invocation", ("ok-client",))
+        real = harness.stage_argvs
+        harness.stage_argvs = lambda c, p, s, v: (("ok-client",), ("second-fails",))
+        try:
+            outcome = self.outcome(spec)
+        finally:
+            harness.stage_argvs = real
+        self.assertEqual(outcome.result, harness.EXECUTED)
+        self.assertEqual(outcome.returncodes, (0, 7))
+        self.assertEqual(outcome.returncode, 7, "the deciding status ignored the failure")
+
+    def test_a_stage_naming_an_unresolved_placeholder_is_blocked(self) -> None:
+        """A value an earlier stage never reported is not guessed at.
+
+        Two clients generate their own install id at placement. When the
+        capture misses, the invocation path used to fall back to the package
+        name, run a path that does not exist, and grade the package as failing
+        for a value the client never reported.
+        """
+        spec = harness.StageSpec("invocation", ("ok-client", f"{harness.PLUGIN_ID}/x"))
+        values = {key: value for key, value in self.values.items() if key != harness.PLUGIN_ID}
+        outcome = harness.run_stage(
+            harness.plan_for("Grok"), spec, CONFIG, values, self.environment
+        )
+        self.assertEqual(outcome.result, harness.BLOCKED)
+        self.assertIn(harness.PLUGIN_ID, outcome.reason)
+        self.assertIn("never reported", outcome.reason)
+
 
 class CredentialTest(FakeClientFixture):
     """No stage may be satisfied by a credential in the operator's shell."""
@@ -465,6 +502,30 @@ class EntrypointPathTest(unittest.TestCase):
                 argvs = harness.invocation_argv(CONFIG, plan, "/usr/bin/python3.12")
                 self.assertEqual(len(argvs), len(CONFIG.custody.entrypoint_transforms))
 
+    def test_every_stage_argv_is_fully_substituted_before_it_runs(self) -> None:
+        """No stage may reach a process still carrying a placeholder.
+
+        The invocation stage's paths come from the descriptor as templates.
+        Returning them unsubstituted made every client run a literal
+        `<client-home>/…` path -- a file that never exists, and an exit status
+        that would be blamed on the package. Asserted over every stage of every
+        client rather than the one that broke.
+        """
+        values = {
+            harness.PACKAGE: "/scratch/package",
+            harness.CLIENT_HOME: "/scratch/home",
+            harness.PYTHON: "/usr/bin/python3.12",
+            harness.PLUGIN_NAME: CONFIG.name,
+            harness.PLUGIN_ID: "unifi-37c9f17b",
+        }
+        for plan in harness.CLIENT_PLANS:
+            for spec in plan.stages:
+                if spec.blocked_reason is not None:
+                    continue
+                for argv in harness.stage_argvs(CONFIG, plan, spec, values):
+                    with self.subTest(client=plan.name, stage=spec.stage):
+                        self.assertEqual(harness.unresolved_placeholders(argv), [])
+
     def test_the_invocation_uses_the_credential_free_help_action(self) -> None:
         for plan in harness.CLIENT_PLANS:
             if plan.stage("invocation").blocked_reason is not None:
@@ -505,6 +566,53 @@ class RedactionTest(unittest.TestCase):
 
     def test_an_empty_value_never_matches_everything(self) -> None:
         self.assertEqual(harness.redact("text", {harness.PLUGIN_ID: ""}), "text")
+
+    def test_the_package_name_inside_a_path_survives_redaction(self) -> None:
+        """Redacting the package name would describe a command nobody ran.
+
+        Every entrypoint path contains the package name -- `unifi-network`,
+        `unifi_network_client.py`. Substituting it back turned the recorded
+        command into `skills/<plugin-name>-network/scripts/<plugin-name>_…`,
+        which is not what ran and does not match the committed matrices. The
+        name is already public in the record's own `$.package.name`; it is not
+        a value redaction exists to hide.
+        """
+        values = {
+            harness.PACKAGE: "/scratch/package",
+            harness.CLIENT_HOME: "/scratch/home",
+            harness.PYTHON: "/usr/bin/python3.12",
+            harness.PLUGIN_NAME: CONFIG.name,
+        }
+        entrypoint = CONFIG.custody.entrypoint_transforms[0]
+        command = f"/usr/bin/python3.12 /scratch/package/{entrypoint} --help"
+        self.assertEqual(
+            harness.redact(command, values),
+            f"<python> <package>/{entrypoint} --help",
+        )
+        self.assertIn(CONFIG.name, harness.redact(command, values))
+
+    def test_a_captured_install_id_is_still_redacted(self) -> None:
+        """A client-generated id is machine-specific, so it does come back out."""
+        values = {
+            harness.PACKAGE: "/scratch/package",
+            harness.PLUGIN_ID: "unifi-37c9f17b",
+        }
+        self.assertEqual(
+            harness.redact("/scratch/home/.grok/installed-plugins/unifi-37c9f17b/x", values),
+            "/scratch/home/.grok/installed-plugins/<plugin-id>/x",
+        )
+
+    def test_only_path_values_and_a_captured_id_are_redactable(self) -> None:
+        values = {
+            harness.PACKAGE: "/p",
+            harness.CLIENT_HOME: "/h",
+            harness.PYTHON: "/py",
+            harness.PLUGIN_NAME: "unifi",
+        }
+        self.assertEqual(
+            set(harness.redaction_values(values)),
+            {harness.PACKAGE, harness.CLIENT_HOME, harness.PYTHON},
+        )
 
 
 class StatusProposalTest(unittest.TestCase):
@@ -685,6 +793,76 @@ class RecordTest(unittest.TestCase):
                 )
         self.assertTrue(calls, "no stage reached the runner, so nothing moved the tree")
         self.assertIn("moved during the run", str(caught.exception))
+
+    def test_a_real_execute_run_produces_a_recordable_row(self) -> None:
+        """One client, driven end to end against fake binaries.
+
+        Every other test here drives a piece: one stage, one predicate, one
+        plan-only record. Nothing drove `assess(execute=True)` all the way
+        through with processes that actually run, and that gap is exactly where
+        an unsubstituted invocation path survived -- every unit passed while the
+        stage would have run a literal `<client-home>/…` path on every client.
+
+        This runs placement, discovery, load, and invocation for one
+        package-scoped client and asserts what lands in the record.
+        """
+        plan = harness.plan_for("Claude Code")
+        scratch_bin = self.workspace / "bin"
+        scratch_bin.mkdir(parents=True, exist_ok=True)
+        write_executable(scratch_bin, plan.binary, 'echo "two skills"\nexit 0\n')
+
+        path = os.pathsep.join([str(scratch_bin), os.environ.get("PATH", "")])
+        with unittest.mock.patch.dict(os.environ, {"PATH": path}):
+            record = harness.assess(
+                CONFIG,
+                python=sys.executable,
+                execute=True,
+                only=(plan.name,),
+                workspace=self.workspace,
+            )
+
+        row = record["clients"][0]
+        self.assertEqual(row["name"], plan.name)
+        for stage in ccm.STAGES:
+            with self.subTest(stage=stage):
+                self.assertEqual(row["stages"][stage]["result"], harness.EXECUTED)
+
+        # The invocation really ran every shipped entrypoint on this
+        # interpreter. What it must NOT assert is that they succeeded: the
+        # entrypoints import requests and urllib3 at module scope, so their exit
+        # status depends on whether the interpreter running these tests has
+        # those packages. `tests/test_client_entrypoints.py` owns "do the
+        # entrypoints work", with stubs that make it the same answer everywhere.
+        # What this owns is that the stage ran them all and recorded each one.
+        invocation = row["stages"]["invocation"]
+        recorded_statuses = invocation["evidence"].split("exit status ")[1].split(".")[0]
+        self.assertEqual(
+            len(recorded_statuses.split(", ")),
+            len(CONFIG.custody.entrypoint_transforms),
+            invocation["evidence"],
+        )
+        # And the recorded command is the redacted form the matrices use.
+        self.assertTrue(invocation["command"].startswith(f"{harness.PYTHON} {harness.PACKAGE}/"))
+        self.assertIn(CONFIG.custody.entrypoint_transforms[0], invocation["command"])
+        self.assertEqual(harness.unresolved_placeholders((invocation["command"],)), [
+            harness.PACKAGE, harness.PYTHON
+        ])
+        self.assertEqual(ccm.check_public_evidence_rules(record), [])
+
+    def test_the_record_states_whether_a_client_added_to_the_copy(self) -> None:
+        """The copy is the tree a client could add a vendor artifact to.
+
+        The source tree is the one nothing can reach, so fingerprinting only it
+        proves nothing about what the clients did. The committed method
+        fingerprints the handed-over copy before and after; this is that check,
+        and the record states the observation rather than leaving it to memory.
+        """
+        record = self.plan_only_record()
+        isolation = record["method"]["isolation"]
+        self.assertIn("scratch copy", isolation)
+        self.assertIn("no client added a vendor artifact", isolation)
+        file_count, _ = ccm.package_fingerprint(self.workspace / "package")
+        self.assertIn(f"{file_count} files", isolation)
 
     def test_the_assessed_copy_is_a_copy_not_the_shipped_tree(self) -> None:
         """A client that installs in place must not be able to reach the source."""
