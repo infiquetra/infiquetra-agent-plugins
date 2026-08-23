@@ -66,7 +66,15 @@ import sync_vendor_source as svs  # noqa: E402
 # rejected by their own integration, and a credential pasted into a free-text
 # value was refused on one path and accepted on the other. That move changes the
 # byte-copied loader and the upstream changelog.
-CORRECTED_REVISION = "c835f91db1c470a23921ccae5ac0331cb9be2240"
+#
+# Then from c835f91d to 769d06f1, UniFi 2.0.3, which repaired the credential-value
+# rule in both directions. The previous repair had replaced a one-token window
+# with a two-token window: a placeholder in the second slot consumed the window,
+# so a credential in the third was never examined, and grading the first token
+# unconditionally rejected ordinary prose, because entropy per character cannot
+# separate `rotation` from `hunter2`. That move changes the byte-copied loader
+# again, along with the upstream changelog.
+CORRECTED_REVISION = "769d06f17a7ed2545e509509c96565bdf67f8dc8"
 FORBIDDEN_REVISION_PREFIX = "995a475b"
 
 #: A client actually reaching for the dropped shim, as opposed to a comment

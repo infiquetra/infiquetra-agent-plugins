@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+## [2.0.3] - 2026-08-22
+
+### Fixed
+
+- **A credential standing behind a placeholder is no longer cleared.**
+  `authorization: Bearer <redacted> <token>` passed: the rule graded a fixed
+  window of two tokens, found the placeholder in the second slot, saw that it
+  names a secret rather than being one, and never examined the real credential
+  in the third. The rule now walks the value, stepping over auth scheme words and
+  placeholders, and grades the first token that is neither. The captured span was
+  also widened, because it stopped at `}` and so truncated
+  `Bearer ${VAR} <token>` before the credential.
+- **Ordinary operational prose is no longer rejected as a credential.**
+  `token: rotation happens quarterly` and `secret: managed elsewhere` were
+  refused. Entropy per character cannot separate English from a credential —
+  `rotation` scores 2.50 against a 2.50 floor while `hunter2` scores 2.81 — and
+  character-class mixing cannot either, since `Rotation` mixes case and `hunter2`
+  does not. A digit does: every credential shape this rule is tested against
+  carries one and no English word does, so a digit-free value must clear 24
+  characters, above the longest word likely to appear in an operator's note.
+- The walk stops at the first substantive token rather than searching the whole
+  value. That is what keeps `auth: see ticket ABC-1234 for rotation` from being
+  graded on its ticket number, which a keep-looking scan would have reached.
+
+Both defects were introduced by the previous repair of this rule and were found
+by two independent reviewers on the fifth review cycle of the portability pilot.
+
 ## [2.0.2] - 2026-08-22
 
 ### Fixed

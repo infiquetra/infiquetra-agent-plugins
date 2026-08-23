@@ -185,7 +185,7 @@ CREDENTIAL_ASSIGNMENT = re.compile(
     r"(?i)(?:^|[^A-Za-z0-9_-])("
     r"pass(?:word|wd|phrase)|secret|token|api[_-]?key|apikey|authorization|auth|"
     r"bearer|credentials?|private[_-]?key|client[_-]?secret|access[_-]?key"
-    r")[\"']?\s*[:=]\s*[\"']?([^\"',;)}\]]{6,})"
+    r")[\"']?\s*[:=]\s*[\"']?([^\"',;]{6,})"
 )
 
 # Mirrors ``site_profile.CREDENTIAL_SCHEME_WORDS``. An auth scheme word sits
@@ -198,9 +198,18 @@ CREDENTIAL_SCHEME_WORDS = frozenset(
     {"bearer", "basic", "digest", "token", "apikey", "hmac", "negotiate"}
 )
 
-# The floor the pattern used to carry inline, moved onto each candidate now that
-# one match can yield two of them.
+# The floor the pattern used to carry inline, moved onto the candidate.
 CREDENTIAL_VALUE_MIN_LENGTH = 6
+
+# Mirrors ``site_profile.CREDENTIAL_VALUE_LONG_ENOUGH_WITHOUT_A_DIGIT``. Entropy
+# per character does not separate a credential from an English word -- ``rotation``
+# scores 2.50 and ``hunter2`` scores 2.81 -- and neither does character-class
+# mixing, because ``Rotation`` mixes case and ``hunter2`` does not. A digit does:
+# every credential shape this rule is tested against carries one and no English
+# word does. A digit-free value therefore has to be longer than the longest word
+# likely to appear in an operator's note; ``internationalization`` is 20
+# characters, so the bar sits above it rather than at it.
+CREDENTIAL_VALUE_LONG_ENOUGH_WITHOUT_A_DIGIT = 24
 
 # An assigned value has to clear this many bits of entropy per character before
 # it counts as a credential. It is deliberately low, because the key name has
@@ -795,21 +804,34 @@ def _names_a_secret(value: str) -> bool:
     return len(set(value)) <= 2 or value.isdigit()
 
 
-def _credential_candidates(assigned: str) -> list[str]:
-    """The spans of an assigned value that could be the credential itself.
+def _is_credential_shaped(token: str) -> bool:
+    """Whether a candidate span looks like a credential rather than a word."""
+    if len(token) < CREDENTIAL_VALUE_MIN_LENGTH:
+        return False
+    if shannon_entropy(token) < CREDENTIAL_VALUE_MIN_ENTROPY:
+        return False
+    if any(character.isdigit() for character in token):
+        return True
+    return len(token) >= CREDENTIAL_VALUE_LONG_ENOUGH_WITHOUT_A_DIGIT
 
-    Mirrors ``site_profile._credential_candidates``. The first token normally is
-    the credential; when it is an auth scheme word the credential is the one
-    after it, so both are graded. Everything past that is prose and is never
-    graded, because ordinary English words clear the entropy floor.
+
+def _credential_candidate(assigned: str) -> str | None:
+    """The one span of an assigned value that could be the credential itself.
+
+    Mirrors ``site_profile._credential_candidate``. Auth scheme words and
+    placeholders stand in front of a credential rather than being one, so they
+    are stepped over; the first token that is neither is the candidate, and the
+    walk stops there. Stopping matters as much as walking: a scan that kept
+    looking would eventually reach a ticket number like ``ABC-1234`` in ordinary
+    prose and grade that instead.
     """
-    tokens = assigned.split()
-    if not tokens:
-        return []
-    candidates = [tokens[0]]
-    if len(tokens) > 1 and tokens[0].lower() in CREDENTIAL_SCHEME_WORDS:
-        candidates.append(tokens[1])
-    return [token for token in candidates if len(token) >= CREDENTIAL_VALUE_MIN_LENGTH]
+    for token in assigned.split():
+        if token.lower() in CREDENTIAL_SCHEME_WORDS:
+            continue
+        if _names_a_secret(token):
+            continue
+        return token
+    return None
 
 
 def credential_findings(text: str, *, include_assignments: bool) -> list[str]:
@@ -828,15 +850,11 @@ def credential_findings(text: str, *, include_assignments: bool) -> list[str]:
             continue
         for match in CREDENTIAL_ASSIGNMENT.finditer(line):
             key, value = match.group(1), match.group(2)
-            for candidate in _credential_candidates(value):
-                if _names_a_secret(candidate):
-                    continue
-                if shannon_entropy(candidate) < CREDENTIAL_VALUE_MIN_ENTROPY:
-                    continue
+            candidate = _credential_candidate(value)
+            if candidate is not None and _is_credential_shaped(candidate):
                 findings.append(
                     f"line {number}: {key!r} is assigned a credential-shaped value"
                 )
-                break
     return findings
 
 

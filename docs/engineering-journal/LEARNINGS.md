@@ -2,6 +2,46 @@
 
 ## 2026-08-22
 
+### A negative test that passed for the wrong reason reported coverage that did not exist
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The credential-value rule was repaired once for grading the wrong span, and the
+repair broke in both directions: it cleared a real credential hidden behind a placeholder, and
+it rejected ordinary operational prose. Two independent reviewers found both on the next
+cycle. The repair had shipped with a must-not-fire test written specifically to catch the
+second class.
+
+**Evidence.** The cycle-4 negative set used `auth: see the runbook for the rotation
+procedure`. It passed. The cycle-5 reviewers used `token: rotation happens quarterly`, which
+failed. Both are the same shape — a credential-shaped key assigned English prose — and the
+difference is only that the first sentence begins with `see`, three characters, which falls
+under the rule's six-character length floor before any grading happens.
+
+**Mechanism.** The test exercised the length floor, not the rule it was written for. Its
+subject never reached the code under test, so it could not have failed no matter how wrong
+that code was. It looked like coverage of the false-positive category and was coverage of
+nothing.
+
+**Fix.** The replacement set is chosen so each case would fail for the *right* reason if the
+rule were wrong: first tokens that are long English words (`rotation`, `managed`,
+`internationalization`), capitalized forms, and a ticket number that carries a digit. Twenty
+eight assertions fail against the defective rule.
+
+**What surprised.** Reviewing my own test set would not have caught this. Reading it, the
+example plainly belongs to the category; only running it against deliberately broken code
+shows that it never touches the rule. Mutation is the only cheap check that distinguishes a
+test from a test-shaped statement.
+
+**Generalizable rule.** For any test that exists to prove a guard does *not* fire, verify it
+would fire if the guard were wrong. A negative case that is filtered out by a precondition
+before reaching the logic is worse than no test, because it is counted as coverage. Cheapest
+implementation: break the code on purpose and require the new assertions to fail. Every repair
+in this pilot now ships with that count recorded, which is how this one was caught.
+
+**Refs.** [`{#credential-span-window-vs-walk}` upstream](../../../infiquetra-claude-plugins),
+cycle-5 reviews in [`docs/reviews/`](../reviews/).
+
 ### The credential detector read the wrong span, so `Bearer` cleared the token behind it
 
 **Author.** Jeff Cox and Claude

@@ -58,13 +58,21 @@ downstream edit, and it cannot land at the wrong value.
 attempted. The pilot is paused here on purpose.
 
 **Context.** Ten clients were assessed identically across placement, discovery, load, and
-invocation. Eight consumed the portable package or its skill units directly. OpenAI Codex
-is recorded as works through an adapter: it needs a marketplace manifest to be reachable
-at all, and building that adapter is remediation. Cursor Agent is recorded as failed: it
-could not be assessed credential-free, and its marketplace accepts only a git repository
-URL, so a local directory is not a path there under any credentials. Each of those two
-clients needs its own decision among repair, an adapter, a different distribution path, or
-an explicitly unsupported status.
+invocation. Nine consumed the portable package or its skill units directly. OpenAI Codex is
+the one client that did not: it is recorded as works through an adapter, because it needs a
+marketplace manifest to be reachable at all, and building that adapter is remediation. It
+needs its own decision among repair, an adapter, a different distribution path, or an
+explicitly unsupported status.
+
+Cursor Agent was recorded as failed in a superseded publication of the matrix and is now
+recorded as works directly. The package did not change to earn that. The earlier run
+exported an empty scratch home for isolation, which stripped that client's existing
+authentication and measured an unauthenticated client rather than a first-run one; the
+recorded failure was an artifact of the harness. Reassessed against the operator's real
+home under the same read-only, credential-free rules, its session-scoped local-plugin path
+places, discovers, and loads the package and runs its entrypoints. Its marketplace still
+accepts only a git repository URL, which is a distribution limitation rather than a
+compatibility result, and it is covered by the separate distribution-gap entry below.
 
 **Guardrail.** Coverage was mandatory and passing was not. No failing client blocks the
 pilot, and no client-specific remediation has begun or may begin without a separate
@@ -73,6 +81,42 @@ operator decision.
 **Refs.** [Compatibility matrix](../evidence/2026-08-22-unifi-compatibility-matrix.md),
 [operator pause decision](DECISIONS.md#pause-the-pilot-at-the-compatibility-matrix-and-take-no-client-specific-remediation),
 [pilot plan](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md)
+
+### The repository carries no marketplace manifest, so it cannot be registered as a catalog
+
+**Author.** Jeff Cox and Claude
+
+**Priority.** P1
+
+**Effort.** Unknown until scoped. Writing a manifest is the obvious move and is explicitly
+NOT authorized here; what the format must be, which clients it has to satisfy, and whether
+one manifest can serve several are open questions.
+
+**Worth it when.** Before anyone is told this repository can be added to a client as a
+catalog. The operator's intended distribution path is catalog registration, and nothing in
+the pilot has tested it.
+
+**What it is.** The compatibility matrix proves that the individual `plugins/unifi/` package
+installs from a local path. It says nothing about registering *this repository* as a client
+marketplace or catalog, which is a different surface and was never assessed for any client.
+
+For Qwen specifically, the two are distinct commands. `qwen extensions install <path>` takes
+a package and is what the matrix exercises. `qwen extensions sources add <source>` is the
+catalog command, and its own help declares it "Adds a marketplace source (Claude format)".
+This repository has no `.claude-plugin/marketplace.json` and no marketplace manifest anywhere
+at root level, so it cannot be registered that way today. The related
+`marketplace-url:plugin-name` form of `extensions install` presupposes a registered source
+and is closed for the same reason.
+
+The gap is at the manifest, not at the client. Nothing published claims otherwise: the
+matrix records only package-scoped commands for every client, and its scope section now says
+in as many words that catalog registration was not assessed.
+
+**Guardrail.** No manifest may be written and no distribution scope may be widened without a
+separate operator decision. This entry records a gap; it does not authorize closing it.
+
+**Refs.** [Compatibility matrix](../evidence/2026-08-22-unifi-compatibility-matrix.md),
+[per-client decision entry](#decide-per-client-what-follows-the-compatibility-matrix)
 
 ### The documented default site-profile runtime path is never read
 
@@ -118,11 +162,14 @@ changes what an existing host resolves, so it is a contract change and not a pat
 
 **Priority.** P2
 
-**Effort.** Small, but it is a custody question before it is an edit: decide whether
-`tests/test_retry_backoff.py` may be re-derived without moving the Fleet Core pin, then
-either re-derive it or record why it stays.
+**Effort.** None remaining. The custody question this entry framed as open was answered by
+re-synchronization rather than by decision: the Fleet Core pin moved to `3b5faa6c` for
+release 0.25.2, and the ported test was re-derived at that revision by re-applying the
+`guard-pytest-import` transform, so it no longer pins a pre-2.0.1 caller shape.
 
-**Worth it when.** Before anyone reads that test as a statement about the shipped clients.
+**Status.** Resolved. Retained here only until the next curation pass moves it to
+[ARCHIVE.md](ARCHIVE.md); the entry is kept rather than deleted because this journal's
+convention is that shipped work is archived, not silently removed.
 
 **What it is.** [`tests/test_retry_backoff.py`](../../tests/test_retry_backoff.py) is a
 `guard-pytest-import` version 2 transform of the upstream test at `ed72f439`, the revision

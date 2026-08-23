@@ -170,7 +170,7 @@ CREDENTIAL_VALUE_ASSIGNMENT = re.compile(
     r"(?i)(?:^|[^A-Za-z0-9_-])("
     r"pass(?:word|wd|phrase)|secret|token|api[_-]?key|apikey|authorization|auth|"
     r"bearer|credentials?|private[_-]?key|client[_-]?secret|access[_-]?key"
-    r")[\"']?\s*[:=]\s*[\"']?([^\"',;)}\]]{6,})"
+    r")[\"']?\s*[:=]\s*[\"']?([^\"',;]{6,})"
 )
 
 # An auth scheme word sits between the key and the credential in the shape an
@@ -185,9 +185,19 @@ CREDENTIAL_SCHEME_WORDS = frozenset(
 )
 
 # A candidate span has to be at least this long before it is worth grading. This
-# is the floor the pattern used to carry inline, moved onto each candidate now
-# that one match can yield two of them.
+# is the floor the pattern used to carry inline, moved onto the candidate.
 CREDENTIAL_VALUE_MIN_LENGTH = 6
+
+# Entropy per character does not separate a credential from an English word:
+# ``rotation`` scores 2.50 and ``hunter2`` scores 2.81, so any floor that admits
+# the password rejects the prose. Character-class mixing does not separate them
+# either, because ``Rotation`` mixes case and ``hunter2`` does not. What does
+# separate them, across every sample this rule is tested against, is a digit:
+# every credential shape carries one and no English word does. A digit-free
+# value therefore has to be longer than the longest word likely to appear in an
+# operator's note before it counts -- ``internationalization`` is 20 characters,
+# so the bar sits above it rather than at it.
+CREDENTIAL_VALUE_LONG_ENOUGH_WITHOUT_A_DIGIT = 24
 
 # An assigned value has to clear this many bits of entropy per character before
 # it counts as a credential. It is deliberately low, because the key name has
@@ -453,22 +463,38 @@ def _names_a_secret(value: str) -> bool:
     return len(set(value)) <= 2 or value.isdigit()
 
 
-def _credential_candidates(assigned: str) -> list[str]:
-    """The spans of an assigned value that could be the credential itself.
+def _is_credential_shaped(token: str) -> bool:
+    """Whether a candidate span looks like a credential rather than a word."""
+    if len(token) < CREDENTIAL_VALUE_MIN_LENGTH:
+        return False
+    if _value_entropy(token) < CREDENTIAL_VALUE_MIN_ENTROPY:
+        return False
+    if any(character.isdigit() for character in token):
+        return True
+    return len(token) >= CREDENTIAL_VALUE_LONG_ENOUGH_WITHOUT_A_DIGIT
 
-    The first token normally is. When that token is an auth scheme word the
-    credential is the one *after* it, so both are returned: grading ``Bearer``
-    alone let ``authorization: Bearer <token>`` pass every check. Everything
-    past the credential is prose and is never graded, because ordinary English
-    words clear the entropy floor and would fire on a sentence.
+
+def _credential_candidate(assigned: str) -> str | None:
+    """The one span of an assigned value that could be the credential itself.
+
+    Auth scheme words and placeholders stand in *front* of a credential rather
+    than being one, so they are stepped over; the first token that is neither is
+    the candidate, and the walk stops there.
+
+    Both halves matter. Walking is what catches
+    ``authorization: Bearer <redacted> <token>``, where a fixed two-token window
+    graded the placeholder and cleared the real credential behind it. Stopping is
+    what keeps the rule off prose: a scan that kept looking would eventually
+    reach a ticket number like ``ABC-1234`` in ``auth: see ticket ABC-1234`` and
+    grade that instead.
     """
-    tokens = assigned.split()
-    if not tokens:
-        return []
-    candidates = [tokens[0]]
-    if len(tokens) > 1 and tokens[0].lower() in CREDENTIAL_SCHEME_WORDS:
-        candidates.append(tokens[1])
-    return [token for token in candidates if len(token) >= CREDENTIAL_VALUE_MIN_LENGTH]
+    for token in assigned.split():
+        if token.lower() in CREDENTIAL_SCHEME_WORDS:
+            continue  # an auth scheme word stands in front of the credential
+        if _names_a_secret(token):
+            continue  # a placeholder or reference stands in for it
+        return token  # the first substantive token is the credential, if any is
+    return None
 
 
 def _credential_in_text(text: str) -> str | None:
@@ -478,11 +504,8 @@ def _credential_in_text(text: str) -> str | None:
             return label
     for match in CREDENTIAL_VALUE_ASSIGNMENT.finditer(text):
         key, assigned = match.group(1), match.group(2)
-        for candidate in _credential_candidates(assigned):
-            if _names_a_secret(candidate):
-                continue
-            if _value_entropy(candidate) < CREDENTIAL_VALUE_MIN_ENTROPY:
-                continue
+        candidate = _credential_candidate(assigned)
+        if candidate is not None and _is_credential_shaped(candidate):
             return f"{key!r} is assigned a credential-shaped value"
     return None
 

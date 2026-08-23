@@ -1,7 +1,7 @@
-# Post-activation readback — portable UniFi package 2.0.2
+# Post-activation readback — portable UniFi package 2.0.3
 
 The UniFi package in this repository, `plugins/unifi/`, is a derived copy of an
-upstream Claude Code plugin that was released as version 2.0.2 and activated
+upstream Claude Code plugin that was released as version 2.0.3 and activated
 upstream. The portability pilot plan requires two things after any activation,
 and neither had been captured:
 
@@ -19,22 +19,27 @@ on 22 August 2026.
 
 ## This readback was re-captured, and why
 
-This is the fourth capture. The first described the package at tree digest
+This is the fifth capture. The first described the package at tree digest
 `6e6b57c1…`; the second, at `da46ca77…`, followed the re-synchronization of the
 portable Fleet Core slice to release 0.25.1; the third, at `cafe8836…`, followed
-the re-synchronization from UniFi 2.0.1.
+the re-synchronization from UniFi 2.0.1; the fourth, at `4c256bb2…`, followed
+Fleet Core 0.25.2 and UniFi 2.0.2.
 
-This capture follows three repairs a fourth review cycle produced. Fleet Core
-`0.25.2` refuses a non-finite `Retry-After`: `float()` accepts `inf`, `nan`, and
-overlarge literals such as `1e400`, so a header carrying one parsed to a
-non-finite delay that destroyed the caller's typed 429 surface at `math.ceil`.
-UniFi `2.0.2` brings the Claude-path site-profile loader onto the `1.1` contract
-the package documents and gives it the value half of the secret-free guarantee,
-closing a skew in which one package disagreed with itself. And the portable
-credential-value rule now grades the token behind an auth scheme word rather than
-the word itself. The byte-copied loader, the Fleet Core primitive, both generated
-bundles, and the manifest version all changed, so every fingerprint in the third
-capture stopped identifying the shipped bytes.
+This capture follows UniFi `2.0.3`, which repairs the credential-value rule that
+a fifth review cycle found defective in both directions — and both defects were
+introduced by the previous repair of that same rule. A placeholder standing
+between an auth scheme word and the credential ended the search, so
+`authorization: Bearer <redacted> <token>` graded the placeholder and cleared the
+real token behind it; and grading the first token unconditionally rejected
+ordinary operational prose, so `token: rotation happens quarterly` was refused as
+a credential. The rule now walks the value, steps over scheme words and
+placeholders, grades the first token that is neither, and stops there.
+
+The byte-copied loader and the manifest version changed, so every fingerprint in
+the fourth capture stopped identifying the shipped bytes. The Fleet Core slice did
+not change: its subtree is byte-identical between `3b5faa6c` and `769d06f1`, which
+was verified rather than assumed, so the two generated bundles carry the same
+digest they did in the previous capture.
 
 Every install, every recomputation, and all three profile states below were
 captured again against the package as it now ships. No number here was carried
@@ -71,19 +76,19 @@ Four links, each verified rather than assumed:
 
 | Link | What identifies it | How it was checked |
 |---|---|---|
-| Activated upstream release | commit `c835f91db1c470a23921ccae5ac0331cb9be2240`, manifest version `2.0.2` | read from a local clone at that commit, read-only |
+| Activated upstream release | commit `769d06f17a7ed2545e509509c96565bdf67f8dc8`, manifest version `2.0.3` | read from a local clone at that commit, read-only |
 | Synchronization pin | `plugins/unifi/PROVENANCE.json` records that same commit and version | read from this repository |
-| Portable package tree | 23 files, tree digest `4c256bb2…5cfa` | recomputed from `plugins/unifi/` |
+| Portable package tree | 23 files, tree digest `34915c40…d0dc` | recomputed from `plugins/unifi/` |
 | Installed copies | same file count, same tree digest | recomputed from each client-owned installed tree |
 
 Read read-only from the same local clone, the upstream manifest at that commit
-declares `unifi` version `2.0.2` and `fleet-core` version `0.25.2`.
+declares `unifi` version `2.0.3` and `fleet-core` version `0.25.2`.
 
 **The two portable slices pin two different revisions, and that is deliberate.**
 `plugins/fleet-core/PROVENANCE.json` pins `3b5faa6c` and
-`plugins/unifi/PROVENANCE.json` pins `c835f91d`. The Fleet Core pin names the
+`plugins/unifi/PROVENANCE.json` pins `769d06f1`. The Fleet Core pin names the
 revision at which the upstream `plugins/fleet-core` subtree last changed, which
-is the rule that slice was created under; `c835f91d` is its direct descendant on
+is the rule that slice was created under; `769d06f1` is a descendant of it on
 the same default branch, and `git diff` over `plugins/fleet-core` between the two
 revisions is empty, which was verified rather than assumed. So the two pins name
 one consistent upstream state — the same state read at the two points where each
@@ -107,8 +112,8 @@ what it holds is evidence, not proof.
 
 | Client | Install unit | Client-reported version | Client-reported digest | Recomputed from installed bytes |
 |---|---|---|---|---|
-| Grok 1.0.5 | package root | `unifi v2.0.2` | none reported | 23 files, `4c256bb2…5cfa` — equal to the source tree |
-| Agy 1.1.18 | package root | not reported; 2 skills processed | none reported | 23 files, `4c256bb2…5cfa` — equal to the source tree |
+| Grok 1.0.5 | package root | `unifi v2.0.3` | none reported | 23 files, `34915c40…d0dc` — equal to the source tree |
+| Agy 1.1.18 | package root | not reported; 2 skills processed | none reported | 23 files, `34915c40…d0dc` — equal to the source tree |
 | Muse 0.2.1 | each skill directory | not reported; activation on, 0 diagnostics | content digest per unit, 4 files each | `unifi-network` 4 files `3650ae42…113b`; `unifi-protect` 4 files `ba06e585…5a4f` — equal to the source units |
 
 Two notes on reading that table honestly:
@@ -158,7 +163,7 @@ discovery-only answer for a caller to mistake for success.
 
 **Proved.** A client installing this package from a cold start holds exactly the
 bytes this repository ships, which are the bytes synchronized from the activated
-upstream 2.0.2 release; the installed copy's entrypoints run credential-free on
+upstream 2.0.3 release; the installed copy's entrypoints run credential-free on
 the catalog's declared minimum interpreter; and the installed profile loader
 distinguishes all three profile states with the documented exit statuses, on that
 same interpreter.
@@ -192,10 +197,10 @@ support.
   "captured_on": "2026-08-22",
   "release": {
     "name": "unifi",
-    "version": "2.0.2",
+    "version": "2.0.3",
     "file_count": 23,
-    "tree_sha256": "4c256bb20bd054c498056282eb7cbb3cee9c224c422bf1f20bb66422d1d15cfa",
-    "upstream_commit": "c835f91db1c470a23921ccae5ac0331cb9be2240",
+    "tree_sha256": "34915c40a34a4fffe9276fed141bd0ce3a089b26935864b16d4a548a76d9d0dc",
+    "upstream_commit": "769d06f17a7ed2545e509509c96565bdf67f8dc8",
     "units": {
       "unifi-network": {
         "file_count": 4,
@@ -217,10 +222,10 @@ support.
       "client": "Grok",
       "client_version": "1.0.5",
       "install_unit": "package-root",
-      "reported_version": "2.0.2",
+      "reported_version": "2.0.3",
       "reported_digest": null,
       "recomputed_file_count": 23,
-      "recomputed_tree_sha256": "4c256bb20bd054c498056282eb7cbb3cee9c224c422bf1f20bb66422d1d15cfa",
+      "recomputed_tree_sha256": "34915c40a34a4fffe9276fed141bd0ce3a089b26935864b16d4a548a76d9d0dc",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },
@@ -231,7 +236,7 @@ support.
       "reported_version": null,
       "reported_digest": null,
       "recomputed_file_count": 23,
-      "recomputed_tree_sha256": "4c256bb20bd054c498056282eb7cbb3cee9c224c422bf1f20bb66422d1d15cfa",
+      "recomputed_tree_sha256": "34915c40a34a4fffe9276fed141bd0ce3a089b26935864b16d4a548a76d9d0dc",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },

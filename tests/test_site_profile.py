@@ -368,6 +368,13 @@ class ValidationTest(TemporaryTreeTest):
             f"Authorization: Bearer {token}",
             f"token: Token {token}",
             f"authorization: Digest {token}",
+            # A placeholder standing between the scheme word and the credential
+            # used to end the search: a fixed two-token window graded the
+            # placeholder, saw that it names a secret rather than being one, and
+            # cleared the real credential behind it.
+            f"authorization: Bearer <redacted> {token}",
+            f"authorization: Bearer ${{UNIFI_API_KEY}} {token}",
+            f"authorization: Bearer vault:infiquetra/unifi {token}",
         ):
             with self.subTest(value=value):
                 payload = json.loads(json.dumps(VALID_PROFILE))
@@ -391,6 +398,19 @@ class ValidationTest(TemporaryTreeTest):
             "password: <redacted>",
             "api_key: ${UNIFI_API_KEY}",
             "the site uses certificate authentication end to end",
+            # Prose whose FIRST token is a long English word. The earlier rule
+            # graded token zero unconditionally, and entropy per character does
+            # not separate English from a credential -- `rotation` scores 2.50
+            # against a 2.50 floor -- so these were rejected as credentials.
+            "auth: rotation procedure documented in the runbook",
+            "token: rotation happens quarterly",
+            "secret: managed elsewhere",
+            "auth: Rotation Procedure Documented",
+            "secret: internationalization",
+            # A ticket reference carries a digit. It is not graded because the
+            # walk stops at the first substantive token rather than searching
+            # the sentence for something that looks credential-shaped.
+            "auth: see ticket ABC-1234 for rotation",
         ):
             with self.subTest(value=value):
                 payload = json.loads(json.dumps(VALID_PROFILE))
@@ -699,23 +719,50 @@ class CredentialRuleDriftTest(unittest.TestCase):
             check_repo.CREDENTIAL_VALUE_MIN_LENGTH,
             site_profile.CREDENTIAL_VALUE_MIN_LENGTH,
         )
+        self.assertEqual(
+            check_repo.CREDENTIAL_VALUE_LONG_ENOUGH_WITHOUT_A_DIGIT,
+            site_profile.CREDENTIAL_VALUE_LONG_ENOUGH_WITHOUT_A_DIGIT,
+        )
 
-    def test_both_copies_pick_the_same_candidate_spans(self) -> None:
-        """The scheme-word rule is the newest half, so it is the likeliest to drift."""
+    def test_both_copies_pick_the_same_candidate_span(self) -> None:
+        """The candidate walk is the newest half, so it is the likeliest to drift."""
         spans = (
             "qY7vP2xK9rLm4aZbC8dEfGhJkNpQsTuWxYz1234567890",
             "Bearer qY7vP2xK9rLm4aZbC8dEfGhJkNpQsTuWxYz1234567890",
             "Basic  qY7vP2xK9rLm4aZbC8dEfGhJkNpQsTuWxYz1234567890",
+            "Bearer <redacted> qY7vP2xK9rLm4aZbC8dEfGhJkNpQsTuWxYz1234567890",
+            "Bearer ${VAR} qY7vP2xK9rLm4aZbC8dEfGhJkNpQsTuWxYz1234567890",
             "Bearer token is stored in vault",
             "see the runbook for the rotation procedure",
+            "see ticket ABC-1234 for rotation",
             "short",
             "",
         )
         for span in spans:
             with self.subTest(span=span):
                 self.assertEqual(
-                    check_repo._credential_candidates(span),
-                    site_profile._credential_candidates(span),
+                    check_repo._credential_candidate(span),
+                    site_profile._credential_candidate(span),
+                )
+
+    def test_both_copies_agree_on_what_a_credential_looks_like(self) -> None:
+        """The shape test decides; entropy alone cannot separate these."""
+        tokens = (
+            "qY7vP2xK9rLm4aZbC8dEfGhJkNpQsTuWxYz1234567890",
+            "hunter2",
+            "s3cr3tP4ssw0rd",
+            "rotation",
+            "Rotation",
+            "internationalization",
+            "abcdefghijklmnopqrstuvwxyz",
+            "secret",
+            "short",
+        )
+        for token in tokens:
+            with self.subTest(token=token):
+                self.assertEqual(
+                    check_repo._is_credential_shaped(token),
+                    site_profile._is_credential_shaped(token),
                 )
 
     def test_both_copies_grade_the_same_values_the_same_way(self) -> None:

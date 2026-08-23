@@ -1,4 +1,6 @@
-<!-- matrix-status: current -->
+<!-- matrix-status: superseded -->
+<!-- superseded-by: 2026-08-22-unifi-compatibility-matrix.md -->
+<!-- superseded-reason: The forty stage results describe portable package 2.0.2 at tree digest 4c256bb2..., before unifi 2.0.3 repaired the credential-value rule a fifth review cycle found defective in both directions: a placeholder standing between an auth scheme word and a credential ended the search, so a real token behind it was cleared, and ordinary operational prose whose first token is a long English word was rejected as a credential. The shipped package is 2.0.3 and fingerprints to 34915c40..., so this record no longer identifies the tree it claims to describe. Its client results and its Cursor correction stand and are carried forward unchanged. -->
 
 # Ten-client compatibility matrix — portable UniFi package
 
@@ -12,9 +14,9 @@ The point of the exercise is to learn which clients can consume a portable
 package and which cannot, before anyone commits to a distribution path. It is a
 survey, not a release gate.
 
-## This is the fifth re-run, and what it replaces
+## This is the fourth re-run, and what it replaces
 
-Five earlier publications of this matrix are preserved as history, each retired
+Four earlier publications of this matrix are preserved as history, each retired
 for a different reason:
 
 1. [`2026-08-22-unifi-compatibility-matrix-pre-repair.md`](2026-08-22-unifi-compatibility-matrix-pre-repair.md)
@@ -32,25 +34,28 @@ for a different reason:
    assessed portable package `2.0.1` at tree digest `cafe8836…`, after the caller
    half of the `Retry-After` defect was repaired but before the two defects a
    fourth review cycle found.
-5. [`2026-08-22-unifi-compatibility-matrix-pre-unifi-203.md`](2026-08-22-unifi-compatibility-matrix-pre-unifi-203.md)
-   assessed portable package `2.0.2` at tree digest `4c256bb2…`. It is also where
-   the Cursor Agent correction was first published, and that correction is carried
-   forward here unchanged.
 
 This document is the re-run against the package as it now ships. What moved since
-the last publication is one repair, at the boundary that owns it:
+the last publication is three repairs, all authored at the boundary that owns
+them:
 
-- **UniFi `2.0.3`** — the credential-value rule was defective in both directions,
-  and both were introduced by the previous repair of that same rule. A placeholder
-  standing between an auth scheme word and the credential ended the search, so
-  `authorization: Bearer <redacted> <token>` cleared the real token behind it; and
-  grading the first token unconditionally rejected ordinary operational prose, so
-  `token: rotation happens quarterly` was refused as a credential. The rule now
-  walks the value, steps over scheme words and placeholders, grades the first token
-  that is neither, and stops there.
-
-Everything else in the package is unchanged from the previous publication, which is
-why every client result below is identical to it.
+- **Fleet Core `0.25.2`** — `parse_retry_after` refuses a non-finite value.
+  `float()` accepts `inf`, `-inf`, `nan`, and overlarge literals such as `1e400`,
+  so a header carrying one parsed to a non-finite "delay" and travelled on as
+  though the server had given a usable hint. The sleep path hid it; the damage
+  landed after retries were exhausted, where the caller reduces the hint to whole
+  seconds and `math.ceil` raised, costing the operator the typed 429 surface and
+  giving them a generic error instead of a wait time.
+- **UniFi `2.0.2`** — the Claude-path site-profile loader was pinned to schema
+  `1.0` while the portable half of this same package advanced its contract to
+  `1.1`. One package disagreed with itself: an operator authoring the `1.1`
+  document the package documents had it rejected by their own integration, and a
+  credential pasted into a free-text value was refused on one path and accepted on
+  the other.
+- **Portable, target-owned** — the credential-value rule graded the auth scheme
+  word rather than the credential behind it, so `authorization: Bearer <token>`
+  passed; `Basic` and `Token` fell under the length floor and were never examined
+  at all.
 
 ## What this document is, and is not
 
@@ -58,20 +63,6 @@ It is a record of what ten clients did with one package on one machine on one
 day. It is not a claim about those clients in general, not a claim that any
 client will keep behaving this way, and not a release gate: nothing here decides
 whether the package ships.
-
-**Its scope is the package, not this repository.** Every result below concerns the
-individual `plugins/unifi/` package, placed by local path. Registering *this
-repository* as a client marketplace or catalog is a different surface, and it was
-not assessed for any client. The distinction is not academic: for Qwen,
-`extensions install <path>` is the command exercised here, while
-`extensions sources add <source>` is the catalog command, and its own help
-declares it takes a marketplace source in Claude format. This repository carries
-no `.claude-plugin/marketplace.json` and no marketplace manifest at root level, so
-it cannot be registered that way today. A "works directly" row therefore means the
-package installs, and says nothing about whether the catalog containing it can be
-added to that client. The gap is recorded in
-[QUEUED.md](../engineering-journal/QUEUED.md); no manifest has been written and
-none is authorized here.
 
 ## How every client was assessed
 
@@ -117,7 +108,7 @@ Held identical across all ten:
   so the floor is exercised here by explicit path rather than assumed.
 - **The assessed copy is the shipped tree.** The package root handed to each
   client was a scratch copy of `plugins/unifi/`, fingerprinted before the run at
-  23 files, `34915c40…`, equal to the source tree, and recomputed after the run
+  23 files, `4c256bb2…`, equal to the source tree, and recomputed after the run
   and still equal — so no client mutated what was assessed.
 
 Where a single client command yields both the enumeration and the resolved unit
@@ -244,7 +235,7 @@ artifact of the harness. It is preserved in the superseded document as history.
 The client accepted the portable package root, read the portable manifest, and
 reports the package's origin as `AgentPlugins` — it names the Agent Plugins
 format as the one it recognized. It reads the version from the portable manifest
-as `2.0.3`, resolves both skills, and reports the extension enabled at user and
+as `2.0.2`, resolves both skills, and reports the extension enabled at user and
 workspace scope. Installing from a directory required confirming an installation
 trust, which the client prompts for by name; that trust authorizes a local
 install and is not a write confirmation against any controller.
@@ -256,7 +247,7 @@ its own bookkeeping. The path it resolves for invocation is therefore its copy.
 ### Grok — works directly
 
 The client validated the portable manifest on its own terms, reporting name,
-version `2.0.3`, and one skill directory, then installed from the local directory
+version `2.0.2`, and one skill directory, then installed from the local directory
 into a client-owned copy. Installing from a directory requires an explicit local
 trust flag, which the client names in its own refusal message; that flag is an
 installation trust, not a write confirmation against any controller. The
@@ -336,9 +327,9 @@ installation identifier.
   "assessed_on": "2026-08-22",
   "package": {
     "name": "unifi",
-    "version": "2.0.3",
+    "version": "2.0.2",
     "file_count": 23,
-    "tree_sha256": "34915c40a34a4fffe9276fed141bd0ce3a089b26935864b16d4a548a76d9d0dc"
+    "tree_sha256": "4c256bb20bd054c498056282eb7cbb3cee9c224c422bf1f20bb66422d1d15cfa"
   },
   "method": {
     "stages": [
@@ -446,7 +437,7 @@ installation identifier.
         "discovery": {
           "result": "executed",
           "command": "qwen extensions list",
-          "evidence": "One entry, unifi 2.0.3, marked with a success indicator, reporting Origin AgentPlugins — the client names the Agent Plugins format as the one it recognized — with Enabled (User) true and Enabled (Workspace) true, and the description read from the portable manifest."
+          "evidence": "One entry, unifi 2.0.2, marked with a success indicator, reporting Origin AgentPlugins — the client names the Agent Plugins format as the one it recognized — with Enabled (User) true and Enabled (Workspace) true, and the description read from the portable manifest."
         },
         "load": {
           "result": "executed",
@@ -469,7 +460,7 @@ installation identifier.
         "placement": {
           "result": "executed",
           "command": "grok plugin install <package> --trust",
-          "evidence": "Validated first with 'grok plugin validate <package>', which reported the manifest valid, name unifi, version 2.0.3, and one skill directory with no command or agent directories. Installing from a directory requires an explicit local trust flag, which the client names in its own refusal message; that flag is an installation trust, not a write confirmation against any controller. With it, one plugin installed."
+          "evidence": "Validated first with 'grok plugin validate <package>', which reported the manifest valid, name unifi, version 2.0.2, and one skill directory with no command or agent directories. Installing from a directory requires an explicit local trust flag, which the client names in its own refusal message; that flag is an installation trust, not a write confirmation against any controller. With it, one plugin installed."
         },
         "discovery": {
           "result": "executed",
@@ -479,7 +470,7 @@ installation identifier.
         "load": {
           "result": "executed",
           "command": "grok plugin details <plugin-id>",
-          "evidence": "Resolved plugins 1, named unifi at version 2.0.3 read from the portable manifest, with the description and a component count of one skill directory and no command or agent directories, plus the client-owned install path and timestamps."
+          "evidence": "Resolved plugins 1, named unifi at version 2.0.2 read from the portable manifest, with the description and a component count of one skill directory and no command or agent directories, plus the client-owned install path and timestamps."
         },
         "invocation": {
           "result": "executed",
