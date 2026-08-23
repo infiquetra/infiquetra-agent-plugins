@@ -2,85 +2,71 @@
 
 ## 2026-08-23
 
-### A completion watcher that can never fire looks exactly like work that never finished
+### A verification step that reports success for an unrelated reason is worth less than none
 
 **Author.** Jeff Cox and Claude
 
-**Context.** The cycle-7 review panel finished and wrote both artifacts. The coordinator's
-background watcher never reported them, so the coordinator sat idle while two complete,
-schema-valid reports sat on disk. The operator noticed and reconciled from the artifacts
-directly.
+**Context.** The UniFi portability pilot ran nine review cycles. Across them the
+same defect appeared six times, three times in the product and three times in the
+coordinator's own verification tooling, and it was never recognised as one defect
+until the retrospective. Each instance was fixed on its own terms and the class
+went on producing new ones.
 
-**Evidence.** Background task `bo084hhi2` (PID 97405), the watcher loop in this session. Its
-completion test was:
+**Evidence.** Six instances, all from this pilot:
 
-```bash
-mo=$( [ -f "$OX" ] && grep -c APPEND_HERE "$OX" || echo 1 )
-[ "$so" -gt 3000 ] && [ "$mo" -eq 0 ] && ...
-```
+| Instance | Reported | Actually |
+|---|---|---|
+| A must-not-fire test whose subject was three characters long | the false-positive class is covered | filtered by a length floor before reaching the rule |
+| A completion watcher testing `grep -c ... \|\| echo 1` | reviewers still working | the predicate could never be true, and only in the success case |
+| A mutation run whose anchors held real characters, in a file storing them escaped | six guards proved | nothing was replaced; the runs were of unmutated code |
+| A mutation run started from an already-failing baseline | eleven guards proved | every result unreadable against the noise |
+| A "survived" detector matching the restored run's `OK` | one mutation survived | it had matched the wrong section |
+| The repository gate's link check | repository links resolve | one resolved only via a sibling checkout on one machine |
 
-**Mechanism.** `grep -c` prints the count *and* exits non-zero when the count is zero. Zero
-matches is the success condition being waited for, so on exactly that condition the command
-printed `0`, exited 1, and the `|| echo 1` branch fired too. `mo` became the two-line string
-`"0\n1"`, and `[ "0\n1" -eq 0 ]` is never true. The watcher was structurally incapable of
-reporting success: the closer the artifacts got to done, the more certainly it stayed silent.
+**Mechanism.** Each is a check whose passing condition is satisfied by something
+other than the property it claims to establish — a precondition, an exit status
+that disagrees with its own output, an unmutated file, a noisy baseline, an
+adjacent line of output, a neighbouring directory on disk. Reading the check does
+not reveal this; every one of them reads correctly. Only running it against a
+world where the claimed property is false does.
 
-Two things made this worse than a stuck loop. It failed *only* in the success case, so every
-partial-progress poll behaved correctly and the bug was invisible until it mattered. And its
-silence was indistinguishable from the condition it was built to detect — a reviewer stalled
-mid-delivery with the marker still present — which is the failure this same session had already
-hit three times, so the silence read as expected rather than anomalous.
+Two of them share a sharper property worth naming on its own: they failed *only*
+in the success case. The watcher's predicate broke exactly when the artifacts
+completed, and the link check passed exactly on the machine where the link was
+wrong. A check that degrades gracefully announces itself; a check that fails only
+when it matters is silent precisely when it is needed.
 
-**Generalizable rule.** Never let a predicate's success path depend on a command whose exit
-status disagrees with its output. For `grep -c`, capture the count with `$(grep -c X f || true)`,
-or test the file directly with `! grep -q X f`. More generally: a watcher must be able to fail
-*loudly*, so give it a bounded timeout that prints the observed state rather than one that
-prints nothing, and prefer checking the artifact and the reviewer's real foreground process over
-a derived boolean. When a watcher goes quiet on work that should be finishing, read the artifact
-before believing the watcher.
+**Fix.** Three habits, each cheap:
 
+1. **Make every check fail on demand.** Break the property on purpose and require
+   the check to fail. For tests this is mutation; for a gate, feed it a violation;
+   for a watcher, hand it the state it is waiting for and confirm it fires.
+2. **Never let a success path depend on a command whose exit status disagrees with
+   its output.** `grep -c` prints a count and exits non-zero on zero matches, so
+   `$(grep -c X f || echo 1)` yields two lines on the success condition. Use
+   `$(grep -c X f || true)`, or test the file with `! grep -q X f`.
+3. **Require a green baseline before any differential run**, and assert on a
+   missing mutation anchor rather than proceeding. Both failures above were
+   invisible without these.
+
+**What surprised.** The product bug and the tooling bugs are the same bug. Nine
+review cycles hunted the first with increasing rigour while the harness doing the
+hunting carried three instances of it. Reviewers scored the code; nothing scored
+the scorer.
+
+**Generalizable rule.** For every check — test, gate, watcher, proof — state the
+property it establishes and the input that would make that property false, then
+confirm the check fails on that input. If it cannot be made to fail, it is not
+evidence, and counting it as coverage is worse than having none, because the gap
+is now believed closed.
+
+**Refs.** [The UniFi portability pilot retrospective](narratives/2026-08-23-unifi-portability-pilot-retrospective.md).
+Two entries superseded by this one and preserved in
+[`ARCHIVE.md`](ARCHIVE.md): the negative test that could not fail, and the
+completion watcher that could not fire.
 
 ## 2026-08-22
 
-### A negative test that passed for the wrong reason reported coverage that did not exist
-
-**Author.** Jeff Cox and Claude
-
-**Context.** The credential-value rule was repaired once for grading the wrong span, and the
-repair broke in both directions: it cleared a real credential hidden behind a placeholder, and
-it rejected ordinary operational prose. Two independent reviewers found both on the next
-cycle. The repair had shipped with a must-not-fire test written specifically to catch the
-second class.
-
-**Evidence.** The cycle-4 negative set used `auth: see the runbook for the rotation
-procedure`. It passed. The cycle-5 reviewers used `token: rotation happens quarterly`, which
-failed. Both are the same shape — a credential-shaped key assigned English prose — and the
-difference is only that the first sentence begins with `see`, three characters, which falls
-under the rule's six-character length floor before any grading happens.
-
-**Mechanism.** The test exercised the length floor, not the rule it was written for. Its
-subject never reached the code under test, so it could not have failed no matter how wrong
-that code was. It looked like coverage of the false-positive category and was coverage of
-nothing.
-
-**Fix.** The replacement set is chosen so each case would fail for the *right* reason if the
-rule were wrong: first tokens that are long English words (`rotation`, `managed`,
-`internationalization`), capitalized forms, and a ticket number that carries a digit. Twenty
-eight assertions fail against the defective rule.
-
-**What surprised.** Reviewing my own test set would not have caught this. Reading it, the
-example plainly belongs to the category; only running it against deliberately broken code
-shows that it never touches the rule. Mutation is the only cheap check that distinguishes a
-test from a test-shaped statement.
-
-**Generalizable rule.** For any test that exists to prove a guard does *not* fire, verify it
-would fire if the guard were wrong. A negative case that is filtered out by a precondition
-before reaching the logic is worse than no test, because it is counted as coverage. Cheapest
-implementation: break the code on purpose and require the new assertions to fail. Every repair
-in this pilot now ships with that count recorded, which is how this one was caught.
-
-**Refs.** the upstream repository `infiquetra-claude-plugins`,
-cycle-5 reviews in [`docs/reviews/`](../reviews/).
 
 ### The credential detector read the wrong span, so `Bearer` cleared the token behind it
 
