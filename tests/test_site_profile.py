@@ -6,6 +6,9 @@ validation job as well as under pytest in the dependency-bearing job.
 
 from __future__ import annotations
 
+import ast
+import hashlib
+import importlib.util
 import json
 import subprocess
 import sys
@@ -18,7 +21,9 @@ ROOT = Path(__file__).resolve().parents[1]
 UNIFI_SCRIPTS = ROOT / "plugins" / "unifi" / "scripts"
 SCHEMA_PATH = ROOT / "plugins" / "unifi" / "schemas" / "site-profile.schema.json"
 sys.path.insert(0, str(UNIFI_SCRIPTS))
+sys.path.insert(0, str(ROOT / "scripts"))
 
+import check_repo  # noqa: E402
 import site_profile  # noqa: E402
 
 
@@ -216,6 +221,339 @@ class ValidationTest(TemporaryTreeTest):
                 with self.assertRaises(site_profile.ProfileInvalidError) as raised:
                     site_profile.validate_profile(payload)
                 self.assertIn(field, str(raised.exception))
+
+    def test_credential_in_notes_is_rejected_naming_the_field_and_the_reason(self) -> None:
+        """The proof both cycle-two reviewers ran, and it must now fail closed.
+
+        Before the value rule this exact document validated successfully, which
+        is what made the printed guarantee false: the field name ``notes`` is
+        innocent and every guard in the contract read names only.
+        """
+        payload = json.loads(json.dumps(VALID_PROFILE))
+        payload["subjects"][0]["notes"] = "controller password=hunter2"
+        path = self.write_profile("leaked-notes.json", payload)
+
+        with self.assertRaises(site_profile.ProfileInvalidError) as raised:
+            site_profile.load_profile_document(path)
+        message = str(raised.exception)
+        self.assertIn("credential value", message)
+        self.assertIn("subjects[0].notes", message)
+        self.assertIn("password", message)
+
+    def test_credential_in_a_description_is_rejected(self) -> None:
+        payload = json.loads(json.dumps(VALID_PROFILE))
+        payload["site"]["description"] = "Example site. api_key=A9f2Kd81LmQz47Rb"
+        with self.assertRaises(site_profile.ProfileInvalidError) as raised:
+            site_profile.validate_profile(payload)
+        self.assertIn("site.description", str(raised.exception))
+
+    def test_credential_in_ownership_is_rejected(self) -> None:
+        payload = json.loads(json.dumps(VALID_PROFILE))
+        payload["subjects"][0]["ownership"] = "example-team, token=Qa7Rm2Xp90Lt"
+        with self.assertRaises(site_profile.ProfileInvalidError) as raised:
+            site_profile.validate_profile(payload)
+        self.assertIn("subjects[0].ownership", str(raised.exception))
+
+    def test_a_credential_value_is_rejected_wherever_a_string_may_appear(self) -> None:
+        """Every free-text location in the contract, not just the ones reviewed."""
+        secret = "controller password=hunter2"
+        placements = {
+            "site.description": lambda p: p["site"].__setitem__("description", secret),
+            "subjects[0].notes": lambda p: p["subjects"][0].__setitem__("notes", secret),
+            "subjects[0].ownership": lambda p: p["subjects"][0].__setitem__("ownership", secret),
+            "intended_policies[0].description": (
+                lambda p: p["intended_policies"][0].__setitem__("description", secret)
+            ),
+            "operational_constraints[0].description": (
+                lambda p: p["operational_constraints"][0].__setitem__("description", secret)
+            ),
+        }
+        for location, place in placements.items():
+            with self.subTest(location=location):
+                payload = json.loads(json.dumps(VALID_PROFILE))
+                place(payload)
+                with self.assertRaises(site_profile.ProfileInvalidError) as raised:
+                    site_profile.validate_profile(payload)
+                self.assertIn(location, str(raised.exception))
+
+    def test_every_literal_credential_format_is_rejected_in_a_value(self) -> None:
+        samples = {
+            "AWS access key id": "AKIAIOSFODNN7EXAMPLE",
+            "GitHub token": "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8",
+            "GitHub fine-grained token": "github_pat_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0",
+            "Slack token": "xoxb-1234567890-abcdefghij",
+            "Stripe secret key": "sk_live_" + "A1b2C3d4E5f6G7h8",
+            "Google API key": "AIza" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r",
+            "Anthropic API key": "sk-ant-" + "A1b2C3d4E5f6G7h8I9j0K1l2",
+            "OpenAI API key": "sk-" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6",
+            "JSON web token": (
+                "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27u"
+            ),
+            "private key block": "-----BEGIN RSA PRIVATE KEY-----",
+            "credential embedded in a URL": "https://operator:s3cr3tvalue@controller.example",
+        }
+        declared = {label for label, _ in site_profile.CREDENTIAL_VALUE_FORMATS}
+        self.assertEqual(set(samples), declared)
+        for label, sample in samples.items():
+            with self.subTest(label=label):
+                payload = json.loads(json.dumps(VALID_PROFILE))
+                payload["subjects"][0]["notes"] = f"inert example: {sample}"
+                with self.assertRaises(site_profile.ProfileInvalidError) as raised:
+                    site_profile.validate_profile(payload)
+                self.assertIn(label, str(raised.exception))
+
+    def test_a_value_that_only_names_a_secret_is_accepted(self) -> None:
+        """Pointing at where a credential lives is the profile's job, not a leak."""
+        accepted = (
+            "The controller password is held in the operator vault, never in this file.",
+            "Rotate the API key with the team that owns this subject.",
+            "api_key=vault:infiquetra/unifi/controller",
+            "password=<redacted>",
+            "token=${UNIFI_API_TOKEN}",
+            "client_secret=redacted",
+            "Secrets for this host are managed outside the profile.",
+        )
+        for note in accepted:
+            with self.subTest(note=note):
+                payload = json.loads(json.dumps(VALID_PROFILE))
+                payload["subjects"][0]["notes"] = note
+                self.assertEqual(site_profile.validate_profile(payload), payload)
+
+    def test_a_legitimate_sha256_digest_is_accepted(self) -> None:
+        """A bare high-entropy scan would reject this, which is why there is none.
+
+        Profiles carry digests and long identifiers as a matter of course. A rule
+        that fires on them is a rule an operator switches off, so the value check
+        is two narrow families and never bare entropy.
+        """
+        digest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        payload = json.loads(json.dumps(VALID_PROFILE))
+        payload["subjects"][0]["notes"] = f"Configuration digest {digest}"
+        payload["site"]["description"] = digest
+        payload["operational_constraints"][0]["description"] = (
+            f"Only the configuration whose sha256 is {digest} may be applied."
+        )
+        self.assertEqual(site_profile.validate_profile(payload), payload)
+
+    def test_a_short_low_entropy_literal_under_a_strict_key_is_refused(self) -> None:
+        """The limit this used to admit is gone, and the reference says so.
+
+        `password: secret` was accepted because it sat below an entropy floor.
+        There is no floor now: under a strict key a lone substantive literal is a
+        credential whatever it looks like. The guarantee in
+        ``references/site-profile.md`` states the stronger rule, and this test
+        exists so that wording stays true rather than aspirational.
+        """
+        payload = json.loads(json.dumps(VALID_PROFILE))
+        payload["subjects"][0]["notes"] = "password=secret"
+        with self.assertRaises(site_profile.ProfileInvalidError) as raised:
+            site_profile.validate_profile(payload)
+        self.assertIn("credential value", str(raised.exception))
+
+    def test_the_documented_prose_padding_limit_is_pinned(self) -> None:
+        """The one limit the reference still admits, pinned so it stays honest.
+
+        A literal padded out with prose under a strict key in a prose field is
+        not reported. Recording it as a test is what keeps the documented limit
+        and the shipped behaviour the same sentence.
+        """
+        payload = json.loads(json.dumps(VALID_PROFILE))
+        payload["subjects"][0]["notes"] = "password: rainbowtrout is the controller value"
+        self.assertEqual(site_profile.validate_profile(payload), payload)
+
+    def test_the_value_rule_applies_to_a_document_declaring_the_older_version(self) -> None:
+        """A credential in a 1.0 profile is exactly as exposed as one in a 1.1."""
+        payload = json.loads(json.dumps(VALID_PROFILE))
+        payload["schema_version"] = "1.0"
+        payload["subjects"][0]["notes"] = "controller password=hunter2"
+        with self.assertRaises(site_profile.ProfileInvalidError) as raised:
+            site_profile.validate_profile(payload)
+        self.assertIn("credential value", str(raised.exception))
+
+    def test_a_credential_behind_an_auth_scheme_word_is_caught(self) -> None:
+        """``authorization: Bearer <token>`` is the shape an operator actually pastes.
+
+        The rule graded only the first token of the assigned value, which here is the
+        word ``Bearer`` -- no entropy, so the credential standing behind it was cleared.
+        ``Basic`` and ``Token`` are shorter than the length floor, so the pattern did not
+        match at all and those values were never examined.
+        """
+        token = "qY7vP2xK9rLm4aZbC8dEfGhJkNpQsTuWxYz1234567890"
+        for value in (
+            f"authorization: Bearer {token}",
+            f"authorization: Basic {token}",
+            f"Authorization: Bearer {token}",
+            f"token: Token {token}",
+            f"authorization: Digest {token}",
+            # A placeholder standing between the scheme word and the credential
+            # used to end the search: a fixed two-token window graded the
+            # placeholder, saw that it names a secret rather than being one, and
+            # cleared the real credential behind it.
+            f"authorization: Bearer <redacted> {token}",
+            f"authorization: Bearer ${{UNIFI_API_KEY}} {token}",
+            f"authorization: Bearer vault:infiquetra/unifi {token}",
+        ):
+            with self.subTest(value=value):
+                payload = json.loads(json.dumps(VALID_PROFILE))
+                payload["subjects"][0]["notes"] = value
+                with self.assertRaises(site_profile.ProfileInvalidError) as raised:
+                    site_profile.validate_profile(payload)
+                self.assertIn("credential value", str(raised.exception))
+
+    def test_a_digitless_literal_under_a_strict_key_is_refused(self) -> None:
+        """The class the retired rule let through, in the copy operators load.
+
+        A digit-free value had to reach twenty-four characters before it counted,
+        so every one of these shipped accepted -- while ``oauth2``, which carries
+        *less* entropy per character than ``rainbowtrout``, was refused. The rule
+        graded the value and the value cannot tell you this.
+        """
+        for value in (
+            "password: rainbowtrout",
+            "password: sunshine",
+            "api_key: correcthorsebattery",
+            "passphrase: correcthorsebattery",
+            "client_secret: managedvalue",
+            "password: rainbowtrout <redacted>",
+        ):
+            with self.subTest(value=value):
+                payload = json.loads(json.dumps(VALID_PROFILE))
+                payload["subjects"][0]["notes"] = value
+                with self.assertRaises(site_profile.ProfileInvalidError) as raised:
+                    site_profile.validate_profile(payload)
+                self.assertIn("credential value", str(raised.exception))
+
+    def test_technical_prose_in_a_descriptive_field_is_accepted(self) -> None:
+        """The class the retired rule refused, in the copy operators load.
+
+        ``description`` and ``notes`` are the two fields the schema keeps for
+        prose, so a strict key followed by several substantive words is a
+        sentence about a credential rather than a credential.
+        """
+        for field, value in (
+            ("notes", "credentials: oauth2 is configured at the controller"),
+            ("notes", "token: base64 of the site identifier"),
+            ("notes", "secret: sha256 checksum recorded in the manifest"),
+            ("notes", "auth: vlan40 handles the guest network"),
+            ("notes", "password: md5 is not used anywhere in this site"),
+            ("notes", "the controller uses oauth2 for operator access"),
+        ):
+            with self.subTest(value=value):
+                payload = json.loads(json.dumps(VALID_PROFILE))
+                payload["subjects"][0][field] = value
+                self.assertEqual(site_profile.validate_profile(payload), payload)
+
+    def test_the_prose_allowance_does_not_reach_a_structured_field(self) -> None:
+        """Only the two prose fields get the several-words allowance."""
+        payload = json.loads(json.dumps(VALID_PROFILE))
+        payload["site"]["identifier"] = "credentials: oauth2 is configured here"
+        with self.assertRaises(site_profile.ProfileInvalidError) as raised:
+            site_profile.validate_profile(payload)
+        self.assertIn("credential value", str(raised.exception))
+
+    def test_the_established_safe_forms_still_pass(self) -> None:
+        """Placeholders, references, schemes and prose, unchanged by this rewrite."""
+        for value in (
+            "password: <redacted>",
+            "api_key: ${UNIFI_API_KEY}",
+            "api_key: {{ lookup }}",
+            "token: %(UNIFI_TOKEN)s",
+            "api_key: vault:infiquetra/unifi#api_key",
+            "password: env:UNIFI_API_KEY",
+            "password: op://vault/item",
+            "password: change-me",
+            "authorization: Bearer <token>",
+            "auth: see ticket ABC-1234 for rotation",
+            "token: rotation happens quarterly",
+            "secret: managed elsewhere",
+        ):
+            with self.subTest(value=value):
+                payload = json.loads(json.dumps(VALID_PROFILE))
+                payload["subjects"][0]["notes"] = value
+                self.assertEqual(site_profile.validate_profile(payload), payload)
+
+    def test_an_innocent_key_does_not_swallow_a_strict_one(self) -> None:
+        """Two assignments on one line: the scan must resume at the delimiter."""
+        for value in (
+            "notes: controller password=hunter2",
+            "description: call it with bearer=aB9dEf2GhJ4kLm7Q",
+        ):
+            with self.subTest(value=value):
+                payload = json.loads(json.dumps(VALID_PROFILE))
+                payload["subjects"][0]["notes"] = value
+                with self.assertRaises(site_profile.ProfileInvalidError) as raised:
+                    site_profile.validate_profile(payload)
+                self.assertIn("credential value", str(raised.exception))
+
+    def test_the_descriptive_fields_are_declared_by_the_schema(self) -> None:
+        """Derived from the contract, not remembered separately."""
+        schema_fields = set(
+            site_profile.SITE_FIELDS
+            + site_profile.SUBJECT_FIELDS
+            + site_profile.POLICY_FIELDS
+            + site_profile.CONSTRAINT_FIELDS
+        )
+        self.assertLessEqual(site_profile.DESCRIPTIVE_FIELDS, schema_fields)
+        self.assertEqual(site_profile.DESCRIPTIVE_FIELDS, {"description", "notes"})
+
+    def test_the_strict_key_set_is_the_property_name_taxonomy(self) -> None:
+        """One taxonomy grades property names and in-text keys alike."""
+        for fragment in site_profile.CREDENTIAL_NAME_FRAGMENTS:
+            self.assertTrue(site_profile._is_strict_credential_key(fragment))
+            self.assertTrue(site_profile._is_strict_credential_key(fragment.upper()))
+        for extra in site_profile.CREDENTIAL_KEY_EXACT_IN_TEXT:
+            self.assertTrue(site_profile._is_strict_credential_key(extra))
+        # Matched whole, not as a substring: `author` contains `auth`.
+        for innocent in ("author", "description", "notes", "identifier", "kind"):
+            self.assertFalse(site_profile._is_strict_credential_key(innocent))
+
+    def test_prose_after_a_credential_key_is_not_graded(self) -> None:
+        """Only the credential's own span is graded, never the sentence around it.
+
+        Several ordinary English words clear the 2.5-bit floor on their own -- ``runbook``
+        is 2.52 -- so a rule that graded every whitespace-separated token of the value
+        would reject a profile for describing where the credential lives, which is exactly
+        what a profile is supposed to do.
+        """
+        for value in (
+            "auth: see the runbook for the rotation procedure",
+            "authorization: Bearer token is stored in vault",
+            "api_key: vault:infiquetra/unifi#api_key",
+            "password: <redacted>",
+            "api_key: ${UNIFI_API_KEY}",
+            "the site uses certificate authentication end to end",
+            # Prose whose FIRST token is a long English word. The earlier rule
+            # graded token zero unconditionally, and entropy per character does
+            # not separate English from a credential -- `rotation` scores 2.50
+            # against a 2.50 floor -- so these were rejected as credentials.
+            "auth: rotation procedure documented in the runbook",
+            "token: rotation happens quarterly",
+            "secret: managed elsewhere",
+            "auth: Rotation Procedure Documented",
+            # A ticket reference carries a digit. It is not graded because the
+            # walk stops at the first substantive token rather than searching
+            # the sentence for something that looks credential-shaped.
+            "auth: see ticket ABC-1234 for rotation",
+        ):
+            with self.subTest(value=value):
+                payload = json.loads(json.dumps(VALID_PROFILE))
+                payload["subjects"][0]["notes"] = value
+                self.assertEqual(site_profile.validate_profile(payload), payload)
+
+    def test_a_credential_shaped_name_is_reported_as_a_name_not_a_value(self) -> None:
+        """Ordering matters: an inert value in a forbidden field is a field fault."""
+        payload = json.loads(json.dumps(VALID_PROFILE))
+        payload["subjects"][0]["api_token"] = "controller password=hunter2"
+        with self.assertRaises(site_profile.ProfileInvalidError) as raised:
+            site_profile.validate_profile(payload)
+        self.assertIn("credential-shaped field", str(raised.exception))
+
+    def test_both_supported_versions_load(self) -> None:
+        for version in site_profile.SUPPORTED_SCHEMA_VERSIONS:
+            with self.subTest(version=version):
+                payload = json.loads(json.dumps(VALID_PROFILE))
+                payload["schema_version"] = version
+                self.assertEqual(site_profile.validate_profile(payload), payload)
 
     def test_unrecognized_schema_version_is_rejected_rather_than_partially_applied(self) -> None:
         payload = json.loads(json.dumps(VALID_PROFILE))
@@ -421,6 +759,446 @@ class SchemaDocumentTest(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, pattern)
 
+    def test_every_free_text_value_is_guarded_against_credential_formats(self) -> None:
+        """No string in the contract may be a plain unguarded string."""
+        self.assertNotIn("nonEmptyText", json.dumps(self.schema))
+        definitions = self.schema["$defs"]
+        guarded = {"#/$defs/credentialFreeText", "#/$defs/identifier"}
+        checked = 0
+        for name, definition in definitions.items():
+            if definition.get("type") != "object":
+                continue
+            for field, subschema in definition.get("properties", {}).items():
+                with self.subTest(definition=name, field=field):
+                    if "enum" in subschema:
+                        # A closed vocabulary cannot hold a credential.
+                        continue
+                    reference = subschema.get("$ref") or subschema.get("items", {}).get("$ref")
+                    self.assertIsNotNone(reference, "an unguarded inline string")
+                    if "enum" in definitions[reference.rsplit("/", 1)[-1]]:
+                        continue
+                    self.assertIn(reference, guarded)
+                    checked += 1
+        self.assertGreater(checked, 5)
+
+    def test_the_schema_rejects_the_same_literal_formats_as_the_loader(self) -> None:
+        """The published contract and the enforcement point must not drift apart.
+
+        A third-party validator reads the schema; the loader is what actually
+        runs on an operator's machine. If one list grows a format the other does
+        not, the contract quietly means two different things.
+        """
+        published = [
+            entry["not"]["pattern"]
+            for entry in self.schema["$defs"]["credentialFreeText"]["allOf"]
+        ]
+        enforced = [pattern.pattern for _, pattern in site_profile.CREDENTIAL_VALUE_FORMATS]
+        self.assertEqual(published, enforced)
+
+
+class CredentialRuleDriftTest(unittest.TestCase):
+    """The portable loader and the repository gate must stay one rule.
+
+    ``scripts/check_repo.py`` already solved credential-detection-by-value for
+    the repository tree. The portable loader cannot import it: this module is
+    package source that lands on an operator's machine and loads with the
+    standard library alone, where that validator does not exist -- which is what
+    :class:`StandardLibraryOnlyTest` proves. So the two families are re-stated in
+    ``site_profile.py`` and pinned to the original here. A rule added to one copy
+    and not the other fails this test rather than becoming a second dialect.
+    """
+
+    def test_the_literal_credential_formats_are_the_same_list(self) -> None:
+        self.assertEqual(
+            [(label, pattern.pattern) for label, pattern in check_repo.CREDENTIAL_FORMATS],
+            [
+                (label, pattern.pattern)
+                for label, pattern in site_profile.CREDENTIAL_VALUE_FORMATS
+            ],
+        )
+
+    def test_the_assignment_family_is_the_same_rule(self) -> None:
+        self.assertEqual(
+            check_repo.CREDENTIAL_PLACEHOLDER.pattern,
+            site_profile.CREDENTIAL_VALUE_PLACEHOLDER.pattern,
+        )
+        self.assertEqual(
+            check_repo.CREDENTIAL_REFERENCE_PREFIX.pattern,
+            site_profile.CREDENTIAL_VALUE_REFERENCE_PREFIX.pattern,
+        )
+        self.assertEqual(
+            check_repo.CREDENTIAL_SCHEME_WORDS,
+            site_profile.CREDENTIAL_SCHEME_WORDS,
+        )
+        self.assertEqual(
+            check_repo.CREDENTIAL_NAME_FRAGMENTS,
+            site_profile.CREDENTIAL_NAME_FRAGMENTS,
+        )
+        self.assertEqual(
+            check_repo.CREDENTIAL_KEY_EXACT_IN_TEXT,
+            site_profile.CREDENTIAL_KEY_EXACT_IN_TEXT,
+        )
+        self.assertEqual(
+            check_repo.CREDENTIAL_TEMPLATE_EXPRESSION.pattern,
+            site_profile.CREDENTIAL_TEMPLATE_EXPRESSION.pattern,
+        )
+        self.assertEqual(
+            check_repo.CREDENTIAL_ASSIGNMENT_IN_TEXT.pattern,
+            site_profile.CREDENTIAL_ASSIGNMENT_IN_TEXT.pattern,
+        )
+
+    def test_both_copies_reduce_a_value_to_the_same_tokens(self) -> None:
+        """The token walk is what decides, so it is the likeliest half to drift."""
+        spans = (
+            "qY7vP2xK9rLm4aZbC8dEfGhJkNpQsTuWxYz1234567890",
+            "Bearer qY7vP2xK9rLm4aZbC8dEfGhJkNpQsTuWxYz1234567890",
+            "Basic  qY7vP2xK9rLm4aZbC8dEfGhJkNpQsTuWxYz1234567890",
+            "Bearer <redacted> qY7vP2xK9rLm4aZbC8dEfGhJkNpQsTuWxYz1234567890",
+            "Bearer ${VAR} qY7vP2xK9rLm4aZbC8dEfGhJkNpQsTuWxYz1234567890",
+            "{{ lookup }}",
+            "%(UNIFI_TOKEN)s",
+            "Bearer token is stored in vault",
+            "see the runbook for the rotation procedure",
+            "see ticket ABC-1234 for rotation",
+            "rainbowtrout",
+            "short",
+            "",
+        )
+        for span in spans:
+            with self.subTest(span=span):
+                self.assertEqual(
+                    check_repo._substantive_tokens(span),
+                    site_profile._substantive_tokens(span),
+                )
+
+    def test_both_copies_agree_which_keys_are_strict(self) -> None:
+        """One taxonomy, read by the gate and by the loader alike."""
+        keys = (
+            *site_profile.CREDENTIAL_NAME_FRAGMENTS,
+            *site_profile.CREDENTIAL_KEY_EXACT_IN_TEXT,
+            "API_KEY",
+            "client_secret",
+            "access-key",
+            "author",
+            "description",
+            "notes",
+            "identifier",
+        )
+        for key in keys:
+            with self.subTest(key=key):
+                self.assertEqual(
+                    check_repo._is_strict_credential_key(key),
+                    site_profile._is_strict_credential_key(key),
+                )
+
+    def test_both_copies_grade_the_same_values_the_same_way(self) -> None:
+        samples = (
+            "hunter2",
+            "secret",
+            "rainbowtrout",
+            "AKIAIOSFODNN7EXAMPLE",
+            "vault:infiquetra/unifi",
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "<redacted>",
+            "aaaaaaaa",
+            "12345678",
+        )
+        for sample in samples:
+            with self.subTest(sample=sample):
+                self.assertEqual(
+                    check_repo._names_a_secret(sample),
+                    site_profile._names_a_secret(sample),
+                )
+
+    def test_both_copies_reach_the_same_verdict_on_a_line(self) -> None:
+        """The end-to-end pin: same line in, same verdict out, in both copies.
+
+        The per-part pins above can all agree while the rules that read them
+        disagree, so the verdict itself is pinned too.
+        """
+        lines = (
+            "password: rainbowtrout",
+            "password: sunshine",
+            "api_key: correcthorsebattery",
+            "password: secret",
+            "password: hunter2",
+            "authorization: Bearer <redacted> qY7vP2xK9rLm4aZbC8dEfGhJkNpQsTuWxYz12",
+            "credentials: oauth2 is configured at the controller",
+            "token: base64 of the site identifier",
+            "secret: sha256 checksum recorded in the manifest",
+            "auth: vlan40 handles the guest network",
+            "auth: see ticket ABC-1234 for rotation",
+            "password: env:UNIFI_API_KEY",
+            "token: {{ lookup }}",
+            "author: someone wrote this note",
+        )
+        for line in lines:
+            with self.subTest(line=line):
+                gate = bool(check_repo.credential_findings(line, include_assignments=True))
+                loader = site_profile._credential_in_text(line, descriptive=True) is not None
+                self.assertEqual(gate, loader)
+
+    def test_the_portable_loader_does_not_import_the_repository_gate(self) -> None:
+        """Prose may cite the gate; the module may not depend on it.
+
+        Parsed rather than grepped, because the module deliberately *names*
+        ``scripts/check_repo.py`` in a comment explaining why it re-states the
+        rule instead of importing it.
+        """
+        tree = ast.parse(Path(site_profile.__file__).read_text(encoding="utf-8"))
+        imported: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module.split(".")[0])
+        self.assertNotIn("check_repo", imported)
+        self.assertLessEqual(imported, set(sys.stdlib_module_names))
+
+
+
+
+def _bundled_loader():
+    """Load the byte-copied loader that ships inside the package."""
+    path = (
+        Path(site_profile.__file__).parent.parent
+        / "com.infiquetra.claude"
+        / "skills"
+        / "unifi-network"
+        / "scripts"
+        / "site_profile_loader.py"
+    )
+    spec = importlib.util.spec_from_file_location("bundled_site_profile_loader", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+#: One expected verdict per line, asserted against all three copies of the rule.
+#:
+#: This corpus exists because the copies drifted on shapes none of their
+#: individual suites carried. Every constant and helper matched while the
+#: verdicts differed: the two loaders read an assignment across a line break and
+#: the repository gate, which splits lines before scanning, did not. One accepted
+#: a credential the other refused, and every per-part agreement test passed
+#: throughout. Pinning the verdict is the only assertion that could have caught
+#: it.
+CREDENTIAL_VERDICT_CORPUS = (
+    # (text, fires)
+    ("password: rainbowtrout", True),
+    ("password: sunshine", True),
+    ("api_key: correcthorsebattery", True),
+    ("password: secret", True),
+    ("password: hunter2", True),
+    ("secret: internationalization", True),
+    ("authorization: Bearer <redacted> qY7vP2xK9rLm4aZbC8dEfGhJkNpQ", True),
+    ("password: abc123 <redacted>", True),
+    ("notes: controller password=hunter2", True),
+    ("description: call it with bearer=aB9dEf2GhJ4kLm7Q", True),
+    # An innocent key must not eat the line break and the strict assignment
+    # standing behind it. This shape was fail-open in both loaders.
+    ("see notes:\npassword=hunter2", True),
+    # Key spellings that reach the rule only through the exact in-text set.
+    # `auth` and `accesskey` match no name fragment, so emptying that tuple
+    # retires them; these rows are what makes that fail rather than pass.
+    ("auth: rainbowtrout", True),
+    ("accesskey: rainbowtrout", True),
+    ("access_key: rainbowtrout", True),
+    ("access-key: rainbowtrout", True),
+    ("clientsecret: rainbowtrout", True),
+    ("client_secret: rainbowtrout", True),
+    ("credentials: oauth2 is configured at the controller", False),
+    ("token: base64 of the site identifier", False),
+    ("secret: sha256 checksum recorded in the manifest", False),
+    ("auth: vlan40 handles the guest network", False),
+    ("token: rotation happens quarterly", False),
+    ("auth: see ticket ABC-1234 for rotation", False),
+    ("password: redacted", False),
+    ("password: env:UNIFI_API_KEY", False),
+    ("password: vault:kv/unifi", False),
+    ("password: ${UNIFI_KEY}", False),
+    ("api_key: {{ lookup }}", False),
+    ("token: %(UNIFI_TOKEN)s", False),
+    ("authorization: Bearer <token>", False),
+    ("password: change-me", False),
+    ("author: someone wrote this note", False),
+    # An assignment split across a line break is matched by no copy. The
+    # reference states exactly this, so it is pinned rather than described.
+    ("password:\n  hunter2", False),
+)
+
+
+class CredentialVerdictCorpusTest(unittest.TestCase):
+    """The end-to-end pin: same line in, same verdict out, in all three copies."""
+
+    def _loader(self):
+        return _bundled_loader()
+
+    def test_all_three_copies_reach_the_recorded_verdict(self) -> None:
+        loader = self._loader()
+        for text, fires in CREDENTIAL_VERDICT_CORPUS:
+            with self.subTest(text=text):
+                target = site_profile._credential_in_text(text, descriptive=True) is not None
+                bundled = loader._credential_in_text(text, descriptive=True) is not None
+                gate = bool(check_repo.credential_findings(text, include_assignments=True))
+                self.assertEqual(target, fires, "target copy")
+                self.assertEqual(bundled, fires, "bundled loader copy")
+                self.assertEqual(gate, fires, "repository gate")
+
+    def test_the_corpus_covers_both_line_break_shapes(self) -> None:
+        """A corpus that lost its multi-line cases would silently stop testing this."""
+        multiline = [text for text, _ in CREDENTIAL_VERDICT_CORPUS if "\n" in text]
+        self.assertEqual(len(multiline), 2, multiline)
+
+
+class MutationProofBindingTest(unittest.TestCase):
+    """A mutation proof must name the bytes it proved.
+
+    A cycle-7 review found a committed proof recording a digest that matched no
+    committed state in either repository: it had been run against an intermediate
+    working tree, so the file it exercised never shipped. The conclusions were
+    sound and the identification was wrong, which for this kind of evidence is the
+    same as having no evidence.
+
+    Checking it once would have fixed that instance. Binding it in a test fixes
+    the class: edit a graded file without re-running its proof and this fails.
+    """
+
+    EVIDENCE = Path(__file__).resolve().parent.parent / "docs" / "evidence"
+
+    def _recorded(self, document: str) -> dict[str, str]:
+        digests: dict[str, str] = {}
+        for line in (self.EVIDENCE / document).read_text(encoding="utf-8").splitlines():
+            if line.startswith("#"):
+                continue
+            name, separator, value = line.partition(" sha256:")
+            if separator:
+                digests[name.strip()] = value.strip()
+        return digests
+
+    def test_the_portable_proof_names_the_bytes_that_ship(self) -> None:
+        recorded = self._recorded("2026-08-23-cycle9-mutation-proof-portable-copies.txt")
+        self.assertEqual(set(recorded), {"site_profile.py", "check_repo.py"}, recorded)
+        actual = {
+            "site_profile.py": Path(site_profile.__file__),
+            "check_repo.py": Path(check_repo.__file__),
+        }
+        for name, path in actual.items():
+            with self.subTest(name=name):
+                self.assertEqual(
+                    recorded[name],
+                    hashlib.sha256(path.read_bytes()).hexdigest(),
+                    f"{name} changed without its mutation proof being re-run",
+                )
+
+    def test_the_upstream_proof_names_the_bytes_that_were_copied_in(self) -> None:
+        recorded = self._recorded("2026-08-23-cycle9-mutation-proof-upstream-loader.txt")
+        self.assertEqual(set(recorded), {"loader"}, recorded)
+        bundled = (
+            Path(site_profile.__file__).parent.parent
+            / "com.infiquetra.claude"
+            / "skills"
+            / "unifi-network"
+            / "scripts"
+            / "site_profile_loader.py"
+        )
+        self.assertEqual(
+            recorded["loader"],
+            hashlib.sha256(bundled.read_bytes()).hexdigest(),
+            "the byte-copied loader is not the file the upstream proof exercised",
+        )
+
+
+#: Every boundary ``str.splitlines()`` recognises, plus the two-character
+#: sequence. The rule's contract is that an assignment is one line, so all three
+#: copies have to agree on where a line ends. Pinning only ``\n`` is how the
+#: previous corpus certified the repair it existed to interrogate.
+LINE_BREAKS = (
+    ("newline", "\n"),
+    ("carriage return", "\r"),
+    ("CRLF", "\r\n"),
+    ("vertical tab", "\x0b"),
+    ("form feed", "\x0c"),
+    ("file separator", "\x1c"),
+    ("group separator", "\x1d"),
+    ("record separator", "\x1e"),
+    ("NEL", "\x85"),
+    ("LINE SEPARATOR", "\u2028"),
+    ("PARAGRAPH SEPARATOR", "\u2029"),
+)
+
+
+class LineBreakAgreementTest(unittest.TestCase):
+    """All three copies, every boundary, both vulnerable shapes."""
+
+    def setUp(self) -> None:
+        self.loader = _bundled_loader()
+
+    def _verdicts(self, text: str) -> tuple[bool, bool, bool]:
+        return (
+            self.loader._credential_in_text(text, descriptive=True) is not None,
+            site_profile._credential_in_text(text, descriptive=True) is not None,
+            bool(check_repo.credential_findings(text, include_assignments=True)),
+        )
+
+    def test_an_innocent_key_never_eats_a_break_whichever_break_it_is(self) -> None:
+        """The swallow shape. Eight of these were fail-open in the loaders.
+
+        Reachable through ordinary JSON: a carriage return survives as the
+        standard escape, and LINE SEPARATOR is legal literally inside a string.
+        """
+        for name, character in LINE_BREAKS:
+            with self.subTest(boundary=name):
+                verdicts = self._verdicts(f"see notes:{character}password=hunter2")
+                self.assertEqual(verdicts, (True, True, True))
+
+    def test_a_split_assignment_is_matched_at_no_boundary(self) -> None:
+        """The documented sentence, once per boundary."""
+        for name, character in LINE_BREAKS:
+            with self.subTest(boundary=name):
+                verdicts = self._verdicts(f"password:{character}  hunter2")
+                self.assertEqual(verdicts, (False, False, False))
+
+    def test_the_break_set_is_exactly_what_splitlines_recognises(self) -> None:
+        """Derived from the standard library, not from memory, in every copy."""
+        recognised = {
+            chr(code)
+            for code in list(range(0x20)) + [0x85, 0x2028, 0x2029]
+            if len(f"a{chr(code)}b".splitlines()) > 1
+        }
+        for name, module in (
+            ("bundled loader", self.loader),
+            ("target copy", site_profile),
+            ("repository gate", check_repo),
+        ):
+            with self.subTest(copy=name):
+                self.assertEqual(set(module.CREDENTIAL_LINE_BREAKS), recognised)
+
+    def test_the_exact_key_set_cannot_be_emptied_without_failures(self) -> None:
+        """The tuple must be load-bearing, not decorative.
+
+        Iterating ``CREDENTIAL_KEY_EXACT_IN_TEXT`` to assert its members are
+        strict is vacuous: empty the tuple and the loop body never runs. These
+        spellings are written out literally and checked by behaviour, so retiring
+        the tuple retires a verdict and fails here.
+
+        ``auth`` and ``accesskey`` match no name fragment and reach the rule only
+        through that tuple. ``clientsecret`` normalises to contain ``secret`` and
+        is caught by the fragment path as well; it is here because the contract
+        names it, not because it proves anything about the tuple.
+        """
+        for key in ("auth", "accesskey", "access_key", "access-key"):
+            with self.subTest(key=key):
+                self.assertEqual(self._verdicts(f"{key}: rainbowtrout"), (True, True, True))
+        for key in ("clientsecret", "client_secret"):
+            with self.subTest(key=key):
+                self.assertTrue(site_profile._is_strict_credential_key(key))
+        for fragment in site_profile.CREDENTIAL_NAME_FRAGMENTS:
+            with self.subTest(fragment=fragment):
+                self.assertEqual(
+                    self._verdicts(f"{fragment}: rainbowtrout"), (True, True, True)
+                )
 
 if __name__ == "__main__":
     unittest.main()

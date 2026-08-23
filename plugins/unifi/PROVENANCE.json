@@ -1,13 +1,13 @@
 {
   "source_repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
-  "source_commit": "0eb1fe04236d975d4b13cbabe7b976eae8599992",
-  "source_version": "2.0.0",
+  "source_commit": "818fd6843e51a9126752061a834db9dead28f72b",
+  "source_version": "2.0.6",
   "source_package_path": "plugins/unifi",
   "generated_by": "scripts/sync_vendor_source.py",
   "notes": [
     "The portable copy is a derived artifact, never a second writable source. The pinned commit is the corrected upstream revision: the documentation repair, the topology relocation, and the removal of the hard-coded controller default are all included at it. Synchronizing from an earlier revision would re-import the defects that repair removed.",
     "Paths in `files` are relative to this package root, which is what the repository validator resolves. `source_path` is relative to the upstream repository root.",
-    "Every path carries exactly one classification. An upstream byte copy is overwritten on each synchronization and its digest must equal its source digest exactly; where the portable tree would need a different byte, the repair is authored upstream first. Target-owned portable source has no upstream counterpart, records no digest, and is never overwritten and never removed here.",
+    "Every path carries exactly one classification. An upstream byte copy is overwritten on each synchronization and its digest must equal its source digest exactly; where the portable tree would need a different byte, the repair is authored upstream first. Target-owned portable source is authored in this repository rather than derived from the pinned commit; it records no digest and is never overwritten and never removed here. Most target-owned paths have no upstream counterpart at all. README.md is the one that supersedes an upstream path of the same name: it documents this portable package rather than the Claude plugin, so the upstream bytes at that path are deliberately never read and never written, which the custody table in scripts/sync_vendor_source.py records as a superseded path rather than leaving it unclassified.",
     "The client extension directory com.infiquetra.claude/ mirrors the upstream package root path for path, so every Claude-custody file's origin is readable from its portable path and every one of them stays a byte copy. The Claude Code manifest is the single exception inside that directory: it is lifted out of .claude-plugin/, whose name is a loading convention with no meaning inside the extension directory, and whose portable counterpart already occupies the package root.",
     "Both fleet_commons_shim.py copies are dropped rather than copied, because the build-time Fleet Core bundle replaces them and their resolution ladder is Claude-specific discovery the portable package must not retain. Dropping the shim while copying the clients verbatim is what left this package with no working entrypoint: both clients import fleet_commons_shim at module scope, so `--help` raised ModuleNotFoundError before any argument was parsed. The two clients are therefore deterministic transforms rather than byte copies. The resolve-bundled-fleet-module rule rewrites that one import to the generated bundle in the _bundled/ directory beside each client, records the source digest, the output digest, and the transform version here, and is re-applied on every synchronization, so a later run cannot silently restore the broken import. This is not a downstream edit smuggled past the byte-copy rule: it is a versioned rule over the pinned source, reproducible from the source bytes alone."
   ],
@@ -26,13 +26,7 @@
       "path": "CHANGELOG.md",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/unifi/CHANGELOG.md",
-      "sha256": "c5fa8ca58f7fa0596f92d1dee615645b2bb883c45bea5be9a4d4d1d23a175adc"
-    },
-    {
-      "path": "README.md",
-      "classification": "upstream-byte-copy",
-      "source_path": "plugins/unifi/README.md",
-      "sha256": "a3b3b05642072c0e7d5e66bf288745f6cb2eccb1d89ddc4b0679c568d557032f"
+      "sha256": "324dc2e29a4028d03479fb4f5f04830f0f071147b84823d817b29288bbf2a635"
     },
     {
       "path": "com.infiquetra.claude/agents/unifi-network-ops.md",
@@ -50,8 +44,8 @@
       "path": "com.infiquetra.claude/plugin.json",
       "classification": "deterministic-transform",
       "source_path": "plugins/unifi/.claude-plugin/plugin.json",
-      "source_sha256": "49ee2fb1e69c97571b882df6938565dcd419fe98d6979b92a03d6ea2ae9b93e4",
-      "sha256": "49ee2fb1e69c97571b882df6938565dcd419fe98d6979b92a03d6ea2ae9b93e4",
+      "source_sha256": "967dcf4b9e70c54ec4f92106ae9c13668be23c09f255d70151d6b96fca4fd981",
+      "sha256": "967dcf4b9e70c54ec4f92106ae9c13668be23c09f255d70151d6b96fca4fd981",
       "transform": "relocate-claude-manifest",
       "transform_version": "1",
       "transform_rule": "Re-emit the Claude Code manifest under the client extension directory the Agent Plugins 1.0 specification's section 8.2 defines. Version 1 preserves the bytes and derives only the output path, because the source directory name .claude-plugin/ is a Claude Code loading convention with no meaning inside the extension directory, and the portable Agent Plugins manifest already occupies the package root the Claude manifest would otherwise claim."
@@ -60,7 +54,7 @@
       "path": "com.infiquetra.claude/skills/unifi-network/scripts/site_profile_loader.py",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/unifi/skills/unifi-network/scripts/site_profile_loader.py",
-      "sha256": "f074306bc88c239c1c82681231a4372c0737fdc50d86857277085084d90a5312"
+      "sha256": "577cec7773989495814dd1496613932aa5991de7f3f8196a2fa4a28c65edd1af"
     },
     {
       "path": "skills/unifi-network/SKILL.md",
@@ -78,8 +72,8 @@
       "path": "skills/unifi-network/scripts/unifi_network_client.py",
       "classification": "deterministic-transform",
       "source_path": "plugins/unifi/skills/unifi-network/scripts/unifi_network_client.py",
-      "source_sha256": "8b414a0ef77c293248d39f93697b397a0fe45f954525d12339bb1f71fac9bb4e",
-      "sha256": "4f9dec34dce3100fe530fc9fa28293893877952daee6edd7036685ec1c8f1c72",
+      "source_sha256": "9dcd6360b5c920f57ed95d013f20e95c542d1cfae7cab21b10165bfbda354403",
+      "sha256": "edb45fc30d305b53610e13dfee9f35df54df38ea9f4717de5b9e5626a8b5774f",
       "transform": "resolve-bundled-fleet-module",
       "transform_version": "1",
       "transform_rule": "Rewrite the client's module-scope import of the dropped fleet_commons_shim into an import of the build-time Fleet Core bundle this package already ships. Version 1 matches the single upstream block that inserts the client's own directory on sys.path and calls fleet_commons_shim.load(NAME), and re-emits it as an insertion of the _bundled/ directory beside the client -- the location the pilot plan's assembled-package tree gives the generated bundle, and the smallest possible change to the upstream line -- followed by a direct import of NAME under the same binding. The rule reads the module name and the binding out of the source rather than assuming them, changes no other byte, and fails loudly when the block is absent or appears more than once, because a synchronization that silently restored the shim import would ship a package with no working entrypoint. The consumer's fleet-bundle.json must declare a destination there; scripts/check_repo.py rejects a declared bundle that is missing and tests/test_client_entrypoints.py runs the shipped scripts, so the two halves cannot drift apart unnoticed."
@@ -100,11 +94,15 @@
       "path": "skills/unifi-protect/scripts/unifi_protect_client.py",
       "classification": "deterministic-transform",
       "source_path": "plugins/unifi/skills/unifi-protect/scripts/unifi_protect_client.py",
-      "source_sha256": "e80865568cf48db034c055fad6117f73014f2ae366e197d2e8ddc74ac2137bbb",
-      "sha256": "6e41889440b3b4d2c44762ebd754be8e6ea79991559ae94bdf519b59438ffe73",
+      "source_sha256": "1ec114b46c774303b1807b779d29843ecbe94ec04652ecbdf30aea0e9cda8aa3",
+      "sha256": "5dc52ea973db4bdd8bf0537e9760cc38988ce5e455e69d28ff2235f6fa9b0b7f",
       "transform": "resolve-bundled-fleet-module",
       "transform_version": "1",
       "transform_rule": "Rewrite the client's module-scope import of the dropped fleet_commons_shim into an import of the build-time Fleet Core bundle this package already ships. Version 1 matches the single upstream block that inserts the client's own directory on sys.path and calls fleet_commons_shim.load(NAME), and re-emits it as an insertion of the _bundled/ directory beside the client -- the location the pilot plan's assembled-package tree gives the generated bundle, and the smallest possible change to the upstream line -- followed by a direct import of NAME under the same binding. The rule reads the module name and the binding out of the source rather than assuming them, changes no other byte, and fails loudly when the block is absent or appears more than once, because a synchronization that silently restored the shim import would ship a package with no working entrypoint. The consumer's fleet-bundle.json must declare a destination there; scripts/check_repo.py rejects a declared bundle that is missing and tests/test_client_entrypoints.py runs the shipped scripts, so the two halves cannot drift apart unnoticed."
+    },
+    {
+      "path": "README.md",
+      "classification": "target-owned"
     },
     {
       "path": "fleet-bundle.json",

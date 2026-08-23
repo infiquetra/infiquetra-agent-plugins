@@ -2,6 +2,205 @@
 
 ## [Unreleased]
 
+## [2.0.6] - 2026-08-23
+
+### Fixed
+
+- **"One line" now means the same thing on both sides of the rule.** 2.0.5 scoped
+  the assignment to `\n` and nothing else. The repository gate reads a line with
+  `str.splitlines()`, which breaks on ten characters and on the two-character
+  CRLF sequence, so nine other boundaries still diverged between the loaders and
+  the gate — and eight of those were fail-open: a credential written with a
+  carriage return, a vertical tab, a form feed, a file, group or record
+  separator, NEL, LINE SEPARATOR or PARAGRAPH SEPARATOR as the break loaded
+  unseen while the gate refused the same text.
+
+  Both shapes are reachable through ordinary valid JSON. A carriage return
+  survives as the standard `\r` escape, and LINE SEPARATOR is legal literally
+  inside a JSON string; both were confirmed to reach the loader and be accepted.
+
+  The boundary set is now named once, derived from what `splitlines()` actually
+  recognises, and used by all three copies. A test rebuilds that set from the
+  standard library, so a future Python adding a boundary fails rather than
+  letting the copies quietly disagree again.
+
+### Testing
+
+- The shared verdict corpus pins every boundary in both vulnerable shapes: the
+  swallow, where an innocent key must not consume the break and hide the strict
+  assignment behind it, and the split, where an assignment divided by a break is
+  matched by no copy. Twenty-two rows, one per boundary per shape.
+- The exact in-text key set is now load-bearing rather than decorative. Iterating
+  the tuple to assert its members are strict was vacuous — emptying it made the
+  loop a no-op and every test still passed, so `auth` and `accesskey` could be
+  retired silently. Those spellings are written out literally and checked by
+  behaviour; emptying the tuple now fails five tests.
+
+## [2.0.5] - 2026-08-23
+
+### Fixed
+
+- **An innocent key no longer eats the line break before a strict one.** The
+  whitespace around the assignment delimiter was `\s*`, which spans a newline. A
+  `notes` key at the end of one line therefore matched, consumed the line break
+  with it, and left the strict assignment on the next line with no preceding
+  character to begin a fresh match against — so a credential written that way was
+  accepted. The repository gate splits lines before scanning and refused the same
+  text, which is how the two copies came to disagree. This is fail-open in the
+  copy operators load, and it is the residual half of the swallow defect 2.0.4
+  repaired along a single line.
+
+  An assignment is now one line in both copies: the whitespace around the
+  delimiter is horizontal only, and the value stops at a newline.
+
+- **An assignment split across two lines is matched by neither copy.** The
+  reference already said so; before this release the loaders matched it and only
+  the gate did not, so the documented guarantee was false in the direction that
+  flatters the loader.
+
+### Testing
+
+- A shared verdict corpus of twenty-seven lines is pinned in the loader suite and,
+  in the portable catalog, across all three copies of the rule. The two defects
+  above were invisible to per-part agreement tests: every constant and helper
+  matched while the verdicts differed.
+
+## [2.0.4] - 2026-08-22
+
+### Changed
+
+- **The value rule now grades the key, not the value.** A strict secret-bearing
+  key assigned a single substantive literal is a credential whatever that literal
+  looks like, and the entropy floor, the digit test and the length bar are gone.
+  Those graded the value, and could not tell a technical word from a password in
+  either direction: `oauth2` carries a digit and 2.585 bits of entropy, which is
+  *less* than `rainbowtrout` at 3.085, so the rule refused the harmless word and
+  accepted the real password. Which keys are strict is derived from
+  `CREDENTIAL_NAME_FRAGMENTS`, the same taxonomy that grades property names, so
+  the two halves of one rule can no longer drift into two dialects.
+
+### Fixed
+
+- **Digit-free passwords are no longer accepted.** A `password` key assigned
+  `rainbowtrout` or `sunshine`, or an `api_key` assigned
+  `correcthorsebattery`, all shipped accepted, because the retired rule required
+  a digit or twenty-four characters before a value counted. Under a strict key
+  there is now no floor below which a literal stops being a credential, so a
+  `password` assigned the word `secret` is refused too.
+- **Ordinary technical prose is no longer refused.** A `credentials` key
+  followed by `oauth2 is configured at the controller`, a `token` followed by
+  `base64 of the site identifier`, and a `secret` followed by
+  `sha256 checksum recorded in the manifest` were all rejected as credentials.
+  A strict key followed by several substantive words is a sentence about a
+  credential rather than a credential, and in `description` and `notes` —
+  the two fields the schema keeps for prose — that is allowed. Every other field
+  in the contract holds an identifier or an enumerated value, so the allowance
+  does not reach them.
+- **A reference written across several pieces is read as one placeholder.**
+  `token: {{ lookup }}` split into three tokens and the bare inner word was
+  graded. Template expressions are collapsed before the value is split.
+
+### Security
+
+- The guarantee is now stated as it behaves. What it still does not do: a literal
+  padded out with prose under a strict key in a prose field is not reported, and
+  the rule reads one line at a time, so an assignment split across lines is not
+  matched. Both limits are written down rather than left to be discovered.
+
+## [2.0.3] - 2026-08-22
+
+### Fixed
+
+- **A credential standing behind a placeholder is no longer cleared.**
+  `authorization: Bearer <redacted> <token>` passed: the rule graded a fixed
+  window of two tokens, found the placeholder in the second slot, saw that it
+  names a secret rather than being one, and never examined the real credential
+  in the third. The rule now walks the value, stepping over auth scheme words and
+  placeholders, and grades the first token that is neither. The captured span was
+  also widened, because it stopped at `}` and so truncated
+  `Bearer ${VAR} <token>` before the credential.
+- **Ordinary operational prose is no longer rejected as a credential.**
+  `token: rotation happens quarterly` and `secret: managed elsewhere` were
+  refused. Entropy per character cannot separate English from a credential —
+  `rotation` scores 2.50 against a 2.50 floor while `hunter2` scores 2.81 — and
+  character-class mixing cannot either, since `Rotation` mixes case and `hunter2`
+  does not. A digit does: every credential shape this rule is tested against
+  carries one and no English word does, so a digit-free value must clear 24
+  characters, above the longest word likely to appear in an operator's note.
+- The walk stops at the first substantive token rather than searching the whole
+  value. That is what keeps `auth: see ticket ABC-1234 for rotation` from being
+  graded on its ticket number, which a keep-looking scan would have reached.
+
+Both defects were introduced by the previous repair of this rule and were found
+by two independent reviewers on the fifth review cycle of the portability pilot.
+
+## [2.0.2] - 2026-08-22
+
+### Fixed
+
+- **The site-profile loader shipped here now enforces the 1.1 contract the package documents.**
+  This loader was published pinned to schema `1.0` while the portable package it mirrors advanced
+  its own contract to `1.1`, so one package disagreed with itself: an operator who authored the
+  `1.1` document the package documents had it rejected outright by their Claude integration, with
+  `UnsupportedSchemaVersionError`. `SUPPORTED_SCHEMA_VERSIONS` is now `("1.0", "1.1")` and
+  `SCHEMA_IDENTIFIER` names `1.1`.
+- **A credential written into a free-text value is refused here, as the contract already promised.**
+  `1.1` adds no field and removes none; what it records is that the secret-free guarantee covers
+  *values* and not only property names. This loader enforced the name half alone, so a controller
+  password or bearer token pasted into `notes` was accepted on the Claude path while the portable
+  loader refused the identical document. Accepting the version and enforcing its rule are one
+  change — taking a `1.1` document while ignoring what `1.1` means would restate the same
+  disagreement in a quieter form. A `1.0` document is held to the same rule, because a credential
+  in a `1.0` profile is exactly as exposed.
+- The ported rule grades the token *behind* an auth scheme word. `authorization: Bearer <token>`
+  previously graded the word `Bearer`, which carries no entropy, and cleared the credential
+  standing behind it; `Basic` and `Token` are shorter than the length floor, so those values were
+  never examined at all. Values that name where a secret lives — `vault:` references, `${VAR}`,
+  `<redacted>` — are still accepted, and ordinary prose is not graded, since several English words
+  clear the entropy floor on their own.
+
+## [2.0.1] - 2026-08-22
+
+Repairs the caller side of the `Retry-After` defect. Fleet Core 0.25.1 taught the shared backoff
+primitive to read both RFC 7231 forms of the header, but both UniFi clients still converted the
+raw header with `int()` before raising, so the primitive only ever saw a hint the caller had
+already failed to parse. Fixing the primitive alone was never sufficient, and the release that
+fixed it said so in a characterization test.
+
+**What went wrong.** A controller that answers a 429 with the HTTP-date form —
+`Retry-After: Fri, 31 Dec 2100 23:59:59 GMT`, which is a form the specification allows and real
+controllers send — made `int()` raise `ValueError` inside the request path. A `ValueError`
+carries no `status_code`, so the shared primitive judged it non-retryable and propagated it
+immediately. The client's `except _RateLimited` never saw it, the bare `except Exception` did,
+and the operator got `Unexpected error: invalid literal for int() with base 10: ...` after
+exactly one request, with no backoff and no retry.
+
+**The fix.** Both clients now hand the raw header to the shared `parse_retry_after`, which
+reduces either RFC 7231 form to seconds, or to `None` when there is no usable hint. The
+`_RateLimited` signalling is unchanged, so a 429 still reaches the backoff primitive carrying its
+status.
+
+- A 429 whose `Retry-After` is an HTTP-date now backs off and retries, honoring the parsed delay
+  (bounded by the primitive's 60-second maximum) instead of raising.
+- A 429 whose `Retry-After` is delta-seconds behaves exactly as before.
+- An absent or unparseable `Retry-After` is now treated as no hint at all and answered with the
+  primitive's computed jittered backoff. This is a **behavior change**: the clients previously
+  substituted a literal 60 for a missing header, which made every hint-less 429 sleep a flat
+  60 seconds per attempt. The operator-facing exit surface is unchanged — when retries are
+  exhausted with no usable hint, the reported `retry_after` is still 60.
+
+The exit surface keeps its shape in every case: `retry_after` remains a whole number of seconds,
+rounded up from a parsed hint.
+
+**Why this is a patch and not a minor.** The one behavior change above is a change in how long the
+client waits between its own retries, and the retry loop is internal — no command signature, no
+output field, and no exit code moves. An installation that worked before works after, and the
+generic `Unexpected error` it used to emit against a date-form `Retry-After` was never a contract
+anyone could depend on. Under semantic versioning that is a bug fix.
+
+Files: `skills/unifi-network/scripts/unifi_network_client.py`,
+`skills/unifi-protect/scripts/unifi_protect_client.py`.
+
 ## [2.0.0] - 2026-08-22
 
 Activates the work Units U6 and U7 authored and deliberately left unreleased. The hold was

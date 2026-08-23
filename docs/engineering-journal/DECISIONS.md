@@ -2,6 +2,251 @@
 
 ## 2026-08-22
 
+### Compatibility evidence is captured on the floor interpreter, by explicit path
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** Every command in the compatibility matrix's invocation stage and in
+the post-activation readback runs on the interpreter the catalog declares as its
+minimum — `python3.12` today — named by explicit path, never as `python3`. The
+recorded commands say `python3.12` so a reader can see which interpreter produced
+the numbers.
+
+**Rationale.** The catalog declares `python>=3.12`. Evidence gathered on a later
+interpreter supports a claim about that later interpreter and nothing about the
+floor. This is not hypothetical here: the two superseded matrices ran on CPython
+3.14 and recorded 29 and 21 lines of usage text, where the floor interpreter
+prints 30 and 22 for the very same bytes. Had a floor break existed, the same
+setup would have reported green.
+
+**Rejected alternatives.**
+
+- *Run on `python3` and note the version in prose.* This is what the earlier
+  matrices did, and both had to add a paragraph saying the floor case was not
+  shown. A limitation that has to be written down every time is a defect in the
+  method, not a caveat.
+- *Run on both the floor and the default interpreter.* Twice the stages for a
+  claim nobody makes. Every later interpreter is in contract by construction; the
+  interesting boundary is the minimum, and only the minimum is promised.
+- *Add a `python_version` field to the matrix schema.* The schema is closed by
+  design and its `method` object is closed too. The interpreter is recorded in
+  `method.isolation` and in every invocation stage's evidence string, which keeps
+  one schema rather than growing one per fact.
+
+**Revisit when.** The declared floor moves. The floor lives in
+`tests/test_python_floor.py` as `PYTHON_FLOOR`; when it changes, the interpreter
+used to capture evidence changes with it, and the evidence has to be re-captured
+rather than re-labelled.
+
+### The portable catalog's minimum supported Python is `python>=3.12`
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** The portable catalog declares a minimum supported Python of
+`python>=3.12`. This is a minimum, not a pin: every later interpreter is in
+contract, and nothing here promises 3.10 or 3.11 any more. Raising the floor
+above 3.12 is a separate operator decision and is not taken here.
+
+The floor is stated once, as the constant in
+[`tests/test_python_floor.py`](../../tests/test_python_floor.py), and every
+place the catalog declares it is checked against that constant: the
+continuous-integration interpreter pin in
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), the repository
+[`README.md`](../../README.md), the
+[pilot plan](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md),
+the Fleet Core package [README](../../plugins/fleet-core/README.md) and
+[changelog](../../plugins/fleet-core/CHANGELOG.md), and this entry. A portable
+skill that declares a `compatibility` value must declare this one. The gate also
+fails when any of those files stops stating a floor at all, so the check cannot
+be defeated by deleting a declaration, and it fails on any `python>=` version
+token anywhere in the repository that names a different version.
+
+The ported-plugin continuous-integration job now pins `3.12` rather than `3.10`,
+because a floor that is never exercised is not a floor and the only interpreter
+that job can usefully prove is the lowest one the contract admits.
+
+**Rejected alternatives.** *Keeping a 3.10 floor and repairing the import
+upstream.* The one-line upstream repair is real and available, but it answers
+the wrong question. Nothing ever proved a 3.10 floor: the ten-client
+compatibility assessment ran every stage on an interpreter well above it, so the
+3.10 case was never observed, and the claim rested on reading the lowest
+interpreter the ported bytes happened to parse under. Repairing this import
+would restore a promise the catalog still could not keep and would leave the
+next 3.12-era API to break it again.
+
+*Pinning exactly 3.12.* That would refuse interpreters the authoritative source
+supports and would turn every later Python release into a catalog-wide edit.
+
+*Moving the floor to 3.11, the minimum the broken import actually required.*
+That is a floor derived from one accident of one byte copy rather than from the
+source's own contract, and it would have to move again on the next one.
+
+*Leaving the declarations as separate hand-maintained strings.* The floor was
+already stated in at least five places and had already fallen out of agreement
+with the code it described. Prose that is not checked is not a contract.
+
+**Rationale.** The authoritative source repository,
+`infiquetra-claude-plugins`, declares `requires-python = ">=3.12"` in its
+project file and pins `python-version: "3.12"` in every one of its
+continuous-integration jobs. Both statements were read at commit `ed72f439`,
+the revision both packages in this catalog are derived from, and at the head of
+that repository's default branch. A derived catalog must not promise more
+compatibility than the source it is derived from. Where it does, the promise is
+not merely unproven, it is unprovable: this repository does not own the bytes,
+cannot test them on the interpreter it advertises, and inherits whatever
+interpreter requirement upstream adopts on the next synchronization.
+
+This cycle demonstrated the failure end to end. Re-synchronizing the Fleet Core
+slice to 0.25.1 brought in `from datetime import UTC`, which exists only on
+Python 3.11 and newer. The digest check passed, because the bytes really were
+identical to their source; the derived package silently stopped running on the
+floor its own documentation advertised. Aligning the floor with the source
+removes the class of failure rather than the one instance of it.
+
+**Supersedes.** The plan's KTD7 in its original form, which derived a 3.10 floor
+from a bare union annotation evaluated at definition time. That reasoning is
+preserved in the plan rather than deleted. It established a lower bound on what
+the ported code parses under; it was never a statement of what the catalog
+supports, and the two came apart on the first re-synchronization.
+
+**Known gap, recorded rather than closed.** KTD7 also claimed the floor is
+declared in the skills' `compatibility` frontmatter. It never was, and it cannot
+be added here: both portable `SKILL.md` documents are classified
+`upstream-byte-copy`, so an added field would break digest equality with their
+source and would move the assessed package's tree fingerprint, retiring the
+ten-client matrix bound to it. Nothing under `plugins/unifi/` was touched by
+this decision for that reason. The declaration is
+[queued as upstream work](QUEUED.md).
+
+**Revisit when.** The authoritative source raises or lowers its own
+`requires-python`, or this catalog acquires a package whose source declares a
+different floor from the rest — at which point one catalog-wide floor stops
+being the right shape and the check has to become per-package.
+
+**Refs.** [Pilot plan KTD7](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md),
+[the floor gate](../../tests/test_python_floor.py),
+[the learning this decision answers](LEARNINGS.md#a-byte-copy-imports-the-upstream-platform-floor-along-with-the-upstream-fix),
+[the archived queue item](ARCHIVE.md#decide-the-python-floor-the-fleet-core-resync-raised)
+
+---
+
+### The ported test's pytest guard raises SkipTest instead of binding pytest to None
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** The `guard-pytest-import` deterministic transform over
+`tests/test_retry_backoff.py` moves to version 2. Where version 1 bound the name
+`pytest` to `None` when the dependency was absent, version 2 raises
+`unittest.SkipTest`. Everything else about the rule is unchanged: the upstream
+module docstring is still replaced with one recording the port, and every line
+from `class RateError(Exception):` to end of file is still copied byte for byte.
+
+**Rejected alternatives.** Keeping version 1, because Fleet Core 0.25.1 brought
+two tests carrying `@pytest.mark.parametrize` and a decorator is evaluated when
+the module is imported: against `None` it raises `AttributeError`, so the
+dependency-free baseline job would fail on a module it never intended to run.
+Substituting a hand-written stub object exposing `mark.parametrize` and
+`raises`, because a fake that silently absorbs whatever the upstream suite
+reaches for is a lie in a file whose entire purpose is to be a faithful copy,
+and it would need extending every time upstream uses one more pytest feature.
+Dropping the ported test from the hermetic job by renaming it out of the
+`test*.py` pattern, because the discovery pattern is not this package's to
+redefine and a test nothing collects is a test nobody notices breaking.
+
+**Rationale.** `unittest` catches `SkipTest` raised during module import and
+records the module as one skipped test, so the baseline job stays green, exits
+0, and says out loud why it collected nothing there — verified directly rather
+than assumed. The plugin job, where pytest is installed, runs all eighteen test
+functions unchanged, which pytest expands to twenty-five cases. The guard also
+stops being a maintenance liability: it no longer has to be revisited each time
+upstream reaches for another pytest feature at module scope.
+
+**Revisit when.** The hermetic baseline job gains pytest, which would make the
+guard dead code, or upstream splits its suite so the ported half no longer needs
+pytest at all.
+
+**Refs.** [`plugins/fleet-core/PROVENANCE.json`](../../plugins/fleet-core/PROVENANCE.json),
+[the 0.25.1 changelog entry](../../plugins/fleet-core/CHANGELOG.md)
+
+### A re-synchronization does not renumber the evidence it invalidates
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** The Fleet Core 0.25.1 re-synchronization left
+[`docs/evidence/2026-08-22-unifi-compatibility-matrix.md`](../evidence/2026-08-22-unifi-compatibility-matrix.md)
+and
+[`docs/evidence/2026-08-22-unifi-post-activation-readback.md`](../evidence/2026-08-22-unifi-post-activation-readback.md)
+untouched, and shipped with the eight binding tests over them failing. The
+recorded fingerprints still name the tree those assessments actually ran
+against.
+
+**Rejected alternatives.** Writing the new tree digest into both documents,
+because the matrix states the rule in its own text — "Refreshing the numbers
+without re-running the assessment is precisely the failure this binding exists
+to catch" — and doing it by hand rather than by a flag does not make it a
+different act. It would turn forty observed stage results and ten client
+readbacks into claims about bytes nobody ran. Marking the current matrix
+superseded, because the supersession contract requires a named successor that is
+itself current, and no successor exists until someone re-runs the ten clients.
+Reverting the bundle regeneration to keep the digest still, because a consumer
+carrying a stale copy of a repaired rate-limit primitive is the actual defect
+this whole re-synchronization exists to remove.
+
+**Rationale.** The binding is not misfiring. Bundling puts a stamped Fleet Core
+module inside the UniFi package, so a Fleet Core release necessarily changes the
+UniFi tree digest, and the document correctly reports that it no longer
+describes what ships. Red is the accurate state, and a red check that names real
+work still owed is worth more than a green one bought by editing the number
+under comparison.
+
+**Revisit when.** The operator authorizes the ten-client re-run and the
+post-activation readback; the new matrix is published as current and the present
+one is marked superseded by it, which is the only path that clears these eight
+tests honestly.
+
+**Refs.** [Queued evidence re-run](QUEUED.md#re-run-the-ten-client-matrix-and-the-readback-against-the-resynced-package),
+[the learning](LEARNINGS.md#regenerating-a-build-artifact-retires-the-observational-evidence-bound-to-it)
+
+### The portable UniFi README is target-owned, rewritten site-neutral
+
+**Author.** Jeff Cox
+
+**Decision.** `plugins/unifi/README.md` is target-owned portable source. It
+describes this package: the Agent Plugins 1.0 layout, the
+`com.infiquetra.claude/` client extension directory, the Fleet Core bundle,
+site-profile resolution, and commands that run in this repository. It is not
+an upstream byte copy of the Claude plugin README, and it is not produced by a
+deterministic transform of that file.
+
+**Rejected alternatives.** Keeping the file as `upstream-byte-copy`, because
+that is the classification that shipped Cursor F-07: a consumer opening the
+portable package's own documentation was told it was a Claude Code plugin and
+was given pytest paths this repository does not contain. Authoring a
+`portable-readme` transform in `scripts/sync_vendor_source.py`, because that
+script is owned by the concurrent C8 repair (path-safety) and a transform
+would still be defined over a Claude-specific source document whose subject is
+the wrong package. Repairing the upstream README so a byte copy becomes
+portable, because this run must not edit another repository.
+
+**Rationale.** The pilot plan already assigned the README "portable core,
+rewritten site-neutral". Claude-only installation belongs in the adapter
+directory. A later `synchronize()` that still lists `README.md` in
+`PORTABLE_BYTE_COPIES` would restore the Claude lede; `tests/test_unifi_readme.py`
+fails closed on that restoration (lede identity, absent test modules, and the
+provenance classification). Dropping the path from the sync table is queued
+rather than taken here, because that tuple lives in a file this unit does not
+own.
+
+**Revisit when.** The next UniFi synchronization is authorized, or the C8 unit
+(or a follow-up) removes `README.md` from `PORTABLE_BYTE_COPIES` so a
+deliberate resync preserves the portable README instead of fighting the test.
+
+**Refs.** [Queued sync-table residual](QUEUED.md#drop-readme-from-the-unifi-byte-copy-table-so-a-resync-keeps-the-portable-docs),
+[byte-copy README learning](LEARNINGS.md#a-byte-copied-readme-describes-the-source-package-not-the-derived-one),
+[pilot plan custody table](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md)
+
+---
+
 ### Pause the pilot at the compatibility matrix and take no client-specific remediation
 
 **Author.** Jeff Cox and Claude
@@ -110,8 +355,8 @@ proves awkward, or a generated artifact appears that has no stable stamp locatio
 **Decision.** Continuous integration runs two jobs. The repository validation job installs
 nothing and runs `python3 scripts/check_repo.py`, the unittest suite, and `git diff
 --check`, so the repository's own baseline uses the standard library alone. A second job
-installs Python 3.10 with `requests`, `urllib3`, and `pytest`, and runs the ported plugin
-tests. Neither job ever contacts a UniFi controller, and the compatibility matrix is
+pins the catalog's declared floor, `python>=3.12`, installs `requests`, `urllib3`, and
+`pytest` on it, and runs the ported plugin tests. Neither job ever contacts a UniFi controller, and the compatibility matrix is
 produced by an operator-run assessment rather than by continuous integration.
 
 **Rejected alternatives.** Rewriting the existing pytest tests into unittest so a single
@@ -123,6 +368,11 @@ outage able to break validation of documentation-only changes.
 guarantee: it answers whether this repository is internally consistent, using nothing it
 has to download. The ported plugin tests answer a different question and legitimately need
 third-party packages, so they get a job whose failures mean what they say.
+
+**Amended 2026-08-22.** The second job's interpreter was pinned to 3.10 when this decision
+was written. It now pins the catalog's declared floor, `python>=3.12`, under
+[the floor decision](#the-portable-catalogs-minimum-supported-python-is-python312). The
+two-job structure this entry decided is unchanged; only the pinned version moved.
 
 **Revisit when.** The ported packages acquire a dependency the second job cannot install,
 or the repository grows a project file that makes a single job hermetic again.
@@ -213,6 +463,102 @@ bundler.
 
 **Revisit when.** A consumer needs a generated bundle outside a `_bundled/` directory,
 which would make the directory name the wrong discriminator.
+
+### Detect credentials by value with two narrow families, and never by bare entropy
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** `scripts/check_repo.py` now rejects a credential written as a *value*
+anywhere under `plugins/`, using exactly two detection families. The first is a list of
+literal credential formats — AWS access key ids, GitHub and Slack and Stripe tokens,
+Google and Anthropic and OpenAI API keys, JSON web tokens, private key blocks, and
+credentials embedded in a URL — matched in every text file of a package including source,
+because a real key committed into source is a leak whatever the surrounding code does with
+it. The second is a credential-shaped key (`password`, `secret`, `token`, `api_key`,
+`bearer`, `client_secret`, and their near neighbours) assigned a value of at least six
+characters that clears 2.5 bits of entropy per character and is not a placeholder or a
+reference to where the secret actually lives. The second family runs only on data and
+documentation files, never on source.
+
+**Rationale.** The reviewers' finding is that every existing guard — the site profile
+loader, its schema, and the compatibility matrix redaction check — inspects field *names*,
+so a password pasted into an allowed `notes`, `description`, or `ownership` value passes
+all of them. Closing that needs value inspection, and value inspection is worth having
+only if it is quiet enough to stay switched on. Measured against the live package tree,
+this rule produces zero false positives while still reporting the reviewer's own example,
+`notes: "controller password=hunter2"`.
+
+**Rejected alternatives.** A third family scanning for bare high-entropy strings, which is
+the usual approach and is unusable here: a provenance manifest is nothing but sha256
+digests, so it would fire on every package in the catalog and the gate would be turned off
+within a day. Running the credential-assignment family on source as well, which was
+measured before being rejected — it produced five false positives on the shipped package,
+every one of them credential-*handling* code such as `api_key = (api_key or "").strip()`
+and `"X-Api-Key": self.api_key`, and none of them a secret. Scanning the whole repository
+rather than `plugins/`, which would make `docs/reviews/` a continuous integration failure
+surface; those two reviewer reports are immutable evidence with recorded digests, they
+quote credential-shaped text on purpose, and a gate no one is allowed to satisfy is a gate
+that gets deleted. `plugins/` is also the scope every other package check here already
+uses, and it is the tree that actually leaves this repository.
+
+**Accepted limits.** A short, low-entropy secret in a free-text value still passes:
+`password: secret` is six characters of 2.25 bits and is below the floor by design. So
+does a secret in a package file that is neither text nor a recognised data suffix. This
+check is defense in depth against an accident, not a proof of absence, and the operator
+guarantee should be worded as such.
+
+**Revisit when.** A credential format in use by the fleet is not on the list, a real
+credential reaches a package and this check does not report it, or the false-positive rate
+stops being zero on the live tree.
+
+**Scope note.** This closes the repository gate only. The same finding also implicates
+`plugins/unifi/scripts/site_profile.py`, whose `validate_profile` accepts a credential in
+a `notes` value at runtime, and `scripts/check_compatibility_matrix.py`, whose redaction
+check is name-shaped. Neither file is owned by this unit and neither is changed here.
+
+### Bind a current matrix to the tree it assessed, and make supersession the only exemption
+
+**Author.** Jeff Cox
+
+**Decision.** `scripts/check_compatibility_matrix.py` recomputes the fingerprint of
+`plugins/unifi/` on every run — package name, version, file count, and a tree digest over
+the sorted per-file digests *with their relative paths* — and fails when the record does
+not match. A document may exempt itself only by declaring `<!-- matrix-status: superseded -->`
+alongside a `superseded-by` naming an existing current matrix and a `superseded-reason`.
+A superseded document whose fingerprint still identifies the shipped tree is rejected.
+`matrix-status` defaults to `current`, so the binding is fail-closed. The no-argument run
+validates every matrix document in `docs/evidence/`, superseded ones included.
+
+**Rejected alternatives.** *Refreshing the numbers only*, because that leaves the identical
+trap armed for the next package change and the review named this explicitly. *Adding a
+`superseded` field to the record*, because `schemas/compatibility-matrix.schema.json` is
+closed and owned by no unit in this run; HTML comment directives carry document-level
+metadata without a schema change. *Dropping the JSON fence in the retired document so the
+validator skips it*, because retiring a document withdraws its claim about the current
+package, not the coverage and redaction rules it was published under. *Overwriting the
+original matrix in place*, because the assessment happened and its record is evidence.
+*A `--update` flag that rewrites the record from the tree*, because a one-keystroke refresh
+would let a stale matrix pass by editing the evidence to match; there is a read-only
+`--print-fingerprint` and nothing that writes. A test asserts no such flag is added.
+
+**Rationale.** Hashing the per-file digests alone would leave a pure rename invisible, and
+a rename is exactly the drift a binding exists to catch, so relative paths are inside the
+hashed text. Checkout noise — `__pycache__`, `.pyc`, `.DS_Store` — is excluded, because a
+fingerprint that moved when the test suite ran would be abandoned within a week. The digest
+is defined in prose in the matrix itself so a third party can reproduce it from published
+bytes.
+
+**Consequence to expect.** Any future change under `plugins/unifi/` fails
+`python3 scripts/check_compatibility_matrix.py` and the test suite until the assessment is
+re-run and the record refreshed. That is the intended cost: the check is meant to be
+noticed, and re-running forty credential-free stages is roughly an hour.
+
+**Revisit when.** `schemas/public-evidence.schema.json` lands and can carry document status
+as a schema field, or a second package joins the catalog and the single `PACKAGE_ROOT`
+constant needs to become per-record.
+
+**Refs.** [Digest learning](LEARNINGS.md#a-digest-in-an-evidence-record-proves-nothing-until-something-recomputes-it),
+`scripts/check_compatibility_matrix.py`, `tests/test_check_compatibility_matrix.py`.
 
 ## 2026-08-21
 

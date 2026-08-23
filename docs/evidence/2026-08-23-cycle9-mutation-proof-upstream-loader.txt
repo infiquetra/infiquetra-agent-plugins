@@ -1,0 +1,66 @@
+# Cycle-9 mutation proof — upstream site_profile_loader.py
+# Digest verified against the committed blob after the commit lands.
+loader sha256: 577cec7773989495814dd1496613932aa5991de7f3f8196a2fa4a28c65edd1af
+
+## MUTATION: break set narrowed back to newline only (the cycle-8 blocker returns)
+============================= 190 passed in 0.46s ==============================
+
+## MUTATION: one boundary dropped from the set (carriage return)
+============================= 190 passed in 0.46s ==============================
+
+## MUTATION: exact in-text key set emptied (A-02)
+FAILED tests/test_unifi_site_profile_loader.py::test_the_verdict_corpus_is_the_rule[auth: rainbowtrout-True]
+FAILED tests/test_unifi_site_profile_loader.py::test_the_verdict_corpus_is_the_rule[accesskey: rainbowtrout-True]
+FAILED tests/test_unifi_site_profile_loader.py::test_the_verdict_corpus_is_the_rule[access_key: rainbowtrout-True]
+FAILED tests/test_unifi_site_profile_loader.py::test_the_verdict_corpus_is_the_rule[access-key: rainbowtrout-True]
+FAILED tests/test_unifi_site_profile_loader.py::test_the_exact_key_set_cannot_be_emptied_without_failures
+======================== 5 failed, 185 passed in 0.55s =========================
+
+## MUTATION: strict-key function weakened
+FAILED tests/test_unifi_site_profile_loader.py::test_the_strict_key_set_is_the_property_name_taxonomy
+FAILED tests/test_unifi_site_profile_loader.py::test_the_verdict_corpus_is_the_rule[auth: rainbowtrout-True]
+FAILED tests/test_unifi_site_profile_loader.py::test_the_verdict_corpus_is_the_rule[accesskey: rainbowtrout-True]
+FAILED tests/test_unifi_site_profile_loader.py::test_the_verdict_corpus_is_the_rule[access_key: rainbowtrout-True]
+FAILED tests/test_unifi_site_profile_loader.py::test_the_verdict_corpus_is_the_rule[access-key: rainbowtrout-True]
+FAILED tests/test_unifi_site_profile_loader.py::test_the_exact_key_set_cannot_be_emptied_without_failures
+
+## MUTATION: descriptive separation removed
+FAILED tests/test_unifi_site_profile_loader.py::test_the_prose_allowance_does_not_reach_a_structured_field
+======================== 1 failed, 189 passed in 0.50s =========================
+
+## MUTATION: strict rule weakened back to a length floor
+FAILED tests/test_unifi_site_profile_loader.py::test_a_credential_written_into_a_free_text_value_is_refused[controller password=hunter2-1.0]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_credential_written_into_a_free_text_value_is_refused[controller password=hunter2-1.1]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_literal_under_a_strict_key_is_refused_whatever_it_looks_like[password: rainbowtrout]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_literal_under_a_strict_key_is_refused_whatever_it_looks_like[password: sunshine]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_literal_under_a_strict_key_is_refused_whatever_it_looks_like[api_key: correcthorsebattery]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_literal_under_a_strict_key_is_refused_whatever_it_looks_like[passphrase: correcthorsebattery]
+
+## MUTATION: template collapse removed
+FAILED tests/test_unifi_site_profile_loader.py::test_a_value_that_names_where_a_secret_lives_is_accepted[api_key: {{ lookup }}]
+FAILED tests/test_unifi_site_profile_loader.py::test_the_verdict_corpus_is_the_rule[api_key: {{ lookup }}-False]
+======================== 2 failed, 188 passed in 0.53s =========================
+
+## RESTORED
+loader sha256: 577cec7773989495814dd1496613932aa5991de7f3f8196a2fa4a28c65edd1af
+byte-identical to pristine: YES
+============================= 190 passed in 0.49s ==============================
+
+## MUTATION (re-run): break set narrowed back to newline only
+#  The first attempt used the real characters as the anchor; the file holds
+#  them escaped, so nothing was replaced and the run proved nothing.
+FAILED tests/test_unifi_site_profile_loader.py::test_a_split_assignment_is_matched_at_no_boundary[LINE SEPARATOR-\u2028]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_split_assignment_is_matched_at_no_boundary[PARAGRAPH SEPARATOR-\u2029]
+FAILED tests/test_unifi_site_profile_loader.py::test_the_break_set_is_exactly_what_splitlines_recognises
+======================== 19 failed, 171 passed in 0.67s ========================
+
+## MUTATION (re-run): one boundary dropped from the set (carriage return)
+FAILED tests/test_unifi_site_profile_loader.py::test_an_innocent_key_never_eats_a_break_whichever_break_it_is[carriage return-\r]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_split_assignment_is_matched_at_no_boundary[carriage return-\r]
+FAILED tests/test_unifi_site_profile_loader.py::test_the_break_set_is_exactly_what_splitlines_recognises
+======================== 3 failed, 187 passed in 0.52s =========================
+
+## RESTORED after re-runs
+loader sha256: 577cec7773989495814dd1496613932aa5991de7f3f8196a2fa4a28c65edd1af
+byte-identical to pristine: YES
+============================= 190 passed in 0.52s ==============================

@@ -1,6 +1,502 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-08-23
+
+### A completion watcher that can never fire looks exactly like work that never finished
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The cycle-7 review panel finished and wrote both artifacts. The coordinator's
+background watcher never reported them, so the coordinator sat idle while two complete,
+schema-valid reports sat on disk. The operator noticed and reconciled from the artifacts
+directly.
+
+**Evidence.** Background task `bo084hhi2` (PID 97405), the watcher loop in this session. Its
+completion test was:
+
+```bash
+mo=$( [ -f "$OX" ] && grep -c APPEND_HERE "$OX" || echo 1 )
+[ "$so" -gt 3000 ] && [ "$mo" -eq 0 ] && ...
+```
+
+**Mechanism.** `grep -c` prints the count *and* exits non-zero when the count is zero. Zero
+matches is the success condition being waited for, so on exactly that condition the command
+printed `0`, exited 1, and the `|| echo 1` branch fired too. `mo` became the two-line string
+`"0\n1"`, and `[ "0\n1" -eq 0 ]` is never true. The watcher was structurally incapable of
+reporting success: the closer the artifacts got to done, the more certainly it stayed silent.
+
+Two things made this worse than a stuck loop. It failed *only* in the success case, so every
+partial-progress poll behaved correctly and the bug was invisible until it mattered. And its
+silence was indistinguishable from the condition it was built to detect — a reviewer stalled
+mid-delivery with the marker still present — which is the failure this same session had already
+hit three times, so the silence read as expected rather than anomalous.
+
+**Generalizable rule.** Never let a predicate's success path depend on a command whose exit
+status disagrees with its output. For `grep -c`, capture the count with `$(grep -c X f || true)`,
+or test the file directly with `! grep -q X f`. More generally: a watcher must be able to fail
+*loudly*, so give it a bounded timeout that prints the observed state rather than one that
+prints nothing, and prefer checking the artifact and the reviewer's real foreground process over
+a derived boolean. When a watcher goes quiet on work that should be finishing, read the artifact
+before believing the watcher.
+
+
 ## 2026-08-22
+
+### A negative test that passed for the wrong reason reported coverage that did not exist
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The credential-value rule was repaired once for grading the wrong span, and the
+repair broke in both directions: it cleared a real credential hidden behind a placeholder, and
+it rejected ordinary operational prose. Two independent reviewers found both on the next
+cycle. The repair had shipped with a must-not-fire test written specifically to catch the
+second class.
+
+**Evidence.** The cycle-4 negative set used `auth: see the runbook for the rotation
+procedure`. It passed. The cycle-5 reviewers used `token: rotation happens quarterly`, which
+failed. Both are the same shape — a credential-shaped key assigned English prose — and the
+difference is only that the first sentence begins with `see`, three characters, which falls
+under the rule's six-character length floor before any grading happens.
+
+**Mechanism.** The test exercised the length floor, not the rule it was written for. Its
+subject never reached the code under test, so it could not have failed no matter how wrong
+that code was. It looked like coverage of the false-positive category and was coverage of
+nothing.
+
+**Fix.** The replacement set is chosen so each case would fail for the *right* reason if the
+rule were wrong: first tokens that are long English words (`rotation`, `managed`,
+`internationalization`), capitalized forms, and a ticket number that carries a digit. Twenty
+eight assertions fail against the defective rule.
+
+**What surprised.** Reviewing my own test set would not have caught this. Reading it, the
+example plainly belongs to the category; only running it against deliberately broken code
+shows that it never touches the rule. Mutation is the only cheap check that distinguishes a
+test from a test-shaped statement.
+
+**Generalizable rule.** For any test that exists to prove a guard does *not* fire, verify it
+would fire if the guard were wrong. A negative case that is filtered out by a precondition
+before reaching the logic is worse than no test, because it is counted as coverage. Cheapest
+implementation: break the code on purpose and require the new assertions to fail. Every repair
+in this pilot now ships with that count recorded, which is how this one was caught.
+
+**Refs.** the upstream repository `infiquetra-claude-plugins`,
+cycle-5 reviews in [`docs/reviews/`](../reviews/).
+
+### The credential detector read the wrong span, so `Bearer` cleared the token behind it
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The site profile's secret-free guarantee has two families: literal credential
+formats, and a credential-shaped key assigned a high-entropy value. The second family is what
+catches `notes: "controller password=..."`. Two independent reviewers, on the fourth review
+cycle, found the same hole in it at full confidence.
+
+**Evidence.** `plugins/unifi/scripts/site_profile.py:169` and the identical copy at
+`scripts/check_repo.py:184`. Probed live: `api_key=<45-char opaque token>` is REJECTED, while
+`authorization: Bearer <the same token>` is ACCEPTED. Printing the match showed why — the
+captured value group was `'Bearer'`. `authorization: Basic <token>` and `token: Token <token>`
+did not match the pattern **at all**.
+
+**Mechanism.** Two distinct faults from one decision. The value group was
+`([^\s"',;)}\]]{6,})`, which stops at whitespace, so for `authorization: Bearer <token>` it
+captured the scheme word and graded that: `Bearer` carries about 2.25 bits per character,
+under the 2.5 floor, so the value was cleared and the credential after the space was never
+examined. Worse, `Basic` and `Token` are five characters — below the `{6,}` floor — so the
+pattern failed to match at that position and those values went wholly unexamined rather than
+examined and cleared. Detection was pointed at the wrong span of the string.
+
+**Fix.** The captured span now runs across whitespace, and a `_credential_candidates` helper
+returns the first token plus, when that token is an auth scheme word, the one after it. Both
+copies plus the cross-copy pin in one change (`site_profile.py` is `target-owned` and
+`check_repo.py` is repository tooling, so neither needed an upstream trip). The same skew on
+the Claude adapter path was repaired upstream as unifi `2.0.2`.
+
+**What was rejected.** Grading *every* whitespace-separated token of the value. It closes the
+same hole, but `runbook` alone scores 2.52 bits per character, so a profile saying
+`auth: see the runbook for the rotation procedure` would be rejected for describing where the
+credential lives — which is precisely what a profile is for. The rule must widen toward the
+credential, not toward the sentence.
+
+**Validation.** Twelve assertions fail against the pre-repair detector and pass after. A
+must-not-fire set covers prose, `vault:` references, `${VAR}`, and `<redacted>`.
+
+**Generalizable rule.** A detector is only as good as the *span* it grades, and a span
+boundary chosen for one input shape silently mis-frames another. When a rule scores a
+substring, test the shapes where the interesting part is not first — a prefix, a scheme word,
+a wrapper — because those do not fail loudly; they pass, which reads exactly like safety. A
+minimum-length floor applied to the whole span turns "examined and cleared" into "never
+examined", and those two outcomes are indistinguishable from the caller.
+
+**Refs.** Upstream contract repair in `infiquetra-claude-plugins` unifi `2.0.2`,
+cycle-4 reviews in [`docs/reviews/`](../reviews/).
+
+### Fixing a shared primitive does not fix the callers that pre-parse its input
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Re-synchronizing the portable UniFi package from upstream release
+`2.0.1` at commit `0d81dd9a`, one release after the portable Fleet Core slice
+took the `Retry-After` repair from Fleet Core `0.25.1` at `ed72f439`.
+
+**Evidence.** Fleet Core `0.25.1` taught `retry_with_backoff` and
+`parse_retry_after` to read both RFC 7231 forms of the `Retry-After` header,
+including the HTTP-date form. Both UniFi clients still did
+`raise _RateLimited(int(resp.headers.get("Retry-After", 60)))` at their call
+site, so the repaired primitive never saw a raw header at all — it saw whatever
+`int()` produced, and on an HTTP-date `int()` raises `ValueError` before the
+primitive is reached. A `ValueError` carries no `status_code`, so the primitive
+judged it non-retryable and propagated it: one request, no backoff, and an
+`Unexpected error: invalid literal for int()` for the operator. UniFi `2.0.1`
+moved both call sites to `_retry_backoff.parse_retry_after(...)`, visible in
+this repository at
+[`plugins/unifi/skills/unifi-network/scripts/unifi_network_client.py:189`](../../plugins/unifi/skills/unifi-network/scripts/unifi_network_client.py)
+and
+[`plugins/unifi/skills/unifi-protect/scripts/unifi_protect_client.py:189`](../../plugins/unifi/skills/unifi-protect/scripts/unifi_protect_client.py).
+
+**Mechanism.** The primitive's contract is over the *raw* header. A caller that
+normalizes the input before handing it over has silently narrowed that contract
+to the subset it can already parse, and every later widening of the primitive is
+invisible to it. Worse, the failure is not a wrong delay — it is a thrown
+exception of a type the retry machinery cannot recognize, so the repair does not
+degrade the retry, it removes it.
+
+**Generalizable rule.** When a shared primitive is widened, audit the call sites
+that pre-parse its input before declaring the defect fixed; a caller that
+converts before it delegates does not inherit the repair, and its failure will
+look like a different bug entirely.
+
+### Two portable slices of one upstream repository can legitimately pin two revisions
+
+**Author.** Jeff Cox and Claude
+
+**Context.** After the UniFi `2.0.1` re-synchronization,
+[`plugins/unifi/PROVENANCE.json`](../../plugins/unifi/PROVENANCE.json) pins
+`0d81dd9a` while
+[`plugins/fleet-core/PROVENANCE.json`](../../plugins/fleet-core/PROVENANCE.json)
+still pins `ed72f439`. The Fleet Core slice's own notes previously asserted that
+the UniFi package pinned "this same revision", which stopped being true.
+
+**Evidence.** `git diff --name-only ed72f439 0d81dd9a -- plugins/fleet-core`
+returns nothing: the upstream subtree is byte-identical across the step. The
+recorded byte-copy digest `5aea3be1…` matches the on-disk module and the
+upstream bytes at `ed72f439`, and both generated bundles carry that same
+`source-sha256` in their stamps.
+
+**Mechanism.** Each slice pins the revision at which *its own* upstream subtree
+last changed, which is what makes a pin name a derivation rather than an
+unrelated later head. Two slices of one repository therefore diverge in pin
+whenever one subtree moves and the other does not, and the pins are still
+consistent as long as one is an ancestor of the other and the quieter subtree is
+byte-identical between them. That last part is a check, not an assumption.
+
+**Generalizable rule.** Do not treat "both slices pin one commit" as an
+invariant; treat it as a coincidence that holds until one subtree moves. State
+the ancestry and the byte-identity instead, and verify both rather than asserting
+either.
+
+### A default interpreter is not evidence for a declared floor
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Refreshing the compatibility evidence after the catalog's minimum
+supported Python was set to `python>=3.12`.
+
+**Evidence.** On the machine this ran on, `python3` is CPython 3.14.6 and
+`/opt/homebrew/bin/python3.12` is CPython 3.12.13. Both earlier matrices ran
+their invocation stage on the default interpreter and recorded 29 and 21 lines of
+argument-parser usage text. On `python3.12` the *same* 2.0.0 client prints 30 and
+22, because `argparse` wraps its usage block differently there. The line count
+moved without a single package byte changing.
+
+**Mechanism.** A run on a later interpreter proves the later interpreter. It
+cannot prove the floor, and it cannot even be assumed to produce the same
+observable output, because the standard library differs between them. An
+evidence document that records a number gathered above the floor and a floor
+claim in the same page invites the reader to attach one to the other.
+
+**Generalizable rule.** Run floor evidence on the floor interpreter by explicit
+path, never on `python3`; and when a recorded number moves, prove the cause by
+re-measuring the old artifact on the new interpreter before attributing it to the
+change under test.
+
+### A byte copy imports the upstream platform floor along with the upstream fix
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Re-synchronizing the portable Fleet Core slice from Fleet Core
+0.25.1, the upstream release that repairs RFC 7231 `Retry-After` HTTP-date
+handling in the shared backoff primitive.
+
+**Evidence.** The corrected module at
+[`plugins/fleet-core/scripts/fleet_commons/retry_backoff.py:28`](../../plugins/fleet-core/scripts/fleet_commons/retry_backoff.py)
+adds `from datetime import UTC`. `datetime.UTC` is an alias introduced in
+Python 3.11; on Python 3.10 that line raises
+`ImportError: cannot import name 'UTC' from 'datetime'`, verified directly
+against a 3.10.20 interpreter. The repository's ported-plugin job pins Python
+3.10 on purpose, at
+[`.github/workflows/ci.yml:48`](../../.github/workflows/ci.yml), "because the
+portable packages target Python 3.10 or newer and a floor that is never
+exercised is not a floor."
+
+**Mechanism.** A byte copy is a promise about bytes, not about behavior on the
+consumer's platform. The two repositories do not share a support floor: the
+upstream Claude Code plugin runs wherever Claude Code runs, while this catalog
+publishes a declared floor of its own. Nothing in the synchronization contract
+compares them, so an upstream author can raise the interpreter requirement in a
+patch release and the derived package inherits it silently. The digest check
+still passes, because the bytes really are identical; that is exactly the
+property that makes the break invisible to every check the repository owns.
+
+**The custody rule is what stops the obvious repair.** Replacing `UTC` with
+`timezone.utc` here would fix the floor and destroy the guarantee: the path
+would no longer equal its source, and `retry_backoff` would have a second
+writable source, which is the failure the whole slice was designed to prevent.
+So the choice is upstream repair or a moved floor, and both are decisions, not
+edits.
+
+**Generalizable rule.** When a derived package declares a platform floor, the
+floor is part of the synchronization contract and has to be checked against the
+source on every re-synchronization; a digest that matches proves nothing about
+whether the new bytes still run where the package says they run.
+
+**Outcome, 2026-08-22.** The operator answered this by making the floor the
+source's floor rather than a separately maintained one. The catalog's minimum
+supported Python is now `python>=3.12`, which is what
+`infiquetra-claude-plugins` declares and tests, so there are no longer two
+support floors to fall out of step. Everything recorded above stayed true as
+written: the interpreter pin quoted here, `.github/workflows/ci.yml` at Python
+3.10, was the configuration at the time and has since moved to the new floor.
+The generalizable rule holds in a stronger form — a derived catalog should not
+maintain a platform floor of its own at all, because the only floor it can
+actually keep is the one its source keeps. See
+[the decision](DECISIONS.md#the-portable-catalogs-minimum-supported-python-is-python312).
+
+**Refs.** [The floor decision](DECISIONS.md#the-portable-catalogs-minimum-supported-python-is-python312),
+[the archived queue item](ARCHIVE.md#decide-the-python-floor-the-fleet-core-resync-raised),
+[the 0.25.1 changelog entry](../../plugins/fleet-core/CHANGELOG.md)
+
+### Regenerating a build artifact retires the observational evidence bound to it
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The same re-synchronization. It had to regenerate both
+`skills/*/scripts/_bundled/retry_backoff.py` bundles so every consumer carries
+the new Fleet Core stamp, and it re-pinned
+`plugins/unifi/PROVENANCE.json` to the corrected revision.
+
+**Evidence.** Those three files are inside `plugins/unifi/`, so the package's
+tree digest moved from `6e6b57c1…` to `da46ca77…`. Eight tests in
+[`tests/test_check_compatibility_matrix.py`](../../tests/test_check_compatibility_matrix.py)
+went red at once: four holding the ten-client matrix at
+[`docs/evidence/2026-08-22-unifi-compatibility-matrix.md`](../evidence/2026-08-22-unifi-compatibility-matrix.md)
+to the tree it assessed, and four holding the post-activation readback at
+[`docs/evidence/2026-08-22-unifi-post-activation-readback.md`](../evidence/2026-08-22-unifi-post-activation-readback.md)
+to the release it read back. The file count did not change; only the digest did.
+
+**Mechanism.** A Fleet Core release and a UniFi assessment look unrelated, and
+the build step is what couples them: bundling puts a stamped copy of the Fleet
+Core module inside the UniFi package, so any Fleet Core release changes the
+UniFi tree digest even when no UniFi source byte moves. The matrix binding then
+fires correctly. It is not a false alarm and it is not this unit's bug — it is
+the binding doing the one job it was added to do, saying that the document no
+longer describes what ships.
+
+**The cheap fix is the exact failure the binding exists to catch.** The matrix
+says so itself: "There is deliberately no flag that writes that fingerprint back
+into this document. Refreshing the numbers without re-running the assessment is
+precisely the failure this binding exists to catch." Editing `tree_sha256` by
+hand is that same act with more keystrokes, and it would convert forty real
+stage results into forty claims about bytes nobody ran. So the resync left both
+documents untouched and the eight tests red, and queued the re-run.
+
+**Generalizable rule.** A build-time bundle makes every upstream release a
+change to the consuming package's identity. Any evidence document bound to that
+identity has to be re-earned by re-running the assessment, so schedule the
+re-run as part of the release, and never let a red binding be closed by editing
+the number it compares.
+
+**Refs.** [Queued evidence re-run](QUEUED.md#re-run-the-ten-client-matrix-and-the-readback-against-the-resynced-package),
+[identity is not execution](LEARNINGS.md#a-bound-digest-names-the-tree-not-the-forty-stages-that-assessed-it)
+
+### A bound digest names the tree, not the forty stages that assessed it
+
+**Author.** Jeff Cox
+
+**Context.** Cycle-two code review finding F6 from Ox Alpha, reconciled as
+consensus open item O7. The matrix binding proves the recorded digest
+identifies the shipped tree. The operator ruled the rest a
+non-blocking evidence limitation, not a new gate. This unit records that
+limitation. It does not add a blocking check, and the identity check is not weakened.
+
+**Evidence.** The Ox Alpha review
+([`docs/reviews/2026-08-22-code-review-cycle2-ox-alpha-max.md`](../reviews/2026-08-22-code-review-cycle2-ox-alpha-max.md),
+finding F6) is exact: the fingerprint check makes accidental drift
+impossible to miss, and it cannot prove the forty stages were actually
+executed against the bound tree. Hand-editing the record's count and
+digest after a package edit still passes every check. Ox Alpha's finding
+is that identity is not execution. The same review
+notes the code is honest about intent —
+`scripts/check_compatibility_matrix.py` refuses a rewrite flag, "re-run,
+not renumbered" — and that the guarantee is one-directional. The
+cycle-two consensus records this as O7, advisory, routed to the operator
+([`docs/reviews/2026-08-22-code-review-cycle2-consensus.md`](../reviews/2026-08-22-code-review-cycle2-consensus.md)).
+
+The binding itself still bites. `check_package_binding` recomputes file
+count and tree digest from `plugins/unifi/` and fails on mismatch.
+Accidental drift remains a validation failure. What remains
+undetectable is copying `--print-fingerprint` into the JSON record
+without running a client.
+
+**Mechanism.** Two claims were being read as one. Matching a digest says
+which bytes the evidence names. It does not say that placement,
+discovery, load, and invocation ran against those bytes. The approved
+plan already split those claims. The binding is the identity half.
+Runtime execution and readback already live in named plan places. This
+record does not replace them with a broader gate.
+
+**The plan already requires real runtime execution and readback here.**
+
+1. Plan unit U11, with requirements R22 and R43: an operator-run
+   ten-client assessment. Each of the ten clients has four stages —
+   placement, discovery, load, and invocation — which is the forty
+   stages. Continuous integration does not run that assessment. Record:
+   [`docs/evidence/2026-08-22-unifi-compatibility-matrix.md`](../evidence/2026-08-22-unifi-compatibility-matrix.md).
+
+2. Plan unit U9, requirement R40: after upstream release activation, an
+   installed-version and digest readback confirms the running client is
+   those bytes. Record:
+   [`docs/evidence/2026-08-22-unifi-post-activation-readback.md`](../evidence/2026-08-22-unifi-post-activation-readback.md).
+
+3. Plan unit U9, requirement R41: a fresh client session proves all
+   three profile states (present, absent, unreadable). Source-tree
+   evidence alone does not satisfy R41, because a running client can
+   hold a cached earlier version.
+
+**Generalizable rule.** A fingerprint check proves identity. It does not
+prove the process that produced the evidence ran against that artifact.
+Keep the identity check; keep execution evidence in the places that
+actually run and read back. Do not invent a gate that still cannot see
+the clients.
+
+**Refs.**
+[Binding decision](DECISIONS.md#bind-a-current-matrix-to-the-tree-it-assessed-and-make-supersession-the-only-exemption),
+[queued recording](QUEUED.md#keep-the-matrix-binding-an-identity-check-do-not-add-an-execution-proof-gate),
+[pilot plan](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md)
+(U9, U11, R22, R40, R41, R43),
+`scripts/check_compatibility_matrix.py` (`check_package_binding`).
+
+---
+
+### A path a manifest names is untrusted input, even when the manifest is ours
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Repairing finding F-06 of the 2026-08-22 code review of the portable UniFi
+package, raised independently by the Cursor reviewer and confirmed by the controller.
+
+**Evidence.** `previously_managed()` in
+[`scripts/sync_vendor_source.py`](../../scripts/sync_vendor_source.py) accepted any
+non-blank `path` string recorded in `plugins/unifi/PROVENANCE.json`, and the stale-cleanup
+step in `apply_plan()` then evaluated `plugin_dir / path` and called `unlink()` on it.
+Replaying the three attack shapes against the pre-repair script deleted a file planted
+outside the package in all three cases: an absolute path, `../../../outside/victim.txt`,
+and `skills/escape/victim.txt` reached through a symlink inside the package. The
+[Cursor review](../reviews/2026-08-22-code-review-cursor-gpt-5.6-sol-xhigh.md) records the
+finding at `scripts/sync_vendor_source.py:635`.
+
+**Mechanism.** Two separate assumptions failed together. First, `pathlib` join is not
+containment: `Path("/a/b") / "/etc/hosts"` is `/etc/hosts`, so an absolute string silently
+discards the prefix that was supposed to confine it. Second, the repository already
+carried the lexical half of the rule — `check_repo.py` rejects absolute and `..`-bearing
+provenance paths when it validates a manifest — but that check runs in a different command
+than the one that deletes, so the deleting path had no guard at all. A rule enforced by a
+validator nobody calls before the dangerous operation is not enforcement. The lexical half
+would also not have been enough on its own: a symlink inside the package makes
+`skills/escape/victim.txt` lexically innocent and still land outside, which only resolving
+the path and comparing it against the resolved package root can see.
+
+**Generalizable rule.** Validate untrusted paths at the operation that acts on them, not
+only where they are authored, and validate them twice: lexically, then by resolving and
+proving containment. A validator in a different command is documentation, not a control.
+
+### A byte-copied README describes the source package, not the derived one
+
+**Author.** Jeff Cox
+
+**Context.** Consensus C5 (Cursor F-07, OpenCode F-07): the portable UniFi
+package's own README introduced the tree as a Claude Code plugin and told
+readers to run `pytest tests/test_unifi_network_client.py` and
+`tests/test_unifi_protect_client.py`, neither of which exists in this
+repository.
+
+**Evidence.**
+`plugins/unifi/README.md` at the reviewed commit opened "Claude Code plugin
+for managing…". `plugins/unifi/PROVENANCE.json` classified that file as
+`upstream-byte-copy` with digest `a3b3b056…`, matching the Claude plugin
+README at the pinned source. The plan labelled the same path "portable core,
+rewritten site-neutral". The two statements cannot both be true of one file.
+Fixed in this repair: the README is rewritten for this package, the provenance
+entry is `target-owned`, and `tests/test_unifi_readme.py` reads the shipped
+file the way a consumer does.
+
+**Mechanism.** Synchronization treats an upstream byte copy as a success when
+the bytes match the source. That is the right rule for a skill or a client.
+It is the wrong rule for package documentation whose subject is the derived
+tree: the client extension directory, the Fleet Core bundle, the site-profile
+contract, and the commands that run here. Copying the source README faithfully
+is how the portable package documented a plugin it is not, and named tests it
+does not ship.
+
+**Generalizable rule.** A derived package whose identity differs from its
+source cannot keep the source README as a byte copy. Package documentation is
+about the assembled artifact; if that artifact is not the source, the README
+is target-owned (or a named transform), not a digest match.
+### A check that cannot be evaluated must not return the permissive answer
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Two independent reviews of the portable UniFi package, reconciled in
+[the review consensus](../reviews/2026-08-22-code-review-consensus.md), each found a
+runtime defect in the discovery and drift scripts. The two look unrelated — one is a
+false drift finding, the other a persistence deny-list — and they are the same mistake.
+
+**Evidence.** Both reviewers independently reported the drift defect (consensus item C2,
+Cursor F-03 and OpenCode F-03, both rated P1). `drift.report` compared the profile's
+intended policies against `inventory["policies"]`, which `discover.py` assigned as an
+unconditional empty list because the read-only catalog composes no policy list
+operation. Every intended policy therefore produced a `missing-policy` finding on every
+live run, including for policies that exist on the controller. The persistence defect
+(consensus item C10, OpenCode F-06, P2) is in `refuse_repository_output`: it resolved the
+working tree by walking up for a `.git` entry, and when that walk found nothing it
+returned the output path unrefused, so discovery run from a copy of the package without a
+checkout could write an unfiltered controller response into the package directory.
+
+**Mechanism.** In both places a guard reached a state where it had no answer, and
+returned the answer that permits. Drift asked "is this policy on the controller?" of a
+list nothing had ever looked at, and read the empty list as "no". Persistence asked "is
+this path inside the working tree?" with no working tree to compare against, and read the
+unanswerable question as "no". Neither failure is visible from inside the guard: an empty
+list and a `None` root are both ordinary values, and the permissive branch is the one
+with no error to raise. Both were also locked in by tests, which asserted the false
+`missing-policy` finding as expected output and exercised persistence only with an
+injected repository root, so the defective branch was never reached.
+
+**The repair.** Discovery now declares `policy_observation` alongside `policies`, so an
+inventory says whether its policy set was observed at all; drift emits `missing-policy`
+only for an inventory that observed one, and names the gap in `limits` rather than
+dropping the comparison silently. An inventory from a policy-aware source still gets the
+full comparison, including when it observed an empty set. Persistence refuses a path
+inside the package's own directory with or without a checkout, and refuses outright when
+no working tree can be determined, naming `--repository-root` as the way to say which
+tree to protect.
+
+**Generalizable rule.** A check that cannot be evaluated must refuse, not pass. When a
+guard's input can be absent as well as empty, absence and emptiness need separate values,
+because collapsing them makes the unexamined case indistinguishable from the examined
+one. And a test that asserts a guarantee should be run once against the unfixed code: a
+regression test that passes either way is the same defect in the test suite.
+
+---
 
 ### A package can satisfy every structural check and still have no working entrypoint
 
@@ -134,6 +630,93 @@ tests had been exercising by accident.
 **Generalizable rule.** When a lookup has more than one rung, isolating a test means
 pinning every rung, not the first one; a rung that ends in a filesystem default is the
 one that will silently read the developer's machine.
+
+### A validator that only inspects what a manifest already declares cannot detect a deletion
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Closing three of the seven findings that two independent reviewers reached
+about commit `95de0d5` (pull request #3), recorded in
+[the two-reviewer consensus](../reviews/2026-08-22-code-review-consensus.md) as C3, C4,
+and C6. All three are validator gates in `scripts/check_repo.py` that report green in
+the situation they exist to catch.
+
+**Evidence.** Three repairs, and each one has a scenario that the pre-repair validator
+let through. C3: `check_provenance_manifests` iterated `payload["files"]` and recomputed
+the digest of each listed file, so adding `plugins/example/scripts/extra.py` to a package
+returned no errors, and so did deleting a file's entry from the manifest while leaving
+the file on disk, and so did listing one path twice with two different classifications.
+C4: `_check_bundle_source_freshness` opened with `if not source_rel or not recorded:
+return []`, so deleting the `source-path` and `source-sha256` lines from a generated
+bundle's stamp removed the comparison with Fleet Core and returned no errors; the same
+held for `generated-by`, `source-version`, and `source-commit`, none of which were read
+at all. C6: no value-level credential check existed, so a package file containing
+`"notes": "controller password=hunter2"` passed the whole gate. Ten of the eleven
+scenarios came back with an empty error list against the validator at `95de0d5`.
+
+**Mechanism.** Each of the three gates took its input from the artifact it was supposed
+to be judging. The provenance check asked the manifest which files to verify, so a file
+the manifest omitted was outside the question being asked. The bundle check asked the
+stamp which comparisons to run, so a deleted stamp line deleted the comparison rather
+than failing it. The secret check asked the schema which field *names* were forbidden, so
+a credential written into a permitted field's *value* was never a candidate. In all three
+the artifact under test controlled the scope of its own test, which means the defect and
+the thing that would have reported it are removed by the same edit. The repairs close the
+loop against a source the artifact does not control: the package tree on disk, a fixed
+tuple of required stamp fields, and the byte content of the value itself.
+
+**Generalizable rule.** A check that derives its own scope from the artifact it is
+checking can only ever detect corruption, never omission. Enumerate the required set
+independently — from the filesystem, from a constant, from the bytes — and compare, or
+the guarantee disappears with whatever line an editor deletes.
+
+### A digest in an evidence record proves nothing until something recomputes it
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Repairing findings C1 and C9 of the 2026-08-22 code review of the portable
+UniFi package. C1 was raised independently by both reviewers (Cursor F-01, OpenCode F-01
+and F-02); C9 came from Cursor F-02 and matched the controller's own record.
+
+**Evidence.** The ten-client compatibility matrix bound itself to `file_count: 21` and tree
+digest `92ed5032…`. The package this repository ships holds 23 files, and both entrypoints
+exit 0 and print usage where the matrix reported `ModuleNotFoundError` at all ten
+invocation slots. `python3 scripts/check_compatibility_matrix.py` passed anyway, because
+`check_public_evidence_rules` skipped `$.package.tree_sha256` as a non-leak and the schema
+only asserted `^[0-9a-f]{64}$`. Nothing in the repository ever computed that digest. The
+recomputed value for the shipped tree is `6e6b57c1…8415`.
+
+**Mechanism.** A digest field creates the *appearance* of binding without the binding. The
+schema constrains its shape, the leak scanner exempts it, the eye reads 64 hex characters
+as proof — and no code path ever compares it with anything. The evidence and the artifact
+then drift apart silently, and the failure does not present as a missing check. It presents
+as a passing one. This is the same shape as the other eight findings in the review: a
+guarantee that exists but does not bite.
+
+**The escape hatch matters as much as the check.** Preserving the pre-repair matrix required
+a way to exempt a retired document from the binding. That exemption is a second trap if it
+is not itself constrained: anyone could mark the live matrix superseded and switch its
+binding off. So a superseded document whose fingerprint *still* identifies the shipped tree
+is rejected, and `matrix-status` defaults to `current` when absent, which makes the binding
+fail-closed.
+
+**One more trap, found while writing the fix.** The directive parser read
+`<!-- matrix-status: superseded -->` out of the fenced code block that *documented* the
+format, and the current matrix marked itself superseded. A document has to be able to
+describe its own metadata language without the description taking effect, so fenced blocks
+are blanked before directives are read.
+
+**Generalizable rule.** A recorded fingerprint is inert unless a check recomputes it from
+the live artifact and fails on mismatch; if an evidence field can only be validated for
+shape, it is decoration, not evidence.
+
+**Refs.** [Binding decision](DECISIONS.md#bind-a-current-matrix-to-the-tree-it-assessed-and-make-supersession-the-only-exemption),
+`scripts/check_compatibility_matrix.py` (`package_fingerprint`, `check_package_binding`,
+`check_document_status`), `tests/test_check_compatibility_matrix.py`
+(`PackageBindingTest`, `DocumentStatusTest`, `FingerprintTest`),
+[`docs/evidence/2026-08-22-unifi-compatibility-matrix.md`](../evidence/2026-08-22-unifi-compatibility-matrix.md),
+[`docs/evidence/2026-08-22-unifi-compatibility-matrix-pre-repair.md`](../evidence/2026-08-22-unifi-compatibility-matrix-pre-repair.md),
+[`docs/evidence/2026-08-22-unifi-post-activation-readback.md`](../evidence/2026-08-22-unifi-post-activation-readback.md).
 
 ## 2026-08-21
 

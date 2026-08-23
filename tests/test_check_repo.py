@@ -13,11 +13,15 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import check_repo  # noqa: E402
 
 
+# The compatibility value is the catalog's declared Python floor, held by
+# tests/test_python_floor.py. A fixture is a declaration like any other: the
+# floor gate scans this file too, so a stale value here fails that test rather
+# than sitting in the suite contradicting the contract it helps validate.
 CONFORMANT_SKILL = """---
 name: unifi-network
 description: Manage UniFi network infrastructure.
 license: Apache-2.0
-compatibility: python>=3.10
+compatibility: python>=3.12
 ---
 
 # UniFi network
@@ -46,29 +50,61 @@ def make_plugin(root: Path, name: str = "example") -> Path:
     return plugin
 
 
-def write_provenance(plugin: Path, files: list[dict[str, object]]) -> Path:
+def write_provenance(
+    plugin: Path,
+    files: list[dict[str, object]],
+    *,
+    classify_plugin_manifest: bool = True,
+) -> Path:
+    """Write a provenance manifest for ``plugin``.
+
+    ``make_plugin`` always writes a ``plugin.json``, and a manifest is now closed
+    over the package tree, so every manifest has to classify it. Classifying it
+    here keeps each test's ``files`` list about the file that test is exercising.
+    Pass ``classify_plugin_manifest=False`` to leave it deliberately unlisted.
+    """
+    entries: list[dict[str, object]] = []
+    if classify_plugin_manifest:
+        entries.append({"path": "plugin.json", "classification": check_repo.TARGET_OWNED})
+    entries.extend(files)
     return write(
         plugin / check_repo.PROVENANCE_FILENAME,
         json.dumps(
             {
                 "source_repository": "https://github.com/infiquetra/example",
                 "source_commit": "0" * 40,
-                "files": files,
+                "files": entries,
             }
         ),
     )
 
 
-def stamped_bundle(body: str, output_digest: str | None = None) -> str:
+STAMP_FIELD_VALUES = {
+    check_repo.BUNDLE_GENERATED_BY_FIELD: "scripts/bundle_fleet_module.py",
+    check_repo.BUNDLE_SOURCE_VERSION_FIELD: "0.25.0",
+    check_repo.BUNDLE_SOURCE_COMMIT_FIELD: "1" * 40,
+    check_repo.BUNDLE_SOURCE_PATH_FIELD: "scripts/fleet_commons/retry_backoff.py",
+    check_repo.BUNDLE_SOURCE_DIGEST_FIELD: "a" * 64,
+}
+
+
+def stamped_bundle(
+    body: str,
+    output_digest: str | None = None,
+    omit: tuple[str, ...] = (),
+) -> str:
+    """A generated bundle carrying every required stamp field except ``omit``."""
     if output_digest is None:
         output_digest = check_repo.sha256_text(body)
+    values = dict(STAMP_FIELD_VALUES)
+    values[check_repo.BUNDLE_OUTPUT_DIGEST_FIELD] = output_digest
+    lines = [
+        f"# {field}: {values[field]}"
+        for field in check_repo.BUNDLE_REQUIRED_STAMP_FIELDS
+        if field not in omit
+    ]
     return (
-        f"{check_repo.BUNDLE_STAMP_BEGIN}\n"
-        "# generated-by: scripts/bundle_fleet_module.py\n"
-        "# source-version: 0.25.0\n"
-        "# source-sha256: " + "a" * 64 + "\n"
-        f"# {check_repo.BUNDLE_OUTPUT_DIGEST_FIELD}: {output_digest}\n"
-        f"{check_repo.BUNDLE_STAMP_END}\n"
+        "\n".join([check_repo.BUNDLE_STAMP_BEGIN, *lines, check_repo.BUNDLE_STAMP_END]) + "\n"
     ) + body
 
 
@@ -286,6 +322,183 @@ class ProvenanceManifestTests(unittest.TestCase):
             self.assertIn("invalid provenance manifest", errors[0])
 
 
+class ProvenanceClosedSetTests(unittest.TestCase):
+    """C3: the manifest must account for every file in the package, both ways."""
+
+    def test_unlisted_package_file_is_reported(self) -> None:
+        """An executable dropped into a package after synchronization must fail."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            ported = write(plugin / "scripts" / "client.py", "VALUE = 1\n")
+            write_provenance(
+                plugin,
+                [
+                    {
+                        "path": "scripts/client.py",
+                        "classification": check_repo.BYTE_COPY,
+                        "sha256": check_repo.sha256_path(ported),
+                    }
+                ],
+            )
+            write(plugin / "scripts" / "extra.py", "BACKDOOR = 1\n")
+
+            errors = check_repo.check_provenance_manifests(root)
+
+            self.assertEqual(len(errors), 1, errors)
+            self.assertIn("unlisted package file", errors[0])
+            self.assertIn("plugins/example/scripts/extra.py", errors[0])
+
+    def test_removing_a_managed_entry_from_the_manifest_is_reported(self) -> None:
+        """The other direction: the file stays, its classification is deleted."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            kept = write(plugin / "scripts" / "client.py", "VALUE = 1\n")
+            write(plugin / "scripts" / "discover.py", "VALUE = 2\n")
+            write_provenance(
+                plugin,
+                [
+                    {
+                        "path": "scripts/client.py",
+                        "classification": check_repo.BYTE_COPY,
+                        "sha256": check_repo.sha256_path(kept),
+                    }
+                ],
+            )
+
+            errors = check_repo.check_provenance_manifests(root)
+
+            self.assertEqual(len(errors), 1, errors)
+            self.assertIn("unlisted package file", errors[0])
+            self.assertIn("plugins/example/scripts/discover.py", errors[0])
+
+    def test_a_path_listed_twice_is_reported(self) -> None:
+        """One path may carry exactly one classification, so a repeat is a defect."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            ported = write(plugin / "scripts" / "client.py", "VALUE = 1\n")
+            entry: dict[str, object] = {
+                "path": "scripts/client.py",
+                "classification": check_repo.BYTE_COPY,
+                "sha256": check_repo.sha256_path(ported),
+            }
+            write_provenance(plugin, [entry, dict(entry)])
+
+            errors = check_repo.check_provenance_manifests(root)
+
+            self.assertEqual(len(errors), 1, errors)
+            self.assertIn("duplicate provenance entry", errors[0])
+            self.assertIn("plugins/example/scripts/client.py", errors[0])
+
+    def test_the_plugin_manifest_is_not_exempt_from_classification(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            write_provenance(plugin, [], classify_plugin_manifest=False)
+
+            errors = check_repo.check_provenance_manifests(root)
+
+            self.assertEqual(len(errors), 1, errors)
+            self.assertIn("unlisted package file", errors[0])
+            self.assertIn("plugins/example/plugin.json", errors[0])
+
+    def test_the_provenance_manifest_itself_is_exempt(self) -> None:
+        """It cannot record its own digest, so it is the one deliberate exclusion."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            write_provenance(plugin, [])
+
+            self.assertEqual(check_repo.check_provenance_manifests(root), [])
+
+    def test_interpreter_artifacts_are_exempt(self) -> None:
+        """Bytecode in the two places the interpreter writes it (PEP 3147)."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            write_provenance(
+                plugin,
+                [{"path": "scripts/client.py", "classification": check_repo.TARGET_OWNED}],
+            )
+            write(plugin / "scripts" / "client.py", "print(1)\n")
+            write(
+                plugin / "scripts" / "__pycache__" / "client.cpython-312.pyc",
+                "not source",
+            )
+            # The legacy sourceless layout: bytecode beside the .py it came from.
+            write(plugin / "scripts" / "client.pyc", "not source")
+
+            self.assertEqual(check_repo.check_provenance_manifests(root), [])
+
+    def test_bytecode_with_no_source_beside_it_is_an_unlisted_package_file(self) -> None:
+        """The closed set is closed against a file merely wearing a .pyo suffix.
+
+        Before this, `PROVENANCE_UNMANAGED_SUFFIXES` exempted `.pyc`/`.pyo`
+        anywhere in the tree at any depth, so a file holding arbitrary text
+        passed this gate without appearing in any provenance manifest.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            write_provenance(plugin, [])
+            write(
+                plugin / "skills" / "unifi-network" / "scripts" / "smuggled.pyo",
+                "this is not bytecode, it is arbitrary smuggled content",
+            )
+
+            errors = check_repo.check_provenance_manifests(root)
+
+            self.assertEqual(len(errors), 1, errors)
+            self.assertIn("unlisted package file", errors[0])
+            self.assertIn(
+                "plugins/example/skills/unifi-network/scripts/smuggled.pyo", errors[0]
+            )
+
+    def test_bytecode_beside_a_differently_named_source_is_not_exempt(self) -> None:
+        """The sibling has to be *the* source: `client.py` does not cover `other.pyo`."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            write_provenance(
+                plugin,
+                [{"path": "scripts/client.py", "classification": check_repo.TARGET_OWNED}],
+            )
+            write(plugin / "scripts" / "client.py", "print(1)\n")
+            write(plugin / "scripts" / "other.pyo", "smuggled")
+
+            errors = check_repo.check_provenance_manifests(root)
+
+            self.assertEqual(len(errors), 1, errors)
+            self.assertIn("plugins/example/scripts/other.pyo", errors[0])
+
+    def test_an_unsafe_listed_path_does_not_satisfy_the_closed_set(self) -> None:
+        """A traversal entry is reported once, and never counts as a classification."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            write_provenance(
+                plugin,
+                [
+                    {
+                        "path": "../../etc/passwd",
+                        "classification": check_repo.BYTE_COPY,
+                        "sha256": "c" * 64,
+                    }
+                ],
+                classify_plugin_manifest=False,
+            )
+
+            errors = check_repo.check_provenance_manifests(root)
+
+            self.assertEqual(len(errors), 2, errors)
+            self.assertTrue(any("unsafe path" in error for error in errors))
+            self.assertTrue(
+                any("plugins/example/plugin.json" in error for error in errors)
+            )
+
+
 class BundleStampTests(unittest.TestCase):
     def test_matching_stamp_produces_no_error(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -335,22 +548,72 @@ class BundleStampTests(unittest.TestCase):
                 ["unstamped generated bundle: plugins/example/scripts/_bundled/retry_backoff.py"],
             )
 
-    def test_stamp_without_an_output_digest_is_reported(self) -> None:
+    def test_every_required_stamp_field_is_reported_by_name_when_omitted(self) -> None:
+        """C4: any optional field is a comparison a hand-edit can switch off."""
+        for field in check_repo.BUNDLE_REQUIRED_STAMP_FIELDS:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                plugin = make_plugin(root)
+                write(
+                    plugin / "scripts" / "_bundled" / "retry_backoff.py",
+                    stamped_bundle("def retry():\n    return None\n", omit=(field,)),
+                )
+
+                errors = check_repo.check_bundled_files(root)
+
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn(f"generated bundle stamp missing {field}", errors[0])
+                self.assertIn(
+                    "plugins/example/scripts/_bundled/retry_backoff.py", errors[0]
+                )
+
+    def test_dropping_both_source_provenance_fields_is_reported(self) -> None:
+        """C4: the reviewed scenario — delete the two fields that reach Fleet Core."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             plugin = make_plugin(root)
             write(
                 plugin / "scripts" / "_bundled" / "retry_backoff.py",
-                f"{check_repo.BUNDLE_STAMP_BEGIN}\n"
-                "# source-version: 0.25.0\n"
-                f"{check_repo.BUNDLE_STAMP_END}\n"
-                "def retry():\n    return None\n",
+                stamped_bundle(
+                    "def retry():\n    return None\n",
+                    omit=(
+                        check_repo.BUNDLE_SOURCE_PATH_FIELD,
+                        check_repo.BUNDLE_SOURCE_DIGEST_FIELD,
+                    ),
+                ),
             )
 
             errors = check_repo.check_bundled_files(root)
 
-            self.assertEqual(len(errors), 1)
-            self.assertIn(f"missing {check_repo.BUNDLE_OUTPUT_DIGEST_FIELD}", errors[0])
+            self.assertEqual(len(errors), 2, errors)
+            self.assertTrue(
+                any(check_repo.BUNDLE_SOURCE_PATH_FIELD in error for error in errors)
+            )
+            self.assertTrue(
+                any(check_repo.BUNDLE_SOURCE_DIGEST_FIELD in error for error in errors)
+            )
+
+    def test_a_blank_stamp_field_counts_as_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            body = "def retry():\n    return None\n"
+            write(
+                plugin / "scripts" / "_bundled" / "retry_backoff.py",
+                stamped_bundle(body, omit=(check_repo.BUNDLE_SOURCE_COMMIT_FIELD,)).replace(
+                    check_repo.BUNDLE_STAMP_END,
+                    f"# {check_repo.BUNDLE_SOURCE_COMMIT_FIELD}:\n"
+                    f"{check_repo.BUNDLE_STAMP_END}",
+                ),
+            )
+
+            errors = check_repo.check_bundled_files(root)
+
+            self.assertEqual(len(errors), 1, errors)
+            self.assertIn(
+                f"generated bundle stamp missing {check_repo.BUNDLE_SOURCE_COMMIT_FIELD}",
+                errors[0],
+            )
 
     def test_output_digest_excludes_the_stamp_block(self) -> None:
         body = "def retry():\n    return None\n"
@@ -462,6 +725,133 @@ class SkillFrontmatterTests(unittest.TestCase):
         )
 
         self.assertEqual(sorted(fields or {}), ["metadata", "name"])
+
+
+class SecretFreeValueTests(unittest.TestCase):
+    """C6: the guarantee is about credential values, not credential field names."""
+
+    def test_credential_in_an_allowed_free_text_field_is_reported(self) -> None:
+        """The reviewed case: a password inside a `notes` string the schema allows."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            write(
+                plugin / "references" / "site-profile-example.json",
+                json.dumps(
+                    {
+                        "site": "example",
+                        "notes": "controller password=hunter2",
+                        "ownership": "network team",
+                    },
+                    indent=2,
+                ),
+            )
+
+            errors = check_repo.check_secret_free_values(root)
+
+            self.assertEqual(len(errors), 1, errors)
+            self.assertIn("credential value in", errors[0])
+            self.assertIn("plugins/example/references/site-profile-example.json", errors[0])
+            self.assertIn("credential-shaped value", errors[0])
+
+    def test_bearer_token_in_a_description_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            write(
+                plugin / "references" / "site-profile.md",
+                "# Site profile\n\ndescription: call it with bearer=aB9dEf2GhJ4kLm7Q\n",
+            )
+
+            errors = check_repo.check_secret_free_values(root)
+
+            self.assertEqual(len(errors), 1, errors)
+            self.assertIn("plugins/example/references/site-profile.md", errors[0])
+
+    def test_a_well_known_credential_format_in_package_source_is_reported(self) -> None:
+        """Family one runs on source too: a literal key is a leak wherever it sits."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            write(
+                plugin / "scripts" / "discover.py",
+                'DEFAULT = "AKIAIOSFODNN7EXAMPLE"\n',
+            )
+
+            errors = check_repo.check_secret_free_values(root)
+
+            self.assertEqual(len(errors), 1, errors)
+            self.assertIn("AWS access key id", errors[0])
+            self.assertIn("plugins/example/scripts/discover.py", errors[0])
+
+    def test_a_private_key_block_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            write(
+                plugin / "references" / "setup.md",
+                "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXk\n",
+            )
+
+            errors = check_repo.check_secret_free_values(root)
+
+            self.assertEqual(len(errors), 1, errors)
+            self.assertIn("private key block", errors[0])
+
+    def test_credential_handling_source_is_not_reported(self) -> None:
+        """The false positives this rule was tuned against, taken from the package."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            write(
+                plugin / "scripts" / "discover.py",
+                'api_key = (api_key or "").strip()\n'
+                'headers = {"X-Api-Key": self.api_key, "Content-Type": "application/json"}\n'
+                "return LiveTransport(host=resolved_host, api_key=resolved_key)\n",
+            )
+
+            self.assertEqual(check_repo.check_secret_free_values(root), [])
+
+    def test_values_that_name_a_secret_rather_than_being_one_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            write(
+                plugin / "references" / "site-profile-example.json",
+                json.dumps(
+                    {
+                        "password": "${VAULT_CONTROLLER_PASSWORD}",
+                        "api_key": "REDACTED",
+                        "token": "env:UNIFI_API_KEY",
+                        "client_secret": "<your-client-secret>",
+                        "access_key": "xxxxxxxxxxxx",
+                        "notes": "ask the network owner for the controller credential",
+                    },
+                    indent=2,
+                ),
+            )
+
+            self.assertEqual(check_repo.check_secret_free_values(root), [])
+
+    def test_a_repository_without_packages_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(check_repo.check_secret_free_values(Path(directory)), [])
+
+    def test_a_strict_key_assigned_a_digitless_literal_is_reported(self) -> None:
+        """The rule the entropy helper used to serve graded the wrong thing.
+
+        ``rainbowtrout`` carries more entropy per character than ``oauth2`` and no
+        digit, so the retired rule accepted the password and refused the word.
+        """
+        self.assertTrue(
+            check_repo.credential_findings("password: rainbowtrout", include_assignments=True)
+        )
+        self.assertEqual(
+            check_repo.credential_findings(
+                "token: base64 of the site identifier", include_assignments=True
+            ),
+            [],
+        )
 
 
 if __name__ == "__main__":

@@ -21,10 +21,13 @@ Three classifications, and every path in the derived tree is exactly one of them
   the dropped `fleet_commons_shim` into an import of the build-time Fleet Core
   bundle this package ships, which is what gives the portable package a working
   entrypoint at all.
-* **target-owned portable source** — authored here, with no upstream
-  counterpart. It is never overwritten and never removed by synchronization,
+* **target-owned portable source** — authored here rather than derived from the
+  pinned commit. It is never overwritten and never removed by synchronization,
   which is what stops this script from silently destroying the portable
-  site-profile contract and the discovery and drift work beside it.
+  site-profile contract and the discovery and drift work beside it. Most of it
+  has no upstream counterpart at all. A few paths supersede an upstream file of
+  the same name, and those are named in `SUPERSEDED_BY_TARGET_OWNED` so the
+  custody table still accounts for every upstream path without copying it.
 
 Two commands::
 
@@ -77,13 +80,29 @@ TARGET_OWNED = check_repo.TARGET_OWNED
 # Files whose custody is the portable core. Their path inside the portable
 # package is their path inside the upstream package, unchanged.
 PORTABLE_BYTE_COPIES = (
-    "README.md",
     "CHANGELOG.md",
     "skills/unifi-network/SKILL.md",
     "skills/unifi-network/references/udm-api-endpoints.md",
     "skills/unifi-protect/SKILL.md",
     "skills/unifi-protect/references/protect-api-endpoints.md",
 )
+
+# Upstream paths this package supersedes with target-owned portable source of
+# its own. Declared here so `classify_source_tree` still accounts for every
+# upstream path, and read nowhere else: no byte is copied, no byte is written,
+# and `target_owned_paths` records the file authored here as `target-owned` on
+# every run without being taught its name.
+#
+# `README.md` is the one such path. The portable README documents *this*
+# package -- the Agent Plugins 1.0 layout, the com.infiquetra.claude/ client
+# extension directory, the Fleet Core bundle, and commands that run in this
+# repository -- and a byte copy of the upstream README told a consumer of the
+# portable package it was reading about a Claude Code plugin. The custody is
+# recorded in docs/engineering-journal/DECISIONS.md, "The portable UniFi README
+# is target-owned, rewritten site-neutral"; listing it as an upstream byte copy
+# here is what made this script contradict that decision and made the next
+# `synchronize()` restore the Claude lede over the portable file.
+SUPERSEDED_BY_TARGET_OWNED = ("README.md",)
 
 # The two executable entrypoints. They keep their upstream-relative path, but
 # they are not byte copies: upstream reaches the shared retry primitive through
@@ -409,6 +428,7 @@ def classify_source_tree(present: list[str]) -> None:
         *PORTABLE_BYTE_COPIES,
         *PORTABLE_ENTRYPOINT_TRANSFORMS,
         *CLIENT_BYTE_COPIES,
+        *SUPERSEDED_BY_TARGET_OWNED,
         *DROPPED_FROM_SOURCE,
         SOURCE_MANIFEST_PATH,
     )
@@ -518,8 +538,65 @@ def target_owned_paths(plugin_dir: Path, managed: set[str]) -> list[str]:
 # --- writing ------------------------------------------------------------------
 
 
+def _managed_path_violation(plugin_dir: Path, path_value: object) -> str | None:
+    """Why ``path_value`` may not be written or deleted, or ``None`` if it is safe.
+
+    ``PROVENANCE.json`` is untrusted input the moment a corrupt or hostile
+    manifest reaches the tree, and the paths it records are the ones stale
+    cleanup unlinks. ``Path`` resolves ``plugin_dir / "/etc/hosts"`` to
+    ``/etc/hosts`` and lets ``../../..`` climb out of the package, so an
+    unvalidated manifest path turns stale cleanup into arbitrary deletion of any
+    user-writable file. Two independent checks, both required:
+
+    * **lexical** — the value has to be a non-blank, package-relative path with
+      no ``..`` component. This is the same rule ``check_repo.py`` applies when
+      it validates a manifest, restated here rather than imported because that
+      helper is private to that module, reports in manifest-entry terms, and
+      belongs to a file this repair does not own.
+    * **containment** — the resolved path has to stay strictly under the
+      resolved package directory. Resolution is what closes the escape a
+      lexical check cannot see: a symlink inside the package pointing out of it
+      makes ``skills/link/victim`` lexically innocent and still land outside.
+    """
+    if not isinstance(path_value, str) or not path_value.strip():
+        return "a managed path that is not a non-empty string"
+    candidate = Path(path_value)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        return f"an unsafe managed path: {path_value}"
+    package = plugin_dir.resolve()
+    target = (plugin_dir / candidate).resolve()
+    if target == package or not target.is_relative_to(package):
+        return f"a managed path that resolves outside the package: {path_value} -> {target}"
+    return None
+
+
+def resolve_managed_path(plugin_dir: Path, path_value: str) -> Path:
+    """Return the in-package path ``path_value`` names, or refuse to name one.
+
+    The single chokepoint every write and every deletion goes through. It fails
+    closed: an unsafe path raises rather than being skipped, because skipping
+    would let a manifest that names one real stale file and one hostile path
+    still complete a partial synchronization.
+    """
+    violation = _managed_path_violation(plugin_dir, path_value)
+    if violation is not None:
+        raise SyncError(
+            f"{PROVENANCE_FILENAME} records {violation}; synchronization writes and deletes "
+            "only inside the package, so a manifest that names a path outside it is refused "
+            "before anything on disk is touched"
+        )
+    return plugin_dir / path_value
+
+
 def previously_managed(plugin_dir: Path) -> set[str]:
-    """Sync-managed paths recorded by an earlier run, read from the manifest on disk."""
+    """Sync-managed paths recorded by an earlier run, read from the manifest on disk.
+
+    Every returned path has passed `resolve_managed_path`, so no caller can be
+    handed a string that escapes the package. An unreadable or non-conforming
+    manifest still yields an empty set — that is a tree with nothing to clean up,
+    not an attack — but a manifest that names a path outside the package raises,
+    because that is the one shape a caller must never act on.
+    """
     manifest = plugin_dir / PROVENANCE_FILENAME
     if not manifest.is_file():
         return set()
@@ -537,8 +614,30 @@ def previously_managed(plugin_dir: Path) -> set[str]:
         if entry.get("classification") in (BYTE_COPY, TRANSFORM):
             path_value = entry.get("path")
             if isinstance(path_value, str) and path_value.strip():
+                resolve_managed_path(plugin_dir, path_value)
                 managed.add(path_value)
     return managed
+
+
+def stale_managed_paths(plugin_dir: Path, managed: set[str]) -> list[str]:
+    """Managed paths an earlier run recorded that the current plan no longer produces.
+
+    The single place the stale set is computed, so the write path and the check
+    path cannot disagree about what synchronization is allowed to delete.
+
+    `SUPERSEDED_BY_TARGET_OWNED` is subtracted because a superseded path is
+    target-owned, and target-owned source is never removed here. A tree
+    synchronized before the custody change still carries a manifest recording
+    `README.md` as an upstream byte copy; without this subtraction the first run
+    after the change would read that entry, find the path absent from the plan,
+    and unlink the portable README outright -- a worse outcome than the
+    overwrite the change exists to prevent.
+
+    Every returned path has already been through `resolve_managed_path` inside
+    `previously_managed`, so a manifest naming a path outside the package still
+    raises here rather than reaching a caller.
+    """
+    return sorted(previously_managed(plugin_dir) - managed - set(SUPERSEDED_BY_TARGET_OWNED))
 
 
 def build_manifest(
@@ -571,8 +670,14 @@ def build_manifest(
             "Every path carries exactly one classification. An upstream byte copy is overwritten "
             "on each synchronization and its digest must equal its source digest exactly; where "
             "the portable tree would need a different byte, the repair is authored upstream "
-            "first. Target-owned portable source has no upstream counterpart, records no digest, "
-            "and is never overwritten and never removed here.",
+            "first. Target-owned portable source is authored in this repository rather than "
+            "derived from the pinned commit; it records no digest and is never overwritten and "
+            "never removed here. Most target-owned paths have no upstream counterpart at all. "
+            "README.md is the one that supersedes an upstream path of the same name: it "
+            "documents this portable package rather than the Claude plugin, so the upstream "
+            "bytes at that path are deliberately never read and never written, which the "
+            "custody table in scripts/sync_vendor_source.py records as a superseded path rather "
+            "than leaving it unclassified.",
             "The client extension directory com.infiquetra.claude/ mirrors the upstream package "
             "root path for path, so every Claude-custody file's origin is readable from its "
             "portable path and every one of them stays a byte copy. The Claude Code manifest is "
@@ -614,10 +719,17 @@ def manifest_text(manifest: dict[str, Any]) -> str:
 
 
 def apply_plan(planned: list[PlannedFile], plugin_dir: Path) -> list[str]:
-    """Write every managed path, verify each byte copy, and drop stale managed paths."""
+    """Write every managed path, verify each byte copy, and drop stale managed paths.
+
+    The stale set is read and validated first, before a single byte is written:
+    a manifest naming a path outside the package aborts the whole run rather
+    than leaving a half-synchronized tree behind.
+    """
+    managed = {item.target_path for item in planned}
+    stale_paths = stale_managed_paths(plugin_dir, managed)
     written: list[str] = []
     for item in planned:
-        destination = plugin_dir / item.target_path
+        destination = resolve_managed_path(plugin_dir, item.target_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
         if not destination.is_file() or destination.read_bytes() != item.output_bytes:
             destination.write_bytes(item.output_bytes)
@@ -631,9 +743,8 @@ def apply_plan(planned: list[PlannedFile], plugin_dir: Path) -> list[str]:
                     "recorded as a transform, so the repair belongs upstream"
                 )
 
-    managed = {item.target_path for item in planned}
-    for stale in sorted(previously_managed(plugin_dir) - managed):
-        path = plugin_dir / stale
+    for stale in stale_paths:
+        path = resolve_managed_path(plugin_dir, stale)
         if path.is_file():
             path.unlink()
             written.append(stale)
@@ -660,8 +771,8 @@ def verify_plan(planned: list[PlannedFile], plugin_dir: Path) -> list[str]:
                 f"synchronized file does not match its planned output: {item.target_path} "
                 f"(planned {item.output_digest}, content {actual})"
             )
-    for stale in sorted(previously_managed(plugin_dir) - {item.target_path for item in planned}):
-        if (plugin_dir / stale).is_file():
+    for stale in stale_managed_paths(plugin_dir, {item.target_path for item in planned}):
+        if resolve_managed_path(plugin_dir, stale).is_file():
             errors.append(f"stale synchronized file no longer in the plan: {stale}")
     return errors
 

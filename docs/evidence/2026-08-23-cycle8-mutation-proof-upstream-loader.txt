@@ -1,0 +1,44 @@
+# Cycle-8 mutation proof — upstream site_profile_loader.py
+# Bytes proved here are the bytes committed: the digest below is verified
+# against the committed blob after the commit lands, not before.
+loader sha256: ee09062ab46d0043a6f3d8da4355310c9c2e62450c32ed3612c54293c6b36db7
+
+## MUTATION: line-scoping removed - whitespace spans the newline again (F-02 returns)
+FAILED tests/test_unifi_site_profile_loader.py::test_the_verdict_corpus_is_the_rule[see notes:\npassword=hunter2-True]
+FAILED tests/test_unifi_site_profile_loader.py::test_the_verdict_corpus_is_the_rule[password:\n  hunter2-False]
+FAILED tests/test_unifi_site_profile_loader.py::test_an_innocent_key_does_not_eat_the_line_break_before_a_strict_one
+FAILED tests/test_unifi_site_profile_loader.py::test_an_assignment_split_across_a_line_break_is_not_matched
+======================== 4 failed, 156 passed in 0.50s =========================
+
+## MUTATION: value class allows newlines again (F-01 doc claim goes false)
+FAILED tests/test_unifi_site_profile_loader.py::test_the_verdict_corpus_is_the_rule[password:\n  hunter2-False]
+FAILED tests/test_unifi_site_profile_loader.py::test_an_assignment_split_across_a_line_break_is_not_matched
+======================== 2 failed, 158 passed in 0.44s =========================
+
+## MUTATION: strict-key function weakened
+FAILED tests/test_unifi_site_profile_loader.py::test_the_strict_key_set_is_the_property_name_taxonomy
+======================== 1 failed, 159 passed in 0.45s =========================
+
+## MUTATION: descriptive separation removed
+FAILED tests/test_unifi_site_profile_loader.py::test_the_prose_allowance_does_not_reach_a_structured_field
+======================== 1 failed, 159 passed in 0.43s =========================
+
+## MUTATION: strict rule weakened back to a length floor
+FAILED tests/test_unifi_site_profile_loader.py::test_a_credential_written_into_a_free_text_value_is_refused[controller password=hunter2-1.0]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_credential_written_into_a_free_text_value_is_refused[controller password=hunter2-1.1]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_literal_under_a_strict_key_is_refused_whatever_it_looks_like[password: rainbowtrout]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_literal_under_a_strict_key_is_refused_whatever_it_looks_like[password: sunshine]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_literal_under_a_strict_key_is_refused_whatever_it_looks_like[api_key: correcthorsebattery]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_literal_under_a_strict_key_is_refused_whatever_it_looks_like[passphrase: correcthorsebattery]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_literal_under_a_strict_key_is_refused_whatever_it_looks_like[password: secret]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_literal_under_a_strict_key_is_refused_whatever_it_looks_like[password: hunter2]
+
+## MUTATION: template collapse removed
+FAILED tests/test_unifi_site_profile_loader.py::test_a_value_that_names_where_a_secret_lives_is_accepted[api_key: {{ lookup }}]
+FAILED tests/test_unifi_site_profile_loader.py::test_the_verdict_corpus_is_the_rule[api_key: {{ lookup }}-False]
+======================== 2 failed, 158 passed in 0.46s =========================
+
+## RESTORED
+loader sha256: ee09062ab46d0043a6f3d8da4355310c9c2e62450c32ed3612c54293c6b36db7
+byte-identical to pristine: YES
+============================= 160 passed in 0.43s ==============================

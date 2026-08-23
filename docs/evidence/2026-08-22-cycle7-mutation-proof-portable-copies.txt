@@ -1,0 +1,86 @@
+# SUPERSEDED — this record misidentifies the bytes it proved.
+#
+# A cycle-7 review found it: the digest recorded below matches no committed state
+# in either repository. The proof was run against an intermediate working tree,
+# after the formatter ran but before the nesting fix and the changelog commit, so
+# the file it exercised never shipped. The bytes released at upstream a46714b8 and
+# carried in portable candidate 0feecfa0 are 80f2bc5d4b8c99f17ccfc062aa9b3094d0b8cda0e95edd75b551510158f175ca.
+#
+# The mutation conclusions below were re-verified independently and hold. What was
+# wrong is the identification, not the result -- which is precisely the failure
+# mode this kind of evidence exists to prevent, so it is corrected in place rather
+# than deleted.
+#
+# Superseded by the cycle-8 records, whose digests are verified against the
+# committed blob after the commit lands:
+#   docs/evidence/2026-08-23-cycle8-mutation-proof-upstream-loader.txt
+#   docs/evidence/2026-08-23-cycle8-mutation-proof-portable-copies.txt
+#
+# Cycle-7 mutation proof — portable target-owned copies
+site_profile.py pristine sha256: 297563467cdcd7dabed254308076cc5d9f40d1776456f6510abf01cea2f86472
+check_repo.py   pristine sha256: 72995935df876524f169e2477ba8cdae25ec16b4190f2da621b8acbbcba1e4e5
+
+## MUTATION: strict-key enforcement weakened  [file: plugins/unifi/scripts/site_profile.py]
+FAIL: test_both_copies_agree_which_keys_are_strict (tests.test_site_profile.CredentialRuleDriftTest.test_both_copies_agree_which_keys_are_strict) (key='auth')
+FAIL: test_both_copies_agree_which_keys_are_strict (tests.test_site_profile.CredentialRuleDriftTest.test_both_copies_agree_which_keys_are_strict) (key='accesskey')
+FAIL: test_both_copies_agree_which_keys_are_strict (tests.test_site_profile.CredentialRuleDriftTest.test_both_copies_agree_which_keys_are_strict) (key='access-key')
+FAIL: test_the_strict_key_set_is_the_property_name_taxonomy (tests.test_site_profile.ValidationTest.test_the_strict_key_set_is_the_property_name_taxonomy)
+Ran 109 tests in 0.248s
+FAILED (failures=4)
+
+## MUTATION: descriptive-field separation removed  [file: plugins/unifi/scripts/site_profile.py]
+
+## MUTATION: strict rule weakened back to a length floor  [file: plugins/unifi/scripts/site_profile.py]
+FAIL: test_both_copies_reach_the_same_verdict_on_a_line (tests.test_site_profile.CredentialRuleDriftTest.test_both_copies_reach_the_same_verdict_on_a_line) (line='password: rainbowtrout')
+FAIL: test_both_copies_reach_the_same_verdict_on_a_line (tests.test_site_profile.CredentialRuleDriftTest.test_both_copies_reach_the_same_verdict_on_a_line) (line='password: sunshine')
+FAIL: test_both_copies_reach_the_same_verdict_on_a_line (tests.test_site_profile.CredentialRuleDriftTest.test_both_copies_reach_the_same_verdict_on_a_line) (line='api_key: correcthorsebattery')
+FAIL: test_both_copies_reach_the_same_verdict_on_a_line (tests.test_site_profile.CredentialRuleDriftTest.test_both_copies_reach_the_same_verdict_on_a_line) (line='password: secret')
+FAIL: test_both_copies_reach_the_same_verdict_on_a_line (tests.test_site_profile.CredentialRuleDriftTest.test_both_copies_reach_the_same_verdict_on_a_line) (line='password: hunter2')
+FAIL: test_a_credential_value_is_rejected_wherever_a_string_may_appear (tests.test_site_profile.ValidationTest.test_a_credential_value_is_rejected_wherever_a_string_may_appear) (location='site.description')
+FAIL: test_a_credential_value_is_rejected_wherever_a_string_may_appear (tests.test_site_profile.ValidationTest.test_a_credential_value_is_rejected_wherever_a_string_may_appear) (location='subjects[0].notes')
+FAIL: test_a_credential_value_is_rejected_wherever_a_string_may_appear (tests.test_site_profile.ValidationTest.test_a_credential_value_is_rejected_wherever_a_string_may_appear) (location='intended_policies[0].description')
+FAIL: test_a_credential_value_is_rejected_wherever_a_string_may_appear (tests.test_site_profile.ValidationTest.test_a_credential_value_is_rejected_wherever_a_string_may_appear) (location='operational_constraints[0].description')
+FAIL: test_a_digitless_literal_under_a_strict_key_is_refused (tests.test_site_profile.ValidationTest.test_a_digitless_literal_under_a_strict_key_is_refused) (value='password: rainbowtrout')
+FAIL: test_a_digitless_literal_under_a_strict_key_is_refused (tests.test_site_profile.ValidationTest.test_a_digitless_literal_under_a_strict_key_is_refused) (value='password: sunshine')
+FAIL: test_a_digitless_literal_under_a_strict_key_is_refused (tests.test_site_profile.ValidationTest.test_a_digitless_literal_under_a_strict_key_is_refused) (value='api_key: correcthorsebattery')
+
+## MUTATION: template collapse removed  [file: plugins/unifi/scripts/site_profile.py]
+ERROR: test_the_established_safe_forms_still_pass (tests.test_site_profile.ValidationTest.test_the_established_safe_forms_still_pass) (value='api_key: {{ lookup }}')
+FAIL: test_both_copies_reach_the_same_verdict_on_a_line (tests.test_site_profile.CredentialRuleDriftTest.test_both_copies_reach_the_same_verdict_on_a_line) (line='token: {{ lookup }}')
+FAIL: test_both_copies_reduce_a_value_to_the_same_tokens (tests.test_site_profile.CredentialRuleDriftTest.test_both_copies_reduce_a_value_to_the_same_tokens) (span='{{ lookup }}')
+Ran 109 tests in 0.227s
+FAILED (failures=2, errors=1)
+
+## MUTATION: gate stops enforcing strict keys  [file: scripts/check_repo.py]
+FAIL: test_live_repository_passes_every_check (tests.test_check_repo.RepositoryValidationTests.test_live_repository_passes_every_check)
+FAIL: test_a_private_key_block_is_reported (tests.test_check_repo.SecretFreeValueTests.test_a_private_key_block_is_reported)
+FAIL: test_a_well_known_credential_format_in_package_source_is_reported (tests.test_check_repo.SecretFreeValueTests.test_a_well_known_credential_format_in_package_source_is_reported)
+FAIL: test_bearer_token_in_a_description_is_reported (tests.test_check_repo.SecretFreeValueTests.test_bearer_token_in_a_description_is_reported)
+FAIL: test_credential_handling_source_is_not_reported (tests.test_check_repo.SecretFreeValueTests.test_credential_handling_source_is_not_reported)
+FAIL: test_credential_in_an_allowed_free_text_field_is_reported (tests.test_check_repo.SecretFreeValueTests.test_credential_in_an_allowed_free_text_field_is_reported)
+FAIL: test_values_that_name_a_secret_rather_than_being_one_pass (tests.test_check_repo.SecretFreeValueTests.test_values_that_name_a_secret_rather_than_being_one_pass)
+Ran 109 tests in 0.231s
+FAILED (failures=7)
+
+## MUTATION: gate value capture consumes again (nesting bug returns)  [file: scripts/check_repo.py]
+FAIL: test_the_assignment_family_is_the_same_rule (tests.test_site_profile.CredentialRuleDriftTest.test_the_assignment_family_is_the_same_rule)
+FAIL: test_bearer_token_in_a_description_is_reported (tests.test_check_repo.SecretFreeValueTests.test_bearer_token_in_a_description_is_reported)
+FAIL: test_credential_in_an_allowed_free_text_field_is_reported (tests.test_check_repo.SecretFreeValueTests.test_credential_in_an_allowed_free_text_field_is_reported)
+Ran 109 tests in 0.221s
+FAILED (failures=3)
+
+## RESTORED
+site_profile.py: 297563467cdcd7dabed254308076cc5d9f40d1776456f6510abf01cea2f86472
+check_repo.py  : 72995935df876524f169e2477ba8cdae25ec16b4190f2da621b8acbbcba1e4e5
+both byte-identical to pristine: YES
+Ran 109 tests in 0.228s
+OK
+
+## MUTATION (re-run): descriptive-field separation removed  [file: plugins/unifi/scripts/site_profile.py]
+# The first attempt placed a trailing comment inside the call parentheses and
+# broke syntax rather than mutating behaviour, so it proved nothing. Re-run with
+# the substitution alone:
+#   descriptive=field in DESCRIPTIVE_FIELDS  ->  descriptive=True
+FAIL: test_the_prose_allowance_does_not_reach_a_structured_field
+Ran 109 tests -- FAILED (failures=1)
+restored byte-identical to pristine: YES
