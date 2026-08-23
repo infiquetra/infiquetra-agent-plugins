@@ -1,5 +1,103 @@
 # Archive - shipped, rejected, and superseded items
 
+## 2026-08-23
+
+### SUPERSEDED - A completion watcher that can never fire looks exactly like work that never finished
+
+**Resolution.** Superseded by [A verification step that reports success for an
+unrelated reason is worth less than none](LEARNINGS.md), which generalises this
+instance together with five others from the same pilot. The mechanism recorded
+here is accurate and is cited by the successor as one of its six cases; what it
+lacked was the observation that the same defect was simultaneously live in the
+product, in the mutation harness, and in the repository gate. Archived rather
+than deleted, per this journal's convention.
+
+### A completion watcher that can never fire looks exactly like work that never finished
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The cycle-7 review panel finished and wrote both artifacts. The coordinator's
+background watcher never reported them, so the coordinator sat idle while two complete,
+schema-valid reports sat on disk. The operator noticed and reconciled from the artifacts
+directly.
+
+**Evidence.** Background task `bo084hhi2` (PID 97405), the watcher loop in this session. Its
+completion test was:
+
+```bash
+mo=$( [ -f "$OX" ] && grep -c APPEND_HERE "$OX" || echo 1 )
+[ "$so" -gt 3000 ] && [ "$mo" -eq 0 ] && ...
+```
+
+**Mechanism.** `grep -c` prints the count *and* exits non-zero when the count is zero. Zero
+matches is the success condition being waited for, so on exactly that condition the command
+printed `0`, exited 1, and the `|| echo 1` branch fired too. `mo` became the two-line string
+`"0\n1"`, and `[ "0\n1" -eq 0 ]` is never true. The watcher was structurally incapable of
+reporting success: the closer the artifacts got to done, the more certainly it stayed silent.
+
+Two things made this worse than a stuck loop. It failed *only* in the success case, so every
+partial-progress poll behaved correctly and the bug was invisible until it mattered. And its
+silence was indistinguishable from the condition it was built to detect — a reviewer stalled
+mid-delivery with the marker still present — which is the failure this same session had already
+hit three times, so the silence read as expected rather than anomalous.
+
+**Generalizable rule.** Never let a predicate's success path depend on a command whose exit
+status disagrees with its output. For `grep -c`, capture the count with `$(grep -c X f || true)`,
+or test the file directly with `! grep -q X f`. More generally: a watcher must be able to fail
+*loudly*, so give it a bounded timeout that prints the observed state rather than one that
+prints nothing, and prefer checking the artifact and the reviewer's real foreground process over
+a derived boolean. When a watcher goes quiet on work that should be finishing, read the artifact
+before believing the watcher.
+
+### SUPERSEDED - A negative test that passed for the wrong reason reported coverage that did not exist
+
+**Resolution.** Superseded by the same successor entry, which cites this as its
+first case. The remedy recorded here — break the code on purpose and require the
+new assertions to fail — became the general habit rather than a credential-rule
+habit, and the successor states it for every kind of check rather than for
+must-not-fire tests alone. Archived rather than deleted, per this journal's
+convention.
+
+### A negative test that passed for the wrong reason reported coverage that did not exist
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The credential-value rule was repaired once for grading the wrong span, and the
+repair broke in both directions: it cleared a real credential hidden behind a placeholder, and
+it rejected ordinary operational prose. Two independent reviewers found both on the next
+cycle. The repair had shipped with a must-not-fire test written specifically to catch the
+second class.
+
+**Evidence.** The cycle-4 negative set used `auth: see the runbook for the rotation
+procedure`. It passed. The cycle-5 reviewers used `token: rotation happens quarterly`, which
+failed. Both are the same shape — a credential-shaped key assigned English prose — and the
+difference is only that the first sentence begins with `see`, three characters, which falls
+under the rule's six-character length floor before any grading happens.
+
+**Mechanism.** The test exercised the length floor, not the rule it was written for. Its
+subject never reached the code under test, so it could not have failed no matter how wrong
+that code was. It looked like coverage of the false-positive category and was coverage of
+nothing.
+
+**Fix.** The replacement set is chosen so each case would fail for the *right* reason if the
+rule were wrong: first tokens that are long English words (`rotation`, `managed`,
+`internationalization`), capitalized forms, and a ticket number that carries a digit. Twenty
+eight assertions fail against the defective rule.
+
+**What surprised.** Reviewing my own test set would not have caught this. Reading it, the
+example plainly belongs to the category; only running it against deliberately broken code
+shows that it never touches the rule. Mutation is the only cheap check that distinguishes a
+test from a test-shaped statement.
+
+**Generalizable rule.** For any test that exists to prove a guard does *not* fire, verify it
+would fire if the guard were wrong. A negative case that is filtered out by a precondition
+before reaching the logic is worse than no test, because it is counted as coverage. Cheapest
+implementation: break the code on purpose and require the new assertions to fail. Every repair
+in this pilot now ships with that count recorded, which is how this one was caught.
+
+**Refs.** the upstream repository `infiquetra-claude-plugins`,
+cycle-5 reviews in [`docs/reviews/`](../reviews/).
+
 ## 2026-08-22
 
 ### SHIPPED - Emit the declared Fleet Core bundle so the package has a working entrypoint

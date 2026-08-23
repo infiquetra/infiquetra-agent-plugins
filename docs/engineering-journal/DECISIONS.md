@@ -1,5 +1,57 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-08-23
+
+### Review rounds are bounded at three, and a round's repairs ship as one release
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** A port under independent review gets at most three review rounds
+against a frozen candidate. Every confirmed finding from a round is batched into a
+single repair and a single release, and the fingerprint-bound evidence is re-run
+once per round rather than once per defect. If the third round still returns
+`repairs_requested`, work stops and the residual findings go to the operator with
+their evidence, rather than a fourth round beginning on the coordinator's own
+authority.
+
+**Rationale.** The UniFi pilot ran nine rounds and shipped one defect per release.
+Because the compatibility matrix and the post-activation readback are bound to the
+package fingerprint by test, each release invalidated both: nine ten-client matrix
+runs and eight readback captures for one port. Batching cycles 4 through 8 into
+one repair per round would have produced roughly two of those runs instead of six.
+
+The round bound is a separate lever from the batching and addresses a different
+failure. Rounds four through nine were all one rule, and the coordinator kept
+authorising its own next attempt because each round produced a real finding. A
+real finding is not evidence that another unattended round is the right response;
+after three, the operator is better placed to judge whether the rule needs a
+different approach than another repair.
+
+**Rejected alternatives.**
+
+- *Leave both unbounded, as the pilot ran.* This is the status quo that produced
+  the numbers above. Its one merit — every defect found is fixed immediately — is
+  preserved by batching, which fixes them all, just together.
+- *Bound the rounds but keep per-defect releases.* Keeps the evidence multiplier,
+  which is where the mechanical time actually went.
+- *Weaken the fingerprint binding so evidence survives a byte change.* Rejected
+  outright. That binding caught stale evidence repeatedly across the pilot and is
+  the reason the final record can be trusted. The cost is real and the answer is
+  fewer releases, not weaker evidence.
+- *Batch across rounds as well, reviewing only once at the end.* Discards the
+  independent check on each repair, which is what caught the two class-level
+  defects.
+
+**Exception.** A confirmed fail-open in a security rule is repaired and re-reviewed
+on its own, not batched. Holding a known-exploitable gap to fill a batch trades
+the wrong thing.
+
+**Revisit when.** A port hits the three-round bound twice, or a round's batch grows
+large enough that a reviewer cannot attribute a regression to a specific repair. The
+first says the bound is too tight for the work; the second says the batch is too
+coarse, and the batch should split before the bound moves.
+
+
 ## 2026-08-22
 
 ### Compatibility evidence is captured on the floor interpreter, by explicit path
