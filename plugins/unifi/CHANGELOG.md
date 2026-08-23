@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+## [2.0.5] - 2026-08-23
+
+### Fixed
+
+- **An innocent key no longer eats the line break before a strict one.** The
+  whitespace around the assignment delimiter was `\s*`, which spans a newline. A
+  `notes` key at the end of one line therefore matched, consumed the line break
+  with it, and left the strict assignment on the next line with no preceding
+  character to begin a fresh match against — so a credential written that way was
+  accepted. The repository gate splits lines before scanning and refused the same
+  text, which is how the two copies came to disagree. This is fail-open in the
+  copy operators load, and it is the residual half of the swallow defect 2.0.4
+  repaired along a single line.
+
+  An assignment is now one line in both copies: the whitespace around the
+  delimiter is horizontal only, and the value stops at a newline.
+
+- **An assignment split across two lines is matched by neither copy.** The
+  reference already said so; before this release the loaders matched it and only
+  the gate did not, so the documented guarantee was false in the direction that
+  flatters the loader.
+
+### Testing
+
+- A shared verdict corpus of twenty-seven lines is pinned in the loader suite and,
+  in the portable catalog, across all three copies of the rule. The two defects
+  above were invisible to per-part agreement tests: every constant and helper
+  matched while the verdicts differed.
+
 ## [2.0.4] - 2026-08-22
 
 ### Changed

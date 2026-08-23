@@ -1,5 +1,45 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-08-23
+
+### A completion watcher that can never fire looks exactly like work that never finished
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The cycle-7 review panel finished and wrote both artifacts. The coordinator's
+background watcher never reported them, so the coordinator sat idle while two complete,
+schema-valid reports sat on disk. The operator noticed and reconciled from the artifacts
+directly.
+
+**Evidence.** Background task `bo084hhi2` (PID 97405), the watcher loop in this session. Its
+completion test was:
+
+```bash
+mo=$( [ -f "$OX" ] && grep -c APPEND_HERE "$OX" || echo 1 )
+[ "$so" -gt 3000 ] && [ "$mo" -eq 0 ] && ...
+```
+
+**Mechanism.** `grep -c` prints the count *and* exits non-zero when the count is zero. Zero
+matches is the success condition being waited for, so on exactly that condition the command
+printed `0`, exited 1, and the `|| echo 1` branch fired too. `mo` became the two-line string
+`"0\n1"`, and `[ "0\n1" -eq 0 ]` is never true. The watcher was structurally incapable of
+reporting success: the closer the artifacts got to done, the more certainly it stayed silent.
+
+Two things made this worse than a stuck loop. It failed *only* in the success case, so every
+partial-progress poll behaved correctly and the bug was invisible until it mattered. And its
+silence was indistinguishable from the condition it was built to detect — a reviewer stalled
+mid-delivery with the marker still present — which is the failure this same session had already
+hit three times, so the silence read as expected rather than anomalous.
+
+**Generalizable rule.** Never let a predicate's success path depend on a command whose exit
+status disagrees with its output. For `grep -c`, capture the count with `$(grep -c X f || true)`,
+or test the file directly with `! grep -q X f`. More generally: a watcher must be able to fail
+*loudly*, so give it a bounded timeout that prints the observed state rather than one that
+prints nothing, and prefer checking the artifact and the reviewer's real foreground process over
+a derived boolean. When a watcher goes quiet on work that should be finishing, read the artifact
+before believing the watcher.
+
+
 ## 2026-08-22
 
 ### A negative test that passed for the wrong reason reported coverage that did not exist

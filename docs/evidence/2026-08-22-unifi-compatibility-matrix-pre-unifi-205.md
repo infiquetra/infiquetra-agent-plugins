@@ -1,4 +1,6 @@
-<!-- matrix-status: current -->
+<!-- matrix-status: superseded -->
+<!-- superseded-by: 2026-08-22-unifi-compatibility-matrix.md -->
+<!-- superseded-reason: The forty stage results describe portable package 2.0.4 at tree digest 81c0503c..., before unifi 2.0.5 line-scoped the credential assignment. In 2.0.4 the whitespace around the delimiter spanned a newline, so an innocent key at the end of a line consumed the break and hid a strict assignment on the next one: both loaders accepted a credential the repository gate refused, and a documented guarantee about split assignments described the weaker of the two copies. The shipped package is 2.0.5 and fingerprints to a8fd46a7..., so this record no longer identifies the tree it claims to describe. Its client results and its Cursor correction stand and are carried forward unchanged. -->
 
 # Ten-client compatibility matrix — portable UniFi package
 
@@ -12,9 +14,9 @@ The point of the exercise is to learn which clients can consume a portable
 package and which cannot, before anyone commits to a distribution path. It is a
 survey, not a release gate.
 
-## This is the seventh re-run, and what it replaces
+## This is the sixth re-run, and what it replaces
 
-Seven earlier publications of this matrix are preserved as history, each retired
+Six earlier publications of this matrix are preserved as history, each retired
 for a different reason:
 
 1. [`2026-08-22-unifi-compatibility-matrix-pre-repair.md`](2026-08-22-unifi-compatibility-matrix-pre-repair.md)
@@ -40,40 +42,42 @@ for a different reason:
    assessed portable package `2.0.3` at tree digest `34915c40…`, after the
    credential-value rule was repaired for a placeholder bypass but while that
    repair's own two defects were still shipping.
-7. [`2026-08-22-unifi-compatibility-matrix-pre-unifi-205.md`](2026-08-22-unifi-compatibility-matrix-pre-unifi-205.md)
-   assessed portable package `2.0.4` at tree digest `81c0503c…`, after the value
-   heuristic was replaced by the field-aware key policy but while the rule still
-   read an assignment across a line break.
 
 This document is the re-run against the package as it now ships. What moved since
 the last publication is one repair, at the boundary that owns it:
 
-- **UniFi `2.0.5`** — an assignment is now one line. The whitespace around the
-  delimiter was `\s*`, which spans a newline, so an innocent key at the end of a
-  line matched, consumed the line break with it, and left the strict assignment on
-  the next line with no preceding character to begin a fresh match against. Both
-  loaders accepted a credential written that way; the repository gate, which
-  splits lines before scanning, refused it. That is fail-open in the copy
-  operators load. The same greedy whitespace made the reference's claim about
-  split assignments false, in the direction that flattered the loader. Horizontal
-  whitespace around the delimiter, and a value that stops at the break, closes
-  both.
+- **UniFi `2.0.4`** — the credential value rule no longer grades the value. The
+  heuristic it replaced could not work, and failed in both directions at once:
+  `oauth2` carries a digit and 2.585 bits of entropy per character, so ordinary
+  technical prose was refused, while `rainbowtrout` carries 3.085 bits and no
+  digit, so a real password was accepted. The rule now grades the *key*. Under a
+  strict secret-bearing key — derived from the same taxonomy that grades property
+  names — a single substantive literal is a credential whatever it looks like,
+  with no entropy floor, no digit test and no length bar. A strict key followed by
+  several substantive words is a sentence about a credential, and that is allowed
+  in `description` and `notes`, the two fields the schema keeps for prose.
 
-Every client reaches the same verdict it did in the sixth run: nine work directly,
-one works through an adapter, none fail. Two things about the *clients* moved:
+  The manifest description was also stale: it still named "the corrected 2.0.3
+  revision" while shipping as 2.0.4. Qwen echoes that description back verbatim,
+  so the correction is visible in this run's own load-stage evidence.
 
-- **Grok** and **Agy** are now launched through a local auto-trust wrapper that
-  resolves the real executable through the client home. An isolated home does not
-  contain it, so the wrapper exits before reaching the client, and the first
-  attempt at each recorded nothing. Each run now supplies the wrapper's own
-  documented override naming the real binary. This is a property of the operator's
-  launcher and of this method's isolated home, not of the package — recording a
-  package failure for it would repeat the mistake this matrix already corrected
-  once, when an emptied client home was mistaken for a Cursor authentication
-  failure.
-- **Muse**'s per-unit content digests are unchanged, because neither skill unit
-  changed in 2.0.5. Only the rule, its two target-owned copies, the reference and
-  the manifest moved.
+Every client reaches the same verdict it did in the fifth run: nine work directly,
+one works through an adapter, none fail. Six things about the *clients* moved, and
+each is recorded in the stage evidence rather than smoothed over:
+
+- **Claude Code** is now `2.1.241`, and its projected always-on cost for this
+  package rose from about 82 tokens to about 149 without any skill text changing.
+  That is the client's estimator moving, not the package.
+- **Qwen** is now `0.22.0` and its installer prompts for confirmation; with no
+  answer on stdin it lists the skills and stops without installing.
+- **Gemini CLI** `skills link` prompts the same way, and hangs rather than
+  declining when stdin is closed.
+- **Muse** needs `--force` on the JSON install to report a digest once placement
+  has already installed the unit.
+- **Agy** is now `1.1.19`.
+- **Grok**'s `plugin details` takes the plugin *name*. The fifth run recorded the
+  command as taking the install id, which returns "Plugin not found". That is a
+  correction to what was written down, not a change in the client.
 
 ## What this document is, and is not
 
@@ -356,12 +360,12 @@ installation identifier.
 {
   "$schema": "../../schemas/compatibility-matrix.schema.json",
   "schema_version": "1",
-  "assessed_on": "2026-08-23",
+  "assessed_on": "2026-08-22",
   "package": {
     "name": "unifi",
-    "version": "2.0.5",
+    "version": "2.0.4",
     "file_count": 23,
-    "tree_sha256": "a8fd46a73824ef08c3e7ce6813dfd94884fb14e0b9eb6588d4d0ba1988b647af"
+    "tree_sha256": "81c0503cc4b5009c7feca2ea1665df24c719c2682c4e4f2593eeeead0710ee4e"
   },
   "method": {
     "stages": [
@@ -370,7 +374,7 @@ installation identifier.
       "load",
       "invocation"
     ],
-    "isolation": "Each client ran against its own empty home directory in a scratch area, so no assessment read or wrote the operator's real client configuration. Every stage result reflects a first-run install rather than an already-configured machine. The package root handed to each client was a scratch copy of the shipped tree, fingerprinted before the run and equal to it at 23 files, and recomputed after the run and still equal. Every invocation stage ran on python3.12, CPython 3.12.13, which is the catalog's declared minimum interpreter, in a throwaway virtual environment holding only the two third-party dependencies the package imports, requests and urllib3. Running the assessment on a newer default interpreter is how a previous floor break reached a green report, so the floor is exercised by explicit path rather than assumed. Two clients, Grok and Agy, are launched through a local auto-trust wrapper that resolves the real executable through the client home. Under an isolated home that lookup fails, so each run supplies the wrapper's own documented override (GROK_AUTO_TRUST_REAL_BIN, AGY_AUTO_TRUST_REAL_BIN) pointing at the real binary. That is a property of the operator's launcher and of this method's isolated home, not of the package; recording a package failure for it would be false.",
+    "isolation": "Each client ran against its own empty home directory in a scratch area, so no assessment read or wrote the operator's real client configuration. Every stage result reflects a first-run install rather than an already-configured machine. The package root handed to each client was a scratch copy of the shipped tree, fingerprinted before the run and equal to it at 23 files, and recomputed after the run and still equal. Every invocation stage ran on python3.12, CPython 3.12.13, which is the catalog's declared minimum interpreter, in a throwaway virtual environment holding only the two third-party dependencies the package imports, requests and urllib3. Running the assessment on a newer default interpreter is how a previous floor break reached a green report, so the floor is exercised by explicit path rather than assumed.",
     "credentials": "No client was authenticated and no controller credential was supplied at any stage. Every UNIFI_ variable was removed from the environment before each invocation. Where a client requires credentials before it will report extension state, that stage is recorded blocked with the requirement named rather than satisfied.",
     "network": "No controller call was made at any stage. The invocation stage runs the package's own entrypoint with its credential-free help action and no host argument, so no request leaves the machine. No mutating operation was invoked and no command passed a write confirmation. Where a client required an explicit local installation trust before installing from a directory, that trust was given and is named in the client's row; it authorizes a local install and is not a write confirmation against any controller."
   },
@@ -392,7 +396,7 @@ installation identifier.
         "load": {
           "result": "executed",
           "command": "claude --plugin-dir <package> plugin details unifi",
-          "evidence": "Component inventory resolved: skills 2, named unifi-network and unifi-protect; agents 0; hooks 0; MCP servers 0; LSP servers 0. The com.infiquetra.claude client extension directory is resolved by the same session-scoped flag under its own directory name."
+          "evidence": "Component inventory resolved: skills 2, named unifi-network and unifi-protect; agents 0; hooks 0; MCP servers 0; LSP servers 0. Projected always-on cost about 149 tokens, split about 90 for unifi-network and about 60 for unifi-protect; the client's estimate rose from about 82 tokens at 2.0.3 without any skill text changing, so it is the client's estimator that moved, not the package. The com.infiquetra.claude client extension directory is resolved by the same session-scoped flag, under its own directory name rather than as unifi."
         },
         "invocation": {
           "result": "executed",
@@ -474,7 +478,7 @@ installation identifier.
         "load": {
           "result": "executed",
           "command": "qwen extensions list",
-          "evidence": "Reports unifi version 2.0.5 with both skills enabled at user and workspace scope, and echoes the manifest description including its 2.0.5 revision text."
+          "evidence": "Reports unifi version 2.0.4 with both skills, unifi-network and unifi-protect, enabled at user and workspace scope, and echoes the manifest description including its 2.0.4 revision text. Origin is recorded as AgentPlugins and the source as the local portable root."
         },
         "invocation": {
           "result": "executed",
@@ -491,8 +495,8 @@ installation identifier.
       "stages": {
         "placement": {
           "result": "executed",
-          "command": "grok plugin install <package> --trust  # GROK_AUTO_TRUST_REAL_BIN set for the isolated home",
-          "evidence": "Installed as unifi-37c9f17b. The launcher on PATH is a local auto-trust wrapper resolving its real binary through the client home, which an isolated home does not contain, so the wrapper's own override names the real binary. Without it the wrapper exits before reaching the client. The previous run did not need this; the wrapper is newer than that run."
+          "command": "grok plugin install <package> --trust",
+          "evidence": "Validated first with 'grok plugin validate <package>', which reported the manifest valid, name unifi, version 2.0.3, and one skill directory with no command or agent directories. Installing from a directory requires an explicit local trust flag, which the client names in its own refusal message; that flag is an installation trust, not a write confirmation against any controller. With it, one plugin installed."
         },
         "discovery": {
           "result": "executed",
@@ -502,7 +506,7 @@ installation identifier.
         "load": {
           "result": "executed",
           "command": "grok plugin details <plugin-name>",
-          "evidence": "Reports unifi v2.0.5 with its manifest description and one skill directory. The installed tree recomputes to 23 files at a8fd46a7..., equal to the source tree."
+          "evidence": "Reports unifi v2.0.4 with its manifest description and one skill directory, resolved under install id unifi-1007756a. The command takes the plugin name, not the install id: the fifth run recorded it as 'grok plugin details <plugin-id>', which returns 'Plugin not found'. That is a correction to the recorded command, not a change in the client."
         },
         "invocation": {
           "result": "executed",
@@ -586,7 +590,7 @@ installation identifier.
         "load": {
           "result": "executed",
           "command": "muse skills install <skill> --scope user --force --json",
-          "evidence": "Content digest per unit over 4 files each: unifi-network sha256:7998fad3...9be7, unifi-protect sha256:102418488...32ca, unchanged from the previous run because neither skill unit changed in 2.0.5. Both installed units are byte-identical to the source units."
+          "evidence": "Content digest per unit over 4 files each: unifi-network sha256:7998fad3...9be7, unifi-protect sha256:102418488...32ca. --force is required because placement already installed the unit; without it the client returns skill-already-installed and reports no digest. Both installed units are byte-identical to the source units, recomputed with this repository's own tree digest: unifi-network 3650ae42..., unifi-protect ba06e585...."
         },
         "invocation": {
           "result": "executed",
@@ -603,8 +607,8 @@ installation identifier.
       "stages": {
         "placement": {
           "result": "executed",
-          "command": "agy plugin install <package>  # AGY_AUTO_TRUST_REAL_BIN set for the isolated home",
-          "evidence": "Installed under the client's own plugins directory, two skills processed, no agents, commands, MCP servers or hooks. Same auto-trust wrapper arrangement as Grok, and the same override for the same reason."
+          "command": "agy plugin install <package>",
+          "evidence": "Validated the portable package root first with 'agy plugin validate <package>', reporting ok with skills 2 processed and agents, commands, mcpServers, and hooks each skipped as not found, then installed from the local path into a client-owned copy."
         },
         "discovery": {
           "result": "executed",
@@ -614,7 +618,7 @@ installation identifier.
         "load": {
           "result": "executed",
           "command": "agy plugin validate <client-home>/.gemini/config/plugins/unifi",
-          "evidence": "Validation reports ok with skills 2 processed. The installed tree recomputes to 23 files at a8fd46a7..., equal to the source tree."
+          "evidence": "Re-validating the client-owned installed copy returned the same result as the source: ok, skills 2 processed, every other component absent. Validated separately, the com.infiquetra.claude client extension directory yielded skills 1 processed, agents 1 processed, and commands 1 processed converted to skills."
         },
         "invocation": {
           "result": "executed",
@@ -642,7 +646,7 @@ installation identifier.
         "load": {
           "result": "executed",
           "command": "hermes prompt-size --json",
-          "evidence": "prompt-size --json resolves both skills into the skills index of the composed prompt. The run used an isolated client home; the operator's live ~/.hermes/skills held 22 entries before and after and was not written to."
+          "evidence": "prompt-size --json resolves both skills into the skills index of the composed prompt. The run used an isolated client home; the operator's live ~/.hermes/skills directory held 22 entries before and after and was not written to."
         },
         "invocation": {
           "result": "executed",

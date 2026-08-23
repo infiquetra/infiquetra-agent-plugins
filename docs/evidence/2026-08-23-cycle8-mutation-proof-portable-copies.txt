@@ -1,0 +1,71 @@
+# Cycle-8 mutation proof — portable target-owned copies
+# The digests below are verified against the committed blobs after the
+# commit lands; the verification line is appended at the end of this file.
+site_profile.py sha256: b38743345767dc89b6c097ee635cdd52595fbad96927a38209ec3650445b8651
+check_repo.py   sha256: 30a61361b9ff1863c1a6b909692b11c2946836ce866fab0b766871406129b999
+
+## MUTATION: line-scoping removed in the target copy (F-02 returns)  [plugins/unifi/scripts/site_profile.py]
+FAIL: test_the_assignment_family_is_the_same_rule (tests.test_site_profile.CredentialRuleDriftTest.test_the_assignment_family_is_the_same_rule)
+FAIL: test_all_three_copies_reach_the_recorded_verdict (tests.test_site_profile.CredentialVerdictCorpusTest.test_all_three_copies_reach_the_recorded_verdict) (text='see notes:\npassword=hunter2')
+FAIL: test_all_three_copies_reach_the_recorded_verdict (tests.test_site_profile.CredentialVerdictCorpusTest.test_all_three_copies_reach_the_recorded_verdict) (text='password:\n  hunter2')
+Ran 111 tests in 0.220s
+FAILED (failures=3)
+
+## MUTATION: value class allows newlines in the target copy (F-01 claim goes false)  [plugins/unifi/scripts/site_profile.py]
+FAIL: test_the_assignment_family_is_the_same_rule (tests.test_site_profile.CredentialRuleDriftTest.test_the_assignment_family_is_the_same_rule)
+FAIL: test_all_three_copies_reach_the_recorded_verdict (tests.test_site_profile.CredentialVerdictCorpusTest.test_all_three_copies_reach_the_recorded_verdict) (text='password:\n  hunter2')
+Ran 111 tests in 0.216s
+FAILED (failures=2)
+
+## MUTATION: line-scoping removed in the gate  [scripts/check_repo.py]
+FAIL: test_the_assignment_family_is_the_same_rule (tests.test_site_profile.CredentialRuleDriftTest.test_the_assignment_family_is_the_same_rule)
+Ran 111 tests in 0.210s
+FAILED (failures=1)
+
+## MUTATION: strict-key function weakened (target)  [plugins/unifi/scripts/site_profile.py]
+FAIL: test_both_copies_agree_which_keys_are_strict (tests.test_site_profile.CredentialRuleDriftTest.test_both_copies_agree_which_keys_are_strict) (key='auth')
+FAIL: test_both_copies_agree_which_keys_are_strict (tests.test_site_profile.CredentialRuleDriftTest.test_both_copies_agree_which_keys_are_strict) (key='accesskey')
+FAIL: test_both_copies_agree_which_keys_are_strict (tests.test_site_profile.CredentialRuleDriftTest.test_both_copies_agree_which_keys_are_strict) (key='access-key')
+FAIL: test_the_strict_key_set_is_the_property_name_taxonomy (tests.test_site_profile.ValidationTest.test_the_strict_key_set_is_the_property_name_taxonomy)
+Ran 111 tests in 0.214s
+FAILED (failures=4)
+
+## MUTATION: descriptive separation removed (target)  [plugins/unifi/scripts/site_profile.py]
+FAIL: test_the_prose_allowance_does_not_reach_a_structured_field (tests.test_site_profile.ValidationTest.test_the_prose_allowance_does_not_reach_a_structured_field)
+Ran 111 tests in 0.215s
+FAILED (failures=1)
+
+## MUTATION: strict rule weakened back to a length floor (target)  [plugins/unifi/scripts/site_profile.py]
+FAIL: test_both_copies_reach_the_same_verdict_on_a_line (tests.test_site_profile.CredentialRuleDriftTest.test_both_copies_reach_the_same_verdict_on_a_line) (line='password: rainbowtrout')
+FAIL: test_both_copies_reach_the_same_verdict_on_a_line (tests.test_site_profile.CredentialRuleDriftTest.test_both_copies_reach_the_same_verdict_on_a_line) (line='password: sunshine')
+FAIL: test_both_copies_reach_the_same_verdict_on_a_line (tests.test_site_profile.CredentialRuleDriftTest.test_both_copies_reach_the_same_verdict_on_a_line) (line='api_key: correcthorsebattery')
+FAIL: test_both_copies_reach_the_same_verdict_on_a_line (tests.test_site_profile.CredentialRuleDriftTest.test_both_copies_reach_the_same_verdict_on_a_line) (line='password: secret')
+FAIL: test_both_copies_reach_the_same_verdict_on_a_line (tests.test_site_profile.CredentialRuleDriftTest.test_both_copies_reach_the_same_verdict_on_a_line) (line='password: hunter2')
+FAIL: test_all_three_copies_reach_the_recorded_verdict (tests.test_site_profile.CredentialVerdictCorpusTest.test_all_three_copies_reach_the_recorded_verdict) (text='password: rainbowtrout')
+FAIL: test_all_three_copies_reach_the_recorded_verdict (tests.test_site_profile.CredentialVerdictCorpusTest.test_all_three_copies_reach_the_recorded_verdict) (text='password: sunshine')
+FAIL: test_all_three_copies_reach_the_recorded_verdict (tests.test_site_profile.CredentialVerdictCorpusTest.test_all_three_copies_reach_the_recorded_verdict) (text='api_key: correcthorsebattery')
+
+## MUTATION: template collapse removed (target)  [plugins/unifi/scripts/site_profile.py]
+ERROR: test_the_established_safe_forms_still_pass (tests.test_site_profile.ValidationTest.test_the_established_safe_forms_still_pass) (value='api_key: {{ lookup }}')
+FAIL: test_both_copies_reach_the_same_verdict_on_a_line (tests.test_site_profile.CredentialRuleDriftTest.test_both_copies_reach_the_same_verdict_on_a_line) (line='token: {{ lookup }}')
+FAIL: test_both_copies_reduce_a_value_to_the_same_tokens (tests.test_site_profile.CredentialRuleDriftTest.test_both_copies_reduce_a_value_to_the_same_tokens) (span='{{ lookup }}')
+FAIL: test_all_three_copies_reach_the_recorded_verdict (tests.test_site_profile.CredentialVerdictCorpusTest.test_all_three_copies_reach_the_recorded_verdict) (text='api_key: {{ lookup }}')
+Ran 111 tests in 0.208s
+FAILED (failures=3, errors=1)
+
+## MUTATION: gate stops enforcing strict keys  [scripts/check_repo.py]
+FAIL: test_live_repository_passes_every_check (tests.test_check_repo.RepositoryValidationTests.test_live_repository_passes_every_check)
+FAIL: test_a_private_key_block_is_reported (tests.test_check_repo.SecretFreeValueTests.test_a_private_key_block_is_reported)
+FAIL: test_a_well_known_credential_format_in_package_source_is_reported (tests.test_check_repo.SecretFreeValueTests.test_a_well_known_credential_format_in_package_source_is_reported)
+FAIL: test_bearer_token_in_a_description_is_reported (tests.test_check_repo.SecretFreeValueTests.test_bearer_token_in_a_description_is_reported)
+FAIL: test_credential_handling_source_is_not_reported (tests.test_check_repo.SecretFreeValueTests.test_credential_handling_source_is_not_reported)
+FAIL: test_credential_in_an_allowed_free_text_field_is_reported (tests.test_check_repo.SecretFreeValueTests.test_credential_in_an_allowed_free_text_field_is_reported)
+FAIL: test_values_that_name_a_secret_rather_than_being_one_pass (tests.test_check_repo.SecretFreeValueTests.test_values_that_name_a_secret_rather_than_being_one_pass)
+Ran 111 tests in 0.215s
+
+## RESTORED
+site_profile.py sha256: b38743345767dc89b6c097ee635cdd52595fbad96927a38209ec3650445b8651
+check_repo.py   sha256: 30a61361b9ff1863c1a6b909692b11c2946836ce866fab0b766871406129b999
+both byte-identical to pristine: YES
+Ran 111 tests in 0.199s
+OK

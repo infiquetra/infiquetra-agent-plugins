@@ -58,14 +58,16 @@ the document is now inspected, at any depth, by two narrow families:
 The loader names the property and says which family fired, so the report is
 actionable rather than a bare refusal.
 
-> **What changed in 2.0.4, and why it is written down here.** The rule used to
+> **What changed in 2.0.4 and 2.0.5, and why it is written down here.** The rule used to
 > grade the *value*: at least six characters clearing 2.5 bits of entropy, later
 > narrowed to "carries a digit, or is 24+ characters without one". Grading the
 > value cannot work, and it failed in both directions at once. `oauth2` carries a
 > digit and 2.585 bits, so ordinary technical prose was refused; `rainbowtrout`
 > carries 3.085 bits and no digit, so a real password was accepted. The
 > discriminator fired on the lower-entropy inputs and passed the higher-entropy
-> ones. The key decides now, and the value is not graded at all.
+> ones. The key decides now, and the value is not graded at all. 2.0.5 then
+> made an assignment line-scoped in every copy, after a review found the
+> loaders reading across a line break where the gate did not.
 
 ### What the value rule deliberately does not do
 
@@ -99,7 +101,16 @@ operator who is told "credentials are excluded" will act on it.
   `password: <literal>` behind and the repository gate would refuse the file —
   correctly, since it cannot know a leak from an illustration.
 - **It reads one line at a time.** An assignment split across two lines is not
-  matched by either the loader or the gate.
+  matched by either the loader or the gate: the whitespace around the delimiter is
+  horizontal only, and the value stops at the line break.
+
+  This sentence was false when it was first written. The loaders used `\s*`, which
+  spans a newline, so they *did* match a split assignment while the gate did not —
+  the documented guarantee described the weaker of the two, in the direction that
+  flattered the loader. Worse, the same greedy whitespace let an innocent key at
+  the end of a line consume the line break and hide a strict assignment on the
+  next one, which the gate caught and the loaders did not. Both are repaired in
+  2.0.5, and a shared verdict corpus now pins the two shapes in all three copies.
 
 So the accurate wording of the guarantee is this: **a profile is validated to be
 free of credential-shaped field names, and of credentials written as values in

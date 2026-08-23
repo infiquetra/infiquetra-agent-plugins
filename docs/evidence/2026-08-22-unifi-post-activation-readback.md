@@ -1,7 +1,7 @@
-# Post-activation readback — portable UniFi package 2.0.4
+# Post-activation readback — portable UniFi package 2.0.5
 
 The UniFi package in this repository, `plugins/unifi/`, is a derived copy of an
-upstream Claude Code plugin that was released as version 2.0.4 and activated
+upstream Claude Code plugin that was released as version 2.0.5 and activated
 upstream. The portability pilot plan requires two things after any activation,
 and neither had been captured:
 
@@ -19,31 +19,25 @@ on 22 August 2026.
 
 ## This readback was re-captured, and why
 
-This is the sixth capture. The first described the package at tree digest
-`6e6b57c1…`; the second, at `da46ca77…`, followed the re-synchronization of the
-portable Fleet Core slice to release 0.25.1; the third, at `cafe8836…`, followed
-the re-synchronization from UniFi 2.0.1; the fourth, at `4c256bb2…`, followed
-Fleet Core 0.25.2 and UniFi 2.0.2; the fifth, at `34915c40…`, followed UniFi
-2.0.3.
+This is the seventh capture. The first six described the package at tree digests
+`6e6b57c1…`, `da46ca77…`, `cafe8836…`, `4c256bb2…`, `34915c40…` and `81c0503c…`.
 
-This capture follows UniFi `2.0.4`, which replaces the credential value
-heuristic with a field-aware key policy. The rule 2.0.3 shipped graded the
-*value*, and a sixth review cycle found it failing in both directions at once:
-`oauth2` carries a digit and 2.585 bits of entropy per character, so ordinary
-technical prose was refused, while `rainbowtrout` carries 3.085 bits and no
-digit, so a real password was accepted. The rule now grades the *key* — under a
-strict secret-bearing key a single substantive literal is a credential whatever
-it looks like, and a strict key followed by several substantive words is a
-sentence, allowed in the two fields the schema keeps for prose.
+This capture follows UniFi `2.0.5`, which makes a credential assignment one line.
+The whitespace around the delimiter was `\s*`, which spans a newline, so an
+innocent key at the end of a line consumed the line break and hid a strict
+assignment on the next one — accepted by both loaders, refused by the repository
+gate. That was fail-open in the copy an operator installs, which is exactly what
+this readback exists to test.
 
-The profile-present state below is not a neutral fixture. Its `notes` value is
-`credentials: oauth2 is configured at the controller`, which 2.0.3 refused and
-2.0.4 accepts, so the three-state check also proves the repair from installed
-bytes rather than from the source tree.
+The profile states below are not neutral fixtures. One `notes` value is
+`credentials: oauth2 is configured at the controller`, which 2.0.3 refused and the
+field-aware rule accepts. A second places a strict key and its literal on opposite
+sides of a line break, the shape 2.0.4 accepted and 2.0.5 refuses. Both are run against installed bytes, so the
+three-state check also proves each repair where it actually has to hold.
 
 The byte-copied loader and the manifest version changed, so every fingerprint in
 the fourth capture stopped identifying the shipped bytes. The Fleet Core slice did
-not change: its subtree is byte-identical between `3b5faa6c` and `a46714b8`, which
+not change: its subtree is byte-identical between `3b5faa6c` and `46825c8d`, which
 was verified rather than assumed, so the two generated bundles carry the same
 digest they did in the previous capture.
 
@@ -82,19 +76,19 @@ Four links, each verified rather than assumed:
 
 | Link | What identifies it | How it was checked |
 |---|---|---|
-| Activated upstream release | commit `a46714b8ef786a47d205217914e7cd4928f6dd92`, manifest version `2.0.4` | read from a local clone at that commit, read-only |
+| Activated upstream release | commit `46825c8da3dba2067f6bc77a8845d833ab62a468`, manifest version `2.0.5` | read from a local clone at that commit, read-only |
 | Synchronization pin | `plugins/unifi/PROVENANCE.json` records that same commit and version | read from this repository |
-| Portable package tree | 23 files, tree digest `81c0503c…ee4e` | recomputed from `plugins/unifi/` |
+| Portable package tree | 23 files, tree digest `a8fd46a7…47af` | recomputed from `plugins/unifi/` |
 | Installed copies | same file count, same tree digest | recomputed from each client-owned installed tree |
 
 Read read-only from the same local clone, the upstream manifest at that commit
-declares `unifi` version `2.0.4` and `fleet-core` version `0.25.2`.
+declares `unifi` version `2.0.5` and `fleet-core` version `0.25.2`.
 
 **The two portable slices pin two different revisions, and that is deliberate.**
 `plugins/fleet-core/PROVENANCE.json` pins `3b5faa6c` and
-`plugins/unifi/PROVENANCE.json` pins `a46714b8`. The Fleet Core pin names the
+`plugins/unifi/PROVENANCE.json` pins `46825c8d`. The Fleet Core pin names the
 revision at which the upstream `plugins/fleet-core` subtree last changed, which
-is the rule that slice was created under; `a46714b8` is a descendant of it on
+is the rule that slice was created under; `46825c8d` is a descendant of it on
 the same default branch, and `git diff` over `plugins/fleet-core` between the two
 revisions is empty, which was verified rather than assumed. So the two pins name
 one consistent upstream state — the same state read at the two points where each
@@ -118,8 +112,8 @@ what it holds is evidence, not proof.
 
 | Client | Install unit | Client-reported version | Client-reported digest | Recomputed from installed bytes |
 |---|---|---|---|---|
-| Grok 1.0.5 | package root | `unifi v2.0.4` | none reported | 23 files, `81c0503c…ee4e` — equal to the source tree |
-| Agy 1.1.18 | package root | not reported; 2 skills processed | none reported | 23 files, `81c0503c…ee4e` — equal to the source tree |
+| Grok 1.0.5 | package root | `unifi v2.0.5` | none reported | 23 files, `a8fd46a7…47af` — equal to the source tree |
+| Agy 1.1.18 | package root | not reported; 2 skills processed | none reported | 23 files, `a8fd46a7…47af` — equal to the source tree |
 | Muse 0.2.1 | each skill directory | not reported; activation on, 0 diagnostics | content digest per unit, 4 files each | `unifi-network` 4 files `3650ae42…113b`; `unifi-protect` 4 files `ba06e585…5a4f` — equal to the source units |
 
 Two notes on reading that table honestly:
@@ -169,7 +163,7 @@ discovery-only answer for a caller to mistake for success.
 
 **Proved.** A client installing this package from a cold start holds exactly the
 bytes this repository ships, which are the bytes synchronized from the activated
-upstream 2.0.4 release; the installed copy's entrypoints run credential-free on
+upstream 2.0.5 release; the installed copy's entrypoints run credential-free on
 the catalog's declared minimum interpreter; and the installed profile loader
 distinguishes all three profile states with the documented exit statuses, on that
 same interpreter.
@@ -200,13 +194,13 @@ support.
 ```json
 {
   "schema_version": "1",
-  "captured_on": "2026-08-22",
+  "captured_on": "2026-08-23",
   "release": {
     "name": "unifi",
-    "version": "2.0.4",
+    "version": "2.0.5",
     "file_count": 23,
-    "tree_sha256": "81c0503cc4b5009c7feca2ea1665df24c719c2682c4e4f2593eeeead0710ee4e",
-    "upstream_commit": "a46714b8ef786a47d205217914e7cd4928f6dd92",
+    "tree_sha256": "a8fd46a73824ef08c3e7ce6813dfd94884fb14e0b9eb6588d4d0ba1988b647af",
+    "upstream_commit": "46825c8da3dba2067f6bc77a8845d833ab62a468",
     "units": {
       "unifi-network": {
         "file_count": 4,
@@ -228,10 +222,10 @@ support.
       "client": "Grok",
       "client_version": "1.0.5",
       "install_unit": "package-root",
-      "reported_version": "2.0.4",
+      "reported_version": "2.0.5",
       "reported_digest": null,
       "recomputed_file_count": 23,
-      "recomputed_tree_sha256": "81c0503cc4b5009c7feca2ea1665df24c719c2682c4e4f2593eeeead0710ee4e",
+      "recomputed_tree_sha256": "a8fd46a73824ef08c3e7ce6813dfd94884fb14e0b9eb6588d4d0ba1988b647af",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },
@@ -242,7 +236,7 @@ support.
       "reported_version": null,
       "reported_digest": null,
       "recomputed_file_count": 23,
-      "recomputed_tree_sha256": "81c0503cc4b5009c7feca2ea1665df24c719c2682c4e4f2593eeeead0710ee4e",
+      "recomputed_tree_sha256": "a8fd46a73824ef08c3e7ce6813dfd94884fb14e0b9eb6588d4d0ba1988b647af",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },
@@ -296,7 +290,7 @@ support.
       "subject_count": 2,
       "policy_count": 1,
       "constraint_count": 1,
-      "note": "The fixture's notes value carries technical prose under a strict secret-bearing key, 'credentials: oauth2 is configured at the controller'. The 2.0.3 rule refused it; 2.0.4 accepts it, so this state also exercises the repair from installed bytes."
+      "note": "The fixture's notes value carries technical prose under a strict secret-bearing key -- a credentials key followed by 'oauth2 is configured at the controller' -- which 2.0.3 refused and the field-aware rule accepts. A second fixture places a strict key and its literal on opposite sides of a line break, the shape 2.0.4 accepted and 2.0.5 refuses with ProfileInvalidError. Both are exercised from installed bytes rather than from the source tree. Neither shape is written out here as an assignment, because this document is public evidence and its own rule forbids that."
     },
     {
       "state": "unreadable",

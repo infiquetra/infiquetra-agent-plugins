@@ -7,6 +7,8 @@ validation job as well as under pytest in the dependency-bearing job.
 from __future__ import annotations
 
 import ast
+import hashlib
+import importlib.util
 import json
 import subprocess
 import sys
@@ -953,6 +955,145 @@ class CredentialRuleDriftTest(unittest.TestCase):
         self.assertNotIn("check_repo", imported)
         self.assertLessEqual(imported, set(sys.stdlib_module_names))
 
+
+
+#: One expected verdict per line, asserted against all three copies of the rule.
+#:
+#: This corpus exists because the copies drifted on shapes none of their
+#: individual suites carried. Every constant and helper matched while the
+#: verdicts differed: the two loaders read an assignment across a line break and
+#: the repository gate, which splits lines before scanning, did not. One accepted
+#: a credential the other refused, and every per-part agreement test passed
+#: throughout. Pinning the verdict is the only assertion that could have caught
+#: it.
+CREDENTIAL_VERDICT_CORPUS = (
+    # (text, fires)
+    ("password: rainbowtrout", True),
+    ("password: sunshine", True),
+    ("api_key: correcthorsebattery", True),
+    ("password: secret", True),
+    ("password: hunter2", True),
+    ("secret: internationalization", True),
+    ("authorization: Bearer <redacted> qY7vP2xK9rLm4aZbC8dEfGhJkNpQ", True),
+    ("password: abc123 <redacted>", True),
+    ("notes: controller password=hunter2", True),
+    ("description: call it with bearer=aB9dEf2GhJ4kLm7Q", True),
+    # An innocent key must not eat the line break and the strict assignment
+    # standing behind it. This shape was fail-open in both loaders.
+    ("see notes:\npassword=hunter2", True),
+    ("credentials: oauth2 is configured at the controller", False),
+    ("token: base64 of the site identifier", False),
+    ("secret: sha256 checksum recorded in the manifest", False),
+    ("auth: vlan40 handles the guest network", False),
+    ("token: rotation happens quarterly", False),
+    ("auth: see ticket ABC-1234 for rotation", False),
+    ("password: redacted", False),
+    ("password: env:UNIFI_API_KEY", False),
+    ("password: vault:kv/unifi", False),
+    ("password: ${UNIFI_KEY}", False),
+    ("api_key: {{ lookup }}", False),
+    ("token: %(UNIFI_TOKEN)s", False),
+    ("authorization: Bearer <token>", False),
+    ("password: change-me", False),
+    ("author: someone wrote this note", False),
+    # An assignment split across a line break is matched by no copy. The
+    # reference states exactly this, so it is pinned rather than described.
+    ("password:\n  hunter2", False),
+)
+
+
+class CredentialVerdictCorpusTest(unittest.TestCase):
+    """The end-to-end pin: same line in, same verdict out, in all three copies."""
+
+    def _loader(self):
+        path = (
+            Path(site_profile.__file__).parent.parent
+            / "com.infiquetra.claude"
+            / "skills"
+            / "unifi-network"
+            / "scripts"
+            / "site_profile_loader.py"
+        )
+        spec = importlib.util.spec_from_file_location("bundled_site_profile_loader", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    def test_all_three_copies_reach_the_recorded_verdict(self) -> None:
+        loader = self._loader()
+        for text, fires in CREDENTIAL_VERDICT_CORPUS:
+            with self.subTest(text=text):
+                target = site_profile._credential_in_text(text, descriptive=True) is not None
+                bundled = loader._credential_in_text(text, descriptive=True) is not None
+                gate = bool(check_repo.credential_findings(text, include_assignments=True))
+                self.assertEqual(target, fires, "target copy")
+                self.assertEqual(bundled, fires, "bundled loader copy")
+                self.assertEqual(gate, fires, "repository gate")
+
+    def test_the_corpus_covers_both_line_break_shapes(self) -> None:
+        """A corpus that lost its multi-line cases would silently stop testing this."""
+        multiline = [text for text, _ in CREDENTIAL_VERDICT_CORPUS if "\n" in text]
+        self.assertEqual(len(multiline), 2, multiline)
+
+
+class MutationProofBindingTest(unittest.TestCase):
+    """A mutation proof must name the bytes it proved.
+
+    A cycle-7 review found a committed proof recording a digest that matched no
+    committed state in either repository: it had been run against an intermediate
+    working tree, so the file it exercised never shipped. The conclusions were
+    sound and the identification was wrong, which for this kind of evidence is the
+    same as having no evidence.
+
+    Checking it once would have fixed that instance. Binding it in a test fixes
+    the class: edit a graded file without re-running its proof and this fails.
+    """
+
+    EVIDENCE = Path(__file__).resolve().parent.parent / "docs" / "evidence"
+
+    def _recorded(self, document: str) -> dict[str, str]:
+        digests: dict[str, str] = {}
+        for line in (self.EVIDENCE / document).read_text(encoding="utf-8").splitlines():
+            if line.startswith("#"):
+                continue
+            name, separator, value = line.partition(" sha256:")
+            if separator:
+                digests[name.strip()] = value.strip()
+        return digests
+
+    def test_the_portable_proof_names_the_bytes_that_ship(self) -> None:
+        recorded = self._recorded("2026-08-23-cycle8-mutation-proof-portable-copies.txt")
+        self.assertEqual(set(recorded), {"site_profile.py", "check_repo.py"}, recorded)
+        actual = {
+            "site_profile.py": Path(site_profile.__file__),
+            "check_repo.py": Path(check_repo.__file__),
+        }
+        for name, path in actual.items():
+            with self.subTest(name=name):
+                self.assertEqual(
+                    recorded[name],
+                    hashlib.sha256(path.read_bytes()).hexdigest(),
+                    f"{name} changed without its mutation proof being re-run",
+                )
+
+    def test_the_upstream_proof_names_the_bytes_that_were_copied_in(self) -> None:
+        recorded = self._recorded("2026-08-23-cycle8-mutation-proof-upstream-loader.txt")
+        self.assertEqual(set(recorded), {"loader"}, recorded)
+        bundled = (
+            Path(site_profile.__file__).parent.parent
+            / "com.infiquetra.claude"
+            / "skills"
+            / "unifi-network"
+            / "scripts"
+            / "site_profile_loader.py"
+        )
+        self.assertEqual(
+            recorded["loader"],
+            hashlib.sha256(bundled.read_bytes()).hexdigest(),
+            "the byte-copied loader is not the file the upstream proof exercised",
+        )
 
 if __name__ == "__main__":
     unittest.main()

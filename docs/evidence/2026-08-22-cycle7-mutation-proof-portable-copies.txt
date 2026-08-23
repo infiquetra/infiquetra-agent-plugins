@@ -1,3 +1,21 @@
+# SUPERSEDED — this record misidentifies the bytes it proved.
+#
+# A cycle-7 review found it: the digest recorded below matches no committed state
+# in either repository. The proof was run against an intermediate working tree,
+# after the formatter ran but before the nesting fix and the changelog commit, so
+# the file it exercised never shipped. The bytes released at upstream a46714b8 and
+# carried in portable candidate 0feecfa0 are 80f2bc5d4b8c99f17ccfc062aa9b3094d0b8cda0e95edd75b551510158f175ca.
+#
+# The mutation conclusions below were re-verified independently and hold. What was
+# wrong is the identification, not the result -- which is precisely the failure
+# mode this kind of evidence exists to prevent, so it is corrected in place rather
+# than deleted.
+#
+# Superseded by the cycle-8 records, whose digests are verified against the
+# committed blob after the commit lands:
+#   docs/evidence/2026-08-23-cycle8-mutation-proof-upstream-loader.txt
+#   docs/evidence/2026-08-23-cycle8-mutation-proof-portable-copies.txt
+#
 # Cycle-7 mutation proof — portable target-owned copies
 site_profile.py pristine sha256: 297563467cdcd7dabed254308076cc5d9f40d1776456f6510abf01cea2f86472
 check_repo.py   pristine sha256: 72995935df876524f169e2477ba8cdae25ec16b4190f2da621b8acbbcba1e4e5

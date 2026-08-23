@@ -162,9 +162,17 @@ CREDENTIAL_KEY_EXACT_IN_TEXT = ("auth", "accesskey", "clientsecret")
 # Consuming the value instead let an innocent key swallow a strict one standing
 # inside it: in ``"notes": "controller password=hunter2"`` the scan matched
 # ``notes``, found it harmless, and resumed *after* the password it had eaten.
+#
+# An assignment is one line. The whitespace around the delimiter is horizontal
+# only and the value stops at a newline, because ``\s*`` spanning a line break
+# reopened that same swallow across lines: ``see notes:\npassword=hunter2``
+# matched ``notes``, ate the newline with it, and left the password with no
+# preceding character to start a fresh match against -- so the loader accepted a
+# credential the repository gate, which reads line by line, refused. Line-scoping
+# both halves is what makes the two agree.
 CREDENTIAL_ASSIGNMENT_IN_TEXT = re.compile(
-    r"(?i)(?:^|[^A-Za-z0-9_-])([A-Za-z][A-Za-z0-9_-]{1,31})[\"']?\s*[:=]\s*[\"']?"
-    r"(?=([^\"',;]{1,200}))"
+    r"(?i)(?:^|[^A-Za-z0-9_-])([A-Za-z][A-Za-z0-9_-]{1,31})[\"']?[^\S\n]*[:=][^\S\n]*"
+    r"[\"']?(?=([^\"',;\n]{1,200}))"
 )
 
 # An auth scheme word sits between the key and the credential in the shape an
