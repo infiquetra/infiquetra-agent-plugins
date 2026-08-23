@@ -1,5 +1,29 @@
 # Queued work - infiquetra-agent-plugins
 
+## The link checker validates against the filesystem, not against the repository
+
+`check_repo.py` resolves each local markdown link with `(document.parent /
+target).resolve()` and accepts it if `.exists()` returns true. Nothing requires
+the target to stay inside the repository, so a link that escapes the root passes
+on any machine where the neighbouring path happens to exist and fails everywhere
+else.
+
+That is not hypothetical. A journal entry in this repository linked
+`../../../infiquetra-claude-plugins`, which resolves in a working tree that has
+the upstream repository checked out beside it. The gate passed locally, every
+time, and failed in CI where only this repository exists. The link was replaced
+with a plain name; the gate that let it through was not changed, because that is
+outside the repair authorized for this cycle.
+
+**Why it matters.** A gate whose verdict depends on what else is on the disk is
+not a gate — it reports the environment, not the repository. This is the same
+shape as the defects the credential rule went through: a check that passes for a
+reason unrelated to what it claims to establish.
+
+**Suggested fix.** Reject any local link whose resolved target falls outside the
+repository root, with the message naming the escape rather than the missing file.
+Pin it with a test that adds an escaping link and expects a finding.
+
 ## P0
 
 Nothing open. The one P0 this file carried shipped in `4c1d30f` and is recorded in

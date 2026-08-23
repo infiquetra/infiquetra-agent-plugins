@@ -79,7 +79,7 @@ before reaching the logic is worse than no test, because it is counted as covera
 implementation: break the code on purpose and require the new assertions to fail. Every repair
 in this pilot now ships with that count recorded, which is how this one was caught.
 
-**Refs.** [`{#credential-span-window-vs-walk}` upstream](../../../infiquetra-claude-plugins),
+**Refs.** the upstream repository `infiquetra-claude-plugins`,
 cycle-5 reviews in [`docs/reviews/`](../reviews/).
 
 ### The credential detector read the wrong span, so `Bearer` cleared the token behind it
@@ -127,7 +127,7 @@ a wrapper — because those do not fail loudly; they pass, which reads exactly l
 minimum-length floor applied to the whole span turns "examined and cleared" into "never
 examined", and those two outcomes are indistinguishable from the caller.
 
-**Refs.** [Upstream contract repair](../../../infiquetra-claude-plugins) unifi `2.0.2`,
+**Refs.** Upstream contract repair in `infiquetra-claude-plugins` unifi `2.0.2`,
 cycle-4 reviews in [`docs/reviews/`](../reviews/).
 
 ### Fixing a shared primitive does not fix the callers that pre-parse its input
