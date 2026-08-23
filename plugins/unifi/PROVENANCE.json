@@ -1,7 +1,7 @@
 {
   "source_repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
-  "source_commit": "0d81dd9a48ce4321645fd857d23d749cc23520d1",
-  "source_version": "2.0.1",
+  "source_commit": "c835f91db1c470a23921ccae5ac0331cb9be2240",
+  "source_version": "2.0.2",
   "source_package_path": "plugins/unifi",
   "generated_by": "scripts/sync_vendor_source.py",
   "notes": [
@@ -26,7 +26,7 @@
       "path": "CHANGELOG.md",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/unifi/CHANGELOG.md",
-      "sha256": "4483d36f9c0a5f4254d8e64362ab56c4cd56e8e413542e56a9ca7e53793c63f7"
+      "sha256": "3dbc847e33c671b9a5012278ff72ace52f1e468b610a3a9a9f47917bd43a0182"
     },
     {
       "path": "com.infiquetra.claude/agents/unifi-network-ops.md",
@@ -44,8 +44,8 @@
       "path": "com.infiquetra.claude/plugin.json",
       "classification": "deterministic-transform",
       "source_path": "plugins/unifi/.claude-plugin/plugin.json",
-      "source_sha256": "7ff62612a4321576279e74f0fa9daee628ae1fd30cc3c89546f614396e5771e9",
-      "sha256": "7ff62612a4321576279e74f0fa9daee628ae1fd30cc3c89546f614396e5771e9",
+      "source_sha256": "c499c755f6f9f1745605f4d2dea4c88d6d13b456666220b26e5a6af2320bb473",
+      "sha256": "c499c755f6f9f1745605f4d2dea4c88d6d13b456666220b26e5a6af2320bb473",
       "transform": "relocate-claude-manifest",
       "transform_version": "1",
       "transform_rule": "Re-emit the Claude Code manifest under the client extension directory the Agent Plugins 1.0 specification's section 8.2 defines. Version 1 preserves the bytes and derives only the output path, because the source directory name .claude-plugin/ is a Claude Code loading convention with no meaning inside the extension directory, and the portable Agent Plugins manifest already occupies the package root the Claude manifest would otherwise claim."
@@ -54,7 +54,7 @@
       "path": "com.infiquetra.claude/skills/unifi-network/scripts/site_profile_loader.py",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/unifi/skills/unifi-network/scripts/site_profile_loader.py",
-      "sha256": "f074306bc88c239c1c82681231a4372c0737fdc50d86857277085084d90a5312"
+      "sha256": "42815630d8c0a0ffd4acf2c7159a2ae36f6a03e234439c293124be365b7ae050"
     },
     {
       "path": "skills/unifi-network/SKILL.md",

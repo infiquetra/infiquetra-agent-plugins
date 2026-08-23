@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-08-22
+
+### Fixed
+
+- **The site-profile loader shipped here now enforces the 1.1 contract the package documents.**
+  This loader was published pinned to schema `1.0` while the portable package it mirrors advanced
+  its own contract to `1.1`, so one package disagreed with itself: an operator who authored the
+  `1.1` document the package documents had it rejected outright by their Claude integration, with
+  `UnsupportedSchemaVersionError`. `SUPPORTED_SCHEMA_VERSIONS` is now `("1.0", "1.1")` and
+  `SCHEMA_IDENTIFIER` names `1.1`.
+- **A credential written into a free-text value is refused here, as the contract already promised.**
+  `1.1` adds no field and removes none; what it records is that the secret-free guarantee covers
+  *values* and not only property names. This loader enforced the name half alone, so a controller
+  password or bearer token pasted into `notes` was accepted on the Claude path while the portable
+  loader refused the identical document. Accepting the version and enforcing its rule are one
+  change — taking a `1.1` document while ignoring what `1.1` means would restate the same
+  disagreement in a quieter form. A `1.0` document is held to the same rule, because a credential
+  in a `1.0` profile is exactly as exposed.
+- The ported rule grades the token *behind* an auth scheme word. `authorization: Bearer <token>`
+  previously graded the word `Bearer`, which carries no entropy, and cleared the credential
+  standing behind it; `Basic` and `Token` are shorter than the length floor, so those values were
+  never examined at all. Values that name where a secret lives — `vault:` references, `${VAR}`,
+  `<redacted>` — are still accepted, and ordinary prose is not graded, since several English words
+  clear the entropy floor on their own.
+
 ## [2.0.1] - 2026-08-22
 
 Repairs the caller side of the `Retry-After` defect. Fleet Core 0.25.1 taught the shared backoff

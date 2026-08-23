@@ -17,10 +17,19 @@ depend on a file that lives only in the other repository.
 
 The contract
 ------------
-Schema ``urn:infiquetra:unifi:site-profile:1.0``, document ``schema_version`` ``"1.0"``,
-released on branch ``orch/orch-2026-08-22-unifi-run-a`` at commit ``097909d7`` of
-``infiquetra-agent-plugins``. This loader is pinned to that version and rejects any other
-outright rather than applying part of a document it does not understand.
+Schema ``urn:infiquetra:unifi:site-profile:1.1``, document ``schema_version`` ``"1.0"`` or
+``"1.1"``, released from ``infiquetra-agent-plugins``. An unrecognized version is rejected
+outright rather than partially applied.
+
+This loader was published pinned to ``1.0`` while the portable package it mirrors advanced
+its own contract to ``1.1``, so the two halves of one package disagreed: an operator who
+authored the ``1.1`` document the package documents had their Claude integration reject it,
+and a credential pasted into a free-text value was accepted here while the portable loader
+refused it. Version ``1.1`` adds no field and removes none. It records that the secret-free
+guarantee covers *values* as well as names, which is why accepting the version and enforcing
+the value rule are one change: taking a ``1.1`` document while ignoring what ``1.1`` means
+would restate the same disagreement in a quieter form. A ``1.0`` document is held to the
+same value rule, because a credential in a ``1.0`` profile is exactly as exposed.
 
 Three rules, each enforced in code rather than described in prose:
 
@@ -47,7 +56,9 @@ Usage:
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -70,10 +81,10 @@ DEFAULT_PROFILE_FILENAME = "site-profile.json"
 #: JSON Schema ``$id`` of the contract this loader reads. A URN rather than a URL, because
 #: nothing here resolves a schema over the network and a fetchable identifier would imply
 #: otherwise.
-SCHEMA_IDENTIFIER = "urn:infiquetra:unifi:site-profile:1.0"
+SCHEMA_IDENTIFIER = "urn:infiquetra:unifi:site-profile:1.1"
 
 #: Document versions this loader understands.
-SUPPORTED_SCHEMA_VERSIONS = ("1.0",)
+SUPPORTED_SCHEMA_VERSIONS = ("1.0", "1.1")
 
 # --- resolution outcomes --------------------------------------------------
 
@@ -108,6 +119,70 @@ CREDENTIAL_NAME_FRAGMENTS = (
     "privatekey",
     "secret",
     "token",
+)
+
+# The value half of the secret-free guarantee, ported from the portable package's
+# ``scripts/site_profile.py`` so this loader enforces the same contract it names.
+# Restated rather than imported: this file is copied onto an operator's machine and
+# loaded with the standard library alone.
+#
+# Family one: literal formats that are credentials wherever they appear.
+CREDENTIAL_VALUE_FORMATS = (
+    ("AWS access key id", re.compile(r"\b(?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b")),
+    ("GitHub token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
+    ("GitHub fine-grained token", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{40,}\b")),
+    ("Slack token", re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{10,}\b")),
+    ("Stripe secret key", re.compile(r"\bsk_(?:live|test)_[A-Za-z0-9]{16,}\b")),
+    ("Google API key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
+    ("Anthropic API key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{24,}\b")),
+    ("OpenAI API key", re.compile(r"\bsk-[A-Za-z0-9]{32,}\b")),
+    (
+        "JSON web token",
+        re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
+    ),
+    ("private key block", re.compile(r"-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----")),
+    ("credential embedded in a URL", re.compile(r"://[^/\s:@]+:[^/\s@]{3,}@")),
+)
+
+# Family two: a credential-shaped key assigned a value that carries real entropy,
+# which is what ``notes: "controller password=..."`` looks like.
+CREDENTIAL_VALUE_ASSIGNMENT = re.compile(
+    r"(?i)(?:^|[^A-Za-z0-9_-])("
+    r"pass(?:word|wd|phrase)|secret|token|api[_-]?key|apikey|authorization|auth|"
+    r"bearer|credentials?|private[_-]?key|client[_-]?secret|access[_-]?key"
+    r")[\"']?\s*[:=]\s*[\"']?([^\"',;)}\]]{6,})"
+)
+
+# An auth scheme word sits between the key and the credential in the shape an
+# operator actually pastes: ``authorization: Bearer <token>``. The captured span
+# above deliberately runs across whitespace so that token is inside it; grading
+# only the first token graded the word ``Bearer``, which carries no entropy, and
+# cleared the credential standing behind it. Scheme words shorter than the
+# length floor (``Basic``, ``Token``) were worse still: the span never reached
+# the floor, so the pattern did not match at all and the value went unexamined.
+CREDENTIAL_SCHEME_WORDS = frozenset(
+    {"bearer", "basic", "digest", "token", "apikey", "hmac", "negotiate"}
+)
+
+# A candidate span has to be at least this long before it is worth grading. This
+# is the floor the pattern used to carry inline, moved onto each candidate now
+# that one match can yield two of them.
+CREDENTIAL_VALUE_MIN_LENGTH = 6
+
+# An assigned value has to clear this many bits of entropy per character before
+# it counts as a credential. It is deliberately low, because the key name has
+# already supplied most of the signal.
+CREDENTIAL_VALUE_MIN_ENTROPY = 2.5
+
+# Values that name a secret rather than being one. A profile is expected to say
+# where the credential lives, so these must never be reported.
+CREDENTIAL_VALUE_PLACEHOLDER = re.compile(
+    r"(?i)^(?:redacted|removed|omitted|none|null|true|false|unset|empty|"
+    r"change[_-]?me|example|placeholder|your[_-].*|my[_-].*|"
+    r"x{3,}|\*{3,}|\.{3,}|-{3,}|_{3,})$"
+)
+CREDENTIAL_VALUE_REFERENCE_PREFIX = re.compile(
+    r"(?i)^(?:env|vault|op|aws|gcp|azure|secretref|ref)[:/]"
 )
 
 TOP_LEVEL_FIELDS = (
@@ -313,6 +388,91 @@ def _credential_field(value: object, trail: str = "") -> str | None:
     return None
 
 
+def _value_entropy(value: str) -> float:
+    """Bits of entropy per character. Grades an already-suspect value only."""
+    if not value:
+        return 0.0
+    total = len(value)
+    counts: dict[str, int] = {}
+    for character in value:
+        counts[character] = counts.get(character, 0) + 1
+    return -sum((count / total) * math.log2(count / total) for count in counts.values())
+
+
+def _names_a_secret(value: str) -> bool:
+    """True when the value points at where a credential lives instead of being one."""
+    if CREDENTIAL_VALUE_PLACEHOLDER.match(value):
+        return True
+    if CREDENTIAL_VALUE_REFERENCE_PREFIX.match(value):
+        return True
+    if value.startswith(("$", "<", "{{", "{%", "%(")) or value.endswith(">"):
+        return True
+    if "${" in value or "{{" in value:
+        return True
+    return len(set(value)) <= 2 or value.isdigit()
+
+
+def _credential_candidates(assigned: str) -> list[str]:
+    """The spans of an assigned value that could be the credential itself.
+
+    The first token normally is. When that token is an auth scheme word the
+    credential is the one *after* it, so both are returned: grading ``Bearer``
+    alone let ``authorization: Bearer <token>`` pass every check. Everything
+    past the credential is prose and is never graded, because ordinary English
+    words clear the entropy floor and would fire on a sentence.
+    """
+    tokens = assigned.split()
+    if not tokens:
+        return []
+    candidates = [tokens[0]]
+    if len(tokens) > 1 and tokens[0].lower() in CREDENTIAL_SCHEME_WORDS:
+        candidates.append(tokens[1])
+    return [token for token in candidates if len(token) >= CREDENTIAL_VALUE_MIN_LENGTH]
+
+
+def _credential_in_text(text: str) -> str | None:
+    """Describe the credential in ``text``, or ``None`` when there is none."""
+    for label, pattern in CREDENTIAL_VALUE_FORMATS:
+        if pattern.search(text):
+            return label
+    for match in CREDENTIAL_VALUE_ASSIGNMENT.finditer(text):
+        key, assigned = match.group(1), match.group(2)
+        for candidate in _credential_candidates(assigned):
+            if _names_a_secret(candidate):
+                continue
+            if _value_entropy(candidate) < CREDENTIAL_VALUE_MIN_ENTROPY:
+                continue
+            return f"{key!r} is assigned a credential-shaped value"
+    return None
+
+
+def _credential_value(value: object, trail: str = "") -> tuple[str, str] | None:
+    """Return ``(property path, what fired)`` for the first credential value.
+
+    Every string in the document is inspected, at any depth, because the point of
+    the check is that a credential does not become acceptable by being written
+    into a field whose name is innocent. Mapping *keys* are not inspected here:
+    a credential-shaped key is :func:`_credential_field`'s job, and every object
+    in the contract is closed, so a key that is itself a literal credential is
+    rejected as an unknown field.
+    """
+    if isinstance(value, str):
+        finding = _credential_in_text(value)
+        return None if finding is None else (trail or "profile", finding)
+    if isinstance(value, dict):
+        for key in value:
+            location = f"{trail}.{key}" if trail else str(key)
+            found = _credential_value(value[key], location)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            found = _credential_value(item, f"{trail}[{index}]")
+            if found is not None:
+                return found
+    return None
+
+
 def _require_object(value: object, location: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ProfileInvalidError(f"{location} must be an object")
@@ -370,6 +530,15 @@ def validate_profile(document: object) -> dict[str, Any]:
     if offending is not None:
         raise ProfileInvalidError(
             f"credential-shaped field is not permitted in a site profile: {offending}"
+        )
+
+    leaked = _credential_value(payload)
+    if leaked is not None:
+        location, reason = leaked
+        raise ProfileInvalidError(
+            f"credential value is not permitted in a site profile: {location} "
+            f"({reason}); a profile states intent and points at where a secret "
+            f"lives, it never carries one"
         )
 
     version = payload.get("schema_version")

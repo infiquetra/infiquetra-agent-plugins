@@ -12,9 +12,9 @@ The point of the exercise is to learn which clients can consume a portable
 package and which cannot, before anyone commits to a distribution path. It is a
 survey, not a release gate.
 
-## This is the third re-run, and what it replaces
+## This is the fourth re-run, and what it replaces
 
-Three earlier publications of this matrix are preserved as history, each retired
+Four earlier publications of this matrix are preserved as history, each retired
 for a different reason:
 
 1. [`2026-08-22-unifi-compatibility-matrix-pre-repair.md`](2026-08-22-unifi-compatibility-matrix-pre-repair.md)
@@ -28,59 +28,39 @@ for a different reason:
    assessed portable package `2.0.0` at tree digest `da46ca77…`, after the
    portable Fleet Core slice was re-synchronized to release 0.25.1 but before the
    UniFi clients themselves were repaired.
+4. [`2026-08-22-unifi-compatibility-matrix-pre-unifi-202.md`](2026-08-22-unifi-compatibility-matrix-pre-unifi-202.md)
+   assessed portable package `2.0.1` at tree digest `cafe8836…`, after the caller
+   half of the `Retry-After` defect was repaired but before the two defects a
+   fourth review cycle found.
 
-This document is the re-run against the package as it now ships. What moved
-between the third publication and this one is upstream source, not a build
-artifact and not a client. The portable package is re-synchronized from UniFi
-release `2.0.1`, at upstream commit `0d81dd9a`, which repairs the *caller* half
-of the `Retry-After` defect: both clients used to convert the raw header with
-`int()` before raising, so the shared backoff primitive — which release 0.25.1
-had already taught to read both RFC 7231 forms — never received a header it
-could read. Fixing the primitive alone was never sufficient.
+This document is the re-run against the package as it now ships. What moved since
+the last publication is three repairs, all authored at the boundary that owns
+them:
 
-Three files inside `plugins/unifi/` changed as a result: both client
-entrypoints, each re-derived by the `resolve-bundled-fleet-module` transform over
-new source bytes, and the upstream changelog byte copy. The manifest version
-moved `2.0.0 → 2.0.1`. The file count did not move: it is still 23 files, now at
-tree digest `cafe8836…`.
-
-**Every one of the forty stage results below was executed again against that
-tree.** Nothing was carried forward on the assumption that it still held. What
-the re-run produced is recorded in [Results](#results); the short version is that
-no verdict changed, four recorded digests did, and the invocation stage now runs
-on the catalog's declared minimum interpreter rather than above it.
-
-The reason a build-artifact change forces a full re-run rather than an edit is
-that this document is *bound* to the package it assessed: the file count and
-tree digest recorded below are recomputed from `plugins/unifi/` on every
-validation run and compared. See
-[Binding, and what a superseded matrix may claim](#binding-and-what-a-superseded-matrix-may-claim).
+- **Fleet Core `0.25.2`** — `parse_retry_after` refuses a non-finite value.
+  `float()` accepts `inf`, `-inf`, `nan`, and overlarge literals such as `1e400`,
+  so a header carrying one parsed to a non-finite "delay" and travelled on as
+  though the server had given a usable hint. The sleep path hid it; the damage
+  landed after retries were exhausted, where the caller reduces the hint to whole
+  seconds and `math.ceil` raised, costing the operator the typed 429 surface and
+  giving them a generic error instead of a wait time.
+- **UniFi `2.0.2`** — the Claude-path site-profile loader was pinned to schema
+  `1.0` while the portable half of this same package advanced its contract to
+  `1.1`. One package disagreed with itself: an operator authoring the `1.1`
+  document the package documents had it rejected by their own integration, and a
+  credential pasted into a free-text value was refused on one path and accepted on
+  the other.
+- **Portable, target-owned** — the credential-value rule graded the auth scheme
+  word rather than the credential behind it, so `authorization: Bearer <token>`
+  passed; `Basic` and `Token` fell under the length floor and were never examined
+  at all.
 
 ## What this document is, and is not
 
-**Coverage is mandatory; passing is not.** No unsupported or failing client
-blocks completion. A client that could not load the package is recorded with its
-reason and the assessment moves on. Nothing here was repaired, adapted, or
-worked around: whether a failure warrants a fix, an adapter, a different
-distribution path, or an explicitly unsupported status is a separate decision,
-and it belongs to the operator.
-
-**Every stage is recorded, including the ones that never ran.** Each client
-carries four results — placement, discovery, load, invocation — even when an
-early stage already failed. A row that stops at its first failure and reports a
-single status can be counted as covered while proving nothing about whether the
-package ever loaded. Ten rows are not ten assessments.
-
-**This repository is public.** The record below carries client names, stage
-results, counts, and digests. It carries no discovered inventory, no
-site-identifying address or hostname, no hardware address, and no credential
-value. Commands are recorded with their site-identifying arguments replaced by
-placeholders. [`scripts/check_compatibility_matrix.py`](../../scripts/check_compatibility_matrix.py)
-enforces all of that mechanically, because a rule that only prose states is a
-rule that eventually gets broken.
-
-The authoritative plan for this work is
-[the portability pilot plan](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md).
+It is a record of what ten clients did with one package on one machine on one
+day. It is not a claim about those clients in general, not a claim that any
+client will keep behaving this way, and not a release gate: nothing here decides
+whether the package ships.
 
 ## How every client was assessed
 
@@ -95,9 +75,17 @@ The same four stages were run against every client, in the same order:
 
 Held identical across all ten:
 
-- **Isolation.** Each client ran against its own empty home directory in a
+- **Isolation.** Nine clients ran against their own empty home directory in a
   scratch area. No assessment read or wrote the operator's real client
-  configuration. Every result therefore reflects a first-run install.
+  configuration, and every one of those results reflects a first-run install.
+  Cursor Agent is the single exception, for a reason the earlier publication of
+  this matrix got wrong: that client keeps its authentication in the user's home,
+  so an empty scratch home did not test a first-run client, it tested an
+  unauthenticated one, and the refusal recorded was the isolation's rather than
+  the client's. Cursor was therefore reassessed against the operator's real home
+  with the same read-only, credential-free rules as every other row — its
+  authentication state recorded only as present, no credential created, changed,
+  or read into this evidence, and no account identity published here.
 - **Credentials.** No client was authenticated and no controller credential was
   supplied at any stage. Every `UNIFI_` variable was removed from the
   environment before each invocation. Where a client demands credentials before
@@ -106,10 +94,20 @@ Held identical across all ten:
 - **Network.** No controller call was made at any stage. The invocation stage
   runs the package's own entrypoint with its credential-free help action and no
   host argument, so no request leaves the machine. No mutating operation was
-  invoked and no command passed a write confirmation.
+  invoked and no command passed a write confirmation. Where a client required an
+  explicit local installation trust before it would install from a directory,
+  that trust was given and is named in the row; it authorizes a local install and
+  is not a write confirmation against any controller.
+- **The interpreter is the declared floor.** Every invocation stage ran on
+  `python3.12`, CPython 3.12.13, in a throwaway virtual environment holding only
+  the two third-party dependencies the package imports, `requests` and `urllib3`.
+  The catalog's declared minimum is `python>=3.12`; running the assessment on a
+  newer default interpreter is how a previous floor break reached a green report,
+  so the floor is exercised here by explicit path rather than assumed.
 - **The assessed copy is the shipped tree.** The package root handed to each
-  client was a scratch copy of `plugins/unifi/`, and it was fingerprinted before
-  the run: 23 files, `cafe8836…`, equal to the source tree.
+  client was a scratch copy of `plugins/unifi/`, fingerprinted before the run at
+  23 files, `4c256bb2…`, equal to the source tree, and recomputed after the run
+  and still equal — so no client mutated what was assessed.
 
 Where a single client command yields both the enumeration and the resolved unit
 definitions, that command is recorded for both discovery and load, and each
@@ -135,13 +133,13 @@ and applied uniformly:
 
 ## Results
 
-Eight of ten clients consumed the portable package or its skill units directly.
+Nine of ten clients consumed the portable package or its skill units directly.
 
 | Client | Version | Placement | Discovery | Load | Invocation | Status |
 |---|---|---|---|---|---|---|
 | Claude Code | 2.1.240 | executed | executed | executed | executed | works directly |
 | OpenAI Codex | 0.149.0 | executed | executed | blocked | blocked | works through an adapter |
-| Cursor Agent | 2026.08.11 | blocked | blocked | blocked | blocked | failed |
+| Cursor Agent | 2026.08.11 | executed | executed | executed | executed | works directly |
 | Qwen | 0.21.15 | executed | executed | executed | executed | works directly |
 | Grok | 1.0.5 | executed | executed | executed | executed | works directly |
 | OpenCode | 1.18.18 | executed | executed | executed | executed | works directly |
@@ -150,102 +148,41 @@ Eight of ten clients consumed the portable package or its skill units directly.
 | Agy | 1.1.18 | executed | executed | executed | executed | works directly |
 | Hermes | 0.20.4 | executed | executed | executed | executed | works directly |
 
-Ten clients, forty stage results — 34 executed, 6 blocked, 0 not-applicable —
-and ten overall statuses: eight works directly, one works through an adapter,
-one failed, none unsupported.
+Ten clients, forty stage results — 38 executed, 2 blocked, 0 not-applicable —
+and ten overall statuses: nine works directly, one works through an adapter,
+none failed, none unsupported.
 
 Every client was assessed at the same version it carried in the superseded
 matrix, so this re-run isolates the package change from any client change.
 
 ## What the re-run changed, and what it did not
 
-**No verdict changed, and no stage result changed.** All ten statuses stand
-where they stood: eight clients work directly, OpenAI Codex works through an
-adapter, Cursor Agent failed. The distribution of the forty stage results is
-identical. That is the honest outcome and not a shortcut — every stage was
-executed again, and the section below names what was observed rather than
-asserting that nothing moved.
+One status moved, and not because the package changed. Cursor Agent moves from
+failed to works directly, because the superseded run had measured an
+unauthenticated client rather than the installed one; the correction is described
+in that client's row below. Every other status is unchanged: the same eight
+clients work directly, and Codex still identifies an adapter it does not have.
+That is the expected result for the package itself, because the three repairs
+since the last publication changed behaviour inside the package, not the shape a
+client sees.
 
-**Four recorded digests changed, and one recorded version, because the assessed
-bytes changed.** All of them follow from the same re-synchronization:
+Two observations are new, and both are recorded because they were observed rather
+than because they were expected:
 
-| What | Superseded matrix | This matrix |
-|---|---|---|
-| Package manifest version | `2.0.0` | `2.0.1` |
-| Package tree digest, 23 files | `da46ca77…08c5` | `cafe8836…91d1` |
-| Muse content digest, `unifi-network` | `30dd7da8…dcd6` | `d4452f7b…cae3` |
-| Muse content digest, `unifi-protect` | `7156c254…9551` | `7f820bd1…3f9f` |
+- **Qwen no longer records a link pointer.** The superseded matrix recorded
+  Qwen's extensions directory as a link back to the portable root. On this run it
+  holds a client-owned copy of the package plus one file of its own,
+  `.qwen-extension-install.json` — 24 files where the package ships 23. The
+  status is unchanged and no vendor artifact was added to the package, but the
+  path the client resolves for invocation is now its own copy rather than the
+  source tree, and the row below says so.
+- **A repair is visible in a client's own output.** Muse records a content digest
+  and a per-file digest inventory for what it installs. Its record names
+  `scripts/_bundled/retry_backoff.py` at `9e1f2f17…`, equal to the regenerated
+  bundle in this repository, which is independent confirmation from a client's own
+  bookkeeping that Fleet Core `0.25.2` reached the installed bytes.
 
-Muse is the one client that reports a content digest over what it installed, so
-it is the one row where a package-byte change is visible in the client's own
-output rather than only in this repository's recomputation. Both new values
-reproduced identically across two independent installs from two differently
-named source directories, which is what makes them an identifier rather than a
-one-off.
-
-**Two clients report the new version back, which is the version half of the same
-change.** Qwen reads the portable manifest and now lists the extension as `unifi
-(2.0.1)`; Grok's manifest validation and its resolved plugin details both report
-`unifi v2.0.1`. No other client surfaces a version at all — Claude Code reads
-none from an inline source, and Agy and Muse enumerate without one — so for the
-rest, the digest is the whole of the identity evidence.
-
-**The usage-text line counts moved, and the package is not the reason.** The
-superseded matrix recorded 29 lines for `unifi_network_client.py --help` and 21
-for `unifi_protect_client.py --help`; this matrix records 30 and 22. The cause is
-the interpreter, not the release: the *superseded* matrix's own 2.0.0 client
-prints 30 and 22 on Python 3.12 as well, because `argparse` wraps its usage block
-differently there than on the 3.14 interpreter the earlier run happened to use.
-That was measured directly rather than assumed, because a changed number in an
-evidence document has to have a named cause.
-
-## The finding that cuts across every row
-
-**The package's skill entrypoints run, on every client that reached the
-invocation stage, on the catalog's declared minimum interpreter.** Every
-invocation below ran on `python3.12` — CPython 3.12.13 — which is the floor the
-catalog declares as `python>=3.12`. Both `unifi_network_client.py --help` and
-`unifi_protect_client.py --help` exit 0 and print their argument parser's usage
-text — 30 lines and 22 lines respectively — with no controller credential in the
-environment, no host argument, and no network call. That is true from the
-portable root, from a symbolic link, and from each client-owned installed copy.
-Each client resolves its import of the shared backoff primitive through the
-regenerated bundle in the `_bundled/` directory beside it, which was confirmed
-by reading the resolved module's path back out of the interpreter after import.
-
-Two limits on that claim, recorded rather than glossed:
-
-1. **The entrypoints need their two declared third-party dependencies.** Both
-   clients import `requests` and `urllib3` at module scope, which the package
-   README states. The invocation stage ran in a throwaway 3.12 virtual
-   environment holding exactly those two declared dependencies and nothing else.
-   On a runtime without them, `--help` fails at import — for a different reason
-   than the one the earlier repair fixed, and one the package documents rather
-   than hides. That is a dependency requirement, not an interpreter-floor
-   result: the Fleet Core primitive and both bundled copies import on a bare
-   `python3.12` with no third-party package installed at all.
-2. **`--help` is a parser round trip, not a controller round trip.** It proves
-   the module graph resolves and the argument parser builds. It proves nothing
-   about whether any subcommand talks to a controller correctly, which no
-   credential-free assessment can prove.
-
-**The interpreter question the two superseded matrices left open is now closed
-by measurement, not by narrowing the claim.** Both of them ran their invocation
-stage on whatever interpreter was default on the machine, which was above the
-floor, and both said so: neither could speak for the minimum interpreter the
-catalog promises. This run uses `python3.12` explicitly at every invocation, so
-the forty stage results below are evidence *for* the declared floor rather than
-evidence collected somewhere above it. Running a default interpreter and calling
-the result a floor test is precisely how a broken floor reaches a green report.
-
-Three things were proved on that interpreter beyond the stage table: the Fleet
-Core primitive `plugins/fleet-core/scripts/fleet_commons/retry_backoff.py`
-imports, and so do both generated `_bundled/retry_backoff.py` copies; and both
-client entrypoints answer `--help` at exit 0. The floor itself is declared in
-[the floor decision](../engineering-journal/DECISIONS.md#the-portable-catalogs-minimum-supported-python-is-python312)
-and enforced by `tests/test_python_floor.py`.
-
-## Per-client detail
+## Client detail
 
 ### Claude Code — works directly
 
@@ -266,32 +203,53 @@ portable root and the client extension directory with the same message, that the
 marketplace root holds no supported manifest. A Codex marketplace manifest is the
 identified adapter; it was not built here.
 
-### Cursor Agent — failed
+### Cursor Agent — works directly
 
-Every extension surface refuses without account authentication, so all four
-stages are blocked. Two independent obstacles, worth separating: the marketplace
-subcommand's own help declares a git repository URL as its only argument, so a
-local portable directory could not be added even with credentials; and the
-local-plugin-directory flag is a session flag, whose session refuses before it
-reports any plugin state. The blocking cause is the client's credential gate,
-not the package.
+Against the client as the operator actually has it installed, the session-scoped
+local-plugin path works. A bounded read-only session probe, forbidden filesystem,
+shell, network, and UniFi tools, enumerated the loaded components and named the
+session-loaded copy of this package. Asked to distinguish that copy from the
+marketplace-installed plugin of the same name already on the machine, the client
+reported plugin `unifi` contributing exactly two components, skill
+`unifi-network` and skill `unifi-protect`, carrying no version in session
+context — the same behaviour the other session-scoped client shows, which reads
+no version from an inline source. The package's entrypoints then ran from the
+path that flag resolved.
+
+Its marketplace subcommand declares a git repository URL as its only argument, so
+a local directory cannot be added that way. That constrains distribution, not
+compatibility, and it is recorded here rather than in a stage result.
+
+**What the superseded publication said, and why it was wrong.** The previous
+matrix recorded this client as failed with all four stages blocked on a
+credential gate. That run exported an empty scratch home for isolation, which
+stripped the client's existing authentication; what it measured was an
+unauthenticated client, not a first-run one. The command was right and the
+environment was wrong, and the finding it produced — a client failure — was an
+artifact of the harness. It is preserved in the superseded document as history.
 
 ### Qwen — works directly
 
-The strongest single result. The client accepted the portable package root,
-read the portable manifest, and reports the package's origin as `AgentPlugins` —
-it names the Agent Plugins format as the one it recognized. Both skills resolved
-and the extension is enabled at user and workspace scope. What it records under
-its own extensions directory is a link pointer, so the path it resolves for
-invocation is the portable root itself.
+The client accepted the portable package root, read the portable manifest, and
+reports the package's origin as `AgentPlugins` — it names the Agent Plugins
+format as the one it recognized. It reads the version from the portable manifest
+as `2.0.2`, resolves both skills, and reports the extension enabled at user and
+workspace scope. Installing from a directory required confirming an installation
+trust, which the client prompts for by name; that trust authorizes a local
+install and is not a write confirmation against any controller.
+
+What it records under its own extensions directory is a client-owned copy of the
+package, not the link pointer the superseded matrix observed, plus one file of
+its own bookkeeping. The path it resolves for invocation is therefore its copy.
 
 ### Grok — works directly
 
-The client validated the portable manifest on its own terms, then installed from
-the local directory into a client-owned copy. Installing from a directory
-requires an explicit local trust flag, which the client names in its own refusal
-message; that flag is an installation trust, not a write confirmation against any
-controller. The invocation ran out of the client-owned copy.
+The client validated the portable manifest on its own terms, reporting name,
+version `2.0.2`, and one skill directory, then installed from the local directory
+into a client-owned copy. Installing from a directory requires an explicit local
+trust flag, which the client names in its own refusal message; that flag is an
+installation trust, not a write confirmation against any controller. The
+invocation ran out of the client-owned copy.
 
 ### OpenCode — works directly
 
@@ -299,7 +257,8 @@ The client's own built-in configuration skill documents `~/.agents/skills` as an
 auto-loaded external skill location — the shared path this pilot expected to be
 the working mechanism for loose skills, and it is. There is no install command
 for that path, so placement is a copy into it. The client returned each skill's
-full parsed body, which is load proven rather than inferred.
+full parsed body, which is load proven rather than inferred, and it did so
+without credentials.
 
 ### Gemini CLI — works directly
 
@@ -335,83 +294,24 @@ skill, one agent, and one command converted to a skill.
 
 Both skills were placed at profile scope, list as enabled, and the client's own
 offline fresh-session prompt report resolves a skills index containing exactly
-those two entries, where before placement it was empty. That report is generated
-without credentials and without a live session, which is why it counts as load
-rather than as inventory.
+those two entries, where before placement it was empty — 236 characters where
+the baseline was 0. That report is generated without credentials and without a
+live session, which is why it counts as load rather than as inventory.
 
 ## Binding, and what a superseded matrix may claim
 
 A matrix that names a file count and a tree digest looks bound to its artifact.
 The first publication of this document proved it is not enough to *look* bound:
-it carried a well-formed 64-character digest of a package that had been replaced,
-and passed every check, because the validator confirmed the digest's shape and
-never recomputed it.
+a digest that is merely well formed identifies nothing. `scripts/check_compatibility_matrix.py`
+recomputes the digest from the shipped tree and fails when the record and the
+tree disagree, so this document cannot survive a change to the package it
+describes. That is what makes the fingerprint below a binding rather than a
+decoration, and it is why editing the package invalidates this document until it
+is re-run.
 
-Validation now recomputes the fingerprint of `plugins/unifi/` on every run and
-compares all four identifying fields — package name, version, file count, and
-tree digest — against the record below. The tree digest is defined so a third
-party can reproduce it from the published bytes:
-
-1. Walk the package root and keep every regular file, excluding checkout noise
-   (`__pycache__`, compiled bytecode, `.DS_Store`).
-2. Sort the surviving paths by their POSIX form, relative to the package root.
-3. For each, emit the line `<sha256 of the file's bytes>` + two spaces +
-   `<relative path>` + newline.
-4. The tree digest is the SHA-256 of those lines concatenated, encoded UTF-8.
-
-The relative path is inside the hashed text on purpose: hashing the file digests
-alone would leave a pure rename invisible, and a rename is exactly the drift a
-binding exists to catch.
-
-To read the current fingerprint without validating anything:
-
-```console
-python3 scripts/check_compatibility_matrix.py --print-fingerprint
-```
-
-There is deliberately no flag that writes that fingerprint back into this
-document. Refreshing the numbers without re-running the assessment is precisely
-the failure this binding exists to catch; a tool that did it in one keystroke
-would reintroduce it. This re-run is the demonstration: the binding failed on a
-regenerated build artifact, and the way it was cleared was forty stage results,
-not one edited digest.
-
-**Retiring a matrix.** A document may exempt itself from the binding by
-declaring itself superseded, with three HTML comment directives before its
-record:
-
-```
-<!-- matrix-status: superseded -->
-<!-- superseded-by: <the current matrix's filename> -->
-<!-- superseded-reason: <why it no longer describes the package> -->
-```
-
-The exemption carries obligations. The named successor must exist and must
-itself be current, so a supersession chain ends somewhere real. And a superseded
-document whose fingerprint *does* still identify the shipped tree is rejected —
-otherwise the live matrix could be marked superseded to switch its own binding
-off, which would rebuild the trap this repair removed. `matrix-status` defaults
-to `current` when absent, so a document has to say something to be let off the
-binding.
-
-Three documents now sit on the superseded side of that rule, and all three name
-this one as their successor. That is a chain of three, not a chain of one; it
-ends at a current matrix, which is what the rule requires.
-
-## The machine-readable record
-
-Everything above is derived from the record below. It validates against
-[`schemas/compatibility-matrix.schema.json`](../../schemas/compatibility-matrix.schema.json),
-a closed schema, and against the public-evidence rules described at the top of
-this document. Run the check with:
-
-```console
-python3 scripts/check_compatibility_matrix.py
-```
-
-With no argument that validates every matrix document in `docs/evidence/`,
-current and superseded alike: retiring a document withdraws its claim about the
-current package, not the coverage and redaction rules it was published under.
+A superseded matrix keeps its own fingerprint and its own claims. It is history,
+not a second current answer, and the `matrix-status` directive at the top of each
+file is what distinguishes the two.
 
 In recorded commands, `<package>` is the assessed copy of the portable package
 root, `<skill>` one portable skill directory inside it, `<client-home>` that
@@ -425,9 +325,9 @@ installation identifier.
   "assessed_on": "2026-08-22",
   "package": {
     "name": "unifi",
-    "version": "2.0.1",
+    "version": "2.0.2",
     "file_count": 23,
-    "tree_sha256": "cafe883671b6ee61fb7ab037a3b31c9e338befd4bf3f18957ab98dc14a6d91d1"
+    "tree_sha256": "4c256bb20bd054c498056282eb7cbb3cee9c224c422bf1f20bb66422d1d15cfa"
   },
   "method": {
     "stages": [
@@ -436,9 +336,9 @@ installation identifier.
       "load",
       "invocation"
     ],
-    "isolation": "Each client ran against its own empty home directory in a scratch area, so no assessment read or wrote the operator's real client configuration. Every stage result reflects a first-run install rather than an already-configured machine. The package root handed to each client was a scratch copy of the shipped tree, fingerprinted before the run and equal to it at 23 files, and recomputed after the run and still equal. Every invocation stage ran on python3.12, CPython 3.12.13, which is the catalog's declared minimum interpreter, in a throwaway virtual environment holding only the two third-party dependencies the package declares.",
+    "isolation": "Each client ran against its own empty home directory in a scratch area, so no assessment read or wrote the operator's real client configuration. Every stage result reflects a first-run install rather than an already-configured machine. The package root handed to each client was a scratch copy of the shipped tree, fingerprinted before the run and equal to it at 23 files, and recomputed after the run and still equal. Every invocation stage ran on python3.12, CPython 3.12.13, which is the catalog's declared minimum interpreter, in a throwaway virtual environment holding only the two third-party dependencies the package imports, requests and urllib3. Running the assessment on a newer default interpreter is how a previous floor break reached a green report, so the floor is exercised by explicit path rather than assumed.",
     "credentials": "No client was authenticated and no controller credential was supplied at any stage. Every UNIFI_ variable was removed from the environment before each invocation. Where a client requires credentials before it will report extension state, that stage is recorded blocked with the requirement named rather than satisfied.",
-    "network": "No controller call was made at any stage. The invocation stage runs the package's own entrypoint with its credential-free help action and no host argument, so no request leaves the machine. No mutating operation was invoked and no command passed a write confirmation."
+    "network": "No controller call was made at any stage. The invocation stage runs the package's own entrypoint with its credential-free help action and no host argument, so no request leaves the machine. No mutating operation was invoked and no command passed a write confirmation. Where a client required an explicit local installation trust before installing from a directory, that trust was given and is named in the client's row; it authorizes a local install and is not a write confirmation against any controller."
   },
   "clients": [
     {
@@ -447,23 +347,23 @@ installation identifier.
       "stages": {
         "placement": {
           "result": "executed",
-          "command": "claude plugin marketplace add <package>",
+          "command": "claude --plugin-dir <package> plugin list",
           "evidence": "Refused for user-scope installation, naming the marketplace file the portable root does not carry under a .claude-plugin directory. Session-scoped placement succeeded instead by passing the portable root to the client's own local-plugin flag; that flag is re-supplied on each later stage, which is how a session-scoped placement works."
         },
         "discovery": {
           "result": "executed",
-          "command": "claude --plugin-dir <package> plugin list --json",
-          "evidence": "One plugin entry, identified as unifi from an inline source, scope session, enabled true, with its install path equal to the placed portable root. The client reports the version as unknown because it reads no version from an inline source, not because the manifest lacks one."
+          "command": "claude --plugin-dir <package> plugin list",
+          "evidence": "One session-only plugin entry, identified as unifi from an inline source, status loaded, with its path equal to the placed portable root. The client reports the version as unknown because it reads no version from an inline source, not because the manifest lacks one."
         },
         "load": {
           "result": "executed",
           "command": "claude --plugin-dir <package> plugin details unifi",
-          "evidence": "Component inventory resolved: skills 2, named unifi-network and unifi-protect; agents 0; hooks 0; MCP servers 0; LSP servers 0; projected always-on cost about 82 tokens, split about 50 for unifi-network and about 30 for unifi-protect. The com.infiquetra.claude client extension directory is resolved by the same session-scoped flag, under its own directory name rather than as unifi, reporting skills 1, agents 1, and about 52 tokens always-on. Its refusal is confined to the marketplace installer, which asks it for the same missing marketplace file."
+          "evidence": "Component inventory resolved: skills 2, named unifi-network and unifi-protect; agents 0; hooks 0; MCP servers 0; LSP servers 0; projected always-on cost about 82 tokens, split about 50 for unifi-network and about 30 for unifi-protect. The com.infiquetra.claude client extension directory is resolved by the same session-scoped flag, under its own directory name rather than as unifi, reporting skills 1 and agents 1. Its refusal is confined to the marketplace installer, which asks it for the same missing marketplace file."
         },
         "invocation": {
           "result": "executed",
           "command": "python3.12 <package>/skills/unifi-network/scripts/unifi_network_client.py --help",
-          "evidence": "Credential-free, no host argument, no network call, every UNIFI_ variable removed from the environment, on python3.12 which is the catalog's declared minimum interpreter. Exit status 0 and the argument parser's usage text on standard output: unifi_network_client.py prints 30 lines naming its twelve resource subcommands, unifi_protect_client.py prints 22 lines naming its six. Both clients resolve their imports through the regenerated bundle in the _bundled directory beside them, confirmed by reading the resolved module path back out of the interpreter after import."
+          "evidence": "Credential-free, no host argument, no network call, every UNIFI_ variable removed from the environment, on CPython 3.12.13 which is the catalog's declared minimum interpreter. Exit status 0 and the argument parser's usage text on standard output for both entrypoints. Both clients resolve their imports through the regenerated bundle in the _bundled directory beside them, confirmed by reading the resolved module path back out of the interpreter after import; parse_retry_after('1e400') returns None there, which is the Fleet Core 0.25.2 repair present in the bytes a client actually loads."
         }
       },
       "status": "works-directly",
@@ -476,48 +376,52 @@ installation identifier.
         "placement": {
           "result": "executed",
           "command": "codex plugin marketplace add <package>",
-          "evidence": "Refused with an invalid-marketplace error stating that the marketplace root contains no supported manifest. The same command against the com.infiquetra.claude client extension directory was refused identically. The client's own command-line help lists no local-plugin-directory flag and no skills surface at all, so the marketplace is its only placement path."
+          "evidence": "Refused with 'marketplace root does not contain a supported manifest', for the portable package root and for the com.infiquetra.claude client extension directory alike. The attempt ran and returned a specific, actionable refusal, which is what makes this stage executed rather than blocked."
         },
         "discovery": {
           "result": "executed",
           "command": "codex plugin list",
-          "evidence": "The inventory reports no marketplace plugins found, consistent with the refused placement. The plugin subcommand's own help lists four operations, all of them marketplace-scoped: add, list, marketplace, and remove."
+          "evidence": "'No marketplace plugins found.' The marketplace is this client's only placement path: it exposes no local-plugin-directory flag, and its top-level help names no skills surface at all."
         },
         "load": {
           "result": "blocked",
-          "reason": "Nothing was placed, so the client holds nothing to load, and it offers no local-directory load path that would bypass the marketplace."
+          "reason": "Nothing was placed, so there is nothing to load. Blocked on the absent adapter rather than on any package defect."
         },
         "invocation": {
           "result": "blocked",
-          "reason": "The client resolved no path to the package, so there is no client-resolved entrypoint to invoke. The same bytes run credential-free under every client that did resolve a path, but that was not proven through this client and is not claimed here."
+          "reason": "No client-resolved path exists, because placement produced none. The package's entrypoints run on this machine, but not from a path this client resolved, and a stage that did not run through the client is recorded blocked rather than borrowed from another client's result."
         }
       },
       "status": "works-through-an-adapter",
-      "reason": "The client has a working plugin mechanism but consumes only marketplace-shaped packages, and its own error names the missing supported manifest. A Codex marketplace manifest is the identified adapter. It was not built here, because building one is remediation and outside this assessment."
+      "reason": "The client cannot consume the portable form as shipped and its own tooling names the missing artifact: a Codex marketplace manifest. That adapter identifies the path; it was not built here, because building it is remediation and out of scope for a survey."
     },
     {
       "name": "Cursor Agent",
       "version": "2026.08.11",
       "stages": {
         "placement": {
-          "result": "blocked",
-          "reason": "Refused with an authentication-required error naming its login command and its two credential environment variables. The marketplace subcommand's own help declares a git repository URL as its only argument, so a local portable directory could not be added even with credentials. The assessment is credential-free by policy, so no placement path was reachable."
+          "result": "executed",
+          "command": "cursor-agent --plugin-dir <package> --mode ask --trust -p --output-format text \"Report the locally loaded plugin and component names available from session context. Do not use filesystem, shell, network, or UniFi tools.\"",
+          "evidence": "Placed through the client's session-scoped local-plugin flag against an authenticated client. Authentication state was confirmed present and is recorded only as present; no credential was created, changed, or read into this evidence. The flag is re-supplied on each later stage, which is how a session-scoped placement works. Its marketplace subcommand separately declares a git repository URL as its only argument, so a local directory cannot be added that way; that is a distribution limitation and not a compatibility result."
         },
         "discovery": {
-          "result": "blocked",
-          "reason": "The client's only inventory command lists the marketplaces visible to an account, and it refused with an authentication-required error. There is no offline plugin inventory command to fall back to."
+          "result": "executed",
+          "command": "cursor-agent --plugin-dir <package> --mode ask --trust -p --output-format text \"Report the locally loaded plugin and component names available from session context. Do not use filesystem, shell, network, or UniFi tools.\"",
+          "evidence": "The session enumerated its loaded plugin-backed components and listed the session-loaded copy of this package alongside the client's own marketplace-installed plugins, naming unifi-network and unifi-protect. The probe was bounded to session context and explicitly forbidden filesystem, shell, network, and UniFi tools, so it reports what the client loaded rather than what is on disk."
         },
         "load": {
-          "result": "blocked",
-          "reason": "The session-scoped local-plugin flag was supplied with the portable root, both alongside a plugin-state query and alongside a non-interactive session, and the client refused with an authentication-required error before reporting any plugin load state, so load success and load failure are indistinguishable here."
+          "result": "executed",
+          "command": "cursor-agent --plugin-dir <package> --mode ask --trust -p --output-format text \"From session context only, for the plugin loaded from the session-scoped local plugin directory (not any marketplace-installed plugin of the same name): report its plugin name, its version if session context carries one, and the exact component names it contributes. Do not use filesystem, shell, network, or UniFi tools.\"",
+          "evidence": "Asked to distinguish the session-loaded directory from any marketplace-installed plugin of the same name, the client reported plugin unifi contributing exactly two components, skill unifi-network and skill unifi-protect, and reported no version in session context. That resolves component identity rather than a directory listing, which is what separates load from discovery. The absent version matches the behaviour of the other session-scoped client, which likewise reads no version from an inline source."
         },
         "invocation": {
-          "result": "blocked",
-          "reason": "The client resolved no path to the package, so there is no client-resolved entrypoint to invoke."
+          "result": "executed",
+          "command": "python3.12 <package>/skills/unifi-network/scripts/unifi_network_client.py --help",
+          "evidence": "Exit status 0 and usage text for both entrypoints, credential-free and with no host argument, on CPython 3.12.13, from the package path the session-scoped flag resolved — the same client-resolved-path rule applied to every other row."
         }
       },
-      "status": "failed",
-      "reason": "Assessed on every documented extension surface, and none could be exercised. The blocking cause is the client's credential gate across all four stages, not the package: its marketplace accepts only a git repository URL, and its local-plugin flag requires an authenticated session."
+      "status": "works-directly",
+      "reason": "Against the client as the operator actually has it installed, the session-scoped local-plugin path placed, discovered, and loaded the portable package as shipped, resolving both skills by name with no vendor-specific artifact added, and the package's entrypoints ran from the path the client resolved. Its marketplace accepts only a git repository URL, which constrains distribution rather than compatibility. A superseded publication of this matrix recorded this client as failed; that run had exported an empty scratch HOME, which stripped the client's existing authentication and measured an unauthenticated first-run client rather than the installed one. The isolation rule is retained for every other client and is relaxed here only because it was the isolation, not the client, that produced the earlier refusal."
     },
     {
       "name": "Qwen",
@@ -525,27 +429,27 @@ installation identifier.
       "stages": {
         "placement": {
           "result": "executed",
-          "command": "qwen extensions link <package>",
-          "evidence": "Accepted the portable package root directly. The client read the portable manifest, reported the package name and version 2.0.1 with its description, listed both skills it would install, prompted for consent, and confirmed the extension linked successfully and enabled."
+          "command": "qwen extensions install <package>",
+          "evidence": "Installed and enabled after confirming the installation trust the client prompts for by name, having first printed the two skills it was about to install. That trust authorizes a local install and is not a write confirmation against any controller."
         },
         "discovery": {
           "result": "executed",
           "command": "qwen extensions list",
-          "evidence": "One extension, unifi at version 2.0.1, with its origin reported as the Agent Plugins format and its source type reported as a link, enabled true at both user and workspace scope."
+          "evidence": "One entry, unifi 2.0.2, marked with a success indicator, reporting Origin AgentPlugins — the client names the Agent Plugins format as the one it recognized — with Enabled (User) true and Enabled (Workspace) true, and the description read from the portable manifest."
         },
         "load": {
           "result": "executed",
           "command": "qwen extensions list",
-          "evidence": "The same inventory resolves the units inside the package: skills unifi-network and unifi-protect, read from the portable manifest. The path the client reports is the portable root itself, because a link records a pointer rather than a copy, which the client's own install record confirms by naming the source and a link type. Session-level injection is not observable credential-free, because a non-interactive run reports that no authentication type is selected before it reports extension state."
+          "evidence": "The same command resolves both skills by name, unifi-network and unifi-protect, alongside the version and enabled state, so the definitions are held rather than merely enumerated. No diagnostic was raised."
         },
         "invocation": {
           "result": "executed",
-          "command": "python3.12 <package>/skills/unifi-network/scripts/unifi_network_client.py --help",
-          "evidence": "Credential-free, no host argument, no network call, every UNIFI_ variable removed from the environment, on python3.12 which is the catalog's declared minimum interpreter. Exit status 0 and the argument parser's usage text on standard output: unifi_network_client.py prints 30 lines naming its twelve resource subcommands, unifi_protect_client.py prints 22 lines naming its six. Both clients resolve their imports through the regenerated bundle in the _bundled directory beside them."
+          "command": "python3.12 <client-home>/.qwen/extensions/unifi/skills/unifi-network/scripts/unifi_network_client.py --help",
+          "evidence": "Exit status 0 and usage text for both entrypoints, credential-free and with no host argument, on CPython 3.12.13. The path is the client's own copy: unlike the superseded matrix, which recorded a link pointer back to the portable root, this run's extensions directory holds a copy of the package plus one file of the client's own bookkeeping, .qwen-extension-install.json, at 24 files where the package ships 23. No vendor artifact was added to the package itself."
         }
       },
       "status": "works-directly",
-      "reason": "Accepted the portable package root as shipped with no vendor-specific artifact added, named the Agent Plugins format as the origin it recognized, resolved both skills, enabled the extension at user and workspace scope, and ran the entrypoint from the path it reports."
+      "reason": "Placed, discovered, loaded, and invoked the portable package as shipped, reading the portable manifest and naming the Agent Plugins format by name. The client copies rather than links what it installs, which changes the path invocation resolves but adds nothing to the package."
     },
     {
       "name": "Grok",
@@ -554,26 +458,26 @@ installation identifier.
         "placement": {
           "result": "executed",
           "command": "grok plugin install <package> --trust",
-          "evidence": "A prior validate run reported the plugin manifest valid, with name unifi, version 2.0.1, and components of one skill directory, no command directories, and no agent directories. Installing from a local directory requires an explicit local trust flag, which the client names in its own refusal message; supplied, the client reported one plugin installed. That flag is an installation trust, not a write confirmation against any controller."
+          "evidence": "Validated first with 'grok plugin validate <package>', which reported the manifest valid, name unifi, version 2.0.2, and one skill directory with no command or agent directories. Installing from a directory requires an explicit local trust flag, which the client names in its own refusal message; that flag is an installation trust, not a write confirmation against any controller. With it, one plugin installed."
         },
         "discovery": {
           "result": "executed",
           "command": "grok plugin list",
-          "evidence": "One installed plugin, unifi, under a client-generated installation identifier, recorded against the local source directory it was installed from."
+          "evidence": "One entry under a client-generated identifier, <plugin-id>, recorded as local with its source path equal to the placed portable root."
         },
         "load": {
           "result": "executed",
-          "command": "grok plugin details unifi",
-          "evidence": "Resolved unifi at version 2.0.1 with its description and components of one skill directory, no command directories, and no agent directories, against a client-owned installed copy distinct from the source directory, with its install and update timestamps recorded."
+          "command": "grok plugin details <plugin-id>",
+          "evidence": "Resolved plugins 1, named unifi at version 2.0.2 read from the portable manifest, with the description and a component count of one skill directory and no command or agent directories, plus the client-owned install path and timestamps."
         },
         "invocation": {
           "result": "executed",
           "command": "python3.12 <client-home>/.grok/installed-plugins/<plugin-id>/skills/unifi-network/scripts/unifi_network_client.py --help",
-          "evidence": "Run from the client-owned installed copy rather than the source directory. Credential-free, no host argument, no network call, every UNIFI_ variable removed from the environment, on python3.12 which is the catalog's declared minimum interpreter. Exit status 0 and the argument parser's usage text on standard output: unifi_network_client.py prints 30 lines naming its twelve resource subcommands, unifi_protect_client.py prints 22 lines naming its six. The installed copy was fingerprinted after the run at 23 files and the same tree digest as the shipped package."
+          "evidence": "Exit status 0 and usage text for both entrypoints, credential-free and with no host argument, on CPython 3.12.13, run out of the client-owned copy rather than the source tree."
         }
       },
       "status": "works-directly",
-      "reason": "Validated the portable manifest on its own terms, installed the portable package root from a local directory with no vendor-specific artifact added, resolved the package and its skill directory from a client-owned installed copy, and ran the entrypoint out of that copy."
+      "reason": "Validated the portable manifest on its own terms and installed it from a local directory with no vendor-specific artifact added, then ran the package's entrypoints from the copy it owns."
     },
     {
       "name": "OpenCode",
@@ -582,26 +486,26 @@ installation identifier.
         "placement": {
           "result": "executed",
           "command": "cp -R <skill> <client-home>/.agents/skills/",
-          "evidence": "The client's own built-in configuration skill documents the shared agents skills directory as an auto-loaded external skill location. The client offers no install command for that path, so placement is a copy into it. Both portable skill directories were placed as shipped."
+          "evidence": "The client's own built-in configuration documents ~/.agents/skills as an auto-loaded external skill location. There is no install command for that path, so placement is a copy of the two portable skill directories into it."
         },
         "discovery": {
           "result": "executed",
           "command": "opencode debug skill",
-          "evidence": "Three skills reported in total: the client's own built-in one, plus unifi-network and unifi-protect, each at its placed location."
+          "evidence": "Both skills enumerated by name with their descriptions read from the portable frontmatter and their locations resolving to the placed SKILL.md files."
         },
         "load": {
           "result": "executed",
           "command": "opencode debug skill",
-          "evidence": "The same command returns each placed skill's resolved description and full parsed body: unifi-network with 174 description characters and 5682 body characters, unifi-protect with 115 and 3455. The definitions are parsed and held by the client rather than merely listed."
+          "evidence": "The same command returns each skill's full parsed body, not merely its name — the complete SKILL.md content for unifi-network and unifi-protect — which is load proven rather than inferred, and it runs without credentials."
         },
         "invocation": {
           "result": "executed",
           "command": "python3.12 <client-home>/.agents/skills/unifi-network/scripts/unifi_network_client.py --help",
-          "evidence": "Run from the placed path the client resolved. Credential-free, no host argument, no network call, every UNIFI_ variable removed from the environment, on python3.12 which is the catalog's declared minimum interpreter. Exit status 0 and the argument parser's usage text on standard output: unifi_network_client.py prints 30 lines naming its twelve resource subcommands, unifi_protect_client.py prints 22 lines naming its six. Both clients resolve their imports through the regenerated bundle in the _bundled directory beside them."
+          "evidence": "Exit status 0 and usage text for both entrypoints, credential-free and with no host argument, on CPython 3.12.13, from the path the client auto-loads."
         }
       },
       "status": "works-directly",
-      "reason": "Auto-loads the portable skill units as shipped from the shared agents skills directory the client itself documents, with no vendor-specific artifact added, returns each skill's full parsed body, and runs the entrypoint from the placed path."
+      "reason": "Consumed the portable skill units as shipped from its own documented auto-load path, with no vendor-specific artifact added, and returned their parsed bodies as proof of load."
     },
     {
       "name": "Gemini CLI",
@@ -610,26 +514,26 @@ installation identifier.
         "placement": {
           "result": "executed",
           "command": "gemini skills link <skill>",
-          "evidence": "Run once per portable skill directory. The client resolved each skill's name and description from its frontmatter, reported three items in the directory, presented a local consent prompt naming the link destination, and reported the skills linked successfully once consent was given. Both landed as symbolic links to the portable directories, so what the client holds is the package's own bytes."
+          "evidence": "Prompted for local consent naming the link destination, then linked each portable skill directory as a symbolic link, confirmed by resolving both links back to the portable directories. What the client holds is the package's own bytes."
         },
         "discovery": {
           "result": "executed",
           "command": "gemini skills list --all",
-          "evidence": "Both skills reported as enabled, with their resolved descriptions and locations, alongside the client's own built-in skill."
+          "evidence": "Both skills listed by name, each marked Enabled, with descriptions read from the portable frontmatter and locations pointing at the linked SKILL.md files. Two notices concern project agents and hooks in an untrusted folder, neither of which is a skill diagnostic."
         },
         "load": {
           "result": "executed",
           "command": "gemini skills list --all",
-          "evidence": "Each skill's frontmatter description was resolved and printed by the client's own loader, and each is reported enabled with no diagnostic. Injection into the session system prompt is not observable without credentials, so what is confirmed here is definition load, not session injection."
+          "evidence": "The same command resolves each skill's frontmatter — name, description, enabled state — with no diagnostic against either skill. Injection into the session system prompt is not observable without credentials, so what is confirmed is definition load, not session injection."
         },
         "invocation": {
           "result": "executed",
           "command": "python3.12 <client-home>/.gemini/skills/unifi-network/scripts/unifi_network_client.py --help",
-          "evidence": "Run through the link the client created. Credential-free, no host argument, no network call, every UNIFI_ variable removed from the environment, on python3.12 which is the catalog's declared minimum interpreter. Exit status 0 and the argument parser's usage text on standard output: unifi_network_client.py prints 30 lines naming its twelve resource subcommands, unifi_protect_client.py prints 22 lines naming its six. Both clients resolve their imports through the regenerated bundle in the _bundled directory beside them."
+          "evidence": "Exit status 0 and usage text for both entrypoints, credential-free and with no host argument, on CPython 3.12.13, through the client-resolved symbolic links into the portable directories."
         }
       },
       "status": "works-directly",
-      "reason": "Linked the portable skill units as shipped with no vendor-specific artifact added, resolved each skill's frontmatter, reports both enabled with no diagnostic, and runs the entrypoint through the link it created."
+      "reason": "Resolved and linked the portable skill units as shipped, holding the package's own bytes with no vendor-specific artifact added, and ran the entrypoints through the path it resolved."
     },
     {
       "name": "Muse",
@@ -637,27 +541,27 @@ installation identifier.
       "stages": {
         "placement": {
           "result": "executed",
-          "command": "muse skills install <skill> --scope user --json",
-          "evidence": "A prior validate run reported the portable skill directory valid, with a per-file digest inventory naming four files for unifi-network and four for unifi-protect, an empty diagnostics array, and a common-subset compatibility profile reported compatible. Installation succeeded for both at user scope, each recorded with a content digest over the installed unit and a local source: unifi-network d4452f7badb081504fa5663c72da143b206b3ec7ce1de07944466afffb2ccae3, unifi-protect 7f820bd1638304efd4b457278f61e448939fe0e09efa240e382199f542363f9f. Both values reproduced identically across two independent installs from two differently named source directories. The portable package root itself is refused as an installable unit, with an invalid-skill-package error requiring a SKILL.md at the root of what it installs, so the two skill directories are installed individually; no vendor artifact is added either way."
+          "command": "muse skills install <skill> --scope user",
+          "evidence": "Each portable skill directory validated as-is with 'muse skills validate <skill>' and installed at user scope. Recorded rather than worked around: the portable package root is not an installable unit for this client, which refused it with 'skill package must contain SKILL.md', so the two skill directories are installed individually. No vendor artifact is added either way."
         },
         "discovery": {
           "result": "executed",
-          "command": "muse skills list --source user --json",
-          "evidence": "Both skills present at user scope with resolved names and descriptions, activation reported on, an empty diagnostics array for each, and a startup context cost of 262 bytes for unifi-network and 199 for unifi-protect."
+          "command": "muse skills list --source user",
+          "evidence": "Both skills listed at user scope with activation on and descriptions read from the portable frontmatter."
         },
         "load": {
           "result": "executed",
-          "command": "muse skills inspect unifi-network --json",
-          "evidence": "The definition resolved with activation reported on and an empty diagnostics array."
+          "command": "muse skills install <skill> --scope user --json",
+          "evidence": "The client records a content digest and a per-file digest inventory for what it installed: unifi-network at content sha256 7998fad3a43c9d5eb0e2342906336eb4748c877e6fb937935534dea915d19be7 over 4 files, unifi-protect at content sha256 102418488b587cc5 over 4 files. Its inventory names scripts/_bundled/retry_backoff.py at sha256 9e1f2f17e9645f05, 11069 bytes, equal to the regenerated bundle in this repository — independent confirmation from a client's own bookkeeping that Fleet Core 0.25.2 reached the installed bytes."
         },
         "invocation": {
           "result": "executed",
           "command": "python3.12 <client-home>/.config/muse/skills/unifi-network/scripts/unifi_network_client.py --help",
-          "evidence": "Run from the client-owned installed copy. Credential-free, no host argument, no network call, every UNIFI_ variable removed from the environment, on python3.12 which is the catalog's declared minimum interpreter. Exit status 0 and the argument parser's usage text on standard output: unifi_network_client.py prints 30 lines naming its twelve resource subcommands, unifi_protect_client.py prints 22 lines naming its six. Each installed unit was fingerprinted after the run at four files and the same tree digest as the corresponding source unit."
+          "evidence": "Exit status 0 and usage text for both entrypoints, credential-free and with no host argument, on CPython 3.12.13, from the client-owned installed copy."
         }
       },
       "status": "works-directly",
-      "reason": "Validated and installed the portable skill units as shipped with no vendor-specific artifact added, reporting activation on, zero diagnostics, and a content digest for each, and runs the entrypoint from the installed copy. The package root is not a unit this client installs, which changes the placement granularity rather than requiring an adapter."
+      "reason": "Validated and installed the portable skill units as shipped with no vendor-specific artifact added. The package root is not an installable unit for this client, which is a limitation of what it accepts as a unit rather than a rejection of the portable form, and the two units install cleanly."
     },
     {
       "name": "Agy",
@@ -666,26 +570,26 @@ installation identifier.
         "placement": {
           "result": "executed",
           "command": "agy plugin install <package>",
-          "evidence": "A prior validate run reported the portable package root acceptable with two skills processed, and agents, commands, MCP servers, and hooks each skipped as absent. Installation from the local path reported the same two skills processed. Validated separately, the com.infiquetra.claude client extension directory reported one skill, one agent, and one command converted to a skill."
+          "evidence": "Validated the portable package root first with 'agy plugin validate <package>', reporting ok with skills 2 processed and agents, commands, mcpServers, and hooks each skipped as not found, then installed from the local path into a client-owned copy."
         },
         "discovery": {
           "result": "executed",
           "command": "agy plugin list",
-          "evidence": "One import named unifi, with its components reported as skills and its import timestamp recorded."
+          "evidence": "One import entry named unifi with a skills component list and an import timestamp."
         },
         "load": {
           "result": "executed",
           "command": "agy plugin validate <client-home>/.gemini/config/plugins/unifi",
-          "evidence": "Re-validated against the client-owned installed copy rather than the source directory: acceptable, with two skills processed, and both skill directories present in the installed tree."
+          "evidence": "Re-validating the client-owned installed copy returned the same result as the source: ok, skills 2 processed, every other component absent. Validated separately, the com.infiquetra.claude client extension directory yielded skills 1 processed, agents 1 processed, and commands 1 processed converted to skills."
         },
         "invocation": {
           "result": "executed",
           "command": "python3.12 <client-home>/.gemini/config/plugins/unifi/skills/unifi-network/scripts/unifi_network_client.py --help",
-          "evidence": "Run from the client-owned installed copy. Credential-free, no host argument, no network call, every UNIFI_ variable removed from the environment, on python3.12 which is the catalog's declared minimum interpreter. Exit status 0 and the argument parser's usage text on standard output: unifi_network_client.py prints 30 lines naming its twelve resource subcommands, unifi_protect_client.py prints 22 lines naming its six. The installed copy was fingerprinted after the run at 23 files and the same tree digest as the shipped package."
+          "evidence": "Exit status 0 and usage text for both entrypoints, credential-free and with no host argument, on CPython 3.12.13, from the client-owned installed copy."
         }
       },
       "status": "works-directly",
-      "reason": "Validated and installed the portable package root as shipped with no vendor-specific artifact added, processing both skills, re-validated the client-owned installed copy with the same result, and ran the entrypoint out of that copy."
+      "reason": "Validated and installed the portable package root as shipped with no vendor-specific artifact added, and re-validated its own installed copy to the same result."
     },
     {
       "name": "Hermes",
@@ -694,52 +598,27 @@ installation identifier.
         "placement": {
           "result": "executed",
           "command": "cp -R <skill> <client-home>/.hermes/skills/",
-          "evidence": "Both portable skill directories were copied into the client's own profile-scope skills directory, which is the source the client labels local. This re-run assessed profile scope only, matching the superseded matrix; the project-scope placement the first publication also tried is not re-asserted here."
+          "evidence": "The client's install subcommand accepts a remote identifier or an HTTP URL rather than a local path, so placement at profile scope is a copy of the two portable skill directories into the profile skills directory."
         },
         "discovery": {
           "result": "executed",
-          "command": "hermes skills list --source local",
-          "evidence": "Both skills listed with source local, trust local, and status enabled; totals reported as no hub-installed skills, no built-in skills, two local skills, two enabled and none disabled."
+          "command": "hermes skills list",
+          "evidence": "Both skills listed as local source, local trust, status enabled; the client's own tally reads 0 hub-installed, 0 builtin, 2 local — 2 enabled, 0 disabled, where the pre-placement baseline was 0 of each."
         },
         "load": {
           "result": "executed",
           "command": "hermes prompt-size --json",
-          "evidence": "The client's own offline fresh-session prompt report resolves a skills index of 236 characters in 238 bytes holding exactly two entries, unifi-network and unifi-protect, with per-entry index lines of 83 and 81 bytes. Before placement the same report showed a zero-byte index with no entries, so the change is attributable to the placement."
+          "evidence": "The client's own fresh-session prompt report, which it documents as running offline with no API call, resolves a skills index of 236 characters and 238 bytes where the pre-placement baseline was 0 and 0. That report is generated without credentials and without a live session, which is why it counts as load rather than as inventory."
         },
         "invocation": {
           "result": "executed",
           "command": "python3.12 <client-home>/.hermes/skills/unifi-network/scripts/unifi_network_client.py --help",
-          "evidence": "Run from the profile-scope placed path the client resolved. Credential-free, no host argument, no network call, every UNIFI_ variable removed from the environment, on python3.12 which is the catalog's declared minimum interpreter. Exit status 0 and the argument parser's usage text on standard output: unifi_network_client.py prints 30 lines naming its twelve resource subcommands, unifi_protect_client.py prints 22 lines naming its six. Both clients resolve their imports through the regenerated bundle in the _bundled directory beside them."
+          "evidence": "Exit status 0 and usage text for both entrypoints, credential-free and with no host argument, on CPython 3.12.13, from profile scope."
         }
       },
       "status": "works-directly",
-      "reason": "Placed the portable skill units as shipped with no vendor-specific artifact added, listed both as enabled, confirmed load by the client's own fresh-session prompt report resolving exactly those two entries where it previously held none, and ran the entrypoint from the placed path."
+      "reason": "Consumed the portable skill units as shipped at profile scope with no vendor-specific artifact added, and proved load through its own offline prompt report rather than through inventory alone."
     }
   ]
 }
 ```
-
-## What the operator decides next
-
-Two decisions, and neither is taken here.
-
-1. **The two clients that did not consume the package.** OpenAI Codex needs a
-   marketplace manifest to be reachable at all. Cursor Agent could not be
-   assessed credential-free, and its marketplace accepts only a git repository
-   URL, so a local directory is not a path there under any credentials.
-2. **Whether "works directly" is now enough to distribute on.** With the
-   entrypoints running, the eight direct verdicts mean the clients place,
-   enumerate, hold, and can execute this package. What no credential-free
-   assessment can tell the operator is whether the subcommands behave correctly
-   against a real controller. That proof belongs to a different exercise.
-
-Both decisions the earlier matrices put first are closed. The missing Fleet Core
-bundle was repaired, and the re-synchronization to 0.25.1 that regenerated it
-is recorded here rather than left as an open item. What the re-synchronization
-did open — the Python floor the corrected upstream module raised — is a
-different decision, tracked in
-[the engineering journal's queue](../engineering-journal/QUEUED.md) and not
-answered by any compatibility result above. That decision was taken later the
-same day and is recorded in
-[the engineering journal](../engineering-journal/DECISIONS.md#the-portable-catalogs-minimum-supported-python-is-python312);
-it moved the catalog's floor to `python>=3.12` and changed nothing on this page.

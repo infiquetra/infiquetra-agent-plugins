@@ -1,14 +1,14 @@
 {
   "source_repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
-  "source_commit": "ed72f439ba01f2e20d94be074e5612c5641c0c8e",
-  "source_version": "0.25.1",
+  "source_commit": "3b5faa6c1044a888e03cb7b8bbf2f71c6749489c",
+  "source_version": "0.25.2",
   "source_package_path": "plugins/fleet-core",
   "notes": [
-    "Custody does not move. This package is a derived artifact, never a second writable source for retry_backoff. A future retry fix lands in infiquetra-claude-plugins first and reaches this repository by re-synchronization. Fleet Core 0.25.1 is the first release to exercise that rule: the RFC 7231 Retry-After repair was authored, reviewed, and released upstream, and arrived here as a re-synchronization rather than as an edit to these bytes.",
+    "Custody does not move. This package is a derived artifact, never a second writable source for retry_backoff. A retry fix lands in infiquetra-claude-plugins first and reaches this repository by re-synchronization. Fleet Core 0.25.1 was the first release to exercise that rule; 0.25.2 is the second. The non-finite Retry-After repair -- float() accepts inf, nan, and 1e400, so a header carrying one parsed to a non-finite delay that destroyed the caller's typed 429 surface at math.ceil -- was authored, reviewed, and released upstream, and arrived here as a re-synchronization rather than as an edit to these bytes.",
     "The pinned commit is the revision at which the upstream plugins/fleet-core subtree last changed. It is the head of the upstream default branch, and the subtree is byte-identical between the two, so the pin names the exact revision these bytes came from rather than an unrelated later head.",
-    "The portable UniFi package no longer pins this same revision, and that is the rule working rather than drift. UniFi 2.0.1 repaired the caller half of the Retry-After defect, so plugins/unifi/PROVENANCE.json now pins 0d81dd9a, a descendant of this commit on the same upstream default branch. The upstream plugins/fleet-core subtree is byte-identical between ed72f439 and 0d81dd9a, so the two pins name one consistent upstream state read at two points on one line of history. This slice's pin stays at ed72f439 because the rule stated above is that it names the revision at which the upstream plugins/fleet-core subtree last changed; moving it to name an unrelated later head is exactly what that rule forbids. The plan's requirement R3, which forbids pinning 995a475, is satisfied by both pins: the UniFi documentation repair is an ancestor of both revisions.",
+    "The portable UniFi package pins c835f91d (unifi 2.0.2) while this slice pins 3b5faa6c (fleet-core 0.25.2). Both name points on one line of upstream history: 3b5faa6c is the revision at which the upstream plugins/fleet-core subtree last changed, and c835f91d is its direct descendant, which changed plugins/unifi and left the fleet-core subtree byte-identical. Two pins, one consistent upstream state, read at the two points where each subtree last moved. The plan's requirement R3, which forbids pinning 995a475, is satisfied by both.",
     "scripts/sync_vendor_source.py derives only plugins/unifi/; it carries no Fleet Core target. This slice's byte copy is therefore extracted from the pinned commit with `git show <commit>:<source_path>`, which is the same primitive that script uses internally to read a source byte, so the copy is a mechanical extraction from the pinned revision and never a hand edit. Generalizing the synchronization script to a second package is named follow-up work in docs/engineering-journal/QUEUED.md; until it lands, the digest equality recorded here and recomputed by scripts/check_repo.py is what proves the extraction was faithful.",
-    "The corrected module imports `UTC` from `datetime`, which exists only in Python 3.11 and newer. That was above the 3.10 floor this catalog used to document, and the byte-copy rule forbade repairing it here, because a downstream edit would make this path diverge from its source and would give retry_backoff a second writable source. The operator closed the question on 2026-08-22 by moving the catalog's floor to python>=3.12, the floor the authoritative source declares and tests, so this module is inside the declared contract with room to spare. The decision is recorded in docs/engineering-journal/DECISIONS.md and the superseded rationale is preserved there.",
+    "The module imports UTC from datetime, which exists only in Python 3.11 and newer. The catalog's floor is python>=3.12 by operator decision of 2026-08-22, recorded in docs/engineering-journal/DECISIONS.md with the superseded 3.10 rationale preserved, so this module sits inside the declared contract with room to spare.",
     "Paths in `files` are relative to this package root, which is what the repository validator resolves. Paths in `derived_files` and `release_surface` are relative to the repository root, because the ported test lives outside the package tree and cannot be expressed as a package-relative path."
   ],
   "files": [
@@ -32,7 +32,7 @@
       "path": "scripts/fleet_commons/retry_backoff.py",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/fleet-core/scripts/fleet_commons/retry_backoff.py",
-      "sha256": "5aea3be13ac444aba2610442f76846a16a0e9537befe39090da173cb1fede975"
+      "sha256": "2aa7fd26bb0fb40dbbd0b7a14ae34f24c473561648695346edaa60079ac63021"
     }
   ],
   "derived_files": [
@@ -40,8 +40,8 @@
       "path": "tests/test_retry_backoff.py",
       "classification": "deterministic-transform",
       "source_path": "tests/test_retry_backoff.py",
-      "source_sha256": "7d80f735b4b955aaecc281bbdfaf9b7b0822fff03733626214e916c9928e6d6a",
-      "sha256": "8fa9cb062f4e049211d60ec1dd95129a462a0d7b1d4f8595249a84067b945b64",
+      "source_sha256": "07ec46c506430548af957179aa245155d004d7bd9a8cff46ff2c598345575f68",
+      "sha256": "eb1b7b486a064b68bc9e63e964f076bbb40952f77b1708d001d91b520273f9b1",
       "transform": "guard-pytest-import",
       "transform_version": "2",
       "transform_rule": "Replace the upstream module docstring with one recording the port, and replace the unconditional `import pytest` with a ModuleNotFoundError-guarded import whose absent-pytest branch raises `unittest.SkipTest`. Every line from `class RateError(Exception):` to end of file is copied byte for byte, so all eighteen upstream test functions are unchanged. The guard exists because this repository's hermetic baseline job runs `python3 -m unittest discover -s tests` with no dependencies installed and imports every test module it finds, while the ported plugin job runs `python -m pytest tests` with pytest installed. Version 2 replaced version 1's `pytest = None` fallback because Fleet Core 0.25.1 added two tests carrying `@pytest.mark.parametrize`: a decorator is evaluated when the module is imported, and against `None` it raises AttributeError, which would fail the baseline job on a module it never runs. `unittest` catches `SkipTest` raised during import and records the module as one skipped test, so the baseline stays green and names the reason out loud."

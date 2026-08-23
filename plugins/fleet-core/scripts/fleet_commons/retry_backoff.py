@@ -22,6 +22,7 @@ changes here are additive-only within fleet-core 0.x — a consumer never breaks
 
 from __future__ import annotations
 
+import math
 import random
 import time
 from collections.abc import Callable
@@ -44,6 +45,21 @@ def _computed_delay(attempt: int, base_delay: float, max_delay: float, rng: rand
     return float(delay * (0.5 + rng.random() * 0.5))  # 50–100% jitter
 
 
+def _usable_delay(seconds: float) -> float | None:
+    """``seconds`` when it is a real number of seconds, otherwise ``None``.
+
+    ``float()`` accepts ``inf``, ``-inf``, ``nan``, and any overlarge literal such
+    as ``1e400``, so a header carrying one of those parsed to a non-finite "delay"
+    and travelled on as though the server had given a usable hint. It had not: a
+    caller that reduced the hint to whole seconds raised ``OverflowError`` or
+    ``ValueError`` inside ``math.ceil`` and lost its typed rate-limit surface, and
+    the operator saw a generic error instead of how long to wait. A non-finite
+    value is exactly the "no usable hint" case this function already documents, so
+    it answers ``None`` and the caller falls back to computed backoff.
+    """
+    return seconds if math.isfinite(seconds) else None
+
+
 def parse_retry_after(
     value: Any,
     *,
@@ -62,8 +78,12 @@ def parse_retry_after(
 
     A date already in the past yields ``0.0`` — retry now, never a negative delay. An absent, empty,
     or unparseable value yields ``None``, which the caller reads as "the server gave no usable hint"
-    and answers with computed jittered backoff. Clamping to ``max_delay`` stays with the caller
-    (``_retry_delay``), so a numeric hint and a date hint are bounded identically.
+    and answers with computed jittered backoff. A non-finite value — ``inf``, ``nan``, or an overlarge
+    literal like ``1e400``, all of which ``float()`` accepts — is unusable in the same way and also
+    yields ``None``, so it can never reach a caller's ``math.ceil`` and cost it its typed 429 surface.
+
+    Clamping to ``max_delay`` stays with the caller (``_retry_delay``), so a numeric hint and a date
+    hint are bounded identically.
 
     ``now`` returns epoch seconds and is injected for deterministic tests (the breaker's ``clock``
     seam is monotonic and is a different clock; an HTTP-date needs wall time).
@@ -71,14 +91,14 @@ def parse_retry_after(
     if value is None or isinstance(value, bool):  # bool is an int subclass; a flag is not a delay
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        return _usable_delay(float(value))
     if not isinstance(value, str):
         return None
     text = value.strip()
     if not text:
         return None
     try:
-        return float(text)  # delta-seconds
+        return _usable_delay(float(text))  # delta-seconds
     except ValueError:
         pass
     try:

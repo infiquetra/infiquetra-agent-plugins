@@ -40,6 +40,34 @@ a catalog-level contract change that this package's own documentation states.
   was a promise nothing upstream was keeping. The decision and its reasoning are
   recorded in the repository's engineering journal.
 
+## [0.25.2] - 2026-08-22
+
+Re-synchronized from Fleet Core 0.25.2 in `infiquetra-claude-plugins` at commit
+`3b5faa6c`. Custody did not move. The repair was authored, reviewed, and
+released upstream and taken here by re-synchronization, which is the second
+exercise of this slice's rule.
+
+### Fixed
+
+- **A non-finite `Retry-After` no longer costs the caller its typed rate-limit
+  surface.** `float()` accepts `inf`, `-inf`, `nan`, and any overlarge literal
+  such as `1e400`, so `parse_retry_after` reduced a header carrying one of those
+  to a non-finite "delay" and returned it as though the server had given a
+  usable hint. The sleep path hid it: `inf` clamped to `max_delay` and `nan`
+  failed its `> 0` test, so every retry behaved correctly. The damage landed
+  only once retries were exhausted, where a caller reduces the hint to whole
+  seconds to say how long to wait — `math.ceil(inf)` raises `OverflowError` and
+  `math.ceil(nan)` raises `ValueError`. Both UniFi clients catch that in a broad
+  handler, so the operator was told `Unexpected error: cannot convert float
+  infinity to integer` instead of a wait time, and the typed 429 surface that
+  0.25.1 exists to preserve was destroyed at exactly the moment it was needed.
+  `1e400` is the shape that matters in practice: an ordinary overlarge integer
+  in a header, nothing exotic.
+- A non-finite value is now the "no usable hint" case the function already
+  documented, so it yields `None` and the caller falls back to computed jittered
+  backoff. The rule covers the numeric path as well as the string one, because a
+  caller that parses its own header hands the number straight in.
+
 ## [0.25.1] - 2026-08-22
 
 Re-synchronized from Fleet Core 0.25.1 in `infiquetra-claude-plugins` at commit

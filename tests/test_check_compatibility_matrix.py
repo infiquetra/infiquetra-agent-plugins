@@ -897,12 +897,20 @@ class LiveDocumentTest(unittest.TestCase):
     def test_the_committed_matrix_records_the_repaired_invocation_stage(self) -> None:
         # The defect this document was re-run to fix: it reported every
         # invocation aborting at import, against a package whose entrypoints run.
+        #
+        # The count is pinned deliberately. It moved from 8 to 9 when Cursor Agent
+        # was reassessed against the operator's real home: the earlier run exported
+        # an empty scratch home for isolation, which stripped that client's
+        # authentication and recorded a client failure that was an artifact of the
+        # harness. A pinned count fails when a row's status changes, which forces
+        # someone to look at why -- that is the point of pinning it rather than
+        # asserting "more than zero".
         invocations = [
             client["stages"]["invocation"]
             for client in self.record["clients"]
             if client["stages"]["invocation"]["result"] == "executed"
         ]
-        self.assertEqual(len(invocations), 8)
+        self.assertEqual(len(invocations), 9)
         for stage in invocations:
             self.assertNotIn("ModuleNotFoundError", stage["evidence"])
             self.assertIn("Exit status 0", stage["evidence"])

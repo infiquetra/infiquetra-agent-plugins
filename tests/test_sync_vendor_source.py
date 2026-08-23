@@ -58,7 +58,15 @@ import sync_vendor_source as svs  # noqa: E402
 # form never received one. That move does change UniFi bytes -- both client
 # entrypoints and the upstream changelog -- so the `resolve-bundled-fleet-module`
 # transform is re-applied over new source bytes and records new digests.
-CORRECTED_REVISION = "0d81dd9a48ce4321645fd857d23d749cc23520d1"
+#
+# Then from 0d81dd9a to c835f91d, UniFi 2.0.2, which closed a skew between the
+# two halves of this one package. The Claude-path loader shipped here was pinned
+# to site-profile schema 1.0 while the portable half advanced its own contract to
+# 1.1, so an operator authoring the 1.1 document the package documents had it
+# rejected by their own integration, and a credential pasted into a free-text
+# value was refused on one path and accepted on the other. That move changes the
+# byte-copied loader and the upstream changelog.
+CORRECTED_REVISION = "c835f91db1c470a23921ccae5ac0331cb9be2240"
 FORBIDDEN_REVISION_PREFIX = "995a475b"
 
 #: A client actually reaching for the dropped shim, as opposed to a comment

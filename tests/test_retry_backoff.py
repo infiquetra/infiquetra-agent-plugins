@@ -4,7 +4,7 @@ Deterministic: injected ``sleep``/``rng``/``clock``/``now`` seams — no real ti
 randomness.
 
 Ported into this repository from ``infiquetra-claude-plugins`` at commit
-``ed72f439ba01f2e20d94be074e5612c5641c0c8e`` (Fleet Core 0.25.1). The eighteen test
+``3b5faa6c`` (Fleet Core 0.25.2). The test
 functions below are byte-identical to their upstream originals. The one
 deviation is the guarded ``pytest`` import directly beneath this docstring, and
 it is recorded in ``plugins/fleet-core/PROVENANCE.json`` as deterministic
@@ -30,6 +30,7 @@ where pytest is installed -- runs every test unchanged.
 from __future__ import annotations
 
 import importlib.util
+import math
 import random
 from pathlib import Path
 from types import ModuleType
@@ -314,24 +315,91 @@ def test_values_that_are_not_a_delay_parse_to_none(value: Any) -> None:
     assert RB.parse_retry_after(value, now=_now) is None
 
 
-def test_a_caller_that_pre_parses_with_int_still_loses_the_retry() -> None:
-    """Pins the boundary of this repair: the primitive fixes the hint it is handed.
+@pytest.mark.parametrize("header", ["inf", "Infinity", "-inf", "nan", "1e400", "  inf  "])
+def test_a_non_finite_delta_seconds_header_is_not_a_usable_hint(header: str) -> None:
+    """``float()`` accepts every one of these; a delay cannot be any of them.
 
-    A call site that converts the header with ``int()`` before raising turns a 429 into a
-    ``ValueError``, which carries no status and so is not retryable — one request, no backoff.
-    Call sites must hand the raw header to ``retry_after`` (or pre-parse with ``parse_retry_after``).
+    A non-finite hint used to travel on as though it were a delay. The sleep path hid it —
+    ``inf`` clamped to ``max_delay`` and ``nan`` failed its ``> 0`` test — so the retries
+    themselves looked correct and the damage surfaced only after they were exhausted, when
+    the caller reduced the hint to whole seconds: ``math.ceil(inf)`` raises ``OverflowError``
+    and ``math.ceil(nan)`` raises ``ValueError``. The caller lost its typed 429 surface and
+    told the operator "Unexpected error" instead of how long to wait. ``1e400`` is the shape
+    that matters in practice: an ordinary overlarge integer in a header, nothing exotic.
+    """
+    assert RB.parse_retry_after(header, now=_now) is None
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
+def test_a_pre_parsed_non_finite_number_is_refused_too(value: float) -> None:
+    # A caller that parses its own header hands the number straight in, so the numeric path
+    # needs the same rule. Guarding only the string path would leave that door open.
+    assert RB.parse_retry_after(value, now=_now) is None
+
+
+def test_a_non_finite_hint_falls_back_to_computed_backoff() -> None:
+    delays = _delays_for("1e400", base_delay=2.0)
+    assert len(delays) == 1
+    assert 1.0 <= delays[0] <= 2.0
+
+
+def test_every_reduced_hint_survives_being_turned_into_whole_seconds() -> None:
+    """The property the repair actually buys, stated as the caller needs it.
+
+    Callers reduce the hint to whole seconds to advise the operator. This asserts the
+    postcondition that makes that safe for every input shape at once, rather than listing
+    the non-finite spellings one at a time — a listing is only ever as complete as the
+    imagination of whoever wrote it, and ``1e400`` is not a spelling most people would list.
+    """
+    headers = [
+        "30",
+        "inf",
+        "Infinity",
+        "nan",
+        "1e400",
+        "-inf",
+        "0",
+        FUTURE_DATE,
+        PAST_DATE,
+        EXCESSIVE_DATE,
+        "next Tuesday-ish",
+        "",
+    ]
+    for header in headers:
+        hint = RB.parse_retry_after(header, now=_now)
+        if hint is not None:
+            math.ceil(hint)  # must not raise, for any header a server can send
+
+
+def test_a_caller_that_pre_parses_with_parse_retry_after_keeps_the_retry() -> None:
+    """The repaired call-site contract: pre-parse with ``parse_retry_after``, never with ``int()``.
+
+    This inverts the characterization test shipped alongside the primitive repair in fleet-core
+    0.25.1, which pinned the then-unrepaired UniFi call sites: converting the header with ``int()``
+    turned a 429 into a ``ValueError`` that carried no status, so the primitive judged it
+    non-retryable and no backoff ran at all. Both UniFi clients now pre-parse with
+    ``parse_retry_after`` (unifi 2.0.1), so the assertion here is the CORRECT behaviour — the 429
+    keeps its status, the HTTP-date becomes the delay, and the call is retried.
     """
     calls = {"n": 0}
 
-    def fn() -> None:
+    def fn() -> str:
         calls["n"] += 1
-        int(FUTURE_DATE)  # what a call site that pre-parses the header with int() does
+        if calls["n"] == 1:
+            # What a repaired call site does: parse the header, then raise a 429-carrying error.
+            raise RawHeaderRateError(RB.parse_retry_after(FUTURE_DATE, now=_now))
+        return "ok"
 
     delays, sleep = _recorder()
-    with pytest.raises(ValueError):
-        RB.retry_with_backoff(fn, sleep=sleep, now=_now)
-    assert calls["n"] == 1  # no retry: the ValueError never looked like a 429
-    assert delays == []
+    result = RB.retry_with_backoff(
+        fn,
+        retry_after=lambda exc: getattr(exc, "retry_after", None),
+        sleep=sleep,
+        now=_now,
+    )
+    assert result == "ok"
+    assert calls["n"] == 2  # retried: the pre-parse left the 429 status intact
+    assert delays == [45.0]  # the HTTP-date became the delay instead of raising ValueError
 
 
 # --------------------------------------------------------------------------- CircuitBreaker / bridge_call

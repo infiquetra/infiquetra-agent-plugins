@@ -1,6 +1,6 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "fleet-core",
-  "version": "0.25.1",
+  "version": "0.25.2",
   "description": "Portable Fleet Core slice carrying one module: the shared 429 rate-limit retry and backoff primitive with its circuit breaker. This is a single vertical slice of the upstream Fleet Core library, not the whole library."
 }
