@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+## [2.0.4] - 2026-08-22
+
+### Changed
+
+- **The value rule now grades the key, not the value.** A strict secret-bearing
+  key assigned a single substantive literal is a credential whatever that literal
+  looks like, and the entropy floor, the digit test and the length bar are gone.
+  Those graded the value, and could not tell a technical word from a password in
+  either direction: `oauth2` carries a digit and 2.585 bits of entropy, which is
+  *less* than `rainbowtrout` at 3.085, so the rule refused the harmless word and
+  accepted the real password. Which keys are strict is derived from
+  `CREDENTIAL_NAME_FRAGMENTS`, the same taxonomy that grades property names, so
+  the two halves of one rule can no longer drift into two dialects.
+
+### Fixed
+
+- **Digit-free passwords are no longer accepted.** A `password` key assigned
+  `rainbowtrout` or `sunshine`, or an `api_key` assigned
+  `correcthorsebattery`, all shipped accepted, because the retired rule required
+  a digit or twenty-four characters before a value counted. Under a strict key
+  there is now no floor below which a literal stops being a credential, so a
+  `password` assigned the word `secret` is refused too.
+- **Ordinary technical prose is no longer refused.** A `credentials` key
+  followed by `oauth2 is configured at the controller`, a `token` followed by
+  `base64 of the site identifier`, and a `secret` followed by
+  `sha256 checksum recorded in the manifest` were all rejected as credentials.
+  A strict key followed by several substantive words is a sentence about a
+  credential rather than a credential, and in `description` and `notes` —
+  the two fields the schema keeps for prose — that is allowed. Every other field
+  in the contract holds an identifier or an enumerated value, so the allowance
+  does not reach them.
+- **A reference written across several pieces is read as one placeholder.**
+  `token: {{ lookup }}` split into three tokens and the bare inner word was
+  graded. Template expressions are collapsed before the value is split.
+
+### Security
+
+- The guarantee is now stated as it behaves. What it still does not do: a literal
+  padded out with prose under a strict key in a prose field is not reported, and
+  the rule reads one line at a time, so an assignment split across lines is not
+  matched. Both limits are written down rather than left to be discovered.
+
 ## [2.0.3] - 2026-08-22
 
 ### Fixed

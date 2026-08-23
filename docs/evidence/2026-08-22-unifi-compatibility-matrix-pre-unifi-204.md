@@ -1,4 +1,6 @@
-<!-- matrix-status: current -->
+<!-- matrix-status: superseded -->
+<!-- superseded-by: 2026-08-22-unifi-compatibility-matrix.md -->
+<!-- superseded-reason: The forty stage results describe portable package 2.0.3 at tree digest 34915c40..., before unifi 2.0.4 replaced the credential value heuristic with a field-aware key policy. The retired rule graded the value and failed in both directions at once: it refused ordinary technical prose such as oauth2 and base64, and it accepted digit-free passwords such as rainbowtrout and sunshine. The shipped package is 2.0.4 and fingerprints to 81c0503c..., so this record no longer identifies the tree it claims to describe. Its client results and its Cursor correction stand and are carried forward unchanged. -->
 
 # Ten-client compatibility matrix — portable UniFi package
 
@@ -12,9 +14,9 @@ The point of the exercise is to learn which clients can consume a portable
 package and which cannot, before anyone commits to a distribution path. It is a
 survey, not a release gate.
 
-## This is the sixth re-run, and what it replaces
+## This is the fifth re-run, and what it replaces
 
-Six earlier publications of this matrix are preserved as history, each retired
+Five earlier publications of this matrix are preserved as history, each retired
 for a different reason:
 
 1. [`2026-08-22-unifi-compatibility-matrix-pre-repair.md`](2026-08-22-unifi-compatibility-matrix-pre-repair.md)
@@ -36,46 +38,21 @@ for a different reason:
    assessed portable package `2.0.2` at tree digest `4c256bb2…`. It is also where
    the Cursor Agent correction was first published, and that correction is carried
    forward here unchanged.
-6. [`2026-08-22-unifi-compatibility-matrix-pre-unifi-204.md`](2026-08-22-unifi-compatibility-matrix-pre-unifi-204.md)
-   assessed portable package `2.0.3` at tree digest `34915c40…`, after the
-   credential-value rule was repaired for a placeholder bypass but while that
-   repair's own two defects were still shipping.
 
 This document is the re-run against the package as it now ships. What moved since
 the last publication is one repair, at the boundary that owns it:
 
-- **UniFi `2.0.4`** — the credential value rule no longer grades the value. The
-  heuristic it replaced could not work, and failed in both directions at once:
-  `oauth2` carries a digit and 2.585 bits of entropy per character, so ordinary
-  technical prose was refused, while `rainbowtrout` carries 3.085 bits and no
-  digit, so a real password was accepted. The rule now grades the *key*. Under a
-  strict secret-bearing key — derived from the same taxonomy that grades property
-  names — a single substantive literal is a credential whatever it looks like,
-  with no entropy floor, no digit test and no length bar. A strict key followed by
-  several substantive words is a sentence about a credential, and that is allowed
-  in `description` and `notes`, the two fields the schema keeps for prose.
+- **UniFi `2.0.3`** — the credential-value rule was defective in both directions,
+  and both were introduced by the previous repair of that same rule. A placeholder
+  standing between an auth scheme word and the credential ended the search, so
+  `authorization: Bearer <redacted> <token>` cleared the real token behind it; and
+  grading the first token unconditionally rejected ordinary operational prose, so
+  `token: rotation happens quarterly` was refused as a credential. The rule now
+  walks the value, steps over scheme words and placeholders, grades the first token
+  that is neither, and stops there.
 
-  The manifest description was also stale: it still named "the corrected 2.0.3
-  revision" while shipping as 2.0.4. Qwen echoes that description back verbatim,
-  so the correction is visible in this run's own load-stage evidence.
-
-Every client reaches the same verdict it did in the fifth run: nine work directly,
-one works through an adapter, none fail. Six things about the *clients* moved, and
-each is recorded in the stage evidence rather than smoothed over:
-
-- **Claude Code** is now `2.1.241`, and its projected always-on cost for this
-  package rose from about 82 tokens to about 149 without any skill text changing.
-  That is the client's estimator moving, not the package.
-- **Qwen** is now `0.22.0` and its installer prompts for confirmation; with no
-  answer on stdin it lists the skills and stops without installing.
-- **Gemini CLI** `skills link` prompts the same way, and hangs rather than
-  declining when stdin is closed.
-- **Muse** needs `--force` on the JSON install to report a digest once placement
-  has already installed the unit.
-- **Agy** is now `1.1.19`.
-- **Grok**'s `plugin details` takes the plugin *name*. The fifth run recorded the
-  command as taking the install id, which returns "Plugin not found". That is a
-  correction to what was written down, not a change in the client.
+Everything else in the package is unchanged from the previous publication, which is
+why every client result below is identical to it.
 
 ## What this document is, and is not
 
@@ -173,15 +150,15 @@ Nine of ten clients consumed the portable package or its skill units directly.
 
 | Client | Version | Placement | Discovery | Load | Invocation | Status |
 |---|---|---|---|---|---|---|
-| Claude Code | 2.1.241 | executed | executed | executed | executed | works directly |
+| Claude Code | 2.1.240 | executed | executed | executed | executed | works directly |
 | OpenAI Codex | 0.149.0 | executed | executed | blocked | blocked | works through an adapter |
 | Cursor Agent | 2026.08.11 | executed | executed | executed | executed | works directly |
-| Qwen | 0.22.0 | executed | executed | executed | executed | works directly |
+| Qwen | 0.21.15 | executed | executed | executed | executed | works directly |
 | Grok | 1.0.5 | executed | executed | executed | executed | works directly |
 | OpenCode | 1.18.18 | executed | executed | executed | executed | works directly |
 | Gemini CLI | 0.44.1 | executed | executed | executed | executed | works directly |
 | Muse | 0.2.1 | executed | executed | executed | executed | works directly |
-| Agy | 1.1.19 | executed | executed | executed | executed | works directly |
+| Agy | 1.1.18 | executed | executed | executed | executed | works directly |
 | Hermes | 0.20.4 | executed | executed | executed | executed | works directly |
 
 Ten clients, forty stage results — 38 executed, 2 blocked, 0 not-applicable —
@@ -361,9 +338,9 @@ installation identifier.
   "assessed_on": "2026-08-22",
   "package": {
     "name": "unifi",
-    "version": "2.0.4",
+    "version": "2.0.3",
     "file_count": 23,
-    "tree_sha256": "81c0503cc4b5009c7feca2ea1665df24c719c2682c4e4f2593eeeead0710ee4e"
+    "tree_sha256": "34915c40a34a4fffe9276fed141bd0ce3a089b26935864b16d4a548a76d9d0dc"
   },
   "method": {
     "stages": [
@@ -379,7 +356,7 @@ installation identifier.
   "clients": [
     {
       "name": "Claude Code",
-      "version": "2.1.241",
+      "version": "2.1.240",
       "stages": {
         "placement": {
           "result": "executed",
@@ -394,7 +371,7 @@ installation identifier.
         "load": {
           "result": "executed",
           "command": "claude --plugin-dir <package> plugin details unifi",
-          "evidence": "Component inventory resolved: skills 2, named unifi-network and unifi-protect; agents 0; hooks 0; MCP servers 0; LSP servers 0. Projected always-on cost about 149 tokens, split about 90 for unifi-network and about 60 for unifi-protect; the client's estimate rose from about 82 tokens at 2.0.3 without any skill text changing, so it is the client's estimator that moved, not the package. The com.infiquetra.claude client extension directory is resolved by the same session-scoped flag, under its own directory name rather than as unifi."
+          "evidence": "Component inventory resolved: skills 2, named unifi-network and unifi-protect; agents 0; hooks 0; MCP servers 0; LSP servers 0; projected always-on cost about 82 tokens, split about 50 for unifi-network and about 30 for unifi-protect. The com.infiquetra.claude client extension directory is resolved by the same session-scoped flag, under its own directory name rather than as unifi, reporting skills 1 and agents 1. Its refusal is confined to the marketplace installer, which asks it for the same missing marketplace file."
         },
         "invocation": {
           "result": "executed",
@@ -453,7 +430,7 @@ installation identifier.
         "invocation": {
           "result": "executed",
           "command": "python3.12 <package>/skills/unifi-network/scripts/unifi_network_client.py --help",
-          "evidence": "Exit status 0 and usage text for both entrypoints, credential-free and with no host argument, on CPython 3.12.13, from the package path the session-scoped flag resolved \u2014 the same client-resolved-path rule applied to every other row."
+          "evidence": "Exit status 0 and usage text for both entrypoints, credential-free and with no host argument, on CPython 3.12.13, from the package path the session-scoped flag resolved — the same client-resolved-path rule applied to every other row."
         }
       },
       "status": "works-directly",
@@ -461,22 +438,22 @@ installation identifier.
     },
     {
       "name": "Qwen",
-      "version": "0.22.0",
+      "version": "0.21.15",
       "stages": {
         "placement": {
           "result": "executed",
-          "command": "qwen extensions install <package>  # confirmation supplied on stdin",
-          "evidence": "Installed and enabled. At 0.22.0 the installer asks 'Do you want to continue?' and waits on stdin; with no answer it prints the skill list and stops without installing. The previous run at 0.21.15 did not prompt. Answering yes installs a client-owned copy of the package, adding one file of its own, .qwen-extension-install.json, so the extension directory holds 24 files where the package ships 23."
+          "command": "qwen extensions install <package>",
+          "evidence": "Installed and enabled after confirming the installation trust the client prompts for by name, having first printed the two skills it was about to install. That trust authorizes a local install and is not a write confirmation against any controller."
         },
         "discovery": {
           "result": "executed",
           "command": "qwen extensions list",
-          "evidence": "One entry, unifi 2.0.3, marked with a success indicator, reporting Origin AgentPlugins \u2014 the client names the Agent Plugins format as the one it recognized \u2014 with Enabled (User) true and Enabled (Workspace) true, and the description read from the portable manifest."
+          "evidence": "One entry, unifi 2.0.3, marked with a success indicator, reporting Origin AgentPlugins — the client names the Agent Plugins format as the one it recognized — with Enabled (User) true and Enabled (Workspace) true, and the description read from the portable manifest."
         },
         "load": {
           "result": "executed",
           "command": "qwen extensions list",
-          "evidence": "Reports unifi version 2.0.4 with both skills, unifi-network and unifi-protect, enabled at user and workspace scope, and echoes the manifest description including its 2.0.4 revision text. Origin is recorded as AgentPlugins and the source as the local portable root."
+          "evidence": "The same command resolves both skills by name, unifi-network and unifi-protect, alongside the version and enabled state, so the definitions are held rather than merely enumerated. No diagnostic was raised."
         },
         "invocation": {
           "result": "executed",
@@ -503,8 +480,8 @@ installation identifier.
         },
         "load": {
           "result": "executed",
-          "command": "grok plugin details <plugin-name>",
-          "evidence": "Reports unifi v2.0.4 with its manifest description and one skill directory, resolved under install id unifi-1007756a. The command takes the plugin name, not the install id: the fifth run recorded it as 'grok plugin details <plugin-id>', which returns 'Plugin not found'. That is a correction to the recorded command, not a change in the client."
+          "command": "grok plugin details <plugin-id>",
+          "evidence": "Resolved plugins 1, named unifi at version 2.0.3 read from the portable manifest, with the description and a component count of one skill directory and no command or agent directories, plus the client-owned install path and timestamps."
         },
         "invocation": {
           "result": "executed",
@@ -532,7 +509,7 @@ installation identifier.
         "load": {
           "result": "executed",
           "command": "opencode debug skill",
-          "evidence": "The same command returns each skill's full parsed body, not merely its name \u2014 the complete SKILL.md content for unifi-network and unifi-protect \u2014 which is load proven rather than inferred, and it runs without credentials."
+          "evidence": "The same command returns each skill's full parsed body, not merely its name — the complete SKILL.md content for unifi-network and unifi-protect — which is load proven rather than inferred, and it runs without credentials."
         },
         "invocation": {
           "result": "executed",
@@ -549,8 +526,8 @@ installation identifier.
       "stages": {
         "placement": {
           "result": "executed",
-          "command": "gemini skills link <skill>  # confirmation supplied on stdin",
-          "evidence": "Both skills linked into the client's own skills directory. The command asks 'Do you want to continue?' and waits on stdin; with stdin closed it hangs rather than declining, so the confirmation is supplied explicitly."
+          "command": "gemini skills link <skill>",
+          "evidence": "Prompted for local consent naming the link destination, then linked each portable skill directory as a symbolic link, confirmed by resolving both links back to the portable directories. What the client holds is the package's own bytes."
         },
         "discovery": {
           "result": "executed",
@@ -560,7 +537,7 @@ installation identifier.
         "load": {
           "result": "executed",
           "command": "gemini skills list --all",
-          "evidence": "The same command resolves each skill's frontmatter \u2014 name, description, enabled state \u2014 with no diagnostic against either skill. Injection into the session system prompt is not observable without credentials, so what is confirmed is definition load, not session injection."
+          "evidence": "The same command resolves each skill's frontmatter — name, description, enabled state — with no diagnostic against either skill. Injection into the session system prompt is not observable without credentials, so what is confirmed is definition load, not session injection."
         },
         "invocation": {
           "result": "executed",
@@ -587,8 +564,8 @@ installation identifier.
         },
         "load": {
           "result": "executed",
-          "command": "muse skills install <skill> --scope user --force --json",
-          "evidence": "Content digest per unit over 4 files each: unifi-network sha256:7998fad3...9be7, unifi-protect sha256:102418488...32ca. --force is required because placement already installed the unit; without it the client returns skill-already-installed and reports no digest. Both installed units are byte-identical to the source units, recomputed with this repository's own tree digest: unifi-network 3650ae42..., unifi-protect ba06e585...."
+          "command": "muse skills install <skill> --scope user --json",
+          "evidence": "The client records a content digest and a per-file digest inventory for what it installed: unifi-network at content sha256 7998fad3a43c9d5eb0e2342906336eb4748c877e6fb937935534dea915d19be7 over 4 files, unifi-protect at content sha256 102418488b587cc5 over 4 files. Its inventory names scripts/_bundled/retry_backoff.py at sha256 9e1f2f17e9645f05, 11069 bytes, equal to the regenerated bundle in this repository — independent confirmation from a client's own bookkeeping that Fleet Core 0.25.2 reached the installed bytes."
         },
         "invocation": {
           "result": "executed",
@@ -601,7 +578,7 @@ installation identifier.
     },
     {
       "name": "Agy",
-      "version": "1.1.19",
+      "version": "1.1.18",
       "stages": {
         "placement": {
           "result": "executed",
@@ -639,12 +616,12 @@ installation identifier.
         "discovery": {
           "result": "executed",
           "command": "hermes skills list",
-          "evidence": "Both skills listed as local source, local trust, status enabled; the client's own tally reads 0 hub-installed, 0 builtin, 2 local \u2014 2 enabled, 0 disabled, where the pre-placement baseline was 0 of each."
+          "evidence": "Both skills listed as local source, local trust, status enabled; the client's own tally reads 0 hub-installed, 0 builtin, 2 local — 2 enabled, 0 disabled, where the pre-placement baseline was 0 of each."
         },
         "load": {
           "result": "executed",
           "command": "hermes prompt-size --json",
-          "evidence": "prompt-size --json resolves both skills into the skills index of the composed prompt. The run used an isolated client home; the operator's live ~/.hermes/skills directory held 22 entries before and after and was not written to."
+          "evidence": "The client's own fresh-session prompt report, which it documents as running offline with no API call, resolves a skills index of 236 characters and 238 bytes where the pre-placement baseline was 0 and 0. That report is generated without credentials and without a live session, which is why it counts as load rather than as inventory."
         },
         "invocation": {
           "result": "executed",

@@ -56,7 +56,6 @@ Usage:
 from __future__ import annotations
 
 import json
-import math
 import os
 import re
 from collections.abc import Iterable, Mapping
@@ -144,45 +143,46 @@ CREDENTIAL_VALUE_FORMATS = (
     ("credential embedded in a URL", re.compile(r"://[^/\s:@]+:[^/\s@]{3,}@")),
 )
 
-# Family two: a credential-shaped key assigned a value that carries real entropy,
-# which is what ``notes: "controller password=..."`` looks like.
-CREDENTIAL_VALUE_ASSIGNMENT = re.compile(
-    r"(?i)(?:^|[^A-Za-z0-9_-])("
-    r"pass(?:word|wd|phrase)|secret|token|api[_-]?key|apikey|authorization|auth|"
-    r"bearer|credentials?|private[_-]?key|client[_-]?secret|access[_-]?key"
-    r")[\"']?\s*[:=]\s*[\"']?([^\"',;]{6,})"
+# Family two: a strict secret-bearing key assigned a literal value. Which keys
+# count as strict is not a second opinion invented here -- it is the property
+# name taxonomy above, reused. A key is strict when its normalized spelling
+# contains one of those fragments, plus the short and compound spellings below
+# that occur inside free text but never as a schema property name. Deriving the
+# in-text set from the property-name set is what stops the two halves of one
+# rule drifting into two dialects.
+#
+# The extras match the whole normalized key rather than a substring of it, so a
+# field called ``author`` is not mistaken for ``auth``.
+CREDENTIAL_KEY_EXACT_IN_TEXT = ("auth", "accesskey", "clientsecret")
+
+# The key is captured generically and graded by that taxonomy instead of being
+# spelled out in the pattern, and the value floor is one character: under a
+# strict key there is no length below which a literal stops being a credential.
+# The value is captured by lookahead so the match itself ends at the delimiter.
+# Consuming the value instead let an innocent key swallow a strict one standing
+# inside it: in ``"notes": "controller password=hunter2"`` the scan matched
+# ``notes``, found it harmless, and resumed *after* the password it had eaten.
+CREDENTIAL_ASSIGNMENT_IN_TEXT = re.compile(
+    r"(?i)(?:^|[^A-Za-z0-9_-])([A-Za-z][A-Za-z0-9_-]{1,31})[\"']?\s*[:=]\s*[\"']?"
+    r"(?=([^\"',;]{1,200}))"
 )
 
 # An auth scheme word sits between the key and the credential in the shape an
-# operator actually pastes: ``authorization: Bearer <token>``. The captured span
-# above deliberately runs across whitespace so that token is inside it; grading
-# only the first token graded the word ``Bearer``, which carries no entropy, and
-# cleared the credential standing behind it. Scheme words shorter than the
-# length floor (``Basic``, ``Token``) were worse still: the span never reached
-# the floor, so the pattern did not match at all and the value went unexamined.
+# operator actually pastes: ``authorization: Bearer <token>``. Scheme words and
+# placeholders are stepped over so the literal standing behind them is what gets
+# graded, which is what catches ``authorization: Bearer <redacted> <token>``.
 CREDENTIAL_SCHEME_WORDS = frozenset(
     {"bearer", "basic", "digest", "token", "apikey", "hmac", "negotiate"}
 )
 
-# A candidate span has to be at least this long before it is worth grading. This
-# is the floor the pattern used to carry inline, moved onto each candidate now
-# that one match can yield two of them.
-CREDENTIAL_VALUE_MIN_LENGTH = 6
-
-# Entropy per character does not separate a credential from an English word:
-# ``rotation`` scores 2.50 and ``hunter2`` scores 2.81, so any floor that admits
-# the password rejects the prose. Character-class mixing does not separate them
-# either, because ``Rotation`` mixes case and ``hunter2`` does not. A digit does:
-# every credential shape this rule is tested against carries one and no English
-# word does. A digit-free value therefore has to be longer than the longest word
-# likely to appear in an operator's note; ``internationalization`` is 20
-# characters, so the bar sits above it rather than at it.
-CREDENTIAL_VALUE_LONG_ENOUGH_WITHOUT_A_DIGIT = 24
-
-# An assigned value has to clear this many bits of entropy per character before
-# it counts as a credential. It is deliberately low, because the key name has
-# already supplied most of the signal.
-CREDENTIAL_VALUE_MIN_ENTROPY = 2.5
+# A template expression is one reference written in several whitespace-separated
+# pieces, so it is collapsed to a single placeholder before the value is split.
+# Grading it as a whole value instead was wrong in a way worth recording: it
+# cleared ``authorization: Bearer ${UNIFI_API_KEY} <token>`` outright, because a
+# value that merely *contains* an expression is not a value that *is* one.
+CREDENTIAL_TEMPLATE_EXPRESSION = re.compile(
+    r"\$\{[^}]*\}|\{\{[^}]*\}\}|\{%[^%]*%\}|%\([^)]*\)s?|\$[A-Za-z_][A-Za-z0-9_]*"
+)
 
 # Values that name a secret rather than being one. A profile is expected to say
 # where the credential lives, so these must never be reported.
@@ -206,6 +206,17 @@ SITE_FIELDS = ("identifier", "description")
 SUBJECT_FIELDS = ("kind", "identifier", "trust_role", "criticality", "ownership", "notes")
 POLICY_FIELDS = ("identifier", "description", "applies_to")
 CONSTRAINT_FIELDS = ("identifier", "description")
+
+#: The schema fields that carry operator prose. Every other field in the
+#: contract is an identifier or an enumerated value, so a sentence is not
+#: expected in one and the prose allowance in :func:`_credential_in_text` does
+#: not apply there. Derived from the field tuples above rather than restated, so
+#: removing a field from the schema removes it from here too.
+DESCRIPTIVE_FIELDS = frozenset(
+    name
+    for name in (*SITE_FIELDS, *SUBJECT_FIELDS, *POLICY_FIELDS, *CONSTRAINT_FIELDS)
+    if name in ("description", "notes")
+)
 
 #: What a caller may not conclude while running without a profile. Rendered by
 #: :meth:`SiteContext.describe` so a discovery-only run states its own limits rather than
@@ -398,17 +409,6 @@ def _credential_field(value: object, trail: str = "") -> str | None:
     return None
 
 
-def _value_entropy(value: str) -> float:
-    """Bits of entropy per character. Grades an already-suspect value only."""
-    if not value:
-        return 0.0
-    total = len(value)
-    counts: dict[str, int] = {}
-    for character in value:
-        counts[character] = counts.get(character, 0) + 1
-    return -sum((count / total) * math.log2(count / total) for count in counts.values())
-
-
 def _names_a_secret(value: str) -> bool:
     """True when the value points at where a credential lives instead of being one."""
     if CREDENTIAL_VALUE_PLACEHOLDER.match(value):
@@ -422,54 +422,69 @@ def _names_a_secret(value: str) -> bool:
     return len(set(value)) <= 2 or value.isdigit()
 
 
-def _is_credential_shaped(token: str) -> bool:
-    """Whether a candidate span looks like a credential rather than a word."""
-    if len(token) < CREDENTIAL_VALUE_MIN_LENGTH:
-        return False
-    if _value_entropy(token) < CREDENTIAL_VALUE_MIN_ENTROPY:
-        return False
-    if any(character.isdigit() for character in token):
-        return True
-    return len(token) >= CREDENTIAL_VALUE_LONG_ENOUGH_WITHOUT_A_DIGIT
+def _is_strict_credential_key(key: str) -> bool:
+    """Whether an in-text assignment key is one a profile may never assign.
 
-
-def _credential_candidate(assigned: str) -> str | None:
-    """The one span of an assigned value that could be the credential itself.
-
-    Auth scheme words and placeholders stand in *front* of a credential rather
-    than being one, so they are stepped over; the first token that is neither is
-    the candidate, and the walk stops there.
-
-    Both halves matter. Walking is what catches
-    ``authorization: Bearer <redacted> <token>``, where a fixed two-token window
-    graded the placeholder and cleared the real credential behind it. Stopping is
-    what keeps the rule off prose: a scan that kept looking would eventually
-    reach a ticket number like ``ABC-1234`` in ``auth: see ticket ABC-1234`` and
-    grade that instead.
+    Graded with the same fragment list :func:`_credential_field` uses on property
+    names, so the rule has one taxonomy rather than two.
     """
-    for token in assigned.split():
-        if token.lower() in CREDENTIAL_SCHEME_WORDS:
-            continue
-        if _names_a_secret(token):
-            continue
-        return token
-    return None
+    normalized = "".join(character for character in key.lower() if character.isalnum())
+    if any(fragment in normalized for fragment in CREDENTIAL_NAME_FRAGMENTS):
+        return True
+    return normalized in CREDENTIAL_KEY_EXACT_IN_TEXT
 
 
-def _credential_in_text(text: str) -> str | None:
-    """Describe the credential in ``text``, or ``None`` when there is none."""
+def _substantive_tokens(assigned: str) -> list[str]:
+    """The tokens of an assigned value that could be a credential themselves.
+
+    Template expressions are collapsed first so that a reference spelled across
+    several whitespace-separated pieces counts as the one placeholder it is,
+    rather than contributing a bare inner word as a candidate.
+    """
+    collapsed = CREDENTIAL_TEMPLATE_EXPRESSION.sub(" <redacted> ", assigned)
+    return [
+        token
+        for token in collapsed.split()
+        if token.lower() not in CREDENTIAL_SCHEME_WORDS and not _names_a_secret(token)
+    ]
+
+
+def _credential_in_text(text: str, descriptive: bool = True) -> str | None:
+    """Describe the credential in ``text``, or ``None`` when there is none.
+
+    Which rule applies is decided by the *key*, not by what the value looks like.
+    A strict secret-bearing key assigned a single substantive literal is a
+    credential whatever that literal happens to be: ``rainbowtrout`` counts, and
+    so does ``secret``. There is no entropy floor, no digit test and no length
+    bar, because those graded the value and could not tell ``oauth2`` from a
+    password in either direction -- they refused the technical word and let the
+    digit-free password through.
+
+    A strict key followed by several substantive words is a sentence *about* a
+    credential rather than a credential, and in the fields the schema keeps for
+    prose that is allowed: ``notes: "token: base64 of the site identifier"``
+    stays. Everywhere else the contract carries identifiers and enumerated
+    values, never sentences, so the allowance does not apply.
+
+    The limit this leaves is deliberate, and the reference states it: a literal
+    padded out with prose under a strict key in a prose field is not reported.
+    """
     for label, pattern in CREDENTIAL_VALUE_FORMATS:
         if pattern.search(text):
             return label
-    for match in CREDENTIAL_VALUE_ASSIGNMENT.finditer(text):
+    for match in CREDENTIAL_ASSIGNMENT_IN_TEXT.finditer(text):
         key, assigned = match.group(1), match.group(2)
-        candidate = _credential_candidate(assigned)
-        if candidate is not None and _is_credential_shaped(candidate):
+        if not _is_strict_credential_key(key):
+            continue
+        tokens = _substantive_tokens(assigned)
+        if not tokens:
+            continue  # a placeholder, a reference, or a bare scheme word
+        if len(tokens) == 1 or not descriptive:
             return f"{key!r} is assigned a credential-shaped value"
     return None
 
 
-def _credential_value(value: object, trail: str = "") -> tuple[str, str] | None:
+def _credential_value(value: object, trail: str = "", field: str = "") -> tuple[str, str] | None:
     """Return ``(property path, what fired)`` for the first credential value.
 
     Every string in the document is inspected, at any depth, because the point of
@@ -480,17 +495,17 @@ def _credential_value(value: object, trail: str = "") -> tuple[str, str] | None:
     rejected as an unknown field.
     """
     if isinstance(value, str):
-        finding = _credential_in_text(value)
+        finding = _credential_in_text(value, descriptive=field in DESCRIPTIVE_FIELDS)
         return None if finding is None else (trail or "profile", finding)
     if isinstance(value, dict):
         for key in value:
             location = f"{trail}.{key}" if trail else str(key)
-            found = _credential_value(value[key], location)
+            found = _credential_value(value[key], location, str(key))
             if found is not None:
                 return found
     elif isinstance(value, list):
         for index, item in enumerate(value):
-            found = _credential_value(item, f"{trail}[{index}]")
+            found = _credential_value(item, f"{trail}[{index}]", field)
             if found is not None:
                 return found
     return None

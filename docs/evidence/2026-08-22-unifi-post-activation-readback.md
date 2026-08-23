@@ -1,7 +1,7 @@
-# Post-activation readback — portable UniFi package 2.0.3
+# Post-activation readback — portable UniFi package 2.0.4
 
 The UniFi package in this repository, `plugins/unifi/`, is a derived copy of an
-upstream Claude Code plugin that was released as version 2.0.3 and activated
+upstream Claude Code plugin that was released as version 2.0.4 and activated
 upstream. The portability pilot plan requires two things after any activation,
 and neither had been captured:
 
@@ -19,25 +19,31 @@ on 22 August 2026.
 
 ## This readback was re-captured, and why
 
-This is the fifth capture. The first described the package at tree digest
+This is the sixth capture. The first described the package at tree digest
 `6e6b57c1…`; the second, at `da46ca77…`, followed the re-synchronization of the
 portable Fleet Core slice to release 0.25.1; the third, at `cafe8836…`, followed
 the re-synchronization from UniFi 2.0.1; the fourth, at `4c256bb2…`, followed
-Fleet Core 0.25.2 and UniFi 2.0.2.
+Fleet Core 0.25.2 and UniFi 2.0.2; the fifth, at `34915c40…`, followed UniFi
+2.0.3.
 
-This capture follows UniFi `2.0.3`, which repairs the credential-value rule that
-a fifth review cycle found defective in both directions — and both defects were
-introduced by the previous repair of that same rule. A placeholder standing
-between an auth scheme word and the credential ended the search, so
-`authorization: Bearer <redacted> <token>` graded the placeholder and cleared the
-real token behind it; and grading the first token unconditionally rejected
-ordinary operational prose, so `token: rotation happens quarterly` was refused as
-a credential. The rule now walks the value, steps over scheme words and
-placeholders, grades the first token that is neither, and stops there.
+This capture follows UniFi `2.0.4`, which replaces the credential value
+heuristic with a field-aware key policy. The rule 2.0.3 shipped graded the
+*value*, and a sixth review cycle found it failing in both directions at once:
+`oauth2` carries a digit and 2.585 bits of entropy per character, so ordinary
+technical prose was refused, while `rainbowtrout` carries 3.085 bits and no
+digit, so a real password was accepted. The rule now grades the *key* — under a
+strict secret-bearing key a single substantive literal is a credential whatever
+it looks like, and a strict key followed by several substantive words is a
+sentence, allowed in the two fields the schema keeps for prose.
+
+The profile-present state below is not a neutral fixture. Its `notes` value is
+`credentials: oauth2 is configured at the controller`, which 2.0.3 refused and
+2.0.4 accepts, so the three-state check also proves the repair from installed
+bytes rather than from the source tree.
 
 The byte-copied loader and the manifest version changed, so every fingerprint in
 the fourth capture stopped identifying the shipped bytes. The Fleet Core slice did
-not change: its subtree is byte-identical between `3b5faa6c` and `769d06f1`, which
+not change: its subtree is byte-identical between `3b5faa6c` and `a46714b8`, which
 was verified rather than assumed, so the two generated bundles carry the same
 digest they did in the previous capture.
 
@@ -76,19 +82,19 @@ Four links, each verified rather than assumed:
 
 | Link | What identifies it | How it was checked |
 |---|---|---|
-| Activated upstream release | commit `769d06f17a7ed2545e509509c96565bdf67f8dc8`, manifest version `2.0.3` | read from a local clone at that commit, read-only |
+| Activated upstream release | commit `a46714b8ef786a47d205217914e7cd4928f6dd92`, manifest version `2.0.4` | read from a local clone at that commit, read-only |
 | Synchronization pin | `plugins/unifi/PROVENANCE.json` records that same commit and version | read from this repository |
-| Portable package tree | 23 files, tree digest `34915c40…d0dc` | recomputed from `plugins/unifi/` |
+| Portable package tree | 23 files, tree digest `81c0503c…ee4e` | recomputed from `plugins/unifi/` |
 | Installed copies | same file count, same tree digest | recomputed from each client-owned installed tree |
 
 Read read-only from the same local clone, the upstream manifest at that commit
-declares `unifi` version `2.0.3` and `fleet-core` version `0.25.2`.
+declares `unifi` version `2.0.4` and `fleet-core` version `0.25.2`.
 
 **The two portable slices pin two different revisions, and that is deliberate.**
 `plugins/fleet-core/PROVENANCE.json` pins `3b5faa6c` and
-`plugins/unifi/PROVENANCE.json` pins `769d06f1`. The Fleet Core pin names the
+`plugins/unifi/PROVENANCE.json` pins `a46714b8`. The Fleet Core pin names the
 revision at which the upstream `plugins/fleet-core` subtree last changed, which
-is the rule that slice was created under; `769d06f1` is a descendant of it on
+is the rule that slice was created under; `a46714b8` is a descendant of it on
 the same default branch, and `git diff` over `plugins/fleet-core` between the two
 revisions is empty, which was verified rather than assumed. So the two pins name
 one consistent upstream state — the same state read at the two points where each
@@ -112,8 +118,8 @@ what it holds is evidence, not proof.
 
 | Client | Install unit | Client-reported version | Client-reported digest | Recomputed from installed bytes |
 |---|---|---|---|---|
-| Grok 1.0.5 | package root | `unifi v2.0.3` | none reported | 23 files, `34915c40…d0dc` — equal to the source tree |
-| Agy 1.1.18 | package root | not reported; 2 skills processed | none reported | 23 files, `34915c40…d0dc` — equal to the source tree |
+| Grok 1.0.5 | package root | `unifi v2.0.4` | none reported | 23 files, `81c0503c…ee4e` — equal to the source tree |
+| Agy 1.1.18 | package root | not reported; 2 skills processed | none reported | 23 files, `81c0503c…ee4e` — equal to the source tree |
 | Muse 0.2.1 | each skill directory | not reported; activation on, 0 diagnostics | content digest per unit, 4 files each | `unifi-network` 4 files `3650ae42…113b`; `unifi-protect` 4 files `ba06e585…5a4f` — equal to the source units |
 
 Two notes on reading that table honestly:
@@ -163,7 +169,7 @@ discovery-only answer for a caller to mistake for success.
 
 **Proved.** A client installing this package from a cold start holds exactly the
 bytes this repository ships, which are the bytes synchronized from the activated
-upstream 2.0.3 release; the installed copy's entrypoints run credential-free on
+upstream 2.0.4 release; the installed copy's entrypoints run credential-free on
 the catalog's declared minimum interpreter; and the installed profile loader
 distinguishes all three profile states with the documented exit statuses, on that
 same interpreter.
@@ -197,10 +203,10 @@ support.
   "captured_on": "2026-08-22",
   "release": {
     "name": "unifi",
-    "version": "2.0.3",
+    "version": "2.0.4",
     "file_count": 23,
-    "tree_sha256": "34915c40a34a4fffe9276fed141bd0ce3a089b26935864b16d4a548a76d9d0dc",
-    "upstream_commit": "769d06f17a7ed2545e509509c96565bdf67f8dc8",
+    "tree_sha256": "81c0503cc4b5009c7feca2ea1665df24c719c2682c4e4f2593eeeead0710ee4e",
+    "upstream_commit": "a46714b8ef786a47d205217914e7cd4928f6dd92",
     "units": {
       "unifi-network": {
         "file_count": 4,
@@ -222,21 +228,21 @@ support.
       "client": "Grok",
       "client_version": "1.0.5",
       "install_unit": "package-root",
-      "reported_version": "2.0.3",
+      "reported_version": "2.0.4",
       "reported_digest": null,
       "recomputed_file_count": 23,
-      "recomputed_tree_sha256": "34915c40a34a4fffe9276fed141bd0ce3a089b26935864b16d4a548a76d9d0dc",
+      "recomputed_tree_sha256": "81c0503cc4b5009c7feca2ea1665df24c719c2682c4e4f2593eeeead0710ee4e",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },
     {
       "client": "Agy",
-      "client_version": "1.1.18",
+      "client_version": "1.1.19",
       "install_unit": "package-root",
       "reported_version": null,
       "reported_digest": null,
       "recomputed_file_count": 23,
-      "recomputed_tree_sha256": "34915c40a34a4fffe9276fed141bd0ce3a089b26935864b16d4a548a76d9d0dc",
+      "recomputed_tree_sha256": "81c0503cc4b5009c7feca2ea1665df24c719c2682c4e4f2593eeeead0710ee4e",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },
@@ -247,8 +253,8 @@ support.
       "reported_version": null,
       "reported_digest": {
         "algorithm": "client-defined content digest, not this repository's tree digest",
-        "unifi-network": "7998fad3a43c9d5eb0e2342906336eb4748c877e6fb937935534dea915d19be7",
-        "unifi-protect": "102418488b587cc5613ac457f1d17b66b474fac69c7fb12bf39cea8634d032ca"
+        "unifi-network": "sha256:7998fad3a43c9d5eb0e2342906336eb4748c877e6fb937935534dea915d19be7",
+        "unifi-protect": "sha256:102418488b587cc5613ac457f1d17b66b474fac69c7fb12bf39cea8634d032ca"
       },
       "recomputed_file_count": 8,
       "recomputed_tree_sha256": null,
@@ -263,7 +269,10 @@ support.
   "profile_states": [
     {
       "state": "absent",
-      "proved_from": ["Grok installed copy", "Agy installed copy"],
+      "proved_from": [
+        "Grok installed copy",
+        "Agy installed copy"
+      ],
       "exit_status": 0,
       "mode": "discovery-only",
       "profile_source": null,
@@ -275,7 +284,10 @@ support.
     },
     {
       "state": "present",
-      "proved_from": ["Grok installed copy", "Agy installed copy"],
+      "proved_from": [
+        "Grok installed copy",
+        "Agy installed copy"
+      ],
       "exit_status": 0,
       "mode": "profile",
       "profile_source": "environment",
@@ -283,11 +295,15 @@ support.
       "site_identifier": "example-site",
       "subject_count": 2,
       "policy_count": 1,
-      "constraint_count": 1
+      "constraint_count": 1,
+      "note": "The fixture's notes value carries technical prose under a strict secret-bearing key, 'credentials: oauth2 is configured at the controller'. The 2.0.3 rule refused it; 2.0.4 accepts it, so this state also exercises the repair from installed bytes."
     },
     {
       "state": "unreadable",
-      "proved_from": ["Grok installed copy", "Agy installed copy"],
+      "proved_from": [
+        "Grok installed copy",
+        "Agy installed copy"
+      ],
       "exit_status": 1,
       "error_type": "ProfileUnreadableError",
       "fell_back_to_discovery_only": false

@@ -837,9 +837,21 @@ class SecretFreeValueTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             self.assertEqual(check_repo.check_secret_free_values(Path(directory)), [])
 
-    def test_entropy_grades_the_value_not_its_length(self) -> None:
-        self.assertGreater(check_repo.shannon_entropy("aB9dEf2GhJ4kLm7Q"), 3.0)
-        self.assertLess(check_repo.shannon_entropy("aaaaaaaaaaaaaaaa"), 0.1)
+    def test_a_strict_key_assigned_a_digitless_literal_is_reported(self) -> None:
+        """The rule the entropy helper used to serve graded the wrong thing.
+
+        ``rainbowtrout`` carries more entropy per character than ``oauth2`` and no
+        digit, so the retired rule accepted the password and refused the word.
+        """
+        self.assertTrue(
+            check_repo.credential_findings("password: rainbowtrout", include_assignments=True)
+        )
+        self.assertEqual(
+            check_repo.credential_findings(
+                "token: base64 of the site identifier", include_assignments=True
+            ),
+            [],
+        )
 
 
 if __name__ == "__main__":

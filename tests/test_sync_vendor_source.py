@@ -74,7 +74,7 @@ import sync_vendor_source as svs  # noqa: E402
 # unconditionally rejected ordinary prose, because entropy per character cannot
 # separate `rotation` from `hunter2`. That move changes the byte-copied loader
 # again, along with the upstream changelog.
-CORRECTED_REVISION = "769d06f17a7ed2545e509509c96565bdf67f8dc8"
+CORRECTED_REVISION = "a46714b8ef786a47d205217914e7cd4928f6dd92"
 FORBIDDEN_REVISION_PREFIX = "995a475b"
 
 #: A client actually reaching for the dropped shim, as opposed to a comment

@@ -1,0 +1,32 @@
+# Cycle-7 mutation proof — upstream site_profile_loader.py (final bytes)
+pristine sha256: 9e03ce931d2f26c79a7c5907b56f619b8669c4265a8a7acf996f03d6b7876e35
+
+## MUTATION: strict-key enforcement weakened — exact in-text spellings dropped
+FAILED tests/test_unifi_site_profile_loader.py::test_the_strict_key_set_is_the_property_name_taxonomy
+======================== 1 failed, 128 passed in 0.40s =========================
+
+## MUTATION: descriptive-field separation removed — every field treated as prose
+FAILED tests/test_unifi_site_profile_loader.py::test_the_prose_allowance_does_not_reach_a_structured_field
+======================== 1 failed, 128 passed in 0.40s =========================
+
+## MUTATION: strict rule weakened back to a length floor
+FAILED tests/test_unifi_site_profile_loader.py::test_a_credential_written_into_a_free_text_value_is_refused[controller password=hunter2-1.0]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_credential_written_into_a_free_text_value_is_refused[controller password=hunter2-1.1]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_literal_under_a_strict_key_is_refused_whatever_it_looks_like[password: rainbowtrout]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_literal_under_a_strict_key_is_refused_whatever_it_looks_like[password: sunshine]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_literal_under_a_strict_key_is_refused_whatever_it_looks_like[api_key: correcthorsebattery]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_literal_under_a_strict_key_is_refused_whatever_it_looks_like[passphrase: correcthorsebattery]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_literal_under_a_strict_key_is_refused_whatever_it_looks_like[password: secret]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_literal_under_a_strict_key_is_refused_whatever_it_looks_like[password: hunter2]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_literal_under_a_strict_key_is_refused_whatever_it_looks_like[secret: internationalization]
+FAILED tests/test_unifi_site_profile_loader.py::test_a_literal_under_a_strict_key_is_refused_whatever_it_looks_like[password: rainbowtrout <redacted>]
+======================== 10 failed, 119 passed in 0.49s ========================
+
+## MUTATION: template collapse removed — a reference in pieces yields a bare inner word
+FAILED tests/test_unifi_site_profile_loader.py::test_a_value_that_names_where_a_secret_lives_is_accepted[api_key: {{ lookup }}]
+======================== 1 failed, 128 passed in 0.42s =========================
+
+## RESTORED
+restored sha256: 9e03ce931d2f26c79a7c5907b56f619b8669c4265a8a7acf996f03d6b7876e35
+byte-identical to pristine: YES
+============================= 129 passed in 0.40s ==============================

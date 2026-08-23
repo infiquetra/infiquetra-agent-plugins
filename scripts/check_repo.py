@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import re
 import sys
 from pathlib import Path
@@ -181,41 +180,51 @@ CREDENTIAL_VALUE_DATA_SUFFIXES = (
     ".yaml",
     ".yml",
 )
-CREDENTIAL_ASSIGNMENT = re.compile(
-    r"(?i)(?:^|[^A-Za-z0-9_-])("
-    r"pass(?:word|wd|phrase)|secret|token|api[_-]?key|apikey|authorization|auth|"
-    r"bearer|credentials?|private[_-]?key|client[_-]?secret|access[_-]?key"
-    r")[\"']?\s*[:=]\s*[\"']?([^\"',;]{6,})"
+# Mirrors ``site_profile.CREDENTIAL_NAME_FRAGMENTS``. The strict in-text key set
+# is derived from it rather than spelled out a second time, which is what stops
+# the gate and the two loaders drifting into separate dialects of one rule.
+CREDENTIAL_NAME_FRAGMENTS = (
+    "apikey",
+    "authorization",
+    "bearer",
+    "credential",
+    "passphrase",
+    "passwd",
+    "password",
+    "privatekey",
+    "secret",
+    "token",
+)
+
+# Mirrors ``site_profile.CREDENTIAL_KEY_EXACT_IN_TEXT``. Short and compound
+# spellings that occur inside free text but never as a schema property name.
+# Matched whole, so a field called ``author`` is not mistaken for ``auth``.
+CREDENTIAL_KEY_EXACT_IN_TEXT = ("auth", "accesskey", "clientsecret")
+
+# Mirrors ``site_profile.CREDENTIAL_ASSIGNMENT_IN_TEXT``. The value is captured
+# by lookahead so the match itself ends at the delimiter.
+# Consuming the value instead let an innocent key swallow a strict one standing
+# inside it: in ``"notes": "controller password=hunter2"`` the scan matched
+# ``notes``, found it harmless, and resumed *after* the password it had eaten.
+CREDENTIAL_ASSIGNMENT_IN_TEXT = re.compile(
+    r"(?i)(?:^|[^A-Za-z0-9_-])([A-Za-z][A-Za-z0-9_-]{1,31})[\"']?\s*[:=]\s*[\"']?"
+    r"(?=([^\"',;]{1,200}))"
 )
 
 # Mirrors ``site_profile.CREDENTIAL_SCHEME_WORDS``. An auth scheme word sits
 # between the key and the credential in ``authorization: Bearer <token>``, so
-# the span above runs across whitespace and the token behind the scheme word is
-# graded too. Grading only the first token graded ``Bearer`` and cleared the
-# credential; ``Basic`` and ``Token`` are shorter than the length floor, so the
-# pattern did not even match and those values went wholly unexamined.
+# scheme words and placeholders are stepped over and the literal standing behind
+# them is what gets graded.
 CREDENTIAL_SCHEME_WORDS = frozenset(
     {"bearer", "basic", "digest", "token", "apikey", "hmac", "negotiate"}
 )
 
-# The floor the pattern used to carry inline, moved onto the candidate.
-CREDENTIAL_VALUE_MIN_LENGTH = 6
-
-# Mirrors ``site_profile.CREDENTIAL_VALUE_LONG_ENOUGH_WITHOUT_A_DIGIT``. Entropy
-# per character does not separate a credential from an English word -- ``rotation``
-# scores 2.50 and ``hunter2`` scores 2.81 -- and neither does character-class
-# mixing, because ``Rotation`` mixes case and ``hunter2`` does not. A digit does:
-# every credential shape this rule is tested against carries one and no English
-# word does. A digit-free value therefore has to be longer than the longest word
-# likely to appear in an operator's note; ``internationalization`` is 20
-# characters, so the bar sits above it rather than at it.
-CREDENTIAL_VALUE_LONG_ENOUGH_WITHOUT_A_DIGIT = 24
-
-# An assigned value has to clear this many bits of entropy per character before
-# it counts as a credential. It is deliberately low, because the key name has
-# already supplied most of the signal: `password: password` clears it and should,
-# while `password: secret` does not and neither does any single repeated word.
-CREDENTIAL_VALUE_MIN_ENTROPY = 2.5
+# Mirrors ``site_profile.CREDENTIAL_TEMPLATE_EXPRESSION``. A reference written in
+# several whitespace-separated pieces is collapsed to one placeholder before the
+# value is split, so a bare inner word is never graded as the candidate.
+CREDENTIAL_TEMPLATE_EXPRESSION = re.compile(
+    r"\$\{[^}]*\}|\{\{[^}]*\}\}|\{%[^%]*%\}|%\([^)]*\)s?|\$[A-Za-z_][A-Za-z0-9_]*"
+)
 
 # Values that name a secret rather than being one. A profile is expected to point
 # at where the credential lives, so these must never be reported.
@@ -780,17 +789,6 @@ def check_skill_frontmatter(root: Path) -> list[str]:
     return errors
 
 
-def shannon_entropy(value: str) -> float:
-    """Bits of entropy per character. Used only to grade an already-suspect value."""
-    if not value:
-        return 0.0
-    total = len(value)
-    counts: dict[str, int] = {}
-    for character in value:
-        counts[character] = counts.get(character, 0) + 1
-    return -sum((count / total) * math.log2(count / total) for count in counts.values())
-
-
 def _names_a_secret(value: str) -> bool:
     """True when the value points at where a credential lives instead of being one."""
     if CREDENTIAL_PLACEHOLDER.match(value):
@@ -804,34 +802,22 @@ def _names_a_secret(value: str) -> bool:
     return len(set(value)) <= 2 or value.isdigit()
 
 
-def _is_credential_shaped(token: str) -> bool:
-    """Whether a candidate span looks like a credential rather than a word."""
-    if len(token) < CREDENTIAL_VALUE_MIN_LENGTH:
-        return False
-    if shannon_entropy(token) < CREDENTIAL_VALUE_MIN_ENTROPY:
-        return False
-    if any(character.isdigit() for character in token):
+def _is_strict_credential_key(key: str) -> bool:
+    """Mirrors ``site_profile._is_strict_credential_key``."""
+    normalized = "".join(character for character in key.lower() if character.isalnum())
+    if any(fragment in normalized for fragment in CREDENTIAL_NAME_FRAGMENTS):
         return True
-    return len(token) >= CREDENTIAL_VALUE_LONG_ENOUGH_WITHOUT_A_DIGIT
+    return normalized in CREDENTIAL_KEY_EXACT_IN_TEXT
 
 
-def _credential_candidate(assigned: str) -> str | None:
-    """The one span of an assigned value that could be the credential itself.
-
-    Mirrors ``site_profile._credential_candidate``. Auth scheme words and
-    placeholders stand in front of a credential rather than being one, so they
-    are stepped over; the first token that is neither is the candidate, and the
-    walk stops there. Stopping matters as much as walking: a scan that kept
-    looking would eventually reach a ticket number like ``ABC-1234`` in ordinary
-    prose and grade that instead.
-    """
-    for token in assigned.split():
-        if token.lower() in CREDENTIAL_SCHEME_WORDS:
-            continue
-        if _names_a_secret(token):
-            continue
-        return token
-    return None
+def _substantive_tokens(assigned: str) -> list[str]:
+    """Mirrors ``site_profile._substantive_tokens``."""
+    collapsed = CREDENTIAL_TEMPLATE_EXPRESSION.sub(" <redacted> ", assigned)
+    return [
+        token
+        for token in collapsed.split()
+        if token.lower() not in CREDENTIAL_SCHEME_WORDS and not _names_a_secret(token)
+    ]
 
 
 def credential_findings(text: str, *, include_assignments: bool) -> list[str]:
@@ -848,13 +834,20 @@ def credential_findings(text: str, *, include_assignments: bool) -> list[str]:
                 findings.append(f"line {number}: {label}")
         if not include_assignments:
             continue
-        for match in CREDENTIAL_ASSIGNMENT.finditer(line):
+        for match in CREDENTIAL_ASSIGNMENT_IN_TEXT.finditer(line):
             key, value = match.group(1), match.group(2)
-            candidate = _credential_candidate(value)
-            if candidate is not None and _is_credential_shaped(candidate):
-                findings.append(
-                    f"line {number}: {key!r} is assigned a credential-shaped value"
-                )
+            if not _is_strict_credential_key(key):
+                continue
+            tokens = _substantive_tokens(value)
+            if len(tokens) != 1:
+                # No substantive token is a placeholder, a reference or a bare
+                # scheme word. Several of them is a sentence about a credential,
+                # and every file this gate reads is prose or source, so the
+                # descriptive reading applies throughout.
+                continue
+            findings.append(
+                f"line {number}: {key!r} is assigned a credential-shaped value"
+            )
     return findings
 
 

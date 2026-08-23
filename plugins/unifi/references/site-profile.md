@@ -45,13 +45,27 @@ the document is now inspected, at any depth, by two narrow families:
    tokens, Google, Anthropic and OpenAI API keys, JSON web tokens, private key
    blocks, and credentials embedded in a URL. These are credentials wherever
    they appear, so they are rejected on sight.
-2. **A credential-shaped key assigned a high-entropy value.** A `notes` string
-   that sets `password`, `secret`, `token`, `api_key`, `bearer`,
-   `client_secret`, or a near neighbour to a value of at least six characters
-   that clears 2.5 bits of entropy per character is rejected.
+2. **A strict secret-bearing key assigned a literal value.** A string that sets
+   `password`, `secret`, `token`, `api_key`, `bearer`, `authorization`,
+   `passphrase`, `private_key`, `client_secret`, `access_key`, `auth`, or a near
+   neighbour, to a single substantive value is rejected — whatever that value
+   looks like. There is no entropy floor, no digit test and no length bar, so
+   `password: rainbowtrout` and `password: secret` are both refused.
+
+   Which keys are strict is the same list that grades property names, read once
+   and used in both halves of the rule.
 
 The loader names the property and says which family fired, so the report is
 actionable rather than a bare refusal.
+
+> **What changed in 2.0.4, and why it is written down here.** The rule used to
+> grade the *value*: at least six characters clearing 2.5 bits of entropy, later
+> narrowed to "carries a digit, or is 24+ characters without one". Grading the
+> value cannot work, and it failed in both directions at once. `oauth2` carries a
+> digit and 2.585 bits, so ordinary technical prose was refused; `rainbowtrout`
+> carries 3.085 bits and no digit, so a real password was accepted. The
+> discriminator fired on the lower-entropy inputs and passed the higher-entropy
+> ones. The key decides now, and the value is not graded at all.
 
 ### What the value rule deliberately does not do
 
@@ -68,10 +82,24 @@ operator who is told "credentials are excluded" will act on it.
   controller password is held in the operator's vault is accepted, as is a
   reference such as `vault:` or `env:`, a redacted marker, and an unexpanded
   variable.
-- **A short, low-entropy secret in a free-text value still passes.** A value of
-  `secret` assigned to a `password` key is six characters of about 2.25 bits and
-  sits below the floor by design, because raising the floor to catch it would
-  start rejecting ordinary prose.
+- **It reads a sentence as a sentence.** In `description` and `notes` — the two
+  fields the schema keeps for prose — a strict key followed by *several*
+  substantive words is a description rather than a credential, so
+  `token: base64 of the site identifier` and `credentials: oauth2 is configured
+  at the controller` are accepted. Every other field in the contract holds an
+  identifier or an enumerated value, so the allowance does not reach them.
+- **A literal padded out with prose is not reported.** The value
+  `password: rainbowtrout is the controller value` passes, because the
+  several-words reading above cannot distinguish it from a description. This is
+  the price of not rejecting ordinary technical writing, and it is the sharpest
+  edge of the rule.
+
+  Writing that example down is itself a demonstration: this page has to keep
+  each sample assignment on one line, because a line break would leave a bare
+  `password: <literal>` behind and the repository gate would refuse the file —
+  correctly, since it cannot know a leak from an illustration.
+- **It reads one line at a time.** An assignment split across two lines is not
+  matched by either the loader or the gate.
 
 So the accurate wording of the guarantee is this: **a profile is validated to be
 free of credential-shaped field names, and of credentials written as values in
