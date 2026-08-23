@@ -206,15 +206,27 @@ CREDENTIAL_KEY_EXACT_IN_TEXT = ("auth", "accesskey", "clientsecret")
 # Consuming the value instead let an innocent key swallow a strict one standing
 # inside it: in ``"notes": "controller password=hunter2"`` the scan matched
 # ``notes``, found it harmless, and resumed *after* the password it had eaten.#
-# An assignment is one line. The whitespace around the delimiter is horizontal
-# only and the value stops at a newline, because ``\s*`` spanning a line break
-# reopened the swallow across lines: ``see notes:\npassword=hunter2`` matched
-# ``notes``, ate the newline with it, and left the password with no preceding
-# character to start a fresh match against -- so the loader accepted a credential
-# the gate, which reads line by line, refused.
+# An assignment is one line, and "one line" has to mean the same thing here as it
+# does in the gate, which reads a line with ``str.splitlines()``. Naming only
+# ``\n`` was the first repair of this defect and fixed one instance of it: nine
+# other boundaries still diverged and eight were fail-open in the loader.
+#: Every boundary ``str.splitlines()`` recognises, which is the definition the
+#: repository gate reads a line by. ``\r\n`` needs no separate entry: both of its
+#: characters are here, so neither can be consumed as horizontal whitespace and
+#: neither can appear inside a value.
+CREDENTIAL_LINE_BREAKS = "\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"
+
+#: The same set as a regular-expression character-class body, built from the
+#: string above so the two cannot disagree.
+_LINE_BREAK_CLASS = "".join(
+    f"\\x{ord(character):02x}" if ord(character) < 0x100 else f"\\u{ord(character):04x}"
+    for character in CREDENTIAL_LINE_BREAKS
+)
+
 CREDENTIAL_ASSIGNMENT_IN_TEXT = re.compile(
-    r"(?i)(?:^|[^A-Za-z0-9_-])([A-Za-z][A-Za-z0-9_-]{1,31})[\"']?[^\S\n]*[:=][^\S\n]*"
-    r"[\"']?(?=([^\"',;\n]{1,200}))"
+    r"(?i)(?:^|[^A-Za-z0-9_-])([A-Za-z][A-Za-z0-9_-]{1,31})[\"']?"
+    rf"[^\S{_LINE_BREAK_CLASS}]*[:=][^\S{_LINE_BREAK_CLASS}]*"
+    rf"[\"']?(?=([^\"',;{_LINE_BREAK_CLASS}]{{1,200}}))"
 )
 
 # Mirrors ``site_profile.CREDENTIAL_SCHEME_WORDS``. An auth scheme word sits

@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+## [2.0.6] - 2026-08-23
+
+### Fixed
+
+- **"One line" now means the same thing on both sides of the rule.** 2.0.5 scoped
+  the assignment to `\n` and nothing else. The repository gate reads a line with
+  `str.splitlines()`, which breaks on ten characters and on the two-character
+  CRLF sequence, so nine other boundaries still diverged between the loaders and
+  the gate — and eight of those were fail-open: a credential written with a
+  carriage return, a vertical tab, a form feed, a file, group or record
+  separator, NEL, LINE SEPARATOR or PARAGRAPH SEPARATOR as the break loaded
+  unseen while the gate refused the same text.
+
+  Both shapes are reachable through ordinary valid JSON. A carriage return
+  survives as the standard `\r` escape, and LINE SEPARATOR is legal literally
+  inside a JSON string; both were confirmed to reach the loader and be accepted.
+
+  The boundary set is now named once, derived from what `splitlines()` actually
+  recognises, and used by all three copies. A test rebuilds that set from the
+  standard library, so a future Python adding a boundary fails rather than
+  letting the copies quietly disagree again.
+
+### Testing
+
+- The shared verdict corpus pins every boundary in both vulnerable shapes: the
+  swallow, where an innocent key must not consume the break and hide the strict
+  assignment behind it, and the split, where an assignment divided by a break is
+  matched by no copy. Twenty-two rows, one per boundary per shape.
+- The exact in-text key set is now load-bearing rather than decorative. Iterating
+  the tuple to assert its members are strict was vacuous — emptying it made the
+  loop a no-op and every test still passed, so `auth` and `accesskey` could be
+  retired silently. Those spellings are written out literally and checked by
+  behaviour; emptying the tuple now fails five tests.
+
 ## [2.0.5] - 2026-08-23
 
 ### Fixed

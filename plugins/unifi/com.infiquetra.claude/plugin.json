@@ -1,6 +1,6 @@
 {
   "name": "unifi",
-  "version": "2.0.5",
+  "version": "2.0.6",
   "description": "UniFi Network and Protect CLI for managing UDM devices, clients, VLANs, firewall rules, traffic routes, DNS, cameras, liveviews, lights, sensors, chimes, and viewers",
   "author": {
     "name": "Infiquetra",

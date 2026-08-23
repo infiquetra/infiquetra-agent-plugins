@@ -957,6 +957,24 @@ class CredentialRuleDriftTest(unittest.TestCase):
 
 
 
+
+def _bundled_loader():
+    """Load the byte-copied loader that ships inside the package."""
+    path = (
+        Path(site_profile.__file__).parent.parent
+        / "com.infiquetra.claude"
+        / "skills"
+        / "unifi-network"
+        / "scripts"
+        / "site_profile_loader.py"
+    )
+    spec = importlib.util.spec_from_file_location("bundled_site_profile_loader", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
 #: One expected verdict per line, asserted against all three copies of the rule.
 #:
 #: This corpus exists because the copies drifted on shapes none of their
@@ -981,6 +999,15 @@ CREDENTIAL_VERDICT_CORPUS = (
     # An innocent key must not eat the line break and the strict assignment
     # standing behind it. This shape was fail-open in both loaders.
     ("see notes:\npassword=hunter2", True),
+    # Key spellings that reach the rule only through the exact in-text set.
+    # `auth` and `accesskey` match no name fragment, so emptying that tuple
+    # retires them; these rows are what makes that fail rather than pass.
+    ("auth: rainbowtrout", True),
+    ("accesskey: rainbowtrout", True),
+    ("access_key: rainbowtrout", True),
+    ("access-key: rainbowtrout", True),
+    ("clientsecret: rainbowtrout", True),
+    ("client_secret: rainbowtrout", True),
     ("credentials: oauth2 is configured at the controller", False),
     ("token: base64 of the site identifier", False),
     ("secret: sha256 checksum recorded in the manifest", False),
@@ -1006,20 +1033,7 @@ class CredentialVerdictCorpusTest(unittest.TestCase):
     """The end-to-end pin: same line in, same verdict out, in all three copies."""
 
     def _loader(self):
-        path = (
-            Path(site_profile.__file__).parent.parent
-            / "com.infiquetra.claude"
-            / "skills"
-            / "unifi-network"
-            / "scripts"
-            / "site_profile_loader.py"
-        )
-        spec = importlib.util.spec_from_file_location("bundled_site_profile_loader", path)
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
-        return module
+        return _bundled_loader()
 
     def test_all_three_copies_reach_the_recorded_verdict(self) -> None:
         loader = self._loader()
@@ -1064,7 +1078,7 @@ class MutationProofBindingTest(unittest.TestCase):
         return digests
 
     def test_the_portable_proof_names_the_bytes_that_ship(self) -> None:
-        recorded = self._recorded("2026-08-23-cycle8-mutation-proof-portable-copies.txt")
+        recorded = self._recorded("2026-08-23-cycle9-mutation-proof-portable-copies.txt")
         self.assertEqual(set(recorded), {"site_profile.py", "check_repo.py"}, recorded)
         actual = {
             "site_profile.py": Path(site_profile.__file__),
@@ -1079,7 +1093,7 @@ class MutationProofBindingTest(unittest.TestCase):
                 )
 
     def test_the_upstream_proof_names_the_bytes_that_were_copied_in(self) -> None:
-        recorded = self._recorded("2026-08-23-cycle8-mutation-proof-upstream-loader.txt")
+        recorded = self._recorded("2026-08-23-cycle9-mutation-proof-upstream-loader.txt")
         self.assertEqual(set(recorded), {"loader"}, recorded)
         bundled = (
             Path(site_profile.__file__).parent.parent
@@ -1094,6 +1108,97 @@ class MutationProofBindingTest(unittest.TestCase):
             hashlib.sha256(bundled.read_bytes()).hexdigest(),
             "the byte-copied loader is not the file the upstream proof exercised",
         )
+
+
+#: Every boundary ``str.splitlines()`` recognises, plus the two-character
+#: sequence. The rule's contract is that an assignment is one line, so all three
+#: copies have to agree on where a line ends. Pinning only ``\n`` is how the
+#: previous corpus certified the repair it existed to interrogate.
+LINE_BREAKS = (
+    ("newline", "\n"),
+    ("carriage return", "\r"),
+    ("CRLF", "\r\n"),
+    ("vertical tab", "\x0b"),
+    ("form feed", "\x0c"),
+    ("file separator", "\x1c"),
+    ("group separator", "\x1d"),
+    ("record separator", "\x1e"),
+    ("NEL", "\x85"),
+    ("LINE SEPARATOR", "\u2028"),
+    ("PARAGRAPH SEPARATOR", "\u2029"),
+)
+
+
+class LineBreakAgreementTest(unittest.TestCase):
+    """All three copies, every boundary, both vulnerable shapes."""
+
+    def setUp(self) -> None:
+        self.loader = _bundled_loader()
+
+    def _verdicts(self, text: str) -> tuple[bool, bool, bool]:
+        return (
+            self.loader._credential_in_text(text, descriptive=True) is not None,
+            site_profile._credential_in_text(text, descriptive=True) is not None,
+            bool(check_repo.credential_findings(text, include_assignments=True)),
+        )
+
+    def test_an_innocent_key_never_eats_a_break_whichever_break_it_is(self) -> None:
+        """The swallow shape. Eight of these were fail-open in the loaders.
+
+        Reachable through ordinary JSON: a carriage return survives as the
+        standard escape, and LINE SEPARATOR is legal literally inside a string.
+        """
+        for name, character in LINE_BREAKS:
+            with self.subTest(boundary=name):
+                verdicts = self._verdicts(f"see notes:{character}password=hunter2")
+                self.assertEqual(verdicts, (True, True, True))
+
+    def test_a_split_assignment_is_matched_at_no_boundary(self) -> None:
+        """The documented sentence, once per boundary."""
+        for name, character in LINE_BREAKS:
+            with self.subTest(boundary=name):
+                verdicts = self._verdicts(f"password:{character}  hunter2")
+                self.assertEqual(verdicts, (False, False, False))
+
+    def test_the_break_set_is_exactly_what_splitlines_recognises(self) -> None:
+        """Derived from the standard library, not from memory, in every copy."""
+        recognised = {
+            chr(code)
+            for code in list(range(0x20)) + [0x85, 0x2028, 0x2029]
+            if len(f"a{chr(code)}b".splitlines()) > 1
+        }
+        for name, module in (
+            ("bundled loader", self.loader),
+            ("target copy", site_profile),
+            ("repository gate", check_repo),
+        ):
+            with self.subTest(copy=name):
+                self.assertEqual(set(module.CREDENTIAL_LINE_BREAKS), recognised)
+
+    def test_the_exact_key_set_cannot_be_emptied_without_failures(self) -> None:
+        """The tuple must be load-bearing, not decorative.
+
+        Iterating ``CREDENTIAL_KEY_EXACT_IN_TEXT`` to assert its members are
+        strict is vacuous: empty the tuple and the loop body never runs. These
+        spellings are written out literally and checked by behaviour, so retiring
+        the tuple retires a verdict and fails here.
+
+        ``auth`` and ``accesskey`` match no name fragment and reach the rule only
+        through that tuple. ``clientsecret`` normalises to contain ``secret`` and
+        is caught by the fragment path as well; it is here because the contract
+        names it, not because it proves anything about the tuple.
+        """
+        for key in ("auth", "accesskey", "access_key", "access-key"):
+            with self.subTest(key=key):
+                self.assertEqual(self._verdicts(f"{key}: rainbowtrout"), (True, True, True))
+        for key in ("clientsecret", "client_secret"):
+            with self.subTest(key=key):
+                self.assertTrue(site_profile._is_strict_credential_key(key))
+        for fragment in site_profile.CREDENTIAL_NAME_FRAGMENTS:
+            with self.subTest(fragment=fragment):
+                self.assertEqual(
+                    self._verdicts(f"{fragment}: rainbowtrout"), (True, True, True)
+                )
 
 if __name__ == "__main__":
     unittest.main()

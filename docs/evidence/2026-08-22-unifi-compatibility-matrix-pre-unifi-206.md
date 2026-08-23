@@ -1,4 +1,6 @@
-<!-- matrix-status: current -->
+<!-- matrix-status: superseded -->
+<!-- superseded-by: 2026-08-22-unifi-compatibility-matrix.md -->
+<!-- superseded-reason: The forty stage results describe portable package 2.0.5 at tree digest a8fd46a7..., before unifi 2.0.6 named the whole line-break set. 2.0.5 scoped the credential assignment to the newline alone, while the repository gate reads a line with str.splitlines(), so nine other boundaries still diverged and eight were fail-open in the loaders. The shipped package is 2.0.6 and fingerprints to 22bfa568..., so this record no longer identifies the tree it claims to describe. Its client results and its Cursor correction stand and are carried forward unchanged. -->
 
 # Ten-client compatibility matrix — portable UniFi package
 
@@ -12,9 +14,9 @@ The point of the exercise is to learn which clients can consume a portable
 package and which cannot, before anyone commits to a distribution path. It is a
 survey, not a release gate.
 
-## This is the eighth re-run, and what it replaces
+## This is the seventh re-run, and what it replaces
 
-Eight earlier publications of this matrix are preserved as history, each retired
+Seven earlier publications of this matrix are preserved as history, each retired
 for a different reason:
 
 1. [`2026-08-22-unifi-compatibility-matrix-pre-repair.md`](2026-08-22-unifi-compatibility-matrix-pre-repair.md)
@@ -44,29 +46,36 @@ for a different reason:
    assessed portable package `2.0.4` at tree digest `81c0503c…`, after the value
    heuristic was replaced by the field-aware key policy but while the rule still
    read an assignment across a line break.
-8. [`2026-08-22-unifi-compatibility-matrix-pre-unifi-206.md`](2026-08-22-unifi-compatibility-matrix-pre-unifi-206.md)
-   assessed portable package `2.0.5` at tree digest `a8fd46a7…`, after the
-   assignment was scoped to the newline but while nine other line-break
-   boundaries still disagreed between the loaders and the gate.
 
 This document is the re-run against the package as it now ships. What moved since
 the last publication is one repair, at the boundary that owns it:
 
-- **UniFi `2.0.6`** — the line-break set is named, rather than one of its members.
-  2.0.5 scoped the assignment to `\n`; the repository gate reads a line with
-  `str.splitlines()`, which breaks on ten characters and on the two-character
-  CRLF sequence. Nine boundaries still disagreed and eight were fail-open: a
-  credential written with a carriage return, vertical tab, form feed, file, group
-  or record separator, NEL, LINE SEPARATOR or PARAGRAPH SEPARATOR as the break
-  loaded unseen while the gate refused the same text. Both shapes are reachable
-  through ordinary valid JSON. The set is now derived from what `splitlines()`
-  recognises, used by all three copies, and pinned in both vulnerable shapes by
-  the shared corpus.
+- **UniFi `2.0.5`** — an assignment is now one line. The whitespace around the
+  delimiter was `\s*`, which spans a newline, so an innocent key at the end of a
+  line matched, consumed the line break with it, and left the strict assignment on
+  the next line with no preceding character to begin a fresh match against. Both
+  loaders accepted a credential written that way; the repository gate, which
+  splits lines before scanning, refused it. That is fail-open in the copy
+  operators load. The same greedy whitespace made the reference's claim about
+  split assignments false, in the direction that flattered the loader. Horizontal
+  whitespace around the delimiter, and a value that stops at the break, closes
+  both.
 
-Every client reaches the same verdict it did in the seventh run: nine work
-directly, one works through an adapter, none fail. Nothing about the clients moved
-this time; the Grok and Agy auto-trust wrapper overrides recorded last run are
-still required and still supplied.
+Every client reaches the same verdict it did in the sixth run: nine work directly,
+one works through an adapter, none fail. Two things about the *clients* moved:
+
+- **Grok** and **Agy** are now launched through a local auto-trust wrapper that
+  resolves the real executable through the client home. An isolated home does not
+  contain it, so the wrapper exits before reaching the client, and the first
+  attempt at each recorded nothing. Each run now supplies the wrapper's own
+  documented override naming the real binary. This is a property of the operator's
+  launcher and of this method's isolated home, not of the package — recording a
+  package failure for it would repeat the mistake this matrix already corrected
+  once, when an emptied client home was mistaken for a Cursor authentication
+  failure.
+- **Muse**'s per-unit content digests are unchanged, because neither skill unit
+  changed in 2.0.5. Only the rule, its two target-owned copies, the reference and
+  the manifest moved.
 
 ## What this document is, and is not
 
@@ -352,9 +361,9 @@ installation identifier.
   "assessed_on": "2026-08-23",
   "package": {
     "name": "unifi",
-    "version": "2.0.6",
+    "version": "2.0.5",
     "file_count": 23,
-    "tree_sha256": "22bfa56828fc7d0fb2246f190730082905bd71b82dee3e8d6e5afc4072498d37"
+    "tree_sha256": "a8fd46a73824ef08c3e7ce6813dfd94884fb14e0b9eb6588d4d0ba1988b647af"
   },
   "method": {
     "stages": [
@@ -467,7 +476,7 @@ installation identifier.
         "load": {
           "result": "executed",
           "command": "qwen extensions list",
-          "evidence": "Reports unifi version 2.0.6 with both skills enabled at user and workspace scope, and echoes the manifest description including its 2.0.6 revision text."
+          "evidence": "Reports unifi version 2.0.5 with both skills enabled at user and workspace scope, and echoes the manifest description including its 2.0.5 revision text."
         },
         "invocation": {
           "result": "executed",
@@ -495,7 +504,7 @@ installation identifier.
         "load": {
           "result": "executed",
           "command": "grok plugin details <plugin-name>",
-          "evidence": "Reports unifi v2.0.6 with its manifest description and one skill directory. The installed tree recomputes to 23 files at 22bfa568..., equal to the source tree."
+          "evidence": "Reports unifi v2.0.5 with its manifest description and one skill directory. The installed tree recomputes to 23 files at a8fd46a7..., equal to the source tree."
         },
         "invocation": {
           "result": "executed",
@@ -607,7 +616,7 @@ installation identifier.
         "load": {
           "result": "executed",
           "command": "agy plugin validate <client-home>/.gemini/config/plugins/unifi",
-          "evidence": "Validation reports skills 2 processed. The installed tree recomputes to 23 files at 22bfa568..., equal to the source tree."
+          "evidence": "Validation reports ok with skills 2 processed. The installed tree recomputes to 23 files at a8fd46a7..., equal to the source tree."
         },
         "invocation": {
           "result": "executed",

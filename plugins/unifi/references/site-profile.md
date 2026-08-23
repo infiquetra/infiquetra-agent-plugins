@@ -58,7 +58,7 @@ the document is now inspected, at any depth, by two narrow families:
 The loader names the property and says which family fired, so the report is
 actionable rather than a bare refusal.
 
-> **What changed in 2.0.4 and 2.0.5, and why it is written down here.** The rule used to
+> **What changed in 2.0.4 through 2.0.6, and why it is written down here.** The rule used to
 > grade the *value*: at least six characters clearing 2.5 bits of entropy, later
 > narrowed to "carries a digit, or is 24+ characters without one". Grading the
 > value cannot work, and it failed in both directions at once. `oauth2` carries a
@@ -67,7 +67,9 @@ actionable rather than a bare refusal.
 > discriminator fired on the lower-entropy inputs and passed the higher-entropy
 > ones. The key decides now, and the value is not graded at all. 2.0.5 then
 > made an assignment line-scoped in every copy, after a review found the
-> loaders reading across a line break where the gate did not.
+> loaders reading across a line break where the gate did not; 2.0.6 then
+> named the whole boundary set, after the next review found that scoping
+> to the newline alone had left nine other breaks disagreeing.
 
 ### What the value rule deliberately does not do
 
@@ -104,13 +106,23 @@ operator who is told "credentials are excluded" will act on it.
   matched by either the loader or the gate: the whitespace around the delimiter is
   horizontal only, and the value stops at the line break.
 
-  This sentence was false when it was first written. The loaders used `\s*`, which
-  spans a newline, so they *did* match a split assignment while the gate did not —
-  the documented guarantee described the weaker of the two, in the direction that
-  flattered the loader. Worse, the same greedy whitespace let an innocent key at
-  the end of a line consume the line break and hide a strict assignment on the
-  next one, which the gate caught and the loaders did not. Both are repaired in
-  2.0.5, and a shared verdict corpus now pins the two shapes in all three copies.
+  This sentence was false when it was first written, and then it was only partly
+  true. The loaders originally used `\s*`, which spans a line break, so they *did*
+  match a split assignment while the gate did not — the guarantee described the
+  weaker of the two, in the direction that flattered the loader. The same greedy
+  whitespace let an innocent key at the end of a line consume the break and hide a
+  strict assignment on the next one, which the gate caught and the loaders did
+  not. 2.0.5 repaired both for the newline and nothing else, which left nine other
+  boundaries disagreeing and eight of them fail-open.
+
+  "One line" now means one thing in all three copies: every boundary
+  `str.splitlines()` recognises — line feed, carriage return, the two-character
+  CRLF sequence, vertical tab, form feed, the file, group and record separators,
+  NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR. The set is named once and the
+  matching rule is built from it, and a test rebuilds that set from the standard
+  library so a future Python adding a boundary fails rather than quietly
+  reopening the gap. The shared verdict corpus pins every boundary in both
+  shapes across all three copies.
 
 So the accurate wording of the guarantee is this: **a profile is validated to be
 free of credential-shaped field names, and of credentials written as values in

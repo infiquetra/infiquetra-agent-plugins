@@ -1,0 +1,31 @@
+A. swallow: 'see notes:<BREAK>password=hunter2' must FIRE
+   \n       loader=True  target=True  gate=True  ok
+   \r       loader=False target=False gate=True  DIVERGES
+   \r\n     loader=True  target=True  gate=True  ok
+   \v       loader=False target=False gate=True  DIVERGES
+   \f       loader=False target=False gate=True  DIVERGES
+   \x1c     loader=False target=False gate=True  DIVERGES
+   \x1d     loader=False target=False gate=True  DIVERGES
+   \x1e     loader=False target=False gate=True  DIVERGES
+   NEL      loader=False target=False gate=True  DIVERGES
+   U+2028   loader=False target=False gate=True  DIVERGES
+   U+2029   loader=False target=False gate=True  DIVERGES
+
+B. split:   'password:<BREAK>  hunter2' must NOT fire
+   \n       loader=False target=False gate=False ok
+   \r       loader=True  target=True  gate=False DIVERGES
+   \r\n     loader=False target=False gate=False ok
+   \v       loader=True  target=True  gate=False DIVERGES
+   \f       loader=True  target=True  gate=False DIVERGES
+   \x1c     loader=True  target=True  gate=False DIVERGES
+   \x1d     loader=True  target=True  gate=False DIVERGES
+   \x1e     loader=True  target=True  gate=False DIVERGES
+   NEL      loader=True  target=True  gate=False DIVERGES
+   U+2028   loader=True  target=True  gate=False DIVERGES
+   U+2029   loader=True  target=True  gate=False DIVERGES
+
+divergent rows: 18 of 22
+
+Reachability through ordinary valid JSON:
+   escaped \r       survives json.load, loader verdict: ACCEPTED — the credential loads unseen
+   literal U+2028   survives json.load, loader verdict: ACCEPTED — the credential loads unseen
