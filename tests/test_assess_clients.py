@@ -29,6 +29,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 
@@ -648,23 +649,41 @@ class RecordTest(unittest.TestCase):
         self.assertTrue(any("no concrete reason" in problem for problem in problems))
 
     def test_a_tree_that_moves_during_the_run_is_refused(self) -> None:
-        """Something wrote into the package under assessment, so nothing is publishable."""
+        """Something wrote into the package under assessment, so nothing is publishable.
+
+        The stage has to actually reach the runner for this to prove anything,
+        and `run_stage` blocks a stage whose binary is not on `PATH`. Left to
+        the machine's own `PATH` this test passed wherever that client happened
+        to be installed and quietly proved nothing everywhere else -- which is
+        how it passed locally and failed in continuous integration. A fake
+        binary makes it the same test on every machine.
+        """
+        plan = harness.plan_for("OpenAI Codex")
+        scratch_bin = self.workspace / "bin"
+        scratch_bin.mkdir(parents=True, exist_ok=True)
+        write_executable(scratch_bin, plan.binary, "exit 0\n")
+
         intruder = CONFIG.package_directory / "intruder.tmp"
+        calls: list[int] = []
 
         def write_once(*arguments: object, **keywords: object):
+            calls.append(1)
             intruder.write_text("moved\n", encoding="utf-8")
             return subprocess.CompletedProcess([], 0, "", "")
 
         self.addCleanup(lambda: intruder.unlink(missing_ok=True))
-        with self.assertRaises(harness.AssessmentError) as caught:
-            harness.assess(
-                CONFIG,
-                python=sys.executable,
-                execute=True,
-                only=("OpenAI Codex",),
-                workspace=self.workspace,
-                runner=write_once,
-            )
+        path = os.pathsep.join([str(scratch_bin), os.environ.get("PATH", "")])
+        with unittest.mock.patch.dict(os.environ, {"PATH": path}):
+            with self.assertRaises(harness.AssessmentError) as caught:
+                harness.assess(
+                    CONFIG,
+                    python=sys.executable,
+                    execute=True,
+                    only=(plan.name,),
+                    workspace=self.workspace,
+                    runner=write_once,
+                )
+        self.assertTrue(calls, "no stage reached the runner, so nothing moved the tree")
         self.assertIn("moved during the run", str(caught.exception))
 
     def test_the_assessed_copy_is_a_copy_not_the_shipped_tree(self) -> None:
