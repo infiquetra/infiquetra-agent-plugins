@@ -17,9 +17,9 @@ and in [`DECISIONS.md`](../engineering-journal/DECISIONS.md).
 Do not begin porting until every line is true.
 
 - [ ] Upstream plugin sits at a pinned commit; its own suite is green there.
-- [ ] Target tooling is parameterized for the new package (see [Reusable assets](#reusable-assets)) and `scripts/check_repo.py` passes on the empty port.
+- [ ] The package's port descriptor exists at `ports/<package>.json` (see [Reusable assets](#reusable-assets)) and `scripts/check_repo.py` passes on the empty port.
 - [ ] Every validation rule the plugin carries is inventoried, each with a named **predicate** and a named **authority** (a standard-library function, a specification, a schema — not a description).
-- [ ] The client roster and assessment method are scripted, not to be re-derived.
+- [ ] The client roster and assessment method are scripted in `scripts/assess_clients.py`, not to be re-derived. Print the plan with `python3 scripts/assess_clients.py --package <package>` before running it.
 - [ ] The Python floor is decided and a matching interpreter exists.
 - [ ] Non-goals are written down.
 
@@ -27,15 +27,15 @@ Do not begin porting until every line is true.
 
 ## Phase 0 — Prepare (serial, ~1h)
 
-- [ ] Set the package identity in the two package-specific tools.
-- [ ] Classify **every** path as `upstream-byte-copy`, `deterministic-transform`, or `target-owned`, and record it in `PROVENANCE.json`.
+- [ ] Write `ports/<package>.json`: package identity, package root, upstream source, custody table, and the `assessment` block naming the package's own scripts, its mutating operations, its credential variable prefixes, and its skill units.
+- [ ] Classify **every** path as `upstream-byte-copy`, `deterministic-transform`, or `target-owned` in that descriptor's `custody` table, which is what `PROVENANCE.json` is then generated from.
 - [ ] Confirm the floor interpreter by explicit path, never as `python3`.
 
 ## Phase 1 — Port (parallel, concurrency cap 3)
 
 Three lanes that share no files. Cap is 3 because the fleet runs above Haiku.
 
-- [ ] **Lane A** — byte copies, provenance manifest, sync script wiring.
+- [ ] **Lane A** — byte copies and the provenance manifest, via `python3 scripts/sync_vendor_source.py --package <package> --source PATH --commit SHA`.
 - [ ] **Lane B** — target-owned surface: README, entrypoints, package manifest.
 - [ ] **Lane C** — bundling and deferred inventory, if the plugin has dependencies.
 
@@ -101,8 +101,10 @@ Do not rebuild these.
 |---|---|---|
 | `scripts/check_repo.py` | Package-agnostic | Use as-is |
 | `scripts/bundle_fleet_module.py` | Package-agnostic | Use as-is |
-| `scripts/check_compatibility_matrix.py` | Near-generic | Set `PACKAGE_ROOT` |
-| `scripts/sync_vendor_source.py` | Near-generic | Set `SOURCE_PACKAGE_PATH`, `TARGET_PACKAGE`, and the copied-path table |
+| `scripts/check_compatibility_matrix.py` | Package-agnostic | Use as-is; it resolves the package from the record's own `$.package.name` |
+| `scripts/sync_vendor_source.py` | Package-agnostic | Use as-is; pass `--package <package>` |
+| `ports/<package>.json` | Per package | Write one. It is the only place package identity, custody, and assessment settings live |
+| `scripts/assess_clients.py` | Package-agnostic | Use as-is; it carries the ten-client roster and every quirk below |
 | `PROVENANCE.json` three-way custody schema | Generic | Reuse the schema |
 | `MutationProofBindingTest` pattern | Generic | Reuse; it fails when a graded file changes without its proof |
 | The credential value rule and its corpus | Stable at unifi 2.0.6 | Reuse for any profile-like contract rather than re-deriving |
@@ -112,7 +114,18 @@ Do not rebuild these.
 ## Client assessment
 
 Ten clients, four stages each: placement, discovery, load, invocation. Every quirk
-below was learned the expensive way.
+below was learned the expensive way, and every one of them is now carried by
+[`scripts/assess_clients.py`](../../scripts/assess_clients.py) rather than by
+whoever is running the assessment.
+
+```bash
+python3 scripts/assess_clients.py --package <package>              # print the plan; runs nothing
+python3 scripts/assess_clients.py --package <package> --execute \
+    --python /opt/homebrew/bin/python3.12 --out <record>.json
+```
+
+The table below is the reference for reading that plan; the harness is what
+executes it.
 
 | Client | Quirk |
 |---|---|
@@ -125,9 +138,11 @@ below was learned the expensive way.
 | Hermes | Run in an isolated home only. Confirm the live skills directory is unchanged before and after. |
 | Codex | Refuses the package root with an actionable message; load and invocation stay blocked. |
 
-Unset `UNIFI_*`-equivalent environment variables for every invocation. A client
-that needs credentials before it will report state gets a **blocked** stage with
-the requirement named, never a satisfied one.
+Name the package's credential variable prefixes in the descriptor's
+`assessment.credential_prefixes`; the harness removes every matching variable
+from every stage's environment. A client that needs credentials before it will
+report state gets a **blocked** stage with the requirement named, never a
+satisfied one.
 
 ## Anti-patterns
 

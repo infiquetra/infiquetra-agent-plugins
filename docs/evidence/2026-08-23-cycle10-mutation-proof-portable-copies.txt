@@ -1,0 +1,142 @@
+# Cycle-10 mutation proof - portable target-owned copies and the readiness guards
+# Digests are bound by MutationProofBindingTest: change a graded file
+# without re-running this proof and the suite fails. Paths are repository-relative.
+#
+# Supersedes 2026-08-23-cycle9-mutation-proof-portable-copies.txt, which is
+# preserved unedited. Reason: scripts/check_repo.py gained check_port_descriptors
+# for the ports/ descriptors, so the cycle-9 digest no longer names the shipped
+# bytes. The credential rule itself did not change; it is re-proved here against
+# the bytes that now ship, and the readiness guards are proved alongside it.
+# Cycle 9 graded two files; this proof grades five, because three of the files
+# added by the readiness work carry load-bearing guards of their own.
+#
+# One mutation survived a first pass: inverting the matrix validator's package
+# resolution, so an unported package name silently fell back to another package,
+# failed no test. That is a fail-open in a new code path, and this proof found it
+# rather than review. tests/test_check_compatibility_matrix.py gained
+# PackageResolutionTest, and the mutation is killed below.
+plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
+scripts/check_repo.py sha256: f1ff25ee53279db83ad7d04ea0c32dfe32789a4c082b1105a234f45c46bcc3e2
+scripts/check_compatibility_matrix.py sha256: ef9863d649aa90028e3a8b1a2f68246bc501a09228e8d4babd2c1eebcf4eb2e4
+scripts/port_config.py sha256: f6ec2211396ea873af1312749697526d230b6d1fd609a71034be5221d577d497
+scripts/assess_clients.py sha256: a3ac7cdf532fce6e39468fed72f73e21f1e544b3f28a654859f1fb706a24eb04
+
+## BASELINE: OK (0 failing)
+
+## MUTATION: break set narrowed to newline only, repository gate  [scripts/check_repo.py]
+   FAILED (failures=3)
+   FAIL: test_the_assignment_family_is_the_same_rule
+   FAIL: test_the_break_set_is_exactly_what_splitlines_recognises copy='repository gate'
+   FAIL: test_the_portable_proof_names_the_bytes_that_ship name='check_repo.py'
+
+## MUTATION: break set narrowed to newline only, target copy  [plugins/unifi/scripts/site_profile.py]
+   FAILED (failures=26)
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='LINE SEPARATOR'
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='NEL'
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='PARAGRAPH SEPARATOR'
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='carriage return'
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='file separator'
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='form feed'
+
+## MUTATION: one boundary dropped (carriage return), repository gate  [scripts/check_repo.py]
+   FAILED (failures=3)
+   FAIL: test_the_assignment_family_is_the_same_rule
+   FAIL: test_the_break_set_is_exactly_what_splitlines_recognises copy='repository gate'
+   FAIL: test_the_portable_proof_names_the_bytes_that_ship name='check_repo.py'
+
+## MUTATION: exact in-text key set emptied, repository gate  [scripts/check_repo.py]
+   FAILED (failures=13)
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='access-key: rainbowtrout'
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='access_key: rainbowtrout'
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='accesskey: rainbowtrout'
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='auth: rainbowtrout'
+   FAIL: test_both_copies_agree_which_keys_are_strict key='access-key'
+   FAIL: test_both_copies_agree_which_keys_are_strict key='accesskey'
+
+## MUTATION: exact in-text key set emptied, target copy  [plugins/unifi/scripts/site_profile.py]
+   FAILED (failures=16)
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='access-key: rainbowtrout'
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='access_key: rainbowtrout'
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='accesskey: rainbowtrout'
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='auth: rainbowtrout'
+   FAIL: test_both_copies_agree_which_keys_are_strict key='access-key'
+   FAIL: test_the_assignment_family_is_the_same_rule
+
+## MUTATION: descriptor path-escape refusal inverted  [scripts/port_config.py]
+   FAILED (failures=6)
+   FAIL: test_a_traversing_custody_path_is_refused
+   FAIL: test_an_absolute_source_package_path_is_refused
+
+## MUTATION: descriptor duplicate-custody refusal removed  [scripts/port_config.py]
+   FAILED (failures=1)
+   FAIL: test_a_path_claimed_by_two_custody_classes_is_refused
+
+## MUTATION: client custody without an extension directory allowed  [scripts/port_config.py]
+   FAILED (failures=1)
+   FAIL: test_client_custody_without_an_extension_directory_is_refused
+
+## MUTATION: descriptor schema_version check removed  [scripts/port_config.py]
+   FAILED (failures=1)
+   FAIL: test_an_unreadable_schema_version_is_refused_rather_than_assumed
+
+## MUTATION: package root confined to plugins/ removed  [scripts/port_config.py]
+   FAILED (failures=1)
+   FAIL: test_a_package_root_outside_the_plugins_directory_is_refused
+
+## MUTATION: matrix package resolution falls back instead of failing closed  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=6)
+   FAIL: test_a_record_naming_an_unported_package_is_refused
+   FAIL: test_an_unresolvable_record_still_has_its_other_rules_applied
+   FAIL: test_resolution_never_returns_a_package_the_record_did_not_name name='../unifi'
+   FAIL: test_resolution_never_returns_a_package_the_record_did_not_name name='UNIFI'
+   FAIL: test_resolution_never_returns_a_package_the_record_did_not_name name='not-a-package'
+   FAIL: test_resolution_never_returns_a_package_the_record_did_not_name name='unifi-'
+
+## MUTATION: the shared --confirm safety rule removed  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=3)
+   FAIL: test_a_confirmed_command_is_refused_before_it_runs
+   FAIL: test_a_recorded_invocation_passing_confirm_fails
+   FAIL: test_confirm_is_refused_in_any_stage_not_only_invocation
+
+## MUTATION: the shared mutating-operation rule removed  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=8)
+   FAIL: test_a_mutating_package_operation_is_refused_before_it_runs
+   FAIL: test_a_recorded_mutating_operation_fails
+   FAIL: test_the_refusal_uses_the_same_predicate_as_the_matrix_validator
+
+## MUTATION: harness real-home write refusal removed  [scripts/assess_clients.py]
+   FAILED (failures=1)
+   FAIL: test_a_state_writing_stage_may_not_run_in_the_operators_home
+
+## MUTATION: harness isolated-only refusal removed  [scripts/assess_clients.py]
+   FAILED (failures=4)
+   FAIL: test_the_isolated_only_client_is_refused_a_real_home_outright stage='discovery'
+   FAIL: test_the_isolated_only_client_is_refused_a_real_home_outright stage='invocation'
+   FAIL: test_the_isolated_only_client_is_refused_a_real_home_outright stage='load'
+   FAIL: test_the_isolated_only_client_is_refused_a_real_home_outright stage='placement'
+
+## MUTATION: harness stdin inherits the parent again  [scripts/assess_clients.py]
+   FAILED (failures=1)
+   FAIL: test_a_stage_never_inherits_the_operators_terminal
+
+## MUTATION: harness stops checking that the assessed tree held still  [scripts/assess_clients.py]
+   FAILED (failures=1)
+   FAIL: test_a_tree_that_moves_during_the_run_is_refused
+
+## MUTATION: harness four-stage coverage guard removed  [scripts/assess_clients.py]
+   FAILED (failures=1)
+   FAIL: test_a_plan_missing_a_stage_is_refused
+
+## MUTATION: harness stops reading the entrypoint exit status  [scripts/assess_clients.py]
+   FAILED (failures=1)
+   FAIL: test_an_entrypoint_that_ran_and_did_not_succeed_proposes_failed
+
+## MUTATION: descriptor validation dropped from the repository gate  [scripts/check_repo.py]
+   FAILED (failures=1)
+   FAIL: test_the_portable_proof_names_the_bytes_that_ship name='check_repo.py'
+
+
+## RESTORED
+byte-identical to pristine: YES
+final suite: OK
+mutations run: 20; survived: 0

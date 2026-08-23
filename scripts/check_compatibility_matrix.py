@@ -65,9 +65,17 @@ address, or credential — are carried by the matrix schema itself and enforced 
 ``check_public_evidence_rules`` below. When the public evidence schema lands,
 this validator should defer to it rather than keep a second copy of the rule.
 
+Which package a matrix assesses is the record's own `$.package.name`, resolved
+through that package's port descriptor under `ports/` (see
+`scripts/port_config.py`). Nothing here names a package: a record that assesses
+a second package is validated by this same file, and a record naming a package
+this repository does not port is refused rather than validated against whichever
+tree happened to be compiled in.
+
 Usage::
 
-    python3 scripts/check_compatibility_matrix.py [document]
+    python3 scripts/check_compatibility_matrix.py [document ...]
+    python3 scripts/check_compatibility_matrix.py --print-fingerprint PACKAGE
 
 Exits 0 when the record is clean, 1 with one line per problem otherwise.
 """
@@ -81,18 +89,17 @@ import sys
 from pathlib import Path
 from typing import Any
 
+SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+import port_config  # noqa: E402
+from port_config import PortConfig, PortConfigError  # noqa: E402
+
 
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE_DIRECTORY = ROOT / "docs" / "evidence"
-DEFAULT_DOCUMENT = EVIDENCE_DIRECTORY / "2026-08-22-unifi-compatibility-matrix.md"
 SCHEMA_PATH = ROOT / "schemas" / "compatibility-matrix.schema.json"
-
-#: The package every matrix in this repository assesses. The binding check
-#: recomputes this tree's fingerprint and compares it with what the record
-#: claims, which is the difference between a digest that is well formed and a
-#: digest that identifies the artifact under assessment.
-PACKAGE_ROOT = ROOT / "plugins" / "unifi"
-PACKAGE_MANIFEST = "plugin.json"
 
 #: Checkout noise that is not part of the package. Excluding it is what makes
 #: the fingerprint reproducible: running the test suite leaves ``__pycache__``
@@ -135,38 +142,16 @@ STATUSES = (
     "failed",
 )
 
-#: Operations the package's own skill documentation gates behind ``--confirm``,
-#: plus the camera snapshot the discovery path refuses outright. This list is
-#: derived from the package rather than invented here, so it stays one
-#: classification rather than two that can drift apart.
-MUTATING_OPERATIONS = frozenset(
-    {
-        "adopt",
-        "block",
-        "create",
-        "delete",
-        "forget",
-        "kick",
-        "locate",
-        "reboot",
-        "restart",
-        "snapshot",
-        "unblock",
-        "update",
-        "upgrade",
-    }
-)
-
-#: The mutating-operation check applies to commands that invoke one of the
-#: package's own scripts. Scoping it this way keeps it precise: a client's own
-#: subcommand that happens to share a verb with a UniFi operation is not a
-#: mutating controller call, and a safety gate that cries wolf gets disabled.
-PACKAGE_SCRIPTS = (
-    "unifi_network_client.py",
-    "unifi_protect_client.py",
-    "discover.py",
-    "drift.py",
-)
+#: The operations a package classifies as mutating, and the package's own
+#: entrypoint scripts, are both read from the descriptor's ``assessment`` block
+#: rather than held as constants here. One reason each:
+#:
+#: * the operation list is derived from the package's own documentation, so it
+#:   stays one classification rather than two that can drift apart;
+#: * the script list scopes the mutating-operation check to commands that
+#:   actually invoke the package. A client's own subcommand that happens to
+#:   share a verb with a package operation is not a mutating controller call,
+#:   and a safety gate that cries wolf gets disabled.
 
 CONFIRM_FLAG = "--confirm"
 
@@ -214,10 +199,29 @@ FILENAME_SUFFIXES = (
     ".sock",
 )
 
-#: Dotted identifiers that are names inside this package rather than hosts. The
-#: client extension directory the Agent Plugins specification defines is spelled
-#: in reverse-domain form and would otherwise read as a hostname.
-NON_HOST_DOTTED_TOKENS = ("com.infiquetra.claude",)
+def non_host_dotted_tokens(root: Path | None = None) -> frozenset[str]:
+    """Dotted identifiers that name something inside a package, not a host.
+
+    The client extension directory the Agent Plugins specification defines is
+    spelled in reverse-domain form and would otherwise read as a hostname. It is
+    collected from every port descriptor rather than from the one whose matrix
+    is being read, because redaction is a property of the document, and a matrix
+    for one package may legitimately mention another package's directory.
+
+    A descriptor that cannot be read contributes nothing, which makes the
+    redaction rule stricter rather than looser: an unlisted directory is
+    reported as a hostname. `scripts/check_repo.py` fails on a descriptor that
+    does not load, so the strictness is never how the problem is discovered.
+    """
+    try:
+        configs = port_config.load_all(root)
+    except PortConfigError:
+        return frozenset()
+    return frozenset(
+        config.source.client_extension_dir
+        for config in configs
+        if config.source.client_extension_dir
+    )
 
 CREDENTIAL_ASSIGNMENT = re.compile(
     r"(?i)\b(?:password|passwd|secret|api[_-]?key|token|auth[_-]?token|bearer)\b"
@@ -315,7 +319,7 @@ def _fingerprint_includes(path: Path, package_root: Path) -> bool:
     return not any(part in FINGERPRINT_EXCLUDED_DIRECTORIES for part in relative.parts)
 
 
-def package_fingerprint(package_root: Path = PACKAGE_ROOT) -> tuple[int, str]:
+def package_fingerprint(package_root: Path) -> tuple[int, str]:
     """The assessed tree's ``(file_count, tree_sha256)``, recomputed from disk.
 
     The digest is defined here rather than inherited from a tool, because a
@@ -350,9 +354,9 @@ def package_fingerprint(package_root: Path = PACKAGE_ROOT) -> tuple[int, str]:
     return len(lines), tree
 
 
-def package_identity(package_root: Path = PACKAGE_ROOT) -> tuple[str, str]:
+def package_identity(package_root: Path, manifest_name: str = "plugin.json") -> tuple[str, str]:
     """The assessed package's ``(name, version)``, read from its manifest."""
-    manifest_path = package_root / PACKAGE_MANIFEST
+    manifest_path = package_root / manifest_name
     if not manifest_path.is_file():
         raise MatrixError(f"{manifest_path}: the assessed package has no manifest")
     try:
@@ -368,9 +372,40 @@ def package_identity(package_root: Path = PACKAGE_ROOT) -> tuple[str, str]:
     return name, version
 
 
+def resolve_config(
+    record: dict[str, Any],
+    root: Path | None = None,
+) -> tuple[PortConfig | None, list[str]]:
+    """The port descriptor the record's own `$.package.name` selects.
+
+    The record says which package it assesses; the descriptor says where that
+    package lives. Resolution therefore runs in that order, and it fails closed:
+    a name this repository carries no descriptor for yields no configuration and
+    a problem, never a fallback to some other tree. A record cannot use the
+    resolution to dodge the binding either -- `check_package_binding` re-reads
+    the manifest at the resolved root and compares the name again, so the only
+    package a record can be validated against is the one it names.
+    """
+    package = record.get("package")
+    if not isinstance(package, dict):
+        return None, [
+            "$.package: missing or not an object, so nothing binds the record to a tree"
+        ]
+    name = package.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None, [
+            "$.package.name: missing or not a non-empty string, so the record does not say "
+            "which package it assesses"
+        ]
+    try:
+        return port_config.load(name, root), []
+    except PortConfigError as error:
+        return None, [f"$.package.name: {error}"]
+
+
 def check_package_binding(
     record: dict[str, Any],
-    package_root: Path = PACKAGE_ROOT,
+    config: PortConfig,
 ) -> list[str]:
     """The record's package fingerprint must identify the tree on disk.
 
@@ -382,9 +417,10 @@ def check_package_binding(
     if not isinstance(package, dict):
         return ["$.package: missing or not an object, so nothing binds the record to a tree"]
 
+    package_root = config.package_directory
     try:
         file_count, tree_sha256 = package_fingerprint(package_root)
-        name, version = package_identity(package_root)
+        name, version = package_identity(package_root, config.package_manifest)
     except MatrixError as error:
         return [f"$.package: {error}"]
 
@@ -423,13 +459,18 @@ def check_document_status(
     text: str,
     record: dict[str, Any],
     document: Path,
-    package_root: Path = PACKAGE_ROOT,
+    config: PortConfig | None,
 ) -> list[str]:
     """Bind a current matrix to the tree; hold a superseded one to its notice.
 
     Supersession is the only exemption from the binding, so it carries its own
     obligations: name the successor, say why, and prove the exemption is not
     being used to switch the binding off for the live matrix.
+
+    Without a resolved package the binding cannot run, but every other
+    obligation here still can, and does. A record that names no package this
+    repository ports has already failed; it should not also get its supersession
+    notice unread.
     """
     directives = read_directives(text)
     status = directives.get(STATUS_DIRECTIVE, STATUS_CURRENT)
@@ -448,7 +489,8 @@ def check_document_status(
                     f"{STATUS_CURRENT!r}; a document is either the current matrix or a "
                     "superseded one, never both"
                 )
-        problems.extend(check_package_binding(record, package_root))
+        if config is not None:
+            problems.extend(check_package_binding(record, config))
         return problems
 
     successor = directives.get(SUPERSEDED_BY_DIRECTIVE, "").strip()
@@ -488,7 +530,7 @@ def check_document_status(
             f"{SUPERSEDED_REASON_DIRECTIVE}"
         )
 
-    if not check_package_binding(record, package_root):
+    if config is not None and not check_package_binding(record, config):
         problems.append(
             f"{document.name}: is marked {STATUS_SUPERSEDED!r} yet its fingerprint still "
             "identifies the package in this revision; supersession exempts a document from the "
@@ -695,25 +737,48 @@ def _recorded_commands(record: dict[str, Any]) -> list[tuple[str, str, str]]:
     return found
 
 
-def check_safety_rules(record: dict[str, Any]) -> list[str]:
+def command_safety_problems(command: str, config: PortConfig | None) -> list[str]:
+    """Why one command is not read-only, or an empty list when it is.
+
+    The single authority for that question. `check_safety_rules` applies it to a
+    command a record already claims was run; `scripts/assess_clients.py` applies
+    it to an argv *before* starting the process. A rule enforced before the fact
+    by one copy and after the fact by another is a rule that can be satisfied by
+    neither when the two copies disagree, so there is one copy and both callers
+    reach it.
+
+    The confirmation half needs no package: no command may pass ``--confirm``,
+    whatever it invokes. The mutating-operation half does, and with no resolved
+    package it is skipped rather than guessed -- the caller that could not
+    resolve the package has already recorded that failure, so nothing is graded
+    against the wrong package's verbs.
+    """
+    problems: list[str] = []
+    if CONFIRM_FLAG in command:
+        problems.append(
+            f"the command passes {CONFIRM_FLAG}; no test path may confirm a write, so the "
+            "clients' own dry-run gate stays a second line of defence rather than the only one"
+        )
+    if config is None:
+        return problems
+    scripts = config.assessment.package_scripts
+    if not any(script in command for script in scripts):
+        return problems
+    tokens = {token.strip("'\"") for token in re.split(r"[\s=]+", command)}
+    for operation in sorted(tokens & config.assessment.mutating_operations):
+        problems.append(
+            f"the invocation names {operation!r}, which the package classifies as a mutating "
+            "operation; live invocation is limited to read-only operations"
+        )
+    return problems
+
+
+def check_safety_rules(record: dict[str, Any], config: PortConfig | None) -> list[str]:
     """No confirmed command anywhere, no mutating package operation recorded."""
     problems: list[str] = []
     for label, stage, command in _recorded_commands(record):
-        if CONFIRM_FLAG in command:
-            problems.append(
-                f"{label}/{stage}: the recorded command passes {CONFIRM_FLAG}; no test path "
-                "may confirm a write, so the clients' own dry-run gate stays a second line "
-                "of defence rather than the only one"
-            )
-        if not any(script in command for script in PACKAGE_SCRIPTS):
-            continue
-        tokens = {token.strip("'\"") for token in re.split(r"[\s=]+", command)}
-        for operation in sorted(tokens & MUTATING_OPERATIONS):
-            problems.append(
-                f"{label}/{stage}: the recorded invocation names {operation!r}, which the "
-                "package classifies as a mutating operation; live invocation is limited to "
-                "read-only operations"
-            )
+        for problem in command_safety_problems(command, config):
+            problems.append(f"{label}/{stage}: {problem}")
     return problems
 
 
@@ -735,16 +800,19 @@ def _record_strings(record: dict[str, Any]) -> list[tuple[str, str]]:
     return found
 
 
-def _is_inert_domain(token: str) -> bool:
+def _is_inert_domain(token: str, non_host_tokens: frozenset[str] = frozenset()) -> bool:
     lowered = token.lower()
-    if lowered in INERT_DOMAINS or lowered in NON_HOST_DOTTED_TOKENS:
+    if lowered in INERT_DOMAINS or lowered in {name.lower() for name in non_host_tokens}:
         return True
     if any(lowered.endswith(suffix) for suffix in INERT_DOMAIN_SUFFIXES):
         return True
     return any(lowered.endswith(suffix) for suffix in FILENAME_SUFFIXES)
 
 
-def check_public_evidence_rules(record: dict[str, Any]) -> list[str]:
+def check_public_evidence_rules(
+    record: dict[str, Any],
+    non_host_tokens: frozenset[str] | None = None,
+) -> list[str]:
     """No address, hardware address, hostname, or credential in the record.
 
     This repository is public and neither client filters nor redacts controller
@@ -752,6 +820,7 @@ def check_public_evidence_rules(record: dict[str, Any]) -> list[str]:
     default-deny. What survives into the record is field names, counts, pass or
     fail comparisons, and digests.
     """
+    resolved_tokens = non_host_dotted_tokens() if non_host_tokens is None else non_host_tokens
     problems: list[str] = []
     for path, value in _record_strings(record):
         if path.startswith("$.package.tree_sha256"):
@@ -771,7 +840,7 @@ def check_public_evidence_rules(record: dict[str, Any]) -> list[str]:
                 )
         for match in DOMAIN.finditer(value):
             token = match.group(0)
-            if _is_inert_domain(token):
+            if _is_inert_domain(token, resolved_tokens):
                 continue
             problems.append(
                 f"{path}: contains the hostname {token!r}; only inert example domains may "
@@ -789,10 +858,24 @@ def check_public_evidence_rules(record: dict[str, Any]) -> list[str]:
 
 
 def check_matrix(
-    document: Path = DEFAULT_DOCUMENT,
-    package_root: Path = PACKAGE_ROOT,
+    document: Path,
+    config: PortConfig | None = None,
+    root: Path | None = None,
 ) -> list[str]:
-    """Every problem with the matrix, or an empty list when it is clean."""
+    """Every problem with the matrix, or an empty list when it is clean.
+
+    `config` names the package to validate against. Left unset it is resolved
+    from the record's own `$.package.name`, which is how a run over every
+    committed matrix validates each one against the package it names rather than
+    against a single compiled-in tree. Passing it explicitly is for a caller that
+    already knows the package -- a test with a scratch tree, or a harness that
+    just produced the record.
+
+    A record whose package cannot be resolved still has its coverage, stage,
+    confirmation, and redaction rules applied. Those rules are true of any
+    matrix, and reporting the one resolution failure while silently dropping
+    nine other problems would make a broken record look nearly clean.
+    """
     if not document.is_file():
         return [f"{document}: the evidence document does not exist"]
     text = document.read_text(encoding="utf-8")
@@ -803,10 +886,13 @@ def check_matrix(
 
     schema = load_schema()
     problems = validate_against_schema(record, schema, schema)
+    if config is None:
+        config, resolution_problems = resolve_config(record, root)
+        problems.extend(resolution_problems)
     problems.extend(check_coverage(record))
-    problems.extend(check_safety_rules(record))
-    problems.extend(check_public_evidence_rules(record))
-    problems.extend(check_document_status(text, record, document, package_root))
+    problems.extend(check_safety_rules(record, config))
+    problems.extend(check_public_evidence_rules(record, non_host_dotted_tokens(root)))
+    problems.extend(check_document_status(text, record, document, config))
     return problems
 
 
@@ -878,10 +964,23 @@ def main(argv: list[str] | None = None) -> int:
         # the tree, because refreshing the numbers without re-running the
         # assessment is exactly the failure this binding exists to catch: it
         # would make a stale matrix pass by editing the evidence to match.
+        #
+        # The package is named rather than defaulted. This output is copied into
+        # a record by hand, and a fingerprint whose package the operator did not
+        # state is the same class of mistake as a digest that binds to nothing.
+        index = arguments.index(FINGERPRINT_FLAG)
+        rest = [value for value in arguments[index + 1 :] if not value.startswith("-")]
+        if not rest:
+            print(
+                f"{FINGERPRINT_FLAG} needs a package name; this repository ports: "
+                + (", ".join(port_config.available()) or "none")
+            )
+            return 1
         try:
-            file_count, tree_sha256 = package_fingerprint()
-            name, version = package_identity()
-        except MatrixError as error:
+            config = port_config.load(rest[0])
+            file_count, tree_sha256 = package_fingerprint(config.package_directory)
+            name, version = package_identity(config.package_directory, config.package_manifest)
+        except (MatrixError, PortConfigError) as error:
             print(str(error))
             return 1
         print(f"name: {name}")

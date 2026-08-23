@@ -2,6 +2,41 @@
 
 ## 2026-08-23
 
+### A harness that inherits stdin behaves differently in a terminal than under a scheduler
+
+**Author.** Jeff Cox and Claude
+
+**Context.** `scripts/assess_clients.py` runs coding-agent clients as subprocesses.
+Several of them prompt for confirmation on standard input, and the pilot's own runbook
+records that one of them hangs rather than declining when stdin is closed.
+
+**Evidence.** `tests/test_assess_clients.py` ran a fake client whose script is
+`read answer; [ "$answer" = "y" ] || exit 9`, with no confirmation supplied, and expected
+exit status 9. It got a 120-second timeout instead, and the whole test file went from
+2.7 seconds to 122 seconds. `subprocess.run` was called with `input=None`, which does not
+redirect stdin, so the child inherited the test runner's terminal and sat waiting for a
+human to type. Fixed at `scripts/assess_clients.py` by passing
+`stdin=subprocess.DEVNULL` whenever a stage supplies no confirmation.
+
+**Mechanism.** `subprocess.run(input=None)` is not "no input" — it is "whatever the
+parent has". Under a terminal that is a human; under a scheduler it is usually
+`/dev/null`; under a test runner it depends on how the runner was invoked. So the same
+stage produces a fast, deterministic exit status in one environment and an indefinite
+block in another, and the environment that blocks is the interactive one where a person
+is most likely to assume the program has crashed.
+
+A second-order point: the timeout *did* fire, and the harness classified the stage
+`blocked` with the deadline named, which is correct behaviour. The deadline turned an
+unbounded hang into a bounded wrong answer. That is the deadline working, and it is still
+not good enough, because the wrong answer was environment-dependent.
+
+**Generalizable rule.** A subprocess a program starts on its own initiative should never
+inherit the parent's standard input. Pass the input it needs, or close it; and give it a
+deadline regardless, because closing stdin does not stop a program that ignores EOF.
+
+**Refs.** `scripts/assess_clients.py` (`run_stage`),
+`tests/test_assess_clients.py::SubprocessResultTest::test_a_stage_never_inherits_the_operators_terminal`.
+
 ### A verification step that reports success for an unrelated reason is worth less than none
 
 **Author.** Jeff Cox and Claude

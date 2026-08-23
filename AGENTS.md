@@ -45,7 +45,10 @@ git diff --check
 ## Rules
 
 - Keep shared skills, contracts, schemas, scripts, and Model Context Protocol
-  (MCP) interfaces vendor-neutral.
+  (MCP) interfaces vendor-neutral. That includes the porting tools: package
+  identity, the custody table, and assessment settings belong in that package's
+  [port descriptor](ports/README.md) under `ports/`, never as a constant inside
+  a script.
 - Put commands, hooks, native agent definitions, permissions, and client runtime
   integration in explicit vendor adapters.
 - Do not claim a vendor package is generated or portable until the relevant

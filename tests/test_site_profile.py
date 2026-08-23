@@ -1077,20 +1077,42 @@ class MutationProofBindingTest(unittest.TestCase):
                 digests[name.strip()] = value.strip()
         return digests
 
+    #: Every file the cycle-10 proof mutates, repository-relative. Listed here
+    #: rather than derived from the document, so a proof that quietly stopped
+    #: grading a file fails this test instead of shrinking in silence.
+    GRADED = (
+        "plugins/unifi/scripts/site_profile.py",
+        "scripts/check_repo.py",
+        "scripts/check_compatibility_matrix.py",
+        "scripts/port_config.py",
+        "scripts/assess_clients.py",
+    )
+
     def test_the_portable_proof_names_the_bytes_that_ship(self) -> None:
-        recorded = self._recorded("2026-08-23-cycle9-mutation-proof-portable-copies.txt")
-        self.assertEqual(set(recorded), {"site_profile.py", "check_repo.py"}, recorded)
-        actual = {
-            "site_profile.py": Path(site_profile.__file__),
-            "check_repo.py": Path(check_repo.__file__),
-        }
-        for name, path in actual.items():
-            with self.subTest(name=name):
+        """Every graded file's committed bytes are the bytes the proof exercised.
+
+        Five files rather than the two cycle-9 graded: the readiness work added
+        three more that carry load-bearing guards, and a guard whose proof is
+        not bound to its bytes is a guard nobody has to re-prove after editing.
+        """
+        root = self.EVIDENCE.parent.parent
+        recorded = self._recorded("2026-08-23-cycle10-mutation-proof-portable-copies.txt")
+        self.assertEqual(set(recorded), set(self.GRADED), recorded)
+        for relative in self.GRADED:
+            with self.subTest(name=relative):
                 self.assertEqual(
-                    recorded[name],
-                    hashlib.sha256(path.read_bytes()).hexdigest(),
-                    f"{name} changed without its mutation proof being re-run",
+                    recorded[relative],
+                    hashlib.sha256((root / relative).read_bytes()).hexdigest(),
+                    f"{relative} changed without its mutation proof being re-run",
                 )
+
+    def test_the_graded_set_covers_the_two_copies_of_the_credential_rule(self) -> None:
+        """The rule exists in two places; a proof of one of them proves half."""
+        root = self.EVIDENCE.parent.parent
+        for module in (site_profile, check_repo):
+            with self.subTest(module=module.__name__):
+                relative = Path(module.__file__).resolve().relative_to(root).as_posix()
+                self.assertIn(relative, self.GRADED)
 
     def test_the_upstream_proof_names_the_bytes_that_were_copied_in(self) -> None:
         recorded = self._recorded("2026-08-23-cycle9-mutation-proof-upstream-loader.txt")

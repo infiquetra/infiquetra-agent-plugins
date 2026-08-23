@@ -904,9 +904,47 @@ def check_secret_free_values(root: Path) -> list[str]:
     return errors
 
 
+def check_port_descriptors(root: Path) -> list[str]:
+    """Every port descriptor loads, and names a package tree that exists.
+
+    The descriptors under ``ports/`` are what `sync_vendor_source.py` overwrites
+    a tree from and what `check_compatibility_matrix.py` binds a matrix to. A
+    descriptor that does not load takes both of those tools down at the moment
+    they are used, so it is caught by the repository gate instead — where the
+    failure is one line naming the field, rather than a traceback in the middle
+    of a synchronization.
+
+    The import is local because this module is the one piece of tooling in the
+    repository that must stay importable on its own: `sync_vendor_source.py`
+    imports *it*, and a module-scope import back would be a cycle.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import port_config  # noqa: PLC0415  (local by design; see the docstring)
+
+    errors: list[str] = []
+    for name in port_config.available(root):
+        try:
+            config = port_config.load(name, root)
+        except port_config.PortConfigError as error:
+            errors.append(f"port descriptor: {error}")
+            continue
+        if not config.package_directory.is_dir():
+            errors.append(
+                f"port descriptor {name}: package_root {config.package_root} is not a directory"
+            )
+            continue
+        if not config.manifest_path.is_file():
+            errors.append(
+                f"port descriptor {name}: names manifest {config.package_manifest}, which "
+                f"{config.package_root} does not carry"
+            )
+    return errors
+
+
 def check_repo(root: Path) -> list[str]:
     return [
         *check_required_paths(root),
+        *check_port_descriptors(root),
         *check_markdown_links(root),
         *check_plugin_manifests(root),
         *check_provenance_manifests(root),

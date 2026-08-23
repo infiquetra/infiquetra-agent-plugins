@@ -2,6 +2,93 @@
 
 ## 2026-08-23
 
+### Package identity is a descriptor under `ports/`, not a constant in a tool
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** Every portable package carries one JSON descriptor at
+`ports/<package>.json` holding its identity, its package root, its upstream source, its
+custody table, its assessment settings, and the provenance notes its `PROVENANCE.json`
+is generated from. `scripts/sync_vendor_source.py` takes `--package NAME`;
+`scripts/check_compatibility_matrix.py` resolves the package from the record's own
+`$.package.name`; `scripts/assess_clients.py` reads the entrypoints, skill units, and
+credential prefixes from the same file. `scripts/port_config.py` is the single authority
+for the format and validates it. `scripts/check_repo.py` fails when a descriptor does
+not load or names a tree that does not exist.
+
+This closes the revisit condition recorded under "Bind a current matrix to the tree it
+assessed": the single `PACKAGE_ROOT` constant is now per-record.
+
+**Rationale.** The pilot's runbook had to tell the next porter which constants to reach
+into inside which two scripts. That is an instruction that rots, and it made "is this
+tool generic?" a question about someone's diligence rather than about the code. As data,
+the same information is validated on load, checked by the repository gate, and readable
+by a third tool that did not exist when the first two were written.
+
+The descriptors live *outside* `plugins/` deliberately. A compatibility matrix binds to a
+fingerprint of the package tree, so a descriptor stored inside the tree it describes would
+move that fingerprint whenever the tooling's configuration changed and invalidate
+assessment evidence that is still true.
+
+**Rejected alternatives.** *A second JSON schema file describing the descriptor*, because
+a rule written twice is a rule that can disagree with itself; `port_config.py` validates
+and `tests/test_port_config.py` derives its corpus from that module. *A descriptor inside
+the package*, for the fingerprint reason above. *Defaulting `--package` to the first
+package*, because a tool that overwrites a tree and deletes stale paths inside it should
+name the tree out loud, and a default makes the first-ported package the silent one.
+*Deriving the matrix's package root from a CLI flag rather than from the record*, because
+the record already names the package it assessed and a flag lets the two disagree.
+
+**Consequence to expect.** Porting a package is a new descriptor plus a review of it,
+rather than edits inside two scripts. A descriptor with an empty
+`assessment.package_scripts` would scope the mutating-operation safety rule to nothing,
+which is a fail-open; a test asserts the shipped list names files the package carries.
+
+**Revisit when.** A third tool needs package-specific settings that do not fit these
+fields, or a package needs two descriptors (two upstream sources into one tree).
+
+**Refs.** `scripts/port_config.py`, `ports/README.md`, `tests/test_port_config.py`,
+[the queued Fleet Core target](QUEUED.md).
+
+### The ten-client assessment is a program, and it refuses rather than guesses
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** `scripts/assess_clients.py` carries the ten-client roster, the four stages,
+and every client quirk. It runs nothing unless `--execute` is passed; it strips the
+package's declared credential variables from every subprocess; it routes every stage argv
+through `check_compatibility_matrix.command_safety_problems` *before* starting the
+process; it gives every stage a deadline; it refuses a state-writing stage under the
+operator's own home and refuses the isolated-only client a real home outright; and it
+refuses to emit a record at all if the assessed tree moved during the run.
+
+The record it emits is deliberately incomplete: each client's `reason` is empty, and
+`check_compatibility_matrix.py` refuses a row with no concrete reason. A record no one
+finished reading therefore cannot be committed as evidence.
+
+**Rationale.** The status a harness computes is a proposal from stage results. The reason
+is a claim about *why*, which only the person who watched it can make. Filling it in
+automatically would produce records that pass every check and assert things nobody
+observed — the precise failure the fingerprint binding exists to catch, moved one level up.
+
+**Rejected alternatives.** *Executing by default*, because the first thing this program
+does is install software into directories. *Deriving the overall status and stopping*,
+because a status without a reason is not evidence. *Recording a client's actionable
+refusal as `blocked`*, because the attempt ran and the client named the missing artifact;
+that is the Codex row's entire value. *A second copy of the mutating-operation predicate
+inside the harness*, because a rule enforced before the fact by one copy and after the
+fact by another can be satisfied by neither when they disagree.
+
+**Consequence to expect.** A stage whose client is not installed is `blocked` with the
+binary named, never a package failure. A stage that hits its deadline is `blocked` with
+the deadline named.
+
+**Revisit when.** A client needs a stage vocabulary the four stages cannot express, or the
+roster changes.
+
+**Refs.** `scripts/assess_clients.py`, `tests/test_assess_clients.py`,
+[the stdin learning](LEARNINGS.md#a-harness-that-inherits-stdin-behaves-differently-in-a-terminal-than-under-a-scheduler).
+
 ### Review rounds are bounded at three, and a round's repairs ship as one release
 
 **Author.** Jeff Cox and Claude

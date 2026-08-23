@@ -16,6 +16,11 @@
 - [Portability pilot plan](docs/plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md): The approved plan for the first portability pilot, executed and paused for an operator decision.
 - [Ten-client compatibility matrix](docs/evidence/2026-08-22-unifi-compatibility-matrix.md): What every installed coding-agent client did with the portable UniFi package, stage by stage, with evidence. Coverage was mandatory; passing was not.
 
+## Tooling
+
+- [Port descriptors](ports/README.md): One JSON file per portable package, holding its identity, custody table, and assessment settings. The porting tools read it instead of carrying package constants of their own.
+- [Porting runbook](docs/runbooks/portable-plugin-port.md): The checklist for porting a plugin into the catalog, derived from the UniFi pilot.
+
 ## Packages
 
 - [UniFi package](plugins/unifi/README.md): Portable UniFi package derived from a pinned upstream revision, with its Claude adapter under `com.infiquetra.claude/`.

@@ -1,0 +1,77 @@
+{
+  "schema_version": "1",
+  "package": "unifi",
+  "package_root": "plugins/unifi",
+  "package_manifest": "plugin.json",
+  "source": {
+    "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+    "package_path": "plugins/unifi",
+    "manifest_path": ".claude-plugin/plugin.json",
+    "client_extension_dir": "com.infiquetra.claude"
+  },
+  "custody": {
+    "byte_copies": [
+      "CHANGELOG.md",
+      "skills/unifi-network/SKILL.md",
+      "skills/unifi-network/references/udm-api-endpoints.md",
+      "skills/unifi-protect/SKILL.md",
+      "skills/unifi-protect/references/protect-api-endpoints.md"
+    ],
+    "entrypoint_transforms": [
+      "skills/unifi-network/scripts/unifi_network_client.py",
+      "skills/unifi-protect/scripts/unifi_protect_client.py"
+    ],
+    "client_byte_copies": [
+      "commands/unifi.md",
+      "agents/unifi-network-ops.md",
+      "skills/unifi-network/scripts/site_profile_loader.py"
+    ],
+    "superseded_by_target_owned": [
+      "README.md"
+    ],
+    "dropped_from_source": [
+      "skills/unifi-network/scripts/fleet_commons_shim.py",
+      "skills/unifi-protect/scripts/fleet_commons_shim.py"
+    ]
+  },
+  "assessment": {
+    "package_scripts": [
+      "unifi_network_client.py",
+      "unifi_protect_client.py",
+      "discover.py",
+      "drift.py"
+    ],
+    "mutating_operations": [
+      "adopt",
+      "block",
+      "create",
+      "delete",
+      "forget",
+      "kick",
+      "locate",
+      "reboot",
+      "restart",
+      "snapshot",
+      "unblock",
+      "update",
+      "upgrade"
+    ],
+    "credential_prefixes": [
+      "UNIFI_"
+    ],
+    "skill_units": [
+      "skills/unifi-network",
+      "skills/unifi-protect"
+    ]
+  },
+  "provenance": {
+    "notes": [
+      "The portable copy is a derived artifact, never a second writable source. The pinned commit is the corrected upstream revision: the documentation repair, the topology relocation, and the removal of the hard-coded controller default are all included at it. Synchronizing from an earlier revision would re-import the defects that repair removed.",
+      "Paths in `files` are relative to this package root, which is what the repository validator resolves. `source_path` is relative to the upstream repository root.",
+      "Every path carries exactly one classification. An upstream byte copy is overwritten on each synchronization and its digest must equal its source digest exactly; where the portable tree would need a different byte, the repair is authored upstream first. Target-owned portable source is authored in this repository rather than derived from the pinned commit; it records no digest and is never overwritten and never removed here. Most target-owned paths have no upstream counterpart at all. README.md is the one that supersedes an upstream path of the same name: it documents this portable package rather than the Claude plugin, so the upstream bytes at that path are deliberately never read and never written, which the custody table in scripts/sync_vendor_source.py records as a superseded path rather than leaving it unclassified.",
+      "The client extension directory com.infiquetra.claude/ mirrors the upstream package root path for path, so every Claude-custody file's origin is readable from its portable path and every one of them stays a byte copy. The Claude Code manifest is the single exception inside that directory: it is lifted out of .claude-plugin/, whose name is a loading convention with no meaning inside the extension directory, and whose portable counterpart already occupies the package root.",
+      "Both fleet_commons_shim.py copies are dropped rather than copied, because the build-time Fleet Core bundle replaces them and their resolution ladder is Claude-specific discovery the portable package must not retain. Dropping the shim while copying the clients verbatim is what left this package with no working entrypoint: both clients import fleet_commons_shim at module scope, so `--help` raised ModuleNotFoundError before any argument was parsed. The two clients are therefore deterministic transforms rather than byte copies. The resolve-bundled-fleet-module rule rewrites that one import to the generated bundle in the _bundled/ directory beside each client, records the source digest, the output digest, and the transform version here, and is re-applied on every synchronization, so a later run cannot silently restore the broken import. This is not a downstream edit smuggled past the byte-copy rule: it is a versioned rule over the pinned source, reproducible from the source bytes alone."
+    ],
+    "dropped_reason": "Replaced by the build-time Fleet Core bundle; its resolution ladder is Claude-specific runtime discovery, which the portable package must not retain."
+  }
+}
