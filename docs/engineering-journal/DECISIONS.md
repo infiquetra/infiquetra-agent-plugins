@@ -2,6 +2,120 @@
 
 ## 2026-08-24
 
+### A skill key the open specification does not permit is transform custody, upstream keeps it
+
+**Author.** Jeff Cox and Qwen (orchestrated unit U1, issue #11)
+
+**Decision.** All seven upstream mission-control `SKILL.md` files carry a
+`when_to_use:` frontmatter key that is not among the six fields
+`SKILL_FRONTMATTER_FIELDS` permits (`scripts/check_repo.py`), and the UniFi
+precedent never met one. The port descriptor
+([ports/mission-control.json](../../ports/mission-control.json)) classifies
+the seven files in `entrypoint_transforms` — the descriptor's only transform
+custody — so a versioned `normalize-skill-frontmatter` rule can fold the key
+under the permitted `metadata` key at synchronization, deterministically and
+idempotently, portable copies only. Upstream keeps the key.
+
+**Rationale.** A byte copy of any of the seven files would fail
+`check_skill_frontmatter` on the assembled branch — the exact failure class
+the gate exists to catch — so the custody must name a transform. Upstream
+normalization is rejected because `when_to_use` is functional in Claude Code
+skill listings; folding the key into the document body is rejected as a lossy
+placement that is harder to check for idempotence. Per-path rule selection is
+the schema-3 field the synchronization unit owns (run plan KTD2/KTD7), so this
+unit records the custody class and not the rule name.
+
+**Rejected alternatives.** Normalizing upstream (functional key in Claude
+Code listings — the contract's recorded rejection); byte copy plus gate
+exemption (a hole in the frontmatter rule for one package); body fold (lossy
+placement, harder idempotence check).
+
+**Revisit when** a third package carries a frontmatter key the open Agent
+Skills specification does not permit, or the specification adopts
+`when_to_use` and the fold becomes unnecessary.
+
+**Refs.** [U1 Phase 0 note](../plans/2026-08-24-mission-control-port-u1-phase0-note.md),
+[run plan KTD3/KTD7](../plans/2026-08-24-mission-control-port-run-plan.md),
+`ports/mission-control.json` (`custody.entrypoint_transforms`), child issue #11.
+
+---
+
+### Ported tests live inside the package, under the provenance closed-set check
+
+**Author.** Jeff Cox and Qwen (orchestrated unit U1, issue #11)
+
+**Decision.** The twenty-one carried upstream mission-control test files are
+byte copies under `plugins/mission-control/tests/` — inside the package tree,
+therefore inside the provenance closed-set check — rather than at the
+repository root.
+
+**Rationale.** The pilot's one-off precedent carried its tests at the
+repository root, tracked by fleet-core's informal `release_surface` key that
+no check validates; a repeat of that shape would ship tests the provenance
+machinery cannot see and the fingerprint cannot bind. Placement inside the
+package keeps every test in the closed set `check_repo.py` and the
+provenance manifest account for, and it is what lets the U6 CI wiring run
+them through the `plugins/*/tests` glob.
+
+**Rejected alternatives.** Repo-root tests tracked by the unvalidated
+`release_surface` key (the pilot's precedent — invisible to every check this
+repository has); a descriptor key declaring external tests (a second home for
+a fact the provenance manifest should own).
+
+**Revisit when** a ported package's tests genuinely cannot live under its
+package root — for example, a test suite that must observe more than one
+package at once — and the closed-set check would need a declared exception.
+
+**Refs.** [U1 Phase 0 note](../plans/2026-08-24-mission-control-port-u1-phase0-note.md),
+`ports/mission-control.json` (`custody.byte_copies`), run plan U1 rejected
+alternative, child issue #11.
+
+---
+
+### A whole-repository drift guard is dropped when its premises cannot cross the port boundary
+
+**Author.** Jeff Cox and Qwen (orchestrated unit U1, issue #11)
+
+**Decision.** `tests/test_prompt_alignment.py` is classified
+`dropped_from_source` in
+[ports/mission-control.json](../../ports/mission-control.json), with the
+custody finalized in U1 before synchronization (run plan doc-review F2). The
+premise verification at the pin found six structural failures under the
+portable layout: the test reads the Claude manifest at the package-local
+`.claude-plugin/` path (relocated to `com.infiquetra.claude/`), the root
+`.claude-plugin/marketplace.json` and the `plugins/saga` handoff skill
+(neither exists in this catalog — both probed absent), the commands and agent
+file at their unrelocated upstream paths, and the package README (superseded
+by the target-owned one). Only its package-internal byte-copy premises hold.
+
+**Rationale.** The guard is a whole-upstream-repository drift guard, not a
+package-scoped one: its authority is the upstream repository layout itself. A
+byte copy would ship a test that errors at collection in the portable package
+suite; editing its content to make it pass is the custody violation the run
+plan's U6 names ("a test that cannot pass without content change is an
+upstream filing or a recorded custody decision"). This is the recorded
+custody decision. The guard stays green upstream, where its premises hold,
+and nothing about this drop weakens the portable tree: the content it guards
+still travels as byte copies whose digests the provenance manifest pins.
+
+**Rejected alternatives.** Byte copy (errors at collection in the U6 package
+suite); content edit to satisfy the portable layout (custody violation);
+target-owned replacement test asserting the same phrases (invents a new
+moving part no unit owns, over a premise set the portable catalog cannot
+honor); carrying it and skipping at runtime (a permanently-skipping test is
+deadweight that misrepresents its own coverage).
+
+**Revisit when** this catalog grows a marketplace manifest or hosts the saga
+plugin, so the guard's repository-level premises can exist here; then the
+test returns through a deliberate repin + resync, never a downstream patch.
+
+**Refs.** [U1 Phase 0 note](../plans/2026-08-24-mission-control-port-u1-phase0-note.md)
+(premise-by-premise verdict table), `ports/mission-control.json`
+(`custody.dropped_from_source`, `provenance.dropped_reason`), run plan
+open-questions section (F2 disposition), child issue #11.
+
+---
+
 ### Mission-control port run plan: new transform rules stay single-shape, rule selection lives in the descriptor
 
 **Author.** Jeff Cox and Claude (Saga Plan for issue #9)
