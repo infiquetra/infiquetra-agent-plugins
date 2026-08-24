@@ -136,12 +136,23 @@ and after that client runs. A client that changes the copy it was given has its
 row recorded without a classification: the stages describe bytes that no longer
 exist. Every run allocates a new numbered directory inside `--workspace`, so
 re-using one workspace never hands a later run a copy an earlier client mutated.
-The run also writes a private `transcript.json` beside those copies,
-holding each command's bounded raw output, written owner-only (mode 0600). That
-transcript is what the record's `evidence`, `reason`, and `version` fields are
-written from — it is operator-only, never committed, and never quoted into the
-public record. It is kept on the failure paths too: a timed-out or invalidated
-row is exactly where the output is needed to explain the block.
+The run also writes a private `transcript.json` beside those copies, at
+`<workspace>/run-NNN/transcript.json` — the command line prints the exact path
+when it finishes, and that is the path to open. It holds each command's bounded
+raw output, written owner-only (mode 0600). That transcript is what the record's
+`evidence`, `reason`, and `version` fields are written from — it is operator-only,
+never committed, and never quoted into the public record. It is kept on the
+failure paths too: a timed-out or invalidated row is exactly where the output is
+needed to explain the block.
+
+Two things to know about a **blocked** row before you act on it. A command that
+hit its deadline is recorded like any other, with `exit_status: -1` — it ran, so
+it appears in the stage's `commands` and is safety-graded with the rest. And the
+cleanup that follows a deadline kills the stage's *process group*: a client whose
+descendant starts a session of its own has left that group, so the harness can
+neither signal it nor see it. The row says so rather than claiming containment.
+If a stage times out on a client you know spawns detached helpers, check for
+stragglers yourself before starting the next run.
 
 The table below is the reference for reading that plan; the harness is what
 executes it.

@@ -580,7 +580,7 @@ class ProcessGroupTest(FakeClientFixture):
             harness.StageSpec("placement", ("spawning-launcher",), timeout=0.6)
         )
         self.assertEqual(outcome.result, harness.BLOCKED)
-        self.assertIn("no client descendant survived it", outcome.reason)
+        self.assertIn("process group was terminated and is empty", outcome.reason)
         # The descendant had 5s to appear; the group was killed well before.
         deadline = time.time() + 8
         while time.time() < deadline:
@@ -592,6 +592,39 @@ class ProcessGroupTest(FakeClientFixture):
             "a client descendant outlived the deadline and kept writing",
         )
 
+
+    def test_a_descendant_that_leaves_the_session_is_not_claimed_as_killed(self) -> None:
+        """`killpg` reaches a group, and a client can leave the group.
+
+        A descendant that calls `setsid` has its own session before the deadline
+        arrives, so the kill does not reach it and the probe does not see it. The
+        cleanup used to answer that with "no client descendant survived it" --
+        a claim about processes it cannot observe, on exactly the runs where the
+        claim is false. What it may say is what it established: this group is
+        empty, and that is not the same statement.
+
+        Deliberately asserts nothing about whether the descendant lived. That is
+        environment-dependent, and the defect was never the escape -- it was
+        reporting the escape as containment.
+        """
+        marker = self.base / "escaped-descendant"
+        escape = (
+            f"{sys.executable} -c "
+            f"'import os,time,pathlib; os.setsid(); time.sleep(3); "
+            f'pathlib.Path("{marker}").write_text("x")\' &\n'
+            "sleep 30\n"
+        )
+        write_executable(self.bin, "escaping-launcher", escape)
+        outcome = self.outcome(
+            harness.StageSpec("placement", ("escaping-launcher",), timeout=0.6)
+        )
+        self.assertEqual(outcome.result, harness.BLOCKED)
+        self.assertIn(
+            "is not evidence that none is still running",
+            outcome.reason,
+            "the cleanup claimed containment it cannot observe",
+        )
+        self.assertNotIn("no client descendant survived", outcome.reason)
 
     def test_the_leader_is_reaped_before_the_group_is_probed(self) -> None:
         """An unreaped leader is a zombie, and a zombie is still a process.
@@ -627,7 +660,7 @@ class ProcessGroupTest(FakeClientFixture):
 
         reason = harness.terminate_process_group(process)
         self.assertIn(
-            "no client descendant survived it",
+            "process group was terminated and is empty",
             reason,
             "the leader's own unreaped corpse was read as a surviving client",
         )
@@ -650,7 +683,7 @@ class ProcessGroupTest(FakeClientFixture):
         )
         self.assertEqual(outcome.result, harness.BLOCKED)
         self.assertIn(
-            "no client descendant survived it",
+            "process group was terminated and is empty",
             outcome.reason,
             "the cleanup reported a state it had not established",
         )
@@ -895,6 +928,40 @@ class FailurePathTranscriptTest(FakeClientFixture):
         self.assertEqual(outcome.result, harness.BLOCKED)
         self.assertEqual(len(outcome.transcript), 1)
         self.assertIn("hanging-client", outcome.transcript[0].command)
+
+    def test_the_timed_out_command_is_in_the_public_record_too(self) -> None:
+        """A stage that started two commands must not record one.
+
+        The deadline repair put the timed-out command in the private transcript
+        and stopped there, so the version-2 record named only the commands that
+        finished. Two consequences, both silent: the stage is not reproducible
+        from the record, and the post-run safety rule -- which grades `commands`
+        -- never sees the command that actually started.
+        """
+        write_executable(self.bin, "slow-second", "sleep 30\n")
+        real = harness.stage_argvs
+        harness.stage_argvs = lambda c, p, s, v: (("ok-client",), ("slow-second",))
+        try:
+            outcome = self.outcome(
+                harness.StageSpec("placement", ("ok-client",), timeout=0.8)
+            )
+        finally:
+            harness.stage_argvs = real
+
+        self.assertEqual(outcome.result, harness.BLOCKED)
+        self.assertEqual(
+            [item.command for item in outcome.commands],
+            ["ok-client", "slow-second"],
+            "the command that hit the deadline is missing from the public record",
+        )
+        self.assertEqual(outcome.commands[-1].exit_status, -1, "a killed command has no exit status")
+        recorded = outcome.record()
+        self.assertEqual(
+            recorded["command"],
+            recorded["commands"][0]["command"],
+            "the alias and the list disagree about what ran first",
+        )
+        self.assertEqual(len(recorded["commands"]), 2)
 
     def test_an_invalidated_client_keeps_its_transcript(self) -> None:
         """Losing the classification must not lose the evidence of why."""
@@ -1631,6 +1698,47 @@ class CommandLineTest(unittest.TestCase):
         self.assertIn(
             harness.PLUGIN_ID, plan, "the client-generated id must stay a placeholder"
         )
+
+    def test_an_executed_run_prints_a_transcript_path_that_exists(self) -> None:
+        """The one path the operator is told to open must be the one written.
+
+        The record ships with blank versions, reasons, and evidence on purpose,
+        and the transcript is where an operator fills them from. The run
+        directory repair moved the file into `<workspace>/run-NNN/` and left this
+        message naming `<workspace>/`, so every executed assessment sent the
+        operator to a file that did not exist -- and the only way to notice was
+        to go looking. Asserted end to end through the real command line,
+        because the defect was a disagreement between two call sites that each
+        looked right on its own.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            binaries = base / "bin"
+            write_executable(binaries, "codex", "exit 0\n")
+            environment = dict(os.environ)
+            environment["PATH"] = os.pathsep.join([str(binaries), environment.get("PATH", "")])
+            completed = subprocess.run(
+                [
+                    sys.executable, str(ROOT / "scripts" / "assess_clients.py"),
+                    "--package", "unifi", "--execute",
+                    "--client", "OpenAI Codex",
+                    "--workspace", str(base / "ws"),
+                ],
+                capture_output=True, text=True, timeout=300, env=environment,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr[-2000:])
+            announced = [
+                line for line in completed.stdout.splitlines()
+                if "The private transcript is at " in line
+            ]
+            self.assertEqual(len(announced), 1, completed.stdout[-1500:])
+            tail = announced[0].split("The private transcript is at ", 1)[1]
+            path = Path(tail.split(". It holds", 1)[0])
+            self.assertTrue(
+                path.is_file(),
+                f"the command line announced {path}, which does not exist; "
+                f"the workspace holds {sorted(p.name for p in (base / 'ws').rglob('*.json'))}",
+            )
 
     def test_the_plan_names_every_deadline(self) -> None:
         """Every stage that will start a process shows the deadline it runs under.

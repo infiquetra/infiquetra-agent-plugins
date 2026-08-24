@@ -2,6 +2,88 @@
 
 ## 2026-08-23
 
+### Both regressions updated the producer and left the consumer behind
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Round two repaired seven review findings. Round three's independent review found
+three more, two of them introduced by those repairs.
+
+**Evidence.** The deadline repair added the timed-out command to the private transcript and did
+not add it to `commands`, so the public version-2 record named fewer commands than the stage
+started — and the post-run safety rule, which grades `commands`, never saw the one command that
+had been running unbounded. The run-directory repair moved the transcript to
+`<workspace>/run-NNN/transcript.json` and left the closing message naming
+`<workspace>/transcript.json`, so every executed assessment told the operator to open a file
+that did not exist.
+
+**Mechanism.** One shape twice: a value acquired a second home and only one writer learned
+about it. Each call site still read correctly on its own — the transcript append is right, the
+`commands` list is right, the write path is right, the message is right — and the defect lives
+in the disagreement, which no single-site review sees. Both survived a fifty-one-anchor mutation
+proof with zero survivors, because no anchor named the *relationship* between the two sites.
+
+**Generalizable rule.** After changing where a value is produced or stored, enumerate its
+consumers and check each one, rather than checking that the change itself is correct. And test
+the relationship end to end: the test that catches the path defect runs the real command line
+and opens the file it announces, which is the only form of the test that could not pass while
+the two sites disagreed.
+
+**Refs.** `scripts/assess_clients.py`,
+`tests/test_assess_clients.py::CommandLineTest::test_an_executed_run_prints_a_transcript_path_that_exists`,
+`tests/test_assess_clients.py::FailurePathTranscriptTest::test_the_timed_out_command_is_in_the_public_record_too`.
+
+### The cleanup reported containment for a boundary the client can step outside
+
+**Author.** Jeff Cox and Claude
+
+**Context.** When a stage hits its deadline the harness kills the child's process group and
+writes into the blocked row how thoroughly it cleaned up.
+
+**Evidence.** The sentence read "The whole process group was terminated, so no client descendant
+survived it." A probe: a launcher whose descendant calls `setsid` before sleeping. The
+descendant left the group, the kill did not reach it, the probe did not see it, the row said no
+descendant survived — and the descendant wrote its marker file three seconds later.
+
+**Mechanism.** `killpg` acts on a process group, and group membership is something a process can
+change. The sentence promised the goal — no client still running — while the mechanism delivered
+something narrower: this group is empty. Every part of the implementation was correct; the claim
+was wider than what the implementation could establish, and the gap only opens on the runs where
+it matters, because a client that escapes its group is exactly the client still doing something.
+
+**Generalizable rule.** State what the mechanism established, not what it was for. When the two
+differ, the sentence is a defect even though the code is not — and the honest form usually has
+to name the case it cannot cover, because a reader who is told "contained" will not go looking.
+
+**Refs.** `scripts/assess_clients.py` (`terminate_process_group`),
+`tests/test_assess_clients.py::ProcessGroupTest::test_a_descendant_that_leaves_the_session_is_not_claimed_as_killed`.
+
+### Zero survivors over fifty-one anchors said nothing about the three defects found next
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The mutation proof is the repository's evidence that a guard is tested: break the
+guard, watch an authorized test fail, restore.
+
+**Evidence.** Cycle 12 ran 51 anchors with 0 survivors on the exact revision an independent
+review then returned three P1 findings against. The reviewer named the reason precisely: "none
+of its mutation anchors exercises an escaped process session, the public representation of a
+timed-out later command, or the command-line transcript-path handoff."
+
+**Mechanism.** A mutation proof measures the anchors it has. Every anchor names a line someone
+already thought was load-bearing, so the proof reports on the guards that exist and is silent
+about the behaviour nobody wrote a guard for. Zero survivors is a statement about coverage of
+the anchor set, not about the code — and the more thorough the proof looks, the more readily its
+silence gets read as a clean bill.
+
+**Generalizable rule.** Read "0 survivors" as "every guard I listed is tested", never as "this is
+correct". The proof's value is bounded by the imagination of whoever wrote the anchor list, so
+pair it with something that does not share that imagination — an independent reviewer, an
+end-to-end probe, a run in an environment you do not control.
+
+**Refs.** `docs/evidence/2026-08-23-cycle13-mutation-proof-portable-copies.txt`,
+[the bookkeeping learning](LEARNINGS.md#the-mutation-proof-counted-its-own-bookkeeping-as-a-kill).
+
 ### The mutation proof counted its own bookkeeping as a kill
 
 **Author.** Jeff Cox and Claude

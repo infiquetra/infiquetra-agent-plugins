@@ -747,10 +747,20 @@ def terminate_process_group(process: subprocess.Popen) -> str:
         return "The stage's own process outlived SIGKILL; a client descendant may survive."
 
     # Confirm rather than assume: having signalled is not the same as gone.
+    # What follows says "this group", never "this client's processes". A
+    # descendant that calls setsid leaves the group before the deadline arrives,
+    # so it is neither signalled by the killpg above nor visible to the probe
+    # below -- and the sentence used to read "no client descendant survived it",
+    # which is a claim about processes this code cannot see. An operator reading
+    # a blocked row has to know which of the two they were told.
     try:
         os.killpg(group, 0)
     except ProcessLookupError:
-        return "The whole process group was terminated, so no client descendant survived it."
+        return (
+            "The stage's process group was terminated and is empty. A descendant that started "
+            "a session of its own is outside that group: this neither signals nor observes one, "
+            "so it is not evidence that none is still running."
+        )
     except PermissionError:  # pragma: no cover - our own descendants, so unexpected
         return "The process group holds a member this process may not signal; a client " \
                "descendant may survive."
@@ -1130,6 +1140,14 @@ def run_stage(
             # command managed to print. A blocked row is precisely where an
             # operator most needs the output to explain the block, and this
             # return used to discard all of it.
+            # The command that hit the deadline is a command that ran, so it is
+            # recorded like every other one. Keeping it only in the private
+            # transcript left the public version-2 record naming fewer commands
+            # than the stage started -- unreproducible, and invisible to the
+            # post-run safety rule, which grades `commands`. Its status is -1:
+            # it was killed at the deadline and never exited, and no real exit
+            # status can say that.
+            recorded_commands.append(StageCommand(redact(" ".join(argv), values), -1))
             transcript.append(
                 CommandTranscript(
                     command=redact(" ".join(argv), values),
@@ -1377,6 +1395,7 @@ def assess(
     execute: bool,
     only: tuple[str, ...] = (),
     workspace: Path | None = None,
+    run_directory: Path | None = None,
     real_binaries: dict[str, str] | None = None,
     runner: Callable[..., subprocess.CompletedProcess] = run_contained,
 ) -> dict[str, Any]:
@@ -1386,7 +1405,13 @@ def assess(
     before = ccm.package_fingerprint(package_root)
     name, version = ccm.package_identity(package_root, config.package_manifest)
 
-    base = allocate_run_directory(
+    # A caller that has to *name* the run directory afterwards -- the command
+    # line, which tells the operator where the transcript is -- allocates it and
+    # passes it in, so the path is decided once and used twice. Recomputing it
+    # from `workspace` is what printed `<workspace>/transcript.json` while the
+    # file was written to `<workspace>/run-NNN/transcript.json`: every executed
+    # assessment sent the operator to a file that did not exist.
+    base = run_directory or allocate_run_directory(
         Path(workspace) if workspace is not None else Path(tempfile.mkdtemp())
     )
 
@@ -1697,7 +1722,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     workspace = Path(arguments.workspace) if arguments.workspace else Path(tempfile.mkdtemp())
-    workspace.mkdir(parents=True, exist_ok=True)
+    run_directory = allocate_run_directory(workspace)
     try:
         record = assess(
             config,
@@ -1705,6 +1730,7 @@ def main(argv: list[str] | None = None) -> int:
             execute=True,
             only=tuple(arguments.client),
             workspace=workspace,
+            run_directory=run_directory,
             real_binaries=parse_real_binaries(arguments.real_binary),
         )
     except (AssessmentError, ccm.MatrixError) as error:
@@ -1730,7 +1756,7 @@ def main(argv: list[str] | None = None) -> int:
         "a record whose reasons are blank. Fill them from what you observed."
     )
     print(
-        f"\nThe private transcript is at {transcript_path(workspace)}. It holds each command's "
+        f"\nThe private transcript is at {transcript_path(run_directory)}. It holds each command's "
         "raw, unredacted output, which is what the record's evidence and reason fields are "
         "written from. It is operator-only: never commit it and never quote it into the record."
     )

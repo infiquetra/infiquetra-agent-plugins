@@ -462,6 +462,33 @@ class PerCommandStatusRecordTest(unittest.TestCase):
             "the alias and the list were allowed to name different commands",
         )
 
+    def test_a_blocked_stage_still_has_its_commands_safety_graded(self) -> None:
+        """A stage that hit its deadline started commands, and they are graded.
+
+        The harness records the timed-out command with exit status -1, on a stage
+        whose result is `blocked`. If safety grading only looked at `executed`
+        stages, the one command most likely to have been doing something
+        unbounded would be the one command nobody checked.
+        """
+        operation = sorted(REAL_CONFIG.assessment.mutating_operations)[0]
+        script = REAL_CONFIG.assessment.package_scripts[0]
+        unsafe = f"python3 <package>/{script} {operation}"
+        record = self.version_two()
+        record["clients"][0]["stages"]["invocation"] = {
+            "result": "blocked",
+            "command": "client run --json",
+            "commands": [
+                {"command": "client run --json", "exit_status": 0},
+                {"command": unsafe, "exit_status": -1},
+            ],
+            "reason": "No result within the 60s deadline.",
+        }
+        problems = check(record)
+        self.assertTrue(
+            any(operation in problem for problem in problems),
+            f"the timed-out command was never safety-graded; got {problems}",
+        )
+
     def test_a_blocked_stage_needs_no_commands(self) -> None:
         """Nothing ran, so there is nothing to record; this must not be an error."""
         record = self.version_two()

@@ -2,6 +2,68 @@
 
 ## 2026-08-23
 
+### A command that hit the deadline is recorded like any other command
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** When a stage's command reaches its deadline, that command is appended to the
+stage's `commands` list with `exit_status: -1`, alongside its entry in the private transcript.
+It is therefore in the public version-2 record and is graded by the post-run safety rule like
+every other recorded command. `-1` is reserved for "killed at the deadline, never exited"; no
+real exit status can say that.
+
+**Rationale.** The stage started it, so it ran. Keeping it only in the private transcript left
+the public record naming fewer commands than the stage started — unreproducible — and left the
+safety rule, which grades `commands`, blind to the single command most likely to have been doing
+something unbounded. A record that omits the command that hung is a record that reads best
+exactly when the run went worst.
+
+**Rejected alternatives.** *Omitting `exit_status` for that entry*, because the schema requires
+an integer and an absent field would read as "not recorded" rather than "did not exit".
+*Recording it only when the stage is blocked for some other reason*, because the deadline is the
+common case. *Grading safety only on `executed` stages*, because a blocked stage's commands
+started.
+
+**Consequence to expect.** A blocked stage can carry more `commands` entries than it has
+`returncodes`; the per-command statuses are the reproducible record and the returncodes are what
+classified the stage.
+
+**Revisit when.** The schema gains a way to mark a command as terminated rather than exited.
+
+**Refs.** `scripts/assess_clients.py`, `schemas/compatibility-matrix.schema.json`,
+`tests/test_check_compatibility_matrix.py` (`PerCommandStatusRecordTest`).
+
+### The caller that has to name the run directory is the caller that allocates it
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** `assess` takes an optional `run_directory`. The command line allocates it and
+passes it in, so the path the transcript is written to and the path the closing message
+announces are the same value rather than two computations that agree by convention. `assess`
+still allocates one itself when no caller supplies it, which is what every test relies on.
+
+**Rationale.** The run-directory repair moved the transcript into `<workspace>/run-NNN/` and the
+message went on naming `<workspace>/`, so every executed assessment sent the operator to a file
+that did not exist — and the transcript is the only place the record's blank versions, reasons,
+and evidence can be filled from. Two call sites deriving one path is the arrangement that
+allowed them to disagree; passing the value removes the second derivation rather than fixing it.
+
+**Rejected alternatives.** *Putting the run directory in the record*, because the record is
+public evidence and a local filesystem path does not belong in it. *Returning a tuple from
+`assess`*, because every caller and test would change to carry a value only one of them wants.
+*Recomputing the newest `run-NNN` in the command line*, because it re-derives what was already
+decided and is wrong the moment two runs share a workspace.
+
+**Consequence to expect.** A caller that needs the path must allocate before assessing, which is
+one line and makes the ordering explicit.
+
+**Revisit when.** More than one artifact has to be announced, at which point a small run-context
+object beats a widening parameter list.
+
+**Refs.** `scripts/assess_clients.py` (`assess`, `main`), `tests/test_assess_clients.py`
+(`CommandLineTest`),
+[the producer-and-consumer learning](LEARNINGS.md#both-regressions-updated-the-producer-and-left-the-consumer-behind).
+
 ### A mutation proof excludes its own binding test, and is never corrected by hand
 
 **Author.** Jeff Cox and Claude
