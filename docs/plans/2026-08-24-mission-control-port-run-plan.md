@@ -47,9 +47,9 @@ These are contract terms this plan executes and must not redesign:
   2026-08-24 12:40:15 -0400). The upstream repository is never edited; defects
   found there are filed by U9 and return only through a deliberate repin +
   resync. Fleet-core expands at its own existing pin `3b5faa6c` (no repin —
-  `intent_envelope.py` and `tier_palette.py` are byte-identical between the two
-  pins; `retry_backoff.py` differs, so a repin would churn UniFi's bundles and
-  invalidate its committed matrix).
+  `intent_envelope.py`, `tier_palette.py`, and `models.json` are byte-identical
+  between the two pins; `retry_backoff.py` differs, so a repin would churn
+  UniFi's bundles and invalidate its committed matrix).
 - **Landing model**: U0, U2, the single U8 integration PR, and U9 land on main
   as their own green PRs, serialized in that order. U1, U3, U4, U5, U6, U7 merge
   serially in unit order into integration branch `port/mission-control`, which
@@ -188,6 +188,62 @@ restated here.
   already serialized (U1 merges before U3 starts), and the boundary is: U1 never
   anticipates the rule-selection field, U3 never revisits custody classes.
   Failure prevented: two writers designing one schema in parallel worktrees.
+- **KTD8 — the mission-control fleet-commons closure is three files, and
+  `intent_envelope.py` ports as a recorded deterministic transform** *(added
+  2026-08-24: the first U2 dispatch stopped on child #12's stop condition
+  item 1 — evidence `.orchestrate-unit-blocked.md`, sole commit `68cf5fc` on
+  `orch/mcport-9-resume1-u2-fleetcore-q1`, coordinator-verified read-only
+  against the pins)*. Verified at `3b5faa6c`, byte-identical at `84eaf042`:
+  `intent_envelope.py` carries a module-scope `sys.path` insert plus
+  `import fleet_commons_shim` (lines 79–83) and lazy
+  `fleet_commons_shim.load("tier_resolver")` / `.load("tier_palette")`
+  (lines 166/170); `tier_palette.py` reads its sibling `models.json` at import
+  time (lines 26, 78), and `models.json` is a deferred data file the original
+  two-module slice omitted. Consumer reachability at `84eaf042`:
+  `sdlc_manager.py` touches only the envelope parse/render surface
+  (`envelope_from_issue_body`, `apply_answers`, `render_issue_block`,
+  `IntentEnvelopeError`), and `IntentEnvelope.validate()` →
+  `SpendEnvelope.validate()` reaches `_tier_palette()` whenever a parsed
+  envelope carries `spend_envelope.tier_ceiling` — so `tier_palette` and
+  `models.json` are reachable on the shipped path; `executor_profile_lint.py`
+  loads `tier_palette` directly (line 89). `recommend_tier` /
+  `self_select_posture` / `authorize_spend` have zero callers in either
+  consumer, so the `tier_resolver` leg (and `tier_policy.json`) is dormant
+  and stays in `DEFERRED.md`. Decisions: (1) U2's slice is three files —
+  `intent_envelope.py`, `tier_palette.py`, `models.json` — three
+  `DEFERRED.md` rows out, three `PROVENANCE.json` entries; (2)
+  `tier_palette.py` and `models.json` stay pure byte copies — the sibling
+  data file satisfies the import-time read in `fleet_commons/` and in any
+  `_bundled/` destination alike; (3) `intent_envelope.py` ports under
+  fleet-core's existing `deterministic-transform` custody class (precedent:
+  `guard-pytest-import` v2 in `derived_files`) with a new named rule
+  `resolve-fleet-commons-sibling` v1 that replaces the module-scope shim
+  block and the two `fleet_commons_shim.load("<name>")` call sites with
+  same-directory sibling resolution — placement-independent by construction,
+  so the identical transformed file works in `fleet_commons/` and in U5's
+  `_bundled/`; a deferred name (`tier_resolver`) fails at call time naming
+  the missing sibling path; source and result digests recorded; (4) the
+  directed byte-port of upstream `tests/test_intent_envelope.py` is
+  impossible as specified — the file imports saga, team-execution, and
+  mission-control surfaces at module level, exercises saga-only re-export
+  APIs (`seeded_tier`, `compute_stakes`), and carries a repo-tree drift
+  guard — so the suite stays upstream and U2 authors minimal target-owned
+  tests instead; (5) KTD1's two entrypoint rules and the
+  `fleet_commons_shim.py` drop-from-source stand unchanged — U3's
+  `git grep fleet_commons_shim plugins/mission-control/scripts/` verification
+  still ends empty, because the bundled modules carry sibling resolution, not
+  shim references. Failure prevented: shipping a module that cannot be
+  imported anywhere in the target — the exact defect class the UniFi pilot
+  shipped and the AGENTS.md runnability rule exists to prevent. Rejected:
+  porting the full tier closure (`tier_resolver.py`, `tier_policy.json`) —
+  zero callers, speculative; a target-owned `fleet_commons_shim.py` adapter
+  under the upstream name — a second implementation under an upstream-custody
+  name, the divergent-source failure the custody model exists to prevent;
+  byte-copying `intent_envelope.py` unchanged — cannot import; repinning —
+  the closure is byte-identical at both pins, so a repin buys nothing and
+  regenerates UniFi's bundles. Revisit when: mission-control's upstream
+  consumption starts calling a `tier_resolver`-backed API — the leg then
+  joins the slice by this same mechanism.
 
 ## Worker bindings and backend
 
@@ -305,8 +361,15 @@ package tree does not exist yet — contract landing model).
 
 ### U2. Fleet Core slice expansion
 
-Add `intent_envelope` and `tier_palette` to the portable fleet-core slice as
-byte copies at fleet-core's existing pin `3b5faa6c`, with provenance, deferral,
+*(record amended 2026-08-24 after the first U2 dispatch stopped on child #12's
+stop condition item 1; the closure decision is KTD8 — the original two-module
+wording is superseded by this text)*
+
+Add `intent_envelope`, `tier_palette`, and the `models.json` registry to the
+portable fleet-core slice at fleet-core's existing pin `3b5faa6c` —
+`tier_palette.py` and `models.json` as byte copies, `intent_envelope.py` under
+the `deterministic-transform` custody class with the
+`resolve-fleet-commons-sibling` v1 rule (KTD8) — with provenance, deferral,
 and release bookkeeping.
 
 **Child issue:** #12 · **Group:** G1 · **Depends on:** none · **Lands into:**
@@ -314,38 +377,50 @@ main (own PR, 2nd merge)
 
 **Worker:** Qwen @ xhigh (T2) · **Backend:** inline
 
-**Smallest viable change:** two byte-copied modules under
-`plugins/fleet-core/scripts/fleet_commons/`, digest-verified against their
-blobs at `3b5faa6c`; remove exactly the two rows from `DEFERRED.md` (lines 54
-and 60, verified); two classified `PROVENANCE.json` entries; CHANGELOG and
-`plugin.json` version bump per package convention; the pin-preserving decision
-recorded in `DECISIONS.md` in the same commit.
+**Smallest viable change:** three files under
+`plugins/fleet-core/scripts/fleet_commons/` — two byte copies digest-verified
+against their blobs at `3b5faa6c`, plus `intent_envelope.py` carrying the KTD8
+transform, its source digest, result digest, and rule name/version/prose
+recorded in `derived_files` per the `guard-pytest-import` precedent; remove
+exactly the three rows from `DEFERRED.md`; three classified `PROVENANCE.json`
+entries; CHANGELOG and `plugin.json` version bump per package convention; the
+pin-preserving decision and KTD8 recorded in `DECISIONS.md` in the same
+commit.
 
-**Mechanism reused:** fleet-core's existing PROVENANCE custody mechanism (no
-`ports/fleet-core.json` exists; not created — a descriptor migration would be a
-restructure the contract calls out as needing its own justification, and
-nothing in this unit needs it), `scripts/bundle_fleet_module.py` staleness
-machinery, and the `tests/test_retry_backoff.py` porting pattern for the new
-`tests/test_intent_envelope.py`.
+**Mechanism reused:** fleet-core's existing PROVENANCE custody mechanism —
+`files` plus `derived_files`; no `ports/fleet-core.json` exists and none is
+created (a descriptor migration would be a restructure the contract calls out
+as needing its own justification, and nothing in this unit needs it) —
+`scripts/bundle_fleet_module.py` staleness machinery, and the
+`deterministic-transform` recording pattern established by
+`tests/test_retry_backoff.py`.
 
-**New moving parts:** minimal `tier_palette` test (upstream ships none) — the
-smallest test proving the module loads and its palette contract holds; prevents
-the in-scope failure of shipping an unexercised module in the release surface
-(the AGENTS.md changed-packaging-carries-tests rule).
+**New moving parts:** the `resolve-fleet-commons-sibling` v1 rule (KTD8), and
+minimal target-owned tests: the transformed module imports cleanly; an
+envelope round-trip; `tier_ceiling` validation resolving through sibling
+`tier_palette` + `models.json`; the deferred-name call path (`tier_resolver`)
+failing with the recorded error shape; plus the minimal `tier_palette`
+palette-contract test (upstream ships none). Prevents shipping an unexercised
+or unimportable module (the AGENTS.md runnability and
+changed-packaging-carries-tests rules).
 
 **Rejected alternative:** repinning fleet-core to `84eaf042` — rejected because
 `retry_backoff.py` differs between the pins, so a repin regenerates UniFi's
 `_bundled/` copies, moves the UniFi package fingerprint, and invalidates its
-committed compatibility matrix.
+committed compatibility matrix. Also rejected, recorded in KTD8: the full tier
+closure; a target-owned shim adapter under the upstream name; an unchanged
+byte copy of `intent_envelope.py`; the directed byte-port of upstream
+`tests/test_intent_envelope.py` (impossible as specified — KTD8 item 4).
 
-**Test scenarios:** `tests/test_intent_envelope.py` (ported), new minimal
-tier-palette test under `tests/`; both green under
+**Test scenarios:** target-owned minimal `tests/test_intent_envelope.py` (per
+KTD8, not a byte-port) and the new minimal tier-palette test; both green under
 `python3 -m unittest discover -s tests -v`. Guard scenario: `git status
 --porcelain -- plugins/unifi` empty after `bundle_fleet_module.py` (no UniFi
 churn — a #12 stop condition if violated).
 
-**Verification:** child #12 block — upstream-blob digest comparison, bundle
-no-op, gate, suite, UniFi-churn probe, `git diff --check`.
+**Verification:** child #12 block (amended) — upstream-blob digest comparison
+for the two byte copies plus recorded source/result digests for the transform,
+bundle no-op, gate, suite, UniFi-churn probe, `git diff --check`.
 
 ### U3. Sync, provenance, and transform rules (Lane A)
 
@@ -440,7 +515,10 @@ environment, no documented mutating invocation, PROVENANCE custody assertion.
 
 ### U5. Fleet Core bundle (Lane C)
 
-Declare the two-module fleet bundle and generate the `_bundled/` modules the
+*(record amended 2026-08-24 per KTD8: the bundle carries three files, and the
+bundled `intent_envelope.py` is the already-transformed fleet-core file)*
+
+Declare the three-file fleet bundle and generate the `_bundled/` files the
 U3 transforms resolve to; refresh provenance to close the set.
 
 **Child issue:** #15 · **Group:** G2 · **Depends on:** U1, U2 (branch rebased
@@ -450,18 +528,26 @@ merge)
 **Worker:** Qwen @ xhigh (T2) · **Backend:** inline
 
 **Smallest viable change:** one new target-owned
-`plugins/mission-control/fleet-bundle.json` naming `intent_envelope` and
-`tier_palette` with destinations `scripts/_bundled/*.py` (the child's exact
-JSON), the two generated modules from
+`plugins/mission-control/fleet-bundle.json` naming `intent_envelope`,
+`tier_palette`, and the `models.json` registry with destinations under
+`scripts/_bundled/` (the child's exact JSON), the three generated files from
 `python3 scripts/bundle_fleet_module.py`, and a `PROVENANCE.json` refresh via
-sync re-run so the closed-set check sees the new target-owned files.
+sync re-run so the closed-set check sees the new target-owned files. The
+bundled `intent_envelope.py` is generated from the fleet-core file that
+already carries the KTD8 transform, so its sibling resolution works unchanged
+in `_bundled/`; `models.json` must land beside it for `tier_palette`'s
+import-time read.
 
 **Mechanism reused:** `schemas/fleet-bundle.schema.json` v1, the UniFi
 `fleet-bundle.json` pattern, `bundle_fleet_module.py` generation +
 `check_repo.py` staleness rejection (AGENTS.md build step), sync-time
 target-owned set-difference discovery.
 
-**New moving parts:** none.
+**New moving parts:** none expected. One contingency, flagged by KTD8: if
+schema v1 or `bundle_fleet_module.py` turns out to carry Python modules only,
+this unit extends them minimally (recorded, versioned) so the `models.json`
+data file can ride the same declaration — decided inside this unit under its
+own review, not silently.
 
 **Rejected alternative:** hand-copying the modules into the package — rejected
 because `check_repo.py` rejects hand-edited bundles by design, and hand copies
@@ -757,3 +843,13 @@ directives, each with the line of reasoning:
 - **Tier interrogation: skipped** — the contract pins every worker and reviewer
   binding (fifth-pass operator amendments in #9); re-deriving tiers from the
   registry would re-litigate a settled operator decision.
+- **U2 closure stop disposition (2026-08-24): amend-and-redispatch, no
+  operator gate** — child #12's stop condition item 1 fired exactly as
+  written ("the closure grows and the parent's plan must account for it
+  before bundling"), and #9's run-level stop list carries the matching entry
+  ("any unit's acceptance criteria requiring scope outside its owned
+  surface"). The contract routes the accounting to the parent plan, not to an
+  operator pause, so the coordinator verified the unit's stop evidence
+  read-only against the pins, decided KTD8, amended this plan and cards
+  #12/#15, and re-dispatches U2 after the amendment's doc review. Only U5 was
+  downstream-blocked; U0 and U1 continued unaffected.
