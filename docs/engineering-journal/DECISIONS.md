@@ -13,12 +13,15 @@ fixes five plan-level choices inside the operator-approved contract of issue
 single-shape transform rules, each preserving exactly-one-match discipline, and
 the existing `resolve-bundled-fleet-module` v1 stays byte-untouched; (2)
 transform-rule selection becomes an explicit per-path field in the port
-descriptor — additive within schema 2, with `ports/unifi.json` naming its rule
-explicitly in the same commit; (3) the `when_to_use:` skill-frontmatter key is
+descriptor at a new schema version 3 (the format authority mandates a bump
+when a field is added, `port_config.py:54`; corrected in the S3 disposition
+pass per doc-review F1), with both descriptors migrated and
+`ports/unifi.json` naming its rule explicitly in the same commit; (3) the `when_to_use:` skill-frontmatter key is
 folded under the permitted `metadata` key by a new `normalize-skill-frontmatter`
 v1 transform, portable copies only; (4) CI package-test wiring uses the
-`plugins/*/tests` glob plus a can-fail path-agreement meta-check rather than
-per-package enumeration; (5) the card-validator verdict-agreement test derives
+`plugins/*/tests` glob — the empty-collection case closed in the job's own
+command shape, a separate path-agreement check only if a concrete collection
+failure remains (doc-review F6) — rather than per-package enumeration; (5) the card-validator verdict-agreement test derives
 its authority live from the home-lab checkout and self-skips loudly when the
 checkout is absent.
 
@@ -26,16 +29,16 @@ checkout is absent.
 exactly-one-match discipline and change the transform identity UniFi's
 committed provenance records; AGENTS.md places porting-tool package
 configuration in the descriptor, never in a script constant; `metadata` is one
-of the seven fields `check_repo.py` permits, so the fold is deterministic,
-idempotent, and lossless; the glob plus meta-check means the next port cannot
+of the six fields `check_repo.py` permits, so the fold is deterministic,
+idempotent, and lossless; the glob plus corrected empty-collection handling means the next port cannot
 silently ship uncollected tests; a copied-constant authority corpus cannot fail
 when the authority moves.
 
 **Rejected alternatives.** *One loosened multi-shape rule v2* and *first-match
 semantics* (a #13 stop condition). *A script-internal path-to-rule registry*
-(the custody violation AGENTS.md names). *A schema-3 bump for the rule-name
-field*, per the precedent above that additive fields do not bump a schema
-version. *Folding `when_to_use` into the skill body* (lossy placement, harder
+(the custody violation AGENTS.md names). *Keeping `schema_version` `"2"` for the rule-name field* — corrected in the
+S3 disposition pass: `port_config.py:54` mandates a bump when a field is
+added, so U3 takes version 3 (doc-review F1). *Folding `when_to_use` into the skill body* (lossy placement, harder
 idempotence) and *normalizing upstream* (the key is functional in Claude Code
 listings). *Vendoring a second card-validator authority copy here* (a third
 copy that can disagree).

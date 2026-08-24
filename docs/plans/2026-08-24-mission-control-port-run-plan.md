@@ -125,38 +125,47 @@ restated here.
   change the recorded transform identity UniFi's committed provenance names,
   making a future UniFi resync non-byte-stable. Rejected: one loosened
   multi-shape rule; "first match" semantics (a #13 stop condition).
-- **KTD2 — Transform-rule selection lives in the port descriptor, additive
-  within schema 2.** AGENTS.md places porting-tool package configuration in the
-  descriptor, "never as a constant inside a script." U3 adds an explicit
-  per-path rule-name field to the descriptor's entrypoint-transform entries;
-  `scripts/port_config.py` remains the single format authority and
-  `tests/test_port_config.py` derives the new expectations. Per the repository's
-  2026-08-24 precedent (additive matrix fields did not bump that schema), the
-  field is additive and `schema_version` stays `"2"`; `ports/unifi.json` gains
-  its explicit rule name in the same U3 commit so no descriptor relies on an
-  implicit default (`ports/README.md` warns absent fields fail open). Descriptors
-  live outside package trees, so neither package fingerprint moves. Failure
-  prevented: a script-internal path→rule registry constant would recreate the
-  exact custody violation AGENTS.md names. Rejected: registry constant in
-  `sync_vendor_source.py`; a schema-3 bump (nothing existing breaks).
+- **KTD2 — Transform-rule selection lives in the port descriptor, at a new
+  schema version 3** *(corrected in the S3 disposition pass per doc-review F1)*.
+  AGENTS.md places porting-tool package configuration in the descriptor, "never
+  as a constant inside a script." U3 adds an explicit per-path rule-name field
+  to the descriptor's entrypoint-transform entries and bumps the descriptor
+  format to version 3, because the format authority itself mandates it:
+  `scripts/port_config.py:54` — "Bumped when a descriptor field is added,
+  removed, or reinterpreted" — and its loader refuses any version it does not
+  understand. In the same U3 commit: `SCHEMA_VERSION` moves to `"3"`,
+  `ports/README.md` documents the field and version, both descriptors migrate
+  (`ports/unifi.json` gains its explicit rule name and the new version), and
+  `tests/test_port_config.py` derives the new expectations. Descriptors live
+  outside package trees, so neither package fingerprint moves. Failure
+  prevented: two incompatible descriptor shapes sharing one version number, and
+  a script-internal path→rule registry constant recreating the custody
+  violation AGENTS.md names. Rejected: keeping `schema_version` `"2"` by
+  analogy to the compatibility-matrix precedent (a different document under a
+  different authority); registry constant in `sync_vendor_source.py`.
 - **KTD3 — `normalize-skill-frontmatter` v1 folds `when_to_use` under the
   permitted `metadata` key.** All seven upstream `SKILL.md` files carry
   `when_to_use:` (verified at the pin), which `check_repo.py:123–130` refuses;
-  `metadata` is one of the seven permitted fields. The transform moves the key
+  `metadata` is one of the six permitted fields. The transform moves the key
   under `metadata` deterministically and idempotently, portable copies only —
   upstream keeps the functional Claude Code field. Failure prevented: every
   byte-copied skill failing `check_skill_frontmatter` on the assembled branch.
   Rejected: folding into the document body (lossy placement, harder idempotence
   check); normalizing upstream (`when_to_use` is functional in Claude Code skill
   listings — the contract's recorded rejection).
-- **KTD4 — CI package-test wiring by `plugins/*/tests` glob plus a can-fail
-  meta-check.** U6 points the `plugin-tests` job (`.github/workflows/ci.yml:38`)
-  at the `plugins/*/tests` pattern upstream itself uses and adds `pyyaml` to the
-  install line, with the smallest meta-check proving the CI path list and the
-  on-disk `plugins/*/tests` directories cannot silently disagree. Failure
-  prevented: a future port's tests silently never running (the exit-status-5
-  masking the child names). Rejected: per-package path enumeration — the next
-  port edits CI again and reintroduces the silent-miss window.
+- **KTD4 — CI package-test wiring by `plugins/*/tests` glob; the
+  empty-collection failure is closed in the job's own command shape** *(narrowed
+  in the S3 disposition pass per doc-review F6)*. U6 points the `plugin-tests`
+  job (`.github/workflows/ci.yml:38`) at the `plugins/*/tests` pattern upstream
+  itself uses, adds `pyyaml` to the install line, and resolves the
+  exit-status-5 tolerance in the final command shape so an empty collection for
+  a package that declares tests fails the job (#16's criterion). A separate
+  path-agreement check is added only if a concrete shell-expansion or
+  collection failure remains once that command shape is written. Failure
+  prevented: a future port's tests silently never running. Rejected:
+  per-package path enumeration (the next port edits CI again and reintroduces
+  the silent-miss window); an unconditional second checker duplicating the
+  glob.
 - **KTD5 — Card-validator verdict agreement derives the authority live, with a
   loud self-skip.** The authority for `validate_card_body` is
   `home-lab/ansible/roles/hermes_orchestrator/files/card_validator.py`, an
@@ -255,10 +264,18 @@ table and assessment settings from #11 (credential prefixes `GH_`/`GITHUB_`,
 five package scripts, entrypoint candidates with recorded rationale for any
 exclusion, the audited `mutating_operations` verb list including
 `_open_mapping_pr`, seven skill units, `declared_none` empty and stated), plus
-the Phase 0 records in the unit PR: upstream suite green at the pin (run
-read-only in the upstream checkout), the validation-rule inventory
-(predicate + authority per rule), the Python floor with explicit interpreter
-path, and non-goals. Journal entry for the two custody decisions with no UniFi
+the Phase 0 records in the unit PR: upstream suite green at the pin — run
+from a **disposable scratch clone** of the local upstream repository (created
+by a read-only Git operation, the pinned commit checked out there, every
+pytest cache and coverage output confined to scratch; the authoritative
+checkout's revision and `git status` recorded before and after, and never
+touched — doc-review F5; an in-place run is not read-only: upstream pytest
+writes coverage by default and the checkout sits on a different commit) — the
+validation-rule inventory (predicate + authority per rule) **including the
+`test_prompt_alignment.py` premise verification under this repository's
+layout, so its custody is finalized here in U1/U3 before synchronization
+(doc-review F2)**, the Python floor with explicit interpreter path, and
+non-goals. Journal entry for the two custody decisions with no UniFi
 precedent (the `when_to_use` transform custody; test placement inside the
 package, KTD-recorded in #11).
 
@@ -347,8 +364,10 @@ commit after extending the tool with exactly three things: (1) two new named
 single-shape transform rules per KTD1 (module-scope split shape for
 `executor_profile_lint.py`; function-scope guarded-contiguous shape for
 `sdlc_manager.py`), (2) `normalize-skill-frontmatter` v1 per KTD3, (3) the
-additive descriptor rule-name field per KTD2 (with `ports/unifi.json` named
-explicitly in the same commit). Client custody lands as specified in #13:
+descriptor rule-name field with the schema version 3 bump per KTD2
+(`SCHEMA_VERSION` to `"3"` in `scripts/port_config.py`, `ports/README.md`
+updated, and both descriptors migrated — `ports/unifi.json` gains its explicit
+rule name and the new version in the same commit). Client custody lands as specified in #13:
 four commands + `agents/sdlc-operator.md` byte-copied under
 `com.infiquetra.claude/`, the Claude manifest relocated via
 `relocate-claude-manifest` v1, `fleet_commons_shim.py` dropped-from-source with
@@ -469,8 +488,9 @@ and the floor declaration sites include the new package.
 **Worker:** Qwen @ xhigh (T2) · **Backend:** inline
 
 **Smallest viable change:** three bounded edits — (1) `.github/workflows/ci.yml`
-`plugin-tests` job gains the `plugins/*/tests` glob and `pyyaml` (KTD4) plus the
-can-fail path-agreement meta-check; (2) `tests/test_client_entrypoints.py`
+`plugin-tests` job gains the `plugins/*/tests` glob and `pyyaml` (KTD4), with
+the exit-status-5 tolerance resolved in the job's final command shape so an
+empty collection for a declaring package fails; (2) `tests/test_client_entrypoints.py`
 generalized from the hardcoded `load_config("unifi")` (line 50, verified) to
 iterate every `ports/*.json`, drive each package's declared
 `assessment.entrypoints`, strip each package's own `credential_prefixes`,
@@ -480,17 +500,20 @@ existing two-job dependency-split convention, DECISIONS 2026-08-22), and keep
 the bundle-deletion control test; (3) `tests/test_python_floor.py`
 `DECLARATION_SITES` (line 70, verified) gains the mission-control README and
 CHANGELOG. Conftest independence is proven by the acceptance run itself (the
-package suite green with no repo-root conftest); `test_prompt_alignment.py`
-premises verified under this layout or a descriptor-level custody decision
-recorded with evidence (see Open questions).
+package suite green with no repo-root conftest). `test_prompt_alignment.py`'s
+premises are verified during U1's Phase 0 and its custody finalized in U1/U3
+before synchronization (doc-review F2); if a premise failure first surfaces
+here, U6 stops and returns the change through the custody owner —
+resynchronization, affected verification, and a new frozen review — rather
+than editing the descriptor or any byte-copied test itself.
 
 **Mechanism reused:** the existing two-CI-job structure, the entrypoint test's
 own control-test pattern, the floor test's declaration-site tuple.
 
-**New moving parts:** the CI path-agreement meta-check — prevents the in-scope
-failure of a declared package test directory that CI silently never collects
-(the exit-status-5 masking #16 names). Added only if no existing check already
-implies it.
+**New moving parts:** none expected — the glob plus the corrected
+empty-collection handling satisfy #16's criterion; a separate path-agreement
+check is added only if a concrete shell-expansion or collection failure
+remains once the final command shape is written (doc-review F6).
 
 **Rejected alternative:** per-package CI path enumeration (KTD4); editing any
 upstream test's content to make it pass here (custody violation — a test that
@@ -562,11 +585,19 @@ into:** branch → main (3rd main merge; the integration review point)
 
 **Worker:** Qwen @ xhigh (T2) · **Backend:** inline
 
-**Smallest viable change:** the runbook Phase 3 sequence exactly once, in
-order: verify → freeze (exact commit, clean tree, recorded) → evidence bound to
-the frozen state → integration review → merge. Evidence set: gate + hermetic +
-package + upstream-at-pin suites green; floor verified from staged bytes; one
-credential-stripped `--execute` ten-client assessment (throwaway 3.12 floor
+**Smallest viable change:** the runbook Phase 3 sequence, in order: verify →
+freeze (exact commit, clean tree, recorded) → evidence bound to the frozen
+state → integration review → merge. The promise is one **current** committed
+matrix, not one lifetime execution (doc-review F3): after an accepted
+integration-review repair, verify again, freeze the successor revision, rerun
+only the evidence whose binding moved, and preserve the superseded record with
+its reason — one evidence rerun per review cycle, inside the same three-cycle
+cap (#18 stop conditions; runbook anti-patterns). Evidence set: gate +
+hermetic + package suites green, plus the upstream suite at the pin from the
+disposable scratch clone (F5 procedure recorded in U1); floor verified from
+staged bytes; per-client matrix `reason` fields authored by this unit from
+observed stage evidence and reviewed at the integration review (amended #18 —
+doc-review F4); one credential-stripped `--execute` ten-client assessment (throwaway 3.12 floor
 venv extended with **PyYAML** — the pilot's requests+urllib3 venv does not
 cover `sdlc_manager.py`'s module-scope import; interpreter by explicit path;
 recorded real binaries `grok=/Users/jefcox/.local/bin/grok.pre-auto-trust`,
@@ -583,7 +614,8 @@ readback pattern; the parent's review contract for the integration review.
 
 **New moving parts:** none — this unit consumes what prior units built. The
 pilot's costliest lesson is encoded as bounded rounds: batched repairs, one
-matrix run, three-cycle cap on the integration review.
+current matrix, at most one evidence rerun per review cycle, three-cycle cap
+on the integration review.
 
 **Rejected alternative:** re-running the assessment after any post-freeze
 change instead of investigating (the harness's fingerprint refusal exists to
@@ -611,8 +643,7 @@ parent's completion evidence is posted.
 
 **Smallest viable change:** README Status narrative + package table gain
 mission-control (building on U0's corrected baseline); `llms.txt` one Packages
-bullet; `docs/README.md` index only if its structure requires; optional dated
-evidence pointer in the architecture brief (smallest honest touch); four
+bullet; `docs/README.md` index only if its structure requires; four
 upstream issues filed in `infiquetra/infiquetra-claude-plugins` with file:line
 evidence (stale `2.1.0` paths; `/issue` self-alias; README skills table omits
 `flow`; `rollout update` names removed `beads-config.json`); journal curation
@@ -693,21 +724,20 @@ extension balloons). This plan's mitigations beyond it:
   (fetch-before-worktree, rerun affected checks after rebase) covers a
   mid-run main advance.
 
-## Open questions (non-blocking; for the operator, not blocking execution)
+## Open questions — resolved in the S3 disposition pass
 
-1. **Matrix `reason` authorship in an unattended run.** #18 says per-client
-   statuses carry "operator-filled reasons," while #9 records that U8 "requires
-   no operator input." Default taken: the U8 worker fills each `reason` from the
-   observed stage evidence (facts about what the client did, in the pilot's
-   recorded-status style), and the operator reviews them at the U8 PR /
-   integration review; per-client remediation decisions stay out of scope
-   either way. If the operator wants literal per-row authorship mid-run, that
-   is a contract amendment to #18.
-2. **`test_prompt_alignment.py` custody if its premises fail here.** #16 allows
-   a descriptor-level dropped-from-source decision "decided with evidence."
-   Default taken: the U6 unit review is the approval surface for that decision
-   (no separate operator gate), with the evidence in the unit PR. Flag at the
-   U6 review if the operator wants it escalated instead.
+Both questions this plan originally left open were closed by the validated
+doc-review findings (F4, F2) and the coordinator's disposition:
+
+1. **Matrix `reason` authorship** *(was open question 1; doc-review F4)* —
+   child #18 amended to match the operator's recorded no-operator-input
+   decision for U8: the unit authors each `reason` from observed stage
+   evidence, and the integration review is the review surface. The operator may
+   override by amending #18 again before U8 starts.
+2. **`test_prompt_alignment.py` custody** *(was open question 2; doc-review
+   F2)* — the premise verification moved into U1's Phase 0 entry criteria and
+   custody is finalized in U1/U3 before synchronization; U6 stops rather than
+   deciding custody after Lane A has merged.
 
 ## Unattended decisions log
 
