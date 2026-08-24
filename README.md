@@ -12,11 +12,16 @@ no such decision has been made.
 
 ## Status
 
-The first portability pilot has been executed and is now paused for an operator
-decision. It ported the Claude Code `unifi` plugin into a portable Agent Plugins
-1.0 package together with one vertical slice of a portable Fleet Core source, and
-then assessed the result against all ten coding-agent clients installed on the
-operator's machine.
+The first portability pilot has been executed and is complete. It ported the
+Claude Code `unifi` plugin into a portable Agent Plugins 1.0 package together
+with one vertical slice of a portable Fleet Core source, and then assessed the
+result against all ten coding-agent clients installed on the operator's machine.
+Completion is recorded by the pilot
+[retrospective](docs/engineering-journal/narratives/2026-08-23-unifi-portability-pilot-retrospective.md)
+and by [porting runbook v1.0.0](docs/runbooks/portable-plugin-port.md), which
+the pilot produced. The recorded operator decision was to stop at the completed
+ten-client compatibility matrix and take no client-specific remediation
+([`DECISIONS.md`](docs/engineering-journal/DECISIONS.md), 2026-08-22).
 
 Custody did not move. Existing vendor repositories remain the runtime sources of
 truth. The packages under [`plugins/`](plugins/) are derived artifacts: each is
@@ -24,20 +29,35 @@ generated from a pinned upstream commit and checked file by file against its own
 SHA-256 provenance manifest. A derived package is never a second writable source,
 and it is never hand-maintained.
 
-Two facts about the current state are recorded rather than repaired, because the
-pilot stops here on purpose:
+Two facts about the current state are verified by the repository's own tests
+and committed evidence:
 
-- **The assembled UniFi package has no working entrypoint.** Both skill scripts
-  abort during module import, because the Fleet Core module their build
-  declaration names was never emitted into the package. No client can run them
-  until that is fixed.
-- **Two of the ten clients did not consume the package.** OpenAI Codex needs a
-  marketplace manifest to be reachable at all, and Cursor Agent's marketplace
-  accepts only a git repository URL, so a local directory is not a path there.
+- **Both UniFi client entrypoints run.** Each client script is classified in
+  [`plugins/unifi/PROVENANCE.json`](plugins/unifi/PROVENANCE.json) as a
+  `deterministic-transform` output of the versioned
+  `resolve-bundled-fleet-module` rule, with a stamped build-time Fleet Core
+  bundle in the `_bundled/` directory beside it.
+  [`tests/test_client_entrypoints.py`](tests/test_client_entrypoints.py) runs
+  both shipped scripts with no credentials and no network, asserts each answers
+  `--help`, and fails when the bundle is removed.
+- **All ten clients assessed; none failed.** The current
+  [ten-client compatibility matrix](docs/evidence/2026-08-22-unifi-compatibility-matrix.md)
+  records nine clients working directly and one, OpenAI Codex, working through
+  an adapter: zero failed, zero unsupported. The adapter status is current fact
+  — Codex's marketplace is its only placement path and holds no supported
+  manifest, and the identified adapter, a Codex marketplace manifest, was not
+  built here. Cursor Agent works directly; the matrix records why its earlier
+  failure reading was an artifact of the assessment's isolation rather than a
+  result of the client.
 
-Whether either warrants a repair, an adapter, a different distribution path, or
-an explicitly unsupported status is an operator decision per client, and none has
-been taken. No client-specific remediation has begun.
+What remains open is distribution, not compatibility. OpenAI Codex needs a
+marketplace manifest to be reachable at all, and Cursor Agent's marketplace
+accepts only a git repository URL, so a local directory is not a path there.
+Whether a client warrants a repair, an adapter, a different distribution path,
+or an explicitly unsupported status is an operator decision per client, and
+none has been taken. No client-specific remediation has begun; the open
+decisions are recorded in the journal's
+[queued work](docs/engineering-journal/QUEUED.md).
 
 The record of the pilot, in the order a new reader should take it:
 
