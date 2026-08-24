@@ -2,6 +2,52 @@
 
 ## 2026-08-24
 
+### Mission-control fleet-commons closure: three files, with intent_envelope as a recorded deterministic transform (KTD8)
+
+**Author.** Jeff Cox and Claude (execution coordinator for issue #9)
+
+**Decision.** The fleet-core slice U2 ports for mission-control is three files,
+not two: `intent_envelope.py`, `tier_palette.py`, and the `models.json`
+registry, all at the existing pin `3b5faa6c`. `tier_palette.py` and
+`models.json` stay pure byte copies; `intent_envelope.py` ports under
+fleet-core's existing `deterministic-transform` custody class with a new named
+rule `resolve-fleet-commons-sibling` v1 that replaces its module-scope
+`fleet_commons_shim` import block and its two `fleet_commons_shim.load()` call
+sites with same-directory sibling resolution, recorded in `derived_files` with
+source and result digests. The upstream `tests/test_intent_envelope.py` is not
+ported (its module-level imports span saga, team-execution, and
+mission-control, and it exercises saga-only APIs); U2 authors minimal
+target-owned tests instead. `tier_resolver.py` and `tier_policy.json` stay
+deferred: at mission-control pin `84eaf042`, `recommend_tier` /
+`self_select_posture` / `authorize_spend` have zero callers in either consumer
+(`sdlc_manager.py`, `executor_profile_lint.py`), while
+`SpendEnvelope.validate()` makes `tier_palette` + `models.json` reachable on
+the shipped envelope-parse path. Full evidence and the rejected alternatives
+are KTD8 in the
+[run plan](../plans/2026-08-24-mission-control-port-run-plan.md); the trigger
+was the first U2 dispatch stopping on child #12's own stop condition item 1
+(evidence `.orchestrate-unit-blocked.md`, commit `68cf5fc` on
+`orch/mcport-9-resume1-u2-fleetcore-q1`).
+
+**Rejected alternatives.** Porting the full tier closure (zero callers —
+speculative); a target-owned `fleet_commons_shim.py` adapter under the
+upstream name (a second implementation under an upstream-custody name — the
+divergent-source failure the custody model exists to prevent); byte-copying
+`intent_envelope.py` unchanged (cannot import anywhere in the target);
+repinning fleet-core (the closure is byte-identical at both pins; a repin
+buys nothing and regenerates UniFi's bundles).
+
+**Rationale.** Same-directory sibling resolution is placement-independent, so
+one transformed file works both in `plugins/fleet-core/scripts/fleet_commons/`
+and in mission-control's `scripts/_bundled/`, keeping KTD1's entrypoint rules
+and the shim drop-from-source unchanged; the `deterministic-transform` class
+already exists in fleet-core custody (`guard-pytest-import` v2), so no new
+custody machinery is invented.
+
+**Revisit when.** Mission-control's upstream consumption starts calling a
+`tier_resolver`-backed API — the dormant leg then joins the slice by this same
+mechanism.
+
 ### Mission-control port run plan: new transform rules stay single-shape, rule selection lives in the descriptor
 
 **Author.** Jeff Cox and Claude (Saga Plan for issue #9)
