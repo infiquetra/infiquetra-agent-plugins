@@ -699,7 +699,7 @@ def _bounded(text: str | None) -> str:
     return text[:TRANSCRIPT_LIMIT] + f"\n[... {dropped} more characters not kept ...]"
 
 
-def terminate_process_group(pid: int) -> str:
+def terminate_process_group(process: subprocess.Popen) -> str:
     """Kill the timed-out stage's whole process group; say what happened.
 
     `subprocess.run` kills and waits for the *direct* child. A launcher that
@@ -722,34 +722,40 @@ def terminate_process_group(pid: int) -> str:
     # the read still times out while the leader is already gone. `getpgid` then
     # raised, the cleanup reported "the group had already exited", and the
     # descendant carried on installing. Signal the id directly.
-    # Every member of this group is a descendant of a process we started, so
-    # "not permitted" cannot mean somebody else's process. It means there is no
-    # longer a live member to signal: once the descendants are gone the leader
-    # is a zombie awaiting reap, and on at least one platform `killpg` answers
-    # EPERM rather than ESRCH for that state. Treating EPERM as failure produced
-    # a warning that a descendant "may survive" on runs where the probe below
-    # showed nothing had.
-    group = pid
-    signalled = False
+    group = process.pid
     for signal_number in (signal.SIGTERM, signal.SIGKILL):
         try:
             os.killpg(group, signal_number)
-            signalled = True
         except (ProcessLookupError, PermissionError):
             break
         except OSError:  # pragma: no cover - unusual
             return "The process group could not be signalled; a client descendant may survive."
         time.sleep(0.2)
 
+    # Reap the leader *before* asking whether the group still holds anyone. An
+    # unreaped leader is a zombie, and a zombie is still a process entry, so the
+    # probe below sees it: Linux answers the signal with success and macOS with
+    # EPERM. Probing first therefore reported a surviving descendant on every
+    # run, on both platforms -- and an earlier repair that read EPERM as "nothing
+    # left to signal" only made the macOS answer right by accident, while leaving
+    # Linux reporting "may survive" on runs where the descendant demonstrably
+    # died. Reaping first makes an empty group answer ProcessLookupError
+    # everywhere, which is the only answer that means what it says.
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired:  # pragma: no cover - SIGKILL did not land
+        return "The stage's own process outlived SIGKILL; a client descendant may survive."
+
     # Confirm rather than assume: having signalled is not the same as gone.
     try:
         os.killpg(group, 0)
-    except (ProcessLookupError, PermissionError):
+    except ProcessLookupError:
         return "The whole process group was terminated, so no client descendant survived it."
+    except PermissionError:  # pragma: no cover - our own descendants, so unexpected
+        return "The process group holds a member this process may not signal; a client " \
+               "descendant may survive."
     except OSError:  # pragma: no cover - unusual
         return "The process group could not be probed; a client descendant may survive."
-    if not signalled:  # pragma: no cover - group alive but never signalled
-        return "The process group could not be signalled; a client descendant may survive."
     return "The process group is still alive after SIGKILL; a client descendant may survive."
 
 
@@ -785,7 +791,7 @@ def run_contained(
     try:
         out, err = process.communicate(input=input, timeout=timeout)
     except subprocess.TimeoutExpired as expired:
-        killed = terminate_process_group(process.pid)
+        killed = terminate_process_group(process)
         try:
             process.communicate(timeout=5)
         except subprocess.TimeoutExpired:  # pragma: no cover - group refused to die

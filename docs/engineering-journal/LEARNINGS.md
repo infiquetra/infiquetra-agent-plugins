@@ -136,35 +136,38 @@ require the input.
 `tests/test_assess_clients.py::RealBinaryResolutionTest`, `::ProcessGroupTest`, cycle-12 mutation
 proof.
 
-### EPERM from killpg can mean "nothing left to signal"
+### The zombie leader answered the question about its own descendants
 
 **Author.** Jeff Cox and Claude
 
-**Context.** The process-group cleanup added above reports, in the blocked stage's reason, how
-thoroughly it managed to clean up.
+**Context.** When a stage hits its deadline the harness kills the child's whole process group
+and then asks whether the group still holds anyone, so the blocked stage's reason can say how
+thoroughly it was cleaned up.
 
-**Evidence.** A probe confirmed the descendant was killed — the marker file it would have written
-never appeared — while the reason read "the process group could not be signalled; a client
-descendant may survive." Tracing it: `SIGTERM` succeeded and killed the descendant, and the
-following `SIGKILL` raised `PermissionError` (EPERM) rather than `ProcessLookupError`. The code read
-EPERM as failure.
+**Evidence.** On macOS the reason read "the process group could not be signalled; a client
+descendant may survive" while a probe showed the descendant was dead — its marker file never
+appeared. Reading the errno, `SIGTERM` had killed the descendant and the following `SIGKILL`
+raised `PermissionError` (EPERM) rather than `ProcessLookupError`. The first repair concluded
+that EPERM meant "nothing left to signal" and treated it as success. That made the sentence
+correct on macOS and the reasoning wrong, and CI said so: on Linux the same state answers the
+signal with plain success, so every timed-out stage there reported that a descendant might have
+survived. Two platforms, two errnos, one cause.
 
-**Mechanism.** Once the descendants are gone, the session leader is a zombie awaiting reap, and at
-least one platform answers `killpg` on that group with EPERM rather than ESRCH. Every member of this
-group is a descendant of a process the harness started, so EPERM cannot mean "somebody else's
-process" here — it means there is no longer a live member to signal.
+**Mechanism.** The probe ran before the direct child was reaped. An unreaped child is a zombie,
+and a zombie is still a process entry that belongs to the group — so the group was never empty
+at the moment it was asked, and the answer described the corpse of the process the harness had
+just killed rather than any client. Which errno that produced is a platform detail; the ordering
+is the defect. Reaping the leader first makes an empty group answer `ProcessLookupError`
+everywhere, which is the only answer that means what it says.
 
-The failure this produced was not a leak. It was a *guard describing its own outcome incorrectly*,
-in the pessimistic direction, which is the direction that gets ignored: a reason that says "may
-survive" on every clean run trains the reader to disregard it, and then it says nothing on the run
-where a descendant really does survive.
-
-**Generalizable rule.** An error code is evidence about a system state, not a verdict. Before
-treating one as failure, ask what states can produce it in *this* process's situation — and confirm
-the outcome directly rather than inferring it from the last call's return.
+**Generalizable rule.** Before reading an error code as evidence, ask what question the call
+actually answered. Here the call was asked "is anything still running in this group" while the
+thing that had just been killed was still in it — no errno interpretation could have fixed that,
+and the one that appeared to was right by accident on the machine it was tried on. When two
+platforms disagree about a result, suspect the question before the codes.
 
 **Refs.** `scripts/assess_clients.py` (`terminate_process_group`),
-`tests/test_assess_clients.py::ProcessGroupTest`.
+`tests/test_assess_clients.py::ProcessGroupTest::test_the_leader_is_reaped_before_the_group_is_probed`.
 
 ### A wrapper resolved by name resolves to itself
 

@@ -593,6 +593,45 @@ class ProcessGroupTest(FakeClientFixture):
         )
 
 
+    def test_the_leader_is_reaped_before_the_group_is_probed(self) -> None:
+        """An unreaped leader is a zombie, and a zombie is still a process.
+
+        The cleanup ends by asking whether the group still holds anyone. Asked
+        before the direct child is reaped, that question is answered by the
+        child's own corpse: Linux replies success and macOS replies EPERM, so
+        the probe reported a surviving descendant on every run on both
+        platforms. A repair that read EPERM as "nothing left to signal" made the
+        macOS answer right for the wrong reason and left Linux reporting that a
+        descendant "may survive" on runs where none did -- a warning that fires
+        every time is a warning nobody reads.
+
+        No client here, no descendant, no signal that matters: the leader has
+        already exited by the time the cleanup runs, and the only thing the
+        answer can come from is whether it was reaped first. Asserted without
+        naming an errno, because which one appears is exactly the platform
+        difference this ordering exists to stop mattering.
+        """
+        process = subprocess.Popen(
+            [sys.executable, "-c", "raise SystemExit(0)"], start_new_session=True
+        )
+        self.addCleanup(lambda: process.poll() is None and process.kill())
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            try:
+                os.killpg(process.pid, 0)  # the zombie is still visible here
+            except ProcessLookupError:  # pragma: no cover - reaped by something else
+                self.skipTest("the leader was reaped before the probe could see it")
+            if process.poll() is None and os.waitpid(process.pid, os.WNOHANG) == (0, 0):
+                break
+            time.sleep(0.05)
+
+        reason = harness.terminate_process_group(process)
+        self.assertIn(
+            "no client descendant survived it",
+            reason,
+            "the leader's own unreaped corpse was read as a surviving client",
+        )
+
     def test_a_leader_that_exits_still_has_its_descendant_killed(self) -> None:
         """The class the first repair missed.
 
