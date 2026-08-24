@@ -703,13 +703,39 @@ def check_coverage(record: dict[str, Any]) -> list[str]:
 
 
 #: The record versions this validator understands. Version 1 carries one command
-#: per stage. Version 2 additionally carries every command the stage ran beside
-#: its own exit status, because a stage that runs one command per skill unit or
-#: one per entrypoint was otherwise recorded as if it ran only the first -- the
-#: command and status cardinalities disagreed and nobody could tell which command
-#: produced which status.
+#: per stage. Version 2 additionally carries every command the stage started,
+#: each either with the process wait status it returned or with `timed_out` when
+#: the harness killed it at the deadline. A stage that runs one command per skill
+#: unit or one per entrypoint was otherwise recorded as if it ran only the first
+#: -- the command and status cardinalities disagreed and nobody could tell which
+#: command produced which status.
 RECORD_VERSIONS = ("1", "2")
 COMMANDS_FROM_VERSION = "2"
+
+
+def _command_ending_problems(
+    label: str, stage: str, index: int, entry: dict[str, Any]
+) -> list[str]:
+    """A command either exited (exit_status) or was deadline-killed (timed_out).
+
+    The two are mutually exclusive because subprocess returncode is -N for
+    termination by signal N, so SIGHUP is exactly -1. A sentinel of -1 for
+    "killed at the deadline" is therefore indistinguishable from a real exit.
+    """
+    where = f"{label}/{stage} commands[{index}]"
+    has_status = "exit_status" in entry
+    timed_out = entry.get("timed_out") is True
+    if timed_out and has_status:
+        return [
+            f"{where}: a command killed at its deadline carries timed_out and no "
+            "exit_status; -1 is SIGHUP, not a deadline"
+        ]
+    if not timed_out and not has_status:
+        return [
+            f"{where}: records neither exit_status nor timed_out, so a reader cannot "
+            "tell whether the command exited"
+        ]
+    return []
 
 
 def check_record_version(record: dict[str, Any]) -> list[str]:
@@ -719,6 +745,12 @@ def check_record_version(record: dict[str, Any]) -> list[str]:
     collapse a multi-command stage again. Without the second, a version-1 record
     could carry `commands` that no version-1 reader knows to look at, which is a
     record whose own version does not describe its shape.
+
+    The alias `command` == `commands[0].command` is checked whenever both homes
+    exist, not only on executed stages: a blocked stage that hit a deadline
+    carries `commands` too, and skipping it left those two names free to
+    disagree. Each command entry must also say how it ended: `exit_status` or
+    `timed_out`, never both, never neither.
     """
     version = record.get("schema_version")
     if version not in RECORD_VERSIONS:
@@ -746,20 +778,29 @@ def check_record_version(record: dict[str, Any]) -> list[str]:
                         f"version {version}"
                     )
                 continue
-            if value.get("result") != "executed":
-                continue
+            if value.get("result") == "executed":
+                if not isinstance(commands, list) or not commands:
+                    problems.append(
+                        f"{label}/{stage}: executed but records no per-command statuses; a "
+                        "stage that ran several commands is not reproducible from the first "
+                        "one alone"
+                    )
+                    continue
             if not isinstance(commands, list) or not commands:
-                problems.append(
-                    f"{label}/{stage}: executed but records no per-command statuses; a stage "
-                    "that ran several commands is not reproducible from the first one alone"
-                )
                 continue
             first = commands[0]
-            if isinstance(first, dict) and first.get("command") != value.get("command"):
+            if (
+                isinstance(first, dict)
+                and "command" in value
+                and first.get("command") != value.get("command")
+            ):
                 problems.append(
                     f"{label}/{stage}: the recorded command is not the first of its "
                     "per-command statuses, so the two disagree about what ran first"
                 )
+            for index, entry in enumerate(commands):
+                if isinstance(entry, dict):
+                    problems.extend(_command_ending_problems(label, str(stage), index, entry))
     return problems
 
 
@@ -796,10 +837,11 @@ def _recorded_commands(record: dict[str, Any]) -> list[tuple[str, str, str]]:
             if not isinstance(value, dict):
                 continue
             # `commands` is the complete list and its first entry is required to
-            # equal `command`, so a version-2 stage is graded from `commands`
-            # alone. Grading both counted the first command twice and reported
-            # one unsafe command as two problems, which inflates the count a
-            # reader uses to judge how bad a record is.
+            # equal `command` whenever both are present, including on blocked
+            # stages, so a version-2 stage is graded from `commands` alone.
+            # Grading both counted the first command twice and reported one
+            # unsafe command as two problems, which inflates the count a reader
+            # uses to judge how bad a record is.
             entries = value.get("commands")
             if isinstance(entries, list) and entries:
                 for entry in entries:

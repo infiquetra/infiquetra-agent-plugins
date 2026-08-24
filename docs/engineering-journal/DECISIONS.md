@@ -1,10 +1,106 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-08-24
+
+### A deadline-killed command is marked timed out, not given a fake exit status
+
+**Author.** Jeff Cox and Grok
+
+**Decision.** A command the harness kills at the stage deadline is recorded with
+`timed_out: true` and no `exit_status`. A command that exited or was terminated by a
+signal carries `exit_status` (the process wait status) and no `timed_out`. The two
+fields are mutually exclusive. subprocess returncode is `-N` for termination by
+signal N, so `-1` is SIGHUP and is recorded as `exit_status: -1`. The schema lists
+both fields; `check_compatibility_matrix.py` refuses a command entry that has both,
+neither, or `timed_out` set to anything other than true. Existing committed records
+carry `exit_status` only and still validate.
+
+This supersedes [A command that hit the deadline is recorded like any other
+command](#a-command-that-hit-the-deadline-is-recorded-like-any-other-command),
+which reserved `-1` for the deadline and claimed no real exit status can say that.
+The "it ran, so it is in `commands` and is safety-graded" half of that decision
+stands.
+
+**Rationale.** A sentinel that collides with a real wait status is not a sentinel.
+The previous form made "killed at the deadline" and "terminated by SIGHUP"
+indistinguishable in every consumer of the public record and of the private
+transcript. Omitting `exit_status` is no longer "not recorded": `timed_out: true`
+is the positive marker that the command did not exit.
+
+**Rejected alternatives.** *Keep `exit_status: -1` and add `timed_out` beside it*,
+because then `-1` is still a lie about the wait status, and a reader who only
+looks at `exit_status` still cannot tell SIGHUP from a deadline. *Record the
+wait status after SIGKILL (`-9`) plus `timed_out`*, because that status describes
+the harness's kill, not the client, and a failed wait still has no integer to
+put there. *Use a non-integer `exit_status` (`null` or `"timed-out"`)*, because
+the schema subset this repository interprets has no union types, and a string
+status would invalidate the "integer wait status" reading of every existing
+entry. *Bump to schema version 3*, because the new field is additive and every
+committed record still validates as version 2.
+
+**Consequence to expect.** A blocked stage's last `commands` entry is often
+`{"command": "...", "timed_out": true}` with no `exit_status`. Operators filling
+the public record from the private transcript will see the same shape there;
+copying `-1` into a matrix as a deadline marker is now a validator failure only
+when `timed_out` is also present, and is SIGHUP when it is not.
+
+**Revisit when.** A command needs to record both that the deadline fired and the
+wait status the kill actually produced.
+
+**Refs.** `schemas/compatibility-matrix.schema.json`,
+`scripts/assess_clients.py` (`StageCommand`, `CommandTranscript`),
+`scripts/check_compatibility_matrix.py` (`_command_ending_problems`),
+`tests/test_assess_clients.py` (`test_a_command_terminated_by_sighup_is_not_recorded_as_a_deadline`),
+`tests/test_check_compatibility_matrix.py` (`PerCommandStatusRecordTest`).
+
+### A supplied run directory is still a fresh run directory
+
+**Author.** Jeff Cox and Grok
+
+**Decision.** `assess` still takes an optional `run_directory` so the write path and
+the announced path are one value. A supplied path must exist as a directory, must
+be empty, and when a workspace is also given must be a subdirectory of it, not
+the workspace itself. The caller still allocates; this check is the invariant
+`allocate_run_directory` already established, applied to the parameter that used
+to skip it.
+
+**Rationale.** The parameter was added so two call sites would not derive one path.
+Accepting any truthy path meant a caller could hand `assess` a directory that
+already held a previous run's package copies and transcript, mix two assessments,
+and overwrite the first transcript through `write_private`. That is the
+one-run-one-directory evidence boundary, routed around.
+
+**Rejected alternatives.** *Refuse a supplied path that already exists*, because
+`allocate_run_directory` creates the directory before passing it in, so existence
+is the happy path; emptiness is the freshness test. *Delete the parameter and
+return the path from `assess`*, which is the alternative the previous decision
+rejected, and which would churn every caller to fix a missing check. *Trust
+`copytree` to fail if a per-client copy already exists*, because a second run
+that assessed a different client would not collide on that copy and would still
+overwrite the transcript.
+
+**Consequence to expect.** Tests that pass `run_directory` must create an empty
+directory first, matching `main`. A reused `--workspace` still accumulates
+`run-NNN` directories; only a caller that names a dirty one is refused.
+
+**Revisit when.** More than one artifact has to be announced, at which point a
+small run-context object still beats a widening parameter list.
+
+**Refs.** `scripts/assess_clients.py` (`require_fresh_run_directory`, `assess`),
+`tests/test_assess_clients.py` (`WorkspaceFreshnessTest`),
+[the caller-allocates decision](#the-caller-that-has-to-name-the-run-directory-is-the-caller-that-allocates-it),
+[the one-run-one-directory decision](#every-assessment-run-gets-its-own-directory-and-every-client-its-own-package-copy).
+
 ## 2026-08-23
 
 ### A command that hit the deadline is recorded like any other command
 
 **Author.** Jeff Cox and Claude
+
+**Superseded 2026-08-24.** The command still goes in `commands` and is still
+safety-graded. The representation is no longer `exit_status: -1`: that value is
+SIGHUP. See [A deadline-killed command is marked timed out, not given a fake exit
+status](#a-deadline-killed-command-is-marked-timed-out-not-given-a-fake-exit-status).
 
 **Decision.** When a stage's command reaches its deadline, that command is appended to the
 stage's `commands` list with `exit_status: -1`, alongside its entry in the private transcript.
@@ -56,6 +152,9 @@ decided and is wrong the moment two runs share a workspace.
 
 **Consequence to expect.** A caller that needs the path must allocate before assessing, which is
 one line and makes the ordering explicit.
+
+**Extended 2026-08-24.** Naming the directory does not exempt it from being a fresh one.
+See [A supplied run directory is still a fresh run directory](#a-supplied-run-directory-is-still-a-fresh-run-directory).
 
 **Revisit when.** More than one artifact has to be announced, at which point a small run-context
 object beats a widening parameter list.
@@ -234,7 +333,13 @@ because an optional record of what ran is a record that can omit the command tha
 **Consequence to expect.** The matrix safety rule now grades every recorded command rather than the
 first, so a mutating command in second position is caught.
 
-**Revisit when.** A stage needs to record something per command that `exit_status` cannot carry.
+**Extended 2026-08-24.** `command` remains the first of `commands` whenever both are present,
+including on blocked stages; the validator used to skip that alias check on every
+non-executed stage. A command that did not exit now carries `timed_out` instead of a
+fake `exit_status`; see [A deadline-killed command is marked timed out, not given a
+fake exit status](#a-deadline-killed-command-is-marked-timed-out-not-given-a-fake-exit-status).
+
+**Revisit when.** A command entry needs a third ending besides `exit_status` and `timed_out`.
 
 **Refs.** `schemas/compatibility-matrix.schema.json`,
 `scripts/check_compatibility_matrix.py` (`check_record_version`), `scripts/assess_clients.py`.

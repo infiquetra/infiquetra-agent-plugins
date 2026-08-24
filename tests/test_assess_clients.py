@@ -603,9 +603,11 @@ class ProcessGroupTest(FakeClientFixture):
         claim is false. What it may say is what it established: this group is
         empty, and that is not the same statement.
 
-        Deliberately asserts nothing about whether the descendant lived. That is
-        environment-dependent, and the defect was never the escape -- it was
-        reporting the escape as containment.
+        Cycle 13's published proof said this test "confirms the descendant really
+        does survive". It did not: it wrote a marker and never read it. Survival
+        was observed by a separate uncommitted probe. The wait below is the
+        round-5 repair -- without it the test still passes if the descendant
+        dies, which is the overclaim.
         """
         marker = self.base / "escaped-descendant"
         escape = (
@@ -625,6 +627,14 @@ class ProcessGroupTest(FakeClientFixture):
             "the cleanup claimed containment it cannot observe",
         )
         self.assertNotIn("no client descendant survived", outcome.reason)
+        deadline = time.time() + 7
+        while time.time() < deadline and not marker.exists():
+            time.sleep(0.2)
+        self.assertTrue(
+            marker.exists(),
+            "the escaped descendant did not survive to write its marker; this test "
+            "cannot claim the cleanup failed to observe an escape it did not produce",
+        )
 
     def test_the_leader_is_reaped_before_the_group_is_probed(self) -> None:
         """An unreaped leader is a zombie, and a zombie is still a process.
@@ -768,6 +778,92 @@ class WorkspaceFreshnessTest(unittest.TestCase):
             )
         runs = sorted(p.name for p in self.workspace.iterdir() if p.is_dir())
         self.assertEqual(runs, ["run-001", "run-002", "run-003"])
+
+    def test_a_supplied_run_directory_that_already_holds_a_run_is_refused(self) -> None:
+        """Naming the run directory must not skip the freshness guard.
+
+        `run_directory` was added so the write path and the announced path are
+        one value. The parameter accepted any existing directory, so a caller
+        could hand `assess` last run's path, mix two package copies, and
+        overwrite the first transcript through `write_private`.
+        """
+        binaries = self.workspace / "bin"
+        write_executable(binaries, "codex", "exit 0\n")
+        path = os.pathsep.join([str(binaries), os.environ.get("PATH", "")])
+        with unittest.mock.patch.dict(os.environ, {"PATH": path}):
+            harness.assess(
+                CONFIG, python=sys.executable, execute=True,
+                only=("OpenAI Codex",), workspace=self.workspace,
+            )
+        run = next(p for p in self.workspace.iterdir() if p.is_dir() and p.name.startswith("run-"))
+        transcript = harness.transcript_path(run)
+        original = transcript.read_text(encoding="utf-8")
+        marker = run / "openai-codex" / "package" / "INTRUDER.txt"
+        marker.write_text("from the first run\n", encoding="utf-8")
+
+        with unittest.mock.patch.dict(os.environ, {"PATH": path}):
+            with self.assertRaises(harness.AssessmentError) as caught:
+                harness.assess(
+                    CONFIG, python=sys.executable, execute=True,
+                    only=("OpenAI Codex",), workspace=self.workspace,
+                    run_directory=run,
+                )
+        self.assertIn("not empty", str(caught.exception))
+        self.assertEqual(
+            transcript.read_text(encoding="utf-8"),
+            original,
+            "the second assessment overwrote the first run's transcript",
+        )
+        self.assertTrue(
+            marker.exists(),
+            "the second assessment mixed its copy into the first run's directory",
+        )
+
+    def test_a_supplied_run_directory_that_does_not_exist_is_refused(self) -> None:
+        missing = self.workspace / "run-999"
+        with self.assertRaises(harness.AssessmentError) as caught:
+            harness.assess(
+                CONFIG, python=sys.executable, execute=False,
+                only=("OpenAI Codex",), workspace=self.workspace,
+                run_directory=missing,
+            )
+        self.assertIn("does not exist", str(caught.exception))
+        self.assertFalse(missing.exists(), "the harness created the directory it should have refused")
+
+    def test_a_supplied_run_directory_outside_the_workspace_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as outsider:
+            outside = Path(outsider)
+            with self.assertRaises(harness.AssessmentError) as caught:
+                harness.assess(
+                    CONFIG, python=sys.executable, execute=False,
+                    only=("OpenAI Codex",), workspace=self.workspace,
+                    run_directory=outside,
+                )
+            self.assertIn("not inside workspace", str(caught.exception))
+            self.assertEqual(list(outside.iterdir()), [])
+
+    def test_the_workspace_itself_is_refused_as_a_run_directory(self) -> None:
+        with self.assertRaises(harness.AssessmentError) as caught:
+            harness.assess(
+                CONFIG, python=sys.executable, execute=False,
+                only=("OpenAI Codex",), workspace=self.workspace,
+                run_directory=self.workspace,
+            )
+        self.assertIn("workspace itself", str(caught.exception))
+
+    def test_a_supplied_empty_run_directory_inside_the_workspace_is_accepted(self) -> None:
+        """The command line's path: allocate, then pass the empty directory in."""
+        run = self.workspace / "run-001"
+        run.mkdir()
+        harness.assess(
+            CONFIG, python=sys.executable, execute=False,
+            only=("OpenAI Codex",), workspace=self.workspace, run_directory=run,
+        )
+        self.assertTrue((run / "openai-codex" / "package").is_dir())
+        self.assertEqual(
+            sorted(p.name for p in self.workspace.iterdir() if p.is_dir()),
+            ["run-001"],
+        )
 
 
 class InvalidEntrypointTest(unittest.TestCase):
@@ -954,7 +1050,11 @@ class FailurePathTranscriptTest(FakeClientFixture):
             ["ok-client", "slow-second"],
             "the command that hit the deadline is missing from the public record",
         )
-        self.assertEqual(outcome.commands[-1].exit_status, -1, "a killed command has no exit status")
+        self.assertTrue(
+            outcome.commands[-1].timed_out,
+            "the command that hit the deadline is not marked timed_out",
+        )
+        self.assertIsNone(outcome.commands[-1].exit_status)
         recorded = outcome.record()
         self.assertEqual(
             recorded["command"],
@@ -962,6 +1062,13 @@ class FailurePathTranscriptTest(FakeClientFixture):
             "the alias and the list disagree about what ran first",
         )
         self.assertEqual(len(recorded["commands"]), 2)
+        self.assertEqual(
+            recorded["commands"][-1],
+            {"command": "slow-second", "timed_out": True},
+        )
+        self.assertTrue(outcome.transcript[-1].timed_out)
+        self.assertIsNone(outcome.transcript[-1].returncode)
+        self.assertNotIn("exit_status", outcome.transcript[-1].record())
 
     def test_an_invalidated_client_keeps_its_transcript(self) -> None:
         """Losing the classification must not lose the evidence of why."""
@@ -1132,6 +1239,8 @@ class PerCommandStatusTest(FakeClientFixture):
         self.assertEqual(recorded["commands"][0]["exit_status"], 0)
         self.assertEqual(recorded["commands"][1]["exit_status"], 7)
         self.assertEqual(recorded["commands"][0]["command"], recorded["command"])
+        self.assertNotIn("timed_out", recorded["commands"][0])
+        self.assertNotIn("timed_out", recorded["commands"][1])
 
     def test_a_reader_can_tell_which_command_failed(self) -> None:
         """The point of the change: the statuses are no longer anonymous."""
@@ -1142,9 +1251,37 @@ class PerCommandStatusTest(FakeClientFixture):
             outcome = self.outcome(harness.StageSpec("invocation", ("ok-client",)))
         finally:
             harness.stage_argvs = real
-        failing = [e for e in outcome.record()["commands"] if e["exit_status"] != 0]
+        failing = [e for e in outcome.record()["commands"] if e.get("exit_status") != 0]
         self.assertEqual(len(failing), 1)
         self.assertIn("second-fails", failing[0]["command"])
+
+    def test_a_command_terminated_by_sighup_is_not_recorded_as_a_deadline(self) -> None:
+        """subprocess returncode is -1 for SIGHUP; that is a real exit status.
+
+        The deadline path used to write -1 and claim no real exit status can
+        say that. A process that ends by signal 1 produces exactly -1, so a
+        reader of -1 cannot tell 'killed at the deadline' from 'SIGHUP'. This
+        test is the SIGHUP side of that distinction; the timeout test is the
+        other side.
+        """
+        write_executable(
+            self.bin,
+            "sighup-self",
+            f'exec {sys.executable} -c "import os,signal; os.kill(os.getpid(), signal.SIGHUP)"\n',
+        )
+        outcome = self.outcome(harness.StageSpec("discovery", ("sighup-self",)))
+        self.assertEqual(outcome.result, harness.EXECUTED)
+        self.assertEqual(outcome.commands[0].exit_status, -1)
+        self.assertFalse(outcome.commands[0].timed_out)
+        recorded = outcome.commands[0].record()
+        self.assertEqual(recorded["exit_status"], -1)
+        self.assertNotIn("timed_out", recorded)
+
+    def test_a_command_cannot_be_both_exited_and_timed_out(self) -> None:
+        with self.assertRaises(harness.AssessmentError):
+            harness.StageCommand("client run", -1, timed_out=True)
+        with self.assertRaises(harness.AssessmentError):
+            harness.StageCommand("client run")
 
 
 class HomePolicyTest(unittest.TestCase):

@@ -29,6 +29,17 @@
 #     neither signalled nor observed; the old sentence was a claim about
 #     processes the code cannot see, false on exactly the runs that matter. The
 #     test builds that escape and confirms the descendant really does survive.
+#
+# 2026-08-24 correction (PR #6 round 5). The sentence above is what cycle 13
+# published. It is not what the named test did. test_a_descendant_that_leaves
+# _the_session_is_not_claimed_as_killed builds the setsid escape and asserts
+# that the cleanup sentence does not claim the descendant was killed. In the
+# cycle-13 bytes it created a marker file and never read it; the docstring said
+# so, deliberately. Survival was observed by a separate uncommitted probe. A
+# published proof is not rewritten to say something more convenient, so this
+# note sits beside the overstatement rather than replacing it. The test now
+# also waits for the marker, so the survival claim is checkable going forward;
+# that assertion was not part of the cycle-13 run.
 #   * a command that hits its deadline is appended to the stage's `commands`
 #     with exit_status -1, so it is in the public version-2 record and is graded
 #     by the post-run safety rule. Keeping it only in the private transcript

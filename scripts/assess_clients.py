@@ -812,22 +812,44 @@ def run_contained(
 
 
 class StageCommand:
-    """One executed command and the status it returned.
+    """One command the stage started, and how that command ended.
 
     A stage may run several commands -- one per skill unit, one per entrypoint.
     Recording only the first made the command and status cardinalities disagree,
     so a reader could see `exit status 0, 7` and had no way to tell which command
     produced the 7, or to reproduce it.
+
+    A command that exited carries `exit_status` (the process wait status). A
+    command the harness killed at the deadline carries `timed_out` and no
+    `exit_status`. subprocess returncode is -N for signal N, so -1 is SIGHUP
+    and cannot mean "never exited".
     """
 
-    __slots__ = ("command", "exit_status")
+    __slots__ = ("command", "exit_status", "timed_out")
 
-    def __init__(self, command: str, exit_status: int) -> None:
+    def __init__(
+        self,
+        command: str,
+        exit_status: int | None = None,
+        *,
+        timed_out: bool = False,
+    ) -> None:
+        if timed_out == (exit_status is not None):
+            raise AssessmentError(
+                "a command either exited (exit_status) or was killed at the deadline "
+                "(timed_out=True), never both and never neither"
+            )
         self.command = command
         self.exit_status = exit_status
+        self.timed_out = timed_out
 
     def record(self) -> dict[str, Any]:
-        return {"command": self.command, "exit_status": self.exit_status}
+        entry: dict[str, Any] = {"command": self.command}
+        if self.timed_out:
+            entry["timed_out"] = True
+        else:
+            entry["exit_status"] = self.exit_status
+        return entry
 
 
 class CommandTranscript:
@@ -843,21 +865,39 @@ class CommandTranscript:
     and the record never quotes.
     """
 
-    __slots__ = ("command", "returncode", "stdout", "stderr")
+    __slots__ = ("command", "returncode", "stdout", "stderr", "timed_out")
 
-    def __init__(self, command: str, returncode: int, stdout: str, stderr: str) -> None:
+    def __init__(
+        self,
+        command: str,
+        returncode: int | None,
+        stdout: str,
+        stderr: str,
+        *,
+        timed_out: bool = False,
+    ) -> None:
+        if timed_out == (returncode is not None):
+            raise AssessmentError(
+                "a transcript entry either exited (returncode) or was killed at the "
+                "deadline (timed_out=True), never both and never neither"
+            )
         self.command = command
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
+        self.timed_out = timed_out
 
     def record(self) -> dict[str, Any]:
-        return {
+        entry: dict[str, Any] = {
             "command": self.command,
-            "exit_status": self.returncode,
             "stdout": self.stdout,
             "stderr": self.stderr,
         }
+        if self.timed_out:
+            entry["timed_out"] = True
+        else:
+            entry["exit_status"] = self.returncode
+        return entry
 
 
 class StageOutcome:
@@ -892,7 +932,7 @@ class StageOutcome:
         self.stage = stage
         self.result = result
         self.command = command
-        #: Every command this stage ran, each beside its own exit status.
+        #: Every command this stage started, each beside how it ended.
         self.commands = commands
         self.evidence = evidence
         self.reason = reason
@@ -927,10 +967,10 @@ class StageOutcome:
         if self.command:
             entry["command"] = self.command
         if self.commands:
-            # Schema version 2. `command` stays the first, so the row still reads
-            # the way version 1 did; `commands` is what makes a multi-command
-            # stage reproducible and tells a reader which one returned which
-            # status.
+            # Schema version 2. `command` stays the first, including when the
+            # stage is blocked, so the row still reads the way version 1 did;
+            # `commands` is what makes a multi-command stage reproducible and
+            # tells a reader which one returned which status, or timed out.
             entry["commands"] = [item.record() for item in self.commands]
         if self.result == EXECUTED:
             entry["evidence"] = self.evidence
@@ -1144,16 +1184,18 @@ def run_stage(
             # recorded like every other one. Keeping it only in the private
             # transcript left the public version-2 record naming fewer commands
             # than the stage started -- unreproducible, and invisible to the
-            # post-run safety rule, which grades `commands`. Its status is -1:
-            # it was killed at the deadline and never exited, and no real exit
-            # status can say that.
-            recorded_commands.append(StageCommand(redact(" ".join(argv), values), -1))
+            # post-run safety rule, which grades `commands`. It carries
+            # `timed_out` and no `exit_status`: subprocess returncode is -N for
+            # signal N, so -1 is SIGHUP and cannot mean "killed at the deadline".
+            redacted = redact(" ".join(argv), values)
+            recorded_commands.append(StageCommand(redacted, timed_out=True))
             transcript.append(
                 CommandTranscript(
-                    command=redact(" ".join(argv), values),
-                    returncode=-1,
+                    command=redacted,
+                    returncode=None,
                     stdout=_bounded(_as_text(expired.stdout)),
                     stderr=_bounded(_as_text(expired.stderr)),
+                    timed_out=True,
                 )
             )
             return StageOutcome(
@@ -1383,6 +1425,48 @@ def allocate_run_directory(workspace: Path) -> Path:
         return candidate
 
 
+def require_fresh_run_directory(run_directory: Path, workspace: Path | None) -> Path:
+    """A supplied run directory must still be a run directory.
+
+    `allocate_run_directory` creates an empty subdirectory of the workspace.
+    Passing the path in as `run_directory` used to skip that guard, so a caller
+    could hand `assess` a directory that already held a previous run's package
+    copies and transcript, mix two assessments, and overwrite the first
+    transcript. The caller still allocates; this checks that what it named is
+    empty and, when a workspace is also given, inside it.
+    """
+    path = Path(run_directory)
+    if not path.is_dir():
+        raise AssessmentError(
+            f"run directory {path} does not exist as a directory. The caller that names "
+            "the run directory is the caller that allocates it, empty, before assessing"
+        )
+    resolved = path.resolve()
+    try:
+        occupied = any(resolved.iterdir())
+    except OSError as error:
+        raise AssessmentError(f"run directory {path} is not readable: {error}") from error
+    if occupied:
+        raise AssessmentError(
+            f"run directory {path} is not empty. Reusing it would mix this assessment "
+            "with a previous run's package copies and overwrite that run's transcript"
+        )
+    if workspace is not None:
+        base = Path(workspace).resolve()
+        if resolved == base:
+            raise AssessmentError(
+                f"run directory {path} is the workspace itself; a run lives in a "
+                "subdirectory so two runs in the same workspace stay separable"
+            )
+        try:
+            resolved.relative_to(base)
+        except ValueError as error:
+            raise AssessmentError(
+                f"run directory {path} is not inside workspace {workspace}"
+            ) from error
+    return resolved
+
+
 def transcript_path(workspace: Path) -> Path:
     """Where a run's private operator transcript lives, given its workspace."""
     return Path(workspace) / "transcript.json"
@@ -1410,10 +1494,19 @@ def assess(
     # passes it in, so the path is decided once and used twice. Recomputing it
     # from `workspace` is what printed `<workspace>/transcript.json` while the
     # file was written to `<workspace>/run-NNN/transcript.json`: every executed
-    # assessment sent the operator to a file that did not exist.
-    base = run_directory or allocate_run_directory(
-        Path(workspace) if workspace is not None else Path(tempfile.mkdtemp())
-    )
+    # assessment sent the operator to a file that did not exist. Naming the
+    # directory does not exempt it from being a fresh one: a supplied path is
+    # still checked empty and inside the workspace, which is the invariant
+    # `allocate_run_directory` established and this parameter used to skip.
+    if run_directory is not None:
+        base = require_fresh_run_directory(
+            Path(run_directory),
+            Path(workspace) if workspace is not None else None,
+        )
+    else:
+        base = allocate_run_directory(
+            Path(workspace) if workspace is not None else Path(tempfile.mkdtemp())
+        )
 
     plans = [plan for plan in CLIENT_PLANS if not only or plan.name in only]
     clients: list[dict[str, Any]] = []
@@ -1431,7 +1524,8 @@ def assess(
         # reused --workspace handed the next run whatever the last one left --
         # including a copy a client had mutated, which then assessed as if it
         # were the shipped package and still bound the record to the shipped
-        # fingerprint. `allocate_run_directory` guarantees this path is new.
+        # fingerprint. `allocate_run_directory` and `require_fresh_run_directory`
+        # both guarantee this path is new and empty.
         scratch.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(package_root, scratch)
         scratch_before = ccm.package_fingerprint(scratch)
@@ -1564,9 +1658,10 @@ def assess(
 
     record = {
         "$schema": "../../schemas/compatibility-matrix.schema.json",
-        # Version 2: a stage records every command it ran beside that command's
-        # own exit status. Version 1 records, which carry one command per stage,
-        # stay valid and are still validated.
+        # Version 2: a stage records every command it started beside how that
+        # command ended (exit_status, or timed_out at the deadline). Version 1
+        # records, which carry one command per stage, stay valid and are still
+        # validated.
         "schema_version": "2",
         "assessed_on": "",
         "package": {

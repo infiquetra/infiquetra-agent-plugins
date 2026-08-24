@@ -146,13 +146,15 @@ failure paths too: a timed-out or invalidated row is exactly where the output is
 needed to explain the block.
 
 Two things to know about a **blocked** row before you act on it. A command that
-hit its deadline is recorded like any other, with `exit_status: -1` — it ran, so
-it appears in the stage's `commands` and is safety-graded with the rest. And the
-cleanup that follows a deadline kills the stage's *process group*: a client whose
-descendant starts a session of its own has left that group, so the harness can
-neither signal it nor see it. The row says so rather than claiming containment.
-If a stage times out on a client you know spawns detached helpers, check for
-stragglers yourself before starting the next run.
+hit its deadline is recorded like any other — it ran, so it appears in the
+stage's `commands` and is safety-graded with the rest — but it carries
+`timed_out: true` and no `exit_status`. subprocess returncode is `-N` for
+termination by signal N, so `-1` is SIGHUP and cannot mean "killed at the
+deadline". And the cleanup that follows a deadline kills the stage's *process
+group*: a client whose descendant starts a session of its own has left that
+group, so the harness can neither signal it nor see it. The row says so rather
+than claiming containment. If a stage times out on a client you know spawns
+detached helpers, check for stragglers yourself before starting the next run.
 
 The table below is the reference for reading that plan; the harness is what
 executes it.

@@ -462,13 +462,40 @@ class PerCommandStatusRecordTest(unittest.TestCase):
             "the alias and the list were allowed to name different commands",
         )
 
+    def test_a_non_executed_stage_command_must_still_match_its_first_status(self) -> None:
+        """Blocked stages carry `commands`; skipping them left the alias unenforced.
+
+        The version-2 executed-only continue meant a blocked row could name one
+        command in `command` and a different first command in `commands`, and
+        the validator reported no problem.
+        """
+        extras = {
+            "blocked": {"reason": "No result within the 60s deadline."},
+            "not-applicable": {"reason": "This client has no invocation path."},
+        }
+        for result, extra in extras.items():
+            with self.subTest(result=result):
+                record = self.version_two()
+                record["clients"][0]["stages"]["invocation"] = {
+                    "result": result,
+                    "command": "client run --json",
+                    "commands": [{"command": "other command entirely", "exit_status": 0}],
+                    **extra,
+                }
+                problems = check(record)
+                self.assertTrue(
+                    any("disagree about what ran first" in problem for problem in problems),
+                    f"{result} stage was allowed to name two different first commands; "
+                    f"got {problems}",
+                )
+
     def test_a_blocked_stage_still_has_its_commands_safety_graded(self) -> None:
         """A stage that hit its deadline started commands, and they are graded.
 
-        The harness records the timed-out command with exit status -1, on a stage
-        whose result is `blocked`. If safety grading only looked at `executed`
-        stages, the one command most likely to have been doing something
-        unbounded would be the one command nobody checked.
+        The harness records the timed-out command with `timed_out: true`, on a
+        stage whose result is `blocked`. If safety grading only looked at
+        `executed` stages, the one command most likely to have been doing
+        something unbounded would be the one command nobody checked.
         """
         operation = sorted(REAL_CONFIG.assessment.mutating_operations)[0]
         script = REAL_CONFIG.assessment.package_scripts[0]
@@ -479,7 +506,7 @@ class PerCommandStatusRecordTest(unittest.TestCase):
             "command": "client run --json",
             "commands": [
                 {"command": "client run --json", "exit_status": 0},
-                {"command": unsafe, "exit_status": -1},
+                {"command": unsafe, "timed_out": True},
             ],
             "reason": "No result within the 60s deadline.",
         }
@@ -494,6 +521,41 @@ class PerCommandStatusRecordTest(unittest.TestCase):
         record = self.version_two()
         record["clients"][0]["stages"]["invocation"] = blocked_stage()
         self.assertFalse(any(self.NO_STATUSES in problem for problem in check(record)))
+
+    def test_a_deadline_killed_command_is_accepted_without_an_exit_status(self) -> None:
+        record = self.version_two()
+        record["clients"][0]["stages"]["invocation"] = {
+            "result": "blocked",
+            "command": "client run --json",
+            "commands": [{"command": "client run --json", "timed_out": True}],
+            "reason": "No result within the 60s deadline.",
+        }
+        self.assertEqual(check(record), [])
+
+    def test_exit_status_negative_one_is_sighup_and_is_accepted(self) -> None:
+        """-1 is a real wait status. Forbidding it would confuse SIGHUP with a lie."""
+        record = self.version_two()
+        record["clients"][0]["stages"]["placement"]["commands"][0]["exit_status"] = -1
+        self.assertEqual(check(record), [])
+
+    def test_a_command_cannot_carry_both_exit_status_and_timed_out(self) -> None:
+        record = self.version_two()
+        record["clients"][0]["stages"]["placement"]["commands"][0]["timed_out"] = True
+        problems = check(record)
+        self.assertTrue(
+            any("timed_out and no exit_status" in problem for problem in problems),
+            f"a command with both endings was accepted; got {problems}",
+        )
+
+    def test_a_command_must_say_how_it_ended(self) -> None:
+        record = self.version_two()
+        command = record["clients"][0]["stages"]["placement"]["command"]
+        record["clients"][0]["stages"]["placement"]["commands"] = [{"command": command}]
+        problems = check(record)
+        self.assertTrue(
+            any("neither exit_status nor timed_out" in problem for problem in problems),
+            f"a command with no ending was accepted; got {problems}",
+        )
 
 
 class PublicEvidenceTest(unittest.TestCase):

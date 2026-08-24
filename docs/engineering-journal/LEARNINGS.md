@@ -1,5 +1,73 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-08-24
+
+### A second home that does not inherit the first home's invariant is the same defect again
+
+**Author.** Jeff Cox and Grok
+
+**Context.** Three consecutive review rounds of PR #6 shipped the same defect shape: a
+value acquired a second home and only one writer or reader learned about it. Round 2's
+repairs caused two of round 3's findings; round 3's repairs caused two of round 4's.
+
+**Evidence.** Round 3 added `run_directory` so the transcript write path and the
+command-line announcement were one value, and `assess` accepted any truthy path —
+skipping the emptiness and workspace-containment invariant `allocate_run_directory`
+existed to enforce. Round 3 also started recording `commands` on blocked stages, and
+`check_record_version` still skipped every non-executed stage before checking that
+`command` equals `commands[0].command`, so a blocked row could name two different
+first commands. Round 3 recorded a deadline kill as `exit_status: -1` in both the
+public `StageCommand` and the private `CommandTranscript`; subprocess returncode is
+`-N` for signal N, so SIGHUP is exactly `-1`.
+
+**Mechanism.** Each repair created a new home for a value (a parameter, a list on a
+newly eligible stage, a sentinel) and updated the site that motivated the repair.
+The other homes — the freshness guard, the alias check, the wait-status meaning of
+`-1`, the private transcript — kept their old assumptions. The tests that existed
+each pinned one home.
+
+**Generalizable rule.** Before writing a fix, enumerate every producer and every
+consumer of the value — every writer, every reader, every validator, every document
+that describes it — and check each one. A fix that updates the producer and leaves
+a consumer stale is the failure mode, and it has a 100% recurrence rate in this PR
+so far. Put the enumeration in the commit message so it is auditable.
+
+**Refs.** `scripts/assess_clients.py` (`require_fresh_run_directory`, `StageCommand`),
+`scripts/check_compatibility_matrix.py` (`check_record_version`),
+`tests/test_assess_clients.py::WorkspaceFreshnessTest::test_a_supplied_run_directory_that_already_holds_a_run_is_refused`,
+`tests/test_check_compatibility_matrix.py::PerCommandStatusRecordTest::test_a_non_executed_stage_command_must_still_match_its_first_status`.
+
+### A published proof is annotated, not rewritten, when it overclaims a test
+
+**Author.** Jeff Cox and Grok
+
+**Context.** Cycle 13's evidence header said the escaped-descendant test "confirms the
+descendant really does survive". The test's own docstring said it deliberately
+asserts nothing about whether the descendant lived: it created a marker file and
+never read it. Survival was observed by a separate uncommitted probe.
+
+**Evidence.** `docs/evidence/2026-08-23-cycle13-mutation-proof-portable-copies.txt`
+line 31 (as published). `tests/test_assess_clients.py::ProcessGroupTest::test_a_descendant_that_leaves_the_session_is_not_claimed_as_killed` as of cycle 13.
+
+**Mechanism.** The proof header described the intent of the test, not the assertions
+it contained. A reader of the evidence file, and a later mutation-proof summary,
+would treat survival as something the suite established. The repository's rule that
+a published proof is never hand-corrected to say something more convenient is about
+digest blocks and manufactured green baselines, not about leaving a false claim in
+place. The honest form keeps the original sentence and dates a correction beside it;
+making the test assert the marker going forward does not make the cycle-13 sentence
+true of that run.
+
+**Generalizable rule.** A published proof may be annotated to say less than it did,
+never silently rewritten to say something more convenient, and never left claiming
+more than something checkable established. If the claim should be true, make the
+test assert it, and say in the note that the assertion was not part of the original
+run.
+
+**Refs.** `docs/evidence/2026-08-23-cycle13-mutation-proof-portable-copies.txt`,
+`tests/test_assess_clients.py::ProcessGroupTest::test_a_descendant_that_leaves_the_session_is_not_claimed_as_killed`,
+[the grading decision](DECISIONS.md#a-mutation-proof-excludes-its-own-binding-test-and-is-never-corrected-by-hand).
+
 ## 2026-08-23
 
 ### Both regressions updated the producer and left the consumer behind
