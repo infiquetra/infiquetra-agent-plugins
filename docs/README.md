@@ -15,9 +15,11 @@
   is preserved unmodified as incoming evidence, with its
   [validation and repair record](reviews/2026-08-22-unifi-fleet-core-portability-pilot-plan-doc-review-disposition.md)
   alongside it.
-- [PR #6 independent code reviews](reviews/2026-08-24-pr-6-code-review-index.md)
+- [PR #6 independent code reviews](code-reviews/2026-08-24-pr-6-code-review-index.md)
   indexes the five review rounds that preceded the porting tools being merged,
   each preserved byte-for-byte with the revision it reviewed and its digest.
+  `docs/code-reviews/` is where a code review belongs from 2026-08-24 onward;
+  the 2026-08-22 per-engine reviews in `reviews/` predate that and stay put.
 
 ## Evidence
 

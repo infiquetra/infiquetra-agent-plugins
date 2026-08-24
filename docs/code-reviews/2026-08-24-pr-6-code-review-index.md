@@ -42,10 +42,18 @@ Round 1's artifacts are already durable on the preserved branch
 here: duplicating an artifact that already has a durable home creates two things to
 keep in agreement. That branch is preserved for exactly this reason.
 
-Note the directory difference. Round 1 was written by the Saga skill to
-`docs/code-reviews/`, which has never existed on `main`. The durable location in
-this repository is `docs/reviews/`, which `docs/README.md` documents and which
-already holds the pilot's code reviews, so rounds 2-5 land there.
+Round 1 was written by the Saga skill to `docs/code-reviews/`, and that is the
+directory this file and rounds 2-5 now establish on `main`. Rounds 2-5 landed
+briefly in `docs/reviews/` first, on the reasoning that `docs/code-reviews/` had
+no files on `main` while `docs/reviews/` was already documented; the operator
+resolved it the other way, so the Saga skill's own output location is the
+convention rather than an accident of where round 1 happened to be written.
+
+`docs/reviews/` still holds this pilot's earlier per-engine code reviews from
+2026-08-22, and they are left where they were merged. So a reader looking for a
+code review in this repository has two places to check: `docs/code-reviews/` is
+the convention from 2026-08-24 onward, and `docs/reviews/` holds the pilot-era
+reviews plus document reviews of plans.
 
 ## Integrity
 
