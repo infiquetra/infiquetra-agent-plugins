@@ -17,9 +17,9 @@ and in [`DECISIONS.md`](../engineering-journal/DECISIONS.md).
 Do not begin porting until every line is true.
 
 - [ ] Upstream plugin sits at a pinned commit; its own suite is green there.
-- [ ] Target tooling is parameterized for the new package (see [Reusable assets](#reusable-assets)) and `scripts/check_repo.py` passes on the empty port.
+- [ ] The package's port descriptor exists at `ports/<package>.json` (see [Reusable assets](#reusable-assets)) and `scripts/check_repo.py` passes on the empty port.
 - [ ] Every validation rule the plugin carries is inventoried, each with a named **predicate** and a named **authority** (a standard-library function, a specification, a schema — not a description).
-- [ ] The client roster and assessment method are scripted, not to be re-derived.
+- [ ] The client roster and assessment method are scripted in `scripts/assess_clients.py`, not to be re-derived. Print the plan with `python3 scripts/assess_clients.py --package <package>` before running it.
 - [ ] The Python floor is decided and a matching interpreter exists.
 - [ ] Non-goals are written down.
 
@@ -27,15 +27,15 @@ Do not begin porting until every line is true.
 
 ## Phase 0 — Prepare (serial, ~1h)
 
-- [ ] Set the package identity in the two package-specific tools.
-- [ ] Classify **every** path as `upstream-byte-copy`, `deterministic-transform`, or `target-owned`, and record it in `PROVENANCE.json`.
+- [ ] Write `ports/<package>.json`: package identity, package root, upstream source, custody table, and the `assessment` block naming the package's own scripts, its mutating operations, its credential variable prefixes, its **entrypoints**, and its skill units. Every object is closed against unknown keys, and every safety field must be stated — a package for which one is genuinely empty names it in `assessment.declared_none`.
+- [ ] Classify **every** path as `upstream-byte-copy`, `deterministic-transform`, or `target-owned` in that descriptor's `custody` table, which is what `PROVENANCE.json` is then generated from.
 - [ ] Confirm the floor interpreter by explicit path, never as `python3`.
 
 ## Phase 1 — Port (parallel, concurrency cap 3)
 
 Three lanes that share no files. Cap is 3 because the fleet runs above Haiku.
 
-- [ ] **Lane A** — byte copies, provenance manifest, sync script wiring.
+- [ ] **Lane A** — byte copies and the provenance manifest, via `python3 scripts/sync_vendor_source.py --package <package> --source PATH --commit SHA`.
 - [ ] **Lane B** — target-owned surface: README, entrypoints, package manifest.
 - [ ] **Lane C** — bundling and deferred inventory, if the plugin has dependencies.
 
@@ -101,8 +101,10 @@ Do not rebuild these.
 |---|---|---|
 | `scripts/check_repo.py` | Package-agnostic | Use as-is |
 | `scripts/bundle_fleet_module.py` | Package-agnostic | Use as-is |
-| `scripts/check_compatibility_matrix.py` | Near-generic | Set `PACKAGE_ROOT` |
-| `scripts/sync_vendor_source.py` | Near-generic | Set `SOURCE_PACKAGE_PATH`, `TARGET_PACKAGE`, and the copied-path table |
+| `scripts/check_compatibility_matrix.py` | Package-agnostic | Use as-is; it resolves the package from the record's own `$.package.name` |
+| `scripts/sync_vendor_source.py` | Package-agnostic | Use as-is; pass `--package <package>` |
+| `ports/<package>.json` | Per package | Write one. It is the only place package identity, custody, and assessment settings live |
+| `scripts/assess_clients.py` | Package-agnostic | Use as-is; it carries the ten-client roster and every quirk below |
 | `PROVENANCE.json` three-way custody schema | Generic | Reuse the schema |
 | `MutationProofBindingTest` pattern | Generic | Reuse; it fails when a graded file changes without its proof |
 | The credential value rule and its corpus | Stable at unifi 2.0.6 | Reuse for any profile-like contract rather than re-deriving |
@@ -112,7 +114,50 @@ Do not rebuild these.
 ## Client assessment
 
 Ten clients, four stages each: placement, discovery, load, invocation. Every quirk
-below was learned the expensive way.
+below was learned the expensive way, and every one of them is now carried by
+[`scripts/assess_clients.py`](../../scripts/assess_clients.py) rather than by
+whoever is running the assessment.
+
+```bash
+python3 scripts/assess_clients.py --package <package>              # print the plan; runs nothing
+python3 scripts/assess_clients.py --package <package> --execute \
+    --python <venv>/bin/python3.12 --workspace <scratch> \
+    --real-binary grok=<path> --real-binary agy=<path> --out <record>.json
+```
+
+`--python` must name an interpreter that already has the package's own
+third-party imports — the pilot used a throwaway virtual environment holding
+only `requests` and `urllib3`. The entrypoints import them at module scope, so a
+bare floor interpreter records a non-zero status for every client and proposes
+`failed` for all ten.
+
+Each client is handed its **own** fresh copy of the package, fingerprinted before
+and after that client runs. A client that changes the copy it was given has its
+row recorded without a classification: the stages describe bytes that no longer
+exist. Every run allocates a new numbered directory inside `--workspace`, so
+re-using one workspace never hands a later run a copy an earlier client mutated.
+The run also writes a private `transcript.json` beside those copies, at
+`<workspace>/run-NNN/transcript.json` — the command line prints the exact path
+when it finishes, and that is the path to open. It holds each command's bounded
+raw output, written owner-only (mode 0600). That transcript is what the record's
+`evidence`, `reason`, and `version` fields are written from — it is operator-only,
+never committed, and never quoted into the public record. It is kept on the
+failure paths too: a timed-out or invalidated row is exactly where the output is
+needed to explain the block.
+
+Two things to know about a **blocked** row before you act on it. A command that
+hit its deadline is recorded like any other — it ran, so it appears in the
+stage's `commands` and is safety-graded with the rest — but it carries
+`timed_out: true` and no `exit_status`. subprocess returncode is `-N` for
+termination by signal N, so `-1` is SIGHUP and cannot mean "killed at the
+deadline". And the cleanup that follows a deadline kills the stage's *process
+group*: a client whose descendant starts a session of its own has left that
+group, so the harness can neither signal it nor see it. The row says so rather
+than claiming containment. If a stage times out on a client you know spawns
+detached helpers, check for stragglers yourself before starting the next run.
+
+The table below is the reference for reading that plan; the harness is what
+executes it.
 
 | Client | Quirk |
 |---|---|
@@ -123,11 +168,14 @@ below was learned the expensive way.
 | Gemini | `skills link` prompts on stdin and hangs rather than declining when stdin is closed. |
 | Muse | `--force` is required on the JSON install to report a digest once placement has installed the unit. |
 | Hermes | Run in an isolated home only. Confirm the live skills directory is unchanged before and after. |
+| Grok, Agy | The auto-trust override must name the **real** binary, and the harness never infers it: `which` returns the wrapper, and a wrapper pointed at itself spawns descendants until the host gives out. Supply `--real-binary <client>=<path>`, or export the client's own override variable. With neither, that client is **blocked** with the requirement named. |
 | Codex | Refuses the package root with an actionable message; load and invocation stay blocked. |
 
-Unset `UNIFI_*`-equivalent environment variables for every invocation. A client
-that needs credentials before it will report state gets a **blocked** stage with
-the requirement named, never a satisfied one.
+Name the package's credential variable prefixes in the descriptor's
+`assessment.credential_prefixes`; the harness removes every matching variable
+from every stage's environment. A client that needs credentials before it will
+report state gets a **blocked** stage with the requirement named, never a
+satisfied one.
 
 ## Anti-patterns
 

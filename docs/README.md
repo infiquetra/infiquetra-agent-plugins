@@ -31,6 +31,16 @@ hostname, hardware address, camera name, or credential value, and
 [`scripts/check_compatibility_matrix.py`](../scripts/check_compatibility_matrix.py)
 enforces that mechanically for the matrix.
 
+That assessment is a script rather than a method to follow:
+[`scripts/assess_clients.py`](../scripts/assess_clients.py) carries the ten-client
+roster, the four stages, and every client quirk the pilot learned. It runs
+nothing unless `--execute` is passed, removes the package's declared credential
+variables from every subprocess, refuses any command that would confirm a write,
+and refuses to emit a record if the assessed tree moved while it was being read.
+
+Which package each tool acts on is a [port descriptor](../ports/README.md) under
+`ports/`, one JSON file per package, rather than a constant inside the tool.
+
 ## Repository guidance
 
 - [Public-safe Infiquetra summary](public-safe-summary.md) gives contributors

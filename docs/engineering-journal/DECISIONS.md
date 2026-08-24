@@ -1,6 +1,462 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-08-24
+
+### A deadline-killed command is marked timed out, not given a fake exit status
+
+**Author.** Jeff Cox and Grok
+
+**Decision.** A command the harness kills at the stage deadline is recorded with
+`timed_out: true` and no `exit_status`. A command that exited or was terminated by a
+signal carries `exit_status` (the process wait status) and no `timed_out`. The two
+fields are mutually exclusive. subprocess returncode is `-N` for termination by
+signal N, so `-1` is SIGHUP and is recorded as `exit_status: -1`. The schema lists
+both fields; `check_compatibility_matrix.py` refuses a command entry that has both,
+neither, or `timed_out` set to anything other than true. Existing committed records
+carry `exit_status` only and still validate.
+
+This supersedes [A command that hit the deadline is recorded like any other
+command](#a-command-that-hit-the-deadline-is-recorded-like-any-other-command),
+which reserved `-1` for the deadline and claimed no real exit status can say that.
+The "it ran, so it is in `commands` and is safety-graded" half of that decision
+stands.
+
+**Rationale.** A sentinel that collides with a real wait status is not a sentinel.
+The previous form made "killed at the deadline" and "terminated by SIGHUP"
+indistinguishable in every consumer of the public record and of the private
+transcript. Omitting `exit_status` is no longer "not recorded": `timed_out: true`
+is the positive marker that the command did not exit.
+
+**Rejected alternatives.** *Keep `exit_status: -1` and add `timed_out` beside it*,
+because then `-1` is still a lie about the wait status, and a reader who only
+looks at `exit_status` still cannot tell SIGHUP from a deadline. *Record the
+wait status after SIGKILL (`-9`) plus `timed_out`*, because that status describes
+the harness's kill, not the client, and a failed wait still has no integer to
+put there. *Use a non-integer `exit_status` (`null` or `"timed-out"`)*, because
+the schema subset this repository interprets has no union types, and a string
+status would invalidate the "integer wait status" reading of every existing
+entry. *Bump to schema version 3*, because the new field is additive and every
+committed record still validates as version 2.
+
+**Consequence to expect.** A blocked stage's last `commands` entry is often
+`{"command": "...", "timed_out": true}` with no `exit_status`. Operators filling
+the public record from the private transcript will see the same shape there;
+copying `-1` into a matrix as a deadline marker is now a validator failure only
+when `timed_out` is also present, and is SIGHUP when it is not.
+
+**Revisit when.** A command needs to record both that the deadline fired and the
+wait status the kill actually produced.
+
+**Refs.** `schemas/compatibility-matrix.schema.json`,
+`scripts/assess_clients.py` (`StageCommand`, `CommandTranscript`),
+`scripts/check_compatibility_matrix.py` (`_command_ending_problems`),
+`tests/test_assess_clients.py` (`test_a_command_terminated_by_sighup_is_not_recorded_as_a_deadline`),
+`tests/test_check_compatibility_matrix.py` (`PerCommandStatusRecordTest`).
+
+### A supplied run directory is still a fresh run directory
+
+**Author.** Jeff Cox and Grok
+
+**Decision.** `assess` still takes an optional `run_directory` so the write path and
+the announced path are one value. A supplied path must exist as a directory, must
+be empty, and when a workspace is also given must be a subdirectory of it, not
+the workspace itself. The caller still allocates; this check is the invariant
+`allocate_run_directory` already established, applied to the parameter that used
+to skip it.
+
+**Rationale.** The parameter was added so two call sites would not derive one path.
+Accepting any truthy path meant a caller could hand `assess` a directory that
+already held a previous run's package copies and transcript, mix two assessments,
+and overwrite the first transcript through `write_private`. That is the
+one-run-one-directory evidence boundary, routed around.
+
+**Rejected alternatives.** *Refuse a supplied path that already exists*, because
+`allocate_run_directory` creates the directory before passing it in, so existence
+is the happy path; emptiness is the freshness test. *Delete the parameter and
+return the path from `assess`*, which is the alternative the previous decision
+rejected, and which would churn every caller to fix a missing check. *Trust
+`copytree` to fail if a per-client copy already exists*, because a second run
+that assessed a different client would not collide on that copy and would still
+overwrite the transcript.
+
+**Consequence to expect.** Tests that pass `run_directory` must create an empty
+directory first, matching `main`. A reused `--workspace` still accumulates
+`run-NNN` directories; only a caller that names a dirty one is refused.
+
+**Revisit when.** More than one artifact has to be announced, at which point a
+small run-context object still beats a widening parameter list.
+
+**Refs.** `scripts/assess_clients.py` (`require_fresh_run_directory`, `assess`),
+`tests/test_assess_clients.py` (`WorkspaceFreshnessTest`),
+[the caller-allocates decision](#the-caller-that-has-to-name-the-run-directory-is-the-caller-that-allocates-it),
+[the one-run-one-directory decision](#every-assessment-run-gets-its-own-directory-and-every-client-its-own-package-copy).
+
 ## 2026-08-23
+
+### A command that hit the deadline is recorded like any other command
+
+**Author.** Jeff Cox and Claude
+
+**Superseded 2026-08-24.** The command still goes in `commands` and is still
+safety-graded. The representation is no longer `exit_status: -1`: that value is
+SIGHUP. See [A deadline-killed command is marked timed out, not given a fake exit
+status](#a-deadline-killed-command-is-marked-timed-out-not-given-a-fake-exit-status).
+
+**Decision.** When a stage's command reaches its deadline, that command is appended to the
+stage's `commands` list with `exit_status: -1`, alongside its entry in the private transcript.
+It is therefore in the public version-2 record and is graded by the post-run safety rule like
+every other recorded command. `-1` is reserved for "killed at the deadline, never exited"; no
+real exit status can say that.
+
+**Rationale.** The stage started it, so it ran. Keeping it only in the private transcript left
+the public record naming fewer commands than the stage started — unreproducible — and left the
+safety rule, which grades `commands`, blind to the single command most likely to have been doing
+something unbounded. A record that omits the command that hung is a record that reads best
+exactly when the run went worst.
+
+**Rejected alternatives.** *Omitting `exit_status` for that entry*, because the schema requires
+an integer and an absent field would read as "not recorded" rather than "did not exit".
+*Recording it only when the stage is blocked for some other reason*, because the deadline is the
+common case. *Grading safety only on `executed` stages*, because a blocked stage's commands
+started.
+
+**Consequence to expect.** A blocked stage can carry more `commands` entries than it has
+`returncodes`; the per-command statuses are the reproducible record and the returncodes are what
+classified the stage.
+
+**Revisit when.** The schema gains a way to mark a command as terminated rather than exited.
+
+**Refs.** `scripts/assess_clients.py`, `schemas/compatibility-matrix.schema.json`,
+`tests/test_check_compatibility_matrix.py` (`PerCommandStatusRecordTest`).
+
+### The caller that has to name the run directory is the caller that allocates it
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** `assess` takes an optional `run_directory`. The command line allocates it and
+passes it in, so the path the transcript is written to and the path the closing message
+announces are the same value rather than two computations that agree by convention. `assess`
+still allocates one itself when no caller supplies it, which is what every test relies on.
+
+**Rationale.** The run-directory repair moved the transcript into `<workspace>/run-NNN/` and the
+message went on naming `<workspace>/`, so every executed assessment sent the operator to a file
+that did not exist — and the transcript is the only place the record's blank versions, reasons,
+and evidence can be filled from. Two call sites deriving one path is the arrangement that
+allowed them to disagree; passing the value removes the second derivation rather than fixing it.
+
+**Rejected alternatives.** *Putting the run directory in the record*, because the record is
+public evidence and a local filesystem path does not belong in it. *Returning a tuple from
+`assess`*, because every caller and test would change to carry a value only one of them wants.
+*Recomputing the newest `run-NNN` in the command line*, because it re-derives what was already
+decided and is wrong the moment two runs share a workspace.
+
+**Consequence to expect.** A caller that needs the path must allocate before assessing, which is
+one line and makes the ordering explicit.
+
+**Extended 2026-08-24.** Naming the directory does not exempt it from being a fresh one.
+See [A supplied run directory is still a fresh run directory](#a-supplied-run-directory-is-still-a-fresh-run-directory).
+
+**Revisit when.** More than one artifact has to be announced, at which point a small run-context
+object beats a widening parameter list.
+
+**Refs.** `scripts/assess_clients.py` (`assess`, `main`), `tests/test_assess_clients.py`
+(`CommandLineTest`),
+[the producer-and-consumer learning](LEARNINGS.md#both-regressions-updated-the-producer-and-left-the-consumer-behind).
+
+### A mutation proof excludes its own binding test, and is never corrected by hand
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** The mutation runner excludes `MutationProofBindingTest` from grading entirely —
+at baseline and under every mutation — and counts a mutation killed only when it fails some
+other test that was passing at baseline. It records the baseline failure set first and aborts
+if anything outside that binding test is failing. The published proof states the exclusion in
+its header. When an anchor no longer matches exactly once, the run aborts, the files are
+restored, the anchor is rewritten to name the guard in its current form, and the whole set is
+re-run; a pre-flight pass checks every anchor before the expensive run begins.
+
+**Rationale.** Every mutation edits a graded file, which changes its digest, which fails the
+binding test. Counting that as a kill made every mutation a kill by construction, and cycle
+11's "0 survivors" was measuring the runner's own bookkeeping. Re-graded with the exclusion,
+seven anchors had no test behind them. Separately, the binding test cannot pass until the run
+it describes is published, so demanding a green baseline created exactly one route to one —
+editing the previous cycle's recorded digests, which is the cycle-7 defect that test exists to
+catch.
+
+**Rejected alternatives.** *Excluding the binding test from the suite the runner invokes*,
+because the exclusion then stops being visible in the published proof. *Writing the expected
+digests into the evidence file before the run*, because a proof whose digest block was authored
+rather than computed identifies nothing. *Publishing a partial pass and appending the remaining
+mutations afterwards*, because the digests would name a tree no single run exercised.
+*Excluding only the binding subtests that fail at baseline*, because that still lets the test
+kill a mutation to any graded file whose digest currently matches — which is every graded file
+the round did not change.
+
+**Consequence to expect.** Every code change to a graded file costs a full re-run of the proof,
+roughly forty minutes, before the suite can be green again. A survivor count above zero is now
+a real finding rather than a broken run.
+
+**Revisit when.** The suite grows a second test that cannot pass until the artifact it checks
+is published, or the graded set grows enough that the run stops fitting in one sitting.
+
+**Refs.** `tests/test_site_profile.py` (`MutationProofBindingTest`),
+`docs/evidence/2026-08-23-cycle12-mutation-proof-portable-copies.txt`,
+[the vacuous-proof learning](LEARNINGS.md#the-mutation-proof-counted-its-own-bookkeeping-as-a-kill).
+
+### A client's real executable is supplied by the operator, never discovered
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** Two of the ten clients launch through a local auto-trust wrapper that finds its
+real binary through the client home, and that lookup fails under the isolated home the harness
+gives it. `resolve_real_binary` takes the real path from `--real-binary NAME=PATH` for the run,
+or from the wrapper's own documented override already exported in the operator's environment.
+With neither, the client is `blocked` with the requirement named. The harness never searches
+`PATH` for it, and refuses a supplied path that is the same file as the launcher on `PATH`.
+
+**Rationale.** Nothing on disk distinguishes a launcher from the thing it launches. The first
+version resolved the value with `which`, which returns the wrapper — the wrapper is what sits on
+`PATH` under that name — so the wrapper exec'd itself and spawned descendants until the host ran
+out. The repair took the first `PATH` entry that was not the *same file* as the wrapper, which a
+second *copy* of the wrapper satisfies: the same defect one arrangement further out. Both
+attempts guess which of several same-named executables is "the real one", and that guess cannot
+be made correct — only made to look correct on the machine it was tried on.
+
+**Rejected alternatives.** *Comparing file size or reading the first line*, because a wrapper
+that grows or loses its shebang defeats it and nothing announces that it has. *Skipping the two
+clients*, because their support status is exactly what the assessment exists to establish.
+*Guessing and capping the recursion depth*, because a bounded process bomb is still a process
+bomb and the record it produces describes the cap, not the client.
+
+**Consequence to expect.** An operator who has never exported the override sees two clients
+`blocked` naming the variable, not two clients silently assessed against a wrapper.
+
+**Revisit when.** A wrapper ships a documented, machine-readable way to name its real target.
+
+**Refs.** `scripts/assess_clients.py` (`resolve_real_binary`), `tests/test_assess_clients.py`
+(`RealBinaryResolutionTest`),
+[the wrapper learning](LEARNINGS.md#a-wrapper-resolved-by-name-resolves-to-itself).
+
+### Every assessment run gets its own directory, and every client its own package copy
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** `--workspace` names a place runs live in, not a place a run owns.
+`allocate_run_directory` claims `run-001`, `run-002`, … inside it with `exist_ok=False`, and
+each client's package copy is made unconditionally into that new directory. Copying is never
+skipped because the destination already exists.
+
+**Rationale.** The record binds itself to the shipped package fingerprint. An operator pointing
+`--workspace` at the same place on every run is the normal case, and a conditional copy handed
+the next run whatever the last one left — including a copy a client had installed into. That
+tree then assessed as if it were the shipped package while the record went on naming the shipped
+digest, which is a record that identifies the wrong bytes. Numbered rather than random so a
+returning operator can tell which run is which.
+
+Two guards cover one defect here, deliberately. The fresh directory makes the collision
+impossible and the unconditional copy refuses it if it happens anyway; the second is what
+survives someone changing the first.
+
+**Rejected alternatives.** *Reusing a copy that still matches the fingerprint*, because it makes
+the guarantee depend on a check that the reuse exists to skip. *Deleting the workspace at
+start*, because it destroys the previous run's transcript, which is the only place raw client
+output is kept. *A temporary directory per run*, because the operator cannot find it afterwards
+and the transcript has to be found.
+
+**Consequence to expect.** Repeated runs accumulate `run-NNN` directories the operator prunes
+deliberately; disk is spent to keep every run's evidence separable.
+
+**Revisit when.** The workspace layout has to be shared with another tool that expects a fixed
+path.
+
+**Refs.** `scripts/assess_clients.py` (`allocate_run_directory`),
+`tests/test_assess_clients.py` (`WorkspaceFreshnessTest`).
+
+### The port descriptor is closed, and its safety fields are stated rather than defaulted
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** Every object in a port descriptor refuses keys the contract does not define, and the
+four `assessment` fields that carry a safety decision — `credential_prefixes`, `package_scripts`,
+`mutating_operations`, `entrypoints` — must each be stated. A package for which one is genuinely
+empty writes it as an empty list *and* names it in `assessment.declared_none`. The descriptor version
+advanced to `2`; version 1 is not accepted, because a descriptor written against it has exactly the
+shape this closes.
+
+`assessment.entrypoints` is also new, and is deliberately independent of the `custody` table: what
+makes a file executable is that the package says it is, not how its bytes were obtained.
+
+**Rationale.** Each of those four fields fails *open* when empty, and "absent" and "empty" were the
+same state. `credential_prefix` for `credential_prefixes` validated, loaded, passed the repository
+gate, and stripped nothing — the cheapest possible mistake buying the most expensive possible
+outcome. Reading entrypoints out of `custody.entrypoint_transforms` had the narrower version of the
+same problem: a package whose executable is an upstream byte copy had no assessable entrypoint, so
+the "package-agnostic" harness only ever worked for one custody layout.
+
+**Rejected alternatives.** *Warning on an unknown key*, because a warning in a tool nobody watches is
+a comment. *Defaulting the safety fields and documenting that they matter*, because documentation is
+not a gate and the failure is silent. *Inferring an empty field as deliberate*, because that is
+indistinguishable from a typo, which is the whole defect. *Accepting version 1 leniently for
+migration*, because the un-migrated package is precisely the one still carrying the hole.
+
+**Consequence to expect.** Adding a package is more verbose: four safety fields must be written even
+when three are empty. That verbosity is the point — the empty case is now something a person decided
+and a reader can see.
+
+**Revisit when.** A safety field is added or retired, or a package needs a per-field exemption the
+`declared_none` list cannot express.
+
+**Refs.** `scripts/port_config.py`, `ports/README.md`, `tests/test_port_config.py`,
+[the learning](LEARNINGS.md#an-optional-safety-setting-is-a-safety-setting-that-is-off).
+
+### A compatibility record stores every command a stage ran, beside its own exit status
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** The compatibility-matrix record advances to `schema_version` 2. An executed stage
+carries `commands`: every argv it ran, redacted, each with its own `exit_status`. `command` remains
+the first of those, so a row still reads as version 1 did. Version 1 records stay valid and keep
+being validated; a version 1 record carrying `commands` is refused, and a version 2 executed stage
+without them is refused.
+
+**Rationale.** A stage runs one command per skill unit, or one per entrypoint. Recording only the
+first made the command and status cardinalities disagree: a reader saw `exit status 0, 7` with one
+command and could neither tell which failed nor reproduce it. The nine committed matrices are
+evidence and are not rewritten, so the version is what separates the two shapes rather than a
+migration.
+
+**Rejected alternatives.** *Keeping one command and listing statuses in prose*, which is the
+disagreement itself. *Rewriting the committed matrices to the new shape*, because editing evidence to
+match a moved tree is the anti-pattern the runbook names. *Making `commands` optional in version 2*,
+because an optional record of what ran is a record that can omit the command that failed.
+
+**Consequence to expect.** The matrix safety rule now grades every recorded command rather than the
+first, so a mutating command in second position is caught.
+
+**Extended 2026-08-24.** `command` remains the first of `commands` whenever both are present,
+including on blocked stages; the validator used to skip that alias check on every
+non-executed stage. A command that did not exit now carries `timed_out` instead of a
+fake `exit_status`; see [A deadline-killed command is marked timed out, not given a
+fake exit status](#a-deadline-killed-command-is-marked-timed-out-not-given-a-fake-exit-status).
+
+**Revisit when.** A command entry needs a third ending besides `exit_status` and `timed_out`.
+
+**Refs.** `schemas/compatibility-matrix.schema.json`,
+`scripts/check_compatibility_matrix.py` (`check_record_version`), `scripts/assess_clients.py`.
+
+### Raw client output is kept for the operator and kept out of the record
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** Each command's stdout and stderr are retained, bounded at 64 KiB with truncation marked,
+in a private `transcript.json` written into the run workspace. The public compatibility record never
+quotes it and never names its path. The operator writes each row's `version`, `reason`, and `evidence`
+from that transcript.
+
+**Rationale.** The public record carries field names, counts, and comparisons — raw client output is
+none of those and is not redacted. But discarding it left the operator nothing to write the record
+*from*, which meant the scripted method could not produce the matrix the prose method did. Both
+constraints are real; they are satisfied by two artifacts, not by one compromise.
+
+**Rejected alternatives.** *Putting bounded output in the record*, because it is unredacted by
+construction. *Printing it to the terminal only*, because a ten-client run's output does not survive
+a scrollback. *Keeping it unbounded*, because one loud client should not fill the operator's disk.
+
+**Consequence to expect.** The run workspace holds site-identifying text and must not be committed.
+The runbook and `--workspace` help both say so.
+
+**Revisit when.** A redaction pass over raw output becomes trustworthy enough to put a bounded
+excerpt in the record itself.
+
+**Refs.** `scripts/assess_clients.py` (`CommandTranscript`, `transcript_path`),
+`docs/runbooks/portable-plugin-port.md`.
+
+### Package identity is a descriptor under `ports/`, not a constant in a tool
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** Every portable package carries one JSON descriptor at
+`ports/<package>.json` holding its identity, its package root, its upstream source, its
+custody table, its assessment settings, and the provenance notes its `PROVENANCE.json`
+is generated from. `scripts/sync_vendor_source.py` takes `--package NAME`;
+`scripts/check_compatibility_matrix.py` resolves the package from the record's own
+`$.package.name`; `scripts/assess_clients.py` reads the entrypoints, skill units, and
+credential prefixes from the same file. `scripts/port_config.py` is the single authority
+for the format and validates it. `scripts/check_repo.py` fails when a descriptor does
+not load or names a tree that does not exist.
+
+This closes the revisit condition recorded under "Bind a current matrix to the tree it
+assessed": the single `PACKAGE_ROOT` constant is now per-record.
+
+**Rationale.** The pilot's runbook had to tell the next porter which constants to reach
+into inside which two scripts. That is an instruction that rots, and it made "is this
+tool generic?" a question about someone's diligence rather than about the code. As data,
+the same information is validated on load, checked by the repository gate, and readable
+by a third tool that did not exist when the first two were written.
+
+The descriptors live *outside* `plugins/` deliberately. A compatibility matrix binds to a
+fingerprint of the package tree, so a descriptor stored inside the tree it describes would
+move that fingerprint whenever the tooling's configuration changed and invalidate
+assessment evidence that is still true.
+
+**Rejected alternatives.** *A second JSON schema file describing the descriptor*, because
+a rule written twice is a rule that can disagree with itself; `port_config.py` validates
+and `tests/test_port_config.py` derives its corpus from that module. *A descriptor inside
+the package*, for the fingerprint reason above. *Defaulting `--package` to the first
+package*, because a tool that overwrites a tree and deletes stale paths inside it should
+name the tree out loud, and a default makes the first-ported package the silent one.
+*Deriving the matrix's package root from a CLI flag rather than from the record*, because
+the record already names the package it assessed and a flag lets the two disagree.
+
+**Consequence to expect.** Porting a package is a new descriptor plus a review of it,
+rather than edits inside two scripts. A descriptor with an empty
+`assessment.package_scripts` would scope the mutating-operation safety rule to nothing,
+which is a fail-open; a test asserts the shipped list names files the package carries.
+
+**Revisit when.** A third tool needs package-specific settings that do not fit these
+fields, or a package needs two descriptors (two upstream sources into one tree).
+
+**Refs.** `scripts/port_config.py`, `ports/README.md`, `tests/test_port_config.py`,
+[the queued Fleet Core target](QUEUED.md).
+
+### The ten-client assessment is a program, and it refuses rather than guesses
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** `scripts/assess_clients.py` carries the ten-client roster, the four stages,
+and every client quirk. It runs nothing unless `--execute` is passed; it strips the
+package's declared credential variables from every subprocess; it routes every stage argv
+through `check_compatibility_matrix.command_safety_problems` *before* starting the
+process; it gives every stage a deadline; it refuses a state-writing stage under the
+operator's own home and refuses the isolated-only client a real home outright; and it
+refuses to emit a record at all if the assessed tree moved during the run.
+
+The record it emits is deliberately incomplete: each client's `reason` is empty, and
+`check_compatibility_matrix.py` refuses a row with no concrete reason. A record no one
+finished reading therefore cannot be committed as evidence.
+
+**Rationale.** The status a harness computes is a proposal from stage results. The reason
+is a claim about *why*, which only the person who watched it can make. Filling it in
+automatically would produce records that pass every check and assert things nobody
+observed — the precise failure the fingerprint binding exists to catch, moved one level up.
+
+**Rejected alternatives.** *Executing by default*, because the first thing this program
+does is install software into directories. *Deriving the overall status and stopping*,
+because a status without a reason is not evidence. *Recording a client's actionable
+refusal as `blocked`*, because the attempt ran and the client named the missing artifact;
+that is the Codex row's entire value. *A second copy of the mutating-operation predicate
+inside the harness*, because a rule enforced before the fact by one copy and after the
+fact by another can be satisfied by neither when they disagree.
+
+**Consequence to expect.** A stage whose client is not installed is `blocked` with the
+binary named, never a package failure. A stage that hits its deadline is `blocked` with
+the deadline named.
+
+**Revisit when.** A client needs a stage vocabulary the four stages cannot express, or the
+roster changes.
+
+**Refs.** `scripts/assess_clients.py`, `tests/test_assess_clients.py`,
+[the stdin learning](LEARNINGS.md#a-harness-that-inherits-stdin-behaves-differently-in-a-terminal-than-under-a-scheduler).
 
 ### Review rounds are bounded at three, and a round's repairs ship as one release
 

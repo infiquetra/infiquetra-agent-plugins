@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Derive the portable UniFi package from a pinned `infiquetra-claude-plugins` revision.
+"""Derive a portable package from a pinned revision of its upstream repository.
 
 The portable copy is a derived artifact, never a second writable source. This
-script reads the bytes of one named commit in a local Claude checkout, writes
-them into `plugins/unifi/`, and records a provenance manifest a machine can
-check without any network access.
+script reads the bytes of one named commit in a local upstream checkout, writes
+them into the package's own tree, and records a provenance manifest a machine
+can check without any network access.
+
+Which package, which upstream path, and which custody each path carries are all
+read from that package's port descriptor under `ports/` -- see
+`scripts/port_config.py`. Nothing about a particular package is compiled into
+this file, so porting a second plugin is a new descriptor rather than an edit
+here.
 
 Three classifications, and every path in the derived tree is exactly one of them
 (the manifest records which):
@@ -26,13 +32,18 @@ Three classifications, and every path in the derived tree is exactly one of them
   which is what stops this script from silently destroying the portable
   site-profile contract and the discovery and drift work beside it. Most of it
   has no upstream counterpart at all. A few paths supersede an upstream file of
-  the same name, and those are named in `SUPERSEDED_BY_TARGET_OWNED` so the
-  custody table still accounts for every upstream path without copying it.
+  the same name, and those are named in the descriptor's
+  `superseded_by_target_owned` list so the custody table still accounts for
+  every upstream path without copying it.
 
 Two commands::
 
-    sync_vendor_source.py --source PATH --commit SHA     # write
-    sync_vendor_source.py --source PATH --commit SHA --check   # write nothing
+    sync_vendor_source.py --package NAME --source PATH --commit SHA
+    sync_vendor_source.py --package NAME --source PATH --commit SHA --check
+
+`--package` is required rather than defaulted. A tool that overwrites one tree
+and deletes stale paths inside it should say which tree out loud, and a default
+would make the first package the silent one.
 
 Standard library only, and no network access: the source is a local checkout and
 every byte is read from the pinned commit through `git show`.
@@ -53,16 +64,9 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import check_repo  # noqa: E402
+import port_config  # noqa: E402
+from port_config import PortConfig, PortConfigError  # noqa: E402
 
-
-SOURCE_REPOSITORY = "https://github.com/infiquetra/infiquetra-claude-plugins"
-SOURCE_PACKAGE_PATH = "plugins/unifi"
-TARGET_PACKAGE = "unifi"
-SOURCE_MANIFEST_PATH = ".claude-plugin/plugin.json"
-
-#: The client extension directory the Agent Plugins 1.0 specification's section
-#: 8.2 defines for one client's own files. Claude-custody files live under it.
-CLIENT_EXTENSION_DIR = "com.infiquetra.claude"
 
 MANIFEST_TRANSFORM_NAME = "relocate-claude-manifest"
 MANIFEST_TRANSFORM_VERSION = "1"
@@ -77,61 +81,35 @@ BYTE_COPY = check_repo.BYTE_COPY
 TRANSFORM = check_repo.TRANSFORM
 TARGET_OWNED = check_repo.TARGET_OWNED
 
-# Files whose custody is the portable core. Their path inside the portable
-# package is their path inside the upstream package, unchanged.
-PORTABLE_BYTE_COPIES = (
-    "CHANGELOG.md",
-    "skills/unifi-network/SKILL.md",
-    "skills/unifi-network/references/udm-api-endpoints.md",
-    "skills/unifi-protect/SKILL.md",
-    "skills/unifi-protect/references/protect-api-endpoints.md",
-)
-
-# Upstream paths this package supersedes with target-owned portable source of
-# its own. Declared here so `classify_source_tree` still accounts for every
-# upstream path, and read nowhere else: no byte is copied, no byte is written,
-# and `target_owned_paths` records the file authored here as `target-owned` on
-# every run without being taught its name.
+# The custody table itself is data, in `ports/<package>.json`, under `custody`:
 #
-# `README.md` is the one such path. The portable README documents *this*
-# package -- the Agent Plugins 1.0 layout, the com.infiquetra.claude/ client
-# extension directory, the Fleet Core bundle, and commands that run in this
-# repository -- and a byte copy of the upstream README told a consumer of the
-# portable package it was reading about a Claude Code plugin. The custody is
-# recorded in docs/engineering-journal/DECISIONS.md, "The portable UniFi README
-# is target-owned, rewritten site-neutral"; listing it as an upstream byte copy
-# here is what made this script contradict that decision and made the next
-# `synchronize()` restore the Claude lede over the portable file.
-SUPERSEDED_BY_TARGET_OWNED = ("README.md",)
-
-# The two executable entrypoints. They keep their upstream-relative path, but
-# they are not byte copies: upstream reaches the shared retry primitive through
-# `fleet_commons_shim`, which this package deliberately drops, so a byte copy of
-# either client cannot be executed at all. The `resolve-bundled-fleet-module`
-# transform rewrites that one module-scope import to the build-time Fleet Core
-# bundle the package already ships.
-PORTABLE_ENTRYPOINT_TRANSFORMS = (
-    "skills/unifi-network/scripts/unifi_network_client.py",
-    "skills/unifi-protect/scripts/unifi_protect_client.py",
-)
-
-# Files whose custody is the Claude adapter. The client extension directory
-# mirrors the upstream package root path for path, so a reader can recover the
-# origin of every Claude-custody file from its portable path and every one of
-# them stays a byte copy. The Claude manifest is the single exception, below.
-CLIENT_BYTE_COPIES = (
-    "commands/unifi.md",
-    "agents/unifi-network-ops.md",
-    "skills/unifi-network/scripts/site_profile_loader.py",
-)
-
-# Dropped rather than copied. The build-time Fleet Core bundle replaces the
-# shim, and its resolution ladder is Claude-specific discovery, which the
-# portable package must not retain.
-DROPPED_FROM_SOURCE = (
-    "skills/unifi-network/scripts/fleet_commons_shim.py",
-    "skills/unifi-protect/scripts/fleet_commons_shim.py",
-)
+# * `byte_copies` -- files whose custody is the portable core. Their path inside
+#   the portable package is their path inside the upstream package, unchanged.
+# * `entrypoint_transforms` -- executable entrypoints that keep their
+#   upstream-relative path but are not byte copies, because upstream reaches a
+#   shared primitive through a client-specific shim the portable package drops.
+# * `client_byte_copies` -- files whose custody is the client adapter. The
+#   client extension directory mirrors the upstream package root path for path,
+#   so a reader can recover the origin of every adapter file from its portable
+#   path and every one of them stays a byte copy. The client manifest is the
+#   single exception, relocated by a transform.
+# * `superseded_by_target_owned` -- upstream paths the package supersedes with
+#   target-owned portable source of its own. Declared so `classify_source_tree`
+#   still accounts for every upstream path, and read nowhere else: no byte is
+#   copied, no byte is written, and `target_owned_paths` records the file
+#   authored here as `target-owned` on every run without being taught its name.
+#
+#   UniFi's `README.md` is the worked example. The portable README documents
+#   *that* package -- the Agent Plugins 1.0 layout, the client extension
+#   directory, the Fleet Core bundle, and commands that run in this repository
+#   -- and a byte copy of the upstream README told a consumer of the portable
+#   package it was reading about a Claude Code plugin. The custody is recorded
+#   in docs/engineering-journal/DECISIONS.md, "The portable UniFi README is
+#   target-owned, rewritten site-neutral"; listing it as an upstream byte copy
+#   is what made this script contradict that decision and made the next
+#   `synchronize()` restore the Claude lede over the portable file.
+# * `dropped_from_source` -- dropped rather than copied, each with the
+#   descriptor's `provenance.dropped_reason` recorded in the manifest.
 
 # Paths inside the package directory that are neither synchronized nor
 # target-owned portable source, and so appear in no `files` entry.
@@ -148,8 +126,26 @@ def repository_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def package_directory(root: Path | None = None) -> Path:
-    return (root or repository_root()) / "plugins" / TARGET_PACKAGE
+def load_config(package: str, root: Path | None = None) -> PortConfig:
+    """The port descriptor for `package`, validated.
+
+    Re-exported here so a caller that already imports this module does not have
+    to reach for a second one, and so the error a bad `--package` produces is
+    raised in this module's own terms.
+    """
+    try:
+        return port_config.load(package, root or repository_root())
+    except PortConfigError as error:
+        raise SyncError(str(error)) from error
+
+
+def package_directory(config: PortConfig, root: Path | None = None) -> Path:
+    """The package tree this synchronization owns.
+
+    `root` overrides the descriptor's own repository root, which is what lets a
+    test synchronize into a scratch tree while reading the real descriptor.
+    """
+    return (root or config.root) / config.package_root
 
 
 # --- reading the pinned source ------------------------------------------------
@@ -191,24 +187,23 @@ def require_clean_checkout(source: Path) -> None:
         )
 
 
-def source_package_files(source: Path, commit: str) -> list[str]:
+def source_package_files(config: PortConfig, source: Path, commit: str) -> list[str]:
     """Every file the upstream package holds at `commit`, package-relative."""
-    listing = _git(
-        source, "ls-tree", "-r", "-z", "--name-only", commit, "--", f"{SOURCE_PACKAGE_PATH}/"
-    )
-    prefix = f"{SOURCE_PACKAGE_PATH}/"
+    package_path = config.source.package_path
+    listing = _git(source, "ls-tree", "-r", "-z", "--name-only", commit, "--", f"{package_path}/")
+    prefix = f"{package_path}/"
     names: list[str] = []
     for raw in listing.decode("utf-8").split("\0"):
         if not raw:
             continue
         if not raw.startswith(prefix):
-            raise SyncError(f"unexpected path outside {SOURCE_PACKAGE_PATH}: {raw}")
+            raise SyncError(f"unexpected path outside {package_path}: {raw}")
         names.append(raw[len(prefix) :])
     return sorted(names)
 
 
-def read_source_file(source: Path, commit: str, package_relative: str) -> bytes:
-    return _git(source, "show", f"{commit}:{SOURCE_PACKAGE_PATH}/{package_relative}")
+def read_source_file(config: PortConfig, source: Path, commit: str, package_relative: str) -> bytes:
+    return _git(source, "show", f"{commit}:{config.source.package_path}/{package_relative}")
 
 
 # --- the transforms -----------------------------------------------------------
@@ -315,7 +310,7 @@ def bundled_module_transform(payload: bytes, *, target_path: str) -> bytes:
     return rewritten.encode("utf-8")
 
 
-def relocate_claude_manifest(payload: bytes) -> bytes:
+def relocate_claude_manifest(payload: bytes, *, source_path: str) -> bytes:
     """Transform `relocate-claude-manifest`, version 1.
 
     The rule: read the Claude Code manifest from `.claude-plugin/plugin.json`
@@ -337,11 +332,11 @@ def relocate_claude_manifest(payload: bytes) -> bytes:
     try:
         document = json.loads(payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise SyncError(f"{SOURCE_MANIFEST_PATH} is not readable JSON: {exc}") from exc
+        raise SyncError(f"{source_path} is not readable JSON: {exc}") from exc
     if not isinstance(document, dict):
-        raise SyncError(f"{SOURCE_MANIFEST_PATH} is not a JSON object")
+        raise SyncError(f"{source_path} is not a JSON object")
     if not isinstance(document.get("name"), str) or not document["name"].strip():
-        raise SyncError(f"{SOURCE_MANIFEST_PATH} has no non-empty name")
+        raise SyncError(f"{source_path} has no non-empty name")
     return payload
 
 
@@ -399,11 +394,11 @@ class PlannedFile:
     def output_digest(self) -> str:
         return check_repo.sha256_bytes(self.output_bytes)
 
-    def manifest_entry(self) -> dict[str, Any]:
+    def manifest_entry(self, config: PortConfig) -> dict[str, Any]:
         entry: dict[str, Any] = {
             "path": self.target_path,
             "classification": self.classification,
-            "source_path": f"{SOURCE_PACKAGE_PATH}/{self.source_path}",
+            "source_path": f"{config.source.package_path}/{self.source_path}",
         }
         if self.classification == TRANSFORM:
             assert self.transform is not None
@@ -417,52 +412,53 @@ class PlannedFile:
         return entry
 
 
-def classify_source_tree(present: list[str]) -> None:
+def classify_source_tree(config: PortConfig, present: list[str]) -> None:
     """Fail unless every upstream path is assigned exactly one custody.
 
-    Nothing is left implicit. A file added upstream that this table does not
-    name would otherwise be dropped in silence, which is how a derived tree
-    quietly stops being a copy of anything.
+    Nothing is left implicit. A file added upstream that the descriptor's table
+    does not name would otherwise be dropped in silence, which is how a derived
+    tree quietly stops being a copy of anything.
+
+    The upstream client manifest is assigned here rather than in the descriptor:
+    it is not a custody choice a package makes, it is the fixed input of the
+    `relocate-claude-manifest` transform, and a descriptor that had to list it
+    could also forget to.
     """
-    declared = (
-        *PORTABLE_BYTE_COPIES,
-        *PORTABLE_ENTRYPOINT_TRANSFORMS,
-        *CLIENT_BYTE_COPIES,
-        *SUPERSEDED_BY_TARGET_OWNED,
-        *DROPPED_FROM_SOURCE,
-        SOURCE_MANIFEST_PATH,
-    )
+    declared = list(config.custody.declared())
+    if config.source.manifest_path is not None:
+        declared.append(config.source.manifest_path)
     assigned = set(declared)
     duplicates = sorted(name for name in assigned if declared.count(name) > 1)
     if duplicates:
         raise SyncError(
             "custody table assigns a path more than one classification: " + ", ".join(duplicates)
         )
+    package_path = config.source.package_path
     unclassified = sorted(set(present) - assigned)
     if unclassified:
         raise SyncError(
             "upstream paths carry no custody assignment, so synchronization would drop them "
-            "in silence: " + ", ".join(f"{SOURCE_PACKAGE_PATH}/{name}" for name in unclassified)
+            "in silence: " + ", ".join(f"{package_path}/{name}" for name in unclassified)
         )
     absent = sorted(assigned - set(present))
     if absent:
         raise SyncError(
             "custody table names paths the pinned commit does not contain: "
-            + ", ".join(f"{SOURCE_PACKAGE_PATH}/{name}" for name in absent)
+            + ", ".join(f"{package_path}/{name}" for name in absent)
         )
 
 
-def plan_sync(source: Path, commit: str) -> list[PlannedFile]:
+def plan_sync(config: PortConfig, source: Path, commit: str) -> list[PlannedFile]:
     """Read the pinned commit and produce the file plan, writing nothing."""
-    present = source_package_files(source, commit)
-    classify_source_tree(present)
+    present = source_package_files(config, source, commit)
+    classify_source_tree(config, present)
 
     planned: list[PlannedFile] = []
-    for relative in PORTABLE_BYTE_COPIES:
-        payload = read_source_file(source, commit, relative)
+    for relative in config.custody.byte_copies:
+        payload = read_source_file(config, source, commit, relative)
         planned.append(PlannedFile(relative, relative, BYTE_COPY, payload, payload))
-    for relative in PORTABLE_ENTRYPOINT_TRANSFORMS:
-        payload = read_source_file(source, commit, relative)
+    for relative in config.custody.entrypoint_transforms:
+        payload = read_source_file(config, source, commit, relative)
         planned.append(
             PlannedFile(
                 relative,
@@ -473,31 +469,41 @@ def plan_sync(source: Path, commit: str) -> list[PlannedFile]:
                 BUNDLED_MODULE_RULE,
             )
         )
-    for relative in CLIENT_BYTE_COPIES:
-        payload = read_source_file(source, commit, relative)
-        target = f"{CLIENT_EXTENSION_DIR}/{relative}"
+    extension_dir = config.source.client_extension_dir
+    for relative in config.custody.client_byte_copies:
+        payload = read_source_file(config, source, commit, relative)
+        target = f"{extension_dir}/{relative}"
         planned.append(PlannedFile(target, relative, BYTE_COPY, payload, payload))
 
-    manifest_payload = read_source_file(source, commit, SOURCE_MANIFEST_PATH)
-    planned.append(
-        PlannedFile(
-            f"{CLIENT_EXTENSION_DIR}/plugin.json",
-            SOURCE_MANIFEST_PATH,
-            TRANSFORM,
-            manifest_payload,
-            relocate_claude_manifest(manifest_payload),
-            RELOCATE_MANIFEST_RULE,
+    manifest_source = config.source.manifest_path
+    if manifest_source is not None:
+        manifest_payload = read_source_file(config, source, commit, manifest_source)
+        planned.append(
+            PlannedFile(
+                f"{extension_dir}/{Path(manifest_source).name}",
+                manifest_source,
+                TRANSFORM,
+                manifest_payload,
+                relocate_claude_manifest(manifest_payload, source_path=manifest_source),
+                RELOCATE_MANIFEST_RULE,
+            )
         )
-    )
     planned.sort(key=lambda item: item.target_path)
     return planned
 
 
-def source_version(source: Path, commit: str) -> str:
-    document = json.loads(read_source_file(source, commit, SOURCE_MANIFEST_PATH).decode("utf-8"))
+def source_version(config: PortConfig, source: Path, commit: str) -> str:
+    """The upstream package's declared version at `commit`.
+
+    Read from the client manifest when the descriptor names one, and from the
+    package's own manifest otherwise, so a package with no client adapter still
+    records a version rather than being told it has no manifest.
+    """
+    relative = config.source.manifest_path or config.package_manifest
+    document = json.loads(read_source_file(config, source, commit, relative).decode("utf-8"))
     version = document.get("version")
     if not isinstance(version, str) or not version.strip():
-        raise SyncError(f"{SOURCE_MANIFEST_PATH} at {commit} has no non-empty version")
+        raise SyncError(f"{relative} at {commit} has no non-empty version")
     return version
 
 
@@ -619,96 +625,63 @@ def previously_managed(plugin_dir: Path) -> set[str]:
     return managed
 
 
-def stale_managed_paths(plugin_dir: Path, managed: set[str]) -> list[str]:
+def stale_managed_paths(config: PortConfig, plugin_dir: Path, managed: set[str]) -> list[str]:
     """Managed paths an earlier run recorded that the current plan no longer produces.
 
     The single place the stale set is computed, so the write path and the check
     path cannot disagree about what synchronization is allowed to delete.
 
-    `SUPERSEDED_BY_TARGET_OWNED` is subtracted because a superseded path is
-    target-owned, and target-owned source is never removed here. A tree
-    synchronized before the custody change still carries a manifest recording
-    `README.md` as an upstream byte copy; without this subtraction the first run
-    after the change would read that entry, find the path absent from the plan,
-    and unlink the portable README outright -- a worse outcome than the
-    overwrite the change exists to prevent.
+    The descriptor's `superseded_by_target_owned` list is subtracted because a
+    superseded path is target-owned, and target-owned source is never removed
+    here. A tree synchronized before the custody change still carries a manifest
+    recording UniFi's `README.md` as an upstream byte copy; without this
+    subtraction the first run after the change would read that entry, find the
+    path absent from the plan, and unlink the portable README outright -- a
+    worse outcome than the overwrite the change exists to prevent.
 
     Every returned path has already been through `resolve_managed_path` inside
     `previously_managed`, so a manifest naming a path outside the package still
     raises here rather than reaching a caller.
     """
-    return sorted(previously_managed(plugin_dir) - managed - set(SUPERSEDED_BY_TARGET_OWNED))
+    superseded = set(config.custody.superseded_by_target_owned)
+    return sorted(previously_managed(plugin_dir) - managed - superseded)
 
 
 def build_manifest(
+    config: PortConfig,
     planned: list[PlannedFile],
     *,
     commit: str,
     version: str,
     plugin_dir: Path,
 ) -> dict[str, Any]:
+    """The provenance manifest for one synchronization run.
+
+    The `notes` are the descriptor's rather than this script's. They explain one
+    package's derivation in that package's own terms -- which paths it drops and
+    why, which upstream file its README supersedes -- and a second package that
+    inherited the first package's prose would ship a manifest that describes
+    something it is not.
+    """
     managed = {item.target_path for item in planned}
-    files = [item.manifest_entry() for item in planned]
+    files = [item.manifest_entry(config) for item in planned]
     files.extend(
         {"path": path, "classification": TARGET_OWNED}
         for path in target_owned_paths(plugin_dir, managed)
     )
     return {
-        "source_repository": SOURCE_REPOSITORY,
+        "source_repository": config.source.repository,
         "source_commit": commit,
         "source_version": version,
-        "source_package_path": SOURCE_PACKAGE_PATH,
+        "source_package_path": config.source.package_path,
         "generated_by": GENERATED_BY,
-        "notes": [
-            "The portable copy is a derived artifact, never a second writable source. The "
-            "pinned commit is the corrected upstream revision: the documentation repair, the "
-            "topology relocation, and the removal of the hard-coded controller default are all "
-            "included at it. Synchronizing from an earlier revision would re-import the defects "
-            "that repair removed.",
-            "Paths in `files` are relative to this package root, which is what the repository "
-            "validator resolves. `source_path` is relative to the upstream repository root.",
-            "Every path carries exactly one classification. An upstream byte copy is overwritten "
-            "on each synchronization and its digest must equal its source digest exactly; where "
-            "the portable tree would need a different byte, the repair is authored upstream "
-            "first. Target-owned portable source is authored in this repository rather than "
-            "derived from the pinned commit; it records no digest and is never overwritten and "
-            "never removed here. Most target-owned paths have no upstream counterpart at all. "
-            "README.md is the one that supersedes an upstream path of the same name: it "
-            "documents this portable package rather than the Claude plugin, so the upstream "
-            "bytes at that path are deliberately never read and never written, which the "
-            "custody table in scripts/sync_vendor_source.py records as a superseded path rather "
-            "than leaving it unclassified.",
-            "The client extension directory com.infiquetra.claude/ mirrors the upstream package "
-            "root path for path, so every Claude-custody file's origin is readable from its "
-            "portable path and every one of them stays a byte copy. The Claude Code manifest is "
-            "the single exception inside that directory: it is lifted out of .claude-plugin/, "
-            "whose name is a loading convention with no meaning inside the extension directory, "
-            "and whose portable counterpart already occupies the package root.",
-            "Both fleet_commons_shim.py copies are dropped rather than copied, because the "
-            "build-time Fleet Core bundle replaces them and their resolution ladder is "
-            "Claude-specific discovery the portable package must not retain. Dropping the shim "
-            "while copying the clients verbatim is what left this package with no working "
-            "entrypoint: both clients import fleet_commons_shim at module scope, so `--help` "
-            "raised ModuleNotFoundError before any argument was parsed. The two clients are "
-            "therefore deterministic transforms rather than byte copies. The "
-            "resolve-bundled-fleet-module rule rewrites that one import to the generated "
-            "bundle in the " + BUNDLE_DIRECTORY_NAME + "/ directory beside each client, "
-            "records the source digest, the output digest, and the transform version here, "
-            "and is re-applied on every "
-            "synchronization, so a later run cannot silently restore the broken import. This "
-            "is not a downstream edit smuggled past the byte-copy rule: it is a versioned rule "
-            "over the pinned source, reproducible from the source bytes alone.",
-        ],
+        "notes": list(config.notes),
         "removed_from_source": [
             {
-                "source_path": f"{SOURCE_PACKAGE_PATH}/{relative}",
-                "reason": (
-                    "Replaced by the build-time Fleet Core bundle; its resolution ladder is "
-                    "Claude-specific runtime discovery, which the portable package must not "
-                    "retain."
-                ),
+                "source_path": f"{config.source.package_path}/{relative}",
+                "reason": config.dropped_reason,
             }
-            for relative in DROPPED_FROM_SOURCE
+            for relative in config.custody.dropped_from_source
         ],
         "files": files,
     }
@@ -718,7 +691,7 @@ def manifest_text(manifest: dict[str, Any]) -> str:
     return json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
 
 
-def apply_plan(planned: list[PlannedFile], plugin_dir: Path) -> list[str]:
+def apply_plan(config: PortConfig, planned: list[PlannedFile], plugin_dir: Path) -> list[str]:
     """Write every managed path, verify each byte copy, and drop stale managed paths.
 
     The stale set is read and validated first, before a single byte is written:
@@ -726,7 +699,7 @@ def apply_plan(planned: list[PlannedFile], plugin_dir: Path) -> list[str]:
     than leaving a half-synchronized tree behind.
     """
     managed = {item.target_path for item in planned}
-    stale_paths = stale_managed_paths(plugin_dir, managed)
+    stale_paths = stale_managed_paths(config, plugin_dir, managed)
     written: list[str] = []
     for item in planned:
         destination = resolve_managed_path(plugin_dir, item.target_path)
@@ -751,7 +724,7 @@ def apply_plan(planned: list[PlannedFile], plugin_dir: Path) -> list[str]:
     return written
 
 
-def verify_plan(planned: list[PlannedFile], plugin_dir: Path) -> list[str]:
+def verify_plan(config: PortConfig, planned: list[PlannedFile], plugin_dir: Path) -> list[str]:
     """Report every difference between the plan and the tree, writing nothing."""
     errors: list[str] = []
     for item in planned:
@@ -771,13 +744,14 @@ def verify_plan(planned: list[PlannedFile], plugin_dir: Path) -> list[str]:
                 f"synchronized file does not match its planned output: {item.target_path} "
                 f"(planned {item.output_digest}, content {actual})"
             )
-    for stale in stale_managed_paths(plugin_dir, {item.target_path for item in planned}):
+    for stale in stale_managed_paths(config, plugin_dir, {item.target_path for item in planned}):
         if resolve_managed_path(plugin_dir, stale).is_file():
             errors.append(f"stale synchronized file no longer in the plan: {stale}")
     return errors
 
 
 def synchronize(
+    config: PortConfig,
     source: Path,
     commit: str,
     *,
@@ -788,15 +762,18 @@ def synchronize(
     source = Path(source).resolve()
     resolved = resolve_commit(source, commit)
     require_clean_checkout(source)
-    planned = plan_sync(source, resolved)
-    plugin_dir = package_directory(root)
-    version = source_version(source, resolved)
+    planned = plan_sync(config, source, resolved)
+    plugin_dir = package_directory(config, root)
+    version = source_version(config, source, resolved)
 
     if check_only:
-        errors = verify_plan(planned, plugin_dir)
+        errors = verify_plan(config, planned, plugin_dir)
         manifest = plugin_dir / PROVENANCE_FILENAME
-        expected = manifest_text(build_manifest(planned, commit=resolved, version=version,
-                                                plugin_dir=plugin_dir))
+        expected = manifest_text(
+            build_manifest(
+                config, planned, commit=resolved, version=version, plugin_dir=plugin_dir
+            )
+        )
         if not manifest.is_file():
             errors.append(f"missing provenance manifest: {PROVENANCE_FILENAME}")
         elif manifest.read_text(encoding="utf-8") != expected:
@@ -805,8 +782,10 @@ def synchronize(
             )
         return errors, resolved
 
-    written = apply_plan(planned, plugin_dir)
-    manifest = build_manifest(planned, commit=resolved, version=version, plugin_dir=plugin_dir)
+    written = apply_plan(config, planned, plugin_dir)
+    manifest = build_manifest(
+        config, planned, commit=resolved, version=version, plugin_dir=plugin_dir
+    )
     manifest_path = plugin_dir / PROVENANCE_FILENAME
     text = manifest_text(manifest)
     if not manifest_path.is_file() or manifest_path.read_text(encoding="utf-8") != text:
@@ -817,14 +796,20 @@ def synchronize(
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description=(
-            "Derive the portable UniFi package from a pinned infiquetra-claude-plugins revision."
-        )
+        description="Derive a portable package from a pinned revision of its upstream repository."
+    )
+    parser.add_argument(
+        "--package",
+        required=True,
+        help=(
+            "the package to derive, named by its descriptor under "
+            f"{port_config.CONFIG_DIRECTORY_NAME}/"
+        ),
     )
     parser.add_argument(
         "--source",
         required=True,
-        help="path to a local infiquetra-claude-plugins checkout",
+        help="path to a local checkout of the upstream repository the descriptor names",
     )
     parser.add_argument(
         "--commit",
@@ -842,19 +827,21 @@ def build_argument_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     arguments = build_argument_parser().parse_args(argv)
     try:
+        config = load_config(arguments.package)
         messages, resolved = synchronize(
-            Path(arguments.source), arguments.commit, check_only=arguments.check
+            config, Path(arguments.source), arguments.commit, check_only=arguments.check
         )
     except SyncError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
+    repository = config.source.repository
     if arguments.check:
         if messages:
             for message in messages:
                 print(f"ERROR: {message}", file=sys.stderr)
             return 1
-        print(f"Portable {TARGET_PACKAGE} package matches {SOURCE_REPOSITORY} at {resolved}.")
+        print(f"Portable {config.name} package matches {repository} at {resolved}.")
         return 0
 
     if messages:
@@ -862,7 +849,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"wrote {message}")
     else:
         print("No change: the portable package already matches the pinned commit.")
-    print(f"Synchronized plugins/{TARGET_PACKAGE} from {SOURCE_REPOSITORY} at {resolved}.")
+    print(f"Synchronized {config.package_root} from {repository} at {resolved}.")
     return 0
 
 

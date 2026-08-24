@@ -78,6 +78,7 @@ for the contract itself.
 | Path | Purpose |
 |---|---|
 | [`plugins/`](plugins/) | Portable packages, each derived from a pinned upstream revision |
+| [`ports/`](ports/README.md) | One port descriptor per package: identity, custody, and assessment settings |
 | [`schemas/`](schemas/) | JSON Schemas for the contracts this repository validates |
 | [`scripts/`](scripts/) | Validation, synchronization, bundling, and inventory tools |
 | [`docs/`](docs/README.md) | Architecture, public guidance, and durable repository knowledge |

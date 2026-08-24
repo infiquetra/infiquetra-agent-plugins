@@ -43,7 +43,14 @@ import check_repo  # noqa: E402
 import sync_vendor_source as svs  # noqa: E402
 
 
-PACKAGE = ROOT / "plugins" / svs.TARGET_PACKAGE
+#: The committed UniFi port descriptor. Every package-specific value these
+#: tests need comes from it rather than from a constant restated here, so a
+#: descriptor that stopped describing the shipped package fails these tests
+#: rather than passing them against a stale copy of its own contents.
+CONFIG = svs.load_config("unifi", ROOT)
+
+
+PACKAGE = ROOT / "plugins" / CONFIG.name
 
 
 def bundle_beside(client: Path, module: str = "retry_backoff") -> Path:
@@ -118,7 +125,7 @@ class EntrypointTests(unittest.TestCase):
         self.stubs = write_transport_stubs(Path(self._temporary.name) / "stubs")
 
     def test_every_client_entrypoint_imports_cleanly_and_prints_usage(self) -> None:
-        for relative in svs.PORTABLE_ENTRYPOINT_TRANSFORMS:
+        for relative in CONFIG.custody.entrypoint_transforms:
             with self.subTest(client=relative):
                 script = PACKAGE / relative
                 self.assertTrue(script.is_file(), f"the package does not ship {relative}")
@@ -140,7 +147,7 @@ class EntrypointTests(unittest.TestCase):
         The clients exit 1 on an absent API key, so a `--help` that reached the
         client constructor would fail here rather than print usage.
         """
-        for relative in svs.PORTABLE_ENTRYPOINT_TRANSFORMS:
+        for relative in CONFIG.custody.entrypoint_transforms:
             with self.subTest(client=relative):
                 completed = run_entrypoint(PACKAGE / relative, "--help", stubs=self.stubs)
                 self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -166,7 +173,7 @@ class BundleResolutionTests(unittest.TestCase):
         shutil.copytree(PACKAGE, self.copy)
 
     def test_the_generated_bundle_is_where_the_clients_resolve_it(self) -> None:
-        for relative in svs.PORTABLE_ENTRYPOINT_TRANSFORMS:
+        for relative in CONFIG.custody.entrypoint_transforms:
             with self.subTest(client=relative):
                 bundled = bundle_beside(PACKAGE / relative)
                 self.assertTrue(bundled.is_file(), f"no generated bundle at {bundled}")
@@ -178,9 +185,9 @@ class BundleResolutionTests(unittest.TestCase):
                 )
 
     def test_removing_the_generated_bundle_breaks_every_entrypoint(self) -> None:
-        for relative in svs.PORTABLE_ENTRYPOINT_TRANSFORMS:
+        for relative in CONFIG.custody.entrypoint_transforms:
             bundle_beside(self.copy / relative).unlink()
-        for relative in svs.PORTABLE_ENTRYPOINT_TRANSFORMS:
+        for relative in CONFIG.custody.entrypoint_transforms:
             with self.subTest(client=relative):
                 completed = run_entrypoint(self.copy / relative, "--help", stubs=self.stubs)
                 self.assertNotEqual(
@@ -192,7 +199,7 @@ class BundleResolutionTests(unittest.TestCase):
 
     def test_the_intact_copy_still_answers_help(self) -> None:
         """The control for the test above: the copy itself is not what breaks it."""
-        for relative in svs.PORTABLE_ENTRYPOINT_TRANSFORMS:
+        for relative in CONFIG.custody.entrypoint_transforms:
             with self.subTest(client=relative):
                 completed = run_entrypoint(self.copy / relative, "--help", stubs=self.stubs)
                 self.assertEqual(completed.returncode, 0, completed.stderr)

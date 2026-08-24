@@ -37,7 +37,62 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import check_repo  # noqa: E402
+import port_config  # noqa: E402
 import sync_vendor_source as svs  # noqa: E402
+
+
+#: The committed UniFi port descriptor. Every package-specific value these
+#: tests need comes from it rather than from a constant restated here, so a
+#: descriptor that stopped describing the shipped package fails these tests
+#: rather than passing them against a stale copy of its own contents.
+CONFIG = svs.load_config("unifi", ROOT)
+
+
+def variant_config(**custody_overrides: object) -> "port_config.PortConfig":
+    """The committed descriptor with one custody class replaced.
+
+    Built through `port_config.parse` rather than by mutating the loaded object,
+    so a variant that the validator would reject -- a path claimed twice, a
+    traversing path -- fails to construct here exactly as it would on disk. This
+    is what replaced patching a module constant: the custody table is data now,
+    and a test that wants a different table asks for a different descriptor.
+    """
+    custody = {
+        field: list(getattr(CONFIG.custody, field)) for field in port_config.CUSTODY_FIELDS
+    }
+    custody.update({key: list(value) for key, value in custody_overrides.items()})  # type: ignore[arg-type]
+    source = {
+        "repository": CONFIG.source.repository,
+        "package_path": CONFIG.source.package_path,
+    }
+    if CONFIG.source.manifest_path is not None:
+        source["manifest_path"] = CONFIG.source.manifest_path
+    if CONFIG.source.client_extension_dir is not None:
+        source["client_extension_dir"] = CONFIG.source.client_extension_dir
+    return port_config.parse(
+        {
+            "schema_version": port_config.SCHEMA_VERSION,
+            "package": CONFIG.name,
+            "package_root": CONFIG.package_root,
+            "package_manifest": CONFIG.package_manifest,
+            "source": source,
+            "custody": custody,
+            "assessment": {
+                "credential_prefixes": list(CONFIG.assessment.credential_prefixes),
+                "package_scripts": list(CONFIG.assessment.package_scripts),
+                "mutating_operations": sorted(CONFIG.assessment.mutating_operations),
+                "entrypoints": list(CONFIG.assessment.entrypoints),
+                "skill_units": list(CONFIG.assessment.skill_units),
+                "declared_none": list(CONFIG.assessment.declared_none),
+            },
+            "provenance": {
+                "notes": list(CONFIG.notes),
+                "dropped_reason": CONFIG.dropped_reason,
+            },
+        },
+        root=CONFIG.root,
+        path=CONFIG.path,
+    )
 
 
 # The corrected upstream revision this pilot synchronizes from. Requirement R3
@@ -184,7 +239,7 @@ def make_source_checkout(directory: Path, files: dict[str, str] | None = None) -
     directory.mkdir(parents=True, exist_ok=True)
     git(directory, "init", "--quiet")
     for relative, body in (files or FIXTURE_SOURCE).items():
-        write(directory / svs.SOURCE_PACKAGE_PATH / relative, body)
+        write(directory / CONFIG.source.package_path / relative, body)
     git(directory, "add", "--all")
     git(directory, "commit", "--quiet", "--message", "fixture upstream package")
     return git(directory, "rev-parse", "HEAD").strip()
@@ -207,15 +262,15 @@ class SyncFixture(unittest.TestCase):
         base = Path(self._temporary.name)
         self.source = base / "upstream"
         self.target = base / "target"
-        (self.target / "plugins" / svs.TARGET_PACKAGE).mkdir(parents=True)
+        (self.target / "plugins" / CONFIG.name).mkdir(parents=True)
         self.commit = make_source_checkout(self.source)
 
     @property
     def package(self) -> Path:
-        return self.target / "plugins" / svs.TARGET_PACKAGE
+        return self.target / "plugins" / CONFIG.name
 
     def synchronize(self, **keywords: object) -> tuple[list[str], str]:
-        return svs.synchronize(self.source, self.commit, root=self.target, **keywords)
+        return svs.synchronize(CONFIG, self.source, self.commit, root=self.target, **keywords)
 
 
 # --- classification, digests, and idempotence ---------------------------------
@@ -236,9 +291,9 @@ class SynchronizedTreeTests(SyncFixture):
             self.assertEqual(check_repo.sha256_path(target), entry["sha256"], entry["path"])
         self.assertEqual(
             recorded,
-            len(svs.PORTABLE_BYTE_COPIES)
-            + len(svs.PORTABLE_ENTRYPOINT_TRANSFORMS)
-            + len(svs.CLIENT_BYTE_COPIES)
+            len(CONFIG.custody.byte_copies)
+            + len(CONFIG.custody.entrypoint_transforms)
+            + len(CONFIG.custody.client_byte_copies)
             + 1,
         )
         self.assertEqual(check_repo.check_provenance_manifests(self.target), [])
@@ -269,7 +324,7 @@ class SynchronizedTreeTests(SyncFixture):
         }
         self.assertEqual(
             sorted(transforms),
-            sorted([f"{svs.CLIENT_EXTENSION_DIR}/plugin.json", *svs.PORTABLE_ENTRYPOINT_TRANSFORMS]),
+            sorted([f"{CONFIG.source.client_extension_dir}/plugin.json", *CONFIG.custody.entrypoint_transforms]),
         )
         for path, entry in transforms.items():
             with self.subTest(path=path):
@@ -278,14 +333,14 @@ class SynchronizedTreeTests(SyncFixture):
                 self.assertTrue(entry["transform_rule"].strip())
                 self.assertTrue(entry["transform_version"].strip())
 
-        manifest_entry = transforms[f"{svs.CLIENT_EXTENSION_DIR}/plugin.json"]
+        manifest_entry = transforms[f"{CONFIG.source.client_extension_dir}/plugin.json"]
         self.assertEqual(
             manifest_entry["source_path"], "plugins/unifi/.claude-plugin/plugin.json"
         )
         self.assertEqual(manifest_entry["transform"], svs.MANIFEST_TRANSFORM_NAME)
         self.assertEqual(manifest_entry["transform_version"], svs.MANIFEST_TRANSFORM_VERSION)
 
-        for relative in svs.PORTABLE_ENTRYPOINT_TRANSFORMS:
+        for relative in CONFIG.custody.entrypoint_transforms:
             entry = transforms[relative]
             self.assertEqual(entry["transform"], svs.BUNDLED_TRANSFORM_NAME)
             self.assertEqual(entry["transform_version"], svs.BUNDLED_TRANSFORM_VERSION)
@@ -307,10 +362,10 @@ class SynchronizedTreeTests(SyncFixture):
     def test_neither_fleet_commons_shim_appears_in_the_output(self) -> None:
         self.synchronize()
         self.assertIn(
-            "skills/unifi-network/scripts/fleet_commons_shim.py", svs.DROPPED_FROM_SOURCE
+            "skills/unifi-network/scripts/fleet_commons_shim.py", CONFIG.custody.dropped_from_source
         )
         self.assertIn(
-            "skills/unifi-protect/scripts/fleet_commons_shim.py", svs.DROPPED_FROM_SOURCE
+            "skills/unifi-protect/scripts/fleet_commons_shim.py", CONFIG.custody.dropped_from_source
         )
         found = [str(path) for path in self.package.rglob("fleet_commons_shim.py")]
         self.assertEqual(found, [])
@@ -319,7 +374,7 @@ class SynchronizedTreeTests(SyncFixture):
 
     def test_claude_manifest_lands_under_the_client_extension_directory(self) -> None:
         self.synchronize()
-        relocated = self.package / svs.CLIENT_EXTENSION_DIR / "plugin.json"
+        relocated = self.package / CONFIG.source.client_extension_dir / "plugin.json"
         self.assertTrue(relocated.is_file())
         self.assertEqual(relocated.read_text(encoding="utf-8"), FIXTURE_MANIFEST)
         self.assertFalse((self.package / ".claude-plugin").exists())
@@ -341,7 +396,7 @@ class SynchronizedTreeTests(SyncFixture):
             "sys.path.insert(0, str(Path(__file__).resolve().parent / "
             f'"{svs.BUNDLE_DIRECTORY_NAME}"))'
         )
-        for relative in svs.PORTABLE_ENTRYPOINT_TRANSFORMS:
+        for relative in CONFIG.custody.entrypoint_transforms:
             with self.subTest(client=relative):
                 body = (self.package / relative).read_text(encoding="utf-8")
                 self.assertIsNone(SHIM_USE.search(body))
@@ -351,7 +406,7 @@ class SynchronizedTreeTests(SyncFixture):
     def test_resynchronizing_re_applies_the_rule_rather_than_restoring_the_shim(self) -> None:
         """A later synchronization must not silently put the broken import back."""
         self.synchronize()
-        relative = svs.PORTABLE_ENTRYPOINT_TRANSFORMS[0]
+        relative = CONFIG.custody.entrypoint_transforms[0]
         client = self.package / relative
         transformed = client.read_text(encoding="utf-8")
 
@@ -368,9 +423,9 @@ class SynchronizedTreeTests(SyncFixture):
 
     def test_client_custody_files_keep_their_upstream_relative_path(self) -> None:
         self.synchronize()
-        for relative in svs.CLIENT_BYTE_COPIES:
+        for relative in CONFIG.custody.client_byte_copies:
             self.assertTrue(
-                (self.package / svs.CLIENT_EXTENSION_DIR / relative).is_file(),
+                (self.package / CONFIG.source.client_extension_dir / relative).is_file(),
                 f"client-custody file missing: {relative}",
             )
 
@@ -382,7 +437,7 @@ class RefusalTests(SyncFixture):
     def test_a_dirty_checkout_is_refused(self) -> None:
         # The witness is a path synchronization actually writes. README.md is
         # target-owned and is never written, so its absence would prove nothing.
-        dirtied = self.source / svs.SOURCE_PACKAGE_PATH / "CHANGELOG.md"
+        dirtied = self.source / CONFIG.source.package_path / "CHANGELOG.md"
         dirtied.write_text("# edited after the commit\n", encoding="utf-8")
         with self.assertRaises(svs.SyncError) as caught:
             self.synchronize()
@@ -395,7 +450,7 @@ class RefusalTests(SyncFixture):
         self.assertIn("CHANGELOG.md", written)
 
     def test_an_unclassified_upstream_path_is_refused(self) -> None:
-        write(self.source / svs.SOURCE_PACKAGE_PATH / "hooks" / "hooks.json", "{}\n")
+        write(self.source / CONFIG.source.package_path / "hooks" / "hooks.json", "{}\n")
         git(self.source, "add", "--all")
         git(self.source, "commit", "--quiet", "--message", "add an unclassified path")
         self.commit = git(self.source, "rev-parse", "HEAD").strip()
@@ -417,7 +472,7 @@ class RefusalTests(SyncFixture):
         base = Path(self._temporary.name) / "upstream-without-shim"
         commit = make_source_checkout(base, source)
         with self.assertRaises(svs.SyncError) as caught:
-            svs.synchronize(base, commit, root=self.target)
+            svs.synchronize(CONFIG, base, commit, root=self.target)
         message = str(caught.exception)
         self.assertIn("skills/unifi-network/scripts/unifi_network_client.py", message)
         self.assertIn("found 0", message)
@@ -433,12 +488,12 @@ class RefusalTests(SyncFixture):
         base = Path(self._temporary.name) / "upstream-twice"
         commit = make_source_checkout(base, source)
         with self.assertRaises(svs.SyncError) as caught:
-            svs.synchronize(base, commit, root=self.target)
+            svs.synchronize(CONFIG, base, commit, root=self.target)
         self.assertIn("found 2", str(caught.exception))
 
     def test_a_missing_commit_is_refused(self) -> None:
         with self.assertRaises(svs.SyncError):
-            svs.synchronize(self.source, "0" * 40, root=self.target)
+            svs.synchronize(CONFIG, self.source, "0" * 40, root=self.target)
 
     def test_a_byte_copy_that_differs_from_its_source_fails_and_is_never_a_transform(self) -> None:
         self.synchronize()
@@ -561,7 +616,7 @@ class TargetOwnedTests(SyncFixture):
             {
                 "path": "README.md",
                 "classification": check_repo.BYTE_COPY,
-                "source_path": f"{svs.SOURCE_PACKAGE_PATH}/README.md",
+                "source_path": f"{CONFIG.source.package_path}/README.md",
                 "sha256": check_repo.sha256_text(FIXTURE_SOURCE["README.md"]),
             }
         )
@@ -587,18 +642,17 @@ class TargetOwnedTests(SyncFixture):
         anything. The superseded set is what keeps that refusal honest after the
         custody change.
         """
-        self.assertNotIn("README.md", svs.PORTABLE_BYTE_COPIES)
-        self.assertIn("README.md", svs.SUPERSEDED_BY_TARGET_OWNED)
-        svs.classify_source_tree(sorted(FIXTURE_SOURCE))
+        self.assertNotIn("README.md", CONFIG.custody.byte_copies)
+        self.assertIn("README.md", CONFIG.custody.superseded_by_target_owned)
+        svs.classify_source_tree(CONFIG, sorted(FIXTURE_SOURCE))
 
-        without_supersession = tuple(
-            name for name in svs.SUPERSEDED_BY_TARGET_OWNED if name != "README.md"
+        without_supersession = variant_config(
+            superseded_by_target_owned=[
+                name for name in CONFIG.custody.superseded_by_target_owned if name != "README.md"
+            ]
         )
-        with unittest.mock.patch.object(
-            svs, "SUPERSEDED_BY_TARGET_OWNED", without_supersession
-        ):
-            with self.assertRaises(svs.SyncError) as caught:
-                svs.classify_source_tree(sorted(FIXTURE_SOURCE))
+        with self.assertRaises(svs.SyncError) as caught:
+            svs.classify_source_tree(without_supersession, sorted(FIXTURE_SOURCE))
         self.assertIn("no custody assignment", str(caught.exception))
         self.assertIn("plugins/unifi/README.md", str(caught.exception))
 
@@ -653,7 +707,7 @@ class ManifestPathSafetyTests(SyncFixture):
             {
                 "path": path_value,
                 "classification": check_repo.BYTE_COPY,
-                "source_path": f"{svs.SOURCE_PACKAGE_PATH}/retired.py",
+                "source_path": f"{CONFIG.source.package_path}/retired.py",
                 "sha256": check_repo.sha256_text("DO NOT DELETE\n"),
             }
         )
@@ -736,7 +790,7 @@ class ManifestPathSafetyTests(SyncFixture):
 
 
 def _skip_unless_shipped(test: unittest.TestCase) -> Path:
-    package = ROOT / "plugins" / svs.TARGET_PACKAGE
+    package = ROOT / "plugins" / CONFIG.name
     if not (package / "PROVENANCE.json").is_file():
         test.skipTest("the portable unifi package has not been synchronized yet")
     return package
@@ -755,7 +809,7 @@ class ShippedPackageTests(unittest.TestCase):
             "requirement R3 forbids pinning the revision before the upstream repair",
         )
         self.assertEqual(commit, CORRECTED_REVISION)
-        self.assertEqual(manifest["source_repository"], svs.SOURCE_REPOSITORY)
+        self.assertEqual(manifest["source_repository"], CONFIG.source.repository)
 
     def test_the_custody_table_agrees_with_the_recorded_classification(self) -> None:
         """The generator and the shipped manifest must not disagree about custody.
@@ -769,14 +823,14 @@ class ShippedPackageTests(unittest.TestCase):
         manifest = json.loads((self.package / "PROVENANCE.json").read_text(encoding="utf-8"))
         recorded = {entry["path"]: entry["classification"] for entry in manifest["files"]}
         expected: dict[str, str] = {}
-        for relative in svs.PORTABLE_BYTE_COPIES:
+        for relative in CONFIG.custody.byte_copies:
             expected[relative] = check_repo.BYTE_COPY
-        for relative in svs.CLIENT_BYTE_COPIES:
-            expected[f"{svs.CLIENT_EXTENSION_DIR}/{relative}"] = check_repo.BYTE_COPY
-        for relative in svs.PORTABLE_ENTRYPOINT_TRANSFORMS:
+        for relative in CONFIG.custody.client_byte_copies:
+            expected[f"{CONFIG.source.client_extension_dir}/{relative}"] = check_repo.BYTE_COPY
+        for relative in CONFIG.custody.entrypoint_transforms:
             expected[relative] = check_repo.TRANSFORM
-        expected[f"{svs.CLIENT_EXTENSION_DIR}/plugin.json"] = check_repo.TRANSFORM
-        for relative in svs.SUPERSEDED_BY_TARGET_OWNED:
+        expected[f"{CONFIG.source.client_extension_dir}/plugin.json"] = check_repo.TRANSFORM
+        for relative in CONFIG.custody.superseded_by_target_owned:
             expected[relative] = check_repo.TARGET_OWNED
 
         for path, classification in expected.items():
@@ -788,19 +842,19 @@ class ShippedPackageTests(unittest.TestCase):
                     f"about {path}",
                 )
 
-        for relative in svs.DROPPED_FROM_SOURCE:
+        for relative in CONFIG.custody.dropped_from_source:
             with self.subTest(dropped=relative):
                 self.assertNotIn(relative, recorded)
 
     def test_portable_manifest_carries_the_canonical_schema_and_a_conformant_name(self) -> None:
         manifest = json.loads((self.package / "plugin.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["$schema"], check_repo.PLUGIN_SCHEMA)
-        self.assertEqual(manifest["name"], svs.TARGET_PACKAGE)
+        self.assertEqual(manifest["name"], CONFIG.name)
         self.assertEqual(manifest["name"], self.package.name)
         self.assertEqual(check_repo.check_plugin_manifests(ROOT), [])
 
     def test_the_claude_manifest_is_not_at_the_plugin_root(self) -> None:
-        self.assertTrue((self.package / svs.CLIENT_EXTENSION_DIR / "plugin.json").is_file())
+        self.assertTrue((self.package / CONFIG.source.client_extension_dir / "plugin.json").is_file())
         root_manifest = json.loads((self.package / "plugin.json").read_text(encoding="utf-8"))
         self.assertIn("$schema", root_manifest, "the plugin root carries the portable manifest")
         self.assertFalse((self.package / ".claude-plugin").exists())
@@ -827,7 +881,7 @@ class ShippedPackageTests(unittest.TestCase):
         rewritten block keeps a comment naming the shim it replaced, and that
         sentence is the reason a later reader will not put the import back.
         """
-        for relative in svs.PORTABLE_ENTRYPOINT_TRANSFORMS:
+        for relative in CONFIG.custody.entrypoint_transforms:
             with self.subTest(client=relative):
                 body = (self.package / relative).read_text(encoding="utf-8")
                 self.assertIsNone(SHIM_USE.search(body), f"{relative} still reaches for the shim")
@@ -835,12 +889,12 @@ class ShippedPackageTests(unittest.TestCase):
     def test_shipped_clients_are_transforms_and_the_bundle_they_import_exists(self) -> None:
         manifest = json.loads((self.package / "PROVENANCE.json").read_text(encoding="utf-8"))
         entries = {entry["path"]: entry for entry in manifest["files"]}
-        for relative in svs.PORTABLE_ENTRYPOINT_TRANSFORMS:
+        for relative in CONFIG.custody.entrypoint_transforms:
             with self.subTest(client=relative):
                 entry = entries[relative]
                 self.assertEqual(entry["classification"], check_repo.TRANSFORM)
                 self.assertEqual(entry["transform"], svs.BUNDLED_TRANSFORM_NAME)
-        for relative in svs.PORTABLE_ENTRYPOINT_TRANSFORMS:
+        for relative in CONFIG.custody.entrypoint_transforms:
             with self.subTest(client=relative):
                 bundled = bundle_beside(Path(relative))
                 self.assertTrue(
@@ -867,7 +921,7 @@ class ShippedPackageTests(unittest.TestCase):
             for destination in module["destinations"]
         }
         resolved = {
-            bundle_beside(Path(relative)) for relative in svs.PORTABLE_ENTRYPOINT_TRANSFORMS
+            bundle_beside(Path(relative)) for relative in CONFIG.custody.entrypoint_transforms
         }
         self.assertTrue(
             resolved <= declared,
@@ -1044,7 +1098,7 @@ class CommandSurfaceTests(unittest.TestCase):
             with self.subTest(client=relative):
                 name = Path(relative).stem
                 upstream = command_surface(
-                    svs.read_source_file(checkout, commit, relative), f"upstream_{name}"
+                    svs.read_source_file(CONFIG, checkout, commit, relative), f"upstream_{name}"
                 )
                 ported = command_surface(
                     (self.package / relative).read_bytes(), f"ported_{name}"

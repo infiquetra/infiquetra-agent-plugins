@@ -151,6 +151,40 @@ class RepositoryValidationTests(unittest.TestCase):
             self.assertEqual(check_repo.check_skill_frontmatter(root), [])
 
 
+class PortDescriptorGateTests(unittest.TestCase):
+    """The gate must actually run the descriptor check, not merely define it.
+
+    `check_port_descriptors` had tests of its own and the aggregation that calls
+    it had none, so deleting the one line that wires it into `check_repo` failed
+    nothing: every descriptor test still passed while the gate no longer looked
+    at a single descriptor.
+    """
+
+    @staticmethod
+    def broken_descriptor(root: Path) -> None:
+        (root / "ports").mkdir(parents=True, exist_ok=True)
+        (root / "ports" / "example.json").write_text(
+            json.dumps({"schema_version": "2", "package": "example"}), encoding="utf-8"
+        )
+
+    def test_the_gate_reports_a_descriptor_that_does_not_load(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.broken_descriptor(root)
+            problems = check_repo.check_repo(root)
+        self.assertTrue(
+            any(problem.startswith("port descriptor") for problem in problems),
+            f"check_repo did not run the descriptor check; it reported {problems}",
+        )
+
+    def test_the_descriptor_check_finds_it_on_its_own_too(self) -> None:
+        """So a failure of the test above localizes to the wiring, not the check."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.broken_descriptor(root)
+            self.assertTrue(check_repo.check_port_descriptors(root))
+
+
 class ProvenanceManifestTests(unittest.TestCase):
     def test_package_without_provenance_manifest_passes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

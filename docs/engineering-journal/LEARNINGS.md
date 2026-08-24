@@ -1,6 +1,524 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-08-24
+
+### A second home that does not inherit the first home's invariant is the same defect again
+
+**Author.** Jeff Cox and Grok
+
+**Context.** Three consecutive review rounds of PR #6 shipped the same defect shape: a
+value acquired a second home and only one writer or reader learned about it. Round 2's
+repairs caused two of round 3's findings; round 3's repairs caused two of round 4's.
+
+**Evidence.** Round 3 added `run_directory` so the transcript write path and the
+command-line announcement were one value, and `assess` accepted any truthy path —
+skipping the emptiness and workspace-containment invariant `allocate_run_directory`
+existed to enforce. Round 3 also started recording `commands` on blocked stages, and
+`check_record_version` still skipped every non-executed stage before checking that
+`command` equals `commands[0].command`, so a blocked row could name two different
+first commands. Round 3 recorded a deadline kill as `exit_status: -1` in both the
+public `StageCommand` and the private `CommandTranscript`; subprocess returncode is
+`-N` for signal N, so SIGHUP is exactly `-1`.
+
+**Mechanism.** Each repair created a new home for a value (a parameter, a list on a
+newly eligible stage, a sentinel) and updated the site that motivated the repair.
+The other homes — the freshness guard, the alias check, the wait-status meaning of
+`-1`, the private transcript — kept their old assumptions. The tests that existed
+each pinned one home.
+
+**Generalizable rule.** Before writing a fix, enumerate every producer and every
+consumer of the value — every writer, every reader, every validator, every document
+that describes it — and check each one. A fix that updates the producer and leaves
+a consumer stale is the failure mode, and it has a 100% recurrence rate in this PR
+so far. Put the enumeration in the commit message so it is auditable.
+
+**Refs.** `scripts/assess_clients.py` (`require_fresh_run_directory`, `StageCommand`),
+`scripts/check_compatibility_matrix.py` (`check_record_version`),
+`tests/test_assess_clients.py::WorkspaceFreshnessTest::test_a_supplied_run_directory_that_already_holds_a_run_is_refused`,
+`tests/test_check_compatibility_matrix.py::PerCommandStatusRecordTest::test_a_non_executed_stage_command_must_still_match_its_first_status`.
+
+### A published proof is annotated, not rewritten, when it overclaims a test
+
+**Author.** Jeff Cox and Grok
+
+**Context.** Cycle 13's evidence header said the escaped-descendant test "confirms the
+descendant really does survive". The test's own docstring said it deliberately
+asserts nothing about whether the descendant lived: it created a marker file and
+never read it. Survival was observed by a separate uncommitted probe.
+
+**Evidence.** `docs/evidence/2026-08-23-cycle13-mutation-proof-portable-copies.txt`
+line 31 (as published). `tests/test_assess_clients.py::ProcessGroupTest::test_a_descendant_that_leaves_the_session_is_not_claimed_as_killed` as of cycle 13.
+
+**Mechanism.** The proof header described the intent of the test, not the assertions
+it contained. A reader of the evidence file, and a later mutation-proof summary,
+would treat survival as something the suite established. The repository's rule that
+a published proof is never hand-corrected to say something more convenient is about
+digest blocks and manufactured green baselines, not about leaving a false claim in
+place. The honest form keeps the original sentence and dates a correction beside it;
+making the test assert the marker going forward does not make the cycle-13 sentence
+true of that run.
+
+**Generalizable rule.** A published proof may be annotated to say less than it did,
+never silently rewritten to say something more convenient, and never left claiming
+more than something checkable established. If the claim should be true, make the
+test assert it, and say in the note that the assertion was not part of the original
+run.
+
+**Refs.** `docs/evidence/2026-08-23-cycle13-mutation-proof-portable-copies.txt`,
+`tests/test_assess_clients.py::ProcessGroupTest::test_a_descendant_that_leaves_the_session_is_not_claimed_as_killed`,
+[the grading decision](DECISIONS.md#a-mutation-proof-excludes-its-own-binding-test-and-is-never-corrected-by-hand).
+
 ## 2026-08-23
+
+### Both regressions updated the producer and left the consumer behind
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Round two repaired seven review findings. Round three's independent review found
+three more, two of them introduced by those repairs.
+
+**Evidence.** The deadline repair added the timed-out command to the private transcript and did
+not add it to `commands`, so the public version-2 record named fewer commands than the stage
+started — and the post-run safety rule, which grades `commands`, never saw the one command that
+had been running unbounded. The run-directory repair moved the transcript to
+`<workspace>/run-NNN/transcript.json` and left the closing message naming
+`<workspace>/transcript.json`, so every executed assessment told the operator to open a file
+that did not exist.
+
+**Mechanism.** One shape twice: a value acquired a second home and only one writer learned
+about it. Each call site still read correctly on its own — the transcript append is right, the
+`commands` list is right, the write path is right, the message is right — and the defect lives
+in the disagreement, which no single-site review sees. Both survived a fifty-one-anchor mutation
+proof with zero survivors, because no anchor named the *relationship* between the two sites.
+
+**Generalizable rule.** After changing where a value is produced or stored, enumerate its
+consumers and check each one, rather than checking that the change itself is correct. And test
+the relationship end to end: the test that catches the path defect runs the real command line
+and opens the file it announces, which is the only form of the test that could not pass while
+the two sites disagreed.
+
+**Refs.** `scripts/assess_clients.py`,
+`tests/test_assess_clients.py::CommandLineTest::test_an_executed_run_prints_a_transcript_path_that_exists`,
+`tests/test_assess_clients.py::FailurePathTranscriptTest::test_the_timed_out_command_is_in_the_public_record_too`.
+
+### The cleanup reported containment for a boundary the client can step outside
+
+**Author.** Jeff Cox and Claude
+
+**Context.** When a stage hits its deadline the harness kills the child's process group and
+writes into the blocked row how thoroughly it cleaned up.
+
+**Evidence.** The sentence read "The whole process group was terminated, so no client descendant
+survived it." A probe: a launcher whose descendant calls `setsid` before sleeping. The
+descendant left the group, the kill did not reach it, the probe did not see it, the row said no
+descendant survived — and the descendant wrote its marker file three seconds later.
+
+**Mechanism.** `killpg` acts on a process group, and group membership is something a process can
+change. The sentence promised the goal — no client still running — while the mechanism delivered
+something narrower: this group is empty. Every part of the implementation was correct; the claim
+was wider than what the implementation could establish, and the gap only opens on the runs where
+it matters, because a client that escapes its group is exactly the client still doing something.
+
+**Generalizable rule.** State what the mechanism established, not what it was for. When the two
+differ, the sentence is a defect even though the code is not — and the honest form usually has
+to name the case it cannot cover, because a reader who is told "contained" will not go looking.
+
+**Refs.** `scripts/assess_clients.py` (`terminate_process_group`),
+`tests/test_assess_clients.py::ProcessGroupTest::test_a_descendant_that_leaves_the_session_is_not_claimed_as_killed`.
+
+### Zero survivors over fifty-one anchors said nothing about the three defects found next
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The mutation proof is the repository's evidence that a guard is tested: break the
+guard, watch an authorized test fail, restore.
+
+**Evidence.** Cycle 12 ran 51 anchors with 0 survivors on the exact revision an independent
+review then returned three P1 findings against. The reviewer named the reason precisely: "none
+of its mutation anchors exercises an escaped process session, the public representation of a
+timed-out later command, or the command-line transcript-path handoff."
+
+**Mechanism.** A mutation proof measures the anchors it has. Every anchor names a line someone
+already thought was load-bearing, so the proof reports on the guards that exist and is silent
+about the behaviour nobody wrote a guard for. Zero survivors is a statement about coverage of
+the anchor set, not about the code — and the more thorough the proof looks, the more readily its
+silence gets read as a clean bill.
+
+**Generalizable rule.** Read "0 survivors" as "every guard I listed is tested", never as "this is
+correct". The proof's value is bounded by the imagination of whoever wrote the anchor list, so
+pair it with something that does not share that imagination — an independent reviewer, an
+end-to-end probe, a run in an environment you do not control.
+
+**Refs.** `docs/evidence/2026-08-23-cycle13-mutation-proof-portable-copies.txt`,
+[the bookkeeping learning](LEARNINGS.md#the-mutation-proof-counted-its-own-bookkeeping-as-a-kill).
+
+### The mutation proof counted its own bookkeeping as a kill
+
+**Author.** Jeff Cox and Claude
+
+**Context.** `MutationProofBindingTest` hashes the five files the mutation proof grades and
+compares them to the digests published in the current proof, so a graded file cannot be edited
+without its proof being re-run. The proof runner mutated one guard at a time and counted a
+mutation killed when the suite went from green to failing.
+
+**Evidence.** Cycle 11 published "38 mutations, 0 survivors". Re-graded with that binding test
+excluded, seven of those same anchors turned out to have no test behind them at all — including
+one whose guard could have been deleted outright, and the entire version-2 per-command-status
+rule in the matrix validator, which shipped with no test of any of its three branches.
+
+**Mechanism.** Every mutation edits a graded file. Editing a graded file changes its digest.
+Changing its digest fails the binding test. So every mutation failed the suite whatever it did to
+the guard, and the runner read that as a kill. The two mechanisms were built a cycle apart, each
+correct alone: the binding test to stop a proof naming bytes that never shipped, the runner to
+detect a guard nothing tests. Composed, the first one satisfied the second's success condition
+for free.
+
+The tell was there and went unread. Several mutations reported `killed (1)` — one failing test —
+and that one test was always the binding test. A kill count of one is a claim that exactly one
+test in six hundred covers a guard, which is worth looking at even when it is true.
+
+**Generalizable rule.** When a check's own instrumentation is inside the system it measures, ask
+what the measurement reads when the thing being measured does nothing. Here the answer was
+"pass", which means the measurement was never about the guard. Any all-pass result from a
+detector is a claim about the detector before it is a claim about the code.
+
+**Refs.** `docs/evidence/2026-08-23-cycle12-mutation-proof-portable-copies.txt` (header),
+`tests/test_site_profile.py::MutationProofBindingTest`.
+
+### A green baseline was the one thing the proof could not honestly have
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The mutation runner refused to start unless the suite was green, so that a mutation
+that fails a test proves the mutation broke something rather than that something was already
+broken.
+
+**Evidence.** After the round-2 repairs changed three graded files, the suite failed three
+subtests of `MutationProofBindingTest`. To reach a green baseline the previous cycle's evidence
+file was edited: three recorded digests replaced with the current ones. That file's own header
+warns against exactly this — "a proof whose digest is corrected by hand afterwards identifies
+nothing, which is the cycle-7 defect this file's binding test exists to prevent."
+
+**Mechanism.** The proof run is what computes those digests, so the binding test cannot pass
+until the run it describes is published. A precondition that cannot be satisfied honestly does
+not stop the work; it selects for whichever dishonest route is nearest, and the nearest one here
+was retroactively editing evidence to describe a run that never happened.
+
+**Generalizable rule.** When a check can only be satisfied by breaking a rule the project holds,
+the check is wrong, not the rule. Fix the check rather than paying its price once and calling it
+done — the price gets paid again by whoever comes next, and they may not notice what it cost.
+
+**Refs.** `docs/evidence/2026-08-23-cycle12-mutation-proof-portable-copies.txt`,
+[the grading decision](DECISIONS.md#a-mutation-proof-excludes-its-own-binding-test-and-is-never-corrected-by-hand).
+
+### A mutation anchor that is a substring of another line grades the wrong guard
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Each mutation names the guard it breaks by an exact source excerpt, and the runner
+aborts if that excerpt does not appear exactly once.
+
+**Evidence.** The anchor for "harness discards captured client output" was
+`"        transcript.append("` — eight spaces. The repair that made the timeout path record its
+transcript added `transcript.append(` at twelve spaces, and the eight-space excerpt is a
+substring of the twelve-space line. The runner aborted after thirty-one minutes. A pre-flight
+pass over all forty-eight anchors then found a second unusable one the aborted run had not yet
+reached: the excerpt for "matrix safety rule reads only the first command" matched nothing at
+all, because the duplicate-grading repair had restructured that loop.
+
+**Mechanism.** Two independent hazards with one shape. An anchor is matched as a substring, so
+indentation does not bound it and a deeper copy of the same call silently makes it ambiguous.
+And an anchor is a claim about source that no longer exists once the source is edited — a repair
+to the guarded line quietly retires the proof of that guard. Both are invisible until the run
+reaches them, and the run reaches them one at a time, half an hour apart.
+
+**Generalizable rule.** Validate the whole set of preconditions before the expensive pass, not
+lazily as each is reached. The pre-flight here is thirty lines, runs in under a second, and turns
+two serial half-hour aborts into one report.
+
+**Refs.** the mutation runner and its anchor pre-flight (session scratchpad),
+[the grading decision](DECISIONS.md#a-mutation-proof-excludes-its-own-binding-test-and-is-never-corrected-by-hand).
+
+### Two repairs in a row fixed the instance and left the class
+
+**Author.** Jeff Cox and Claude
+
+**Context.** An independent review of the port-readiness change found a P0 — a launcher wrapper
+resolved as its own real binary, so it would exec itself until the host gave out — and a reliability
+defect where a stage's deadline did not contain the client's descendants. Both were repaired,
+mutation-proved, and shipped. The next review round found both again.
+
+**Evidence.**
+
+| Round | Defect | Repair | Why it did not hold |
+|---|---|---|---|
+| 1 | `which` returns the wrapper | return the first PATH entry that is **not the same file** as the wrapper | a second *copy* of the wrapper has a different inode, so `samefile` passes it |
+| 1 | `subprocess.run` kills only the direct child | `start_new_session=True`, then `os.getpgid(pid)` and signal the group | a launcher that exits leaves the descendant holding the pipes; `getpgid` on the exited leader raises, and the cleanup reported "the group had already exited" while the descendant kept writing |
+
+Both repairs were covered by mutation anchors, and both anchors passed, because each anchor tested
+the arrangement the repair was written against.
+
+**Mechanism.** Each repair encoded the *example* rather than the *predicate*. The predicate for the
+first is "which of several same-named executables is the launcher" — and nothing on disk answers it,
+so every rule of the form "the one that differs from the first" is a guess that happens to be right
+on the machine it was tried on. The predicate for the second is "signal the group", and resolving the
+group *through the leader* silently made it "signal the group, if the leader is still alive" — a
+precondition nobody stated and the probe did not vary.
+
+A mutation proof does not catch this. It shows a guard is load-bearing for the cases in its corpus;
+it says nothing about cases the corpus does not contain, and the corpus was written by the same
+person who wrote the too-narrow guard.
+
+**Fix.** Stop guessing and stop deriving. The real binary is now supplied by the operator
+(`--real-binary NAME=PATH`, or the client's own exported override) and refused otherwise — a blocked
+client with the requirement named is true, where a guessed path is a process bomb. The process group
+is signalled by `process.pid` directly, which `start_new_session=True` guarantees *is* the group id,
+with no lookup that can fail. Both corpora were widened to the class: a copied wrapper, a symlinked
+wrapper, an override naming the launcher itself; a leader that exits before its descendant.
+
+**Generalizable rule.** After repairing a defect, write down the predicate the repair now implements
+and ask what else satisfies it. If the answer is "the case I tested", the repair is the example
+again. And when a repair's predicate turns out to be unanswerable from the available evidence —
+which of these identical files is the real one — the correct repair is to stop answering it and
+require the input.
+
+**Refs.** `scripts/assess_clients.py` (`resolve_real_binary`, `terminate_process_group`),
+`tests/test_assess_clients.py::RealBinaryResolutionTest`, `::ProcessGroupTest`, cycle-12 mutation
+proof.
+
+### The zombie leader answered the question about its own descendants
+
+**Author.** Jeff Cox and Claude
+
+**Context.** When a stage hits its deadline the harness kills the child's whole process group
+and then asks whether the group still holds anyone, so the blocked stage's reason can say how
+thoroughly it was cleaned up.
+
+**Evidence.** On macOS the reason read "the process group could not be signalled; a client
+descendant may survive" while a probe showed the descendant was dead — its marker file never
+appeared. Reading the errno, `SIGTERM` had killed the descendant and the following `SIGKILL`
+raised `PermissionError` (EPERM) rather than `ProcessLookupError`. The first repair concluded
+that EPERM meant "nothing left to signal" and treated it as success. That made the sentence
+correct on macOS and the reasoning wrong, and CI said so: on Linux the same state answers the
+signal with plain success, so every timed-out stage there reported that a descendant might have
+survived. Two platforms, two errnos, one cause.
+
+**Mechanism.** The probe ran before the direct child was reaped. An unreaped child is a zombie,
+and a zombie is still a process entry that belongs to the group — so the group was never empty
+at the moment it was asked, and the answer described the corpse of the process the harness had
+just killed rather than any client. Which errno that produced is a platform detail; the ordering
+is the defect. Reaping the leader first makes an empty group answer `ProcessLookupError`
+everywhere, which is the only answer that means what it says.
+
+**Generalizable rule.** Before reading an error code as evidence, ask what question the call
+actually answered. Here the call was asked "is anything still running in this group" while the
+thing that had just been killed was still in it — no errno interpretation could have fixed that,
+and the one that appeared to was right by accident on the machine it was tried on. When two
+platforms disagree about a result, suspect the question before the codes.
+
+**Refs.** `scripts/assess_clients.py` (`terminate_process_group`),
+`tests/test_assess_clients.py::ProcessGroupTest::test_the_leader_is_reaped_before_the_group_is_probed`.
+
+### A wrapper resolved by name resolves to itself
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Two of the ten assessed clients are launched through a local auto-trust wrapper that
+finds its real binary through the client home. Under the assessment's isolated home that lookup
+fails, so each run supplies the wrapper's own documented override naming the real executable.
+
+**Evidence.** `scripts/assess_clients.py` resolved that override as
+`shutil.which(plan.binary)` — which returns **the wrapper**, because the wrapper is what sits on
+`PATH` under that name. The wrapper would then exec the value of its own override, which is itself,
+and keep doing so: an unbounded chain of descendants that never reaches the client. An independent
+review graded it P0 and proved the equality without executing the recursion.
+
+**Mechanism.** "Find the real X" and "find X on `PATH`" are the same call when the thing shadowing
+X is named X. The shadowing is the whole point of a wrapper, so the one lookup that feels obvious is
+the one guaranteed to return the wrong answer — and the wrong answer is not an error, it is a
+plausible path that fails only at runtime, in the most expensive way available.
+
+**Fix.** `resolve_real_binary` walks every `PATH` entry, keeps the executables it finds, and returns
+the first that is not the same file as the first match, comparing by `os.path.samefile` so a symlink
+to the wrapper is caught too. With only the wrapper present it **refuses** — a stage blocked with the
+reason named beats a host spawning processes until it dies.
+
+**Generalizable rule.** When a program resolves a dependency *by the same name it is itself known
+by*, resolution by name is a self-reference. Resolve by identity — compare the file, not the string —
+and refuse when the only candidate is the caller.
+
+**Refs.** `scripts/assess_clients.py` (`resolve_real_binary`),
+`tests/test_assess_clients.py::RealBinaryResolutionTest`, cycle-11 mutation proof.
+
+### A deadline is not a containment boundary unless it signals the group
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Every assessment stage carries a timeout, added after a client that prompts on standard
+input hung a run indefinitely.
+
+**Evidence.** `subprocess.run(timeout=...)` kills and waits for the **direct** child. Several of
+these clients are launched through a wrapper, so the direct child is the wrapper and the client is
+its descendant. A probe confirmed a grandchild alive after the run timed out. The stage was recorded
+`blocked` while the client it started kept installing and writing state.
+
+A second-order detail worth keeping: the first fix reached for
+`subprocess.TimeoutExpired.pid`, which does not exist. The cleanup silently took its
+platform-fallback branch and reported "this platform has no process-group signal" on a platform that
+has one — a guard reporting a reason that was not true.
+
+**Mechanism.** A timeout bounds *the waiting*, not *the work*. Without a new session the child shares
+the caller's process group, so there is no group to signal that would not also signal the harness;
+with `start_new_session=True` the child leads its own group, but only a caller holding the `Popen`
+still has the pid to signal it with. `subprocess.run` gives that pid away.
+
+**Fix.** `run_contained` owns the `Popen`, mirrors `subprocess.run`'s signature so it drops into the
+same injectable seam, and on timeout signals the child's session with `SIGTERM` then `SIGKILL`.
+
+**Generalizable rule.** If a timeout is meant to stop work rather than stop waiting, the process must
+lead its own group and the caller must keep the handle needed to signal it. Prove it with a child
+that outlives its parent, not with the parent's exit.
+
+**Refs.** `scripts/assess_clients.py` (`run_contained`, `terminate_process_group`),
+`tests/test_assess_clients.py::ProcessGroupTest`.
+
+### An optional safety setting is a safety setting that is off
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The port descriptor introduced in this change carries the settings that scope the
+assessment's safety rules: which environment variables to strip, which scripts the mutating-operation
+rule applies to, which operations count as mutating.
+
+**Evidence.** `custody` was closed against unknown keys; `assessment` was not, and every field in it
+defaulted to empty. A descriptor writing `credential_prefix` instead of `credential_prefixes`
+validated, loaded, passed the repository gate — and stripped nothing. The same typo in
+`package_scripts` scoped the mutating-operation rule to no command, so every command passed the
+safety check. An independent review found both, and my own earlier review had found only the narrower
+version of the second.
+
+**Mechanism.** Each of these fields fails **open** when empty, and "absent" and "empty" were the same
+state. So the failure mode of a typo was not an error but a silently disabled control, and the
+cheapest possible mistake bought the most expensive possible outcome.
+
+**Fix.** Every object in the descriptor is closed against unknown keys, every safety field must be
+stated, and a field that is genuinely empty is named in `assessment.declared_none` — a decision a
+reader can see and a typo cannot produce.
+
+**Generalizable rule.** A setting whose empty value disables a control must never be optional, and
+"absent" must never mean "empty". Make the empty case a thing someone had to write down.
+
+**Refs.** `scripts/port_config.py` (`_closed`, `SAFETY_FIELDS`),
+`tests/test_port_config.py::ClosedContractTest`, [`ports/README.md`](../../ports/README.md).
+
+### A test that asserts on the machine it runs on reports the machine, not the code
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The port-readiness change added `scripts/assess_clients.py` and its test file. Three
+separate tests in one change asserted something true of the author's machine rather than of the
+code, and each passed locally while proving nothing, or proving it only there.
+
+**Evidence.** All three, from one pull request:
+
+| Test | Asserted | Actually depended on |
+|---|---|---|
+| `test_a_tree_that_moves_during_the_run_is_refused` | a stage reached the runner and moved the tree | whether `codex` was installed — all ten clients are on the author's machine, none on the continuous integration runner, so it passed locally and failed in CI |
+| `test_a_real_execute_run_produces_a_recordable_row` | the entrypoints exited 0 | whether the interpreter running the tests had `requests` and `urllib3` — true on 3.14 locally, false on the 3.12 floor |
+| `test_without_a_confirmation_the_same_process_reports_the_difference` | a prompting process exits 9 | whether the parent's stdin was a terminal, a pipe, or `/dev/null` |
+
+**Mechanism.** Each test named a real behaviour and then reached for an ambient fact to observe it
+— a binary on `PATH`, a package in the interpreter, a file descriptor inherited from the parent.
+Ambient facts are inputs the test does not control, so the assertion silently becomes *"is this
+machine configured the way I expect"*. When the answer is yes the test is green and mute; when it
+is no the failure looks like a defect in the code under test.
+
+The dangerous half is the passing case. A test that fails on a different machine gets fixed. A test
+that *passes* on the author's machine for the wrong reason ships, and the guard it claims to hold
+is not held anywhere.
+
+**Fix.** Supply the ambient fact instead of assuming it. A fake executable in a scratch directory
+prepended to `PATH`; `stdin=subprocess.DEVNULL` rather than whatever the parent had; an assertion
+on *how many* statuses were recorded rather than on what they were. Where the fact genuinely
+belongs to another test's subject — "do the entrypoints run" is
+`tests/test_client_entrypoints.py`'s question, and it stubs the transport so the answer is the same
+everywhere — assert the part this test actually owns and say so in the docstring.
+
+**Generalizable rule.** Before asserting, ask what on this machine the assertion is reading. If the
+answer is anything the test did not put there, either put it there or assert something else. A test
+whose result changes with the machine is a machine report wearing a test's name.
+
+**Refs.** `tests/test_assess_clients.py` (`RecordTest`, `SubprocessResultTest`), commit
+`e8f342f`, [the code review](../evidence/adhoc-port-readiness-generic-tooling/).
+
+### A guard added to fix one defect can hide the next one
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The code-review gate on the port-readiness change found that an uncaptured client
+install id fell back to the package name, so the assessment invoked a path no client uses and
+blamed the package for the resulting exit status. The repair stopped seeding the placeholder and
+blocked any stage whose command still named an unresolved one.
+
+**Evidence.** Re-running the original probe after the repair returned `blocked`, with the reason
+naming `<client-home>, <plugin-id>`. `<client-home>` was in the probe's own values and should have
+been substituted. `scripts/assess_clients.py` `stage_argvs` substituted placeholders on two of its
+three branches and returned the invocation branch's paths as raw templates, so *every* client's
+invocation stage would have run a literal `<client-home>/…` path. The new guard turned that into a
+clean, permanent, plausible-looking block.
+
+**Mechanism.** The guard and the latent defect produce the same observable. Before the guard, the
+defect showed up as a non-zero exit status that looked like a package failure; after it, as a
+blocked stage that looked like correct caution. Neither reading is "the path was never
+substituted", and the suite agreed with both: every unit test passed throughout, because nothing
+drove `assess(execute=True)` end to end with processes that actually run.
+
+**Fix.** Substitute on every branch, and add the end-to-end test whose absence let it through — one
+client, real processes, asserting what lands in the record. The defect was found by re-running the
+probe that had motivated the repair, which is the cheap habit: after fixing what a probe found,
+run the probe again and read the *whole* output rather than the one field that changed.
+
+**Generalizable rule.** A repair that converts a wrong answer into a refusal has not been verified
+until something proves the refusal is not now the only answer. Re-run the original probe after the
+fix, and cover the path end to end, not just the guard.
+
+**Refs.** `scripts/assess_clients.py` (`stage_argvs`),
+`tests/test_assess_clients.py::RecordTest::test_a_real_execute_run_produces_a_recordable_row`.
+
+### A harness that inherits stdin behaves differently in a terminal than under a scheduler
+
+**Author.** Jeff Cox and Claude
+
+**Context.** `scripts/assess_clients.py` runs coding-agent clients as subprocesses.
+Several of them prompt for confirmation on standard input, and the pilot's own runbook
+records that one of them hangs rather than declining when stdin is closed.
+
+**Evidence.** `tests/test_assess_clients.py` ran a fake client whose script is
+`read answer; [ "$answer" = "y" ] || exit 9`, with no confirmation supplied, and expected
+exit status 9. It got a 120-second timeout instead, and the whole test file went from
+2.7 seconds to 122 seconds. `subprocess.run` was called with `input=None`, which does not
+redirect stdin, so the child inherited the test runner's terminal and sat waiting for a
+human to type. Fixed at `scripts/assess_clients.py` by passing
+`stdin=subprocess.DEVNULL` whenever a stage supplies no confirmation.
+
+**Mechanism.** `subprocess.run(input=None)` is not "no input" — it is "whatever the
+parent has". Under a terminal that is a human; under a scheduler it is usually
+`/dev/null`; under a test runner it depends on how the runner was invoked. So the same
+stage produces a fast, deterministic exit status in one environment and an indefinite
+block in another, and the environment that blocks is the interactive one where a person
+is most likely to assume the program has crashed.
+
+A second-order point: the timeout *did* fire, and the harness classified the stage
+`blocked` with the deadline named, which is correct behaviour. The deadline turned an
+unbounded hang into a bounded wrong answer. That is the deadline working, and it is still
+not good enough, because the wrong answer was environment-dependent.
+
+**Generalizable rule.** A subprocess a program starts on its own initiative should never
+inherit the parent's standard input. Pass the input it needs, or close it; and give it a
+deadline regardless, because closing stdin does not stop a program that ignores EOF.
+
+**Refs.** `scripts/assess_clients.py` (`run_stage`),
+`tests/test_assess_clients.py::SubprocessResultTest::test_a_stage_never_inherits_the_operators_terminal`.
 
 ### A verification step that reports success for an unrelated reason is worth less than none
 

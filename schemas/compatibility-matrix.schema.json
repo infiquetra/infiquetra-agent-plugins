@@ -5,15 +5,24 @@
   "description": "Closed record of one bounded compatibility assessment run across every installed coding-agent client. Each client carries four independently recorded stage results — placement, discovery, load, invocation — followed by exactly one overall status. Ten rows are not ten assessments: a row that stops at its first failure and reports one status proves nothing about whether the package ever loaded, so every stage is recorded even when an earlier stage already failed. This record is published in a public repository and therefore carries field names, counts, and digests rather than raw discovered inventory: no address, hostname, hardware address, or credential value may appear in any command, evidence, or reason string.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "assessed_on", "package", "method", "clients"],
+  "required": [
+    "schema_version",
+    "assessed_on",
+    "package",
+    "method",
+    "clients"
+  ],
   "properties": {
     "$schema": {
       "type": "string",
       "minLength": 1
     },
     "schema_version": {
-      "type": "string",
-      "const": "1"
+      "description": "1 records one command per stage. 2 additionally records every command a stage started, each either with the process wait status it returned (`exit_status`) or with `timed_out: true` when the harness killed it at the stage deadline. `command` remains the first of those, including on blocked stages.",
+      "enum": [
+        "1",
+        "2"
+      ]
     },
     "assessed_on": {
       "description": "Calendar date of the assessment run, ISO-8601.",
@@ -24,7 +33,12 @@
       "description": "The package under assessment, identified by digest rather than by content.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "version", "file_count", "tree_sha256"],
+      "required": [
+        "name",
+        "version",
+        "file_count",
+        "tree_sha256"
+      ],
       "properties": {
         "name": {
           "type": "string",
@@ -49,14 +63,24 @@
       "description": "What was held identical across all ten clients, so the rows are comparable.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["stages", "isolation", "credentials", "network"],
+      "required": [
+        "stages",
+        "isolation",
+        "credentials",
+        "network"
+      ],
       "properties": {
         "stages": {
           "type": "array",
           "minItems": 4,
           "maxItems": 4,
           "items": {
-            "enum": ["placement", "discovery", "load", "invocation"]
+            "enum": [
+              "placement",
+              "discovery",
+              "load",
+              "invocation"
+            ]
           }
         },
         "isolation": {
@@ -81,7 +105,13 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "version", "stages", "status", "reason"],
+        "required": [
+          "name",
+          "version",
+          "stages",
+          "status",
+          "reason"
+        ],
         "properties": {
           "name": {
             "enum": [
@@ -105,7 +135,12 @@
             "description": "All four stages are mandatory. A row missing a stage fails the check even when it carries an overall status.",
             "type": "object",
             "additionalProperties": false,
-            "required": ["placement", "discovery", "load", "invocation"],
+            "required": [
+              "placement",
+              "discovery",
+              "load",
+              "invocation"
+            ],
             "properties": {
               "placement": {
                 "$ref": "#/$defs/stage"
@@ -142,10 +177,16 @@
     "stage": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["result"],
+      "required": [
+        "result"
+      ],
       "properties": {
         "result": {
-          "enum": ["executed", "blocked", "not-applicable"]
+          "enum": [
+            "executed",
+            "blocked",
+            "not-applicable"
+          ]
         },
         "command": {
           "description": "Required when the result is executed. Site-identifying arguments are redacted to a placeholder before the command is recorded.",
@@ -161,6 +202,32 @@
           "description": "Required when the result is blocked or not applicable.",
           "type": "string",
           "minLength": 1
+        },
+        "commands": {
+          "description": "Schema version 2. Every command the stage started, in order. A command that exited or was terminated by a signal carries `exit_status` (the process wait status: 0-255, or -N for signal N, so -1 is SIGHUP). A command the harness killed at the stage deadline carries `timed_out: true` and no `exit_status`: a wait status of -1 cannot mean 'never exited'. Exactly one of the two fields is present. `command` remains the first of these, including on blocked stages. Site-identifying arguments are redacted to a placeholder before a command is recorded.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "command"
+            ],
+            "properties": {
+              "command": {
+                "type": "string",
+                "minLength": 1
+              },
+              "exit_status": {
+                "description": "Process wait status. Present if and only if the command exited or was terminated by a signal other than the harness deadline. -1 is SIGHUP, not a deadline.",
+                "type": "integer"
+              },
+              "timed_out": {
+                "description": "The harness killed this command at the stage deadline. Mutually exclusive with exit_status.",
+                "const": true
+              }
+            }
+          }
         }
       },
       "allOf": [
@@ -171,23 +238,37 @@
                 "const": "executed"
               }
             },
-            "required": ["result"]
+            "required": [
+              "result"
+            ]
           },
           "then": {
-            "required": ["result", "command", "evidence"]
+            "required": [
+              "result",
+              "command",
+              "evidence"
+            ]
           }
         },
         {
           "if": {
             "properties": {
               "result": {
-                "enum": ["blocked", "not-applicable"]
+                "enum": [
+                  "blocked",
+                  "not-applicable"
+                ]
               }
             },
-            "required": ["result"]
+            "required": [
+              "result"
+            ]
           },
           "then": {
-            "required": ["result", "reason"]
+            "required": [
+              "result",
+              "reason"
+            ]
           }
         }
       ]

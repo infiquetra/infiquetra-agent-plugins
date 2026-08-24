@@ -1,0 +1,382 @@
+# Cycle-13 mutation proof - portable target-owned copies and the readiness guards
+# Digests are bound by MutationProofBindingTest: change a graded file
+# without re-running this proof and the suite fails. Paths are repository-relative.
+#
+# Supersedes 2026-08-23-cycle12-mutation-proof-portable-copies.txt, which is
+# preserved unedited. Reason: a third independent Codex review of PR #6 returned
+# repairs_requested with three P1 findings, all in scripts/assess_clients.py.
+# All three were repaired in one batch, so the cycle-12 digest for that file no
+# longer names the shipped bytes. Every cycle-12 anchor is retained and re-run
+# against the repaired bytes rather than assumed to hold.
+#
+# READ THIS BEFORE TREATING 0 SURVIVORS AS A CLEAN BILL. Cycle 12 ran 51 anchors
+# with 0 survivors on the exact revision the review then returned three P1
+# findings against. The reviewer named the reason exactly: none of its anchors
+# exercised an escaped process session, the public representation of a timed-out
+# later command, or the command-line transcript-path handoff.
+#
+#   A mutation proof measures the anchors it has. Every anchor names a line
+#   somebody already believed was load-bearing, so the proof reports on the
+#   guards that exist and is silent about behaviour nobody wrote a guard for.
+#   "0 survivors" is a statement about the anchor set, not about the code. It
+#   pairs with an independent reviewer precisely because the reviewer does not
+#   share the anchor author's imagination.
+#
+# The three repairs this round, each with an anchor here:
+#   * the deadline cleanup states what it established -- this process group is
+#     empty -- instead of "no client descendant survived it". A descendant that
+#     calls setsid leaves the group before the deadline arrives, so it is
+#     neither signalled nor observed; the old sentence was a claim about
+#     processes the code cannot see, false on exactly the runs that matter. The
+#     test builds that escape and confirms the descendant really does survive.
+#
+# 2026-08-24 correction (PR #6 round 5). The sentence above is what cycle 13
+# published. It is not what the named test did. test_a_descendant_that_leaves
+# _the_session_is_not_claimed_as_killed builds the setsid escape and asserts
+# that the cleanup sentence does not claim the descendant was killed. In the
+# cycle-13 bytes it created a marker file and never read it; the docstring said
+# so, deliberately. Survival was observed by a separate uncommitted probe. A
+# published proof is not rewritten to say something more convenient, so this
+# note sits beside the overstatement rather than replacing it. The test now
+# also waits for the marker, so the survival claim is checkable going forward;
+# that assertion was not part of the cycle-13 run.
+#   * a command that hits its deadline is appended to the stage's `commands`
+#     with exit_status -1, so it is in the public version-2 record and is graded
+#     by the post-run safety rule. Keeping it only in the private transcript
+#     left the record naming fewer commands than the stage started, and left the
+#     one command most likely to have been running unbounded ungraded.
+#   * `assess` takes the run directory from its caller, so the path the
+#     transcript is written to and the path the command line announces are one
+#     value rather than two derivations. They had diverged: the file went to
+#     <workspace>/run-NNN/transcript.json and the message named <workspace>/.
+#
+# Two of those three were regressions introduced by the round-two repairs, and
+# they share a shape: a value acquired a second home and only one writer learned
+# about it. Each call site read correctly alone; the defect lived in the
+# disagreement, which is why the transcript-path test now runs the real command
+# line and opens the file it announces.
+#
+# One anchor-set hazard recurred and was caught before it cost a run. The new
+# `recorded_commands.append(...)` on the deadline path is indented twelve spaces,
+# which made the existing eight-space anchor for that call a substring of it. The
+# pre-flight pass over all anchors reported it in under a second; it is pinned to
+# the start of its line now. The same collision cost thirty-one minutes in cycle
+# 12, before the pre-flight existed.
+#
+# Standing disclosures carried forward from cycle 12, both about whether this
+# evidence can be trusted:
+#
+#   1. MutationProofBindingTest is excluded from grading entirely, at baseline
+#      and under every mutation. Every mutation edits a graded file, which
+#      changes its digest, which fails that test -- counting it as a kill made
+#      every mutation a kill by construction, and that is what made cycle 11's
+#      "0 survivors" vacuous. A mutation is killed here only by a test that was
+#      passing at baseline and is not the proof binding.
+#
+#   2. The proof cannot start from a fully green suite, because this run is what
+#      computes the digests that test asserts. The honest handling is the
+#      exclusion above. Hand-editing a previous cycle's recorded digests to
+#      manufacture a green baseline was done once, in the first attempt at cycle
+#      12, and reverted; cycle 11 and cycle 12 both ship unedited.
+## BASELINE: FAILED (failures=1), none of them outside the proof binding
+##   test_the_portable_proof_names_the_bytes_that_ship is excluded from grading entirely, at baseline
+##   and under every mutation. Mutating a graded file changes its bytes, so
+##   that test fails for reasons that have nothing to do with the guard.
+##   A mutation is killed only by a test that was passing at baseline and
+##   is not the proof binding.
+
+## MUTATION: break set narrowed to newline only, repository gate  [scripts/check_repo.py]
+   FAILED (failures=4)
+   FAIL: test_the_assignment_family_is_the_same_rule
+   FAIL: test_the_break_set_is_exactly_what_splitlines_recognises copy='repository gate'
+
+## MUTATION: break set narrowed to newline only, target copy  [plugins/unifi/scripts/site_profile.py]
+   FAILED (failures=27)
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='LINE SEPARATOR'
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='NEL'
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='PARAGRAPH SEPARATOR'
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='carriage return'
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='file separator'
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='form feed'
+
+## MUTATION: one boundary dropped (carriage return), repository gate  [scripts/check_repo.py]
+   FAILED (failures=4)
+   FAIL: test_the_assignment_family_is_the_same_rule
+   FAIL: test_the_break_set_is_exactly_what_splitlines_recognises copy='repository gate'
+
+## MUTATION: exact in-text key set emptied, repository gate  [scripts/check_repo.py]
+   FAILED (failures=14)
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='access-key: rainbowtrout'
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='access_key: rainbowtrout'
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='accesskey: rainbowtrout'
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='auth: rainbowtrout'
+   FAIL: test_both_copies_agree_which_keys_are_strict key='access-key'
+   FAIL: test_both_copies_agree_which_keys_are_strict key='accesskey'
+
+## MUTATION: exact in-text key set emptied, target copy  [plugins/unifi/scripts/site_profile.py]
+   FAILED (failures=17)
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='access-key: rainbowtrout'
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='access_key: rainbowtrout'
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='accesskey: rainbowtrout'
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='auth: rainbowtrout'
+   FAIL: test_both_copies_agree_which_keys_are_strict key='access-key'
+   FAIL: test_the_assignment_family_is_the_same_rule
+
+## MUTATION: descriptor path-escape refusal inverted  [scripts/port_config.py]
+   FAILED (failures=9)
+   FAIL: test_a_traversing_custody_path_is_refused
+   FAIL: test_a_traversing_entrypoint_is_refused
+   FAIL: test_an_absolute_source_package_path_is_refused
+
+## MUTATION: descriptor duplicate-custody refusal removed  [scripts/port_config.py]
+   FAILED (failures=3)
+   FAIL: test_a_path_claimed_by_two_custody_classes_is_refused
+
+## MUTATION: client custody without an extension directory allowed  [scripts/port_config.py]
+   FAILED (failures=3)
+   FAIL: test_client_custody_without_an_extension_directory_is_refused
+
+## MUTATION: descriptor schema_version check removed  [scripts/port_config.py]
+   FAILED (failures=3)
+   FAIL: test_an_unreadable_schema_version_is_refused_rather_than_assumed
+
+## MUTATION: package root confined to plugins/ removed  [scripts/port_config.py]
+   FAILED (failures=3)
+   FAIL: test_a_package_root_outside_the_plugins_directory_is_refused
+
+## MUTATION: matrix package resolution falls back instead of failing closed  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=8)
+   FAIL: test_a_record_naming_an_unported_package_is_refused
+   FAIL: test_an_unresolvable_record_still_has_its_other_rules_applied
+   FAIL: test_resolution_never_returns_a_package_the_record_did_not_name name='../unifi'
+   FAIL: test_resolution_never_returns_a_package_the_record_did_not_name name='UNIFI'
+   FAIL: test_resolution_never_returns_a_package_the_record_did_not_name name='not-a-package'
+   FAIL: test_resolution_never_returns_a_package_the_record_did_not_name name='unifi-'
+
+## MUTATION: the shared --confirm safety rule removed  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=5)
+   FAIL: test_a_confirmed_command_is_refused_before_it_runs
+   FAIL: test_a_recorded_invocation_passing_confirm_fails
+   FAIL: test_confirm_is_refused_in_any_stage_not_only_invocation
+
+## MUTATION: the shared mutating-operation rule removed  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=14)
+   FAIL: test_a_blocked_stage_still_has_its_commands_safety_graded
+   FAIL: test_a_mutating_package_operation_is_refused_before_it_runs
+   FAIL: test_a_recorded_mutating_operation_fails
+   FAIL: test_a_version_one_stage_is_still_graded
+   FAIL: test_an_unsafe_second_command_is_still_caught
+   FAIL: test_one_unsafe_command_yields_one_problem
+
+## MUTATION: harness real-home write refusal removed  [scripts/assess_clients.py]
+   FAILED (failures=2)
+   FAIL: test_a_state_writing_stage_may_not_run_in_the_operators_home
+
+## MUTATION: harness isolated-only refusal removed  [scripts/assess_clients.py]
+   FAILED (failures=5)
+   FAIL: test_the_isolated_only_client_is_refused_a_real_home_outright stage='discovery'
+   FAIL: test_the_isolated_only_client_is_refused_a_real_home_outright stage='invocation'
+   FAIL: test_the_isolated_only_client_is_refused_a_real_home_outright stage='load'
+   FAIL: test_the_isolated_only_client_is_refused_a_real_home_outright stage='placement'
+
+## MUTATION: harness stdin inherits the parent again  [scripts/assess_clients.py]
+   FAILED (failures=2)
+   FAIL: test_a_stage_never_inherits_the_operators_terminal
+
+## MUTATION: harness stops checking that the assessed tree held still  [scripts/assess_clients.py]
+   FAILED (failures=2)
+   FAIL: test_a_tree_that_moves_during_the_run_is_refused
+
+## MUTATION: harness four-stage coverage guard removed  [scripts/assess_clients.py]
+   FAILED (failures=2)
+   FAIL: test_a_plan_missing_a_stage_is_refused
+
+## MUTATION: harness stops reading the entrypoint exit status  [scripts/assess_clients.py]
+   FAILED (failures=2)
+   FAIL: test_an_entrypoint_that_ran_and_did_not_succeed_proposes_failed
+
+## MUTATION: harness reads executed as success again  [scripts/assess_clients.py]
+   FAILED (failures=4)
+   FAIL: test_a_client_that_refused_every_stage_is_not_works_directly
+   FAIL: test_a_failed_entrypoint_without_a_successful_placement_is_not_failed
+   FAIL: test_an_entrypoint_that_ran_and_did_not_succeed_proposes_failed
+
+## MUTATION: harness infers the real binary from PATH again  [scripts/assess_clients.py]
+   FAILED (failures=4)
+   FAIL: test_a_copied_wrapper_is_never_selected
+   FAIL: test_a_wrapper_client_with_nothing_supplied_is_blocked_not_run
+   FAIL: test_with_nothing_supplied_it_refuses_rather_than_guessing
+
+## MUTATION: harness accepts an override naming the launcher itself  [scripts/assess_clients.py]
+   FAILED (failures=3)
+   FAIL: test_a_symlink_to_the_launcher_is_refused
+   FAIL: test_an_override_naming_the_launcher_itself_is_refused
+
+## MUTATION: harness accepts a non-executable real-binary path  [scripts/assess_clients.py]
+   FAILED (failures=2)
+   FAIL: test_a_supplied_path_that_is_not_executable_is_refused
+
+## MUTATION: harness leaves the timed-out process group running  [scripts/assess_clients.py]
+   FAILED (failures=4)
+   FAIL: test_a_descendant_that_leaves_the_session_is_not_claimed_as_killed
+   FAIL: test_a_leader_that_exits_still_has_its_descendant_killed
+   FAIL: test_a_timed_out_launcher_does_not_leave_its_client_running
+
+## MUTATION: harness resolves the process group through the exited leader again  [scripts/assess_clients.py]
+   FAILED (failures=1, errors=1)
+   FAIL: test_a_leader_that_exits_still_has_its_descendant_killed
+
+## MUTATION: harness claims containment it cannot observe again  [scripts/assess_clients.py]
+   FAILED (failures=2)
+   FAIL: test_a_descendant_that_leaves_the_session_is_not_claimed_as_killed
+
+## MUTATION: harness drops the timed-out command from the public record again  [scripts/assess_clients.py]
+   FAILED (failures=2)
+   FAIL: test_the_timed_out_command_is_in_the_public_record_too
+
+## MUTATION: harness ignores the run directory its caller allocated  [scripts/assess_clients.py]
+   FAILED (failures=2)
+   FAIL: test_an_executed_run_prints_a_transcript_path_that_exists
+
+## MUTATION: command line announces the workspace instead of the run directory again  [scripts/assess_clients.py]
+   FAILED (failures=2)
+   FAIL: test_an_executed_run_prints_a_transcript_path_that_exists
+
+## MUTATION: harness probes the group before reaping the leader again  [scripts/assess_clients.py]
+   FAILED (failures=5)
+   FAIL: test_a_descendant_that_leaves_the_session_is_not_claimed_as_killed
+   FAIL: test_a_leader_that_exits_still_has_its_descendant_killed
+   FAIL: test_a_timed_out_launcher_does_not_leave_its_client_running
+   FAIL: test_the_leader_is_reaped_before_the_group_is_probed
+
+## MUTATION: harness reuses an existing per-client package copy again  [scripts/assess_clients.py]
+   FAILED (failures=2)
+   FAIL: test_a_pre_existing_copy_is_refused_rather_than_reused
+
+## MUTATION: harness reuses one run directory across runs  [scripts/assess_clients.py]
+   FAILED (failures=1, errors=2)
+   FAIL: test_a_second_run_in_the_same_workspace_gets_fresh_copies
+   FAIL: test_each_run_gets_its_own_numbered_directory
+
+## MUTATION: harness stops refusing an entrypoint the package lacks  [scripts/assess_clients.py]
+   FAILED (failures=2)
+   FAIL: test_an_entrypoint_the_package_does_not_carry_is_refused
+
+## MUTATION: harness drops the transcript on the timeout path again  [scripts/assess_clients.py]
+   FAILED (failures=2)
+   FAIL: test_a_timed_out_stage_records_the_timed_out_command_too
+
+## MUTATION: harness drops the transcript when a client mutated its copy  [scripts/assess_clients.py]
+   FAILED (failures=2)
+   FAIL: test_an_invalidated_client_keeps_its_transcript
+
+## MUTATION: harness writes the raw transcript world-readable again  [scripts/assess_clients.py]
+   FAILED (failures=2)
+   FAIL: test_the_file_is_created_owner_only_before_anything_is_written
+
+## MUTATION: gate stops checking that declared entrypoints exist  [scripts/check_repo.py]
+   FAILED (failures=3)
+   FAIL: test_the_repository_gate_refuses_it_too
+
+## MUTATION: matrix safety rule grades the version-2 alias twice again  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=4)
+   FAIL: test_a_version_one_stage_is_still_graded
+   FAIL: test_one_unsafe_command_yields_one_problem
+
+## MUTATION: harness discards captured client output again  [scripts/assess_clients.py]
+   FAILED (failures=4, errors=1)
+   FAIL: test_a_stage_retains_each_command_output
+   FAIL: test_a_timed_out_stage_keeps_what_already_ran
+   FAIL: test_an_invalidated_client_keeps_its_transcript
+   FAIL: test_the_transcript_is_bounded
+
+## MUTATION: harness records only the first command again  [scripts/assess_clients.py]
+   FAILED (failures=2, errors=2)
+   FAIL: test_a_reader_can_tell_which_command_failed
+   FAIL: test_each_command_is_recorded_with_its_own_status
+   FAIL: test_the_timed_out_command_is_in_the_public_record_too
+
+## MUTATION: harness shares one scratch package across every client again  [scripts/assess_clients.py]
+   FAILED (failures=3, errors=10)
+   FAIL: test_a_plan_only_run_starts_no_process
+   FAIL: test_a_pre_existing_copy_is_refused_rather_than_reused
+   FAIL: test_a_second_run_in_the_same_workspace_gets_fresh_copies
+   FAIL: test_an_invalidated_client_is_not_classified_at_all
+   FAIL: test_each_client_is_handed_its_own_copy
+   FAIL: test_no_scratch_path_survives_into_the_record
+
+## MUTATION: harness keeps a mutated client's stage results  [scripts/assess_clients.py]
+   FAILED (failures=2)
+   FAIL: test_an_invalidated_client_is_not_classified_at_all
+
+## MUTATION: harness hides the known package name in the plan again  [scripts/assess_clients.py]
+   FAILED (failures=2)
+   FAIL: test_the_plan_shows_the_package_name_the_harness_already_knows
+
+## MUTATION: descriptor objects stop refusing unknown keys  [scripts/port_config.py]
+   FAILED (failures=6)
+   FAIL: test_an_unknown_key_is_refused_at_every_level
+
+## MUTATION: descriptor safety fields stop being required  [scripts/port_config.py]
+   FAILED (failures=6)
+   FAIL: test_a_missing_field_is_named_as_missing_rather_than_as_empty
+
+## MUTATION: descriptor accepts a manifest with no destination  [scripts/port_config.py]
+   FAILED (failures=3)
+   FAIL: test_a_manifest_path_without_an_extension_directory_is_refused
+
+## MUTATION: matrix version gate lets a version-1 record carry version-2 statuses  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=3)
+   FAIL: test_a_version_one_record_may_not_carry_per_command_statuses
+
+## MUTATION: matrix stops checking the alias against the first per-command status  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=3)
+   FAIL: test_the_recorded_command_must_be_the_first_of_its_statuses
+
+## MUTATION: matrix validator stops requiring per-command statuses  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=2, errors=2)
+   FAIL: test_an_executed_stage_with_an_empty_command_list_is_refused
+   FAIL: test_an_executed_stage_without_commands_is_refused
+
+## MUTATION: matrix safety rule reads only the first command again  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=4)
+   FAIL: test_a_blocked_stage_still_has_its_commands_safety_graded
+   FAIL: test_an_unsafe_second_command_is_still_caught
+
+## MUTATION: harness redacts identity values as well as paths again  [scripts/assess_clients.py]
+   FAILED (failures=4)
+   FAIL: test_a_real_execute_run_produces_a_recordable_row
+   FAIL: test_only_path_values_and_a_captured_id_are_redactable
+   FAIL: test_the_package_name_inside_a_path_survives_redaction
+
+## MUTATION: harness stops blocking a command with an unresolved placeholder  [scripts/assess_clients.py]
+   FAILED (failures=2)
+   FAIL: test_a_stage_naming_an_unresolved_placeholder_is_blocked
+
+## MUTATION: harness records only the first command status again  [scripts/assess_clients.py]
+   FAILED (failures=2)
+   FAIL: test_every_command_status_is_recorded_not_just_the_first
+
+## MUTATION: harness returns invocation paths unsubstituted again  [scripts/assess_clients.py]
+   FAILED (failures=23, errors=1)
+   FAIL: test_a_client_that_leaves_the_package_alone_keeps_its_results
+   FAIL: test_a_real_execute_run_produces_a_recordable_row
+   FAIL: test_a_real_execute_run_produces_a_recordable_row stage='invocation'
+   FAIL: test_an_invalidated_client_is_not_classified_at_all
+   FAIL: test_every_stage_argv_is_fully_substituted_before_it_runs client='Agy', stage='invocation'
+   FAIL: test_every_stage_argv_is_fully_substituted_before_it_runs client='Claude Code', stage='invocation'
+
+## MUTATION: descriptor validation dropped from the repository gate  [scripts/check_repo.py]
+   FAILED (failures=3)
+   FAIL: test_the_gate_reports_a_descriptor_that_does_not_load
+
+## RESTORED
+plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
+scripts/assess_clients.py sha256: 8b6042d288138ec8d27a05e2960cf8566f4c1602045ecd1f4a795585d01786c8
+scripts/check_compatibility_matrix.py sha256: dcd8926dcc95b7d7f7afd74a791f1e25d2057e3eb39e1d7991914117c57f4e5b
+scripts/check_repo.py sha256: ef37a18a10d83abd3f653b399b672a7aa17fe7d567902cdaf9515eb5670c6f34
+scripts/port_config.py sha256: 60149faa0675e3e0d36ef9eeac79b364dfbd8faf81db0535ed90641860a4000f
+byte-identical to pristine: YES
+final suite: FAILED (failures=1)
+final suite failures outside the excluded proof binding: none
+mutations run: 55; survived: 0
