@@ -2,6 +2,49 @@
 
 ## 2026-08-24
 
+### Mission-control port run plan: new transform rules stay single-shape, rule selection lives in the descriptor
+
+**Author.** Jeff Cox and Claude (Saga Plan for issue #9)
+
+**Decision.** The mission-control port run plan
+([docs/plans/2026-08-24-mission-control-port-run-plan.md](../plans/2026-08-24-mission-control-port-run-plan.md))
+fixes five plan-level choices inside the operator-approved contract of issue
+#9: (1) the two mission-control entrypoint consumers get two **new** named
+single-shape transform rules, each preserving exactly-one-match discipline, and
+the existing `resolve-bundled-fleet-module` v1 stays byte-untouched; (2)
+transform-rule selection becomes an explicit per-path field in the port
+descriptor — additive within schema 2, with `ports/unifi.json` naming its rule
+explicitly in the same commit; (3) the `when_to_use:` skill-frontmatter key is
+folded under the permitted `metadata` key by a new `normalize-skill-frontmatter`
+v1 transform, portable copies only; (4) CI package-test wiring uses the
+`plugins/*/tests` glob plus a can-fail path-agreement meta-check rather than
+per-package enumeration; (5) the card-validator verdict-agreement test derives
+its authority live from the home-lab checkout and self-skips loudly when the
+checkout is absent.
+
+**Rationale.** Bumping the existing rule to a multi-shape v2 would loosen the
+exactly-one-match discipline and change the transform identity UniFi's
+committed provenance records; AGENTS.md places porting-tool package
+configuration in the descriptor, never in a script constant; `metadata` is one
+of the seven fields `check_repo.py` permits, so the fold is deterministic,
+idempotent, and lossless; the glob plus meta-check means the next port cannot
+silently ship uncollected tests; a copied-constant authority corpus cannot fail
+when the authority moves.
+
+**Rejected alternatives.** *One loosened multi-shape rule v2* and *first-match
+semantics* (a #13 stop condition). *A script-internal path-to-rule registry*
+(the custody violation AGENTS.md names). *A schema-3 bump for the rule-name
+field*, per the precedent above that additive fields do not bump a schema
+version. *Folding `when_to_use` into the skill body* (lossy placement, harder
+idempotence) and *normalizing upstream* (the key is functional in Claude Code
+listings). *Vendoring a second card-validator authority copy here* (a third
+copy that can disagree).
+
+**Revisit when** a third port needs a transform shape neither new rule covers
+(that is the moment to consider a general rule grammar, not before), or when
+fleet-core migrates onto a port descriptor and the descriptor-vs-PROVENANCE
+custody split changes.
+
 ### A deadline-killed command is marked timed out, not given a fake exit status
 
 **Author.** Jeff Cox and Grok
