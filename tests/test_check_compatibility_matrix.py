@@ -407,6 +407,68 @@ class SafetyBoundaryTest(unittest.TestCase):
         self.assertEqual(check(record), [])
 
 
+class PerCommandStatusRecordTest(unittest.TestCase):
+    """Version 2 records every command beside its own exit status.
+
+    The whole rule shipped without a test. A mutation that stopped requiring
+    per-command statuses altogether failed nothing, which means the guard could
+    have been deleted and the suite would have said the record was still sound.
+    """
+
+    @staticmethod
+    def version_two() -> dict:
+        record = valid_record(schema_version="2")
+        for client in record["clients"]:
+            for value in client["stages"].values():
+                value["commands"] = [{"command": value["command"], "exit_status": 0}]
+        return record
+
+    NO_STATUSES = "records no per-command statuses"
+
+    def test_a_well_formed_version_two_record_is_accepted(self) -> None:
+        self.assertEqual(self.version_two() and check(self.version_two()), [])
+
+    def test_an_executed_stage_without_commands_is_refused(self) -> None:
+        """A stage that ran several commands is not reproducible from the first."""
+        record = self.version_two()
+        del record["clients"][0]["stages"]["placement"]["commands"]
+        self.assertTrue(
+            any(self.NO_STATUSES in problem for problem in check(record)),
+            "a version-2 stage with no per-command statuses was accepted",
+        )
+
+    def test_an_executed_stage_with_an_empty_command_list_is_refused(self) -> None:
+        record = self.version_two()
+        record["clients"][0]["stages"]["placement"]["commands"] = []
+        self.assertTrue(any(self.NO_STATUSES in problem for problem in check(record)))
+
+    def test_a_version_one_record_may_not_carry_per_command_statuses(self) -> None:
+        """The field arrived in version 2; a version-1 record claiming it is lying."""
+        record = valid_record()
+        record["clients"][0]["stages"]["placement"]["commands"] = [
+            {"command": "client install", "exit_status": 0}
+        ]
+        self.assertTrue(
+            any("declares version 1" in problem for problem in check(record)),
+            "a version-1 record carried a version-2 field unchallenged",
+        )
+
+    def test_the_recorded_command_must_be_the_first_of_its_statuses(self) -> None:
+        """`command` is an alias of commands[0]; two names for one thing must agree."""
+        record = self.version_two()
+        record["clients"][0]["stages"]["placement"]["commands"][0]["command"] = "other"
+        self.assertTrue(
+            any("disagree about what ran first" in problem for problem in check(record)),
+            "the alias and the list were allowed to name different commands",
+        )
+
+    def test_a_blocked_stage_needs_no_commands(self) -> None:
+        """Nothing ran, so there is nothing to record; this must not be an error."""
+        record = self.version_two()
+        record["clients"][0]["stages"]["invocation"] = blocked_stage()
+        self.assertFalse(any(self.NO_STATUSES in problem for problem in check(record)))
+
+
 class PublicEvidenceTest(unittest.TestCase):
     def test_a_seeded_address_in_an_evidence_field_fails(self) -> None:
         record = valid_record()

@@ -2,6 +2,115 @@
 
 ## 2026-08-23
 
+### A mutation proof excludes its own binding test, and is never corrected by hand
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** The mutation runner excludes `MutationProofBindingTest` from grading entirely —
+at baseline and under every mutation — and counts a mutation killed only when it fails some
+other test that was passing at baseline. It records the baseline failure set first and aborts
+if anything outside that binding test is failing. The published proof states the exclusion in
+its header. When an anchor no longer matches exactly once, the run aborts, the files are
+restored, the anchor is rewritten to name the guard in its current form, and the whole set is
+re-run; a pre-flight pass checks every anchor before the expensive run begins.
+
+**Rationale.** Every mutation edits a graded file, which changes its digest, which fails the
+binding test. Counting that as a kill made every mutation a kill by construction, and cycle
+11's "0 survivors" was measuring the runner's own bookkeeping. Re-graded with the exclusion,
+seven anchors had no test behind them. Separately, the binding test cannot pass until the run
+it describes is published, so demanding a green baseline created exactly one route to one —
+editing the previous cycle's recorded digests, which is the cycle-7 defect that test exists to
+catch.
+
+**Rejected alternatives.** *Excluding the binding test from the suite the runner invokes*,
+because the exclusion then stops being visible in the published proof. *Writing the expected
+digests into the evidence file before the run*, because a proof whose digest block was authored
+rather than computed identifies nothing. *Publishing a partial pass and appending the remaining
+mutations afterwards*, because the digests would name a tree no single run exercised.
+*Excluding only the binding subtests that fail at baseline*, because that still lets the test
+kill a mutation to any graded file whose digest currently matches — which is every graded file
+the round did not change.
+
+**Consequence to expect.** Every code change to a graded file costs a full re-run of the proof,
+roughly forty minutes, before the suite can be green again. A survivor count above zero is now
+a real finding rather than a broken run.
+
+**Revisit when.** The suite grows a second test that cannot pass until the artifact it checks
+is published, or the graded set grows enough that the run stops fitting in one sitting.
+
+**Refs.** `tests/test_site_profile.py` (`MutationProofBindingTest`),
+`docs/evidence/2026-08-23-cycle12-mutation-proof-portable-copies.txt`,
+[the vacuous-proof learning](LEARNINGS.md#the-mutation-proof-counted-its-own-bookkeeping-as-a-kill).
+
+### A client's real executable is supplied by the operator, never discovered
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** Two of the ten clients launch through a local auto-trust wrapper that finds its
+real binary through the client home, and that lookup fails under the isolated home the harness
+gives it. `resolve_real_binary` takes the real path from `--real-binary NAME=PATH` for the run,
+or from the wrapper's own documented override already exported in the operator's environment.
+With neither, the client is `blocked` with the requirement named. The harness never searches
+`PATH` for it, and refuses a supplied path that is the same file as the launcher on `PATH`.
+
+**Rationale.** Nothing on disk distinguishes a launcher from the thing it launches. The first
+version resolved the value with `which`, which returns the wrapper — the wrapper is what sits on
+`PATH` under that name — so the wrapper exec'd itself and spawned descendants until the host ran
+out. The repair took the first `PATH` entry that was not the *same file* as the wrapper, which a
+second *copy* of the wrapper satisfies: the same defect one arrangement further out. Both
+attempts guess which of several same-named executables is "the real one", and that guess cannot
+be made correct — only made to look correct on the machine it was tried on.
+
+**Rejected alternatives.** *Comparing file size or reading the first line*, because a wrapper
+that grows or loses its shebang defeats it and nothing announces that it has. *Skipping the two
+clients*, because their support status is exactly what the assessment exists to establish.
+*Guessing and capping the recursion depth*, because a bounded process bomb is still a process
+bomb and the record it produces describes the cap, not the client.
+
+**Consequence to expect.** An operator who has never exported the override sees two clients
+`blocked` naming the variable, not two clients silently assessed against a wrapper.
+
+**Revisit when.** A wrapper ships a documented, machine-readable way to name its real target.
+
+**Refs.** `scripts/assess_clients.py` (`resolve_real_binary`), `tests/test_assess_clients.py`
+(`RealBinaryResolutionTest`),
+[the wrapper learning](LEARNINGS.md#a-wrapper-resolved-by-name-resolves-to-itself).
+
+### Every assessment run gets its own directory, and every client its own package copy
+
+**Author.** Jeff Cox and Claude
+
+**Decision.** `--workspace` names a place runs live in, not a place a run owns.
+`allocate_run_directory` claims `run-001`, `run-002`, … inside it with `exist_ok=False`, and
+each client's package copy is made unconditionally into that new directory. Copying is never
+skipped because the destination already exists.
+
+**Rationale.** The record binds itself to the shipped package fingerprint. An operator pointing
+`--workspace` at the same place on every run is the normal case, and a conditional copy handed
+the next run whatever the last one left — including a copy a client had installed into. That
+tree then assessed as if it were the shipped package while the record went on naming the shipped
+digest, which is a record that identifies the wrong bytes. Numbered rather than random so a
+returning operator can tell which run is which.
+
+Two guards cover one defect here, deliberately. The fresh directory makes the collision
+impossible and the unconditional copy refuses it if it happens anyway; the second is what
+survives someone changing the first.
+
+**Rejected alternatives.** *Reusing a copy that still matches the fingerprint*, because it makes
+the guarantee depend on a check that the reuse exists to skip. *Deleting the workspace at
+start*, because it destroys the previous run's transcript, which is the only place raw client
+output is kept. *A temporary directory per run*, because the operator cannot find it afterwards
+and the transcript has to be found.
+
+**Consequence to expect.** Repeated runs accumulate `run-NNN` directories the operator prunes
+deliberately; disk is spent to keep every run's evidence separable.
+
+**Revisit when.** The workspace layout has to be shared with another tool that expects a fixed
+path.
+
+**Refs.** `scripts/assess_clients.py` (`allocate_run_directory`),
+`tests/test_assess_clients.py` (`WorkspaceFreshnessTest`).
+
 ### The port descriptor is closed, and its safety fields are stated rather than defaulted
 
 **Author.** Jeff Cox and Claude

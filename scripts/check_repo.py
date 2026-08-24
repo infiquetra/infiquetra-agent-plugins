@@ -940,6 +940,16 @@ def check_port_descriptors(root: Path) -> list[str]:
                 f"port descriptor {name}: names manifest {config.package_manifest}, which "
                 f"{config.package_root} does not carry"
             )
+        for relative in config.assessment.entrypoints:
+            # An entrypoint that is only syntactically a path reaches the
+            # interpreter, exits non-zero because the file is not there, and is
+            # graded as the package failing -- a descriptor typo charged to the
+            # package.
+            if not (config.package_directory / relative).is_file():
+                errors.append(
+                    f"port descriptor {name}: assessment.entrypoints names {relative}, which "
+                    f"{config.package_root} does not carry"
+                )
     return errors
 
 

@@ -83,6 +83,11 @@ absent, each in its own way:
 | `mutating_operations` | the same rule has no verbs to match |
 | `entrypoints` | the assessment invokes nothing, and a package can be called compatible without any executable having run |
 
+Every path in `entrypoints` must name a file the package actually carries.
+`scripts/check_repo.py` and the harness both refuse one that does not: left to
+run, the interpreter exits non-zero on a missing file and the row is graded as a
+package failure — charging a descriptor typo to the package.
+
 Each must be stated. A package for which one is genuinely empty names it in
 `declared_none` — a decision a reader can see, and one a typo cannot produce.
 

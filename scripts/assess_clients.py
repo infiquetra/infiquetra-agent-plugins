@@ -532,52 +532,74 @@ def credential_variables(environ: dict[str, str], config: PortConfig) -> list[st
     return sorted(name for name in environ if name.startswith(tuple(prefixes)))
 
 
-def resolve_real_binary(name: str, path: str | None = None) -> str:
-    """The real executable behind a launcher wrapper of the same name.
+def resolve_real_binary(
+    name: str,
+    variable: str,
+    *,
+    supplied: dict[str, str] | None = None,
+    environ: dict[str, str] | None = None,
+    path: str | None = None,
+) -> str:
+    """The real executable behind a launcher wrapper, taken -- never inferred.
 
-    Two clients are launched through a local auto-trust wrapper that resolves
-    its real binary through the client home. Under an isolated home that lookup
-    fails, so each run supplies the wrapper's own documented override naming the
-    real executable.
+    Two clients are launched through a local auto-trust wrapper that finds its
+    real binary through the client home. Under an isolated home that lookup
+    fails, so each run must supply the wrapper's own documented override naming
+    the real executable.
 
-    Resolving that override with a plain `which` returns *the wrapper*, because
-    the wrapper is what sits on `PATH` under that name. The wrapper then launches
-    itself, and keeps doing so: an unbounded chain of descendants that never
-    reaches the client and consumes the host while it fails. That is the defect
-    this function exists to prevent, so it fails loudly rather than returning
-    something plausible.
+    **Nothing here infers that value.** An earlier version resolved it with
+    `which`, which returns the wrapper -- the wrapper is what sits on `PATH`
+    under that name -- so the wrapper exec'd itself and kept doing so until the
+    host ran out. The repair after that returned the first `PATH` entry that was
+    not the *same file* as the wrapper, which a second *copy* of the wrapper
+    satisfies: same defect, one arrangement further out.
 
-    The search walks `PATH` in order and returns the first entry that is a real
-    executable *and* is not the same file as the first match. Same-file is
-    compared by `os.path.samefile`, so a symlink to the wrapper is caught too.
+    Both attempts share a shape: guessing which of several same-named
+    executables is "the real one". Nothing on disk distinguishes a launcher from
+    the thing it launches, so the guess cannot be made correct -- only made to
+    look correct on the machine it was tried on. The value is therefore taken
+    from the operator, in this order:
+
+    1. an explicit ``--real-binary NAME=PATH`` for this run;
+    2. the variable already exported in the operator's own environment, which is
+       the wrapper's documented override and is what makes the wrapper work
+       outside this harness at all.
+
+    With neither, this refuses. A blocked client with the requirement named is a
+    true statement about the run; a guessed path is a process bomb.
     """
-    entries = (path if path is not None else os.environ.get("PATH", "")).split(os.pathsep)
-    found: list[Path] = []
-    for entry in entries:
-        if not entry:
+    environ = os.environ if environ is None else environ
+    for source, value in (
+        ("--real-binary", (supplied or {}).get(name)),
+        (f"the exported {variable}", environ.get(variable)),
+    ):
+        if not value or not value.strip():
             continue
-        candidate = Path(entry) / name
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            found.append(candidate)
-    if not found:
-        raise AssessmentError(
-            f"{name!r} is not on PATH, so its real-binary override cannot be resolved"
-        )
-
-    wrapper = found[0]
-    for candidate in found[1:]:
-        try:
-            if os.path.samefile(candidate, wrapper):
-                continue
-        except OSError:  # pragma: no cover - unreadable candidate
-            continue
+        candidate = Path(value.strip())
+        if not candidate.is_file() or not os.access(candidate, os.X_OK):
+            raise AssessmentError(
+                f"{variable} from {source} names {value!r}, which is not an executable file"
+            )
+        launcher = shutil.which(name, path=path if path is not None else environ.get("PATH"))
+        if launcher is not None:
+            try:
+                if os.path.samefile(candidate, launcher):
+                    raise AssessmentError(
+                        f"{variable} from {source} names {value!r}, which is the same file as "
+                        f"the {name!r} launcher on PATH. A wrapper pointed at itself launches "
+                        "itself recursively and spawns descendants until the host runs out"
+                    )
+            except OSError:  # pragma: no cover - unreadable candidate
+                pass
         return str(candidate)
 
     raise AssessmentError(
-        f"the only {name!r} on PATH is the launcher wrapper at {wrapper}. Pointing that "
-        "wrapper's real-binary override back at itself makes it launch itself recursively, "
-        "never reach the client, and spawn descendants until the host runs out. Put the real "
-        "executable on PATH behind the wrapper, or set the override explicitly in the plan"
+        f"{name!r} runs through a launcher wrapper that needs {variable} to name its real "
+        f"executable, and this run has neither --real-binary {name}=PATH nor an exported "
+        f"{variable}. The harness will not guess: every same-named executable on PATH is a "
+        "candidate and nothing on disk says which is the launcher, so a guess risks the "
+        "wrapper launching itself until the host runs out. Supply the path, or accept this "
+        "client blocked."
     )
 
 
@@ -655,6 +677,19 @@ def refuse_unsafe_home(plan: ClientPlan, spec: StageSpec, home_kind: str) -> Non
 TRANSCRIPT_LIMIT = 64 * 1024
 
 
+def _as_text(value: object) -> str:
+    """Whatever `TimeoutExpired` carried, as text.
+
+    Its `stdout`/`stderr` are whatever was read before the deadline, and they
+    come back as bytes even when the call asked for text.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    return str(value)
+
+
 def _bounded(text: str | None) -> str:
     if not text:
         return ""
@@ -679,19 +714,43 @@ def terminate_process_group(pid: int) -> str:
     """
     if not hasattr(os, "killpg"):  # pragma: no cover - non-POSIX fallback
         return "The direct child was terminated; this platform has no process-group signal."
-    try:
-        group = os.getpgid(pid)
-    except (ProcessLookupError, PermissionError, OSError):
-        return "The process group had already exited."
+
+    # `start_new_session=True` makes the child a session and process-group
+    # leader, so its pid *is* the group id. Looking the id up with `getpgid`
+    # instead failed exactly when it mattered: a launcher that starts a
+    # descendant and exits leaves the descendant holding the captured pipes, so
+    # the read still times out while the leader is already gone. `getpgid` then
+    # raised, the cleanup reported "the group had already exited", and the
+    # descendant carried on installing. Signal the id directly.
+    # Every member of this group is a descendant of a process we started, so
+    # "not permitted" cannot mean somebody else's process. It means there is no
+    # longer a live member to signal: once the descendants are gone the leader
+    # is a zombie awaiting reap, and on at least one platform `killpg` answers
+    # EPERM rather than ESRCH for that state. Treating EPERM as failure produced
+    # a warning that a descendant "may survive" on runs where the probe below
+    # showed nothing had.
+    group = pid
+    signalled = False
     for signal_number in (signal.SIGTERM, signal.SIGKILL):
         try:
             os.killpg(group, signal_number)
-        except ProcessLookupError:
+            signalled = True
+        except (ProcessLookupError, PermissionError):
             break
-        except (PermissionError, OSError):  # pragma: no cover - unusual
+        except OSError:  # pragma: no cover - unusual
             return "The process group could not be signalled; a client descendant may survive."
         time.sleep(0.2)
-    return "The whole process group was terminated, so no client descendant survived it."
+
+    # Confirm rather than assume: having signalled is not the same as gone.
+    try:
+        os.killpg(group, 0)
+    except (ProcessLookupError, PermissionError):
+        return "The whole process group was terminated, so no client descendant survived it."
+    except OSError:  # pragma: no cover - unusual
+        return "The process group could not be probed; a client descendant may survive."
+    if not signalled:  # pragma: no cover - group alive but never signalled
+        return "The process group could not be signalled; a client descendant may survive."
+    return "The process group is still alive after SIGKILL; a client descendant may survive."
 
 
 def run_contained(
@@ -1061,11 +1120,24 @@ def run_stage(
             )
         except subprocess.TimeoutExpired as expired:
             killed = getattr(expired, "killed_group", "The direct child was terminated.")
+            # The transcript of what already ran, plus whatever the timed-out
+            # command managed to print. A blocked row is precisely where an
+            # operator most needs the output to explain the block, and this
+            # return used to discard all of it.
+            transcript.append(
+                CommandTranscript(
+                    command=redact(" ".join(argv), values),
+                    returncode=-1,
+                    stdout=_bounded(_as_text(expired.stdout)),
+                    stderr=_bounded(_as_text(expired.stderr)),
+                )
+            )
             return StageOutcome(
                 spec.stage,
                 BLOCKED,
                 command=recorded,
                 commands=tuple(recorded_commands),
+                transcript=tuple(transcript),
                 reason=(
                     f"No result within the {spec.timeout:g}s deadline. At least one client "
                     "prompts on standard input and hangs rather than declining when it gets no "
@@ -1196,6 +1268,18 @@ def entrypoint_paths(config: PortConfig, plan: ClientPlan) -> tuple[str, ...]:
     # upstream byte copy or target-owned source had no assessable entrypoint at
     # all -- the harness worked only for UniFi's custody layout.
     entrypoints = config.assessment.entrypoints
+    missing = [
+        relative
+        for relative in entrypoints
+        if not (config.package_directory / relative).is_file()
+    ]
+    if missing:
+        raise AssessmentError(
+            f"{config.name}: assessment.entrypoints names path(s) the package does not carry: "
+            f"{', '.join(missing)}. Left to run, the interpreter exits non-zero on a file that "
+            "is not there and the row is graded as a package failure -- blaming the package for "
+            "a typo in its descriptor"
+        )
     if not entrypoints:
         raise AssessmentError(
             f"{config.name}: declares no assessment.entrypoints, so there is nothing to invoke. "
@@ -1234,6 +1318,47 @@ def invocation_argv(config: PortConfig, plan: ClientPlan, python: str) -> tuple[
     return tuple((python, path, "--help") for path in entrypoint_paths(config, plan))
 
 
+def write_private(path: Path, payload: str) -> None:
+    """Write a file only its owner can read, whatever the umask is.
+
+    `Path.write_text` creates at 0666 masked by the umask, which on an ordinary
+    0022 umask is 0644 -- world-readable. This file holds raw, unredacted client
+    output and is documented as private, so the mode is set explicitly rather
+    than inherited, and re-set on an overwrite in case the file already existed
+    with a looser one.
+    """
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(descriptor, payload.encode("utf-8"))
+    finally:
+        os.close(descriptor)
+    os.chmod(path, 0o600)
+
+
+def allocate_run_directory(workspace: Path) -> Path:
+    """A directory inside `workspace` that no previous run has used.
+
+    The operator may point `--workspace` at the same place every time, and the
+    per-client copies must still be fresh: a copy an earlier run mutated would
+    otherwise be assessed as if it were the shipped package, while the record
+    went on binding itself to the shipped fingerprint.
+
+    Numbered rather than random so a returning operator can tell which run is
+    which, and created with `exist_ok=False` so the search cannot race itself
+    into reusing one.
+    """
+    workspace.mkdir(parents=True, exist_ok=True)
+    index = 1
+    while True:
+        candidate = workspace / f"run-{index:03d}"
+        try:
+            candidate.mkdir(exist_ok=False)
+        except FileExistsError:
+            index += 1
+            continue
+        return candidate
+
+
 def transcript_path(workspace: Path) -> Path:
     """Where a run's private operator transcript lives, given its workspace."""
     return Path(workspace) / "transcript.json"
@@ -1246,14 +1371,18 @@ def assess(
     execute: bool,
     only: tuple[str, ...] = (),
     workspace: Path | None = None,
+    real_binaries: dict[str, str] | None = None,
     runner: Callable[..., subprocess.CompletedProcess] = run_contained,
 ) -> dict[str, Any]:
     """Run the assessment and return the record, or raise rather than emit a lie."""
+    real_binaries = real_binaries or {}
     package_root = config.package_directory
     before = ccm.package_fingerprint(package_root)
     name, version = ccm.package_identity(package_root, config.package_manifest)
 
-    base = Path(workspace) if workspace is not None else Path(tempfile.mkdtemp())
+    base = allocate_run_directory(
+        Path(workspace) if workspace is not None else Path(tempfile.mkdtemp())
+    )
 
     plans = [plan for plan in CLIENT_PLANS if not only or plan.name in only]
     clients: list[dict[str, Any]] = []
@@ -1267,9 +1396,13 @@ def assess(
         # the original fingerprint -- ten rows describing up to ten different
         # trees under one digest.
         scratch = base / plan.name.replace(" ", "-").lower() / "package"
-        if not scratch.exists():
-            scratch.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(package_root, scratch)
+        # Never conditional. Copying only when the path was absent meant a
+        # reused --workspace handed the next run whatever the last one left --
+        # including a copy a client had mutated, which then assessed as if it
+        # were the shipped package and still bound the record to the shipped
+        # fingerprint. `allocate_run_directory` guarantees this path is new.
+        scratch.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(package_root, scratch)
         scratch_before = ccm.package_fingerprint(scratch)
         home = stage_home(base, plan) if plan.home == ISOLATED_HOME else None
         values = {
@@ -1285,12 +1418,14 @@ def assess(
             # reported. Unset, `run_stage` blocks the stage and names the
             # placeholder instead.
         }
-        # An empty declared value means "resolve the real executable behind the
-        # launcher wrapper". Resolving it with `which` returns the wrapper, and
-        # a wrapper told to launch itself does exactly that, forever.
+        # An empty declared value means "the operator must supply this"; it is
+        # never inferred. See `resolve_real_binary`.
         try:
             extra = {
-                key: (value or resolve_real_binary(plan.binary))
+                key: (
+                    value
+                    or resolve_real_binary(plan.binary, key, supplied=real_binaries)
+                )
                 for key, value in plan.environment.items()
             }
         except AssessmentError as error:
@@ -1355,6 +1490,11 @@ def assess(
                     BLOCKED,
                     command=outcomes[stage].command,
                     commands=outcomes[stage].commands,
+                    # Carried, not dropped. Invalidating the classification says
+                    # the stages describe bytes that no longer exist; it does not
+                    # make what the client printed less useful for working out
+                    # why it wrote to the package in the first place.
+                    transcript=outcomes[stage].transcript,
                     reason=invalidated,
                 )
                 for stage in ccm.STAGES
@@ -1434,8 +1574,9 @@ def assess(
         # each row's version, reason, and evidence. It stays in the run
         # workspace, which is private to the operator; the record never quotes
         # it and never names its path.
-        transcript_path(base).write_text(
-            json.dumps(transcripts, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        write_private(
+            transcript_path(base),
+            json.dumps(transcripts, indent=2, ensure_ascii=False) + "\n",
         )
     return record
 
@@ -1482,6 +1623,17 @@ def describe_plan(config: PortConfig) -> str:
     return "\n".join(lines)
 
 
+def parse_real_binaries(values: list[str]) -> dict[str, str]:
+    """`NAME=PATH` pairs from the command line, refused rather than half-read."""
+    resolved: dict[str, str] = {}
+    for value in values:
+        name, separator, path = value.partition("=")
+        if not separator or not name.strip() or not path.strip():
+            raise AssessmentError(f"--real-binary expects NAME=PATH, got {value!r}")
+        resolved[name.strip()] = path.strip()
+    return resolved
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run the ten-client compatibility assessment for a portable package."
@@ -1503,6 +1655,17 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--client", action="append", default=[], help="restrict to one client")
+    parser.add_argument(
+        "--real-binary",
+        action="append",
+        default=[],
+        metavar="NAME=PATH",
+        help=(
+            "the real executable behind a launcher wrapper, for a client that runs through one "
+            "(grok, agy). Never inferred: nothing on disk distinguishes a launcher from what it "
+            "launches, so a client with no value supplied here and none exported is blocked"
+        ),
+    )
     parser.add_argument("--out", help="write the record as JSON to this path")
     parser.add_argument(
         "--workspace",
@@ -1536,6 +1699,7 @@ def main(argv: list[str] | None = None) -> int:
             execute=True,
             only=tuple(arguments.client),
             workspace=workspace,
+            real_binaries=parse_real_binaries(arguments.real_binary),
         )
     except (AssessmentError, ccm.MatrixError) as error:
         print(f"ERROR: {error}", file=sys.stderr)

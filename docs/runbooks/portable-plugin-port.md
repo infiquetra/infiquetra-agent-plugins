@@ -121,7 +121,8 @@ whoever is running the assessment.
 ```bash
 python3 scripts/assess_clients.py --package <package>              # print the plan; runs nothing
 python3 scripts/assess_clients.py --package <package> --execute \
-    --python <venv>/bin/python3.12 --out <record>.json
+    --python <venv>/bin/python3.12 --workspace <scratch> \
+    --real-binary grok=<path> --real-binary agy=<path> --out <record>.json
 ```
 
 `--python` must name an interpreter that already has the package's own
@@ -133,10 +134,14 @@ bare floor interpreter records a non-zero status for every client and proposes
 Each client is handed its **own** fresh copy of the package, fingerprinted before
 and after that client runs. A client that changes the copy it was given has its
 row recorded without a classification: the stages describe bytes that no longer
-exist. The run also writes a private `transcript.json` beside those copies,
-holding each command's bounded raw output. That transcript is what the record's
-`evidence`, `reason`, and `version` fields are written from — it is operator-only,
-never committed, and never quoted into the public record.
+exist. Every run allocates a new numbered directory inside `--workspace`, so
+re-using one workspace never hands a later run a copy an earlier client mutated.
+The run also writes a private `transcript.json` beside those copies,
+holding each command's bounded raw output, written owner-only (mode 0600). That
+transcript is what the record's `evidence`, `reason`, and `version` fields are
+written from — it is operator-only, never committed, and never quoted into the
+public record. It is kept on the failure paths too: a timed-out or invalidated
+row is exactly where the output is needed to explain the block.
 
 The table below is the reference for reading that plan; the harness is what
 executes it.
@@ -150,7 +155,7 @@ executes it.
 | Gemini | `skills link` prompts on stdin and hangs rather than declining when stdin is closed. |
 | Muse | `--force` is required on the JSON install to report a digest once placement has installed the unit. |
 | Hermes | Run in an isolated home only. Confirm the live skills directory is unchanged before and after. |
-| Grok, Agy | The auto-trust override must name the **real** binary. Resolving it with `which` returns the wrapper, which then launches itself recursively until the host gives out; the harness refuses that rather than spawning it. |
+| Grok, Agy | The auto-trust override must name the **real** binary, and the harness never infers it: `which` returns the wrapper, and a wrapper pointed at itself spawns descendants until the host gives out. Supply `--real-binary <client>=<path>`, or export the client's own override variable. With neither, that client is **blocked** with the requirement named. |
 | Codex | Refuses the package root with an actionable message; load and invocation stay blocked. |
 
 Name the package's credential variable prefixes in the descriptor's

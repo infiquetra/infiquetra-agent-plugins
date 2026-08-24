@@ -1077,7 +1077,7 @@ class MutationProofBindingTest(unittest.TestCase):
                 digests[name.strip()] = value.strip()
         return digests
 
-    #: Every file the cycle-10 proof mutates, repository-relative. Listed here
+    #: Every file the current proof mutates, repository-relative. Listed here
     #: rather than derived from the document, so a proof that quietly stopped
     #: grading a file fails this test instead of shrinking in silence.
     GRADED = (
@@ -1094,9 +1094,15 @@ class MutationProofBindingTest(unittest.TestCase):
         Five files rather than the two cycle-9 graded: the readiness work added
         three more that carry load-bearing guards, and a guard whose proof is
         not bound to its bytes is a guard nobody has to re-prove after editing.
+
+        This test is also the reason the proof runner cannot start from a green
+        suite, and must exclude this test from grading. It fails until the run it
+        describes is published, and under every mutation, because a mutation
+        changes a graded file's bytes. Counting that as a kill made every
+        mutation a kill by construction -- see the cycle-12 proof's header.
         """
         root = self.EVIDENCE.parent.parent
-        recorded = self._recorded("2026-08-23-cycle11-mutation-proof-portable-copies.txt")
+        recorded = self._recorded("2026-08-23-cycle12-mutation-proof-portable-copies.txt")
         self.assertEqual(set(recorded), set(self.GRADED), recorded)
         for relative in self.GRADED:
             with self.subTest(name=relative):

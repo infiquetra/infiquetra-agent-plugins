@@ -229,6 +229,37 @@ class ClosedContractTest(unittest.TestCase):
                 self.assertIn(field, str(caught.exception))
                 self.assertIn("declared_none", str(caught.exception))
 
+    def test_a_missing_field_is_named_as_missing_rather_than_as_empty(self) -> None:
+        """Two guards refuse the same descriptor; only their diagnostics differ.
+
+        A field left out is read as empty downstream, so the emptiness guard
+        refuses it too and the descriptor is rejected either way. That made the
+        stated-field guard deletable without any test failing. What it actually
+        contributes is the diagnostic: `credential_prefixes` left out is a typo
+        or an oversight, and `credential_prefixes: []` is a decision. Telling the
+        author which one the file has is the whole point of asking for it.
+        """
+        for field in port_config.SAFETY_FIELDS:
+            with self.subTest(field=field):
+                absent = minimal()
+                del absent["assessment"][field]
+                with self.assertRaises(port_config.PortConfigError) as missing:
+                    parse(absent)
+
+                empty = minimal()
+                empty["assessment"][field] = []
+                with self.assertRaises(port_config.PortConfigError) as stated_empty:
+                    parse(empty)
+
+                self.assertIn("must be stated", str(missing.exception))
+                self.assertNotIn(
+                    "is empty",
+                    str(missing.exception),
+                    f"{field} left out was reported as empty, which sends the author "
+                    "looking for a value they never wrote",
+                )
+                self.assertIn("is empty", str(stated_empty.exception))
+
     def test_an_empty_safety_field_needs_an_explicit_declaration(self) -> None:
         for field in port_config.SAFETY_FIELDS:
             with self.subTest(field=field):

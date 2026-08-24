@@ -2,6 +2,170 @@
 
 ## 2026-08-23
 
+### The mutation proof counted its own bookkeeping as a kill
+
+**Author.** Jeff Cox and Claude
+
+**Context.** `MutationProofBindingTest` hashes the five files the mutation proof grades and
+compares them to the digests published in the current proof, so a graded file cannot be edited
+without its proof being re-run. The proof runner mutated one guard at a time and counted a
+mutation killed when the suite went from green to failing.
+
+**Evidence.** Cycle 11 published "38 mutations, 0 survivors". Re-graded with that binding test
+excluded, seven of those same anchors turned out to have no test behind them at all — including
+one whose guard could have been deleted outright, and the entire version-2 per-command-status
+rule in the matrix validator, which shipped with no test of any of its three branches.
+
+**Mechanism.** Every mutation edits a graded file. Editing a graded file changes its digest.
+Changing its digest fails the binding test. So every mutation failed the suite whatever it did to
+the guard, and the runner read that as a kill. The two mechanisms were built a cycle apart, each
+correct alone: the binding test to stop a proof naming bytes that never shipped, the runner to
+detect a guard nothing tests. Composed, the first one satisfied the second's success condition
+for free.
+
+The tell was there and went unread. Several mutations reported `killed (1)` — one failing test —
+and that one test was always the binding test. A kill count of one is a claim that exactly one
+test in six hundred covers a guard, which is worth looking at even when it is true.
+
+**Generalizable rule.** When a check's own instrumentation is inside the system it measures, ask
+what the measurement reads when the thing being measured does nothing. Here the answer was
+"pass", which means the measurement was never about the guard. Any all-pass result from a
+detector is a claim about the detector before it is a claim about the code.
+
+**Refs.** `docs/evidence/2026-08-23-cycle12-mutation-proof-portable-copies.txt` (header),
+`tests/test_site_profile.py::MutationProofBindingTest`.
+
+### A green baseline was the one thing the proof could not honestly have
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The mutation runner refused to start unless the suite was green, so that a mutation
+that fails a test proves the mutation broke something rather than that something was already
+broken.
+
+**Evidence.** After the round-2 repairs changed three graded files, the suite failed three
+subtests of `MutationProofBindingTest`. To reach a green baseline the previous cycle's evidence
+file was edited: three recorded digests replaced with the current ones. That file's own header
+warns against exactly this — "a proof whose digest is corrected by hand afterwards identifies
+nothing, which is the cycle-7 defect this file's binding test exists to prevent."
+
+**Mechanism.** The proof run is what computes those digests, so the binding test cannot pass
+until the run it describes is published. A precondition that cannot be satisfied honestly does
+not stop the work; it selects for whichever dishonest route is nearest, and the nearest one here
+was retroactively editing evidence to describe a run that never happened.
+
+**Generalizable rule.** When a check can only be satisfied by breaking a rule the project holds,
+the check is wrong, not the rule. Fix the check rather than paying its price once and calling it
+done — the price gets paid again by whoever comes next, and they may not notice what it cost.
+
+**Refs.** `docs/evidence/2026-08-23-cycle12-mutation-proof-portable-copies.txt`,
+[the grading decision](DECISIONS.md#a-mutation-proof-excludes-its-own-binding-test-and-is-never-corrected-by-hand).
+
+### A mutation anchor that is a substring of another line grades the wrong guard
+
+**Author.** Jeff Cox and Claude
+
+**Context.** Each mutation names the guard it breaks by an exact source excerpt, and the runner
+aborts if that excerpt does not appear exactly once.
+
+**Evidence.** The anchor for "harness discards captured client output" was
+`"        transcript.append("` — eight spaces. The repair that made the timeout path record its
+transcript added `transcript.append(` at twelve spaces, and the eight-space excerpt is a
+substring of the twelve-space line. The runner aborted after thirty-one minutes. A pre-flight
+pass over all forty-eight anchors then found a second unusable one the aborted run had not yet
+reached: the excerpt for "matrix safety rule reads only the first command" matched nothing at
+all, because the duplicate-grading repair had restructured that loop.
+
+**Mechanism.** Two independent hazards with one shape. An anchor is matched as a substring, so
+indentation does not bound it and a deeper copy of the same call silently makes it ambiguous.
+And an anchor is a claim about source that no longer exists once the source is edited — a repair
+to the guarded line quietly retires the proof of that guard. Both are invisible until the run
+reaches them, and the run reaches them one at a time, half an hour apart.
+
+**Generalizable rule.** Validate the whole set of preconditions before the expensive pass, not
+lazily as each is reached. The pre-flight here is thirty lines, runs in under a second, and turns
+two serial half-hour aborts into one report.
+
+**Refs.** the mutation runner and its anchor pre-flight (session scratchpad),
+[the grading decision](DECISIONS.md#a-mutation-proof-excludes-its-own-binding-test-and-is-never-corrected-by-hand).
+
+### Two repairs in a row fixed the instance and left the class
+
+**Author.** Jeff Cox and Claude
+
+**Context.** An independent review of the port-readiness change found a P0 — a launcher wrapper
+resolved as its own real binary, so it would exec itself until the host gave out — and a reliability
+defect where a stage's deadline did not contain the client's descendants. Both were repaired,
+mutation-proved, and shipped. The next review round found both again.
+
+**Evidence.**
+
+| Round | Defect | Repair | Why it did not hold |
+|---|---|---|---|
+| 1 | `which` returns the wrapper | return the first PATH entry that is **not the same file** as the wrapper | a second *copy* of the wrapper has a different inode, so `samefile` passes it |
+| 1 | `subprocess.run` kills only the direct child | `start_new_session=True`, then `os.getpgid(pid)` and signal the group | a launcher that exits leaves the descendant holding the pipes; `getpgid` on the exited leader raises, and the cleanup reported "the group had already exited" while the descendant kept writing |
+
+Both repairs were covered by mutation anchors, and both anchors passed, because each anchor tested
+the arrangement the repair was written against.
+
+**Mechanism.** Each repair encoded the *example* rather than the *predicate*. The predicate for the
+first is "which of several same-named executables is the launcher" — and nothing on disk answers it,
+so every rule of the form "the one that differs from the first" is a guess that happens to be right
+on the machine it was tried on. The predicate for the second is "signal the group", and resolving the
+group *through the leader* silently made it "signal the group, if the leader is still alive" — a
+precondition nobody stated and the probe did not vary.
+
+A mutation proof does not catch this. It shows a guard is load-bearing for the cases in its corpus;
+it says nothing about cases the corpus does not contain, and the corpus was written by the same
+person who wrote the too-narrow guard.
+
+**Fix.** Stop guessing and stop deriving. The real binary is now supplied by the operator
+(`--real-binary NAME=PATH`, or the client's own exported override) and refused otherwise — a blocked
+client with the requirement named is true, where a guessed path is a process bomb. The process group
+is signalled by `process.pid` directly, which `start_new_session=True` guarantees *is* the group id,
+with no lookup that can fail. Both corpora were widened to the class: a copied wrapper, a symlinked
+wrapper, an override naming the launcher itself; a leader that exits before its descendant.
+
+**Generalizable rule.** After repairing a defect, write down the predicate the repair now implements
+and ask what else satisfies it. If the answer is "the case I tested", the repair is the example
+again. And when a repair's predicate turns out to be unanswerable from the available evidence —
+which of these identical files is the real one — the correct repair is to stop answering it and
+require the input.
+
+**Refs.** `scripts/assess_clients.py` (`resolve_real_binary`, `terminate_process_group`),
+`tests/test_assess_clients.py::RealBinaryResolutionTest`, `::ProcessGroupTest`, cycle-12 mutation
+proof.
+
+### EPERM from killpg can mean "nothing left to signal"
+
+**Author.** Jeff Cox and Claude
+
+**Context.** The process-group cleanup added above reports, in the blocked stage's reason, how
+thoroughly it managed to clean up.
+
+**Evidence.** A probe confirmed the descendant was killed — the marker file it would have written
+never appeared — while the reason read "the process group could not be signalled; a client
+descendant may survive." Tracing it: `SIGTERM` succeeded and killed the descendant, and the
+following `SIGKILL` raised `PermissionError` (EPERM) rather than `ProcessLookupError`. The code read
+EPERM as failure.
+
+**Mechanism.** Once the descendants are gone, the session leader is a zombie awaiting reap, and at
+least one platform answers `killpg` on that group with EPERM rather than ESRCH. Every member of this
+group is a descendant of a process the harness started, so EPERM cannot mean "somebody else's
+process" here — it means there is no longer a live member to signal.
+
+The failure this produced was not a leak. It was a *guard describing its own outcome incorrectly*,
+in the pessimistic direction, which is the direction that gets ignored: a reason that says "may
+survive" on every clean run trains the reader to disregard it, and then it says nothing on the run
+where a descendant really does survive.
+
+**Generalizable rule.** An error code is evidence about a system state, not a verdict. Before
+treating one as failure, ask what states can produce it in *this* process's situation — and confirm
+the outcome directly rather than inferring it from the last call's return.
+
+**Refs.** `scripts/assess_clients.py` (`terminate_process_group`),
+`tests/test_assess_clients.py::ProcessGroupTest`.
+
 ### A wrapper resolved by name resolves to itself
 
 **Author.** Jeff Cox and Claude

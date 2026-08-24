@@ -47,6 +47,7 @@ CONFIG = port_config.load("unifi", ROOT)
 
 def write_executable(directory: Path, name: str, body: str) -> Path:
     """A real executable on disk, so the tests below run real processes."""
+    directory.mkdir(parents=True, exist_ok=True)
     path = directory / name
     path.write_text("#!/bin/sh\n" + body, encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -428,72 +429,141 @@ class SafetyRefusalTest(FakeClientFixture):
 
 
 class RealBinaryResolutionTest(FakeClientFixture):
-    """The P0: a wrapper told to launch itself does exactly that, forever.
+    """The P0 class: the harness never guesses which same-named binary is real.
 
-    Two clients run through a local auto-trust wrapper that needs its real
-    binary named under an isolated home. Resolving that with a plain `which`
-    returns the wrapper, because the wrapper is what sits on PATH under that
-    name. The launcher then relaunches itself, never reaches the client, and
-    spawns descendants until the host gives out.
+    Two earlier attempts guessed. `which` returned the wrapper, so the wrapper
+    exec'd itself. Returning the first PATH entry that was not the *same file*
+    as the wrapper accepted a second *copy* of the wrapper -- same defect, one
+    arrangement further out. Nothing on disk distinguishes a launcher from what
+    it launches, so the value is taken from the operator or the client is
+    blocked.
     """
 
-    def test_the_wrapper_alone_on_path_is_refused_not_returned(self) -> None:
-        wrappers = self.base / "wrap"
-        wrappers.mkdir()
-        write_executable(wrappers, "grok", 'exec "$GROK_AUTO_TRUST_REAL_BIN" "$@"\n')
-        with self.assertRaises(harness.AssessmentError) as caught:
-            harness.resolve_real_binary("grok", path=str(wrappers))
-        message = str(caught.exception)
-        self.assertIn("launcher wrapper", message)
-        self.assertIn("recursively", message)
+    def setUp(self) -> None:
+        super().setUp()
+        self.wrappers = self.base / "wrap"
+        self.real = self.base / "real"
+        write_executable(self.wrappers, "grok", 'exec "$GROK_AUTO_TRUST_REAL_BIN" "$@"\n')
+        write_executable(self.real, "grok", 'echo "the real client"\nexit 0\n')
+        self.path = os.pathsep.join([str(self.wrappers), str(self.real)])
 
-    def test_the_real_binary_behind_the_wrapper_is_found(self) -> None:
-        wrappers = self.base / "wrap"
-        real = self.base / "real"
-        wrappers.mkdir()
-        real.mkdir()
-        write_executable(wrappers, "grok", 'exec "$GROK_AUTO_TRUST_REAL_BIN" "$@"\n')
-        write_executable(real, "grok", 'echo "the real client"\nexit 0\n')
+    def test_an_explicit_path_is_used(self) -> None:
         resolved = harness.resolve_real_binary(
-            "grok", path=os.pathsep.join([str(wrappers), str(real)])
+            "grok",
+            "GROK_AUTO_TRUST_REAL_BIN",
+            supplied={"grok": str(self.real / "grok")},
+            environ={"PATH": self.path},
+            path=self.path,
         )
-        self.assertEqual(Path(resolved).parent, real)
+        self.assertEqual(Path(resolved), self.real / "grok")
 
-    def test_a_symlink_to_the_wrapper_is_not_mistaken_for_the_real_binary(self) -> None:
-        wrappers = self.base / "wrap"
-        linked = self.base / "linked"
-        wrappers.mkdir()
-        linked.mkdir()
-        wrapper = write_executable(wrappers, "agy", "exit 0\n")
-        (linked / "agy").symlink_to(wrapper)
+    def test_an_exported_override_is_used_when_no_flag_is_given(self) -> None:
+        """The wrapper's own documented variable, which the operator already sets."""
+        resolved = harness.resolve_real_binary(
+            "grok",
+            "GROK_AUTO_TRUST_REAL_BIN",
+            environ={"PATH": self.path, "GROK_AUTO_TRUST_REAL_BIN": str(self.real / "grok")},
+            path=self.path,
+        )
+        self.assertEqual(Path(resolved), self.real / "grok")
+
+    def test_with_nothing_supplied_it_refuses_rather_than_guessing(self) -> None:
+        with self.assertRaises(harness.AssessmentError) as caught:
+            harness.resolve_real_binary(
+                "grok", "GROK_AUTO_TRUST_REAL_BIN", environ={"PATH": self.path}, path=self.path
+            )
+        message = str(caught.exception)
+        self.assertIn("will not guess", message)
+        self.assertIn("--real-binary", message)
+
+    def test_a_copied_wrapper_is_never_selected(self) -> None:
+        """The defect the previous repair reintroduced.
+
+        Two byte-identical wrapper copies have different inodes, so a
+        same-file check passes them. With no inference at all there is nothing
+        to pass.
+        """
+        copy = self.base / "copy"
+        write_executable(copy, "grok", 'exec "$GROK_AUTO_TRUST_REAL_BIN" "$@"\n')
+        path = os.pathsep.join([str(self.wrappers), str(copy)])
         with self.assertRaises(harness.AssessmentError):
             harness.resolve_real_binary(
-                "agy", path=os.pathsep.join([str(wrappers), str(linked)])
+                "grok", "GROK_AUTO_TRUST_REAL_BIN", environ={"PATH": path}, path=path
             )
 
-    def test_an_absent_binary_is_reported_not_guessed(self) -> None:
+    def test_an_override_naming_the_launcher_itself_is_refused(self) -> None:
+        """Even supplied explicitly, a wrapper pointed at itself still recurses."""
         with self.assertRaises(harness.AssessmentError) as caught:
-            harness.resolve_real_binary("no-such-client", path=str(self.base))
-        self.assertIn("not on PATH", str(caught.exception))
+            harness.resolve_real_binary(
+                "grok",
+                "GROK_AUTO_TRUST_REAL_BIN",
+                supplied={"grok": str(self.wrappers / "grok")},
+                environ={"PATH": self.path},
+                path=self.path,
+            )
+        self.assertIn("same file as", str(caught.exception))
 
-    def test_no_override_ever_resolves_to_the_command_on_path(self) -> None:
-        """The property that makes the recursion impossible, over both clients."""
-        wrappers = self.base / "wrap"
-        real = self.base / "real"
-        wrappers.mkdir()
-        real.mkdir()
-        for plan in harness.CLIENT_PLANS:
-            if not plan.environment:
-                continue
-            with self.subTest(client=plan.name):
-                write_executable(wrappers, plan.binary, "exit 0\n")
-                write_executable(real, plan.binary, "exit 0\n")
-                path = os.pathsep.join([str(wrappers), str(real)])
-                resolved = harness.resolve_real_binary(plan.binary, path=path)
-                self.assertFalse(
-                    os.path.samefile(resolved, wrappers / plan.binary),
-                    "the override points back at the wrapper",
-                )
+    def test_a_symlink_to_the_launcher_is_refused(self) -> None:
+        linked = self.base / "linked"
+        linked.mkdir()
+        (linked / "grok").symlink_to(self.wrappers / "grok")
+        with self.assertRaises(harness.AssessmentError):
+            harness.resolve_real_binary(
+                "grok",
+                "GROK_AUTO_TRUST_REAL_BIN",
+                supplied={"grok": str(linked / "grok")},
+                environ={"PATH": self.path},
+                path=self.path,
+            )
+
+    def test_a_supplied_path_that_is_not_executable_is_refused(self) -> None:
+        plain = self.base / "not-executable"
+        plain.write_text("#!/bin/sh\n", encoding="utf-8")
+        with self.assertRaises(harness.AssessmentError) as caught:
+            harness.resolve_real_binary(
+                "grok",
+                "GROK_AUTO_TRUST_REAL_BIN",
+                supplied={"grok": str(plain)},
+                environ={"PATH": self.path},
+                path=self.path,
+            )
+        self.assertIn("not an executable file", str(caught.exception))
+
+    def test_a_wrapper_client_with_nothing_supplied_is_blocked_not_run(self) -> None:
+        """End to end: the whole client is blocked, and no process starts."""
+        plan = harness.plan_for("Grok")
+        started: list[object] = []
+
+        def refuse(*arguments: object, **keywords: object):
+            started.append(arguments)
+            raise AssertionError("a stage started despite an unresolved override")
+
+        with unittest.mock.patch.dict(os.environ, {"PATH": self.path}, clear=False):
+            os.environ.pop("GROK_AUTO_TRUST_REAL_BIN", None)
+            record = harness.assess(
+                CONFIG,
+                python=sys.executable,
+                execute=True,
+                only=(plan.name,),
+                workspace=self.base / "ws",
+                runner=refuse,
+            )
+        self.assertFalse(started)
+        row = record["clients"][0]
+        for stage in ccm.STAGES:
+            with self.subTest(stage=stage):
+                self.assertEqual(row["stages"][stage]["result"], harness.BLOCKED)
+                self.assertIn("will not guess", row["stages"][stage]["reason"])
+
+    def test_the_cli_parses_and_refuses_real_binary_pairs(self) -> None:
+        self.assertEqual(
+            harness.parse_real_binaries(["grok=/usr/local/bin/grok"]),
+            {"grok": "/usr/local/bin/grok"},
+        )
+        for bad in ("grok", "=/path", "grok=", "  =  "):
+            with self.subTest(value=bad):
+                with self.assertRaises(harness.AssessmentError):
+                    harness.parse_real_binaries([bad])
 
 
 class ProcessGroupTest(FakeClientFixture):
@@ -510,7 +580,7 @@ class ProcessGroupTest(FakeClientFixture):
             harness.StageSpec("placement", ("spawning-launcher",), timeout=0.6)
         )
         self.assertEqual(outcome.result, harness.BLOCKED)
-        self.assertIn("process group", outcome.reason)
+        self.assertIn("no client descendant survived it", outcome.reason)
         # The descendant had 5s to appear; the group was killed well before.
         deadline = time.time() + 8
         while time.time() < deadline:
@@ -521,6 +591,219 @@ class ProcessGroupTest(FakeClientFixture):
             marker.exists(),
             "a client descendant outlived the deadline and kept writing",
         )
+
+
+    def test_a_leader_that_exits_still_has_its_descendant_killed(self) -> None:
+        """The class the first repair missed.
+
+        A launcher that starts a descendant and exits leaves the descendant
+        holding the captured pipes, so the read still times out while the leader
+        is already gone. Resolving the group id through the exited leader failed,
+        and the cleanup reported the group had exited while the descendant kept
+        running.
+        """
+        marker = self.base / "leader-descendant-alive"
+        write_executable(
+            self.bin, "exiting-leader", f'( sleep 4; touch "{marker}" ) &\nexit 0\n'
+        )
+        outcome = self.outcome(
+            harness.StageSpec("placement", ("exiting-leader",), timeout=0.8)
+        )
+        self.assertEqual(outcome.result, harness.BLOCKED)
+        self.assertIn(
+            "no client descendant survived it",
+            outcome.reason,
+            "the cleanup reported a state it had not established",
+        )
+        deadline = time.time() + 7
+        while time.time() < deadline and not marker.exists():
+            time.sleep(0.2)
+        self.assertFalse(
+            marker.exists(),
+            "the descendant outlived its exited leader and the deadline",
+        )
+
+
+class WorkspaceFreshnessTest(unittest.TestCase):
+    """A reused --workspace must never hand a client an earlier run's copy."""
+
+    def setUp(self) -> None:
+        self._temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporary.cleanup)
+        self.workspace = Path(self._temporary.name)
+
+    def test_a_second_run_in_the_same_workspace_gets_fresh_copies(self) -> None:
+        """The defect: the copy was made only when the path did not exist.
+
+        A client that mutated its copy left that copy behind, and the next run
+        assessed the mutated tree while still binding the record to the shipped
+        package's fingerprint.
+        """
+        harness.assess(
+            CONFIG, python=sys.executable, execute=False,
+            only=("OpenAI Codex",), workspace=self.workspace,
+        )
+        first = next(p for p in self.workspace.glob("*/*/package") if p.is_dir())
+        (first / "INTRUDER.txt").write_text("mutated\n", encoding="utf-8")
+
+        harness.assess(
+            CONFIG, python=sys.executable, execute=False,
+            only=("OpenAI Codex",), workspace=self.workspace,
+        )
+        copies = sorted(p for p in self.workspace.glob("*/*/package") if p.is_dir())
+        self.assertEqual(len(copies), 2, "the second run reused the first run's directory")
+        second = [p for p in copies if p != first][0]
+        self.assertFalse(
+            (second / "INTRUDER.txt").exists(),
+            "the second run inherited a mutated copy from the first",
+        )
+        self.assertEqual(
+            ccm.package_fingerprint(second),
+            ccm.package_fingerprint(CONFIG.package_directory),
+            "the fresh copy does not match the shipped package",
+        )
+
+    def test_a_pre_existing_copy_is_refused_rather_than_reused(self) -> None:
+        """Two guards cover this defect, and only one of them was proved.
+
+        `allocate_run_directory` hands out a directory no run has used, so the
+        copy can never find its destination occupied -- which meant the copy
+        could be made conditional and nothing failed. A guard whose only proof is
+        that another guard makes it unreachable is a guard that can be deleted.
+        Force the collision the run directory normally prevents.
+        """
+        run = self.workspace / "run-001"
+        stale = run / "openai-codex" / "package"
+        stale.mkdir(parents=True)
+        (stale / "INTRUDER.txt").write_text("left by an earlier client\n", encoding="utf-8")
+
+        with unittest.mock.patch.object(harness, "allocate_run_directory", lambda _: run):
+            with self.assertRaises(FileExistsError):
+                harness.assess(
+                    CONFIG, python=sys.executable, execute=False,
+                    only=("OpenAI Codex",), workspace=self.workspace,
+                )
+        self.assertTrue(
+            (stale / "INTRUDER.txt").exists(),
+            "the run destroyed the evidence it should have refused to assess",
+        )
+
+    def test_each_run_gets_its_own_numbered_directory(self) -> None:
+        for _ in range(3):
+            harness.assess(
+                CONFIG, python=sys.executable, execute=False,
+                only=("OpenAI Codex",), workspace=self.workspace,
+            )
+        runs = sorted(p.name for p in self.workspace.iterdir() if p.is_dir())
+        self.assertEqual(runs, ["run-001", "run-002", "run-003"])
+
+
+class InvalidEntrypointTest(unittest.TestCase):
+    """A descriptor typo must not be charged to the package."""
+
+    def variant(self, entrypoints: list[str]) -> port_config.PortConfig:
+        return port_config.parse(
+            {
+                "schema_version": port_config.SCHEMA_VERSION,
+                "package": CONFIG.name,
+                "package_root": CONFIG.package_root,
+                "source": {
+                    "repository": CONFIG.source.repository,
+                    "package_path": CONFIG.source.package_path,
+                },
+                "custody": {},
+                "assessment": {
+                    "credential_prefixes": list(CONFIG.assessment.credential_prefixes),
+                    "package_scripts": list(CONFIG.assessment.package_scripts),
+                    "mutating_operations": sorted(CONFIG.assessment.mutating_operations),
+                    "entrypoints": entrypoints,
+                    "skill_units": list(CONFIG.assessment.skill_units),
+                    "declared_none": [],
+                },
+            },
+            root=CONFIG.root,
+            path=CONFIG.path,
+        )
+
+    def test_an_entrypoint_the_package_does_not_carry_is_refused(self) -> None:
+        """Left to run, python exits 2 and propose_status reports `failed`."""
+        config = self.variant(["skills/unifi-network/scripts/typoed_client.py"])
+        with self.assertRaises(harness.AssessmentError) as caught:
+            harness.entrypoint_paths(config, harness.plan_for("Claude Code"))
+        message = str(caught.exception)
+        self.assertIn("does not carry", message)
+        self.assertIn("blaming the package", message)
+
+    def test_the_repository_gate_refuses_it_too(self) -> None:
+        """Two independent catches: the gate, and the harness before it runs."""
+        import check_repo
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "ports").mkdir()
+            (root / CONFIG.package_root).mkdir(parents=True)
+            (root / CONFIG.package_root / "plugin.json").write_text(
+                json.dumps({"name": CONFIG.name, "version": "1.0"}), encoding="utf-8"
+            )
+            document = json.loads(CONFIG.path.read_text(encoding="utf-8"))
+            document["assessment"]["entrypoints"] = ["scripts/absent.py"]
+            (root / "ports" / f"{CONFIG.name}.json").write_text(
+                json.dumps(document), encoding="utf-8"
+            )
+            errors = check_repo.check_port_descriptors(root)
+        self.assertTrue(any("assessment.entrypoints" in e for e in errors), errors)
+
+    def test_the_shipped_descriptor_names_only_files_that_exist(self) -> None:
+        for relative in CONFIG.assessment.entrypoints:
+            with self.subTest(entrypoint=relative):
+                self.assertTrue((CONFIG.package_directory / relative).is_file())
+
+
+class TranscriptPrivacyTest(unittest.TestCase):
+    """Raw unredacted client output must not be world-readable."""
+
+    def test_the_transcript_is_written_owner_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            os.chmod(workspace, 0o755)
+            target = harness.transcript_path(workspace)
+            previous = os.umask(0o022)
+            try:
+                harness.write_private(target, '{"x": "raw client output"}')
+            finally:
+                os.umask(previous)
+            mode = stat.S_IMODE(target.stat().st_mode)
+        self.assertEqual(mode, 0o600, f"transcript is {oct(mode)}, not owner-only")
+
+    def test_the_file_is_created_owner_only_before_anything_is_written(self) -> None:
+        """The chmod after the write cannot protect the window before it.
+
+        Both guards leave the same final mode, so a test that reads the mode
+        afterwards passes with the *creation* mode widened to 0644 -- and the raw
+        client output is then written into a world-readable file and tightened a
+        moment later. Neutralize the second guard to observe the first.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            target = harness.transcript_path(Path(directory))
+            previous = os.umask(0o022)
+            try:
+                with unittest.mock.patch.object(harness.os, "chmod", lambda *a, **k: None):
+                    harness.write_private(target, '{"x": "raw client output"}')
+                mode = stat.S_IMODE(target.stat().st_mode)
+            finally:
+                os.umask(previous)
+        self.assertEqual(
+            mode, 0o600, f"created {oct(mode)}; raw output is exposed until the chmod lands"
+        )
+
+    def test_an_existing_loose_file_is_tightened_on_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            target = harness.transcript_path(Path(directory))
+            target.write_text("stale", encoding="utf-8")
+            os.chmod(target, 0o644)
+            harness.write_private(target, '{"x": "fresh"}')
+            mode = stat.S_IMODE(target.stat().st_mode)
+        self.assertEqual(mode, 0o600)
 
 
 class TranscriptTest(FakeClientFixture):
@@ -543,6 +826,188 @@ class TranscriptTest(FakeClientFixture):
     def test_the_record_never_carries_raw_output(self) -> None:
         outcome = self.outcome(harness.StageSpec("discovery", ("ok-client", "list")))
         self.assertNotIn("two skills resolved", json.dumps(outcome.record()))
+
+
+class FailurePathTranscriptTest(FakeClientFixture):
+    """The rows that most need output are the ones that used to lose it."""
+
+    def test_a_timed_out_stage_keeps_what_already_ran(self) -> None:
+        write_executable(self.bin, "slow-second", "sleep 30\n")
+        real = harness.stage_argvs
+        harness.stage_argvs = lambda c, p, s, v: (("ok-client",), ("slow-second",))
+        try:
+            outcome = self.outcome(
+                harness.StageSpec("placement", ("ok-client",), timeout=0.8)
+            )
+        finally:
+            harness.stage_argvs = real
+        self.assertEqual(outcome.result, harness.BLOCKED)
+        self.assertTrue(outcome.transcript, "the timeout discarded the whole transcript")
+        self.assertIn(
+            "two skills resolved",
+            "".join(item.stdout for item in outcome.transcript),
+            "the completed command's output was lost",
+        )
+
+    def test_a_timed_out_stage_records_the_timed_out_command_too(self) -> None:
+        outcome = self.outcome(
+            harness.StageSpec("placement", ("hanging-client",), timeout=0.6)
+        )
+        self.assertEqual(outcome.result, harness.BLOCKED)
+        self.assertEqual(len(outcome.transcript), 1)
+        self.assertIn("hanging-client", outcome.transcript[0].command)
+
+    def test_an_invalidated_client_keeps_its_transcript(self) -> None:
+        """Losing the classification must not lose the evidence of why."""
+        workspace = self.base / "ws"
+        plan = harness.plan_for("OpenAI Codex")
+        write_executable(self.base / "cbin", plan.binary, 'echo "codex says no" >&2\nexit 3\n')
+
+        def mutate_once(*arguments: object, **keywords: object):
+            copies = list(workspace.glob("*/*/package"))
+            if copies:
+                (copies[0] / "INTRUDER.txt").write_text("x\n", encoding="utf-8")
+            return subprocess.CompletedProcess([], 0, "client output here", "")
+
+        path = os.pathsep.join([str(self.base / "cbin"), os.environ.get("PATH", "")])
+        with unittest.mock.patch.dict(os.environ, {"PATH": path}):
+            harness.assess(
+                CONFIG, python=sys.executable, execute=True,
+                only=(plan.name,), workspace=workspace, runner=mutate_once,
+            )
+        transcript = json.loads(
+            harness.transcript_path(sorted(workspace.iterdir())[0]).read_text(encoding="utf-8")
+        )
+        kept = json.dumps(transcript)
+        self.assertIn("client output here", kept, "invalidation discarded the transcript")
+
+
+    def test_an_invalidated_client_is_not_classified_at_all(self) -> None:
+        """Keeping the transcript is half of it; the stage results must not stand.
+
+        Every command returns 0 and the package is changed on the last of them,
+        so on their own terms all four stages succeeded and the status they
+        propose is `works-directly`. They must not stand: the tree the record's
+        fingerprint names is not the tree they ran against, so nothing about this
+        client was established. Invalidation rewrites every stage to `blocked`
+        with the reason, and `unsupported` follows from there rather than being
+        asserted separately.
+        """
+        workspace = self.base / "ws-status"
+        plan = harness.plan_for("Claude Code")
+        write_executable(self.base / "sbin", plan.binary, "exit 0\n")
+        calls: list[int] = []
+
+        def mutate_last(*arguments: object, **keywords: object):
+            calls.append(1)
+            if len(calls) == 5:  # Claude Code runs five commands across four stages
+                copies = list(workspace.glob("*/*/package"))
+                if copies:
+                    (copies[0] / "INTRUDER.txt").write_text("x\n", encoding="utf-8")
+            return subprocess.CompletedProcess([], 0, "all four stages fine", "")
+
+        path = os.pathsep.join([str(self.base / "sbin"), os.environ.get("PATH", "")])
+        with unittest.mock.patch.dict(os.environ, {"PATH": path}):
+            record = harness.assess(
+                CONFIG, python=sys.executable, execute=True,
+                only=(plan.name,), workspace=workspace, runner=mutate_last,
+            )
+        row = record["clients"][0]
+        self.assertEqual(
+            [row["stages"][stage]["result"] for stage in ccm.STAGES],
+            ["blocked"] * len(ccm.STAGES),
+            "stages that ran against bytes which no longer exist were left standing",
+        )
+        for stage in ccm.STAGES:
+            self.assertIn(
+                "changed the package copy",
+                row["stages"][stage]["reason"],
+                f"{stage} does not say why its result was withdrawn",
+            )
+        self.assertEqual(row["status"], "unsupported")
+
+    def test_a_client_that_leaves_the_package_alone_keeps_its_results(self) -> None:
+        """The contrast: the same run without the change is `works-directly`."""
+        plan = harness.plan_for("Claude Code")
+        write_executable(self.base / "sbin", plan.binary, "exit 0\n")
+        path = os.pathsep.join([str(self.base / "sbin"), os.environ.get("PATH", "")])
+        with unittest.mock.patch.dict(os.environ, {"PATH": path}):
+            record = harness.assess(
+                CONFIG, python=sys.executable, execute=True, only=(plan.name,),
+                workspace=self.base / "ws-clean",
+                runner=lambda *a, **k: subprocess.CompletedProcess([], 0, "fine", ""),
+            )
+        self.assertEqual(record["clients"][0]["status"], "works-directly")
+
+
+class DuplicateDiagnosticTest(unittest.TestCase):
+    """Version 2 keeps `command` as an alias of commands[0]; grade it once."""
+
+    def test_one_unsafe_command_yields_one_problem(self) -> None:
+        script = CONFIG.assessment.package_scripts[0]
+        operation = sorted(CONFIG.assessment.mutating_operations)[0]
+        unsafe = f"python3 {script} {operation}"
+        record = {
+            "clients": [
+                {
+                    "name": "Claude Code",
+                    "stages": {
+                        "invocation": {
+                            "result": "executed",
+                            "command": unsafe,
+                            "commands": [{"command": unsafe, "exit_status": 0}],
+                            "evidence": "x",
+                        }
+                    },
+                }
+            ]
+        }
+        problems = ccm.check_safety_rules(record, CONFIG)
+        self.assertEqual(len(problems), 1, problems)
+
+    def test_a_version_one_stage_is_still_graded(self) -> None:
+        script = CONFIG.assessment.package_scripts[0]
+        operation = sorted(CONFIG.assessment.mutating_operations)[0]
+        record = {
+            "clients": [
+                {
+                    "name": "Claude Code",
+                    "stages": {
+                        "invocation": {
+                            "result": "executed",
+                            "command": f"python3 {script} {operation}",
+                            "evidence": "x",
+                        }
+                    },
+                }
+            ]
+        }
+        self.assertEqual(len(ccm.check_safety_rules(record, CONFIG)), 1)
+
+    def test_an_unsafe_second_command_is_still_caught(self) -> None:
+        """Deduplicating the alias must not stop grading the rest."""
+        script = CONFIG.assessment.package_scripts[0]
+        operation = sorted(CONFIG.assessment.mutating_operations)[0]
+        safe = f"python3 {script} list"
+        record = {
+            "clients": [
+                {
+                    "name": "Claude Code",
+                    "stages": {
+                        "invocation": {
+                            "result": "executed",
+                            "command": safe,
+                            "commands": [
+                                {"command": safe, "exit_status": 0},
+                                {"command": f"python3 {script} {operation}", "exit_status": 0},
+                            ],
+                            "evidence": "x",
+                        }
+                    },
+                }
+            ]
+        }
+        self.assertEqual(len(ccm.check_safety_rules(record, CONFIG)), 1)
 
 
 class PerCommandStatusTest(FakeClientFixture):
@@ -696,7 +1161,9 @@ class EntrypointPathTest(unittest.TestCase):
                     "credential_prefixes": ["UNIFI_"],
                     "package_scripts": ["unifi_network_client.py"],
                     "mutating_operations": ["reboot"],
-                    "entrypoints": ["tools/orphan.py"],
+                    # A file the package really carries, so the existence
+                    # check passes and the skill-unit rule is what refuses it.
+                    "entrypoints": ["scripts/discover.py"],
                     "skill_units": ["skills/unifi-network"],
                     "declared_none": [],
                 },
@@ -1057,7 +1524,7 @@ class RecordTest(unittest.TestCase):
         could describe up to ten different trees under one digest.
         """
         self.plan_only_record()
-        copies = sorted(p for p in self.workspace.glob("*/package") if p.is_dir())
+        copies = sorted(p for p in self.workspace.glob("*/*/package") if p.is_dir())
         self.assertEqual(len(copies), len(harness.CLIENT_PLANS))
         digests = {ccm.package_fingerprint(copy)[1] for copy in copies}
         self.assertEqual(len(digests), 1, "the copies are not identical to begin with")
@@ -1068,7 +1535,7 @@ class RecordTest(unittest.TestCase):
         """A client that installs in place must not be able to reach the source."""
         before = ccm.package_fingerprint(CONFIG.package_directory)
         self.plan_only_record()
-        copies = [p for p in self.workspace.glob("*/package") if p.is_dir()]
+        copies = [p for p in self.workspace.glob("*/*/package") if p.is_dir()]
         self.assertTrue(copies)
         for copy in copies:
             self.assertNotEqual(copy.resolve(), CONFIG.package_directory.resolve())
@@ -1102,6 +1569,29 @@ class CommandLineTest(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 1)
         self.assertIn("no port descriptor", completed.stderr)
+
+    def test_the_plan_shows_the_package_name_the_harness_already_knows(self) -> None:
+        """The plan promises the exact argv, so a known value must not be a blank.
+
+        `<plugin-name>` is the package's own name; the harness has it from the
+        descriptor before anything runs. Leaving it as a placeholder makes the
+        safety preview show an argv different from the one that will run, which
+        is the one thing the preview exists to prevent. The only value still
+        written as a placeholder is `<plugin-id>`, which the client generates at
+        placement and nobody can know in advance.
+        """
+        plan = harness.describe_plan(CONFIG)
+        naming = [line for line in plan.splitlines() if harness.PLUGIN_NAME in line]
+        self.assertEqual(
+            naming, [], f"the plan still shows {harness.PLUGIN_NAME}: {naming[:2]}"
+        )
+        self.assertTrue(
+            any(f" {CONFIG.name}" in line for line in plan.splitlines()),
+            f"the plan never names the package as {CONFIG.name!r}",
+        )
+        self.assertIn(
+            harness.PLUGIN_ID, plan, "the client-generated id must stay a placeholder"
+        )
 
     def test_the_plan_names_every_deadline(self) -> None:
         """Every stage that will start a process shows the deadline it runs under.

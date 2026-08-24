@@ -795,14 +795,18 @@ def _recorded_commands(record: dict[str, Any]) -> list[tuple[str, str, str]]:
         for stage, value in stages.items():
             if not isinstance(value, dict):
                 continue
-            if isinstance(value.get("command"), str):
+            # `commands` is the complete list and its first entry is required to
+            # equal `command`, so a version-2 stage is graded from `commands`
+            # alone. Grading both counted the first command twice and reported
+            # one unsafe command as two problems, which inflates the count a
+            # reader uses to judge how bad a record is.
+            entries = value.get("commands")
+            if isinstance(entries, list) and entries:
+                for entry in entries:
+                    if isinstance(entry, dict) and isinstance(entry.get("command"), str):
+                        found.append((label, str(stage), entry["command"]))
+            elif isinstance(value.get("command"), str):
                 found.append((label, str(stage), value["command"]))
-            # Every command, not only the first. A stage that ran a mutating
-            # command second would otherwise pass the safety rule because the
-            # rule only ever read one of them.
-            for entry in value.get("commands") or ():
-                if isinstance(entry, dict) and isinstance(entry.get("command"), str):
-                    found.append((label, str(stage), entry["command"]))
     return found
 
 
