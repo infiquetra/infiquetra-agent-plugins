@@ -13,11 +13,14 @@ registry, all at the existing pin `3b5faa6c`. `tier_palette.py` and
 fleet-core's existing `deterministic-transform` custody class with a new named
 rule `resolve-fleet-commons-sibling` v1 that replaces its module-scope
 `fleet_commons_shim` import block and its two `fleet_commons_shim.load()` call
-sites with same-directory sibling resolution, recorded in `derived_files` with
-source and result digests. The upstream `tests/test_intent_envelope.py` is not
-ported (its module-level imports span saga, team-execution, and
-mission-control, and it exercises saga-only APIs); U2 authors minimal
-target-owned tests instead. `tier_resolver.py` and `tier_policy.json` stay
+sites with same-directory sibling resolution, recorded as a package `files`
+entry with classification `deterministic-transform` (source digest, transform
+version, result digest — the package-resident shape `check_repo.py`
+validates; corrected per the amendment doc review, F2). The upstream
+`tests/test_intent_envelope.py` is not ported (it imports the saga re-export
+at module level, loads team-execution, mission-control, and shim surfaces
+during test execution, and exercises saga-only APIs; wording per F4); U2
+authors minimal target-owned tests instead. `tier_resolver.py` and `tier_policy.json` stay
 deferred: at mission-control pin `84eaf042`, `recommend_tier` /
 `self_select_posture` / `authorize_spend` have zero callers in either consumer
 (`sdlc_manager.py`, `executor_profile_lint.py`), while

@@ -222,13 +222,20 @@ restated here.
   same-directory sibling resolution — placement-independent by construction,
   so the identical transformed file works in `fleet_commons/` and in U5's
   `_bundled/`; a deferred name (`tier_resolver`) fails at call time naming
-  the missing sibling path; source and result digests recorded; (4) the
-  directed byte-port of upstream `tests/test_intent_envelope.py` is
-  impossible as specified — the file imports saga, team-execution, and
-  mission-control surfaces at module level, exercises saga-only re-export
-  APIs (`seeded_tier`, `compute_stakes`), and carries a repo-tree drift
-  guard — so the suite stays upstream and U2 authors minimal target-owned
-  tests instead; (5) KTD1's two entrypoint rules and the
+  the missing sibling path; the transform recorded as a package `files`
+  entry with classification `deterministic-transform` — `source_sha256`,
+  `transform_version`, result `sha256`, the exact shape
+  `scripts/check_repo.py` validates for package-resident files
+  (`derived_files` stays for repo-root derived items such as
+  `tests/test_retry_backoff.py`; doc-review F2); (4) the directed byte-port
+  of upstream `tests/test_intent_envelope.py` is impossible as specified —
+  the file puts `plugins/saga/scripts` on `sys.path` and imports the saga
+  re-export `intent_envelope` at module level, loads team-execution's
+  `posture_check.py`, mission-control's `sdlc_manager`, and
+  `fleet_commons_shim` during test execution (doc-review F4), exercises
+  saga-only re-export APIs (`seeded_tier`, `compute_stakes`), and carries a
+  repo-tree drift guard — so the suite stays upstream and U2 authors minimal
+  target-owned tests instead; (5) KTD1's two entrypoint rules and the
   `fleet_commons_shim.py` drop-from-source stand unchanged — U3's
   `git grep fleet_commons_shim plugins/mission-control/scripts/` verification
   still ends empty, because the bundled modules carry sibling resolution, not
@@ -380,12 +387,14 @@ main (own PR, 2nd merge)
 **Smallest viable change:** three files under
 `plugins/fleet-core/scripts/fleet_commons/` — two byte copies digest-verified
 against their blobs at `3b5faa6c`, plus `intent_envelope.py` carrying the KTD8
-transform, its source digest, result digest, and rule name/version/prose
-recorded in `derived_files` per the `guard-pytest-import` precedent; remove
-exactly the three rows from `DEFERRED.md`; three classified `PROVENANCE.json`
-entries; CHANGELOG and `plugin.json` version bump per package convention; the
-pin-preserving decision and KTD8 recorded in `DECISIONS.md` in the same
-commit.
+transform, recorded as a package `files` entry with classification
+`deterministic-transform` (source digest, transform name/version/prose, result
+digest — the package-resident shape `check_repo.py` validates; doc-review F2);
+remove exactly the three rows from `DEFERRED.md`; three classified
+`PROVENANCE.json` entries; CHANGELOG and `plugin.json` version bump per
+package convention. KTD8 and the pin decision are already journaled by
+amendment `d1ac17c` — the unit appends a `DECISIONS.md` entry only if it
+surfaces a new non-obvious decision (doc-review F5).
 
 **Mechanism reused:** fleet-core's existing PROVENANCE custody mechanism —
 `files` plus `derived_files`; no `ports/fleet-core.json` exists and none is
@@ -543,11 +552,17 @@ import-time read.
 `check_repo.py` staleness rejection (AGENTS.md build step), sync-time
 target-owned set-difference discovery.
 
-**New moving parts:** none expected. One contingency, flagged by KTD8: if
-schema v1 or `bundle_fleet_module.py` turns out to carry Python modules only,
-this unit extends them minimally (recorded, versioned) so the `models.json`
-data file can ride the same declaration — decided inside this unit under its
-own review, not silently.
+**New moving parts:** one recorded, versioned extension of the bundle
+machinery for the data file — required scope, not a contingency (doc-review
+F3, verified 2026-08-24): `schemas/fleet-bundle.schema.json`'s module `name`
+pattern (`^[A-Za-z_][A-Za-z0-9_]*$`) rejects `models.json`;
+`bundle_fleet_module.py` resolves every source as `fleet_commons/<name>.py`
+and prepends a `#`-comment stamp block that is invalid inside JSON. The unit
+adds an explicit data-file entry class to the schema and generator (source
+resolved without the `.py` suffix, destination verbatim, staleness proven by
+digest comparison recorded outside the file instead of an in-file stamp),
+with schema docs and tests updated in the same commit; UniFi declarations
+stay byte-untouched and validating.
 
 **Rejected alternative:** hand-copying the modules into the package — rejected
 because `check_repo.py` rejects hand-edited bundles by design, and hand copies
@@ -850,6 +865,19 @@ directives, each with the line of reasoning:
   ("any unit's acceptance criteria requiring scope outside its owned
   surface"). The contract routes the accounting to the parent plan, not to an
   operator pause, so the coordinator verified the unit's stop evidence
-  read-only against the pins, decided KTD8, amended this plan and cards
-  #12/#15, and re-dispatches U2 after the amendment's doc review. Only U5 was
-  downstream-blocked; U0 and U1 continued unaffected.
+  read-only against the pins, decided KTD8, and amended this plan; cards
+  #12/#15 are amended and U2 re-dispatched only after the amendment's doc
+  review concluded (doc-review F1 — sequencing stated truthfully). Only U5
+  was downstream-blocked; U0 and U1 continued unaffected.
+- **KTD8 amendment doc-review disposition (2026-08-24)** — Codex
+  `gpt-5.6-sol` xhigh reviewed amendment `d1ac17c`
+  (`docs/reviews/2026-08-24-ktd8-amendment-doc-review.md`, persisted at
+  `a3af7c7`): five findings, three blockers, every one validated against
+  primary sources (`scripts/check_repo.py` provenance rules,
+  `schemas/fleet-bundle.schema.json`, `scripts/bundle_fleet_module.py`, the
+  pinned upstream test file) and fixed in this commit — the transform's
+  provenance placement corrected to a package `files` entry (F2), the U5
+  data-file bundle extension promoted from contingency to required scope
+  (F3), the import-shape wording made precise (F4), the duplicate journal
+  instruction dropped (F5), and card-amendment sequencing stated truthfully
+  (F1).
