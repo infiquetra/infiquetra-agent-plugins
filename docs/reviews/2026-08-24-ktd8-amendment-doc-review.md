@@ -237,3 +237,14 @@ The review did not run an implementation probe against hypothetical transformed
 bytes because the requested scope is the documentation delta and the transform
 does not exist. Repository validation can prove the review artifact is well
 formed; it cannot make the blocked plan executable.
+
+## Delta recheck addendum — commit 8590ce9
+
+Commit `8590ce9` resolves F1, F2, F4, and F5. F3 remains a blocker. The amended
+U5 record still does not name the data-file declaration field or item shape,
+the schema-version value, or where the external data-file digest is stored.
+It simultaneously calls schema v1 the reused mechanism and calls the extension
+“versioned.” A fresh worker must still design the contract that issue 15 is
+supposed to carry, so “explicit data-file entry class” and “digest comparison
+recorded outside the file” are not the exact declaration and provenance design
+F3 required before bundling.
