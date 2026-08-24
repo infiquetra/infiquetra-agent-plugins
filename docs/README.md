@@ -15,6 +15,9 @@
   is preserved unmodified as incoming evidence, with its
   [validation and repair record](reviews/2026-08-22-unifi-fleet-core-portability-pilot-plan-doc-review-disposition.md)
   alongside it.
+- [PR #6 independent code reviews](reviews/2026-08-24-pr-6-code-review-index.md)
+  indexes the five review rounds that preceded the porting tools being merged,
+  each preserved byte-for-byte with the revision it reviewed and its digest.
 
 ## Evidence
 
