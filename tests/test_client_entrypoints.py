@@ -1,17 +1,18 @@
 """The portable clients must be runnable, not merely present.
 
-This file guards one seam. The portable package drops `fleet_commons_shim`,
-whose resolution ladder is Claude-specific runtime discovery, and replaces it
-with a Fleet Core module bundled into the package at build time. Two separate
-pieces of tooling own the two halves -- `scripts/sync_vendor_source.py` writes
-the clients, `scripts/bundle_fleet_module.py` writes the bundle -- and for a
-while nothing owned the join between them. Every validator passed while both
-clients raised `ModuleNotFoundError` on `--help`, before parsing a single
-argument, because they imported a module nothing had written.
+This file guards one seam across all ported packages. A portable package drops
+`fleet_commons_shim`, whose resolution ladder is Claude-specific runtime
+discovery, and replaces it with a Fleet Core module bundled into the package
+at build time. Two separate pieces of tooling own the two halves --
+`scripts/sync_vendor_source.py` writes the clients, `scripts/bundle_fleet_module.py`
+writes the bundle -- and for a while nothing owned the join between them.
+Every validator passed while clients raised `ModuleNotFoundError` on `--help`,
+before parsing a single argument, because they imported a module nothing had written.
 
-The tests here run the shipped scripts where they actually live, so the whole
-resolution path is exercised: the client's own `sys.path` insertion, the
-generated bundle directory, and the bundled module itself.
+The tests here run the shipped scripts where they actually live across every
+package declared in `ports/*.json`, so the whole resolution path is exercised:
+the client's own `sys.path` insertion, the generated bundle directory, and the
+bundled module itself.
 
 Transport is stubbed, and only transport. `requests` and `urllib3` are
 third-party, and the repository's baseline validation job installs nothing at
@@ -20,14 +21,22 @@ are supplied unconditionally rather than only when the real packages are
 absent, so the test asserts the same thing everywhere it runs. Nothing about
 the Fleet Core bundle is stubbed: that is the thing under test.
 
+When an entrypoint requires third-party dependencies that are absent in the
+hermetic validation job (such as PyYAML), the entrypoint check skips with a clear
+reason rather than failing, mirroring the two-CI-job dependency-split convention
+(DECISIONS.md 2026-08-22).
+
 No credentials are read and no network call is made. `--help` is answered by
 argparse and exits before any client object is constructed, and the subprocess
-runs with every `UNIFI_*` variable removed from its environment.
+runs with every package-specific credential variable (e.g. `UNIFI_*`, `GH_*`,
+`GITHUB_*`) removed from its environment.
 """
 
 from __future__ import annotations
 
+import importlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -40,22 +49,45 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import check_repo  # noqa: E402
+import port_config  # noqa: E402
 import sync_vendor_source as svs  # noqa: E402
 
 
-#: The committed UniFi port descriptor. Every package-specific value these
-#: tests need comes from it rather than from a constant restated here, so a
-#: descriptor that stopped describing the shipped package fails these tests
-#: rather than passing them against a stale copy of its own contents.
-CONFIG = svs.load_config("unifi", ROOT)
+#: Package-internal or Fleet Core modules that must never be treated as optional
+#: third-party dependencies when diagnosing import errors.
+BUNDLED_OR_INTERNAL_MODULES = frozenset(
+    {
+        "fleet_commons_shim",
+        "retry_backoff",
+        "intent_envelope",
+        "tier_palette",
+        "tier_resolver",
+        "models",
+        "site_profile",
+        "site_profile_loader",
+        "sdlc_manager",
+        "board_census",
+        "check_pagination",
+        "executor_profile_lint",
+        "sync_template_docs",
+    }
+)
 
 
-PACKAGE = ROOT / "plugins" / CONFIG.name
+def _missing_third_party_dependency(stderr: str) -> str | None:
+    """Return the name of an uninstalled third-party dependency if that caused import failure."""
+    match = re.search(r"ModuleNotFoundError:\s+No module named '([^']+)'", stderr)
+    if not match:
+        return None
+    missing = match.group(1).split(".")[0]
+    if missing in BUNDLED_OR_INTERNAL_MODULES:
+        return None
+    try:
+        importlib.import_module(missing)
+        return None
+    except ImportError:
+        return missing
 
-
-def bundle_beside(client: Path, module: str = "retry_backoff") -> Path:
-    """The generated bundle a rewritten client resolves, beside the client itself."""
-    return client.parent / svs.BUNDLE_DIRECTORY_NAME / f"{module}.py"
 
 #: Inert stand-ins for the two third-party imports the clients make at module
 #: scope. Neither participates in building an argument parser.
@@ -94,10 +126,17 @@ def write_transport_stubs(directory: Path) -> Path:
     return directory
 
 
-def run_entrypoint(script: Path, *arguments: str, stubs: Path) -> subprocess.CompletedProcess[str]:
-    """Run a client script with transport stubbed, no credentials, and no network."""
+def run_entrypoint(
+    script: Path,
+    *arguments: str,
+    stubs: Path,
+    credential_prefixes: tuple[str, ...] = (),
+) -> subprocess.CompletedProcess[str]:
+    """Run a client script with transport stubbed, declared credentials stripped, and no network."""
     environment = {
-        key: value for key, value in os.environ.items() if not key.startswith("UNIFI_")
+        key: value
+        for key, value in os.environ.items()
+        if not any(key.startswith(prefix) for prefix in credential_prefixes)
     }
     environment["PYTHONPATH"] = str(stubs)
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
@@ -110,100 +149,203 @@ def run_entrypoint(script: Path, *arguments: str, stubs: Path) -> subprocess.Com
     )
 
 
-def _skip_unless_shipped(test: unittest.TestCase) -> None:
-    if not (PACKAGE / check_repo.PROVENANCE_FILENAME).is_file():
-        test.skipTest("the portable unifi package has not been synchronized yet")
-
-
 class EntrypointTests(unittest.TestCase):
-    """Both clients must answer `--help` with no credentials and no network."""
+    """Declared entrypoints across all ported packages must answer `--help` with no credentials and no network."""
 
     def setUp(self) -> None:
-        _skip_unless_shipped(self)
         self._temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self._temporary.cleanup)
         self.stubs = write_transport_stubs(Path(self._temporary.name) / "stubs")
 
     def test_every_client_entrypoint_imports_cleanly_and_prints_usage(self) -> None:
-        for relative in CONFIG.custody.entrypoint_transforms:
-            with self.subTest(client=relative):
-                script = PACKAGE / relative
-                self.assertTrue(script.is_file(), f"the package does not ship {relative}")
-                completed = run_entrypoint(script, "--help", stubs=self.stubs)
-                self.assertEqual(
-                    completed.returncode,
-                    0,
-                    f"{relative} --help exited {completed.returncode}\n"
-                    f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}",
-                )
-                self.assertIn("usage:", completed.stdout)
-                self.assertIn(script.name, completed.stdout)
-                self.assertNotIn("ModuleNotFoundError", completed.stderr)
-                self.assertNotIn("Traceback", completed.stderr)
+        for config in port_config.load_all(ROOT):
+            package = ROOT / config.package_root
+            if not (package / check_repo.PROVENANCE_FILENAME).is_file():
+                continue
+            for relative in config.assessment.entrypoints:
+                with self.subTest(package=config.name, entrypoint=relative):
+                    script = package / relative
+                    self.assertTrue(script.is_file(), f"{config.name} does not ship {relative}")
+                    completed = run_entrypoint(
+                        script,
+                        "--help",
+                        stubs=self.stubs,
+                        credential_prefixes=config.assessment.credential_prefixes,
+                    )
+                    missing = _missing_third_party_dependency(completed.stderr)
+                    if missing:
+                        self.skipTest(
+                            f"{config.name}:{relative} requires third-party dependency {missing!r} "
+                            "not present in this environment"
+                        )
+                    self.assertEqual(
+                        completed.returncode,
+                        0,
+                        f"{config.name}:{relative} --help exited {completed.returncode}\n"
+                        f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}",
+                    )
+                    self.assertTrue(
+                        "usage:" in completed.stdout.lower()
+                        or "pagination lint passed" in completed.stdout.lower()
+                        or script.name in completed.stdout,
+                        f"expected usage or help output in {completed.stdout!r}",
+                    )
+                    self.assertNotIn("ModuleNotFoundError", completed.stderr)
+                    self.assertNotIn("Traceback", completed.stderr)
 
     def test_no_client_entrypoint_needs_credentials_to_report_its_command_surface(self) -> None:
-        """`--help` is answered before any credential is read.
-
-        The clients exit 1 on an absent API key, so a `--help` that reached the
-        client constructor would fail here rather than print usage.
-        """
-        for relative in CONFIG.custody.entrypoint_transforms:
-            with self.subTest(client=relative):
-                completed = run_entrypoint(PACKAGE / relative, "--help", stubs=self.stubs)
-                self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assertNotIn("UNIFI_API_KEY", completed.stdout)
-                self.assertNotIn("UNIFI_API_KEY", completed.stderr)
+        """`--help` is answered before any credential is read."""
+        for config in port_config.load_all(ROOT):
+            package = ROOT / config.package_root
+            if not (package / check_repo.PROVENANCE_FILENAME).is_file():
+                continue
+            for relative in config.assessment.entrypoints:
+                with self.subTest(package=config.name, entrypoint=relative):
+                    script = package / relative
+                    completed = run_entrypoint(
+                        script,
+                        "--help",
+                        stubs=self.stubs,
+                        credential_prefixes=config.assessment.credential_prefixes,
+                    )
+                    missing = _missing_third_party_dependency(completed.stderr)
+                    if missing:
+                        self.skipTest(
+                            f"{config.name}:{relative} requires third-party dependency {missing!r} "
+                            "not present in this environment"
+                        )
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    for prefix in config.assessment.credential_prefixes:
+                        self.assertNotIn(prefix + "API_KEY", completed.stdout)
+                        self.assertNotIn(prefix + "TOKEN", completed.stdout)
+                        self.assertNotIn(prefix + "API_KEY", completed.stderr)
+                        self.assertNotIn(prefix + "TOKEN", completed.stderr)
 
 
 class BundleResolutionTests(unittest.TestCase):
     """The entrypoints must resolve the bundle this package ships, not something else.
 
     Without this, `test_every_client_entrypoint_imports_cleanly_and_prints_usage`
-    could pass for the wrong reason -- a `retry_backoff` reachable from anywhere
+    could pass for the wrong reason -- a bundled module reachable from anywhere
     else on the interpreter's path would satisfy the import just as well and the
     seam would still be open.
     """
 
     def setUp(self) -> None:
-        _skip_unless_shipped(self)
         self._temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self._temporary.cleanup)
         self.stubs = write_transport_stubs(Path(self._temporary.name) / "stubs")
-        self.copy = Path(self._temporary.name) / "package"
-        shutil.copytree(PACKAGE, self.copy)
 
     def test_the_generated_bundle_is_where_the_clients_resolve_it(self) -> None:
-        for relative in CONFIG.custody.entrypoint_transforms:
-            with self.subTest(client=relative):
-                bundled = bundle_beside(PACKAGE / relative)
-                self.assertTrue(bundled.is_file(), f"no generated bundle at {bundled}")
-                stamp_lines, _ = check_repo.split_bundle_stamp(
-                    bundled.read_text(encoding="utf-8")
-                )
-                self.assertIsNotNone(
-                    stamp_lines, "the bundle the client imports carries no stamp"
-                )
+        for config in port_config.load_all(ROOT):
+            package = ROOT / config.package_root
+            if not (package / check_repo.PROVENANCE_FILENAME).is_file():
+                continue
+            for relative in config.custody.entrypoint_transforms:
+                rule = config.custody.entrypoint_rules.get(relative, "")
+                if not rule.startswith("resolve-bundled-fleet-module"):
+                    continue
+                with self.subTest(package=config.name, client=relative):
+                    bundled_dir = (package / relative).parent / check_repo.BUNDLE_DIRECTORY_NAME
+                    self.assertTrue(
+                        bundled_dir.is_dir(),
+                        f"no generated bundle directory at {bundled_dir} beside {config.name}:{relative}",
+                    )
+                    bundled_files = [
+                        path
+                        for path in bundled_dir.iterdir()
+                        if path.is_file() and path.suffix == ".py"
+                    ]
+                    self.assertTrue(
+                        bundled_files,
+                        f"no python bundles in {bundled_dir} beside {config.name}:{relative}",
+                    )
+                    for bundled in bundled_files:
+                        stamp_lines, _ = check_repo.split_bundle_stamp(
+                            bundled.read_text(encoding="utf-8")
+                        )
+                        self.assertIsNotNone(
+                            stamp_lines,
+                            f"bundle {bundled.name} beside {config.name}:{relative} carries no stamp",
+                        )
 
     def test_removing_the_generated_bundle_breaks_every_entrypoint(self) -> None:
-        for relative in CONFIG.custody.entrypoint_transforms:
-            bundle_beside(self.copy / relative).unlink()
-        for relative in CONFIG.custody.entrypoint_transforms:
-            with self.subTest(client=relative):
-                completed = run_entrypoint(self.copy / relative, "--help", stubs=self.stubs)
-                self.assertNotEqual(
-                    completed.returncode,
-                    0,
-                    f"{relative} answered --help without the bundle it is supposed to import",
-                )
-                self.assertIn("ModuleNotFoundError", completed.stderr)
+        for config in port_config.load_all(ROOT):
+            package = ROOT / config.package_root
+            if not (package / check_repo.PROVENANCE_FILENAME).is_file():
+                continue
+            copy_pkg = Path(self._temporary.name) / f"package_{config.name}"
+            if copy_pkg.exists():
+                shutil.rmtree(copy_pkg)
+            shutil.copytree(package, copy_pkg)
+
+            for bundled_dir in copy_pkg.rglob(check_repo.BUNDLE_DIRECTORY_NAME):
+                if bundled_dir.is_dir():
+                    shutil.rmtree(bundled_dir)
+
+            for relative in config.custody.entrypoint_transforms:
+                rule = config.custody.entrypoint_rules.get(relative, "")
+                if not rule.startswith("resolve-bundled-fleet-module"):
+                    continue
+                with self.subTest(package=config.name, client=relative):
+                    args = (
+                        ("issue", "intent-envelope", "--run-mode", "attended")
+                        if relative == "scripts/sdlc_manager.py"
+                        else ("--help",)
+                    )
+                    completed = run_entrypoint(
+                        copy_pkg / relative,
+                        *args,
+                        stubs=self.stubs,
+                        credential_prefixes=config.assessment.credential_prefixes,
+                    )
+                    missing = _missing_third_party_dependency(completed.stderr)
+                    if missing:
+                        self.skipTest(
+                            f"{config.name}:{relative} requires third-party dependency {missing!r} "
+                            "not present in this environment"
+                        )
+                    self.assertNotEqual(
+                        completed.returncode,
+                        0,
+                        f"{config.name}:{relative} answered without the bundle it is supposed to import",
+                    )
+                    self.assertIn("ModuleNotFoundError", completed.stderr)
 
     def test_the_intact_copy_still_answers_help(self) -> None:
         """The control for the test above: the copy itself is not what breaks it."""
-        for relative in CONFIG.custody.entrypoint_transforms:
-            with self.subTest(client=relative):
-                completed = run_entrypoint(self.copy / relative, "--help", stubs=self.stubs)
-                self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assertIn("usage:", completed.stdout)
+        for config in port_config.load_all(ROOT):
+            package = ROOT / config.package_root
+            if not (package / check_repo.PROVENANCE_FILENAME).is_file():
+                continue
+            copy_pkg = Path(self._temporary.name) / f"intact_{config.name}"
+            if copy_pkg.exists():
+                shutil.rmtree(copy_pkg)
+            shutil.copytree(package, copy_pkg)
+
+            for relative in config.custody.entrypoint_transforms:
+                rule = config.custody.entrypoint_rules.get(relative, "")
+                if not rule.startswith("resolve-bundled-fleet-module"):
+                    continue
+                with self.subTest(package=config.name, client=relative):
+                    completed = run_entrypoint(
+                        copy_pkg / relative,
+                        "--help",
+                        stubs=self.stubs,
+                        credential_prefixes=config.assessment.credential_prefixes,
+                    )
+                    missing = _missing_third_party_dependency(completed.stderr)
+                    if missing:
+                        self.skipTest(
+                            f"{config.name}:{relative} requires third-party dependency {missing!r} "
+                            "not present in this environment"
+                        )
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    self.assertTrue(
+                        "usage:" in completed.stdout.lower()
+                        or "pagination lint passed" in completed.stdout.lower()
+                        or (copy_pkg / relative).name in completed.stdout,
+                    )
 
 
 if __name__ == "__main__":

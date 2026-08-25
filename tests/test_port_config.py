@@ -29,6 +29,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import check_repo  # noqa: E402
 import port_config  # noqa: E402
+import sync_vendor_source as svs  # noqa: E402
 
 
 def minimal(**overrides: object) -> dict:
@@ -188,6 +189,80 @@ class CustodyTest(unittest.TestCase):
         self.assertEqual(table.declared().count("a"), 2)
 
 
+class EntrypointTransformRuleTest(unittest.TestCase):
+    """Schema 3: every entrypoint-transform entry states the rule rewriting it.
+
+    With more than one transform rule in play, selection has to be data a
+    reader can see: an entry with no rule name would be rewritten by an
+    assumed default, which is the setting-that-silently-did-not-take-effect
+    failure every closed object in the descriptor prevents.
+    """
+
+    def entry(self, **overrides: object) -> dict:
+        entry: dict = {"path": "scripts/example.py", "rule": "resolve-bundled-fleet-module"}
+        entry.update(overrides)
+        return entry
+
+    def parsed(self, entries: list) -> port_config.PortConfig:
+        return parse(minimal(custody={"entrypoint_transforms": entries}))
+
+    def test_an_object_entry_records_its_path_and_rule(self) -> None:
+        config = self.parsed([self.entry()])
+        self.assertEqual(config.custody.entrypoint_transforms, ("scripts/example.py",))
+        self.assertEqual(
+            config.custody.entrypoint_rules,
+            {"scripts/example.py": "resolve-bundled-fleet-module"},
+        )
+        self.assertEqual(config.custody.declared(), ("scripts/example.py",))
+
+    def test_an_absent_field_is_empty_and_carries_no_rules(self) -> None:
+        """Absent means empty, like every other custody class -- never an error."""
+        config = parse(minimal())
+        self.assertEqual(config.custody.entrypoint_transforms, ())
+        self.assertEqual(config.custody.entrypoint_rules, {})
+
+    def test_a_bare_path_string_entry_is_refused_as_the_schema_2_shape(self) -> None:
+        with self.assertRaises(port_config.PortConfigError) as caught:
+            self.parsed(["scripts/example.py"])
+        self.assertIn("schema-2 shape", str(caught.exception))
+
+    def test_an_entry_without_a_rule_is_refused_rather_than_defaulted(self) -> None:
+        entry = self.entry()
+        del entry["rule"]
+        with self.assertRaises(port_config.PortConfigError) as caught:
+            self.parsed([entry])
+        self.assertIn("rule", str(caught.exception))
+        self.assertIn("assumed default", str(caught.exception))
+
+    def test_an_entry_without_a_path_is_refused(self) -> None:
+        entry = self.entry()
+        del entry["path"]
+        with self.assertRaises(port_config.PortConfigError) as caught:
+            self.parsed([entry])
+        self.assertIn("path", str(caught.exception))
+
+    def test_an_entry_with_an_unknown_field_is_refused(self) -> None:
+        """The closed-object discipline holds on the new entry object too."""
+        with self.assertRaises(port_config.PortConfigError) as caught:
+            self.parsed([self.entry(version="1")])
+        self.assertIn("unknown field", str(caught.exception))
+
+    def test_an_empty_or_non_string_rule_is_refused(self) -> None:
+        for value in ("", "   ", 3, None):
+            with self.subTest(value=value):
+                with self.assertRaises(port_config.PortConfigError):
+                    self.parsed([self.entry(rule=value)])
+
+    def test_a_traversing_entry_path_is_refused(self) -> None:
+        with self.assertRaises(port_config.PortConfigError):
+            self.parsed([self.entry(path="../../../etc/passwd")])
+
+    def test_two_entries_may_not_claim_the_same_path(self) -> None:
+        with self.assertRaises(port_config.PortConfigError) as caught:
+            self.parsed([self.entry(), self.entry(rule="normalize-skill-frontmatter")])
+        self.assertIn("more than one classification", str(caught.exception))
+
+
 class ClosedContractTest(unittest.TestCase):
     """Every object is closed, and every safety field is stated.
 
@@ -326,7 +401,11 @@ class EntrypointDeclarationTest(unittest.TestCase):
         for custody_class in port_config.CUSTODY_FIELDS:
             with self.subTest(custody=custody_class):
                 document = minimal()
-                document["custody"] = {custody_class: ["scripts/example.py"]}
+                if custody_class == "entrypoint_transforms":
+                    entry = {"path": "scripts/example.py", "rule": "resolve-bundled-fleet-module"}
+                else:
+                    entry = "scripts/example.py"
+                document["custody"] = {custody_class: [entry]}
                 if custody_class == "client_byte_copies":
                     document["source"]["client_extension_dir"] = "com.example.client"
                 if custody_class == "dropped_from_source":
@@ -398,12 +477,48 @@ class CommittedDescriptorTest(unittest.TestCase):
 
     def test_every_descriptor_in_the_repository_loads(self) -> None:
         self.assertIn("unifi", port_config.available(ROOT))
+        gate_errors = check_repo.check_port_descriptors(ROOT)
         for config in port_config.load_all(ROOT):
             with self.subTest(package=config.name):
-                self.assertTrue(config.package_directory.is_dir())
+                if config.package_directory.is_dir():
+                    continue
+                # The run plan's landing model lets a descriptor land on the
+                # integration branch before the package tree it names does.
+                # That interim state is legitimate only while the repository
+                # gate reports it -- never as a silent pass.
+                self.assertTrue(
+                    any(config.name in error for error in gate_errors),
+                    f"{config.name} has no package tree and the gate does not report it",
+                )
 
     def test_the_repository_gate_checks_every_descriptor(self) -> None:
-        self.assertEqual(check_repo.check_port_descriptors(ROOT), [])
+        """The gate is green exactly when every descriptor's package is complete.
+
+        A descriptor lands before its package tree on an integration branch
+        (the run plan's landing model). The gate must report every such
+        incomplete descriptor and nothing else, and it must be green once
+        every named tree, manifest, and entrypoint is present.
+        """
+        errors = check_repo.check_port_descriptors(ROOT)
+        incomplete = [
+            config.name
+            for config in port_config.load_all(ROOT)
+            if not (
+                config.package_directory.is_dir()
+                and config.manifest_path.is_file()
+                and all(
+                    (config.package_directory / relative).is_file()
+                    for relative in config.assessment.entrypoints
+                )
+            )
+        ]
+        if not incomplete:
+            self.assertEqual(errors, [])
+            return
+        for name in incomplete:
+            self.assertTrue(any(name in error for error in errors), name)
+        for error in errors:
+            self.assertTrue(any(name in error for name in incomplete), error)
 
     def test_the_gate_reports_a_descriptor_naming_an_absent_tree(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -442,6 +557,22 @@ class CommittedDescriptorTest(unittest.TestCase):
             self.assertEqual(recorded.get(relative), check_repo.TARGET_OWNED, relative)
         for relative in self.config.custody.dropped_from_source:
             self.assertNotIn(relative, recorded)
+
+    def test_every_entrypoint_transform_entry_names_a_rule_the_sync_tool_implements(self) -> None:
+        """The schema-3 selection is a name; the registry is what names exist.
+
+        The validator checks the entry's shape only, so a typo'd rule name
+        would otherwise survive repository validation and fail in the middle of
+        a synchronization. Joining the two here fails at the gate instead.
+        """
+        for config in port_config.load_all(ROOT):
+            for relative in config.custody.entrypoint_transforms:
+                with self.subTest(package=config.name, path=relative):
+                    rule = config.custody.entrypoint_rules.get(relative)
+                    self.assertTrue(
+                        rule, f"{config.name}: {relative} carries no rule name"
+                    )
+                    self.assertIn(rule, svs.TRANSFORM_RULES)
 
     def test_the_provenance_notes_name_the_real_bundle_directory(self) -> None:
         """The note is prose in a data file, so its one live reference is checked.

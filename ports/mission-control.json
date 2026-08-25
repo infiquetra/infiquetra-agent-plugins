@@ -1,0 +1,181 @@
+{
+  "schema_version": "3",
+  "package": "mission-control",
+  "package_root": "plugins/mission-control",
+  "package_manifest": "plugin.json",
+  "source": {
+    "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+    "package_path": "plugins/mission-control",
+    "manifest_path": ".claude-plugin/plugin.json",
+    "client_extension_dir": "com.infiquetra.claude"
+  },
+  "custody": {
+    "byte_copies": [
+      ".gitignore",
+      "CHANGELOG.md",
+      "config/board-schema.json",
+      "config/generated/check_issue_contract_parity.py",
+      "config/generated/issue_contract_data.py",
+      "config/generated/issue_contract_data.py.sha256",
+      "config/generated/issue_contract_shim.py",
+      "config/generated/issue_contract_shim.py.sha256",
+      "config/project-mappings.json",
+      "config/sdlc-schema.json",
+      "scripts/board_census.py",
+      "scripts/check_pagination.py",
+      "scripts/sync_template_docs.py",
+      "skills/board/references/graphql-queries.md",
+      "skills/board/references/kanban-workflow.md",
+      "skills/issues/references/issue-types.md",
+      "skills/issues/references/templates-reference.md",
+      "skills/labels/references/labels-reference.md",
+      "skills/metrics/references/metrics-targets.md",
+      "skills/milestones/references/objective-workflow.md",
+      "skills/rollout/references/work-hierarchy.md",
+      "tests/__init__.py",
+      "tests/test_assign_mimir.py",
+      "tests/test_board_add_multi_project.py",
+      "tests/test_board_census.py",
+      "tests/test_board_move_exit.py",
+      "tests/test_card_validator.py",
+      "tests/test_check_pagination.py",
+      "tests/test_flow_subcommands.py",
+      "tests/test_graphql_issue_resolution.py",
+      "tests/test_issue_contract_parity.py",
+      "tests/test_issue_create_interactive.py",
+      "tests/test_issue_create_prepared.py",
+      "tests/test_issue_prepare.py",
+      "tests/test_issue_prepare_compile_approve.py",
+      "tests/test_issue_source_artifacts.py",
+      "tests/test_pagination_helper.py",
+      "tests/test_project_mappings_resolution.py",
+      "tests/test_sdlc_draft_revision.py",
+      "tests/test_template_sync.py",
+      "tests/test_typed_exceptions.py",
+      "tests/test_user_defaults.py"
+    ],
+    "entrypoint_transforms": [
+      {
+        "path": "scripts/executor_profile_lint.py",
+        "rule": "resolve-bundled-fleet-module-split"
+      },
+      {
+        "path": "scripts/sdlc_manager.py",
+        "rule": "resolve-bundled-fleet-module-guarded"
+      },
+      {
+        "path": "skills/board/SKILL.md",
+        "rule": "normalize-skill-frontmatter"
+      },
+      {
+        "path": "skills/flow/SKILL.md",
+        "rule": "normalize-skill-frontmatter"
+      },
+      {
+        "path": "skills/issues/SKILL.md",
+        "rule": "normalize-skill-frontmatter"
+      },
+      {
+        "path": "skills/labels/SKILL.md",
+        "rule": "normalize-skill-frontmatter"
+      },
+      {
+        "path": "skills/metrics/SKILL.md",
+        "rule": "normalize-skill-frontmatter"
+      },
+      {
+        "path": "skills/milestones/SKILL.md",
+        "rule": "normalize-skill-frontmatter"
+      },
+      {
+        "path": "skills/rollout/SKILL.md",
+        "rule": "normalize-skill-frontmatter"
+      }
+    ],
+    "client_byte_copies": [
+      "agents/sdlc-operator.md",
+      "commands/board.md",
+      "commands/issue.md",
+      "commands/metrics.md",
+      "commands/triage.md"
+    ],
+    "superseded_by_target_owned": [
+      "README.md"
+    ],
+    "dropped_from_source": [
+      "scripts/fleet_commons_shim.py",
+      "tests/test_prompt_alignment.py"
+    ]
+  },
+  "assessment": {
+    "credential_prefixes": [
+      "GH_",
+      "GITHUB_"
+    ],
+    "package_scripts": [
+      "sdlc_manager.py",
+      "board_census.py",
+      "check_pagination.py",
+      "executor_profile_lint.py",
+      "sync_template_docs.py"
+    ],
+    "mutating_operations": [
+      "_open_mapping_pr",
+      "add",
+      "approve",
+      "archive",
+      "assign-mimir",
+      "auto-label",
+      "close",
+      "comment",
+      "create",
+      "create-option",
+      "create-prepared",
+      "deploy",
+      "deploy-all",
+      "deploy-labels",
+      "deploy-templates",
+      "label-add",
+      "label-remove",
+      "link",
+      "link-sub-issue",
+      "move",
+      "reopen",
+      "set-field",
+      "sync-fields",
+      "unlink-sub-issue",
+      "verify-label"
+    ],
+    "entrypoints": [
+      "scripts/sdlc_manager.py",
+      "scripts/board_census.py",
+      "scripts/check_pagination.py",
+      "scripts/executor_profile_lint.py",
+      "scripts/sync_template_docs.py"
+    ],
+    "skill_units": [
+      "skills/board",
+      "skills/flow",
+      "skills/issues",
+      "skills/labels",
+      "skills/metrics",
+      "skills/milestones",
+      "skills/rollout"
+    ],
+    "declared_none": []
+  },
+  "provenance": {
+    "notes": [
+      "The portable copy is a derived artifact, never a second writable source. The pinned commit 84eaf042f0e350005f7eddf8e7d80da25c12119d is the audited upstream revision (plugin version 2.12.2); the upstream suite was verified green at it from a disposable scratch clone before this descriptor was written, so a synchronization from this pin derives from a passing source.",
+      "Paths in `files` are relative to this package root, which is what the repository validator resolves. `source_path` is relative to the upstream repository root.",
+      "Every path carries exactly one classification. An upstream byte copy is overwritten on each synchronization and its digest must equal its source digest exactly; where the portable tree would need a different byte, the repair is authored upstream first. Target-owned portable source is authored in this repository rather than derived from the pinned commit; it records no digest and is never overwritten and never removed here. README.md is the one target-owned path that supersedes an upstream path of the same name: the upstream README documents the Claude Code plugin, so its bytes are deliberately never read and never written, recorded here as a superseded path rather than left unclassified.",
+      "The client extension directory com.infiquetra.claude/ mirrors the upstream package root path for path, so every Claude-custody file's origin is readable from its portable path and every one of them stays a byte copy: the four commands and agents/sdlc-operator.md. The Claude Code manifest is the single exception inside that directory: it is lifted out of .claude-plugin/, whose name is a loading convention with no meaning inside the extension directory, and whose portable counterpart already occupies the package root.",
+      "scripts/fleet_commons_shim.py is dropped rather than copied, because the build-time Fleet Core bundle replaces it and its resolution ladder is Claude-specific discovery the portable package must not retain. Two entrypoints reach fleet_commons_shim and are therefore deterministic transforms rather than byte copies: scripts/executor_profile_lint.py imports it at module scope (line 35 at the pin) and loads tier_palette through it (line 89), and scripts/sdlc_manager.py imports it inside the _load_intent_envelope function (lines 4283-4287 at the pin) and loads intent_envelope through it. The resolve-bundled-fleet-module rule family rewrites those imports to the generated bundle in the _bundled/ directory, records the source digest, the output digest, and the transform version here, and is re-applied on every synchronization, so a later run cannot silently restore the broken import. This is not a downstream edit smuggled past the byte-copy rule: it is a versioned rule over the pinned source, reproducible from the source bytes alone.",
+      "All seven SKILL.md files carry a when_to_use: frontmatter key that is not among the six fields the open Agent Skills specification permits (SKILL_FRONTMATTER_FIELDS, scripts/check_repo.py). The upstream UniFi skills never carried it, so this package is the first to need the answer: the seven files are transforms, not byte copies. A versioned normalize-skill-frontmatter rule folds the key under the permitted metadata key, deterministically and idempotently, portable copies only; upstream keeps the key because it is functional in Claude Code skill listings. The alternative of normalizing upstream was rejected for exactly that reason. The seven files sit in the entrypoint_transforms class because that is the descriptor's only transform custody; per-path rule selection is the explicit rule field every entry carries since descriptor schema version 3, named above with the rule the synchronization tool applies to each path.",
+      "The twenty-one upstream test files are byte copies under plugins/mission-control/tests/, inside the package and therefore inside the provenance closed-set check. The pilot's one-off precedent carried its tests at the repository root, tracked by fleet-core's informal release_surface key that no check validates; a repeat of that shape would ship tests the provenance machinery cannot see. tests/test_prompt_alignment.py is the single test not carried: it is a whole-upstream-repository drift guard, and every premise it holds outside the package's own byte copies fails under the portable layout. It reads the Claude manifest at the package-local .claude-plugin/ path (relocated to com.infiquetra.claude/ here), the root .claude-plugin/marketplace.json and the plugins/saga handoff skill (neither exists in this catalog), the commands and agent file at their upstream paths (relocated), and the package README (superseded). A byte copy could never run here, and editing its content to make it pass would be a custody violation, so the custody decision is recorded here and in the engineering journal instead of shipped as a test that cannot pass.",
+      "Publication parity, verified before this descriptor was written: both repositories are public, and the vendored config/project-mappings.json and config/board-schema.json carry real project node IDs that are already public upstream, so byte-copying them introduces no new exposure.",
+      "The assessment block encodes the audited safety facts: the plugin calls GitHub exclusively through the gh CLI, which honors GH_TOKEN, GITHUB_TOKEN, and GH_HOST, so both GH_ and GITHUB_ prefixes are stripped from every assessment subprocess even though sdlc_manager.py itself reads only INFIQUETRA_SDLC_PATH (line 135 at the pin). All five package scripts are declared entrypoints and none is excluded: sdlc_manager.py needs PyYAML at module scope (line 83 at the pin), board_census.py imports sdlc_manager from its own directory, sync_template_docs.py imports PyYAML, check_pagination.py is standard-library-only, and executor_profile_lint.py runs only after its transform. The mutating_operations list is the audited subcommand table plus the _open_mapping_pr path (sdlc_manager.py:4664 at the pin), which runs real git worktree add, commit, push, and gh pr create; it is an internal code path rather than a CLI verb and is listed so the safety predicate treats that route as mutating."
+    ],
+    "dropped_reason": "scripts/fleet_commons_shim.py: replaced by the build-time Fleet Core bundle; its resolution ladder is Claude-specific runtime discovery, which the portable package must not retain. tests/test_prompt_alignment.py: a whole-upstream-repository drift guard whose non-package premises (the root Claude marketplace manifest, the plugins/saga handoff skill, the package-local .claude-plugin manifest path, the unrelocated commands and agent paths, and the superseded README) all fail under the portable layout, so a byte copy could never run here; the custody decision is finalized in the descriptor and the engineering journal rather than shipped as a test that cannot pass."
+  }
+}

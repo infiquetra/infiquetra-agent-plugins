@@ -596,6 +596,43 @@ byte-untouched.
 **Verification:** child #15 block — bundle run, gate, suite, UniFi-churn probe,
 `git diff --check`.
 
+### U5b. Cycle-15 mutation-proof regeneration (evidence, inserted 2026-08-24)
+
+*(Unit added by coordinator amendment after U5 landed — not in the original
+ten-unit table. Trigger: `MutationProofBindingTest` fired as designed on the
+two graded-tool edits the run itself planned — `scripts/port_config.py`
+changed at U3 (KTD2 schema 3) and `scripts/check_repo.py` at U5 (the
+data-file staleness extension) — leaving exactly two suite failures on the
+otherwise-green assembled lane. Child #16 excludes mutation proofs by its own
+non-goals and #18 owns them at freeze; the landing model requires the lane
+fully green from U6 onward. The only disposition honoring all three texts is
+regenerating the proof now, as #18's mutation-proof obligation executed
+early: no unit after U5 touches the five graded files, so the cycle-15 proof
+IS the freeze-state proof and U8 verifies rather than regenerates. Evidence
+posts to #18; no new child issue.)*
+
+Re-run every cycle-14 mutation anchor against the current graded bytes, add
+anchors for the new load-bearing guards the run introduced (KTD2 schema-3
+refusals in `port_config.py`; data-file verbatim/staleness rejection in
+`check_repo.py`), and publish the cycle-15 record in the established format
+(baseline, per-mutation kill lists, digest footer, standing disclosures
+carried forward — cycle-14 precedent, which itself re-ran cycle-13 anchors
+after tool repairs).
+
+**Child issue:** #18 (obligation executed early) · **Depends on:** U5 ·
+**Lands into:** run branch (before U6)
+
+**Worker:** Antigravity `gemini-3.7-flash-high` (T4, sixth pass) · **Backend:** inline
+
+**Owned surface:** `docs/evidence/2026-08-24-cycle15-mutation-proof-portable-copies.txt`
+(new), `tests/test_site_profile.py` (ONLY the current-proof document reference
+and any new-guard anchors the binding contract needs — the five-file GRADED
+tuple is unchanged), journal append only if a new decision surfaces. The five
+graded files themselves are read-only to this unit.
+
+**Verification:** full suite green (the binding test passes against
+cycle-15), `check_repo.py` green, zero UniFi churn, `git diff --check`.
+
 ### U6. Test custody, CI wiring, entrypoint generalization
 
 Make the ported 21-file pytest suite real and enforced: CI runs it on the floor
@@ -749,6 +786,44 @@ SHAs, not file digests — matrix checker green again on main post-merge.
 
 **Verification:** child #18 block — assessment plan print, matrix checker,
 gate, both suites, `git diff --check`.
+
+**Run record — freeze (2026-08-25).** U7 landed (base `40367a8` → frozen
+`d0f366d` → merged `51d1ab3`; review accepted at cycle 1, artifacts at
+`6c7b17c`), closing serial Phase 2. Pre-freeze reconciliation with main:
+`origin/main` (`3948525`, the U2 snapshot squash) is already an ancestor of
+the run branch, so the merge-form reconciliation recorded at `57c377e`
+required no new merge. **Frozen candidate: the run-branch commit carrying
+this record.** At the pre-record tip `6c7b17c` the package tree
+`plugins/mission-control` has git tree hash
+`12433538e5b8aa9d88b573e695ef9bc6786549ab` (64 blobs); this docs-only commit
+does not change it, and no unit after U7 may change package bytes before the
+integration merge. U8's evidence unit branches from this record's commit; the
+assessment binds to the harness fingerprint (`$.package.file_count` +
+`$.package.tree_sha256`) computed over these same frozen bytes. Cycle-15
+disposition per #18: verify by digest re-check, never regenerate. Worker:
+Antigravity `gemini-3.7-flash-high` (sixth-pass amendment); the orchestrator
+owns the freeze, the integration review, the PR to main, and every GitHub
+write.
+
+**Freeze successor (2026-08-25, post-repair).** The first evidence unit
+(`u8-freeze-agy1`) stopped on a verified harness seam: `assess_clients.py`
+refused package-root entrypoints for skill-scoped clients at plan time
+(blocked report `080b535`, preserved on its unmerged unit branch), after
+completing the frozen-state suite runs, the upstream suite at the pin (275
+passed), floor verification (3.12.13 + PyYAML, 266 passed), and the cycle-15
+digest re-check (all five files matched). Repairs landed per the U3/U5 → U5b
+precedent: U8a `b2b3d75` (skill-scoped invocation recorded blocked-in-advance
+for undeliverable entrypoints; review accepted, all six lenses 10.0; merged
+`f50fce5`) and cycle-16 `da2df28` (68 anchors, 0 survivors — the disclosed
+cycle-15 survivor now killed by U6's test; binding re-pointed; supersedes
+cycle-15, preserved unedited; review accepted, all six lenses 10.0; merged
+with artifacts at `a5dd39c`). **Successor frozen candidate: the run-branch
+commit carrying this amendment.** The package tree is UNCHANGED from the
+original freeze — git tree `12433538e5b8aa9d88b573e695ef9bc6786549ab`, 64
+blobs, harness fingerprint `651ac28a…` — neither repair touched
+`plugins/**`. The evidence unit re-dispatches as `u8-freeze-agy2` from this
+commit; cycle-16 is now the freeze-state proof it verifies by digest
+re-check.
 
 ### U9. Closeout: docs, upstream filings, journal, board evidence
 
@@ -921,3 +996,21 @@ directives, each with the line of reasoning:
   unchanged. T4 re-validated at amendment time: `agy` binary present,
   `agy models` re-listed the id, dry-run receipt matched the recorded
   template.
+- **Post-U2 main reconciliation executed as a merge, not a rebase
+  (2026-08-24)** — the landing model's "branch rebases onto current
+  origin/main after U2 lands" clause was written for the two-branch model;
+  in this single-lane recovery run `land` already delivers U2's content to
+  the lane, and a literal rebase would rewrite fifteen-plus commits
+  including five recorded merge SHAs that closed issues cite as durable
+  evidence. The clause's purpose — the lane incorporates main's state before
+  U5 — is met by merging origin/main into the run branch (`d650d6f`), which
+  verified as a zero-tree-delta graph reconciliation (main's squash-merged
+  snapshots carry content the lane already has). The pre-freeze
+  reconciliation before U8 follows the same form.
+- **Cycle-15 mutation proof inserted as unit U5b (2026-08-24)** — the proof
+  binding fired as designed on the run's own U3/U5 tool edits; #16 excludes
+  proofs, #18 owns them at freeze, and the landing model wants full green
+  from U6. Resolution: execute #18's proof obligation early as a dedicated
+  evidence unit between U5 and U6 (details in the U5b record above); the
+  graded files do not change again before freeze, so cycle-15 is the
+  freeze-state proof.

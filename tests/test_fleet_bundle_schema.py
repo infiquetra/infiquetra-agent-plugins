@@ -127,9 +127,53 @@ class SchemaValidationTests(unittest.TestCase):
         self.assertTrue(any("schema_version" in error for error in errors), msg=errors)
 
     def test_unsupported_schema_version_is_rejected(self) -> None:
-        errors = bfm.validate_declaration(valid_declaration(schema_version="2"), origin="decl.json")
+        errors = bfm.validate_declaration(valid_declaration(schema_version="3"), origin="decl.json")
         self.assertTrue(any("schema_version" in error for error in errors), msg=errors)
-        self.assertTrue(any("'2'" in error for error in errors), msg=errors)
+        self.assertTrue(any("'3'" in error for error in errors), msg=errors)
+
+    def test_v1_modules_only_declaration_remains_valid(self) -> None:
+        payload = valid_declaration(schema_version="1")
+        self.assertEqual(
+            bfm.validate_declaration(payload, origin="fleet-bundle.json"),
+            [],
+        )
+
+    def test_data_present_at_v1_is_refused(self) -> None:
+        payload = valid_declaration(
+            schema_version="1",
+            data=[{"name": "models.json"}],
+        )
+        errors = bfm.validate_declaration(payload, origin="fleet-bundle.json")
+        self.assertTrue(errors, "expected schema_version 2 requirement when data is present")
+        self.assertTrue(any("schema_version" in error for error in errors), msg=errors)
+
+    def test_data_present_at_v2_is_accepted(self) -> None:
+        payload = valid_declaration(
+            schema_version="2",
+            data=[{"name": "models.json"}],
+        )
+        self.assertEqual(
+            bfm.validate_declaration(payload, origin="fleet-bundle.json"),
+            [],
+        )
+
+    def test_data_item_requires_extension_in_name(self) -> None:
+        payload = valid_declaration(
+            schema_version="2",
+            data=[{"name": "models"}],
+        )
+        errors = bfm.validate_declaration(payload, origin="fleet-bundle.json")
+        self.assertTrue(errors, "expected name without extension to be rejected")
+        self.assertTrue(any("data[0]" in error or "name" in error for error in errors), msg=errors)
+
+    def test_data_item_extra_field_is_rejected_by_name(self) -> None:
+        payload = valid_declaration(
+            schema_version="2",
+            data=[{"name": "models.json", "extra_field": True}],
+        )
+        errors = bfm.validate_declaration(payload, origin="fleet-bundle.json")
+        self.assertTrue(errors)
+        self.assertTrue(any("extra_field" in error for error in errors), msg=errors)
 
     def test_empty_modules_array_is_rejected(self) -> None:
         errors = bfm.validate_declaration(valid_declaration(modules=[]), origin="decl.json")
@@ -168,6 +212,24 @@ class LiveDeclarationTests(unittest.TestCase):
         payload = json.loads(LIVE_DECLARATION.read_text(encoding="utf-8"))
         names = [entry["name"] for entry in payload["modules"]]
         self.assertEqual(names, ["retry_backoff"])
+
+    def test_live_mission_control_declaration_matches_the_schema(self) -> None:
+        mc_declaration = ROOT / "plugins" / "mission-control" / "fleet-bundle.json"
+        self.assertTrue(mc_declaration.is_file(), "U5 owns plugins/mission-control/fleet-bundle.json")
+        errors = bfm.validate_declaration_file(
+            mc_declaration,
+            origin="plugins/mission-control/fleet-bundle.json",
+        )
+        self.assertEqual(errors, [])
+
+    def test_live_mission_control_declaration_names_modules_and_data(self) -> None:
+        mc_declaration = ROOT / "plugins" / "mission-control" / "fleet-bundle.json"
+        payload = json.loads(mc_declaration.read_text(encoding="utf-8"))
+        self.assertEqual(payload.get("schema_version"), "2")
+        module_names = [entry["name"] for entry in payload.get("modules", [])]
+        self.assertEqual(module_names, ["intent_envelope", "tier_palette"])
+        data_names = [entry["name"] for entry in payload.get("data", [])]
+        self.assertEqual(data_names, ["models.json"])
 
 
 if __name__ == "__main__":

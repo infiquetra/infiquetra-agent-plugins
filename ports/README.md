@@ -25,7 +25,7 @@ that is still perfectly true.
 
 ```jsonc
 {
-  "schema_version": "2",              // refused rather than read with assumed defaults
+  "schema_version": "3",              // refused rather than read with assumed defaults
   "package": "unifi",                 // must equal the file name
   "package_root": "plugins/unifi",    // must be plugins/<package>
   "package_manifest": "plugin.json",  // optional; this is the default
@@ -41,7 +41,9 @@ that is still perfectly true.
   // and a path in none stops a synchronization rather than being dropped.
   "custody": {
     "byte_copies": [],                 // identical to source; digest must match exactly
-    "entrypoint_transforms": [],       // rewritten by a versioned rule; keeps its path
+    "entrypoint_transforms": [         // rewritten by a versioned rule; keeps its path
+      { "path": "scripts/example.py", "rule": "resolve-bundled-fleet-module" }
+    ],
     "client_byte_copies": [],          // byte copies under the client extension directory
     "superseded_by_target_owned": [],  // upstream path this package replaces; never copied
     "dropped_from_source": []          // not carried; needs provenance.dropped_reason
@@ -90,6 +92,34 @@ package failure — charging a descriptor typo to the package.
 
 Each must be stated. A package for which one is genuinely empty names it in
 `declared_none` — a decision a reader can see, and one a typo cannot produce.
+
+## Transform-rule selection is explicit (schema version 3)
+
+Schema version 2 carried `custody.entrypoint_transforms` as bare path strings:
+the synchronization tool had one rewriting rule and applied it to every one of
+them. With more than one rule in play that stops being a selection — it is a
+default. Version 3 makes every entry an object stating both fields:
+
+```jsonc
+{ "path": "scripts/example.py", "rule": "resolve-bundled-fleet-module" }
+```
+
+`path` keeps its upstream-relative path through synchronization; `rule` names
+the versioned rule the synchronization tool applies to it. Both fields are
+required and the entry object is closed like every other object here: a bare
+path string is the version-2 shape, an entry with no rule name would be read
+with an assumed default, and both are refused. The names a descriptor may use
+are the synchronization tool's `TRANSFORM_RULES` registry —
+`relocate-claude-manifest` is never selected this way (the client manifest
+always relocates under it); the selectable rules are the
+`resolve-bundled-fleet-module` family (`resolve-bundled-fleet-module`,
+`resolve-bundled-fleet-module-split`, `resolve-bundled-fleet-module-guarded`)
+and `normalize-skill-frontmatter`. A name the tool does not implement is
+refused at synchronization, never matched by a fallback. Version 2 is not
+accepted: both descriptors migrated in the same commit that bumped the
+version. Selection lives in the descriptor rather than a script-internal
+registry because AGENTS.md places porting-tool package configuration in the
+descriptor, never as a constant inside a script.
 
 ## Entrypoints are declared, not inferred from custody
 
