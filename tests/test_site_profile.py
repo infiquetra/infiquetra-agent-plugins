@@ -1102,7 +1102,7 @@ class MutationProofBindingTest(unittest.TestCase):
         mutation a kill by construction -- see the cycle-12 proof's header.
         """
         root = self.EVIDENCE.parent.parent
-        recorded = self._recorded("2026-08-24-cycle14-mutation-proof-portable-copies.txt")
+        recorded = self._recorded("2026-08-25-cycle16-mutation-proof-portable-copies.txt")
         self.assertEqual(set(recorded), set(self.GRADED), recorded)
         for relative in self.GRADED:
             with self.subTest(name=relative):

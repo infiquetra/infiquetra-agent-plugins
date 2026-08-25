@@ -1,0 +1,413 @@
+{
+  "attempted_lenses": [
+    "architecture-maintainability",
+    "correctness",
+    "security",
+    "testing",
+    "documentation-clarity",
+    "adversarial",
+    "api-contract"
+  ],
+  "best_available_revision": "700a50cf0419e42be627c75a08542c6f703c5a81",
+  "collection_operation": {
+    "operation": "collect",
+    "schema": "review_result.v1"
+  },
+  "cycle_history": [
+    {
+      "attempted_lenses": [
+        "architecture-maintainability",
+        "correctness",
+        "security",
+        "testing",
+        "documentation-clarity",
+        "adversarial",
+        "api-contract"
+      ],
+      "cycle": 1,
+      "delta_checks": [],
+      "failing_lenses": [],
+      "lens_results": [
+        {
+          "accepted": true,
+          "applicable_dimensions": {
+            "architectural-fit-ownership-single-sources": 10.0,
+            "conventions-portability-configuration": 10.0,
+            "dependency-direction": 10.0,
+            "readability-naming-error-contracts": 10.0,
+            "separation-of-concerns": 10.0,
+            "significant-decision-documentation": 9.0,
+            "simplicity-abstraction-duplication-changeability": 9.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 9.714285714285714,
+          "failing_dimensions": [],
+          "lens_id": "architecture-maintainability",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81",
+          "score_accepted": true,
+          "scoring_findings": []
+        },
+        {
+          "accepted": true,
+          "applicable_dimensions": {
+            "boundary-types-serialization-numeric-time": 10.0,
+            "caller-enum-consumer-completeness": 10.0,
+            "intent-behavior-completeness": 10.0,
+            "side-effects-errors-resource-lifecycle": 10.0,
+            "state-data-invariants-transactions-concurrency": 10.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 10.0,
+          "failing_dimensions": [],
+          "lens_id": "correctness",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81",
+          "score_accepted": true,
+          "scoring_findings": []
+        },
+        {
+          "accepted": true,
+          "applicable_dimensions": {
+            "confidentiality-logs-errors-egress": 10.0,
+            "dependency-supply-chain": 10.0,
+            "input-trust-boundaries-injection": 10.0,
+            "secrets-cryptography-session-handling": 10.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 10.0,
+          "failing_dimensions": [],
+          "lens_id": "security",
+          "non_applicable_dimensions": {
+            "authentication-authorization-tenant-isolation": "The diff adds no authenticated endpoint or tenant boundary."
+          },
+          "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81",
+          "score_accepted": true,
+          "scoring_findings": []
+        },
+        {
+          "accepted": true,
+          "applicable_dimensions": {
+            "behavior-sensitive-assertions": 10.0,
+            "determinism-isolation-diagnostics-maintainability": 10.0,
+            "negative-edge-state-concurrency-time": 9.0,
+            "realistic-seams-mocks-integration-evidence": 10.0,
+            "requirements-regression-coverage": 10.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 9.8,
+          "failing_dimensions": [],
+          "lens_id": "testing",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81",
+          "score_accepted": true,
+          "scoring_findings": []
+        },
+        {
+          "accepted": true,
+          "applicable_dimensions": {
+            "completeness-audience-prerequisites": 10.0,
+            "runbook-safety-rollback-links-generated-drift": 9.0,
+            "runnable-examples-actionability": 10.0,
+            "shipped-behavior-parity": 9.0,
+            "structure-navigation": 10.0,
+            "terminology-cross-document-consistency": 10.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 9.666666666666666,
+          "failing_dimensions": [],
+          "lens_id": "documentation-clarity",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81",
+          "score_accepted": true,
+          "scoring_findings": []
+        },
+        {
+          "accepted": true,
+          "applicable_dimensions": {
+            "abuse-edge-cases": 9.0,
+            "alternatives-considered": 10.0,
+            "failure-amplification-silent-green": 10.0,
+            "load-bearing-assumptions": 10.0,
+            "scope-creep-risk": 10.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 9.8,
+          "failing_dimensions": [],
+          "lens_id": "adversarial",
+          "non_applicable_dimensions": {
+            "environment-operator-failure": "This unit does not execute live GitHub or operator credentials.",
+            "recovery": "Generate and check are static tree operations with no partial-execution protocol."
+          },
+          "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81",
+          "score_accepted": true,
+          "scoring_findings": []
+        },
+        {
+          "accepted": true,
+          "applicable_dimensions": {
+            "interface-contract-compatibility": 10.0,
+            "serialization-errors": 10.0,
+            "specification-documentation-parity": 9.0,
+            "versioning-deprecation": 10.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 9.75,
+          "failing_dimensions": [],
+          "lens_id": "api-contract",
+          "non_applicable_dimensions": {
+            "pagination-rate-limits": "The declaration exposes no collection pagination.",
+            "retry-idempotency-semantics": "The fleet-bundle declaration is not a retryable mutation protocol.",
+            "sdk-generated-client-impact": "No generated software development kit consumes this schema as a client SDK."
+          },
+          "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81",
+          "score_accepted": true,
+          "scoring_findings": []
+        }
+      ],
+      "revision": "700a50cf0419e42be627c75a08542c6f703c5a81",
+      "unresolved_fix_ids": []
+    }
+  ],
+  "evidence_ledger": {},
+  "external_advisory_reviews": [],
+  "failing_lenses": [],
+  "findings": [],
+  "fix_requests": [],
+  "lens_results": [
+    {
+      "accepted": true,
+      "applicable_dimensions": {
+        "architectural-fit-ownership-single-sources": 10.0,
+        "conventions-portability-configuration": 10.0,
+        "dependency-direction": 10.0,
+        "readability-naming-error-contracts": 10.0,
+        "separation-of-concerns": 10.0,
+        "significant-decision-documentation": 9.0,
+        "simplicity-abstraction-duplication-changeability": 9.0
+      },
+      "cycle": 1,
+      "delta_check": null,
+      "derived_overall": 9.714285714285714,
+      "failing_dimensions": [],
+      "lens_id": "architecture-maintainability",
+      "non_applicable_dimensions": {},
+      "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81",
+      "score_accepted": true,
+      "scoring_findings": []
+    },
+    {
+      "accepted": true,
+      "applicable_dimensions": {
+        "boundary-types-serialization-numeric-time": 10.0,
+        "caller-enum-consumer-completeness": 10.0,
+        "intent-behavior-completeness": 10.0,
+        "side-effects-errors-resource-lifecycle": 10.0,
+        "state-data-invariants-transactions-concurrency": 10.0
+      },
+      "cycle": 1,
+      "delta_check": null,
+      "derived_overall": 10.0,
+      "failing_dimensions": [],
+      "lens_id": "correctness",
+      "non_applicable_dimensions": {},
+      "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81",
+      "score_accepted": true,
+      "scoring_findings": []
+    },
+    {
+      "accepted": true,
+      "applicable_dimensions": {
+        "confidentiality-logs-errors-egress": 10.0,
+        "dependency-supply-chain": 10.0,
+        "input-trust-boundaries-injection": 10.0,
+        "secrets-cryptography-session-handling": 10.0
+      },
+      "cycle": 1,
+      "delta_check": null,
+      "derived_overall": 10.0,
+      "failing_dimensions": [],
+      "lens_id": "security",
+      "non_applicable_dimensions": {
+        "authentication-authorization-tenant-isolation": "The diff adds no authenticated endpoint or tenant boundary."
+      },
+      "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81",
+      "score_accepted": true,
+      "scoring_findings": []
+    },
+    {
+      "accepted": true,
+      "applicable_dimensions": {
+        "behavior-sensitive-assertions": 10.0,
+        "determinism-isolation-diagnostics-maintainability": 10.0,
+        "negative-edge-state-concurrency-time": 9.0,
+        "realistic-seams-mocks-integration-evidence": 10.0,
+        "requirements-regression-coverage": 10.0
+      },
+      "cycle": 1,
+      "delta_check": null,
+      "derived_overall": 9.8,
+      "failing_dimensions": [],
+      "lens_id": "testing",
+      "non_applicable_dimensions": {},
+      "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81",
+      "score_accepted": true,
+      "scoring_findings": []
+    },
+    {
+      "accepted": true,
+      "applicable_dimensions": {
+        "completeness-audience-prerequisites": 10.0,
+        "runbook-safety-rollback-links-generated-drift": 9.0,
+        "runnable-examples-actionability": 10.0,
+        "shipped-behavior-parity": 9.0,
+        "structure-navigation": 10.0,
+        "terminology-cross-document-consistency": 10.0
+      },
+      "cycle": 1,
+      "delta_check": null,
+      "derived_overall": 9.666666666666666,
+      "failing_dimensions": [],
+      "lens_id": "documentation-clarity",
+      "non_applicable_dimensions": {},
+      "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81",
+      "score_accepted": true,
+      "scoring_findings": []
+    },
+    {
+      "accepted": true,
+      "applicable_dimensions": {
+        "abuse-edge-cases": 9.0,
+        "alternatives-considered": 10.0,
+        "failure-amplification-silent-green": 10.0,
+        "load-bearing-assumptions": 10.0,
+        "scope-creep-risk": 10.0
+      },
+      "cycle": 1,
+      "delta_check": null,
+      "derived_overall": 9.8,
+      "failing_dimensions": [],
+      "lens_id": "adversarial",
+      "non_applicable_dimensions": {
+        "environment-operator-failure": "This unit does not execute live GitHub or operator credentials.",
+        "recovery": "Generate and check are static tree operations with no partial-execution protocol."
+      },
+      "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81",
+      "score_accepted": true,
+      "scoring_findings": []
+    },
+    {
+      "accepted": true,
+      "applicable_dimensions": {
+        "interface-contract-compatibility": 10.0,
+        "serialization-errors": 10.0,
+        "specification-documentation-parity": 9.0,
+        "versioning-deprecation": 10.0
+      },
+      "cycle": 1,
+      "delta_check": null,
+      "derived_overall": 9.75,
+      "failing_dimensions": [],
+      "lens_id": "api-contract",
+      "non_applicable_dimensions": {
+        "pagination-rate-limits": "The declaration exposes no collection pagination.",
+        "retry-idempotency-semantics": "The fleet-bundle declaration is not a retryable mutation protocol.",
+        "sdk-generated-client-impact": "No generated software development kit consumes this schema as a client SDK."
+      },
+      "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81",
+      "score_accepted": true,
+      "scoring_findings": []
+    }
+  ],
+  "next_action": "continue",
+  "outcome": "accepted",
+  "residual_summary": {
+    "final_lens_scores": {
+      "adversarial": {
+        "accepted": true,
+        "delta_check": null,
+        "derived_overall": 9.8,
+        "failing_dimensions": [],
+        "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81"
+      },
+      "api-contract": {
+        "accepted": true,
+        "delta_check": null,
+        "derived_overall": 9.75,
+        "failing_dimensions": [],
+        "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81"
+      },
+      "architecture-maintainability": {
+        "accepted": true,
+        "delta_check": null,
+        "derived_overall": 9.714285714285714,
+        "failing_dimensions": [],
+        "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81"
+      },
+      "correctness": {
+        "accepted": true,
+        "delta_check": null,
+        "derived_overall": 10.0,
+        "failing_dimensions": [],
+        "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81"
+      },
+      "documentation-clarity": {
+        "accepted": true,
+        "delta_check": null,
+        "derived_overall": 9.666666666666666,
+        "failing_dimensions": [],
+        "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81"
+      },
+      "security": {
+        "accepted": true,
+        "delta_check": null,
+        "derived_overall": 10.0,
+        "failing_dimensions": [],
+        "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81"
+      },
+      "testing": {
+        "accepted": true,
+        "delta_check": null,
+        "derived_overall": 9.8,
+        "failing_dimensions": [],
+        "reviewed_revision": "700a50cf0419e42be627c75a08542c6f703c5a81"
+      }
+    },
+    "review_incomplete_reason": null,
+    "score_regressions": [],
+    "unresolved_fix_ids": []
+  },
+  "resume_transitions": [
+    "continue"
+  ],
+  "revision_binding": {
+    "best_available_revision": "700a50cf0419e42be627c75a08542c6f703c5a81",
+    "lens_revisions": {
+      "adversarial": "700a50cf0419e42be627c75a08542c6f703c5a81",
+      "api-contract": "700a50cf0419e42be627c75a08542c6f703c5a81",
+      "architecture-maintainability": "700a50cf0419e42be627c75a08542c6f703c5a81",
+      "correctness": "700a50cf0419e42be627c75a08542c6f703c5a81",
+      "documentation-clarity": "700a50cf0419e42be627c75a08542c6f703c5a81",
+      "security": "700a50cf0419e42be627c75a08542c6f703c5a81",
+      "testing": "700a50cf0419e42be627c75a08542c6f703c5a81"
+    }
+  },
+  "schema": "review_result.v1",
+  "selected_lenses": [
+    "architecture-maintainability",
+    "correctness",
+    "security",
+    "testing",
+    "documentation-clarity",
+    "adversarial",
+    "api-contract"
+  ],
+  "unresolved_fix_ids": []
+}

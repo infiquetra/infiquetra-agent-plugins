@@ -667,6 +667,25 @@ class BundleStampTests(unittest.TestCase):
 
             self.assertEqual(check_repo.check_bundled_files(root), [])
 
+    def test_missing_data_file_source_is_reported_as_stale_source(self) -> None:
+        """A non-python bundled data file whose Fleet Core source is missing is reported."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            write(
+                plugin / "scripts" / "_bundled" / "models.json",
+                '{"schema_version": 2}\n',
+            )
+            fleet_core = root / "plugins" / check_repo.FLEET_CORE_PLUGIN_NAME
+            (fleet_core / "scripts" / "fleet_commons").mkdir(parents=True, exist_ok=True)
+
+            errors = check_repo.check_bundled_files(root)
+
+            self.assertEqual(len(errors), 1, errors)
+            self.assertIn("stale source: models.json", errors[0])
+            self.assertIn("source file missing:", errors[0])
+
+
 
 class SkillFrontmatterTests(unittest.TestCase):
     def test_conformant_frontmatter_passes(self) -> None:
@@ -888,5 +907,45 @@ class SecretFreeValueTests(unittest.TestCase):
         )
 
 
+class ContinuousIntegrationTests(unittest.TestCase):
+    """The CI workflow's test paths must match the repository's on-disk plugin test directories."""
+
+    def test_ci_plugin_tests_glob_covers_all_on_disk_plugin_test_directories(self) -> None:
+        ci_path = ROOT / ".github" / "workflows" / "ci.yml"
+        self.assertTrue(ci_path.is_file(), f"missing {ci_path}")
+        ci_text = ci_path.read_text(encoding="utf-8")
+
+        on_disk_test_dirs = sorted(
+            p.relative_to(ROOT).as_posix()
+            for p in ROOT.glob("plugins/*/tests")
+            if p.is_dir()
+        )
+        self.assertTrue(
+            on_disk_test_dirs,
+            "no plugin test directories found on disk to validate against CI",
+        )
+        self.assertIn(
+            "pytest plugins/*/tests",
+            ci_text,
+            "ci.yml must invoke pytest with 'plugins/*/tests' to discover all ported plugin test suites",
+        )
+
+    def test_meta_check_fails_if_a_plugin_test_directory_is_not_matched_by_ci_pattern(self) -> None:
+        """Control test: proves that meta-check fails if CI pattern does not match all test directories."""
+        import fnmatch
+
+        ci_pattern = "plugins/*/tests"
+        covered = [
+            d
+            for d in ["plugins/mission-control/tests", "plugins/unifi/tests"]
+            if fnmatch.fnmatch(d, ci_pattern)
+        ]
+        self.assertEqual(len(covered), 2)
+
+        broken_pattern = "plugins/mission-control/tests"
+        self.assertFalse(fnmatch.fnmatch("plugins/unifi/tests", broken_pattern))
+
+
 if __name__ == "__main__":
+
     unittest.main()

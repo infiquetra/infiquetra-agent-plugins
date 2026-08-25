@@ -1,0 +1,956 @@
+{
+  "schema_version": "2026-06-17",
+  "migration_notes": [
+    "2026-06-13: Added additive saga_lifecycle block derived from the vendored saga-docs-model.yaml snapshot (plugin 0.21.0). At that migration, this was strictly additive and existing consumers (for example, wip_limits.olympus) were unchanged; superseded for Olympus routing by the 2026-06-17 retirement.",
+    "2026-06-13.2: Merged hand-authored config/saga-lifecycle-extras.yaml (combinations, reset_edges, gate_classification, phase_board_map, phase_command_map) into the saga_lifecycle block. Strictly additive; snapshot-derived keys and existing consumers unchanged.",
+    "2026-06-17: Retired Mount Olympus as an active board projection. phase_board_map now projects only Jeff Intent, Asgard, and CAMPPS; Project #1 is closed externally and preserved as historical context.",
+    "2026-07-10: Pinned Objective-field membership, Objective-grouped views, top-level-by-default Capabilities, and optional Outcome parents for explicit long-lived initiative-board contracts."
+  ],
+  "status": "active",
+  "description": "Canonical Infiquetra SDLC board, team, routing, review, approval, and deployment-state schema. This file intentionally contains no live GitHub Projects field option IDs; tooling must resolve those from GitHub at runtime.",
+  "teams": {
+    "jeff": {
+      "kind": "human_operator",
+      "status": "active",
+      "role": "Sole human operator, intent source, approval gate, escalation arbitrator, and occasional direct implementer with local AI tools",
+      "board": "operations",
+      "review_model": "operator_judgment"
+    },
+    "asgard": {
+      "kind": "agent_team",
+      "status": "active",
+      "role": "Jeff-proximal rapid-action, incubation, and mission-mode team with an issue-backed feed and lightweight proof model",
+      "board": "asgard",
+      "modes": ["Rapid Action", "Incubator", "Mission"],
+      "review_model": "team_owned_review",
+      "operating_model_doc": "docs/process/asgard-operating-model.md"
+    },
+    "olympus": {
+      "kind": "agent_team",
+      "status": "retired_historical",
+      "role": "Former primary autonomous engineering execution pipeline. Preserved for history only; do not route active work or current board state through Mount Olympus.",
+      "board": null,
+      "agents": ["Zeus", "Athena", "Apollo", "Artemis", "Hephaestus", "Perseus", "Prometheus", "Ares"],
+      "review_model": "retired"
+    },
+    "hermes": {
+      "kind": "system_role",
+      "status": "active",
+      "role": "Single Python orchestrator process that ingests GitHub webhooks, dispatches work, coordinates plan review, and manages Discord threads",
+      "board": null,
+      "review_model": "not_a_reviewer"
+    },
+    "themis": {
+      "kind": "system_role",
+      "status": "retired_historical",
+      "role": "Former PR-review state machine. Preserved for migration history only; not an active routing path.",
+      "board": null,
+      "review_model": "retired"
+    }
+  },
+  "boards": {
+    "operations": {
+      "name": "Operations",
+      "status": "active",
+      "purpose": "Raw operator intent, approvals, questions, personal/operator work, and shaping before team execution",
+      "owner": "jeff",
+      "workflow": "intent_flow",
+      "routing_required_at": "Ready",
+      "live_creation": "created_2026-05-29_project_3"
+    },
+    "asgard": {
+      "name": "Asgard",
+      "status": "active",
+      "purpose": "Rapid action, incubation, and mission-mode work close to Jeff",
+      "owner": "asgard",
+      "workflow": "intent_flow",
+      "live_creation": "created_2026-05-29_project_2"
+    },
+    "campps": {
+      "name": "CAMPPS",
+      "kind": "long_lived_initiative_board",
+      "status": "active",
+      "purpose": "Portfolio-level execution board for the CAMPPS program, tracking Outcome, Capability, and Component slice progress while the initiative is active",
+      "owner": "asgard",
+      "workflow": "campps_initiative",
+      "archive_trigger": "Operator declares the initiative complete after Objectives are Done and Outcome Scorecards are reviewed.",
+      "live_creation": "created_2026-06-16_project_4"
+    }
+  },
+  "workflows": {
+    "intent_flow": {
+      "statuses": ["Idea", "Shaping", "Ready", "Active", "Verify", "Done"],
+      "terminal_statuses": ["Done"],
+      "canonical_for": ["operations", "asgard"]
+    },
+    "campps_initiative": {
+      "statuses": ["Idea", "Committed", "In Progress", "Done", "Parked"],
+      "pause_states": ["Parked"],
+      "terminal_statuses": ["Done"],
+      "canonical_for": ["campps"]
+    }
+  },
+  "fields": {
+    "common": ["Status", "Owner", "Priority", "Risk", "Initiative", "Objective"],
+    "operations": ["Status", "Target Team", "Jeff Needed", "Context Pack", "Decision Needed", "Objective"],
+    "asgard": ["Status", "Mode", "Jeff Needed", "Target Repository", "Risk", "Transfer Target", "Objective"],
+    "campps": ["Status", "Objective", "Milestone", "Start", "Target", "Initiative", "Test Strategy"]
+  },
+  "work_hierarchy": {
+    "source_note": "Canonical machine-readable hierarchy for Objective, Outcome, Capability, and Component slice roles. Component is a dispatch role encoded by sub-issue position plus fields, not a separate issue type.",
+    "roles": {
+      "objective": {
+        "kind": "project_field_plus_scorecard",
+        "issue_type": false,
+        "primary_surface": "Objective project field",
+        "supporting_artifact": "Outcome Scorecard doc in the owning context-library repository",
+        "membership_rule": "Assign the Objective field value to every contributing Capability and executable child; do not create an Objective parent issue.",
+        "project_view_group_by": "Objective"
+      },
+      "outcome": {
+        "kind": "initiative_board_proof_card",
+        "issue_type": false,
+        "applies_to": ["long_lived_initiative_board"],
+        "example_board": "campps",
+        "required_by_default": false,
+        "purpose": "Dated proof tier for initiative-level outcomes when a long-lived initiative board exists."
+      },
+      "capability": {
+        "kind": "cross_service_coordinator",
+        "issue_type": "capability",
+        "default_parent_role": null,
+        "allowed_parent_roles": ["outcome"],
+        "parent_policy": "Top-level by default; use an Outcome parent only when the active board contract explicitly requires dated proof cards.",
+        "purpose": "Coordinates the end-to-end result across services and names the verification slice that proves completion."
+      },
+      "component": {
+        "kind": "repo_bounded_dispatch_slice",
+        "issue_type": false,
+        "encoded_by": ["native GitHub sub-issue position under a Capability", "Test Strategy project field"],
+        "purpose": "Independently service-testable slice an agent can build inside one repository or bounded context."
+      }
+    },
+    "component_slices": {
+      "parent_role": "capability",
+      "test_strategy_field": "Test Strategy",
+      "test_strategy_field_status": "planned_schema_intent",
+      "test_strategies": ["endpoint", "event", "schema", "property", "combine"],
+      "validation_policy": {
+        "endpoint": {
+          "enforcement": "advisory",
+          "proof_expectation": "Request and response seam proof for one endpoint vertical."
+        },
+        "event": {
+          "enforcement": "enforced",
+          "proof_expectation": "Event emission, idempotency, state transition, and alarm or retry proof."
+        },
+        "schema": {
+          "enforcement": "enforced",
+          "proof_expectation": "Schema invariant, compatibility, and generated artifact proof."
+        },
+        "property": {
+          "enforcement": "enforced",
+          "proof_expectation": "Property, exhaustiveness, or state-space proof for non-enumerable behavior."
+        },
+        "combine": {
+          "enforcement": "enforced",
+          "proof_expectation": "Cross-repository or cross-service seam proof that local green checks did not miss the end-to-end result."
+        }
+      },
+      "capability_close_rule": "Every Capability coordinator names one enforced end-to-end verification slice before close; use combine when a cross-repo seam exists or a dedicated closeout E2E slice otherwise.",
+      "experiment_metrics": ["slice_rework_rate", "dispatch_without_clarification_rate", "service_test_pass_rate", "cross_service_e2e_pass_rate"]
+    }
+  },
+  "pause_states": {
+    "Plan-Approved": "Plan accepted but operator intentionally paused dispatch.",
+    "Needs Review": "Operator or team review needed before work can continue.",
+    "Needs Question": "Author or operator input needed; currently treated as a human-input state.",
+    "Blocked": "Known external blocker prevents progress.",
+    "Cancelled": "Work intentionally stopped before completion."
+  },
+  "wip_limits": {
+    "operations": {
+      "Idea": null,
+      "Shaping": 10,
+      "Ready": 10,
+      "Active": 5,
+      "Verify": 5,
+      "Done": null
+    },
+    "asgard": {
+      "Idea": null,
+      "Shaping": 8,
+      "Ready": 8,
+      "Active": 5,
+      "Verify": 5,
+      "Done": null
+    },
+    "campps": {
+      "Idea": null,
+      "Committed": null,
+      "In Progress": null,
+      "Done": null,
+      "Parked": null
+    }
+  },
+  "dispatch_gates": {
+    "operations": {
+      "Ready": ["Target Team must be set before promotion out of Operations"]
+    },
+    "asgard": {
+      "Active": ["Mode must be set", "Jeff Needed must be set when work crosses an approval boundary"]
+    },
+    "campps": {
+      "Committed": ["Outcome or Capability is admitted to the initiative portfolio", "Objective field is set"],
+      "In Progress": ["Component slices identify their Test Strategy when applicable"]
+    }
+  },
+  "team_routing": {
+    "target_team_values": ["Asgard", "CAMPPS", "Jeff", "External/Deferred"],
+    "operations_ready_rule": "A Ready Operations card must name one target team before moving to another board or workflow.",
+    "asgard_issue_feed_rule": "Asgard-bound work enters through Operations Target Team=Asgard, a direct issue added to Asgard, or a context/issue pack. Before Active, set Mode, target repository or surface, risk, approval state, proof path, and transfer target when a cross-team handoff is expected.",
+    "cross_team_transfer_rule": "Asgard and CAMPPS are sibling active target surfaces. Cross-team movement happens only when an operator explicitly routes, transfers, clones, or links work to another board; readiness checks may warn about target fit but must not infer movement. Mount Olympus is retired historical context and is not an active target.",
+    "default_pressure_valve": "Prefer project views over new boards unless scale, automation, or reporting needs justify a separate board."
+  },
+  "review_model": {
+    "current": "team_owned_review",
+    "team_owned_review": "The team that owns the work owns PR review, evidence, and merge readiness. Hermes may coordinate events, but does not route active PR review to Themis.",
+    "plan_review": "Hermes can coordinate plan review before dispatch.",
+    "retired": {
+      "Themis": "Historical PR-review state machine. Do not route active PR review to Themis from current SDLC docs."
+    }
+  },
+  "human_approval_state": {
+    "active_pattern": "Per-agent direct message or per-card thread request to Jeff, depending on the work context.",
+    "retired_patterns": ["olympus-input-orchestrator", "olympus:agent:input-request", "#agent-handoffs as canonical HITL channel"],
+    "approval_required_for": [
+      "production changes",
+      "destructive operations",
+      "secrets or credential changes",
+      "IAM or permission changes",
+      "billing or cost-impacting actions",
+      "external commitments",
+      "major team or process authority changes"
+    ]
+  },
+  "deployment_state": {
+    "source_of_truth": "GitHub Deployments/Environments plus tag-promotion records",
+    "not_workflow_statuses": ["nonprod", "staging", "production", "Deployment Ready", "Deployed"],
+    "fields": {
+      "Deploy Target": "Environment or promotion target requested by the work item",
+      "Deploy State": "Current deployment or promotion state derived from deployment records",
+      "Snapshot Version": "Immutable version or tag promoted across environments",
+      "Promotion Pending": "Whether a promotion approval or gate is waiting",
+      "Release Risk": "Operational risk classification for the release or promotion",
+      "Last Deployment": "Most recent deployment evidence link or timestamp"
+    },
+    "mutation_owner": "deploy",
+    "display_owner": "mission-control may display or link deployment state in a later pass"
+  },
+  "saga_lifecycle": {
+    "derived_from": "config/saga-docs-model.yaml",
+    "extras_from": "config/saga-lifecycle-extras.yaml",
+    "source_note": "Generated by tools/docs/gen_saga_schema.py from the vendored saga snapshot (config/saga-docs-model.yaml) merged with the hand-authored config/saga-lifecycle-extras.yaml. Snapshot-derived: phases, state_axes, maturity derivation, gates_raw. Extras-authored: combinations, reset_edges, gate_classification, phase_board_map, phase_command_map.",
+    "phases": [
+      "ideation",
+      "brainstorm",
+      "plan",
+      "review",
+      "work",
+      "qa",
+      "retro"
+    ],
+    "state_axes": {
+      "lifecycle_phase": [
+        "ideation",
+        "brainstorm",
+        "plan",
+        "review",
+        "work",
+        "qa",
+        "retro"
+      ],
+      "phase_status": [
+        "pending",
+        "in_progress",
+        "complete"
+      ],
+      "status": [
+        "active",
+        "blocked",
+        "paused",
+        "handed-off",
+        "done",
+        "abandoned"
+      ]
+    },
+    "maturity": {
+      "derived_not_stored": true,
+      "values": {
+        "idea-ready": {
+          "from": [
+            "docs/ideation/"
+          ],
+          "consumed_by": [
+            "/plan"
+          ]
+        },
+        "requirements-ready": {
+          "from": [
+            "docs/brainstorms/",
+            "docs/specs/"
+          ],
+          "consumed_by": [
+            "/plan"
+          ]
+        },
+        "plan-ready": {
+          "from": [
+            "docs/plans/",
+            "docs/reviews/"
+          ],
+          "consumed_by": [
+            "/work"
+          ]
+        },
+        "resume-ready": {
+          "from": [
+            "docs/work-sessions/",
+            "branch refs"
+          ],
+          "consumed_by": [
+            "/work"
+          ]
+        },
+        "deferred-context": {
+          "from": [
+            "explicit preserve/defer language"
+          ],
+          "consumed_by": [
+            "/handoff"
+          ]
+        }
+      }
+    },
+    "gates_raw": {
+      "gates_by_command": {
+        "office-hours": "Never implement, plan, scaffold, or file an SDLC issue.",
+        "ideate": "Preserve rejection reasons; do not treat operator seed ideas as exempt from critique.",
+        "brainstorm": "Keep WHAT and acceptance examples clear enough for /plan.",
+        "spec": "Do not produce a spec after message 1; interrogate first and read code before technical questions.",
+        "plan": "Does not implement or run the review gauntlet.",
+        "doc-review": "P0/P1 findings block /work without recorded override.",
+        "work": "Hard test gate by risk; hard review gate on P0/P1 or stale review; PR and merge require confirmation.",
+        "code-review": "P0/P1 findings block PR-ready unless overridden.",
+        "qa": "Verdict threshold determines ship, ship-with-deferred, or no-ship.",
+        "handoff": "Ask when source, maturity, target repo, team, or issue type is ambiguous.",
+        "retro": "Self-edit safety gate; modifications/deletions require explicit apply/skip/modify choice.",
+        "resume": "Read-only on world; Tier 2 session forensics only when no saga and no resolvable issue exist.",
+        "investigate": "No fix without root-cause chain grounded in observed evidence.",
+        "optimize": "Hard degenerate gates before any LLM judge; keep only real measured improvement.",
+        "strategy": "Interview-driven update with pushback; do not implement or file issues.",
+        "founder-review": "Opt-in ceremony before scope expansion.",
+        "loop": "Enforces doc-review P0/P1 hard gate before /work; stub/off-chain routes are advisory."
+      },
+      "routes": {
+        "main_chain": [
+          {
+            "from": "idea-ready",
+            "to": "/plan",
+            "reason": "Turn idea or requirements context into HOW."
+          },
+          {
+            "from": "/plan",
+            "to": "/doc-review",
+            "reason": "Check implementation readiness before work."
+          },
+          {
+            "from": "/doc-review",
+            "to": "/work",
+            "reason": "Execute only after no unresolved P0/P1 review findings or recorded override."
+          },
+          {
+            "from": "/work",
+            "to": "/code-review",
+            "reason": "Review code at PR boundary."
+          },
+          {
+            "from": "/work",
+            "to": "/qa",
+            "reason": "Run acceptance evidence after merge."
+          },
+          {
+            "from": "/qa",
+            "to": "/handoff",
+            "reason": "Route defects or follow-up work."
+          },
+          {
+            "from": "/qa",
+            "to": "/retro",
+            "reason": "Capture lifecycle learning when work is complete."
+          }
+        ],
+        "off_chain": [
+          {
+            "command": "/spec",
+            "state_behavior": "saga-untouched",
+            "routes_to": [
+              "/handoff",
+              "/plan",
+              "/doc-review"
+            ]
+          },
+          {
+            "command": "/investigate",
+            "state_behavior": "saga-read-only",
+            "routes_to": [
+              "/work",
+              "/handoff",
+              "/brainstorm",
+              "/code-review"
+            ]
+          },
+          {
+            "command": "/optimize",
+            "state_behavior": "saga-untouched",
+            "routes_to": [
+              "/work"
+            ]
+          },
+          {
+            "command": "/strategy",
+            "state_behavior": "saga-untouched",
+            "routes_to": [
+              "/ideate",
+              "/brainstorm",
+              "/plan"
+            ]
+          },
+          {
+            "command": "/retro",
+            "state_behavior": "saga-read-only",
+            "routes_to": [
+              "/handoff"
+            ]
+          }
+        ]
+      }
+    },
+    "combinations": {
+      "legal": [
+        {
+          "lifecycle_phase": "*",
+          "phase_status": "*",
+          "status": "blocked",
+          "note": "any phase can be blocked"
+        },
+        {
+          "lifecycle_phase": "*",
+          "phase_status": "*",
+          "status": "paused",
+          "note": "any phase can be paused"
+        },
+        {
+          "lifecycle_phase": "*",
+          "phase_status": "*",
+          "status": "handed-off",
+          "note": "any phase can be handed off"
+        },
+        {
+          "lifecycle_phase": "work",
+          "phase_status": "in_progress",
+          "status": "active",
+          "note": "normal active build"
+        },
+        {
+          "lifecycle_phase": "plan",
+          "phase_status": "complete",
+          "status": "active",
+          "note": "plan finished, advancing to the review gate"
+        },
+        {
+          "lifecycle_phase": "qa",
+          "phase_status": "complete",
+          "status": "done",
+          "note": "acceptance passed, thread done"
+        }
+      ],
+      "illegal": [
+        {
+          "lifecycle_phase": "*",
+          "phase_status": "in_progress",
+          "status": "done",
+          "reason": "a done thread cannot have an in-progress phase"
+        },
+        {
+          "lifecycle_phase": "*",
+          "phase_status": "pending",
+          "status": "done",
+          "reason": "a done thread cannot have a pending phase (status=done requires phase_status=complete)"
+        }
+      ]
+    },
+    "reset_edges": [
+      {
+        "from": "review",
+        "to": "plan",
+        "via": "/founder-review",
+        "grounded": true,
+        "reason": "Accepted scope change from founder-review routes back to /plan for a re-plan that re-runs /doc-review (model: founder-review.routes_out + doc-review.routes_out include /plan)."
+      },
+      {
+        "from": "work",
+        "to": "plan",
+        "via": "/plan",
+        "grounded": false,
+        "reason": "A stale base (the plan's assumptions diverged from a moved main) forces a re-plan before continuing work (saga-spec convention, not in the model)."
+      },
+      {
+        "from": "qa",
+        "to": "work",
+        "via": "/qa",
+        "grounded": true,
+        "reason": "A failed acceptance verdict keeps lifecycle_phase=work for repair routing (model: qa.saga_state_behavior 'on fail, keeps lifecycle_phase=work'; qa.routes_out includes /work)."
+      },
+      {
+        "from": "work",
+        "to": "work",
+        "via": "/code-review",
+        "grounded": true,
+        "reason": "Blocking code-review findings route back into the work loop before PR-ready (model: code-review.routes_out includes /work)."
+      }
+    ],
+    "gate_classification": {
+      "doc-review": {
+        "blocking": true,
+        "advances_phase": true,
+        "overridable": true,
+        "source": "saga-docs-model.yaml commands.doc-review.gates ('P0/P1 findings block /work without recorded override')",
+        "note": "Authoritative implementation-readiness gate; unresolved P0/P1 block /work; advances review -> work; overridable only with a recorded rationale."
+      },
+      "code-review": {
+        "blocking": false,
+        "advances_phase": false,
+        "overridable": true,
+        "source": "saga-docs-model.yaml commands.code-review (saga_state_behavior: 'does not advance lifecycle_phase')",
+        "note": "Internal quality lens at the work->PR boundary, NOT a substitute for team-owned PR review; advisory in the authority sense; does not advance the lifecycle spine."
+      },
+      "qa": {
+        "blocking": false,
+        "advances_phase": true,
+        "overridable": true,
+        "source": "saga-docs-model.yaml commands.qa (saga_state_behavior: 'on pass, advances qa-track'; gates: 'Verdict threshold determines ship, ship-with-deferred, or no-ship')",
+        "note": "Post-merge acceptance-evidence verdict; advisory to the team-owned gate; a passing verdict advances the thread qa->retro (the qa-track is recorded), a no-ship keeps lifecycle_phase=work; ship-with-deferred is the recorded-rationale path."
+      },
+      "plan-review": {
+        "blocking": true,
+        "advances_phase": false,
+        "overridable": true,
+        "source": "config/sdlc-schema.json review_model.plan_review ('Hermes can coordinate plan review before dispatch')",
+        "note": "Hermes-coordinated plan readiness before dispatch; blocks dispatch; does not itself advance the stored lifecycle_phase (/plan completing does)."
+      },
+      "team-owned-pr-review": {
+        "blocking": true,
+        "advances_phase": true,
+        "overridable": false,
+        "source": "config/sdlc-schema.json review_model.team_owned_review",
+        "note": "The authoritative PR review + merge-readiness gate; the team or initiative surface that owns the work owns it; clearing it (with merge) advances work->qa; not unilaterally overridable (the owner decides)."
+      }
+    },
+    "phase_board_map": {
+      "ideation": {
+        "operations": [
+          "Idea"
+        ],
+        "asgard": [
+          "Idea"
+        ],
+        "campps": [
+          "Idea"
+        ]
+      },
+      "brainstorm": {
+        "operations": [
+          "Shaping"
+        ],
+        "asgard": [
+          "Shaping"
+        ],
+        "campps": [
+          "Idea"
+        ]
+      },
+      "plan": {
+        "operations": [
+          "Ready"
+        ],
+        "asgard": [
+          "Ready"
+        ],
+        "campps": [
+          "Committed"
+        ]
+      },
+      "review": {
+        "operations": [
+          "Ready"
+        ],
+        "asgard": [
+          "Ready"
+        ],
+        "campps": [
+          "Committed"
+        ],
+        "note": "The doc-review gate is the Ready->Active gate on Operations / Asgard (plan approved before work goes Active); on CAMPPS the work is Committed (admitted to the portfolio) before execution starts."
+      },
+      "work": {
+        "operations": [
+          "Active"
+        ],
+        "asgard": [
+          "Active"
+        ],
+        "campps": [
+          "In Progress"
+        ],
+        "note": "Work (with code-review at the PR boundary) runs in Active on Operations / Asgard and In Progress on CAMPPS."
+      },
+      "qa": {
+        "operations": [
+          "Verify"
+        ],
+        "asgard": [
+          "Verify"
+        ],
+        "campps": [
+          "In Progress"
+        ],
+        "note": "The qa verdict gates Verify -> Done on Operations / Asgard; CAMPPS has no separate verify column, so qa stays In Progress on the initiative rollup until the work is Done."
+      },
+      "retro": {
+        "operations": [
+          "Done"
+        ],
+        "asgard": [
+          "Done"
+        ],
+        "campps": [
+          "Done"
+        ],
+        "note": "Learn (/retro) runs post-Done; no dedicated board column."
+      }
+    },
+    "phase_command_map": {
+      "ideation": [
+        "/ideate",
+        "/office-hours"
+      ],
+      "brainstorm": [
+        "/brainstorm"
+      ],
+      "plan": [
+        "/plan"
+      ],
+      "review": [
+        "/doc-review"
+      ],
+      "work": [
+        "/work",
+        "/code-review"
+      ],
+      "qa": [
+        "/qa"
+      ],
+      "retro": [
+        "/retro"
+      ]
+    }
+  },
+  "issue_fields": {
+    "source_note": "Generated by tools/docs/gen_issue_contract.py from the issue_fields block in config/sdlc-schema.json (U2: full field set, faithfully extracted from card_validator.py). DATA only -- the card_validator algorithm (home-lab) is never generated (KTD2).",
+    "fields": [
+      {
+        "key": "objective",
+        "header": "Objective",
+        "required": true,
+        "template": {
+          "id": "objective",
+          "type": "input",
+          "description": "One sentence stating what the capability delivers."
+        }
+      },
+      {
+        "key": "intent",
+        "header": "Intent",
+        "required": true,
+        "template": {
+          "id": "intent",
+          "type": "textarea",
+          "description": "Why this matters + the end-state (distinct from the one-line Objective), so the agent can re-derive the right action when the plan no longer applies."
+        }
+      },
+      {
+        "key": "non_goals",
+        "header": "Out-of-scope / non-goals",
+        "required": true,
+        "template": {
+          "id": "non_goals",
+          "type": "textarea",
+          "description": "Explicit list of things the agent MUST NOT do. If there are no non-goals, write \"None\" rather than leaving blank."
+        }
+      },
+      {
+        "key": "inputs",
+        "header": "Inputs inventory",
+        "required": false,
+        "template": {
+          "id": "inputs",
+          "type": "textarea",
+          "description": "The countable inputs (files, IDs, endpoints, fixtures) confirmed to exist before step 1. Required for high-risk items."
+        }
+      },
+      {
+        "key": "files_expected",
+        "header": "Files expected to change",
+        "required": true,
+        "semantic_check": {
+          "name": "plausible_path",
+          "pattern": "^\\s*(?:[-*]\\s+)?[`'\\\"]?[\\w./~\\-]*[/.][\\w./~\\-]+.*$",
+          "flags": [
+            "MULTILINE"
+          ],
+          "message": "no plausible file paths found (expected lines containing `/` or a file extension)"
+        },
+        "template": {
+          "id": "files_expected",
+          "type": "textarea",
+          "description": "Path list, one per line. Planner verifies each parent directory exists."
+        }
+      },
+      {
+        "key": "tests_required",
+        "header": "Tests to add or update",
+        "required": true,
+        "template": {
+          "id": "tests_required",
+          "type": "textarea",
+          "description": "File path + test function name, OR \"No new tests required\" with a one-line rationale."
+        }
+      },
+      {
+        "key": "failure_modes",
+        "header": "Failure modes / pre-mortem",
+        "required": false,
+        "template": {
+          "id": "failure_modes",
+          "type": "textarea",
+          "description": "Pre-mortem table: condition -> pre-authorized response (do-instead, not a bare don't). Required for high-risk items."
+        }
+      },
+      {
+        "key": "stop_conditions",
+        "header": "Stop conditions",
+        "required": false,
+        "template": {
+          "id": "stop_conditions",
+          "type": "textarea",
+          "description": "Explicit escalation triggers keyed to actions (when to stop and ask rather than proceed). Required for high-risk items."
+        }
+      },
+      {
+        "key": "context_library_links",
+        "header": "Context library links",
+        "required": true,
+        "context_parsing": {
+          "typed_context_pattern": "^\\s*[-*]\\s+(?P<label>[A-Za-z][A-Za-z0-9_\\-]*)\\s*:\\s*(?P<value>.*?)\\s*$",
+          "typed_context_flags": [
+            "MULTILINE"
+          ],
+          "none_marker_pattern": "^_?none_?$",
+          "none_marker_flags": [
+            "IGNORECASE"
+          ]
+        },
+        "template": {
+          "id": "context_library_links",
+          "type": "textarea",
+          "description": "Deep-links into the project's long-running context-library repo. Required: link the relevant context, or write `_none_` to declare no link applies. Use labeled subsections so policy-dependent reviewers know which doc applies."
+        }
+      },
+      {
+        "key": "notes",
+        "header": "Notes / conventions",
+        "required": false,
+        "template": {
+          "id": "notes",
+          "type": "textarea",
+          "description": "Free-form. Pattern-to-follow hints, constraints, or context about why the card exists."
+        }
+      },
+      {
+        "key": "acceptance_criteria",
+        "header": "Acceptance criteria",
+        "required": true,
+        "semantic_check": {
+          "name": "checklist_items",
+          "pattern": "^\\s*[-*]\\s+\\[[ xX]\\]\\s+\\S",
+          "flags": [
+            "MULTILINE"
+          ],
+          "message": "no checklist items found (expected at least one `- [ ] ...` line)"
+        },
+        "executable_check": {
+          "name": "executable_criteria",
+          "pattern": "`[^`]+`|^```",
+          "flags": [
+            "MULTILINE"
+          ],
+          "message": "acceptance criteria are not executable (expected each criterion to name a runnable check -- a command in a `code span` or a ``` fenced block -- with its expected result)"
+        },
+        "template": {
+          "id": "acceptance_criteria",
+          "type": "textarea",
+          "description": "Testable checklist. Each item names a runnable check (command + expected result) the reviewer/agent can execute to self-verify."
+        }
+      },
+      {
+        "key": "verification",
+        "header": "Verification",
+        "required": true,
+        "semantic_check": {
+          "name": "fenced_code_block",
+          "pattern": "^```",
+          "flags": [
+            "MULTILINE"
+          ],
+          "message": "no fenced code block found (expected commands inside a ``` ``` block)"
+        },
+        "template": {
+          "id": "verification",
+          "type": "textarea",
+          "description": "Exact commands the agent runs to prove success. Shell code block.",
+          "render": "bash"
+        }
+      },
+      {
+        "key": "lifecycle_origin",
+        "header": "Lifecycle Origin",
+        "required": false,
+        "template": {
+          "id": "lifecycle_origin",
+          "type": "textarea",
+          "description": "Backpointer to the originating saga thread / plan doc. Auto-populated by the /handoff compile step; authors leave blank."
+        }
+      }
+    ],
+    "regexes": {
+      "header": {
+        "pattern": "^###\\s+(?P<label>.+?)\\s*$",
+        "flags": [
+          "MULTILINE"
+        ]
+      }
+    },
+    "placeholder_lines": [
+      "- [ ]",
+      "-",
+      "* [ ]",
+      "*",
+      "_No response_",
+      "None",
+      "<!-- placeholder -->"
+    ],
+    "required_matrix": {
+      "axes": {
+        "field": [
+          "objective",
+          "intent",
+          "non_goals",
+          "inputs",
+          "files_expected",
+          "tests_required",
+          "failure_modes",
+          "stop_conditions",
+          "context_library_links",
+          "notes",
+          "acceptance_criteria",
+          "verification",
+          "lifecycle_origin"
+        ],
+        "issue_type": [
+          "capability",
+          "enhancement",
+          "defect"
+        ],
+        "risk": [
+          "low",
+          "medium",
+          "high",
+          "very-high",
+          "*"
+        ]
+      },
+      "default_required": false,
+      "auto_populated_fields": [
+        "lifecycle_origin"
+      ],
+      "rules": [
+        {
+          "fields": [
+            "objective",
+            "intent",
+            "non_goals",
+            "files_expected",
+            "tests_required",
+            "acceptance_criteria",
+            "verification",
+            "context_library_links"
+          ],
+          "issue_type": "*",
+          "risk": "*",
+          "required": true,
+          "rationale": "Always-required core (context package R1/R3/R4): objective + intent + non_goals + files_expected + tests_required + acceptance_criteria + verification + context_library_links are required for every hermes-task issue type at every Risk. context_library_links is required-or-`_none_`.",
+          "source": "issue-context-package-requirements.md R1 (Intent), R3 (non-goals), R4 (context-links required-or-_none_); foundation REQUIRED_FIELDS"
+        },
+        {
+          "fields": [
+            "failure_modes",
+            "inputs",
+            "stop_conditions",
+            "lifecycle_origin",
+            "notes"
+          ],
+          "issue_type": "*",
+          "risk": "*",
+          "required": false,
+          "rationale": "Baseline-optional: notes is free-form; failure_modes / inputs / stop_conditions are risk-conditional (a high-blast rule below flips them on); lifecycle_origin is auto-populated by the compile step (R10), never author-required.",
+          "source": "issue-context-package-requirements.md R5-R7 (risk-conditional), R10 (Lifecycle Origin auto)"
+        },
+        {
+          "fields": [
+            "failure_modes",
+            "inputs",
+            "stop_conditions"
+          ],
+          "issue_type": "*",
+          "risk": "high",
+          "required": true,
+          "rationale": "Risk-conditional rigor scales to blast radius (completeness != maximalism): a failure-modes pre-mortem, an inputs inventory, and stop-conditions are required at high-blast Risk (high).",
+          "source": "issue-context-package-requirements.md R5/R6/R7 (high-risk/high-blast); risk tiers from config/labels.json"
+        },
+        {
+          "fields": [
+            "failure_modes",
+            "inputs",
+            "stop_conditions"
+          ],
+          "issue_type": "*",
+          "risk": "very-high",
+          "required": true,
+          "rationale": "Risk-conditional rigor scales to blast radius (completeness != maximalism): a failure-modes pre-mortem, an inputs inventory, and stop-conditions are required at high-blast Risk (very-high).",
+          "source": "issue-context-package-requirements.md R5/R6/R7 (high-risk/high-blast); risk tiers from config/labels.json"
+        }
+      ]
+    }
+  }
+}

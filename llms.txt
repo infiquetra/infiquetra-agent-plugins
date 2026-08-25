@@ -13,7 +13,7 @@
 
 ## Pilot
 
-- [Portability pilot plan](docs/plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md): The approved plan for the first portability pilot, executed and paused for an operator decision.
+- [Portability pilot plan](docs/plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md): The approved plan for the first portability pilot, executed and complete.
 - [Ten-client compatibility matrix](docs/evidence/2026-08-22-unifi-compatibility-matrix.md): What every installed coding-agent client did with the portable UniFi package, stage by stage, with evidence. Coverage was mandatory; passing was not.
 
 ## Tooling
@@ -23,7 +23,8 @@
 
 ## Packages
 
+- [Mission Control package](plugins/mission-control/README.md): Portable mission-control package for SDLC management, derived from a pinned upstream revision with its Claude adapter under `com.infiquetra.claude/`.
 - [UniFi package](plugins/unifi/README.md): Portable UniFi package derived from a pinned upstream revision, with its Claude adapter under `com.infiquetra.claude/`.
-- [Fleet Core package](plugins/fleet-core/README.md): Portable Fleet Core source carrying the `retry_backoff` module only.
+- [Fleet Core package](plugins/fleet-core/README.md): Portable Fleet Core source carrying the shared rate-limit retry, intent envelope, and tier palette modules.
 - [Deferred Fleet Core modules](plugins/fleet-core/DEFERRED.md): Every upstream module not ported, named explicitly. No document here claims full Fleet Core parity.
 - [Site profile contract](plugins/unifi/references/site-profile.md): The optional machine-local operator site profile the UniFi package reads. Absent profile means discovery-only mode and no inferred intent.

@@ -1,0 +1,22 @@
+{
+  "name": "mission-control",
+  "version": "2.12.2",
+  "description": "SDLC management for Operations, Asgard, and CAMPPS: prepared issue drafts, live schema sync, board schemas, labels, project fields, metrics, and card validation.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+  "keywords": [
+    "sdlc",
+    "github-projects",
+    "kanban",
+    "issues",
+    "labels",
+    "metrics",
+    "sub-issues",
+    "campps",
+    "asgard",
+    "operations"
+  ]
+}

@@ -17,6 +17,10 @@
   is preserved unmodified as incoming evidence, with its
   [validation and repair record](reviews/2026-08-22-unifi-fleet-core-portability-pilot-plan-doc-review-disposition.md)
   alongside it.
+- [Mission Control portability run plan](plans/2026-08-24-mission-control-port-run-plan.md)
+  is the approved run plan for the mission-control package port. It has been
+  executed and completed across all implementation units under porting runbook
+  v1.0.0.
 - [PR #6 independent code reviews](code-reviews/2026-08-24-pr-6-code-review-index.md)
   indexes the five review rounds that preceded the porting tools being merged,
   each preserved byte-for-byte with the revision it reviewed and its digest.
@@ -25,7 +29,10 @@
 
 ## Evidence
 
-- [Ten-client compatibility matrix](evidence/2026-08-22-unifi-compatibility-matrix.md)
+- [Mission Control ten-client compatibility matrix](evidence/2026-08-25-mission-control-compatibility-matrix.md)
+  records what every installed coding-agent client did with the portable
+  mission-control package across four stages with fingerprint-bound verification.
+- [UniFi ten-client compatibility matrix](evidence/2026-08-22-unifi-compatibility-matrix.md)
   records what every installed coding-agent client did with the portable UniFi
   package, across four stages each, with the command and evidence behind every
   result. Coverage was mandatory and passing was not: a client that could not
