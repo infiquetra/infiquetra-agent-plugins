@@ -1,0 +1,435 @@
+{
+  "attempted_lenses": [
+    "architecture-maintainability",
+    "correctness",
+    "security",
+    "testing",
+    "documentation-clarity",
+    "adversarial"
+  ],
+  "best_available_revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf",
+  "collection_operation": {
+    "operation": "collect",
+    "schema": "review_result.v1"
+  },
+  "cycle_history": [
+    {
+      "attempted_lenses": [
+        "architecture-maintainability",
+        "correctness",
+        "security",
+        "testing",
+        "documentation-clarity",
+        "adversarial"
+      ],
+      "cycle": 1,
+      "delta_checks": [],
+      "failing_lenses": [
+        "documentation-clarity"
+      ],
+      "lens_results": [
+        {
+          "accepted": true,
+          "applicable_dimensions": {
+            "architectural-fit-ownership-single-sources": 10.0,
+            "conventions-portability-configuration": 10.0,
+            "dependency-direction": 10.0,
+            "readability-naming-error-contracts": 10.0,
+            "separation-of-concerns": 10.0,
+            "significant-decision-documentation": 10.0,
+            "simplicity-abstraction-duplication-changeability": 10.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 10.0,
+          "failing_dimensions": [],
+          "lens_id": "architecture-maintainability",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf",
+          "score_accepted": true,
+          "scoring_findings": []
+        },
+        {
+          "accepted": true,
+          "applicable_dimensions": {
+            "boundary-types-serialization-numeric-time": 10.0,
+            "caller-enum-consumer-completeness": 10.0,
+            "intent-behavior-completeness": 10.0,
+            "side-effects-errors-resource-lifecycle": 10.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 10.0,
+          "failing_dimensions": [],
+          "lens_id": "correctness",
+          "non_applicable_dimensions": {
+            "state-data-invariants-transactions-concurrency": "The unit edits documentation and the journal; it does not mutate concurrent product state."
+          },
+          "reviewed_revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf",
+          "score_accepted": true,
+          "scoring_findings": []
+        },
+        {
+          "accepted": true,
+          "applicable_dimensions": {
+            "confidentiality-logs-errors-egress": 10.0,
+            "dependency-supply-chain": 10.0,
+            "input-trust-boundaries-injection": 10.0,
+            "secrets-cryptography-session-handling": 10.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 10.0,
+          "failing_dimensions": [],
+          "lens_id": "security",
+          "non_applicable_dimensions": {
+            "authentication-authorization-tenant-isolation": "The diff adds no authenticated endpoint or tenant boundary."
+          },
+          "reviewed_revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf",
+          "score_accepted": true,
+          "scoring_findings": []
+        },
+        {
+          "accepted": true,
+          "applicable_dimensions": {
+            "behavior-sensitive-assertions": 10.0,
+            "determinism-isolation-diagnostics-maintainability": 10.0,
+            "negative-edge-state-concurrency-time": 10.0,
+            "realistic-seams-mocks-integration-evidence": 10.0,
+            "requirements-regression-coverage": 10.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 10.0,
+          "failing_dimensions": [],
+          "lens_id": "testing",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf",
+          "score_accepted": true,
+          "scoring_findings": []
+        },
+        {
+          "accepted": false,
+          "applicable_dimensions": {
+            "completeness-audience-prerequisites": 10.0,
+            "runbook-safety-rollback-links-generated-drift": 10.0,
+            "runnable-examples-actionability": 10.0,
+            "shipped-behavior-parity": 6.0,
+            "structure-navigation": 10.0,
+            "terminology-cross-document-consistency": 10.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 9.333333333333334,
+          "failing_dimensions": [
+            "shipped-behavior-parity"
+          ],
+          "lens_id": "documentation-clarity",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf",
+          "score_accepted": false,
+          "scoring_findings": [
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "shipped-behavior-parity",
+              "finding_id": "F01",
+              "priority": "P1",
+              "resolved": false
+            }
+          ]
+        },
+        {
+          "accepted": true,
+          "applicable_dimensions": {
+            "alternatives-considered": 10.0,
+            "failure-amplification-silent-green": 10.0,
+            "load-bearing-assumptions": 10.0,
+            "recovery": 10.0,
+            "scope-creep-risk": 10.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 10.0,
+          "failing_dimensions": [],
+          "lens_id": "adversarial",
+          "non_applicable_dimensions": {
+            "abuse-edge-cases": "Closeout documentation is not an input parser.",
+            "environment-operator-failure": "This unit does not execute live GitHub or operator credentials."
+          },
+          "reviewed_revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf",
+          "score_accepted": true,
+          "scoring_findings": []
+        }
+      ],
+      "revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf",
+      "unresolved_fix_ids": [
+        "fix-176784886a82"
+      ]
+    }
+  ],
+  "evidence_ledger": {},
+  "external_advisory_reviews": [],
+  "failing_lenses": [
+    "documentation-clarity"
+  ],
+  "findings": [
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "shipped-behavior-parity",
+      "evidence": [
+        "README.md:117 ed72f439 (v0.25.1)",
+        "plugins/unifi/PROVENANCE.json source_commit=818fd6843e51\u2026 source_version=2.0.6",
+        "plugins/unifi/plugin.json version=2.0.6",
+        "docs/evidence/2026-08-22-unifi-compatibility-matrix.md package version 2.0.6"
+      ],
+      "file": "README.md",
+      "finding_id": "F01",
+      "lens_id": "documentation-clarity",
+      "line": 117,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": true,
+      "severity": "P1",
+      "status": "active",
+      "suggested_fix": "In the Packages table UniFi cell, replace `ed72f439` (v0.25.1) with `818fd684` (v2.0.6) so the pin matches PROVENANCE.json and plugin.json. Leave the fleet-core and mission-control cells unchanged.",
+      "title": "New Packages table pins UniFi at a superseded Fleet Core revision",
+      "touched_paths": [
+        "README.md"
+      ],
+      "why_it_matters": "The closeout unit added a catalog identity table. The UniFi row claims upstream pin ed72f439 (v0.25.1), which is the historical Fleet Core 0.25.1 revision, not the shipped UniFi package. plugins/unifi/PROVENANCE.json and plugin.json record 818fd684 / 2.0.6; the current UniFi matrix is version 2.0.6. Child #19 requires that README claims not contradict committed evidence \u2014 the same class of defect U0 existed to stop."
+    }
+  ],
+  "fix_requests": [
+    {
+      "autofix_class": "manual",
+      "finding_ids": [
+        "F01"
+      ],
+      "fix_id": "fix-176784886a82",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "summary": "New Packages table pins UniFi at a superseded Fleet Core revision",
+      "touched_paths": [
+        "README.md"
+      ]
+    }
+  ],
+  "lens_results": [
+    {
+      "accepted": true,
+      "applicable_dimensions": {
+        "architectural-fit-ownership-single-sources": 10.0,
+        "conventions-portability-configuration": 10.0,
+        "dependency-direction": 10.0,
+        "readability-naming-error-contracts": 10.0,
+        "separation-of-concerns": 10.0,
+        "significant-decision-documentation": 10.0,
+        "simplicity-abstraction-duplication-changeability": 10.0
+      },
+      "cycle": 1,
+      "delta_check": null,
+      "derived_overall": 10.0,
+      "failing_dimensions": [],
+      "lens_id": "architecture-maintainability",
+      "non_applicable_dimensions": {},
+      "reviewed_revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf",
+      "score_accepted": true,
+      "scoring_findings": []
+    },
+    {
+      "accepted": true,
+      "applicable_dimensions": {
+        "boundary-types-serialization-numeric-time": 10.0,
+        "caller-enum-consumer-completeness": 10.0,
+        "intent-behavior-completeness": 10.0,
+        "side-effects-errors-resource-lifecycle": 10.0
+      },
+      "cycle": 1,
+      "delta_check": null,
+      "derived_overall": 10.0,
+      "failing_dimensions": [],
+      "lens_id": "correctness",
+      "non_applicable_dimensions": {
+        "state-data-invariants-transactions-concurrency": "The unit edits documentation and the journal; it does not mutate concurrent product state."
+      },
+      "reviewed_revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf",
+      "score_accepted": true,
+      "scoring_findings": []
+    },
+    {
+      "accepted": true,
+      "applicable_dimensions": {
+        "confidentiality-logs-errors-egress": 10.0,
+        "dependency-supply-chain": 10.0,
+        "input-trust-boundaries-injection": 10.0,
+        "secrets-cryptography-session-handling": 10.0
+      },
+      "cycle": 1,
+      "delta_check": null,
+      "derived_overall": 10.0,
+      "failing_dimensions": [],
+      "lens_id": "security",
+      "non_applicable_dimensions": {
+        "authentication-authorization-tenant-isolation": "The diff adds no authenticated endpoint or tenant boundary."
+      },
+      "reviewed_revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf",
+      "score_accepted": true,
+      "scoring_findings": []
+    },
+    {
+      "accepted": true,
+      "applicable_dimensions": {
+        "behavior-sensitive-assertions": 10.0,
+        "determinism-isolation-diagnostics-maintainability": 10.0,
+        "negative-edge-state-concurrency-time": 10.0,
+        "realistic-seams-mocks-integration-evidence": 10.0,
+        "requirements-regression-coverage": 10.0
+      },
+      "cycle": 1,
+      "delta_check": null,
+      "derived_overall": 10.0,
+      "failing_dimensions": [],
+      "lens_id": "testing",
+      "non_applicable_dimensions": {},
+      "reviewed_revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf",
+      "score_accepted": true,
+      "scoring_findings": []
+    },
+    {
+      "accepted": false,
+      "applicable_dimensions": {
+        "completeness-audience-prerequisites": 10.0,
+        "runbook-safety-rollback-links-generated-drift": 10.0,
+        "runnable-examples-actionability": 10.0,
+        "shipped-behavior-parity": 6.0,
+        "structure-navigation": 10.0,
+        "terminology-cross-document-consistency": 10.0
+      },
+      "cycle": 1,
+      "delta_check": null,
+      "derived_overall": 9.333333333333334,
+      "failing_dimensions": [
+        "shipped-behavior-parity"
+      ],
+      "lens_id": "documentation-clarity",
+      "non_applicable_dimensions": {},
+      "reviewed_revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf",
+      "score_accepted": false,
+      "scoring_findings": [
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "shipped-behavior-parity",
+          "finding_id": "F01",
+          "priority": "P1",
+          "resolved": false
+        }
+      ]
+    },
+    {
+      "accepted": true,
+      "applicable_dimensions": {
+        "alternatives-considered": 10.0,
+        "failure-amplification-silent-green": 10.0,
+        "load-bearing-assumptions": 10.0,
+        "recovery": 10.0,
+        "scope-creep-risk": 10.0
+      },
+      "cycle": 1,
+      "delta_check": null,
+      "derived_overall": 10.0,
+      "failing_dimensions": [],
+      "lens_id": "adversarial",
+      "non_applicable_dimensions": {
+        "abuse-edge-cases": "Closeout documentation is not an input parser.",
+        "environment-operator-failure": "This unit does not execute live GitHub or operator credentials."
+      },
+      "reviewed_revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf",
+      "score_accepted": true,
+      "scoring_findings": []
+    }
+  ],
+  "next_action": "dispatch_repairs",
+  "outcome": "repairs_requested",
+  "residual_summary": {
+    "final_lens_scores": {
+      "adversarial": {
+        "accepted": true,
+        "delta_check": null,
+        "derived_overall": 10.0,
+        "failing_dimensions": [],
+        "reviewed_revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf"
+      },
+      "architecture-maintainability": {
+        "accepted": true,
+        "delta_check": null,
+        "derived_overall": 10.0,
+        "failing_dimensions": [],
+        "reviewed_revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf"
+      },
+      "correctness": {
+        "accepted": true,
+        "delta_check": null,
+        "derived_overall": 10.0,
+        "failing_dimensions": [],
+        "reviewed_revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf"
+      },
+      "documentation-clarity": {
+        "accepted": false,
+        "delta_check": null,
+        "derived_overall": 9.333333333333334,
+        "failing_dimensions": [
+          "shipped-behavior-parity"
+        ],
+        "reviewed_revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf"
+      },
+      "security": {
+        "accepted": true,
+        "delta_check": null,
+        "derived_overall": 10.0,
+        "failing_dimensions": [],
+        "reviewed_revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf"
+      },
+      "testing": {
+        "accepted": true,
+        "delta_check": null,
+        "derived_overall": 10.0,
+        "failing_dimensions": [],
+        "reviewed_revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf"
+      }
+    },
+    "review_incomplete_reason": null,
+    "score_regressions": [],
+    "unresolved_fix_ids": [
+      "fix-176784886a82"
+    ]
+  },
+  "resume_transitions": [
+    "dispatch_repairs"
+  ],
+  "revision_binding": {
+    "best_available_revision": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf",
+    "lens_revisions": {
+      "adversarial": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf",
+      "architecture-maintainability": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf",
+      "correctness": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf",
+      "documentation-clarity": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf",
+      "security": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf",
+      "testing": "4648760cbe9064486254ffe0f81e3bf1a4ea87bf"
+    }
+  },
+  "schema": "review_result.v1",
+  "selected_lenses": [
+    "architecture-maintainability",
+    "correctness",
+    "security",
+    "testing",
+    "documentation-clarity",
+    "adversarial"
+  ],
+  "unresolved_fix_ids": [
+    "fix-176784886a82"
+  ]
+}
