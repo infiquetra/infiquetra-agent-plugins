@@ -12,16 +12,25 @@ no such decision has been made.
 
 ## Status
 
-The first portability pilot has been executed and is complete. It ported the
-Claude Code `unifi` plugin into a portable Agent Plugins 1.0 package together
-with one vertical slice of a portable Fleet Core source, and then assessed the
-result against all ten coding-agent clients installed on the operator's machine.
-Completion is recorded by the pilot
-[retrospective](docs/engineering-journal/narratives/2026-08-23-unifi-portability-pilot-retrospective.md)
-and by [porting runbook v1.0.0](docs/runbooks/portable-plugin-port.md), which
-the pilot produced. The recorded operator decision was to stop at the completed
-ten-client compatibility matrix and take no client-specific remediation
-([`DECISIONS.md`](docs/engineering-journal/DECISIONS.md), 2026-08-22).
+Two portable plugin packages have been ported and assessed across all ten
+coding-agent clients installed on the operator's machine:
+
+1. **`unifi` pilot** — The first portability pilot ported the Claude Code
+   `unifi` plugin into a portable Agent Plugins 1.0 package together with an
+   initial vertical slice of Fleet Core. Completion is recorded by the pilot
+   [retrospective](docs/engineering-journal/narratives/2026-08-23-unifi-portability-pilot-retrospective.md)
+   and by [porting runbook v1.0.0](docs/runbooks/portable-plugin-port.md). The
+   recorded operator decision was to stop at the completed ten-client
+   compatibility matrix and take no client-specific remediation
+   ([`DECISIONS.md`](docs/engineering-journal/DECISIONS.md), 2026-08-22).
+2. **`mission-control` package** — Ported under the same runbook
+   ([`docs/runbooks/portable-plugin-port.md`](docs/runbooks/portable-plugin-port.md) v1.0.0)
+   and approved run plan
+   ([`docs/plans/2026-08-24-mission-control-port-run-plan.md`](docs/plans/2026-08-24-mission-control-port-run-plan.md)),
+   delivering a 64-file portable package derived from upstream commit `84eaf042`
+   (version 2.12.2) in `infiquetra-claude-plugins`, with 266 ported tests in
+   continuous integration, the validation rule audit, and a full ten-client
+   compatibility assessment.
 
 Custody did not move. Existing vendor repositories remain the runtime sources of
 truth. The packages under [`plugins/`](plugins/) are derived artifacts: each is
@@ -29,7 +38,7 @@ generated from a pinned upstream commit and checked file by file against its own
 SHA-256 provenance manifest. A derived package is never a second writable source,
 and it is never hand-maintained.
 
-Two facts about the current state are verified by the repository's own tests
+Key facts about the current state are verified by the repository's own tests
 and committed evidence:
 
 - **Both UniFi client entrypoints run.** Each client script is classified in
@@ -40,8 +49,8 @@ and committed evidence:
   [`tests/test_client_entrypoints.py`](tests/test_client_entrypoints.py) runs
   both shipped scripts with no credentials and no network, asserts each answers
   `--help`, and fails when the bundle is removed.
-- **All ten clients assessed; none failed.** The current
-  [ten-client compatibility matrix](docs/evidence/2026-08-22-unifi-compatibility-matrix.md)
+- **UniFi ten-client assessment: none failed.** The
+  [UniFi ten-client compatibility matrix](docs/evidence/2026-08-22-unifi-compatibility-matrix.md)
   records nine clients working directly and one, OpenAI Codex, working through
   an adapter: zero failed, zero unsupported. The adapter status is current fact
   — Codex's marketplace is its only placement path and holds no supported
@@ -49,6 +58,35 @@ and committed evidence:
   built here. Cursor Agent works directly; the matrix records why its earlier
   failure reading was an artifact of the assessment's isolation rather than a
   result of the client.
+- **Mission Control ships 64 portable files and 266 CI tests.** Pinned to
+  `84eaf042` (v2.12.2), the package provides seven Agent Skills (`board`, `flow`,
+  `issues`, `labels`, `metrics`, `milestones`, `rollout`), the shared CLI
+  (`scripts/sdlc_manager.py`), board census, pagination, template sync, and
+  executor profile lint entrypoints. Twenty-one test files (266 tests) live
+  inside the package under [`plugins/mission-control/tests/`](plugins/mission-control/tests/)
+  under provenance custody and run in CI on `python>=3.12`. The validation rule
+  audit ([`docs/plans/2026-08-24-mission-control-port-u7-phase2-rule-audit.md`](docs/plans/2026-08-24-mission-control-port-u7-phase2-rule-audit.md),
+  [`tests/test_mission_control_rule_audit.py`](tests/test_mission_control_rule_audit.py))
+  audits validation rules class-first against live authority.
+- **Mission Control ten-client assessment: 1 directly, 8 via adapter, 1 failed.**
+  The [Mission Control compatibility matrix](docs/evidence/2026-08-25-mission-control-compatibility-matrix.md)
+  records:
+  - 1 works directly (Agy: placed, discovered, loaded, and ran all entrypoints cleanly).
+  - 8 work through an adapter (Claude Code, OpenAI Codex, Qwen, Grok, OpenCode,
+    Gemini CLI, Muse, Hermes). The four skill-scoped clients (OpenCode, Gemini
+    CLI, Muse, Hermes) fully consume the seven skill units with zero diagnostics,
+    while package-root entrypoint scripts sit outside the skill tree.
+  - 1 failed (Cursor Agent: placement, discovery, and load succeeded from session
+    context, but `sync_template_docs.py --help` failed because it assumed a
+    4-level ancestor repository depth `parents[3]` to import its contract data
+    file — a recorded relocatability finding, [`LEARNINGS.md`](docs/engineering-journal/LEARNINGS.md)).
+  - 0 unsupported.
+  - Evidence is bound to the package fingerprint by
+    [`scripts/check_compatibility_matrix.py`](scripts/check_compatibility_matrix.py),
+    with post-activation readback in
+    [`docs/evidence/2026-08-25-mission-control-post-activation-readback.md`](docs/evidence/2026-08-25-mission-control-post-activation-readback.md)
+    and 0 survivors across 68 anchors in mutation proof
+    [`docs/evidence/2026-08-25-cycle16-mutation-proof-portable-copies.txt`](docs/evidence/2026-08-25-cycle16-mutation-proof-portable-copies.txt).
 
 What remains open is distribution, not compatibility. OpenAI Codex needs a
 marketplace manifest to be reachable at all, and Cursor Agent's marketplace
@@ -59,24 +97,35 @@ none has been taken. No client-specific remediation has begun; the open
 decisions are recorded in the journal's
 [queued work](docs/engineering-journal/QUEUED.md).
 
-The record of the pilot, in the order a new reader should take it:
+The record of the work, in the order a new reader should take it:
 
-- [Ten-client compatibility matrix](docs/evidence/2026-08-22-unifi-compatibility-matrix.md)
-  — what each client did with the package, stage by stage, with evidence.
-- [UniFi and portable Fleet Core portability pilot plan](docs/plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md)
-  — the approved plan the work followed.
+- [Mission Control ten-client compatibility matrix](docs/evidence/2026-08-25-mission-control-compatibility-matrix.md)
+  and [UniFi ten-client compatibility matrix](docs/evidence/2026-08-22-unifi-compatibility-matrix.md)
+  — what each client did with each package, stage by stage, with evidence.
+- [Mission Control port run plan](docs/plans/2026-08-24-mission-control-port-run-plan.md)
+  and [UniFi pilot plan](docs/plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md)
+  — the approved plans the work followed.
 - [Cross-vendor plugin architecture brief](docs/cross-vendor-plugin-architecture-brief.md)
-  — the research and proposed direction the pilot tests.
+  — the research and proposed direction the ports test.
 - [Engineering journal](docs/engineering-journal/README.md) — the decisions taken,
-  the learnings the pilot produced, and the work it deliberately deferred.
+  the learnings produced, and the work deliberately deferred.
+
+## Packages
+
+| Package | Status | Description | Upstream Pin |
+|---|---|---|---|
+| [`plugins/unifi/`](plugins/unifi/README.md) | Ported (pilot) | Portable UniFi network and protect management | `ed72f439` (v0.25.1) |
+| [`plugins/fleet-core/`](plugins/fleet-core/README.md) | Ported (vertical slice) | Shared rate-limit retry, intent envelope, tier palette, and models registry | `3b5faa6c` (v0.25.2) |
+| [`plugins/mission-control/`](plugins/mission-control/README.md) | Ported | SDLC management on Operations, Asgard, and CAMPPS boards | `84eaf042` (v2.12.2) |
 
 ### Portable Fleet Core scope
 
-Only the `retry_backoff` module is ported. Every other module the upstream source
-carries is named as explicitly unported in
-[`plugins/fleet-core/DEFERRED.md`](plugins/fleet-core/DEFERRED.md), so no reader
-has to infer what is missing. Nothing in this repository claims full Fleet Core
-parity.
+This package carries the shared `retry_backoff` rate-limit primitive, plus the
+`intent_envelope`, `tier_palette`, and `models.json` modules that mission-control
+reaches. Every other module the upstream source carries is named as explicitly
+unported in [`plugins/fleet-core/DEFERRED.md`](plugins/fleet-core/DEFERRED.md),
+so no reader has to infer what is missing. Nothing in this repository claims
+full Fleet Core parity.
 
 ### Operator site profile
 
@@ -102,15 +151,16 @@ for the contract itself.
 | [`schemas/`](schemas/) | JSON Schemas for the contracts this repository validates |
 | [`scripts/`](scripts/) | Validation, synchronization, bundling, and inventory tools |
 | [`docs/`](docs/README.md) | Architecture, public guidance, and durable repository knowledge |
-| [`docs/plans/`](docs/plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md) | Approved implementation plans |
-| [`docs/evidence/`](docs/evidence/2026-08-22-unifi-compatibility-matrix.md) | Assessment records, written under the public evidence rules |
+| [`docs/plans/`](docs/plans/2026-08-24-mission-control-port-run-plan.md) | Approved implementation plans |
+| [`docs/evidence/`](docs/evidence/2026-08-25-mission-control-compatibility-matrix.md) | Assessment records, written under the public evidence rules |
 | [`docs/engineering-journal/`](docs/engineering-journal/README.md) | Learnings, decisions, queued work, and archive |
 | [`.github/`](.github/PULL_REQUEST_TEMPLATE.md) | Pull request, issue, and validation workflow configuration |
 
 Client-specific material lives in an explicit adapter directory inside the package
 that needs it, never at the package root. `plugins/unifi/com.infiquetra.claude/`
-is the Claude adapter; the portable manifest, skills, schemas, and scripts beside
-it carry no client-specific assumption.
+and `plugins/mission-control/com.infiquetra.claude/` are Claude adapters; the
+portable manifests, skills, schemas, and scripts beside them carry no
+client-specific assumption.
 
 ## Validation
 
