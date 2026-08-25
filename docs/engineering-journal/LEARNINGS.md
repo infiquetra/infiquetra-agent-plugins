@@ -2,6 +2,109 @@
 
 ## 2026-08-25
 
+### Claude Code runs Stop hooks synchronously — a hook that does real work must detach
+
+**Author.** Jeff Cox and Qwen (voice run, #29/#34)
+
+**Context.** Building the voice plugin's `Stop` hook, which speaks the bound
+session's completed response; preflight P2 measured hook timing on this host
+while planning the run.
+
+**Evidence.** A blocking 8 s hook delayed turn settle by 8.19 s, while a
+detaching hook returned in 0.030 s (run plan, Grounded facts — preflight P2).
+Live acceptance re-confirmed the shape: four hook invocations returned in
+0.04–0.05 s of wall time while their detached children synthesized (~5–14 s)
+and played (~3–30 s) asynchronously afterwards
+([`docs/evidence/voice/acceptance.md`](../evidence/voice/acceptance.md),
+AE1/AE2/R1).
+
+**Mechanism.** The harness executes `Stop` hooks synchronously as part of
+turn settle, so every second a hook works is charged to the user's wait; the
+harness-side timeout in the hook descriptor is a backstop against a wedged
+hook, not a budget for doing work.
+
+**Generalizable rule.** A hook that must do real work should read its payload
+once, decide, hand the work to a fully detached child (its own session, stdin
+closed, streams to devnull), and return 0 immediately — treating the harness
+timeout as a backstop, never a budget. Anything the child needs travels by
+file and argv, never by the hook's still-open streams.
+
+**Refs.** `plugins/voice/com.infiquetra.claude/hooks/stop_hook.py`,
+[run plan](../plans/2026-08-25-voice-plugin-implementation-plan.md) KTD2,
+[`docs/evidence/voice/acceptance.md`](../evidence/voice/acceptance.md).
+
+### A probe's expected response shape is itself a wire contract — verify it against the live service, not just hermetic fakes
+
+**Author.** Jeff Cox and Qwen (voice run U7 acceptance, #34)
+
+**Context.** The voice plugin's preflight probes were built hermetically
+(seams and fakes, as CI hermeticity requires) and merged green; U7 then ran
+them against the live Voice Forge deployment and the live Hermes relay.
+
+**Evidence.** The suite was green (243 plugin tests at the final commit) yet
+the live preflight failed twice on assumed shapes: Voice Forge v0.3.0
+`/health` answers `{"ok": true, "version", "registry_dir", "voices_count",
+"backends_available", "backends_loaded"}` — no `status` or `backend` members
+the probe required — and Hermes v0.20.4 `/api/profiles` entries carry no
+`stt` surface at all, so the probe's `stt.provider == "xai"` assertion could
+never resolve. Driving the same services directly succeeded: synthesis
+played, and the transcription round trip returned the phrase verbatim with
+`provider: xai`
+([`docs/evidence/voice/acceptance.md`](../evidence/voice/acceptance.md),
+findings F1/F2).
+
+**Mechanism.** A hermetic fake and the probe that consumes it are written
+together, so a shared wrong assumption about a remote contract gets confirmed
+twice by one source; the suite can only prove the probe agrees with the fake,
+never that either agrees with the service.
+
+**Generalizable rule.** When a probe asserts the shape of a remote response,
+treat that shape as a wire contract: verify it once against the live
+endpoint, and when it cannot be verified live before merge, mark the
+assumption in the probe so the first live run is read as a contract check,
+not just a connectivity check.
+
+**Refs.** `plugins/voice/scripts/preflight.py`,
+[`docs/evidence/voice/acceptance.md`](../evidence/voice/acceptance.md)
+findings F1/F2, voice-forge `server.py` `/health`, hermes
+`web_routers/profiles.py`.
+
+### A relay's silence mapping and a strict provider guard turn a quiet room into a provider alarm
+
+**Author.** Jeff Cox and Qwen (voice run U7 acceptance, #34)
+
+**Context.** Composing the voice plugin's no-substitution guard (R23: refuse
+any transcription resolved by a provider other than the declared one) with
+the Hermes relay's own handling of silent recordings.
+
+**Evidence.** For audio with no speech, the live relay answered `{"ok":
+true, "transcript": "", "provider": null}` — its `transcribe_recording` maps
+silence, `no_speech`, and hallucination-filtered results onto an empty
+success and omits `provider` on exactly those paths. The voice guard then
+refused with `the relay resolved None, not the expected 'xai'; nothing
+substitutes for the declared provider` — observed twice during acceptance.
+The same call on audible audio returned `provider: xai` with a verbatim
+transcript
+([`docs/evidence/voice/acceptance.md`](../evidence/voice/acceptance.md),
+finding F3).
+
+**Mechanism.** Two locally-correct contracts compose into a confusing edge:
+the relay folds "heard nothing" into an empty success without provider
+attribution, while the consumer treats any attribution other than the
+expected provider — including none — as substitution. Nothing unsafe happens
+(nothing is delivered), but the operator sees a provider alarm for a quiet
+room instead of a quiet no-op.
+
+**Generalizable rule.** When consuming a relay that maps empty or silent
+results onto success, distinguish "empty result with no attribution" from
+"wrong provider" before refusing by name — otherwise silence and
+substitution become indistinguishable at the operator surface.
+
+**Refs.** hermes `tools/voice_mode.py` `transcribe_recording`, hermes
+`web_server.py` `/api/audio/transcribe`, `plugins/voice/scripts/transcribe.py`,
+[`docs/evidence/voice/acceptance.md`](../evidence/voice/acceptance.md)
+finding F3.
+
 ### An async CLI agent's "done" status is a turn boundary, not completion
 
 **Author.** Jeff Cox and Claude (mission-control migration retrospective,
