@@ -1,5 +1,38 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-08-25
+
+### Package-root entrypoints must be blocked in advance for skill-scoped clients
+
+**Author.** Jeff Cox and Antigravity
+
+**Context.** In run unit U8a of `mission-control` porting (issue #18), `assess_clients.py` plan evaluation
+raised `AssessmentError` because `mission-control`'s five declared entrypoints (`scripts/*.py`) sit at the
+package root outside every declared skill unit (`skills/*`), whereas four client plans (OpenCode, Gemini CLI,
+Muse, Hermes) are `skill_scoped=True` and install only individual skill units rather than the package root.
+
+**Evidence.** `python3 scripts/assess_clients.py --package mission-control` raised `AssessmentError` at plan
+evaluation (`scripts/assess_clients.py:1358-1372` pre-fix). In this unit, `scripts/assess_clients.py`
+(`undeliverable_entrypoints`, `stage_blocked_reason`, lines 1084-1130) intercepts undeliverable entrypoints
+and classifies the invocation stage as blocked in advance via `StageOutcome(stage, BLOCKED, reason=...)`
+naming the client's design and the undeliverable entrypoint set.
+
+**Mechanism.** A skill-scoped client copies or links only declared skill unit directories into the client's
+skill registry, stripping the package root and everything above the skill directories. When entrypoints sit
+at the package root outside any skill unit, they physically do not exist in the skill-scoped client's
+environment. Hard-refusing the entire 10-client assessment at plan time prevented observing the 6 package-scoped
+clients and the 3 runnable stages (placement, discovery, load) of the 4 skill-scoped clients. Blocking invocation
+in advance for skill-scoped clients with undeliverable entrypoints accurately captures the client design boundary
+without misrepresenting coverage or aborting the assessment.
+
+**Generalizable rule.** When a client's placement model structurally precludes delivering certain package
+surfaces, classify the affected downstream stage as blocked in advance with the structural reason rather
+than aborting the multi-client assessment plan.
+
+**Refs.** `scripts/assess_clients.py` (`undeliverable_entrypoints`, `stage_blocked_reason`),
+`tests/test_assess_clients.py::EntrypointPathTest` (`test_skill_scoped_plan_with_package_root_entrypoints_blocks_invocation_in_advance`,
+`test_skill_scoped_plan_with_mixed_entrypoints_blocks_and_names_undeliverable_subset`).
+
 ## 2026-08-24
 
 ### Dynamic module loading of dataclass-bearing authorities requires pre-execution sys.modules registration
