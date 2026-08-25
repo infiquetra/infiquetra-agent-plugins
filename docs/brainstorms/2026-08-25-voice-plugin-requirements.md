@@ -2,7 +2,7 @@
 date: 2026-08-25
 topic: voice-plugin
 maturity: requirements-ready
-source: docs/ideation/2026-08-25-voice-plugin-ideation.md — survivors 1 (providers declare), 2 (seam split by direction), 4 (lease discipline), 7 (speech is not an approval channel)
+source: docs/ideation/2026-08-25-voice-plugin-ideation.md — survivors 1 (providers declare), 2 (seam split by direction), 4 (lease discipline), 5 (born-portable custody record), 6 (blocked-session signal, deferred as optional), 7 (speech is not an approval channel)
 ---
 
 # Voice Plugin — Requirements
@@ -27,7 +27,7 @@ Version one proves that loop for a single Claude session because the loop is the
 
 ## Key Decisions
 
-**Herdr is the required substrate for version one.** Herdr's agent API is the only cross-client lifecycle seam in scope. Voice is explicitly for Herdr-managed agents at this stage, and no per-client fallback is promised, configured, or scaffolded without a demonstrated consumer. Herdr already ships and maintains state-reporting integrations for roughly seventeen clients, so this inherits a maintained fleet of adapters rather than owing one.
+**Herdr is the required substrate for version one.** Herdr's agent API is the only cross-client lifecycle seam in scope. Voice is explicitly for Herdr-managed agents at this stage, and no per-client fallback is promised, configured, or scaffolded without a demonstrated consumer. Herdr is the repository's recorded vendor-independent execution boundary, and Voice consumes its state-reporting agent integrations, so this inherits a maintained fleet of adapters rather than owing one.
 
 **Response text comes from the Claude `Stop` hook, never from the screen.** Claude Code's own documentation directs hooks needing the final assistant text to use `last_assistant_message` rather than reading the transcript, because the transcript is written asynchronously and can lag. Terminal-output scraping is rejected outright: it is a text-user-interface snapshot, and whatever matches becomes something a speaker says aloud in the room.
 
@@ -39,7 +39,7 @@ Version one proves that loop for a single Claude session because the loop is the
 
 **Providers are declared, never discovered or installed.** The operator states each provider's command or endpoint, its capabilities, and its egress class. Voice preflights and reports; it never installs, provisions, or silently substitutes.
 
-**Voice performs no response-length management.** Voice speaks exactly the text Claude supplies. Concision is an agent output-style concern to be addressed after real usage, not Voice's responsibility. The stop control is consequently the only length control that exists, which is why it is required in three forms.
+**Voice performs no response-length management.** Voice speaks exactly the text Claude supplies. Concision is an agent output-style concern to be addressed after real usage, not Voice's responsibility. The stop control is consequently the only length control that exists, which is why it is required in three forms: the in-pane stop key (R8), barge-in through the record toggle (R9), and the Herdr-wide `voice stop` keybinding whose presence is preflighted (R14).
 
 ## Actors
 
@@ -124,7 +124,7 @@ R19. A refused transcript is retained only transiently, until the operator expli
 
 **Providers and preflight**
 
-R20. Voice ships no provider implementations. Each provider is declared by the operator with its invocation or endpoint, its capabilities, and its egress class.
+R20. Voice ships no provider implementations. Each provider is declared by the operator with its invocation or endpoint, its capabilities, its egress class, and the name of any credential environment variable it needs (never the value).
 
 R21. Egress class is a stated value from a closed set — on-device, local-network, named-remote-service, or unofficial-remote-endpoint — and Voice distinguishes external egress from local-network use.
 
@@ -152,9 +152,13 @@ R30. The package carries no provenance manifest and no port descriptor, because 
 
 R31. Code is standard-library Python at the repository's declared floor, tested with `unittest` alongside the existing suite.
 
-R32. Version one is accepted only when the full loop works, the multi-session silence check passes, and each safety behaviour has been manually verified.
+R32. Every subprocess Voice starts runs with its standard input explicitly closed and a deadline attached.
+
+R33. Version one is accepted only when the full loop works, the multi-session silence check passes, and each safety behaviour has been manually verified.
 
 ## Acceptance Examples
+
+These examples exercise the conversational loop and the load-bearing safety behaviours. They are not the complete acceptance set: R33 gates version one on the full loop, the multi-session silence check, and a manual verification of every safety behaviour, including requirements that carry no example here.
 
 AE1. **Unbound sessions stay silent.** **Covers R1, R3.** With at least two Claude sessions running and Voice bound to one of them, the bound session's reply is spoken and the other session's reply produces no sound at all.
 
@@ -189,7 +193,7 @@ Running Voice with a fleet of concurrent agents produces sound from exactly one 
 - Apple's on-device `SpeechAnalyzer` as a speech-to-text provider. Deferred, not rejected. It returns when its compiled, signed, permission-bearing implementation is understood, and it must not reopen version one's toolchain. It carries a preflight obligation the others do not: its model assets are fetched on demand and can be evicted under disk pressure, so offline capability is a runtime state rather than a property.
 - Local `whisper.cpp` or an operator-managed local-network speech service. Both are legitimate declared providers under the same contract; neither is a prerequisite.
 - True press-and-hold recording. Possible only if the terminal and multiplexer both forward key-release events, which is unverified and deliberately untested. An evidence-backed enhancement, never a version-one promise.
-- Response-length management of any kind. If replies prove too long to listen to, the remedy is the agent's output style, not a Voice feature.
+- Response-length management of any kind. If replies prove too long to listen to, the remedy is the agent's output style, not a Voice feature. This is also a deliberate divergence from the ideation's producer-authored spoken closer (survivor 3): version one keeps no authorship layer between Claude's text and speech, per R5.
 
 **Outside this product's identity**
 
@@ -197,13 +201,13 @@ Running Voice with a fleet of concurrent agents produces sound from exactly one 
 - Multi-session speech arbitration, queues, priorities, and automatic opt-in. The single-binding design exists so these are unnecessary rather than deferred.
 - Any resident daemon or background listener.
 - Continuous listening and wake-word activation.
-- A Model Context Protocol listening tool. Ruled out on verified evidence: plugin-bundled servers are confirmed on only four of the ten named clients, Hermes structurally cannot host one this way, and a blocking tool call is moved to a background task after two minutes on Claude Code, which silently breaks the turn-taking this loop depends on.
+- A Model Context Protocol listening tool. Ruled out on evidence verified at decision time but not archived in this repository: plugin-bundled servers were confirmed on only four of the ten named clients, Hermes cannot host one this way (its MCP path is its native plugin system, not a portable plugin bundle, per the brief's compatibility table), and a blocking tool call is moved to a background task after two minutes on Claude Code, which silently breaks the turn-taking this loop depends on.
 - Terminal-output scraping and terminal-input injection.
 - Modifying Herdr, or vendoring any part of it.
 
 ## Dependencies and Assumptions
 
-**Depends on Herdr** for agent identity, lifecycle state, and the input path. Two exact join keys were confirmed against a live session: the Claude `session_id` a hook receives appears as `agent_session.value` in `herdr agent list`, and `HERDR_PANE_ID` is present in every pane's environment. Identity is therefore supplied, never guessed.
+**Depends on Herdr** for agent identity, lifecycle state, and the input path. Two exact join keys were confirmed against a live session: the Claude `session_id` a hook receives appears as `agent_session.value` in `herdr agent list`, and `HERDR_PANE_ID` is present in every pane's environment. Identity is therefore supplied, never guessed. These confirmations, the no-submit semantics of `herdr agent send-keys`, and the guard asymmetry between `herdr agent prompt` and `send-keys` are live-session results and are not archived in this repository; planning re-confirms each before implementation relies on it.
 
 **Depends on declared providers** being installed and configured by the operator before use.
 
@@ -236,13 +240,13 @@ Running Voice with a fleet of concurrent agents produces sound from exactly one 
 
 - `docs/ideation/2026-08-25-voice-plugin-ideation.md` — the ideation run this brainstorm consumes, including the rejections retained with reasons.
 - `AGENTS.md:52-53` — commands, hooks, native agent definitions, permissions, and client runtime integration belong in explicit vendor adapters.
-- `docs/cross-vendor-plugin-architecture-brief.md:27-31,46-56,93-104` — what Agent Plugins 1.0 does not standardise, the portable package shape, and the ten-client compatibility table.
-- `docs/engineering-journal/DECISIONS.md:357` — a client's real executable is supplied by the operator, never discovered. Governs every provider path and both join keys.
-- `docs/engineering-journal/LEARNINGS.md:385` and `DECISIONS.md:426` — a setting whose empty value disables a control must never be optional; absent must never mean empty. Governs egress class and retention.
-- `docs/engineering-journal/LEARNINGS.md:488` — a self-started subprocess must never inherit the parent's standard input, and needs a deadline regardless.
-- `docs/engineering-journal/LEARNINGS.md:104` — state what the mechanism established, not what it was for. Governs how the blocked-state residual is described.
+- `docs/cross-vendor-plugin-architecture-brief.md:27-31,46-56,61-63,93-104` — what Agent Plugins 1.0 does not standardise, the portable package shape, the Herdr execution boundary, and the ten-client compatibility table.
+- `docs/engineering-journal/DECISIONS.md:748` — a client's real executable is supplied by the operator, never discovered. Governs every provider path and both join keys.
+- `docs/engineering-journal/LEARNINGS.md:468` and `DECISIONS.md:817` — a setting whose empty value disables a control must never be optional; absent must never mean empty. Governs egress class and retention.
+- `docs/engineering-journal/LEARNINGS.md:571` — a self-started subprocess must never inherit the parent's standard input, and needs a deadline regardless. Carried by R32.
+- `docs/engineering-journal/LEARNINGS.md:187` — state what the mechanism established, not what it was for. Governs how the blocked-state residual is described.
 - `scripts/check_repo.py` — a package with no provenance manifest is not an error, because a package authored in this repository has no upstream to pin. `plugins/fleet-core/` is the working precedent for a skill-less, scripts-only package with no port descriptor.
-- Claude Code hooks documentation — the `Stop` event, the `last_assistant_message` field and the recommendation to prefer it over the transcript, asynchronous hook execution, and plugin-provided hooks declared at the plugin root.
+- Claude Code hooks documentation — the `Stop` event, the `last_assistant_message` field and the recommendation to prefer it over the transcript, asynchronous hook execution, and plugin-provided hooks declared at the plugin root. Cited by source name only; no durable capture lives in this repository, so archive the relevant excerpts before implementation relies on these field semantics.
 - `claude-interface` (local prior art, read-only) — proves the `Stop`-hook-to-speech path and supplies the counter-examples: four per-terminal injection strategies, no push-to-talk, and a cross-session process kill that makes it unusable on a fleet.
 - LifeOS (read-only) — proves the producer-authored readback pattern and supplies its costs: an enforcement gate that is observation-only, no maximum length where one is expected, a whole-message rejection at five hundred characters that produces silence, and no user-facing way to stop speech.
 - voice-forge (read-only) — the provider Protocol and the three-state installed-versus-configured-versus-loaded discovery pattern, adopted as ideas rather than as a dependency.
