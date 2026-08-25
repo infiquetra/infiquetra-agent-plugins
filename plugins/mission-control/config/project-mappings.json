@@ -1,0 +1,35 @@
+{
+  "_comment": "Vendored canonical project mapping for the Infiquetra org. Plugin reads this by default. Override at $INFIQUETRA_SDLC_PATH/config/project-mappings.json (per the resolution order in load_config). Project node IDs and field/option IDs are NOT cached here \u2014 they rotate on rename/recreate; fetched live via _resolve_project_field and discover_project_field_options.",
+  "_provenance": "Verified 2026-06-20: `gh project list --owner infiquetra` shows the active boards CAMPPS #4, Jeff Intent #3, and Asgard #2. Mount Olympus (former project #1) was retired 2026-06-17 and is closed externally; it is preserved only as historical context in sdlc-schema.json and is NOT an active routing target. No board is a default: board commands require an explicit --project (KTD17). The `repositories` lists are intentionally empty \u2014 repo-based default routing was removed so work is never silently routed to a board. Project #3 'Jeff Intent' was renamed to 'Operations' on 2026-06-27.",
+  "organization": "infiquetra",
+  "projects": {
+    "operations": {
+      "number": 3,
+      "id": "PVT_kwDODdfJoc4BZLMK",
+      "name": "Operations",
+      "board_key": "operations",
+      "workflow": "intent_flow",
+      "_id_note": "Project node id captured 2026-05-29. If it rotates, re-fetch via: gh project view 3 --owner infiquetra --format json -q .id",
+      "repositories": []
+    },
+    "asgard": {
+      "number": 2,
+      "id": "PVT_kwDODdfJoc4BZLMH",
+      "name": "Asgard",
+      "board_key": "asgard",
+      "workflow": "intent_flow",
+      "_id_note": "Project node id captured 2026-05-29. If it rotates, re-fetch via: gh project view 2 --owner infiquetra --format json -q .id",
+      "repositories": []
+    },
+    "campps": {
+      "number": 4,
+      "id": "PVT_kwDODdfJoc4BanD0",
+      "name": "CAMPPS",
+      "board_key": "campps",
+      "workflow": "campps_initiative",
+      "_id_note": "Project node id captured 2026-06-20. If it rotates, re-fetch via: gh project view 4 --owner infiquetra --format json -q .id",
+      "repositories": []
+    }
+  },
+  "excluded_repositories": []
+}
