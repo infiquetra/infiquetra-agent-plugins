@@ -1,0 +1,551 @@
+# Cycle-16 mutation proof - portable target-owned copies and the readiness guards
+# Digests are bound by MutationProofBindingTest: change a graded file
+# without re-running this proof and the suite fails. Paths are repository-relative.
+#
+# Supersedes 2026-08-24-cycle15-mutation-proof-portable-copies.txt, which is
+# preserved unedited. Reason: repair unit U8a (skill-scoped client blocked-in-advance
+# handling for package-root entrypoints) edited one graded file:
+# scripts/assess_clients.py. The cycle-15 digest for that file no longer names
+# the shipped bytes. Every cycle-15 anchor is retained and re-run against the
+# current bytes, and new anchors are added for the load-bearing guards introduced
+# in U8a. In addition, unit U6 added the test for the cycle-15 survivor (missing
+# data-file source file check in scripts/check_repo.py), which now kills.
+#
+# What this proof adds for the U8a changes:
+#   * scripts/assess_clients.py: undeliverable_entrypoints detects entrypoints
+#     sitting outside every declared skill unit for skill-scoped clients, while
+#     leaving package-scoped clients intact. stage_blocked_reason marks invocation
+#     blocked-in-advance when undeliverable entrypoints exist and includes their
+#     paths in the reason text. run_stage and describe_plan check
+#     stage_blocked_reason to block early and print preview explanations without
+#     raising.
+#
+# Standing disclosures carried forward: MutationProofBindingTest is excluded
+# from grading entirely (every mutation edits a graded file, so counting its
+# failure as a kill made every mutation a kill by construction, which is what
+# made cycle 11 vacuous); the proof cannot start from a fully green suite
+# because this run computes the digests that test asserts; "0 survivors" means
+# every listed guard is tested, never that the code is correct.
+#
+# Survivor resolution and status: 0 mutations survived across all 68 anchors:
+#   * The single cycle-15 survivor (`missing data-file source file check removed
+#     [scripts/check_repo.py]`) is now killed by U6's new test
+#     `test_missing_data_file_source_is_reported_as_stale_source`.
+#   * All 5 new U8a guards are killed by tests in `tests/test_assess_clients.py`.
+## BASELINE: FAILED (failures=1), none of them outside the proof binding
+
+## MUTATION: break set narrowed to newline only, repository gate  [scripts/check_repo.py]
+   FAILED (failures=4, skipped=1)
+   FAIL: test_the_assignment_family_is_the_same_rule
+   FAIL: test_the_break_set_is_exactly_what_splitlines_recognises copy='repository gate'
+
+## MUTATION: break set narrowed to newline only, target copy  [plugins/unifi/scripts/site_profile.py]
+   FAILED (failures=27, skipped=1)
+   FAIL: test_the_command_line_entrypoint_reports_success
+   FAIL: test_the_committed_matrix_identifies_the_shipped_package
+   FAIL: test_the_committed_matrix_passes_every_check
+   FAIL: test_the_no_argument_run_validates_every_committed_matrix
+   FAIL: test_the_recorded_release_fingerprint_identifies_the_shipped_package
+   FAIL: test_the_assignment_family_is_the_same_rule
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='carriage return'
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='vertical tab'
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='form feed'
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='file separator'
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='group separator'
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='record separator'
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='NEL'
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='LINE SEPARATOR'
+   FAIL: test_a_split_assignment_is_matched_at_no_boundary boundary='PARAGRAPH SEPARATOR'
+   FAIL: test_an_innocent_key_never_eats_a_break_whichever_break_it_is boundary='carriage return'
+   FAIL: test_an_innocent_key_never_eats_a_break_whichever_break_it_is boundary='vertical tab'
+   FAIL: test_an_innocent_key_never_eats_a_break_whichever_break_it_is boundary='form feed'
+   FAIL: test_an_innocent_key_never_eats_a_break_whichever_break_it_is boundary='file separator'
+   FAIL: test_an_innocent_key_never_eats_a_break_whichever_break_it_is boundary='group separator'
+   FAIL: test_an_innocent_key_never_eats_a_break_whichever_break_it_is boundary='record separator'
+   FAIL: test_an_innocent_key_never_eats_a_break_whichever_break_it_is boundary='NEL'
+   FAIL: test_an_innocent_key_never_eats_a_break_whichever_break_it_is boundary='LINE SEPARATOR'
+   FAIL: test_an_innocent_key_never_eats_a_break_whichever_break_it_is boundary='PARAGRAPH SEPARATOR'
+   FAIL: test_the_break_set_is_exactly_what_splitlines_recognises copy='target copy'
+
+## MUTATION: one boundary dropped (carriage return), repository gate  [scripts/check_repo.py]
+   FAILED (failures=4, skipped=1)
+   FAIL: test_the_assignment_family_is_the_same_rule
+   FAIL: test_the_break_set_is_exactly_what_splitlines_recognises copy='repository gate'
+
+## MUTATION: exact in-text key set emptied, repository gate  [scripts/check_repo.py]
+   FAILED (failures=14, skipped=1)
+   FAIL: test_both_copies_agree_which_keys_are_strict key='auth'
+   FAIL: test_both_copies_agree_which_keys_are_strict key='accesskey'
+   FAIL: test_both_copies_agree_which_keys_are_strict key='access-key'
+   FAIL: test_the_assignment_family_is_the_same_rule
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='auth: rainbowtrout'
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='accesskey: rainbowtrout'
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='access_key: rainbowtrout'
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='access-key: rainbowtrout'
+   FAIL: test_the_exact_key_set_cannot_be_emptied_without_failures key='auth'
+   FAIL: test_the_exact_key_set_cannot_be_emptied_without_failures key='accesskey'
+   FAIL: test_the_exact_key_set_cannot_be_emptied_without_failures key='access_key'
+   FAIL: test_the_exact_key_set_cannot_be_emptied_without_failures key='access-key'
+
+## MUTATION: exact in-text key set emptied, target copy  [plugins/unifi/scripts/site_profile.py]
+   FAILED (failures=17, skipped=1)
+   FAIL: test_the_command_line_entrypoint_reports_success
+   FAIL: test_the_committed_matrix_identifies_the_shipped_package
+   FAIL: test_the_committed_matrix_passes_every_check
+   FAIL: test_the_no_argument_run_validates_every_committed_matrix
+   FAIL: test_the_recorded_release_fingerprint_identifies_the_shipped_package
+   FAIL: test_both_copies_agree_which_keys_are_strict key='access-key'
+   FAIL: test_the_assignment_family_is_the_same_rule
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='auth: rainbowtrout'
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='accesskey: rainbowtrout'
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='access_key: rainbowtrout'
+   FAIL: test_all_three_copies_reach_the_recorded_verdict text='access-key: rainbowtrout'
+   FAIL: test_the_exact_key_set_cannot_be_emptied_without_failures key='auth'
+   FAIL: test_the_exact_key_set_cannot_be_emptied_without_failures key='accesskey'
+   FAIL: test_the_exact_key_set_cannot_be_emptied_without_failures key='access_key'
+   FAIL: test_the_exact_key_set_cannot_be_emptied_without_failures key='access-key'
+
+## MUTATION: descriptor path-escape refusal inverted  [scripts/port_config.py]
+   FAILED (failures=34, errors=31)
+   ERROR: test_assess_clients
+   ERROR: test_check_compatibility_matrix
+   ERROR: test_removing_the_generated_bundle_breaks_every_entrypoint
+   ERROR: test_the_generated_bundle_is_where_the_clients_resolve_it
+   ERROR: test_the_intact_copy_still_answers_help
+   ERROR: test_every_client_entrypoint_imports_cleanly_and_prints_usage
+   ERROR: test_no_client_entrypoint_needs_credentials_to_report_its_command_surface
+   ERROR: test_an_explicitly_declared_empty_field_is_accepted
+   ERROR: test_every_descriptor_in_the_repository_loads
+   ERROR: test_every_entrypoint_sits_under_a_declared_skill_unit
+   ERROR: test_every_entrypoint_transform_entry_names_a_rule_the_sync_tool_implements
+   ERROR: test_it_names_the_package_that_ships
+   ERROR: test_the_custody_table_accounts_for_every_shipped_managed_path
+   ERROR: test_the_declared_package_scripts_are_files_the_package_carries
+   ERROR: test_the_declared_skill_units_exist_in_the_shipped_package
+   ERROR: test_the_descriptor_declares_the_credential_variables_to_strip
+   ERROR: test_the_gate_reports_a_descriptor_naming_an_absent_tree
+   ERROR: test_the_provenance_notes_name_the_real_bundle_directory
+   ERROR: test_the_repository_gate_checks_every_descriptor
+   ERROR: test_a_package_with_no_custody_at_all_still_declares_entrypoints
+   ERROR: test_entrypoints_are_independent_of_custody custody='byte_copies'
+   ERROR: test_entrypoints_are_independent_of_custody custody='entrypoint_transforms'
+   ERROR: test_entrypoints_are_independent_of_custody custody='client_byte_copies'
+   ERROR: test_entrypoints_are_independent_of_custody custody='superseded_by_target_owned'
+   ERROR: test_entrypoints_are_independent_of_custody custody='dropped_from_source'
+   ERROR: test_an_absent_field_is_empty_and_carries_no_rules
+   ERROR: test_an_object_entry_records_its_path_and_rule
+   ERROR: test_no_synchronization_can_plan_a_path_from_a_missing_value
+   ERROR: test_the_pair_together_is_accepted
+   ERROR: test_the_minimal_descriptor_validates
+   ERROR: test_sync_vendor_source
+   FAIL: test_live_repository_passes_every_check
+   FAIL: test_every_fenced_bash_command_is_runnable_from_the_repository_root
+   ERROR: port
+   ERROR: port
+   FAIL: test_a_missing_field_is_named_as_missing_rather_than_as_empty field='credential_prefixes'
+   FAIL: test_a_missing_field_is_named_as_missing_rather_than_as_empty field='package_scripts'
+   FAIL: test_a_missing_field_is_named_as_missing_rather_than_as_empty field='mutating_operations'
+   FAIL: test_a_missing_field_is_named_as_missing_rather_than_as_empty field='entrypoints'
+   FAIL: test_an_empty_safety_field_needs_an_explicit_declaration field='credential_prefixes'
+   FAIL: test_an_empty_safety_field_needs_an_explicit_declaration field='package_scripts'
+   FAIL: test_an_empty_safety_field_needs_an_explicit_declaration field='mutating_operations'
+   FAIL: test_an_empty_safety_field_needs_an_explicit_declaration field='entrypoints'
+   FAIL: test_an_unknown_key_is_refused_at_every_level object='source'
+   FAIL: test_an_unknown_key_is_refused_at_every_level object='assessment'
+   FAIL: test_an_unknown_key_is_refused_at_every_level object='provenance'
+   FAIL: test_declared_none_may_only_name_a_safety_field
+   FAIL: test_declaring_a_field_none_while_it_is_populated_is_refused
+   FAIL: test_every_safety_field_must_be_stated field='credential_prefixes'
+   FAIL: test_every_safety_field_must_be_stated field='package_scripts'
+   FAIL: test_every_safety_field_must_be_stated field='mutating_operations'
+   FAIL: test_every_safety_field_must_be_stated field='entrypoints'
+   FAIL: test_a_path_claimed_by_two_custody_classes_is_refused
+   FAIL: test_an_unknown_custody_class_is_refused_by_name
+   FAIL: test_client_custody_without_an_extension_directory_is_refused
+   FAIL: test_dropping_a_path_without_saying_why_is_refused
+   FAIL: test_a_bare_path_string_entry_is_refused_as_the_schema_2_shape
+   FAIL: test_an_entry_with_an_unknown_field_is_refused
+   FAIL: test_an_entry_without_a_rule_is_refused_rather_than_defaulted
+   FAIL: test_two_entries_may_not_claim_the_same_path
+   FAIL: test_a_manifest_path_without_an_extension_directory_is_refused
+   FAIL: test_a_package_root_outside_the_plugins_directory_is_refused
+   FAIL: test_every_required_source_field_is_required field='repository'
+   FAIL: test_every_required_source_field_is_required field='package_path'
+   FAIL: test_every_fenced_bash_command_is_runnable_from_the_repository_root
+   ERROR: port
+   ERROR: port
+
+## MUTATION: descriptor duplicate-custody refusal removed  [scripts/port_config.py]
+   FAILED (failures=4, skipped=1)
+   FAIL: test_a_path_claimed_by_two_custody_classes_is_refused
+   FAIL: test_two_entries_may_not_claim_the_same_path
+
+## MUTATION: client custody without an extension directory allowed  [scripts/port_config.py]
+   FAILED (failures=3, skipped=1)
+   FAIL: test_client_custody_without_an_extension_directory_is_refused
+
+## MUTATION: descriptor schema_version check removed  [scripts/port_config.py]
+   FAILED (failures=3, skipped=1)
+   FAIL: test_an_unreadable_schema_version_is_refused_rather_than_assumed
+
+## MUTATION: package root confined to plugins/ removed  [scripts/port_config.py]
+   FAILED (failures=3, skipped=1)
+   FAIL: test_a_package_root_outside_the_plugins_directory_is_refused
+
+## MUTATION: matrix package resolution falls back instead of failing closed  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=8, skipped=1)
+   FAIL: test_a_record_naming_an_unported_package_is_refused
+   FAIL: test_an_unresolvable_record_still_has_its_other_rules_applied
+   FAIL: test_resolution_never_returns_a_package_the_record_did_not_name name='not-a-package'
+   FAIL: test_resolution_never_returns_a_package_the_record_did_not_name name='unifi-'
+   FAIL: test_resolution_never_returns_a_package_the_record_did_not_name name='UNIFI'
+   FAIL: test_resolution_never_returns_a_package_the_record_did_not_name name='../unifi'
+
+## MUTATION: the shared --confirm safety rule removed  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=5, skipped=1)
+   FAIL: test_a_confirmed_command_is_refused_before_it_runs
+   FAIL: test_a_recorded_invocation_passing_confirm_fails
+   FAIL: test_confirm_is_refused_in_any_stage_not_only_invocation
+
+## MUTATION: the shared mutating-operation rule removed  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=14, skipped=1)
+   FAIL: test_a_version_one_stage_is_still_graded
+   FAIL: test_an_unsafe_second_command_is_still_caught
+   FAIL: test_one_unsafe_command_yields_one_problem
+   FAIL: test_a_mutating_package_operation_is_refused_before_it_runs
+   FAIL: test_the_refusal_uses_the_same_predicate_as_the_matrix_validator
+   FAIL: test_a_blocked_stage_still_has_its_commands_safety_graded
+   FAIL: test_a_recorded_mutating_operation_fails operation='restart'
+   FAIL: test_a_recorded_mutating_operation_fails operation='block'
+   FAIL: test_a_recorded_mutating_operation_fails operation='delete'
+   FAIL: test_a_recorded_mutating_operation_fails operation='adopt'
+   FAIL: test_a_recorded_mutating_operation_fails operation='forget'
+   FAIL: test_a_recorded_mutating_operation_fails operation='snapshot'
+
+## MUTATION: harness real-home write refusal removed  [scripts/assess_clients.py]
+   FAILED (failures=2, skipped=1)
+   FAIL: test_a_state_writing_stage_may_not_run_in_the_operators_home
+
+## MUTATION: harness isolated-only refusal removed  [scripts/assess_clients.py]
+   FAILED (failures=5, skipped=1)
+   FAIL: test_the_isolated_only_client_is_refused_a_real_home_outright stage='placement'
+   FAIL: test_the_isolated_only_client_is_refused_a_real_home_outright stage='discovery'
+   FAIL: test_the_isolated_only_client_is_refused_a_real_home_outright stage='load'
+   FAIL: test_the_isolated_only_client_is_refused_a_real_home_outright stage='invocation'
+
+## MUTATION: harness stdin inherits the parent again  [scripts/assess_clients.py]
+   FAILED (failures=3, skipped=1)
+   FAIL: test_a_stage_never_inherits_the_operators_terminal
+   FAIL: test_without_a_confirmation_the_same_process_reports_the_difference
+
+## MUTATION: harness stops checking that the assessed tree held still  [scripts/assess_clients.py]
+   FAILED (failures=2, skipped=1)
+   FAIL: test_a_tree_that_moves_during_the_run_is_refused
+
+## MUTATION: harness four-stage coverage guard removed  [scripts/assess_clients.py]
+   FAILED (failures=2, skipped=1)
+   FAIL: test_a_plan_missing_a_stage_is_refused
+
+## MUTATION: harness stops reading the entrypoint exit status  [scripts/assess_clients.py]
+   FAILED (failures=2, skipped=1)
+   FAIL: test_an_entrypoint_that_ran_and_did_not_succeed_proposes_failed
+
+## MUTATION: harness reads executed as success again  [scripts/assess_clients.py]
+   FAILED (failures=4, skipped=1)
+   FAIL: test_a_client_that_refused_every_stage_is_not_works_directly
+   FAIL: test_a_failed_entrypoint_without_a_successful_placement_is_not_failed
+   FAIL: test_an_entrypoint_that_ran_and_did_not_succeed_proposes_failed
+
+## MUTATION: harness infers the real binary from PATH again  [scripts/assess_clients.py]
+   FAILED (failures=4, skipped=1)
+   FAIL: test_a_copied_wrapper_is_never_selected
+   FAIL: test_a_wrapper_client_with_nothing_supplied_is_blocked_not_run
+   FAIL: test_with_nothing_supplied_it_refuses_rather_than_guessing
+
+## MUTATION: harness accepts an override naming the launcher itself  [scripts/assess_clients.py]
+   FAILED (failures=3, skipped=1)
+   FAIL: test_a_symlink_to_the_launcher_is_refused
+   FAIL: test_an_override_naming_the_launcher_itself_is_refused
+
+## MUTATION: harness accepts a non-executable real-binary path  [scripts/assess_clients.py]
+   FAILED (failures=2, skipped=1)
+   FAIL: test_a_supplied_path_that_is_not_executable_is_refused
+
+## MUTATION: harness leaves the timed-out process group running  [scripts/assess_clients.py]
+   FAILED (failures=4, skipped=1)
+   FAIL: test_a_descendant_that_leaves_the_session_is_not_claimed_as_killed
+   FAIL: test_a_leader_that_exits_still_has_its_descendant_killed
+   FAIL: test_a_timed_out_launcher_does_not_leave_its_client_running
+
+## MUTATION: harness resolves the process group through the exited leader again  [scripts/assess_clients.py]
+   FAILED (failures=1, errors=1, skipped=1)
+   ERROR: test_a_leader_that_exits_still_has_its_descendant_killed
+
+## MUTATION: harness claims containment it cannot observe again  [scripts/assess_clients.py]
+   FAILED (failures=5, skipped=1)
+   FAIL: test_a_descendant_that_leaves_the_session_is_not_claimed_as_killed
+   FAIL: test_a_leader_that_exits_still_has_its_descendant_killed
+   FAIL: test_a_timed_out_launcher_does_not_leave_its_client_running
+   FAIL: test_the_leader_is_reaped_before_the_group_is_probed
+
+## MUTATION: harness drops the timed-out command from the public record again  [scripts/assess_clients.py]
+   FAILED (failures=2, skipped=1)
+   FAIL: test_the_timed_out_command_is_in_the_public_record_too
+
+## MUTATION: harness ignores the run directory its caller allocated  [scripts/assess_clients.py]
+   FAILED (failures=7, skipped=1)
+   FAIL: test_an_executed_run_prints_a_transcript_path_that_exists
+   FAIL: test_a_supplied_empty_run_directory_inside_the_workspace_is_accepted
+   FAIL: test_a_supplied_run_directory_outside_the_workspace_is_refused
+   FAIL: test_a_supplied_run_directory_that_already_holds_a_run_is_refused
+   FAIL: test_a_supplied_run_directory_that_does_not_exist_is_refused
+   FAIL: test_the_workspace_itself_is_refused_as_a_run_directory
+
+## MUTATION: harness accepts an occupied run directory again  [scripts/assess_clients.py]
+   FAILED (failures=1, errors=1, skipped=1)
+   ERROR: test_a_supplied_run_directory_that_already_holds_a_run_is_refused
+
+## MUTATION: harness accepts a run directory outside the workspace again  [scripts/assess_clients.py]
+   FAILED (failures=2, skipped=1)
+   FAIL: test_a_supplied_run_directory_outside_the_workspace_is_refused
+
+## MUTATION: command line announces the workspace instead of the run directory again  [scripts/assess_clients.py]
+   FAILED (failures=2, skipped=1)
+   FAIL: test_an_executed_run_prints_a_transcript_path_that_exists
+
+## MUTATION: harness probes the group before reaping the leader again  [scripts/assess_clients.py]
+   FAILED (failures=5, skipped=1)
+   FAIL: test_a_descendant_that_leaves_the_session_is_not_claimed_as_killed
+   FAIL: test_a_leader_that_exits_still_has_its_descendant_killed
+   FAIL: test_a_timed_out_launcher_does_not_leave_its_client_running
+   FAIL: test_the_leader_is_reaped_before_the_group_is_probed
+
+## MUTATION: harness reuses an existing per-client package copy again  [scripts/assess_clients.py]
+   FAILED (failures=2, skipped=1)
+   FAIL: test_a_pre_existing_copy_is_refused_rather_than_reused
+
+## MUTATION: harness reuses one run directory across runs  [scripts/assess_clients.py]
+   FAILED (failures=1, errors=2, skipped=1)
+   ERROR: test_a_second_run_in_the_same_workspace_gets_fresh_copies
+   ERROR: test_each_run_gets_its_own_numbered_directory
+
+## MUTATION: harness stops refusing an entrypoint the package lacks  [scripts/assess_clients.py]
+   FAILED (failures=2, skipped=1)
+   FAIL: test_an_entrypoint_the_package_does_not_carry_is_refused
+
+## MUTATION: harness drops the transcript on the timeout path again  [scripts/assess_clients.py]
+   FAILED (failures=3, skipped=1)
+   FAIL: test_a_timed_out_stage_records_the_timed_out_command_too
+   FAIL: test_the_timed_out_command_is_in_the_public_record_too
+
+## MUTATION: harness drops the transcript when a client mutated its copy  [scripts/assess_clients.py]
+   FAILED (failures=2, skipped=1)
+   FAIL: test_an_invalidated_client_keeps_its_transcript
+
+## MUTATION: harness writes the raw transcript world-readable again  [scripts/assess_clients.py]
+   FAILED (failures=4, skipped=1)
+   FAIL: test_an_existing_loose_file_is_tightened_on_overwrite
+   FAIL: test_the_file_is_created_owner_only_before_anything_is_written
+   FAIL: test_the_transcript_is_written_owner_only
+
+## MUTATION: gate stops checking that declared entrypoints exist  [scripts/check_repo.py]
+   FAILED (failures=3, skipped=1)
+   FAIL: test_the_repository_gate_refuses_it_too
+
+## MUTATION: matrix safety rule grades the version-2 alias twice again  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=3, skipped=1)
+   FAIL: test_one_unsafe_command_yields_one_problem
+
+## MUTATION: harness discards captured client output again  [scripts/assess_clients.py]
+   FAILED (failures=4, errors=1, skipped=1)
+   ERROR: test_the_transcript_is_bounded
+   FAIL: test_a_timed_out_stage_keeps_what_already_ran
+   FAIL: test_an_invalidated_client_keeps_its_transcript
+   FAIL: test_a_stage_retains_each_command_output
+
+## MUTATION: harness records only the first command again  [scripts/assess_clients.py]
+   FAILED (failures=3, skipped=1)
+   FAIL: test_a_reader_can_tell_which_command_failed
+   FAIL: test_each_command_is_recorded_with_its_own_status
+
+## MUTATION: harness shares one scratch package across every client again  [scripts/assess_clients.py]
+   FAILED (failures=4, errors=11, skipped=1)
+   ERROR: test_a_plan_only_run_starts_no_process
+   ERROR: test_each_client_is_handed_its_own_copy
+   ERROR: test_no_scratch_path_survives_into_the_record
+   ERROR: test_the_assessed_copy_is_a_copy_not_the_shipped_tree
+   ERROR: test_the_emitted_record_leaks_nothing
+   ERROR: test_the_record_binds_to_the_shipped_fingerprint
+   ERROR: test_the_record_covers_exactly_the_ten_clients_with_four_stages_each
+   ERROR: test_the_record_is_refused_by_the_validator_until_a_human_finishes_it
+   ERROR: test_the_record_states_whether_a_client_added_to_the_copy
+   ERROR: test_a_second_run_in_the_same_workspace_gets_fresh_copies
+   ERROR: test_a_supplied_run_directory_that_already_holds_a_run_is_refused
+   FAIL: test_an_invalidated_client_is_not_classified_at_all
+   FAIL: test_a_pre_existing_copy_is_refused_rather_than_reused
+   FAIL: test_a_supplied_empty_run_directory_inside_the_workspace_is_accepted
+
+## MUTATION: harness keeps a mutated client's stage results  [scripts/assess_clients.py]
+   FAILED (failures=2, skipped=1)
+   FAIL: test_an_invalidated_client_is_not_classified_at_all
+
+## MUTATION: harness hides the known package name in the plan again  [scripts/assess_clients.py]
+   FAILED (failures=2, skipped=1)
+   FAIL: test_the_plan_shows_the_package_name_the_harness_already_knows
+
+## MUTATION: descriptor objects stop refusing unknown keys  [scripts/port_config.py]
+   FAILED (failures=7, skipped=1)
+   FAIL: test_an_unknown_key_is_refused_at_every_level object='top level'
+   FAIL: test_an_unknown_key_is_refused_at_every_level object='source'
+   FAIL: test_an_unknown_key_is_refused_at_every_level object='assessment'
+   FAIL: test_an_unknown_key_is_refused_at_every_level object='provenance'
+   FAIL: test_an_entry_with_an_unknown_field_is_refused
+
+## MUTATION: descriptor safety fields stop being required  [scripts/port_config.py]
+   FAILED (failures=6, skipped=1)
+   FAIL: test_a_missing_field_is_named_as_missing_rather_than_as_empty field='credential_prefixes'
+   FAIL: test_a_missing_field_is_named_as_missing_rather_than_as_empty field='package_scripts'
+   FAIL: test_a_missing_field_is_named_as_missing_rather_than_as_empty field='mutating_operations'
+   FAIL: test_a_missing_field_is_named_as_missing_rather_than_as_empty field='entrypoints'
+
+## MUTATION: descriptor accepts a manifest with no destination  [scripts/port_config.py]
+   FAILED (failures=3, skipped=1)
+   FAIL: test_a_manifest_path_without_an_extension_directory_is_refused
+
+## MUTATION: matrix version gate lets a version-1 record carry version-2 statuses  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=3, skipped=1)
+   FAIL: test_a_version_one_record_may_not_carry_per_command_statuses
+
+## MUTATION: matrix stops checking the alias against the first per-command status  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=5, skipped=1)
+   FAIL: test_a_non_executed_stage_command_must_still_match_its_first_status result='blocked'
+   FAIL: test_a_non_executed_stage_command_must_still_match_its_first_status result='not-applicable'
+   FAIL: test_the_recorded_command_must_be_the_first_of_its_statuses
+
+## MUTATION: matrix accepts a command that is both exited and timed out again  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=3, skipped=1)
+   FAIL: test_a_command_cannot_carry_both_exit_status_and_timed_out
+
+## MUTATION: matrix accepts a command that never says how it ended again  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=3, skipped=1)
+   FAIL: test_a_command_must_say_how_it_ended
+
+## MUTATION: matrix validator stops requiring per-command statuses  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=4, skipped=1)
+   FAIL: test_an_executed_stage_with_an_empty_command_list_is_refused
+   FAIL: test_an_executed_stage_without_commands_is_refused
+
+## MUTATION: matrix safety rule reads only the first command again  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=4, skipped=1)
+   FAIL: test_an_unsafe_second_command_is_still_caught
+   FAIL: test_a_blocked_stage_still_has_its_commands_safety_graded
+
+## MUTATION: harness redacts identity values as well as paths again  [scripts/assess_clients.py]
+   FAILED (failures=4, skipped=1)
+   FAIL: test_a_real_execute_run_produces_a_recordable_row
+   FAIL: test_only_path_values_and_a_captured_id_are_redactable
+   FAIL: test_the_package_name_inside_a_path_survives_redaction
+
+## MUTATION: harness stops blocking a command with an unresolved placeholder  [scripts/assess_clients.py]
+   FAILED (failures=2, skipped=1)
+   FAIL: test_a_stage_naming_an_unresolved_placeholder_is_blocked
+
+## MUTATION: harness records only the first command status again  [scripts/assess_clients.py]
+   FAILED (failures=3, skipped=1)
+   FAIL: test_a_reader_can_tell_which_command_failed
+   FAIL: test_each_command_is_recorded_with_its_own_status
+
+## MUTATION: harness returns invocation paths unsubstituted again  [scripts/assess_clients.py]
+   FAILED (failures=9, skipped=1)
+   FAIL: test_the_plan_shows_the_package_name_the_harness_already_knows
+   FAIL: test_a_package_scoped_client_keeps_the_package_layout
+   FAIL: test_package_scoped_plan_with_package_root_entrypoints_resolves_unchanged client='Claude Code'
+   FAIL: test_package_scoped_plan_with_package_root_entrypoints_resolves_unchanged client='Cursor Agent'
+   FAIL: test_package_scoped_plan_with_package_root_entrypoints_resolves_unchanged client='Qwen'
+   FAIL: test_package_scoped_plan_with_package_root_entrypoints_resolves_unchanged client='Grok'
+   FAIL: test_package_scoped_plan_with_package_root_entrypoints_resolves_unchanged client='Agy'
+   FAIL: test_a_real_execute_run_produces_a_recordable_row
+
+## MUTATION: descriptor validation dropped from the repository gate  [scripts/check_repo.py]
+   FAILED (failures=3, skipped=1)
+   FAIL: test_the_gate_reports_a_descriptor_that_does_not_load
+
+## MUTATION: bare-string entrypoint_transforms entries allowed  [scripts/port_config.py]
+   FAILED (failures=4, skipped=1)
+   FAIL: test_a_bare_path_string_entry_is_refused_as_the_schema_2_shape
+   FAIL: test_a_traversing_custody_path_is_refused field='entrypoint_transforms'
+
+## MUTATION: entrypoint_transforms entry without rule name allowed  [scripts/port_config.py]
+   FAILED (failures=7, skipped=1)
+   FAIL: test_an_empty_or_non_string_rule_is_refused value=''
+   FAIL: test_an_empty_or_non_string_rule_is_refused value='   '
+   FAIL: test_an_empty_or_non_string_rule_is_refused value=3
+   FAIL: test_an_empty_or_non_string_rule_is_refused value=None
+   FAIL: test_an_entry_without_a_rule_is_refused_rather_than_defaulted
+
+## MUTATION: stale data-file bundle freshness check removed  [scripts/check_repo.py]
+   FAILED (failures=4, skipped=1)
+   FAIL: test_data_file_seeded_hand_edit_fails_check_repo
+   FAIL: test_data_file_seeded_stale_source_fails_check_repo
+
+## MUTATION: missing data-file source file check removed  [scripts/check_repo.py]
+   FAILED (failures=3, skipped=1)
+   FAIL: test_missing_data_file_source_is_reported_as_stale_source
+
+## MUTATION: harness undeliverable-entrypoint detection removed  [scripts/assess_clients.py]
+   FAILED (failures=7, skipped=1)
+   FAIL: test_the_plan_names_every_deadline
+   FAIL: test_skill_scoped_plan_with_all_deliverable_entrypoints_is_not_blocked client='OpenCode'
+   FAIL: test_skill_scoped_plan_with_all_deliverable_entrypoints_is_not_blocked client='Gemini CLI'
+   FAIL: test_skill_scoped_plan_with_all_deliverable_entrypoints_is_not_blocked client='Muse'
+   FAIL: test_skill_scoped_plan_with_all_deliverable_entrypoints_is_not_blocked client='Hermes'
+   FAIL: test_skill_scoped_plan_with_mixed_entrypoints_blocks_and_names_undeliverable_subset
+
+## MUTATION: harness skill-scoped plan guard removed in undeliverable_entrypoints  [scripts/assess_clients.py]
+   FAILED (failures=11, skipped=1)
+   FAIL: test_describe_plan_does_not_raise_for_mission_control_shape package_scoped_client='Claude Code'
+   FAIL: test_describe_plan_does_not_raise_for_mission_control_shape package_scoped_client='Cursor Agent'
+   FAIL: test_describe_plan_does_not_raise_for_mission_control_shape package_scoped_client='Qwen'
+   FAIL: test_describe_plan_does_not_raise_for_mission_control_shape package_scoped_client='Grok'
+   FAIL: test_describe_plan_does_not_raise_for_mission_control_shape package_scoped_client='Agy'
+   FAIL: test_package_scoped_plan_with_package_root_entrypoints_resolves_unchanged client='Claude Code'
+   FAIL: test_package_scoped_plan_with_package_root_entrypoints_resolves_unchanged client='Cursor Agent'
+   FAIL: test_package_scoped_plan_with_package_root_entrypoints_resolves_unchanged client='Qwen'
+   FAIL: test_package_scoped_plan_with_package_root_entrypoints_resolves_unchanged client='Grok'
+   FAIL: test_package_scoped_plan_with_package_root_entrypoints_resolves_unchanged client='Agy'
+
+## MUTATION: harness blocked-in-advance invocation condition inverted  [scripts/assess_clients.py]
+   FAILED (failures=6, errors=1, skipped=1)
+   ERROR: test_describe_plan_does_not_raise_for_mission_control_shape
+   FAIL: test_skill_scoped_plan_with_mixed_entrypoints_blocks_and_names_undeliverable_subset
+   FAIL: test_skill_scoped_plan_with_package_root_entrypoints_blocks_invocation_in_advance client='OpenCode'
+   FAIL: test_skill_scoped_plan_with_package_root_entrypoints_blocks_invocation_in_advance client='Gemini CLI'
+   FAIL: test_skill_scoped_plan_with_package_root_entrypoints_blocks_invocation_in_advance client='Muse'
+   FAIL: test_skill_scoped_plan_with_package_root_entrypoints_blocks_invocation_in_advance client='Hermes'
+
+## MUTATION: harness blocked-in-advance reason drops undeliverable entrypoints  [scripts/assess_clients.py]
+   FAILED (failures=10, skipped=1)
+   FAIL: test_describe_plan_does_not_raise_for_mission_control_shape skill_scoped_client='OpenCode'
+   FAIL: test_describe_plan_does_not_raise_for_mission_control_shape skill_scoped_client='Gemini CLI'
+   FAIL: test_describe_plan_does_not_raise_for_mission_control_shape skill_scoped_client='Muse'
+   FAIL: test_describe_plan_does_not_raise_for_mission_control_shape skill_scoped_client='Hermes'
+   FAIL: test_skill_scoped_plan_with_mixed_entrypoints_blocks_and_names_undeliverable_subset
+   FAIL: test_skill_scoped_plan_with_package_root_entrypoints_blocks_invocation_in_advance client='OpenCode'
+   FAIL: test_skill_scoped_plan_with_package_root_entrypoints_blocks_invocation_in_advance client='Gemini CLI'
+   FAIL: test_skill_scoped_plan_with_package_root_entrypoints_blocks_invocation_in_advance client='Muse'
+   FAIL: test_skill_scoped_plan_with_package_root_entrypoints_blocks_invocation_in_advance client='Hermes'
+
+## MUTATION: describe_plan bypasses stage_blocked_reason  [scripts/assess_clients.py]
+   FAILED (failures=1, errors=1, skipped=1)
+   ERROR: test_describe_plan_does_not_raise_for_mission_control_shape
+
+## RESTORED
+plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
+scripts/assess_clients.py sha256: 2f8fafe988f791e53403d619ed61e4749930838435d001993e8cf581ca1ad9d8
+scripts/check_compatibility_matrix.py sha256: 1b03201cad5f94ed7c717738020dd1e9c5975e527f94eb46211ca5b96bfa4834
+scripts/check_repo.py sha256: 6cf74eb943e790a4a335984bb8fc294aa0d4f2905bb99cbecba8d74a3106f90a
+scripts/port_config.py sha256: bfaeb49285558435195382050ed6bde4d7736e8f42be3665b569cdfd849c927b
+byte-identical to pristine: YES
+final suite: FAILED (failures=1)
+final suite failures outside the excluded proof binding: none
+mutations run: 68; survived: 0
