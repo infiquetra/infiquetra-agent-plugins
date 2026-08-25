@@ -2,6 +2,31 @@
 
 ## 2026-08-24
 
+### Dynamic module loading of dataclass-bearing authorities requires pre-execution sys.modules registration
+
+**Author.** Jeff Cox and Antigravity
+
+**Context.** In unit U7 (issue #17), the validation rule audit derived the authority
+`card_validator.py` live from the external checkout `home-lab` at test time.
+
+**Evidence.** Calling `spec.loader.exec_module(mod)` on a module containing `@dataclass`
+without prior `sys.modules[mod.__name__] = mod` registration failed with
+`AttributeError: 'NoneType' object has no attribute '__dict__'` under Python dataclass inspection
+(`dataclasses.py:814`: `ns = sys.modules.get(cls.__module__).__dict__`).
+
+**Mechanism.** Python's standard library `dataclasses` module inspects `sys.modules` for the
+declaring module during `@dataclass` class decoration. When a module is loaded dynamically via
+`importlib.util.module_from_spec(spec)` but not yet registered in `sys.modules`, `sys.modules.get(cls.__module__)`
+returns `None`. Pre-populating `sys.modules[mod.__name__] = mod` before calling `exec_module(mod)`
+satisfies the inspection cleanly across all Python versions.
+
+**Generalizable rule.** When dynamically loading an external module that defines dataclasses,
+always register the module in `sys.modules` before executing its spec.
+
+**Refs.** `tests/test_mission_control_rule_audit.py` (`_load_home_lab_authority`),
+`home-lab/ansible/roles/hermes_orchestrator/files/card_validator.py` (`ValidationResult`).
+
+
 ### A second home that does not inherit the first home's invariant is the same defect again
 
 **Author.** Jeff Cox and Grok
