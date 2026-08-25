@@ -1081,6 +1081,52 @@ def stage_argvs(
     return (substitute(spec.argv, values),)
 
 
+def undeliverable_entrypoints(config: PortConfig, plan: ClientPlan) -> tuple[str, ...]:
+    """Entrypoints that cannot land under this client's placement.
+
+    A package-scoped client receives the full package tree, so every declared
+    entrypoint is reachable at its relative path. A skill-scoped client installs
+    individual skill units rather than the package root, so an entrypoint that
+    sits outside every declared skill unit never lands on the client's filesystem.
+    """
+    if not plan.skill_scoped:
+        return ()
+    undeliverable: list[str] = []
+    for relative in config.assessment.entrypoints:
+        for unit in config.assessment.skill_units:
+            prefix = f"{unit}/"
+            if relative.startswith(prefix):
+                break
+        else:
+            undeliverable.append(relative)
+    return tuple(undeliverable)
+
+
+def stage_blocked_reason(
+    config: PortConfig, plan: ClientPlan, spec: StageSpec
+) -> str | None:
+    """Why this stage is known in advance not to be runnable, or None.
+
+    A stage may be blocked statically (e.g. Codex placement installs nothing, so
+    its load and invocation stages are blocked by design) or dynamically based on
+    package geometry (a skill-scoped client whose declared entrypoints do not sit
+    inside any declared skill unit).
+    """
+    if spec.blocked_reason is not None:
+        return spec.blocked_reason
+    if spec.stage == "invocation" or spec.from_package:
+        undeliverable = undeliverable_entrypoints(config, plan)
+        if undeliverable:
+            names = ", ".join(repr(path) for path in undeliverable)
+            return (
+                f"{plan.name} installs skill units rather than the package, so declared "
+                f"entrypoint(s) sitting outside every declared skill unit have no "
+                f"client-resolved path: {names}. A stage that half ran did not run, "
+                "so invocation is blocked in advance."
+            )
+    return None
+
+
 def run_stage(
     plan: ClientPlan,
     spec: StageSpec,
@@ -1110,8 +1156,9 @@ def run_stage(
     A stage of several processes is blocked if *any* of them is, because a stage
     that half ran did not run.
     """
-    if spec.blocked_reason is not None:
-        return StageOutcome(spec.stage, BLOCKED, reason=spec.blocked_reason)
+    blocked = stage_blocked_reason(config, plan, spec)
+    if blocked is not None:
+        return StageOutcome(spec.stage, BLOCKED, reason=blocked)
 
     argvs = stage_argvs(config, plan, spec, values)
     for argv in argvs:
@@ -1576,8 +1623,9 @@ def assess(
                     spec.stage, BLOCKED, reason=unresolved_override
                 )
                 continue
+            blocked = stage_blocked_reason(config, plan, spec)
             if not execute:
-                if spec.blocked_reason is not None:
+                if blocked is not None:
                     command = ""
                 else:
                     command = redact(" ".join(stage_argvs(config, plan, spec, values)[0]), values)
@@ -1586,7 +1634,7 @@ def assess(
                     BLOCKED,
                     command=command,
                     reason=(
-                        spec.blocked_reason
+                        blocked
                         or "Planned only. This run was not started with --execute."
                     ),
                 )
@@ -1732,8 +1780,9 @@ def describe_plan(config: PortConfig) -> str:
             lines.append(f"   quirk: {plan.quirk}")
         for stage in ccm.STAGES:
             spec = plan.stage(stage)
-            if spec.blocked_reason is not None:
-                lines.append(f"   {stage:<11} blocked in advance: {spec.blocked_reason}")
+            blocked_reason = stage_blocked_reason(config, plan, spec)
+            if blocked_reason is not None:
+                lines.append(f"   {stage:<11} blocked in advance: {blocked_reason}")
                 continue
             argvs = stage_argvs(config, plan, spec, values)
             suffix = []

@@ -1418,6 +1418,130 @@ class EntrypointPathTest(unittest.TestCase):
             harness.entrypoint_paths(variant, harness.plan_for("OpenCode"))
         self.assertIn("skill_units", str(caught.exception))
 
+    def test_skill_scoped_plan_with_package_root_entrypoints_blocks_invocation_in_advance(self) -> None:
+        """When entrypoints sit at package root, a skill-scoped client blocks invocation."""
+        mc_config = port_config.load("mission-control", ROOT)
+        for name in ("OpenCode", "Gemini CLI", "Muse", "Hermes"):
+            plan = harness.plan_for(name)
+            spec = plan.stage("invocation")
+            with self.subTest(client=name):
+                blocked = harness.stage_blocked_reason(mc_config, plan, spec)
+                self.assertIsNotNone(blocked)
+                self.assertIn(name, blocked)
+                self.assertIn("installs skill units rather than the package", blocked)
+                for entrypoint in mc_config.assessment.entrypoints:
+                    self.assertIn(entrypoint, blocked)
+                outcome = harness.run_stage(
+                    plan,
+                    spec,
+                    mc_config,
+                    {
+                        harness.PACKAGE: "/scratch/package",
+                        harness.PYTHON: sys.executable,
+                        harness.CLIENT_HOME: "/scratch/home",
+                        harness.PLUGIN_NAME: mc_config.name,
+                    },
+                    dict(os.environ),
+                )
+                self.assertEqual(outcome.result, harness.BLOCKED)
+                self.assertEqual(outcome.reason, blocked)
+
+    def test_skill_scoped_plan_with_all_deliverable_entrypoints_is_not_blocked(self) -> None:
+        """When all entrypoints sit under skill units, skill-scoped clients execute normally."""
+        for name in ("OpenCode", "Gemini CLI", "Muse", "Hermes"):
+            plan = harness.plan_for(name)
+            spec = plan.stage("invocation")
+            with self.subTest(client=name):
+                blocked = harness.stage_blocked_reason(CONFIG, plan, spec)
+                self.assertIsNone(blocked)
+                argvs = harness.stage_argvs(
+                    CONFIG,
+                    plan,
+                    spec,
+                    {
+                        harness.PACKAGE: "/scratch/package",
+                        harness.PYTHON: sys.executable,
+                        harness.CLIENT_HOME: "/scratch/home",
+                        harness.PLUGIN_NAME: CONFIG.name,
+                    },
+                )
+                self.assertEqual(len(argvs), len(CONFIG.assessment.entrypoints))
+
+    def test_skill_scoped_plan_with_mixed_entrypoints_blocks_and_names_undeliverable_subset(self) -> None:
+        """Mixed deliverable and undeliverable entrypoints block, naming only undeliverable."""
+        variant = port_config.parse(
+            {
+                "schema_version": port_config.SCHEMA_VERSION,
+                "package": "unifi",
+                "package_root": "plugins/unifi",
+                "source": {"repository": "https://example.com/u", "package_path": "plugins/unifi"},
+                "custody": {},
+                "assessment": {
+                    "credential_prefixes": ["UNIFI_"],
+                    "package_scripts": ["unifi_network_client.py", "discover.py"],
+                    "mutating_operations": ["reboot"],
+                    "entrypoints": [
+                        "skills/unifi-network/scripts/unifi_network_client.py",
+                        "scripts/discover.py",
+                    ],
+                    "skill_units": ["skills/unifi-network"],
+                    "declared_none": [],
+                },
+            },
+            root=ROOT,
+            path=ROOT / "ports" / "unifi.json",
+        )
+        plan = harness.plan_for("OpenCode")
+        spec = plan.stage("invocation")
+        blocked = harness.stage_blocked_reason(variant, plan, spec)
+        self.assertIsNotNone(blocked)
+        self.assertIn("scripts/discover.py", blocked)
+        self.assertNotIn("skills/unifi-network/scripts/unifi_network_client.py", blocked)
+        outcome = harness.run_stage(
+            plan,
+            spec,
+            variant,
+            {
+                harness.PACKAGE: "/scratch/package",
+                harness.PYTHON: sys.executable,
+                harness.CLIENT_HOME: "/scratch/home",
+                harness.PLUGIN_NAME: variant.name,
+            },
+            dict(os.environ),
+        )
+        self.assertEqual(outcome.result, harness.BLOCKED)
+        self.assertEqual(outcome.reason, blocked)
+
+    def test_package_scoped_plan_with_package_root_entrypoints_resolves_unchanged(self) -> None:
+        """Package-scoped clients resolve package-root entrypoints without blocking."""
+        mc_config = port_config.load("mission-control", ROOT)
+        for name in ("Claude Code", "Cursor Agent", "Qwen", "Grok", "Agy"):
+            plan = harness.plan_for(name)
+            spec = plan.stage("invocation")
+            with self.subTest(client=name):
+                blocked = harness.stage_blocked_reason(mc_config, plan, spec)
+                self.assertIsNone(blocked)
+                paths = harness.entrypoint_paths(mc_config, plan)
+                self.assertEqual(len(paths), len(mc_config.assessment.entrypoints))
+                for path, relative in zip(paths, mc_config.assessment.entrypoints):
+                    self.assertEqual(path, f"{plan.invocation_root}/{relative}")
+
+    def test_describe_plan_does_not_raise_for_mission_control_shape(self) -> None:
+        """Plan print renders blocked invocation for skill-scoped and commands for package-scoped."""
+        mc_config = port_config.load("mission-control", ROOT)
+        plan_text = harness.describe_plan(mc_config)
+        self.assertIn("Assessment plan for mission-control", plan_text)
+        for name in ("OpenCode", "Gemini CLI", "Muse", "Hermes"):
+            with self.subTest(skill_scoped_client=name):
+                section = plan_text.split(f"## {name}")[1].split("## ")[0]
+                self.assertIn("invocation  blocked in advance:", section)
+                self.assertIn("scripts/sdlc_manager.py", section)
+        for name in ("Claude Code", "Cursor Agent", "Qwen", "Grok", "Agy"):
+            with self.subTest(package_scoped_client=name):
+                section = plan_text.split(f"## {name}")[1].split("## ")[0]
+                self.assertIn("invocation  <python>", section)
+                self.assertIn("5 commands", section)
+
 
 class RedactionTest(unittest.TestCase):
     def test_the_longest_value_is_replaced_first(self) -> None:
