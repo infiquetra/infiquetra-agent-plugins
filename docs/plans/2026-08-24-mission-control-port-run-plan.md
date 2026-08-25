@@ -805,6 +805,26 @@ Antigravity `gemini-3.7-flash-high` (sixth-pass amendment); the orchestrator
 owns the freeze, the integration review, the PR to main, and every GitHub
 write.
 
+**Freeze successor (2026-08-25, post-repair).** The first evidence unit
+(`u8-freeze-agy1`) stopped on a verified harness seam: `assess_clients.py`
+refused package-root entrypoints for skill-scoped clients at plan time
+(blocked report `080b535`, preserved on its unmerged unit branch), after
+completing the frozen-state suite runs, the upstream suite at the pin (275
+passed), floor verification (3.12.13 + PyYAML, 266 passed), and the cycle-15
+digest re-check (all five files matched). Repairs landed per the U3/U5 → U5b
+precedent: U8a `b2b3d75` (skill-scoped invocation recorded blocked-in-advance
+for undeliverable entrypoints; review accepted, all six lenses 10.0; merged
+`f50fce5`) and cycle-16 `da2df28` (68 anchors, 0 survivors — the disclosed
+cycle-15 survivor now killed by U6's test; binding re-pointed; supersedes
+cycle-15, preserved unedited; review accepted, all six lenses 10.0; merged
+with artifacts at `a5dd39c`). **Successor frozen candidate: the run-branch
+commit carrying this amendment.** The package tree is UNCHANGED from the
+original freeze — git tree `12433538e5b8aa9d88b573e695ef9bc6786549ab`, 64
+blobs, harness fingerprint `651ac28a…` — neither repair touched
+`plugins/**`. The evidence unit re-dispatches as `u8-freeze-agy2` from this
+commit; cycle-16 is now the freeze-state proof it verifies by digest
+re-check.
+
 ### U9. Closeout: docs, upstream filings, journal, board evidence
 
 Close the migration on main: documentation reflects the shipped package, the
