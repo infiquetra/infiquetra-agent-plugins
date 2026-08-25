@@ -787,6 +787,24 @@ SHAs, not file digests — matrix checker green again on main post-merge.
 **Verification:** child #18 block — assessment plan print, matrix checker,
 gate, both suites, `git diff --check`.
 
+**Run record — freeze (2026-08-25).** U7 landed (base `40367a8` → frozen
+`d0f366d` → merged `51d1ab3`; review accepted at cycle 1, artifacts at
+`6c7b17c`), closing serial Phase 2. Pre-freeze reconciliation with main:
+`origin/main` (`3948525`, the U2 snapshot squash) is already an ancestor of
+the run branch, so the merge-form reconciliation recorded at `57c377e`
+required no new merge. **Frozen candidate: the run-branch commit carrying
+this record.** At the pre-record tip `6c7b17c` the package tree
+`plugins/mission-control` has git tree hash
+`12433538e5b8aa9d88b573e695ef9bc6786549ab` (64 blobs); this docs-only commit
+does not change it, and no unit after U7 may change package bytes before the
+integration merge. U8's evidence unit branches from this record's commit; the
+assessment binds to the harness fingerprint (`$.package.file_count` +
+`$.package.tree_sha256`) computed over these same frozen bytes. Cycle-15
+disposition per #18: verify by digest re-check, never regenerate. Worker:
+Antigravity `gemini-3.7-flash-high` (sixth-pass amendment); the orchestrator
+owns the freeze, the integration review, the PR to main, and every GitHub
+write.
+
 ### U9. Closeout: docs, upstream filings, journal, board evidence
 
 Close the migration on main: documentation reflects the shipped package, the
