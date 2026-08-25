@@ -2,6 +2,101 @@
 
 ## 2026-08-24
 
+### Mission-control fleet-commons closure: three files, with intent_envelope as a recorded deterministic transform (KTD8)
+
+**Author.** Jeff Cox and Claude (execution coordinator for issue #9)
+
+**Decision.** The fleet-core slice U2 ports for mission-control is three files,
+not two: `intent_envelope.py`, `tier_palette.py`, and the `models.json`
+registry, all at the existing pin `3b5faa6c`. `tier_palette.py` and
+`models.json` stay pure byte copies; `intent_envelope.py` ports under
+fleet-core's existing `deterministic-transform` custody class with a new named
+rule `resolve-fleet-commons-sibling` v1 that replaces its module-scope
+`fleet_commons_shim` import block and its two `fleet_commons_shim.load()` call
+sites with same-directory sibling resolution, recorded as a package `files`
+entry with classification `deterministic-transform` (source digest, transform
+version, result digest — the package-resident shape `check_repo.py`
+validates; corrected per the amendment doc review, F2). The upstream
+`tests/test_intent_envelope.py` is not ported (it imports the saga re-export
+at module level, loads team-execution, mission-control, and shim surfaces
+during test execution, and exercises saga-only APIs; wording per F4); U2
+authors minimal target-owned tests instead. `tier_resolver.py` and `tier_policy.json` stay
+deferred: at mission-control pin `84eaf042`, `recommend_tier` /
+`self_select_posture` / `authorize_spend` have zero callers in either consumer
+(`sdlc_manager.py`, `executor_profile_lint.py`), while
+`SpendEnvelope.validate()` makes `tier_palette` + `models.json` reachable on
+the shipped envelope-parse path. Full evidence and the rejected alternatives
+are KTD8 in the
+[run plan](../plans/2026-08-24-mission-control-port-run-plan.md); the trigger
+was the first U2 dispatch stopping on child #12's own stop condition item 1
+(evidence `.orchestrate-unit-blocked.md`, commit `68cf5fc` on
+`orch/mcport-9-resume1-u2-fleetcore-q1`).
+
+**Rejected alternatives.** Porting the full tier closure (zero callers —
+speculative); a target-owned `fleet_commons_shim.py` adapter under the
+upstream name (a second implementation under an upstream-custody name — the
+divergent-source failure the custody model exists to prevent); byte-copying
+`intent_envelope.py` unchanged (cannot import anywhere in the target);
+repinning fleet-core (the closure is byte-identical at both pins; a repin
+buys nothing and regenerates UniFi's bundles).
+
+**Rationale.** Same-directory sibling resolution is placement-independent, so
+one transformed file works both in `plugins/fleet-core/scripts/fleet_commons/`
+and in mission-control's `scripts/_bundled/`, keeping KTD1's entrypoint rules
+and the shim drop-from-source unchanged; the `deterministic-transform` class
+already exists in fleet-core custody (`guard-pytest-import` v2), so no new
+custody machinery is invented.
+
+**Revisit when.** Mission-control's upstream consumption starts calling a
+`tier_resolver`-backed API — the dormant leg then joins the slice by this same
+mechanism.
+
+### Mission-control port run plan: new transform rules stay single-shape, rule selection lives in the descriptor
+
+**Author.** Jeff Cox and Claude (Saga Plan for issue #9)
+
+**Decision.** The mission-control port run plan
+([docs/plans/2026-08-24-mission-control-port-run-plan.md](../plans/2026-08-24-mission-control-port-run-plan.md))
+fixes five plan-level choices inside the operator-approved contract of issue
+#9: (1) the two mission-control entrypoint consumers get two **new** named
+single-shape transform rules, each preserving exactly-one-match discipline, and
+the existing `resolve-bundled-fleet-module` v1 stays byte-untouched; (2)
+transform-rule selection becomes an explicit per-path field in the port
+descriptor at a new schema version 3 (the format authority mandates a bump
+when a field is added, `port_config.py:54`; corrected in the S3 disposition
+pass per doc-review F1), with both descriptors migrated and
+`ports/unifi.json` naming its rule explicitly in the same commit; (3) the `when_to_use:` skill-frontmatter key is
+folded under the permitted `metadata` key by a new `normalize-skill-frontmatter`
+v1 transform, portable copies only; (4) CI package-test wiring uses the
+`plugins/*/tests` glob — the empty-collection case closed in the job's own
+command shape, a separate path-agreement check only if a concrete collection
+failure remains (doc-review F6) — rather than per-package enumeration; (5) the card-validator verdict-agreement test derives
+its authority live from the home-lab checkout and self-skips loudly when the
+checkout is absent.
+
+**Rationale.** Bumping the existing rule to a multi-shape v2 would loosen the
+exactly-one-match discipline and change the transform identity UniFi's
+committed provenance records; AGENTS.md places porting-tool package
+configuration in the descriptor, never in a script constant; `metadata` is one
+of the six fields `check_repo.py` permits, so the fold is deterministic,
+idempotent, and lossless; the glob plus corrected empty-collection handling means the next port cannot
+silently ship uncollected tests; a copied-constant authority corpus cannot fail
+when the authority moves.
+
+**Rejected alternatives.** *One loosened multi-shape rule v2* and *first-match
+semantics* (a #13 stop condition). *A script-internal path-to-rule registry*
+(the custody violation AGENTS.md names). *Keeping `schema_version` `"2"` for the rule-name field* — corrected in the
+S3 disposition pass: `port_config.py:54` mandates a bump when a field is
+added, so U3 takes version 3 (doc-review F1). *Folding `when_to_use` into the skill body* (lossy placement, harder
+idempotence) and *normalizing upstream* (the key is functional in Claude Code
+listings). *Vendoring a second card-validator authority copy here* (a third
+copy that can disagree).
+
+**Revisit when** a third port needs a transform shape neither new rule covers
+(that is the moment to consider a general rule grammar, not before), or when
+fleet-core migrates onto a port descriptor and the descriptor-vs-PROVENANCE
+custody split changes.
+
 ### A deadline-killed command is marked timed out, not given a fake exit status
 
 **Author.** Jeff Cox and Grok
