@@ -369,6 +369,48 @@ class RefusedHoldTests(DeliverTestBase):
             "Approve the deploy",
         )
 
+    def test_use_refused_keeps_the_hold_when_the_send_fails(self) -> None:
+        # The hold is deleted only after a successful send: a send that
+        # times out or fails after the read must not consume the only
+        # remaining copy of the refused transcript (F02).
+        text = "Approve the deploy"
+        failures = [
+            subprocess.TimeoutExpired(
+                ["herdr", "pane", "send-text", LIVE_PANE_ID, text],
+                deliver.HERDR_TIMEOUT_SECONDS,
+            ),
+            subprocess.CalledProcessError(
+                1,
+                ["herdr", "pane", "send-text", LIVE_PANE_ID, text],
+                "",
+                "pane gone",
+            ),
+        ]
+        for failure in failures:
+            with self.subTest(failure=type(failure).__name__):
+                self._write_hold(text)
+                spawn = _HerdrSpawnSeam([_agent_get_result(), failure])
+                with self.assertRaises(deliver.DeliveryRefusal):
+                    deliver.use_refused(spawn=spawn)
+                self.assertEqual(
+                    self._refused_path().read_text(encoding="utf-8"),
+                    text,
+                )
+
+    def test_use_refused_keeps_the_hold_when_the_binding_is_gone(self) -> None:
+        # An unbound agent refuses the delivery before any herdr call; the
+        # hold read just before must survive that refusal (F02).
+        self._write_hold("Approve the deploy")
+        (self.state_dir / binding.BINDING_FILENAME).unlink()
+        spawn = _HerdrSpawnSeam([])
+        with self.assertRaises(deliver.DeliveryRefusal):
+            deliver.use_refused(spawn=spawn)
+        self.assertEqual(spawn.calls, [])
+        self.assertEqual(
+            self._refused_path().read_text(encoding="utf-8"),
+            "Approve the deploy",
+        )
+
     def test_discard_refused_deletes_the_hold_without_sending(self) -> None:
         self._write_hold("Approve the deploy")
         deliver.discard_refused()
