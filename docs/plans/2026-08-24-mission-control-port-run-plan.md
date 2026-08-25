@@ -596,6 +596,43 @@ byte-untouched.
 **Verification:** child #15 block — bundle run, gate, suite, UniFi-churn probe,
 `git diff --check`.
 
+### U5b. Cycle-15 mutation-proof regeneration (evidence, inserted 2026-08-24)
+
+*(Unit added by coordinator amendment after U5 landed — not in the original
+ten-unit table. Trigger: `MutationProofBindingTest` fired as designed on the
+two graded-tool edits the run itself planned — `scripts/port_config.py`
+changed at U3 (KTD2 schema 3) and `scripts/check_repo.py` at U5 (the
+data-file staleness extension) — leaving exactly two suite failures on the
+otherwise-green assembled lane. Child #16 excludes mutation proofs by its own
+non-goals and #18 owns them at freeze; the landing model requires the lane
+fully green from U6 onward. The only disposition honoring all three texts is
+regenerating the proof now, as #18's mutation-proof obligation executed
+early: no unit after U5 touches the five graded files, so the cycle-15 proof
+IS the freeze-state proof and U8 verifies rather than regenerates. Evidence
+posts to #18; no new child issue.)*
+
+Re-run every cycle-14 mutation anchor against the current graded bytes, add
+anchors for the new load-bearing guards the run introduced (KTD2 schema-3
+refusals in `port_config.py`; data-file verbatim/staleness rejection in
+`check_repo.py`), and publish the cycle-15 record in the established format
+(baseline, per-mutation kill lists, digest footer, standing disclosures
+carried forward — cycle-14 precedent, which itself re-ran cycle-13 anchors
+after tool repairs).
+
+**Child issue:** #18 (obligation executed early) · **Depends on:** U5 ·
+**Lands into:** run branch (before U6)
+
+**Worker:** Antigravity `gemini-3.7-flash-high` (T4, sixth pass) · **Backend:** inline
+
+**Owned surface:** `docs/evidence/2026-08-24-cycle15-mutation-proof-portable-copies.txt`
+(new), `tests/test_site_profile.py` (ONLY the current-proof document reference
+and any new-guard anchors the binding contract needs — the five-file GRADED
+tuple is unchanged), journal append only if a new decision surfaces. The five
+graded files themselves are read-only to this unit.
+
+**Verification:** full suite green (the binding test passes against
+cycle-15), `check_repo.py` green, zero UniFi churn, `git diff --check`.
+
 ### U6. Test custody, CI wiring, entrypoint generalization
 
 Make the ported 21-file pytest suite real and enforced: CI runs it on the floor
@@ -932,3 +969,10 @@ directives, each with the line of reasoning:
   verified as a zero-tree-delta graph reconciliation (main's squash-merged
   snapshots carry content the lane already has). The pre-freeze
   reconciliation before U8 follows the same form.
+- **Cycle-15 mutation proof inserted as unit U5b (2026-08-24)** — the proof
+  binding fired as designed on the run's own U3/U5 tool edits; #16 excludes
+  proofs, #18 owns them at freeze, and the landing model wants full green
+  from U6. Resolution: execute #18's proof obligation early as a dedicated
+  evidence unit between U5 and U6 (details in the U5b record above); the
+  graded files do not change again before freeze, so cycle-15 is the
+  freeze-state proof.
