@@ -192,8 +192,12 @@ class DetachedSpawnTests(StopHookTestCase):
         files = self.speak_files()
         self.assertEqual(len(files), 2)
         self.assertEqual(len(self.seam.calls), 2)
-        for (command, _kwargs), path in zip(self.seam.calls, files):
-            self.assertEqual(command[2], str(path))
+        # Payload names carry unique random uuids, so chronological call
+        # order and lexicographic file order are unrelated: compare the
+        # spawned paths and the files on disk as sets, never by position.
+        spawned_paths = sorted(command[2] for command, _kwargs in self.seam.calls)
+        self.assertEqual(spawned_paths, [str(path) for path in files])
+        for path in files:
             self.assertEqual(
                 json.loads(path.read_text(encoding="utf-8")),
                 {"text": RESPONSE_TEXT},
