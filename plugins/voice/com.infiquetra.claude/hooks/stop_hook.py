@@ -6,9 +6,12 @@ therefore detaches (KTD2): it reads the hook payload from standard input
 once, compares the payload's ``session_id`` against the sticky binding with
 a pure local file read, and — only when this session is the bound one —
 writes the response text to a unique payload file and starts the speak
-script as a fully detached child. It then exits 0 immediately. It never
-blocks on, waits for, or reads back from the child; the harness timeout in
-``hooks.json`` is a backstop, not a budget.
+script as a fully detached child. If that spawn fails, it removes the
+payload it just wrote, so a failed hook never leaves an orphaned file
+behind; the speak child owns the payload on every path once it starts. It
+then exits 0 immediately. It never blocks on, waits for, or reads back from
+the child; the harness timeout in ``hooks.json`` is a backstop, not a
+budget.
 
 Only the bound session may speak (R3): unbound, mismatched, absent, or
 unreadable binding, or an empty ``last_assistant_message``, reads as
@@ -74,9 +77,17 @@ def main() -> int:
             return 0
         payload_path = settings.state_dir() / f"speak-{uuid.uuid4()}.json"
         payload_path.write_text(json.dumps({"text": text}) + "\n", encoding="utf-8")
-        process.spawn_detached(
-            [sys.executable, str(SPEAK_SCRIPT), str(payload_path)]
-        )
+        try:
+            process.spawn_detached(
+                [sys.executable, str(SPEAK_SCRIPT), str(payload_path)]
+            )
+        except Exception:
+            # The spawn failed, so no child will consume this payload: remove
+            # it so failed hooks do not accumulate orphaned files. The removal
+            # is best-effort — a failure there still reads as silence through
+            # the outer guard.
+            payload_path.unlink(missing_ok=True)
+            return 0
     except Exception:
         # A hook must never break a turn: any failure reads as silence.
         return 0
