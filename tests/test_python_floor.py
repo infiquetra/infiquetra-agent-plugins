@@ -74,6 +74,7 @@ DECLARATION_SITES = (
     "docs/plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md",
     "plugins/fleet-core/README.md",
     "plugins/fleet-core/CHANGELOG.md",
+    "plugins/mission-control/README.md",
 )
 
 #: Suffixes worth scanning for a stale floor token. Anything else in the tree is

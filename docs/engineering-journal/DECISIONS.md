@@ -2,6 +2,57 @@
 
 ## 2026-08-24
 
+### Ported test suite custody, CI glob execution, and generalized entrypoint enforcement (U6)
+
+**Author.** Jeff Cox and Antigravity (orchestrated unit U6, issue #16)
+
+**Decision.** Five test-custody and verification contracts for ported packages:
+(1) Carried upstream test suites live inside the package tree under
+`plugins/<package>/tests/` (twenty-one files for mission-control, 266 tests),
+verified conftest-independent with zero repo-root `conftest.py` files.
+(2) Continuous integration's floor-pinned `plugin-tests` job
+(`.github/workflows/ci.yml`) targets the `plugins/*/tests` glob, installs
+`pyyaml` (`python -m pip install --upgrade pip requests urllib3 pyyaml pytest`),
+and removes exit-status-5 masking so empty test collections fail.
+(3) `tests/test_client_entrypoints.py` generalizes across all descriptors in
+`ports/*.json` via `port_config.load_all()`, drives declared
+`assessment.entrypoints`, strips declared `credential_prefixes`
+(`GH_`/`GITHUB_` for mission-control, `UNIFI_` for unifi), preserves
+bundle-deletion controls, and skips (not fails) entrypoints whose uninstalled
+third-party dependencies (such as PyYAML) are absent in hermetic test runs.
+(4) `tests/test_python_floor.py` `DECLARATION_SITES` adds
+`plugins/mission-control/README.md` (`python>=3.12`);
+`plugins/mission-control/CHANGELOG.md` is an immutable upstream byte copy under
+provenance custody (pinned at `84eaf042`) so unlike target-owned
+`plugins/fleet-core/CHANGELOG.md` it is excluded from declaration sites.
+(5) `tests/test_check_repo.py` gains a survivor-killing test for missing Fleet
+Core data-file sources in `check_bundled_files`, plus a meta-check confirming CI
+globs match on-disk plugin test suites.
+
+**Rationale.** Placement inside the package puts every test under `PROVENANCE.json`'s
+closed set and `check_repo.py`'s manifest validation. Using `plugins/*/tests` in CI
+with exit-status-5 masking removed ensures no ported package can silently skip
+its test suite. Iterating descriptors dynamically in `test_client_entrypoints.py`
+prevents package-hardcoding and guarantees uniform entrypoint and bundle
+enforcement across all current and future ported packages.
+
+**Rejected alternatives.** Enumerating package test paths in CI (reintroduces
+silent-miss risk on subsequent ports); creating a root `conftest.py` (couples the
+catalog root to package-specific fixtures); editing `plugins/mission-control/CHANGELOG.md`
+to force a floor declaration (breaks byte-copy provenance digest).
+
+**Revisit when.** A future port requires multi-package integration fixtures or
+modifies interpreter floor requirements.
+
+**Refs.** Child #16, [run plan U6](../plans/2026-08-24-mission-control-port-run-plan.md),
+[two-CI-job decision 2026-08-22](#two-continuous-integration-jobs-hermetic-validation-and-floor-pinned-plugin-tests),
+[ported tests inside package decision](#ported-tests-live-inside-the-package-under-the-provenance-closed-set-check),
+[descriptor closed decision](#the-port-descriptor-is-closed-and-its-safety-fields-are-stated-rather-than-defaulted),
+[portable README runnable surface decision](#the-portable-mission-control-readmes-runnable-surface-is-usage-probes-and-its-links-bind-only-what-lane-b-lands-u4),
+[cycle-15 mutation proof survivor disclosure](../../docs/evidence/2026-08-24-cycle15-mutation-proof-portable-copies.txt).
+
+---
+
 ### The portable mission-control README's runnable surface is usage probes, and its links bind only what Lane B lands (U4)
 
 **Author.** Jeff Cox and Qwen (orchestrated unit U4, issue #14)
