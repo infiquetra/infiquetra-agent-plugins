@@ -361,7 +361,15 @@ class LivePackageTests(unittest.TestCase):
         deferred = {item.name for item in gdi.parse_rendered_items(text, gdi.DEFERRED_HEADING)}
         ported = {item.name for item in gdi.parse_rendered_items(text, gdi.PORTED_HEADING)}
 
-        self.assertEqual(ported, {"fleet_commons/retry_backoff.py"})
+        self.assertEqual(
+            ported,
+            {
+                "fleet_commons/intent_envelope.py",
+                "fleet_commons/models.json",
+                "fleet_commons/retry_backoff.py",
+                "fleet_commons/tier_palette.py",
+            },
+        )
         self.assertEqual(deferred & ported, set())
         self.assertIn(gdi.SHIM_FILENAME, deferred)
 
