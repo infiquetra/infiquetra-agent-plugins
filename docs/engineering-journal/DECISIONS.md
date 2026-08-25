@@ -186,6 +186,62 @@ small run-context object still beats a widening parameter list.
 [the caller-allocates decision](#the-caller-that-has-to-name-the-run-directory-is-the-caller-that-allocates-it),
 [the one-run-one-directory decision](#every-assessment-run-gets-its-own-directory-and-every-client-its-own-package-copy).
 
+### A slice expansion at an unchanged pin releases without moving the tracked version
+
+**Author.** Jeff Cox and Qwen (orchestrated unit U2, issue #12)
+
+**Decision.** The 2026-08-24 fleet-core slice expansion ([KTD8](#mission-control-fleet-commons-closure-three-files-with-intent_envelope-as-a-recorded-deterministic-transform-ktd8))
+records its changelog entry under Unreleased and keeps
+`plugins/fleet-core/plugin.json` at `0.25.2`. Child #12 directed a "version
+bump per the package release convention," but the convention's own terms
+forbid moving the number here: the version tracks the upstream Fleet Core
+version the package's bytes derive from, and upstream released 0.25.3 on
+2026-08-24 changing `retry_backoff.py` — which this pin deliberately does not
+take, because a repin churns UniFi's bundles and invalidates its committed
+matrix. Naming this package 0.25.3 while it still carries 0.25.2's
+`retry_backoff` bytes would collide with the real upstream release; inventing
+any other number is the parallel numbering the changelog preamble rejects.
+
+**Rationale.** A version string in this catalog is a derivation claim, not a
+release counter: readers and the bundle stamps resolve it against
+`PROVENANCE.json`'s pin, and the two must not disagree. The expansion moves no
+byte already here, so the Unreleased precedent the python-floor entry set
+applies; the changelog entry itself records the no-bump reasoning.
+
+**Rejected alternatives.** Bumping to 0.25.3 (false derivation and a collision
+with the actual upstream release); a package-local suffix such as
+`0.25.2-slice.1` (an invented parallel numbering the convention exists to
+prevent); repinning to take upstream 0.25.3 (a #12 stop condition).
+
+**Revisit when.** Fleet-core repins — the version moves with the pin, and the
+Unreleased entries release under it.
+
+### The U2 empty-shim-grep probe binds the transformed module, not the whole package
+
+**Author.** Jeff Cox and Qwen (orchestrated unit U2, issue #12)
+
+**Decision.** Child #12's acceptance probe `git grep fleet_commons_shim
+plugins/fleet-core/` (expected empty) is enforced in intent, not literally.
+The transformed `intent_envelope.py` carries zero references to the
+discovery shim and nothing in the slice imports or needs it, but the literal
+already lived in the committed package before this unit and must keep living
+there: the byte-copied `retry_backoff.py` docstring names the shim, and
+byte copies cannot be edited without breaking their recorded digests; the
+generated deferred inventory names `fleet_commons_shim.py` as a deferred
+item, a row the same card requires to stay ("every other deferral stays
+explicit") and the suite pins. The contract's empty-grep verification is the
+one KTD1 gives U3, scoped to `plugins/mission-control/scripts/`.
+
+**Rationale.** An acceptance probe that contradicts two other acceptance
+items in the same card (byte-copy digest equality and explicit deferrals)
+cannot be the literal contract. The property all three items share — and the
+one the first U2 dispatch's failure made concrete — is that no ported module
+depends on the shim at import or call time.
+
+**Revisit when.** Never for fleet-core while it carries byte copies whose
+upstream prose names the shim; the mission-control probe in U3 is the one
+that must end empty.
+
 ## 2026-08-23
 
 ### A command that hit the deadline is recorded like any other command
