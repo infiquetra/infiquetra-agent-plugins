@@ -33,10 +33,12 @@ coding-agent clients installed on the operator's machine:
    compatibility assessment.
 
 Custody did not move. Existing vendor repositories remain the runtime sources of
-truth. The packages under [`plugins/`](plugins/) are derived artifacts: each is
-generated from a pinned upstream commit and checked file by file against its own
-SHA-256 provenance manifest. A derived package is never a second writable source,
-and it is never hand-maintained.
+truth. The *ported* packages under [`plugins/`](plugins/) are derived artifacts:
+each is generated from a pinned upstream commit and checked file by file against
+its own SHA-256 provenance manifest. A derived package is never a second writable
+source, and it is never hand-maintained. A package authored in this repository —
+`voice` is the first — carries no upstream pin and no provenance manifest, and is
+maintained here directly.
 
 Key facts about the current state are verified by the repository's own tests
 and committed evidence:
