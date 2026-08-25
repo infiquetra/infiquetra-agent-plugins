@@ -557,12 +557,25 @@ machinery for the data file — required scope, not a contingency (doc-review
 F3, verified 2026-08-24): `schemas/fleet-bundle.schema.json`'s module `name`
 pattern (`^[A-Za-z_][A-Za-z0-9_]*$`) rejects `models.json`;
 `bundle_fleet_module.py` resolves every source as `fleet_commons/<name>.py`
-and prepends a `#`-comment stamp block that is invalid inside JSON. The unit
-adds an explicit data-file entry class to the schema and generator (source
-resolved without the `.py` suffix, destination verbatim, staleness proven by
-digest comparison recorded outside the file instead of an in-file stamp),
-with schema docs and tests updated in the same commit; UniFi declarations
-stay byte-untouched and validating.
+and prepends a `#`-comment stamp block that is invalid inside JSON. The
+extension is decision-complete here (F3 recheck): **(a) declaration shape** —
+a new OPTIONAL top-level `data` array beside `modules`, items mirroring the
+module item (`{"name", "destinations"}`, `additionalProperties: false`) with
+name pattern `^[A-Za-z_][A-Za-z0-9_]*\.[a-z0-9]+$` (extension required),
+source resolved verbatim as `fleet_commons/<name>`, destinations defaulting
+to `scripts/_bundled/<name>`; **(b) schema version** — `schema_version`
+moves from `const "1"` to `enum ["1", "2"]` with an `if/then` requiring
+`"2"` whenever `data` is present; a modules-only declaration stays valid at
+`"1"`, so both UniFi declarations remain byte-untouched (their package
+fingerprints and the committed matrix never move) — the KTD2 migrate-both
+precedent is deliberately NOT followed here for exactly that
+fingerprint reason, recorded as the rejected alternative; **(c) staleness
+and digests** — a bundled data file is a VERBATIM byte copy: no in-file
+stamp, no sidecar; the extended `check_bundled_files` proves freshness by
+direct byte-equality against `plugins/fleet-core/scripts/fleet_commons/<name>`,
+and the file's canonical digest already lives in fleet-core's
+`PROVENANCE.json` `files` entry. Schema docs and generator/schema tests
+update in the same commit; UniFi generated bundles stay byte-untouched.
 
 **Rejected alternative:** hand-copying the modules into the package — rejected
 because `check_repo.py` rejects hand-edited bundles by design, and hand copies
@@ -880,4 +893,12 @@ directives, each with the line of reasoning:
   data-file bundle extension promoted from contingency to required scope
   (F3), the import-shape wording made precise (F4), the duplicate journal
   instruction dropped (F5), and card-amendment sequencing stated truthfully
-  (F1).
+  (F1). The reviewer's delta recheck resolved F1/F2/F4/F5 and held F3 open
+  for decision-completeness (addendum persisted at `fa6139e`); the U5
+  record now fixes the three open choices — optional `data` array
+  mirroring the module item shape with an extension-bearing name pattern,
+  `schema_version` `enum ["1","2"]` + `if/then` so UniFi declarations stay
+  byte-untouched (fingerprint preservation; the KTD2 migrate-both
+  precedent deliberately not followed, for that reason), and verbatim
+  byte-equality staleness with no in-file stamp or sidecar (the canonical
+  digest already lives in fleet-core's `PROVENANCE.json`).
