@@ -2,6 +2,62 @@
 
 ## 2026-08-24
 
+### The portable mission-control README's runnable surface is usage probes, and its links bind only what Lane B lands (U4)
+
+**Author.** Jeff Cox and Qwen (orchestrated unit U4, issue #14)
+
+**Decision.** Two shapes of the target-owned package README
+(`plugins/mission-control/README.md`). First: the only commands it documents
+in runnable `bash` fences are repository checks and `--help` usage probes of
+the five package entrypoints. Every live mission-control subcommand reaches
+GitHub through the `gh` CLI, so any fenced live command would force the
+README's enforcement test (`tests/test_mission_control_readme.py`) to make a
+live GitHub call with ambient credentials or to fail — the first violates the
+run plan's no-live-GitHub rule (R5), and the second is the exact
+"documented command that cannot run" defect the test exists to catch. Usage
+probes prove import and argument parsing, not live behavior; live behavior
+needs an authenticated `gh`, and the read-only versus GitHub-mutating split
+is therefore documented as an audited table, not as runnable fences. Second:
+relative links bind only paths present when Lane B lands (the target-owned
+manifest, the descriptor, the repository tooling); paths the parallel sync
+and bundle lanes land later (`scripts/`, `skills/`, `config/`,
+`com.infiquetra.claude/`, `PROVENANCE.json`, `fleet-bundle.json`,
+`scripts/_bundled/`) are referenced as literals. `check_markdown_links` and
+`test_check_repo.py`'s live-tree assertion run per branch, so a link to a
+file another lane has not landed yet is a broken link on this branch and in
+every integration state before that lane merges. The enforcement test skips
+its Lane A/C-guarded assertions (command runnability with `GH_`/`GITHUB_`
+variables stripped, PROVENANCE target-owned custody) with a reason when the
+artifacts are absent and asserts them fully when present; the assembled
+integration branch is where everything is required green.
+
+**Rejected alternatives.** Fencing live commands and extending the test's
+skip list to them — that removes runnability enforcement from exactly the
+commands most likely to rot, restoring the pilot's defect in a new shape.
+Relative links to synchronized paths — broken on this branch and on the
+integration branch until each owning lane lands, turning another unit's merge
+order into this README's gate failures. Byte-copying the upstream README —
+the codified pilot failure: it introduces the Claude Code plugin, hardcodes a
+stale installed script path under the plugin cache, and omits `flow` from its
+own skills table, and a later resync would restore all three.
+
+**Rationale.** The UniFi README can fence live operations because UniFi's
+discovery and drift commands are credential-free and offline; mission-control
+has no such surface, so its runnable verification contract is the usage probe
+— the same shape `tests/test_client_entrypoints.py` uses. Keeping links green
+at every branch state matches the run plan's landing model, under which
+intermediate states may fail only named package-completeness checks.
+
+**Revisit when.** Mission-control grows a genuinely credential-free,
+network-free read mode (the way UniFi has discovery and drift); it then joins
+the fenced surface under this same test.
+
+**Refs.** Child #14, [run plan U4](../plans/2026-08-24-mission-control-port-run-plan.md),
+[`tests/test_mission_control_readme.py`](../../tests/test_mission_control_readme.py),
+[`tests/test_unifi_readme.py`](../../tests/test_unifi_readme.py)
+
+---
+
 ### Mission-control fleet-commons closure: three files, with intent_envelope as a recorded deterministic transform (KTD8)
 
 **Author.** Jeff Cox and Claude (execution coordinator for issue #9)
