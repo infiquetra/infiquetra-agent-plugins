@@ -52,8 +52,8 @@ non-overlapping: all 33 requirements appear once, and no requirement appears twi
 | --- | --- | --- | --- | --- | --- | --- |
 | U1 | #28 | Package foundation, provider declaration contract, retention posture, subprocess discipline. **Implements R30.** | G1 | — | R20, R21, R23, R24, R28, R29, R30, R31, R32 | `plugins/voice/{plugin.json,README.md}`, `plugins/voice/scripts/{providers,settings,process}.py` |
 | U2 | #29 | Claude client extension: `Stop` hook, binding store, single-speaker guard | G2 | U1 | R1, R2, R3 | `plugins/voice/com.infiquetra.claude/**`, `plugins/voice/scripts/binding.py` |
-| U3 | #30 | Speak path: Markdown cleanup, code-block omission, synthesis invocation | G2 | U1 | R5, R6, R7 | `plugins/voice/scripts/{text_cleanup,speak}.py` |
-| U4 | #31 | Listen path: toggle recording, hosted transcription, ephemeral retention | G2 | U1 | R10, R12, R25, R26, R27 | `plugins/voice/scripts/{record,transcribe}.py` |
+| U3 | #30 | Speak path: Markdown cleanup, code-block omission, Voice Forge synthesis | G2 | U1 | R5, R6, R7 | `plugins/voice/scripts/{text_cleanup,speak}.py` |
+| U4 | #31 | Listen path: toggle recording, Hermes relay transcription, ephemeral retention | G2 | U1 | R10, R12, R25, R26, R27 | `plugins/voice/scripts/{record,transcribe}.py` |
 | U5 | #32 | Deliver path: unsubmitted `herdr pane send-text`, bound-only target, **audible** blocked refusal, transient retention | G3 | U1, U2, **U3**, U4 | R16, R17, R18, R19 | `plugins/voice/scripts/deliver.py` |
 | U6 | #33 | Agent Skill entrypoint, Voice pane controls, provider and keybinding preflight | G3 | U1, U2, U3, U4 | R4, R8, R9, R11, R13, R14, R15, R22 | `plugins/voice/skills/voice/SKILL.md`, `plugins/voice/scripts/{voice_cli,pane,preflight}.py` |
 | U7 | #34 | Acceptance evidence, README **verification**, journal closeout | G4 | U1–U6 | R33 | `docs/evidence/voice/**`, `plugins/voice/README.md` (finalize only), `docs/engineering-journal/**` |
@@ -277,6 +277,8 @@ proof** — do not repair a launcher or redesign the run during preflight.
 | P5 | `herdr pane send-text <pane_id> "<text>"` delivers literal text **without** Enter | Send text to a live pane and confirm it sits unsubmitted and editable | R16 is unmet and the loop cannot close; stop |
 | P6 | Terminal microphone permission is granted (decision D3) | Capture a short sample with `/opt/homebrew/bin/ffmpeg` via AVFoundation | U4 parks; recording cannot be exercised |
 | P7 | Every launch template in the per-run vendor table dry-runs cleanly | `agents --dry-run …` for each row | Stop; the affected role has no validated launcher |
+| P8 | **Voice Forge text-to-speech is reachable and can actually synthesize** (decision D1) | Resolve `VOICE_FORGE_BASE_URL` from the Home Lab deployment receipt; `GET /health` and require a **usable backend**, not merely a healthy process; `GET /v1/audio/voices` and require the configured `VOICE_FORGE_VOICE_ID` to be present; then `POST /v1/audio/speech` with a short real phrase and verify the response is non-empty, playable audio | **Stop. Do not substitute another text-to-speech provider.** A healthy process with no available backend fails this gate |
+| P9 | **Hermes relay speech-to-text resolves xAI and actually transcribes** (decision D2) | `GET {VOICE_HERMES_BASE_URL}/api/health` and require healthy; prove the configured `VOICE_HERMES_PROFILE` exists and resolves `stt.provider: xai` **without displaying any credential**; `POST /api/audio/transcribe?profile=mimir-engineer` with a short real audio sample and require `provider` = `xai` plus a non-empty expected transcript; confirm `voice` never read `auth.json` and stored no bearer | **Stop. Do not substitute another speech-to-text provider.** |
 
 Preflight is run once, immediately before dispatch, even though this contract already
 records earlier receipts. Record the results in the opening run comment on this issue.
@@ -286,7 +288,13 @@ records earlier receipts. Record the results in the opening run comment on this 
 The run halts and asks the operator when any of these occurs:
 
 - A unit concludes it must edit `.github/workflows/ci.yml`.
-- A unit needs a provider credential, a billing decision, or a paid endpoint.
+- A unit needs a provider credential, a billing decision, or a paid endpoint. `voice`
+  holds no credential of its own: Hermes owns the xAI OAuth token, and any unit that
+  finds itself reading `auth.json`, copying a bearer, or wanting `XAI_API_KEY` has hit
+  this condition.
+- Voice Forge preflight (P8) or Hermes speech-to-text preflight (P9) fails. Stop rather
+  than substituting a different provider — R23 forbids silent substitution, and these
+  two are decided.
 - A unit proposes writing Herdr configuration, which R15 forbids outright.
 - Microphone permission cannot be granted to the terminal non-interactively.
 - A Saga Code Review is still below the consensus threshold after three cycles.
@@ -307,6 +315,9 @@ The run halts and asks the operator when any of these occurs:
 - [ ] The multi-session silence check passes per AE1, recorded in the same acceptance evidence.
 - [ ] The README states the absent provenance manifest and port descriptor plainly per R30, implemented by U1 and verified by U7: `grep -iE "provenance|port descriptor" plugins/voice/README.md` returns a match.
 - [ ] The portable Agent Skill entrypoint exists and no MCP server was added: `test -f plugins/voice/skills/voice/SKILL.md && ! grep -riq "mcpServers" plugins/voice/` exits 0.
+- [ ] No credential is read or stored by the package: `grep -riE "auth\.json|XAI_API_KEY|Bearer " plugins/voice/scripts/` returns no output.
+- [ ] No Hermes internals are imported and no HTTP dependency was added: `grep -riE "^import hermes|from hermes|import requests|import httpx" plugins/voice/scripts/` returns no output.
+- [ ] No provider endpoint is hard-coded to an IP address: `grep -rE "https?://[0-9]{1,3}(\.[0-9]{1,3}){3}" plugins/voice/scripts/` returns no output.
 
 ### Verification
 
@@ -332,22 +343,32 @@ durable; and any pool that never ran disclosed as unexercised.
 
 ### Operator decision table
 
-Five of the six decisions are settled by operator ruling and are **closed**. Exactly
-one remains genuinely open. The run continues unattended through the closed ones and
-pauses only for D2 or a genuine stop condition outside its authority.
+**All six decisions are settled. There is no remaining provider decision gate.** The
+run continues unattended and pauses only for a genuine stop condition outside its
+authority.
 
 | # | Decision | Status | Ruling |
 | --- | --- | --- | --- |
-| D1 | Text-to-speech provider and egress class | **RESOLVED** | `/usr/bin/say`, egress class `on-device`, for the first text-to-speech acceptance proof. Declared like any other provider — `voice` still ships no implementation and still refuses by name rather than substituting |
-| D2 | Hosted speech-to-text provider, its credential variable name, and its external egress declaration | **PENDING — the only open decision** | Not decided. Do not infer, default, or select one. U4 builds against the U1 declaration contract and parks rather than choosing |
+| D1 | Text-to-speech provider and egress class | **RESOLVED** | **Voice Forge on the Mac mini**, reached over the local network. Egress class **`local-network`** — not `on-device`. Configured through non-secret `VOICE_FORGE_BASE_URL` (from the Home Lab deployment receipt) and `VOICE_FORGE_VOICE_ID` (a registered Voice Forge voice). No IP address is hard-coded. Synthesis uses `POST /v1/audio/speech` with Voice Forge's OpenAI-compatible request shape |
+| D2 | Speech-to-text provider, credential owner, and egress declaration | **RESOLVED** | **xAI Grok speech-to-text through the local Hermes relay.** `voice` calls `POST {VOICE_HERMES_BASE_URL}/api/audio/transcribe?profile={VOICE_HERMES_PROFILE}`, acceptance values `http://127.0.0.1:8765` and `mimir-engineer`. **Credential variable in `voice`: none.** Credential owner: Hermes xAI OAuth. **Effective audio egress: `external`**, because Hermes forwards the audio to xAI |
 | D3 | Audio capture tool and microphone permission | **RESOLVED** | `/opt/homebrew/bin/ffmpeg` using the macOS AVFoundation input device. Terminal microphone permission is confirmed during preflight (gate P6), not assumed at run time |
 | D4 | The Herdr-wide `voice stop` keybinding | **RESOLVED — yes** | The operator adds the documented keybinding. `voice` only preflights and reports its presence (R14) and never writes Herdr configuration (R15) |
-| D5 | Retention posture | **RESOLVED — ephemeral** | Temporary audio deleted after both success and failure; no `voice` transcript log; no telemetry. Planning chooses the smallest clear setting *name*; the behaviour is settled and is written down rather than defaulted (R28) |
+| D5 | Retention posture | **RESOLVED — ephemeral** | Temporary audio deleted after both success and failure; no `voice` transcript log; no telemetry. Planning chooses the smallest clear setting *name*; the behaviour is settled and written down rather than defaulted (R28) |
 
-**How D2 parks.** U4 preserves its work in a draft pull request linked with
-`Relates to`, the coordinator marks the unit parked and moves its board card, and
-independent lanes continue. The operator's ruling is recorded as a durable comment and
-the same unit resumes — no replacement unit is created for completed work.
+**Provider boundary — what stays outside `voice`.** Provider installation, OAuth
+refresh, service management, billing, and credentials all remain outside the plugin
+(R24). Hermes owns the xAI OAuth token and the xAI request; `voice` must never read
+`auth.json`, copy a bearer, import Hermes internals, or require an `XAI_API_KEY`. The
+Home Lab System Update session owns upgrading the Mac mini Voice Forge installation and
+making it reachable; this run neither modifies Home Lab nor waits on that session.
+
+Both providers are reached over plain HTTP behind the U1 declaration contract, so the
+provider boundary stays replaceable. `voice` depends on no Hermes Python module and no
+Hermes repository code.
+
+**Runtime proofs are not yet run.** D1 and D2 are *decided*, not *proven*. Gates P8 and
+P9 above are the proofs, and they belong to the fresh preflight after Home Lab finishes
+the Mac mini deployment.
 
 
 ### Authority
@@ -365,9 +386,9 @@ elsewhere. Pre-existing artifacts and unrelated sessions are never touched.
 **This becomes an unattended run only after the operator approves this contract and a
 fresh preflight passes green.** Both conditions are required; neither is assumed.
 
-Once running, it continues without routine supervision. It pauses for exactly two
-things: the pending D2 provider ruling, and a genuine stop condition outside its
-authority. It does not pause to confirm work it is already authorized to do, and it
+Once running, it continues without routine supervision. **Every operator decision gate
+is now resolved**, so it pauses for exactly one thing: a genuine stop condition outside
+its authority. It does not pause to confirm work it is already authorized to do, and it
 never answers an operator decision gate on the operator's behalf.
 
 **The coordinator is the sole Operations-board writer**, and keeps parent and child
