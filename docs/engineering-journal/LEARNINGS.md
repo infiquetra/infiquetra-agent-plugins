@@ -2,6 +2,31 @@
 
 ## 2026-08-25
 
+### Package-internal asset paths must avoid assuming fixed ancestor repository depth
+
+**Author.** Jeff Cox and Antigravity
+
+**Context.** In run unit U8 of `mission-control` porting (issue #18), ten-client compatibility
+assessment revealed that `sync_template_docs.py` failed during `--help` invocation under
+session-scoped placement (Cursor Agent and Claude Code).
+
+**Evidence.** `python3 scripts/assess_clients.py --package mission-control --execute` recorded
+exit status 1 on `<python> <package>/scripts/sync_template_docs.py --help` for Cursor Agent and
+Claude Code, raising `FileNotFoundError: [Errno 2] No such file or directory: '.../plugins/mission-control/config/generated/issue_contract_data.py'`.
+
+**Mechanism.** `sync_template_docs.py:16-25` resolves its contract data file using
+`REPO_ROOT = Path(__file__).resolve().parents[3]` and `REPO_ROOT / "plugins/mission-control/config/generated/issue_contract_data.py"`.
+This hardcodes a 4-level directory hierarchy (`<repo>/plugins/<package>/scripts/<script>.py`). When
+a client installs or mounts the package as a top-level folder (`<session>/package/scripts/<script>.py`),
+`parents[3]` steps outside the package into `<session>`, where `plugins/mission-control/` does not exist.
+Because `issue_contract_data.py` is imported at module scope (line 27-31), the `FileNotFoundError` occurs
+before `argparse` can parse `--help`.
+
+**Generalizable rule.** Package-internal configuration and data files should be resolved relative
+to the package root (`parents[1]`), never via assumed repository root nesting (`parents[3]`).
+
+**Refs.** `plugins/mission-control/scripts/sync_template_docs.py:16-31`, `docs/evidence/2026-08-25-mission-control-compatibility-matrix.md`.
+
 ### Package-root entrypoints must be blocked in advance for skill-scoped clients
 
 **Author.** Jeff Cox and Antigravity
