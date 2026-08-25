@@ -144,10 +144,12 @@ def use_refused(
 ) -> None:
     """Explicitly use the held refused transcript (R19).
 
-    Reads the hold file, deletes it, then delivers that text. When the
-    agent is still blocked, delivery refuses again and the transcript is
-    held anew — it is never forced through. A missing hold is refused by
-    name.
+    Reads the hold file and delivers that text, deleting the hold only
+    after a successful send. When the agent is still blocked, delivery
+    refuses again and the transcript is held anew — it is never forced
+    through. Any other delivery failure likewise leaves the hold in
+    place, so a failed send never consumes the only remaining copy of a
+    refused transcript. A missing hold is refused by name.
     """
     path = _refused_path()
     try:
@@ -156,8 +158,8 @@ def use_refused(
         raise DeliveryRefusal(
             "there is no refused transcript to use"
         ) from error
-    path.unlink(missing_ok=True)
     deliver(text, spawn=spawn, speak_text=speak_text)
+    path.unlink(missing_ok=True)
 
 
 def discard_refused() -> None:
