@@ -114,7 +114,7 @@ The record of the work, in the order a new reader should take it:
 
 | Package | Status | Description | Upstream Pin |
 |---|---|---|---|
-| [`plugins/unifi/`](plugins/unifi/README.md) | Ported (pilot) | Portable UniFi network and protect management | `ed72f439` (v0.25.1) |
+| [`plugins/unifi/`](plugins/unifi/README.md) | Ported (pilot) | Portable UniFi network and protect management | `818fd684` (v2.0.6) |
 | [`plugins/fleet-core/`](plugins/fleet-core/README.md) | Ported (vertical slice) | Shared rate-limit retry, intent envelope, tier palette, and models registry | `3b5faa6c` (v0.25.2) |
 | [`plugins/mission-control/`](plugins/mission-control/README.md) | Ported | SDLC management on Operations, Asgard, and CAMPPS boards | `84eaf042` (v2.12.2) |
 
