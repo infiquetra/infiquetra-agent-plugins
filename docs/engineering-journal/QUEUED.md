@@ -1,5 +1,21 @@
 # Queued work - infiquetra-agent-plugins
 
+## Consume the eight open upstream mission-control filings via a deliberate repin + resync
+
+The #9 migration filed eight defects/enhancements against
+`infiquetra/infiquetra-claude-plugins`, all open as of 2026-08-25: #818–#822
+(during the run: stale 2.1.0 paths, `/issue` self-alias, README `flow`
+omission, `beads-config.json` help text, `sync_template_docs.py` `parents[3]`)
+and #828–#830 (at the retrospective: module-scope `yaml` import deferral, the
+two tests' `parents[3]` assumptions, an upstream card-validator
+verdict-agreement test). When upstream lands any of them, the fix reaches this
+repository only through the resync policy — repin, `sync_vendor_source.py
+--check`, re-run the suites, and re-run exactly the fingerprint-bound evidence
+whose binding moved — never an in-place edit. One related proposal was
+deliberately **declined**, not deferred (restructuring
+`test_prompt_alignment.py`'s repository-structural premises); the
+[retrospective](../retros/issue-9-2026-08-25.md) records all dispositions.
+
 ## The link checker validates against the filesystem, not against the repository
 
 `check_repo.py` resolves each local markdown link with `(document.parent /

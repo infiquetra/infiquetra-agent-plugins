@@ -2,6 +2,48 @@
 
 ## 2026-08-25
 
+### Async worker watchers trigger on branch commits and runner liveness, never agent status
+
+**Author.** Jeff Cox and Claude (mission-control migration retrospective,
+[#9](https://github.com/infiquetra/infiquetra-agent-plugins/issues/9))
+
+**Decision.** A watcher over a dispatched CLI-agent unit wakes on durable side
+effects — a commit appearing on the unit's branch, or its runner process dying —
+with agent status used only as a long-threshold stall signal that the agent's
+own heartbeat resets. Status alone never triggers action.
+
+**Rationale.** Antigravity reports `done` at its async turn boundary while a
+background runner keeps executing; the mcport-9-resume1 run burned three watcher
+redesigns on this (a 5-minute idle alarm fired mid-work twice) before the
+commit-triggered design held for the rest of the run.
+
+**Rejected alternatives.** Status-polling watchers (false alarms by
+construction); short idle thresholds without heartbeat reset (fire during any
+long grind, such as a 47-minute mutation-anchor run).
+
+**Revisit when.** A driven CLI exposes a first-class completion signal distinct
+from its conversational turn state.
+
+### Record-only orchestration branches are marked merge=false at creation
+
+**Author.** Jeff Cox and Claude (mission-control migration retrospective, #9)
+
+**Decision.** Any orchestrate unit whose branch exists to be read rather than
+landed — a review controller, a doc-review unit, a unit that stopped on a
+blocked marker — carries `merge=false` in the run state, set the moment its
+nature is known.
+
+**Rationale.** `land` merges every done unit with commits and applies no review
+or content gating in selection. When the first U8 evidence unit stopped by
+committing `.orchestrate-unit-blocked.md`, only an immediate `merge=false` edit
+kept the blocked marker off the integration lane.
+
+**Rejected alternatives.** Land-time vigilance (one missed `land` ships the
+marker); deleting the blocked branch immediately (destroys the record before its
+content is durably quoted into the child issue).
+
+**Revisit when.** Orchestrate grows a first-class record-only unit type.
+
 ### Portable mission-control package port executed under runbook v1.0.0 (U9)
 
 **Author.** Jeff Cox and Antigravity (orchestrated unit U9, issue #19)

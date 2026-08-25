@@ -2,6 +2,30 @@
 
 ## 2026-08-25
 
+### An async CLI agent's "done" status is a turn boundary, not completion
+
+**Author.** Jeff Cox and Claude (mission-control migration retrospective,
+[#9](https://github.com/infiquetra/infiquetra-agent-plugins/issues/9))
+
+**Context.** Driving five Antigravity units unattended through Herdr during the
+mcport-9-resume1 run.
+
+**Evidence.** The U8 evidence unit showed `done` 75 seconds after launch while
+its background runner was executing the ten-client assessment; the cycle-16 unit
+ground 68 mutation anchors for ~47 minutes of `done` status punctuated by a
+4-minute self-scheduled heartbeat; after each turn a CLI-feedback dialog
+occupied the composer and could swallow a follow-up prompt
+([retro §2.5](../retros/issue-9-2026-08-25.md)).
+
+**Mechanism.** The CLI ends its interactive turn and self-schedules background
+work; the session multiplexer reads turn state, so "done" means "not currently
+conversing," and anything sent to the composer before the dialog is cleared is
+captured by the dialog, not the agent.
+
+**Generalizable rule.** Judge an async worker by durable side effects — commits,
+artifacts, live processes — never by its conversational state, and clear its
+composer before prompting into an existing session.
+
 ### Package-internal asset paths must avoid assuming fixed ancestor repository depth
 
 **Author.** Jeff Cox and Antigravity
