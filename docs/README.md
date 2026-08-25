@@ -69,5 +69,6 @@ Which package each tool acts on is a [port descriptor](../ports/README.md) under
 
 The architecture is proposed, and the first pilot has now tested it end to end.
 Existing vendor plugin repositories remain authoritative: the pilot moved no
-custody, and the packages under `plugins/` are derived artifacts pinned to an
-upstream revision rather than a second writable source.
+custody, and the ported packages under `plugins/` are derived artifacts pinned
+to an upstream revision rather than a second writable source; the `voice`
+package is authored in this repository and carries no upstream pin.
