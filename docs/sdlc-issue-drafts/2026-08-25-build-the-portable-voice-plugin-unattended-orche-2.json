@@ -1,0 +1,57 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-25-build-the-portable-voice-plugin-unattended-orche-2.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "needs-plan"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-08-25-voice-plugin-requirements.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-25-build-the-portable-voice-plugin-unattended-orche-2.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-08-25\ntopic: voice-plugin\nmaturity: requirements-ready\nsource: docs/ideation/2026-08-25-voice-plugin-ideation.md \u2014 survivors 1 (providers declare), 2 (seam split by direction), 4 (lease discipline), 5 (born-portable custody record), 6 (blocked-session signal, deferred as optional), 7 (speech is not an approval channel)\n---\n\n# Voice Plugin \u2014 Requirements\n\n## Summary\n\nA portable Agent Plugins package named `voice` that gives one explicitly bound, Herdr-managed Claude session a complete spoken conversational loop: the agent's reply is read aloud, the operator toggles a key and speaks, and the transcribed words arrive as editable, unsubmitted text in that same agent's input box. One agent at a time, both directions, no arbitration anywhere.\n\n## Problem Frame\n\nVoice behaviour across the operator's coding-agent environment is fragmented and client-specific. Claude Code's native `/voice` is input-only, hosted by Anthropic, and Claude-specific. A working prior-art plugin at `claude-interface` proves two-way voice is achievable but is macOS- and Claude-bound, depends on fragile terminal-input injection, has no provider contract, and kills every other session's listener when a",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-08-25-voice-plugin-requirements.md",
+    "ref": "docs/brainstorms/2026-08-25-voice-plugin-requirements.md",
+    "title": "Voice Plugin \u2014 Requirements",
+    "url": null
+  },
+  "state": "blocked",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "Build the portable voice plugin \u2014 unattended orchestration contract",
+  "updated_at": "2026-08-25T15:06:52.632289+00:00"
+}
