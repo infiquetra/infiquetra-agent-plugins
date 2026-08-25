@@ -85,17 +85,18 @@ class StopHookTestCase(unittest.TestCase):
     def spawn_through_seam(self, argv):
         return self.real_spawn_detached(argv, spawn=self.seam)
 
-    def run_hook(self, stdin_text: str) -> int:
+    def run_hook(self, stdin_text: str, spawn_side_effect=None) -> int:
+        side_effect = (
+            self.spawn_through_seam if spawn_side_effect is None else spawn_side_effect
+        )
         stream = io.StringIO(stdin_text)
         with (
             patch.object(sys, "stdin", stream),
-            patch.object(
-                process, "spawn_detached", side_effect=self.spawn_through_seam
-            ),
+            patch.object(process, "spawn_detached", side_effect=side_effect),
         ):
             return stop_hook.main()
 
-    def run_hook_payload(self, **fields) -> int:
+    def run_hook_payload(self, spawn_side_effect=None, **fields) -> int:
         payload = {
             "session_id": BOUND_SESSION,
             "hook_event_name": "Stop",
@@ -103,7 +104,7 @@ class StopHookTestCase(unittest.TestCase):
             "last_assistant_message": RESPONSE_TEXT,
         }
         payload.update(fields)
-        return self.run_hook(json.dumps(payload))
+        return self.run_hook(json.dumps(payload), spawn_side_effect=spawn_side_effect)
 
     def speak_files(self) -> list[Path]:
         return sorted(self.state_dir.glob("speak-*.json"))
@@ -209,6 +210,66 @@ class DetachedSpawnTests(StopHookTestCase):
         self.bind()
         self.assertEqual(self.run_hook_payload(), 0)
         self.assertEqual(len(self.seam.calls), 1)
+
+
+class SpawnFailureCleanupTests(StopHookTestCase):
+    """A failed spawn removes the payload it wrote and still exits 0 (F03)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.attempts: list[list[str]] = []
+
+    def failing_spawn(self, error: Exception):
+        """Route the real ``spawn_detached`` through a Popen seam that refuses."""
+        attempts = self.attempts
+
+        def refuse(command, **kwargs):
+            attempts.append(command)
+            raise error
+
+        def spawn_through_refusal(argv):
+            return self.real_spawn_detached(argv, spawn=refuse)
+
+        return spawn_through_refusal
+
+    def test_a_failed_spawn_removes_the_payload_and_exits_zero(self) -> None:
+        self.bind()
+        result = self.run_hook_payload(
+            spawn_side_effect=self.failing_spawn(OSError("spawn refused"))
+        )
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            len(self.attempts), 1, "the spawn was attempted exactly once"
+        )
+        attempted_path = Path(self.attempts[0][2])
+        self.assertTrue(attempted_path.name.startswith("speak-"))
+        self.assertFalse(
+            attempted_path.exists(),
+            "a failed spawn must not leave its payload file behind",
+        )
+        self.assertEqual(self.speak_files(), [])
+
+    def test_a_failed_spawn_still_gets_a_unique_payload_name(self) -> None:
+        self.bind()
+        for _ in range(2):
+            result = self.run_hook_payload(
+                spawn_side_effect=self.failing_spawn(OSError("spawn refused"))
+            )
+            self.assertEqual(result, 0)
+        attempted_paths = [command[2] for command in self.attempts]
+        self.assertEqual(len(attempted_paths), 2)
+        self.assertEqual(len(set(attempted_paths)), 2)
+        self.assertEqual(self.speak_files(), [])
+
+    def test_a_cleanup_failure_still_exits_zero(self) -> None:
+        self.bind()
+        with (
+            patch.object(Path, "unlink", side_effect=OSError("disk gone")),
+        ):
+            result = self.run_hook_payload(
+                spawn_side_effect=self.failing_spawn(OSError("spawn refused"))
+            )
+        self.assertEqual(result, 0)
 
 
 class NeverBreakTheTurnTests(StopHookTestCase):
