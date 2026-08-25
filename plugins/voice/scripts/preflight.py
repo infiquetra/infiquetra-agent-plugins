@@ -8,16 +8,18 @@ rather than failing at first use (R22). Nothing is ever substituted
 
 The probes, in fixed order:
 
-- ``voice-forge`` — ``GET /health`` requiring a healthy process *with* a
-  usable backend (a healthy process with no backend fails), ``GET
+- ``voice-forge`` — ``GET /health`` requiring ``ok: true`` *with* a loaded
+  backend (a healthy process with no loaded backend fails), ``GET
   /v1/audio/voices`` requiring the configured voice id, then one real
   short synthesis whose audio becomes the speech-to-text sample (KTD15).
 - ``hermes-xai`` — ``GET /api/health``, the loopback session token read
   from the dashboard root page into memory only, ``GET /api/profiles``
-  with the token header requiring the configured profile to resolve
-  ``stt.provider`` = ``xai``, then the KTD15 sample through ``POST
-  /api/audio/transcribe`` requiring a non-empty transcript from provider
-  ``xai``. ``auth_required: false`` on the health endpoint is never read
+  with the token header requiring the configured profile to resolve among
+  the relay's profiles (live profiles carry no speech-to-text surface —
+  the profile's ``provider`` is its LLM provider), then the KTD15 sample
+  through ``POST /api/audio/transcribe`` requiring a non-empty transcript
+  from provider ``xai``: the round trip itself is the speech-to-text
+  guarantee. ``auth_required: false`` on the health endpoint is never read
   as anonymous access: the token is required either way, and a missing
   token is reported as token-missing, never as healthy.
 - The operator's Herdr-wide keybinding — one read-only probe of Herdr's
@@ -106,8 +108,6 @@ _TOKEN_PATTERN = re.compile(
     r"window\.__HERMES_SESSION_TOKEN__\s*=\s*([\"'])([^\"']+)\1"
 )
 
-_HEALTHY_WORDS = frozenset({"ok", "healthy", "up", "true"})
-
 
 @dataclass(frozen=True)
 class ProbeResult:
@@ -157,15 +157,30 @@ def _get_json(
     return status, payload
 
 
-def _status_is_healthy(value: object) -> bool:
-    return isinstance(value, str) and value.strip().lower() in _HEALTHY_WORDS
+def _backends_loaded(value: object) -> bool:
+    """A non-empty ``backends_loaded`` is the usable-backend proof.
+
+    Accepts the loaded-backend collection or a positive loaded count, so a
+    healthy process proves it has a backend to synthesize with under
+    either representation.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value > 0
+    if isinstance(value, (str, list, tuple, dict)):
+        return len(value) > 0
+    return False
 
 
 def probe_forge_health(base_url: str, *, open_url: Callable) -> ProbeResult:
     """``GET /health``: a healthy process with a usable backend.
 
-    A healthy process with no backend fails — the process answering is
-    not the backend synthesizing.
+    Voice Forge v0.3.0 answers ``{"ok": true, "version", "registry_dir",
+    "voices_count", "backends_available", "backends_loaded"}`` — ``ok`` is
+    the health flag, and a non-empty ``backends_loaded`` proves the
+    backend. A healthy process with no loaded backend fails — the process
+    answering is not the backend synthesizing.
     """
     check = f"GET {HEALTH_PATH}"
     try:
@@ -185,33 +200,25 @@ def probe_forge_health(base_url: str, *, open_url: Callable) -> ProbeResult:
             CHECK_FAILED,
             "answered something that is not a JSON object",
         )
-    process_status = payload.get("status")
-    if not _status_is_healthy(process_status):
+    if payload.get("ok") is not True:
         return ProbeResult(
             providers.VOICE_FORGE,
             check,
             CHECK_FAILED,
-            f"the process reports status {process_status!r}, not healthy",
+            f"the process reports ok={payload.get('ok')!r}, not true",
         )
-    backend = payload.get("backend")
-    if backend in (None, "", {}, []):
+    if not _backends_loaded(payload.get("backends_loaded")):
         return ProbeResult(
             providers.VOICE_FORGE,
             check,
             CHECK_FAILED,
-            "the process is healthy but carries no backend",
+            "the process is healthy but reports no loaded backend",
         )
-    if isinstance(backend, dict):
-        backend_status = backend.get("status")
-        if backend_status is not None and not _status_is_healthy(backend_status):
-            return ProbeResult(
-                providers.VOICE_FORGE,
-                check,
-                CHECK_FAILED,
-                f"the backend reports status {backend_status!r}, not healthy",
-            )
     return ProbeResult(
-        providers.VOICE_FORGE, check, CHECK_OK, "process healthy with a backend"
+        providers.VOICE_FORGE,
+        check,
+        CHECK_OK,
+        "process healthy with a loaded backend",
     )
 
 
@@ -407,11 +414,17 @@ def _find_profile(payload: object, profile_name: str) -> dict | None:
 def probe_hermes_profile(
     base_url: str, profile: str, token: str, *, open_url: Callable
 ) -> ProbeResult:
-    """``GET /api/profiles``: the profile must resolve ``stt.provider`` xai.
+    """``GET /api/profiles``: the configured profile must resolve.
+
+    Live relay profiles carry no speech-to-text surface — a profile's
+    ``provider`` is its LLM provider — so the probe proves the token
+    authenticates and the configured profile is among the relay's
+    profiles, and stops there. The speech-to-text guarantee is the sample
+    round trip, which resolves the provider from the relay's own
+    transcription answer (KTD15).
 
     The session token rides in the header only — never in the URL — and
-    the report names the profile and its resolved provider, never a
-    credential.
+    the report names the profile, never a credential.
     """
     check = f"GET {HERMES_PROFILES_PATH}"
     url = base_url.rstrip("/") + HERMES_PROFILES_PATH
@@ -447,21 +460,11 @@ def probe_hermes_profile(
             CHECK_FAILED,
             f"profile {profile!r} is not among the relay's profiles",
         )
-    stt = entry.get("stt")
-    provider = stt.get("provider") if isinstance(stt, dict) else None
-    if provider != transcribe.EXPECTED_PROVIDER:
-        return ProbeResult(
-            providers.HERMES_XAI,
-            check,
-            CHECK_FAILED,
-            f"profile {profile!r} resolves stt.provider {provider!r}, not "
-            f"{transcribe.EXPECTED_PROVIDER!r}",
-        )
     return ProbeResult(
         providers.HERMES_XAI,
         check,
         CHECK_OK,
-        f"profile {profile!r} resolves stt.provider {provider!r}",
+        f"profile {profile!r} resolved among the relay's profiles",
     )
 
 

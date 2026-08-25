@@ -38,8 +38,17 @@ ROOT_PAGE_WITH_TOKEN = (
 ).encode("utf-8")
 ROOT_PAGE_WITHOUT_TOKEN = b"<html><body>no token here</body></html>"
 
+# The deployed Voice Forge v0.3.0 /health document (review F05): an ``ok``
+# flag plus backend bookkeeping — no ``status`` key, no ``backend`` member.
 HEALTHY_FORGE_HEALTH = json.dumps(
-    {"status": "healthy", "backend": {"status": "healthy", "name": "engine"}}
+    {
+        "ok": True,
+        "version": "0.3.0",
+        "registry_dir": "example-registry",
+        "voices_count": 2,
+        "backends_available": ["example-backend"],
+        "backends_loaded": ["example-backend"],
+    }
 ).encode("utf-8")
 VOICES_LISTED = json.dumps(
     {"voices": [{"id": FORGE_VOICE_ID}, {"id": "another-voice"}]}
@@ -48,8 +57,25 @@ SAMPLE_AUDIO = b"RIFF-inert-sample-bytes"
 HERMES_HEALTH = json.dumps(
     {"version": "0.20.4", "auth_required": False}
 ).encode("utf-8")
-PROFILES_XAI = json.dumps(
-    {"profiles": {HERMES_PROFILE: {"stt": {"provider": "xai"}}}}
+# The deployed relay v0.20.4 /api/profiles entry shape (review F06): no
+# ``stt`` surface — ``provider`` is the profile's LLM provider, and
+# ``gateway_running``, ``model``, ``path``, ``skill_count`` and similar
+# carry its state. The speech-to-text proof is the sample round trip.
+PROFILES_LISTED = json.dumps(
+    {
+        "profiles": {
+            HERMES_PROFILE: {
+                "description": "example profile",
+                "display_name": "Example Profile",
+                "gateway_running": True,
+                "model": "example-model",
+                "name": HERMES_PROFILE,
+                "path": "example-profile-path",
+                "provider": "xai",
+                "skill_count": 3,
+            }
+        }
+    }
 ).encode("utf-8")
 SAMPLE_TRANSCRIPTION = json.dumps(
     {"transcript": "voice preflight sample", "provider": "xai"}
@@ -103,7 +129,7 @@ def _happy_routes() -> dict:
         ("POST", "/v1/audio/speech"): (200, SAMPLE_AUDIO),
         ("GET", "/api/health"): (200, HERMES_HEALTH),
         ("GET", "/"): (200, ROOT_PAGE_WITH_TOKEN),
-        ("GET", "/api/profiles"): (200, PROFILES_XAI),
+        ("GET", "/api/profiles"): (200, PROFILES_LISTED),
         ("POST", "/api/audio/transcribe"): (200, SAMPLE_TRANSCRIPTION),
     }
 
@@ -180,29 +206,52 @@ class VoiceForgeProbeTests(PreflightTestBase):
         )
         self.assertEqual(hermes_health.status, preflight.CHECK_OK)
 
-    def test_healthy_process_without_backend_fails(self) -> None:
-        seam = _RouteTable({("GET", "/health"): (200, json.dumps(
-            {"status": "healthy", "backend": None}
-        ).encode("utf-8"))})
+    def test_the_live_health_document_passes(self) -> None:
+        # The deployed v0.3.0 document itself is the contract (review F05).
+        seam = _RouteTable({("GET", "/health"): (200, HEALTHY_FORGE_HEALTH)})
         result = preflight.probe_forge_health(FORGE_BASE, open_url=seam)
-        self.assertEqual(result.status, preflight.CHECK_FAILED)
-        self.assertIn("no backend", result.detail)
+        self.assertEqual(result.status, preflight.CHECK_OK)
 
-    def test_unhealthy_process_status_fails_by_name(self) -> None:
+    def test_a_loaded_backend_count_passes(self) -> None:
         seam = _RouteTable({("GET", "/health"): (200, json.dumps(
-            {"status": "down", "backend": "engine"}
+            {"ok": True, "version": "0.3.0", "voices_count": 2,
+             "backends_available": 1, "backends_loaded": 1}
         ).encode("utf-8"))})
         result = preflight.probe_forge_health(FORGE_BASE, open_url=seam)
-        self.assertEqual(result.status, preflight.CHECK_FAILED)
-        self.assertIn("'down'", result.detail)
+        self.assertEqual(result.status, preflight.CHECK_OK)
 
-    def test_backend_reporting_unhealthy_fails_by_name(self) -> None:
+    def test_healthy_process_without_a_loaded_backend_fails(self) -> None:
         seam = _RouteTable({("GET", "/health"): (200, json.dumps(
-            {"status": "healthy", "backend": {"status": "down"}}
+            {"ok": True, "version": "0.3.0", "voices_count": 0,
+             "backends_available": [], "backends_loaded": []}
         ).encode("utf-8"))})
         result = preflight.probe_forge_health(FORGE_BASE, open_url=seam)
         self.assertEqual(result.status, preflight.CHECK_FAILED)
-        self.assertIn("backend", result.detail)
+        self.assertIn("no loaded backend", result.detail)
+
+    def test_ok_false_fails_by_name(self) -> None:
+        seam = _RouteTable({("GET", "/health"): (200, json.dumps(
+            {"ok": False, "version": "0.3.0", "backends_loaded": ["engine"]}
+        ).encode("utf-8"))})
+        result = preflight.probe_forge_health(FORGE_BASE, open_url=seam)
+        self.assertEqual(result.status, preflight.CHECK_FAILED)
+        self.assertIn("ok=False", result.detail)
+
+    def test_an_answer_without_the_ok_flag_fails_by_name(self) -> None:
+        seam = _RouteTable({("GET", "/health"): (200, json.dumps(
+            {"version": "0.3.0", "backends_loaded": ["engine"]}
+        ).encode("utf-8"))})
+        result = preflight.probe_forge_health(FORGE_BASE, open_url=seam)
+        self.assertEqual(result.status, preflight.CHECK_FAILED)
+        self.assertIn("not true", result.detail)
+
+    def test_a_zero_loaded_backend_count_fails(self) -> None:
+        seam = _RouteTable({("GET", "/health"): (200, json.dumps(
+            {"ok": True, "version": "0.3.0", "backends_loaded": 0}
+        ).encode("utf-8"))})
+        result = preflight.probe_forge_health(FORGE_BASE, open_url=seam)
+        self.assertEqual(result.status, preflight.CHECK_FAILED)
+        self.assertIn("no loaded backend", result.detail)
 
     def test_unreachable_forge_fails_by_name(self) -> None:
         seam = _RouteTable(
@@ -309,7 +358,11 @@ class HermesProbeTests(PreflightTestBase):
 
     def test_profile_absent_fails_by_name(self) -> None:
         seam = _RouteTable({("GET", "/api/profiles"): (200, json.dumps(
-            {"profiles": {"someone-else": {"stt": {"provider": "xai"}}}}
+            {"profiles": {"someone-else": {
+                "name": "someone-else",
+                "provider": "xai",
+                "model": "example-model",
+            }}}
         ).encode("utf-8"))})
         result = preflight.probe_hermes_profile(
             HERMES_BASE, HERMES_PROFILE, SESSION_TOKEN, open_url=seam
@@ -317,25 +370,37 @@ class HermesProbeTests(PreflightTestBase):
         self.assertEqual(result.status, preflight.CHECK_FAILED)
         self.assertIn(HERMES_PROFILE, result.detail)
 
-    def test_profile_resolving_a_different_provider_fails_by_name(self) -> None:
-        seam = _RouteTable({("GET", "/api/profiles"): (200, json.dumps(
-            {"profiles": {HERMES_PROFILE: {"stt": {"provider": "openai"}}}}
-        ).encode("utf-8"))})
+    def test_the_live_profile_document_passes(self) -> None:
+        # The deployed v0.20.4 entry shape — no ``stt`` surface — is the
+        # contract (review F06); the STT proof is the sample round trip.
+        seam = _RouteTable({("GET", "/api/profiles"): (200, PROFILES_LISTED)})
         result = preflight.probe_hermes_profile(
             HERMES_BASE, HERMES_PROFILE, SESSION_TOKEN, open_url=seam
         )
-        self.assertEqual(result.status, preflight.CHECK_FAILED)
-        self.assertIn("'openai'", result.detail)
-        self.assertIn("'xai'", result.detail)
+        self.assertEqual(result.status, preflight.CHECK_OK)
 
-    def test_profile_without_stt_fails_by_name(self) -> None:
+    def test_a_profile_without_any_stt_surface_passes(self) -> None:
         seam = _RouteTable({("GET", "/api/profiles"): (200, json.dumps(
             {"profiles": {HERMES_PROFILE: {}}}
         ).encode("utf-8"))})
         result = preflight.probe_hermes_profile(
             HERMES_BASE, HERMES_PROFILE, SESSION_TOKEN, open_url=seam
         )
-        self.assertEqual(result.status, preflight.CHECK_FAILED)
+        self.assertEqual(result.status, preflight.CHECK_OK)
+
+    def test_the_probe_does_not_assert_the_profile_llm_provider(self) -> None:
+        # A profile's ``provider`` is its LLM provider, never the
+        # speech-to-text resolution; the probe does not assert it.
+        seam = _RouteTable({("GET", "/api/profiles"): (200, json.dumps(
+            {"profiles": {HERMES_PROFILE: {
+                "name": HERMES_PROFILE,
+                "provider": "openai",
+            }}}
+        ).encode("utf-8"))})
+        result = preflight.probe_hermes_profile(
+            HERMES_BASE, HERMES_PROFILE, SESSION_TOKEN, open_url=seam
+        )
+        self.assertEqual(result.status, preflight.CHECK_OK)
 
     def test_rejected_token_fails_by_name_without_a_loop(self) -> None:
         seam = _RouteTable({("GET", "/api/profiles"): (401, b"")})
@@ -345,13 +410,6 @@ class HermesProbeTests(PreflightTestBase):
         self.assertEqual(result.status, preflight.CHECK_FAILED)
         self.assertIn("rejected the session token", result.detail)
         self.assertEqual(len(seam.requests), 1)
-
-    def test_profile_resolving_xai_passes(self) -> None:
-        seam = _RouteTable({("GET", "/api/profiles"): (200, PROFILES_XAI)})
-        result = preflight.probe_hermes_profile(
-            HERMES_BASE, HERMES_PROFILE, SESSION_TOKEN, open_url=seam
-        )
-        self.assertEqual(result.status, preflight.CHECK_OK)
 
 
 class SampleRoundTripTests(PreflightTestBase):
@@ -385,6 +443,25 @@ class SampleRoundTripTests(PreflightTestBase):
         sample = self.result_for(results, providers.HERMES_XAI, "sample round trip")
         self.assertEqual(sample.status, preflight.CHECK_FAILED)
         self.assertIn("empty transcript", sample.detail)
+
+    def test_the_relay_silence_document_fails_as_nothing_to_deliver(
+        self,
+    ) -> None:
+        # The live silence mapping (review F07): empty transcript, absent
+        # provider. The round trip names it nothing to deliver — never a
+        # substitution.
+        routes = _happy_routes()
+        routes[("POST", "/api/audio/transcribe")] = (
+            200,
+            json.dumps(
+                {"ok": True, "transcript": "", "provider": None}
+            ).encode("utf-8"),
+        )
+        seam = _RouteTable(routes)
+        results = self.run_all(seam)
+        sample = self.result_for(results, providers.HERMES_XAI, "sample round trip")
+        self.assertEqual(sample.status, preflight.CHECK_FAILED)
+        self.assertIn("nothing to deliver", sample.detail)
 
     def test_sample_provider_mismatch_fails_by_name(self) -> None:
         routes = _happy_routes()
