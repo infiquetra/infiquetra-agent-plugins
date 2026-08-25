@@ -134,14 +134,19 @@ floor `python>=3.12`, tested with `unittest` (R31); `urllib.request` for HTTP �
   names the closed agent-state set: `idle`, `working`, `blocked`, `done`, `unknown`.
 - The session-id join is live: `herdr agent list` shows each Claude pane's
   `agent_session.value` equal to that session's Claude `session_id` (observed for this
-  planning session itself). Preflight P3 re-proves it before dispatch.
+  planning session itself). Each listed agent carries `agent_status` and `pane_id`.
+  Preflight P3 re-proves the join before dispatch.
+- Herdr custom keybindings live at `~/.config/herdr/config.toml` on this host
+  (`[[keys.command]]` entries). KTD13 probes that path read-only; tests inject it.
+- The live Hermes relay at `http://127.0.0.1:8765/api/health` reports version `0.20.4`
+  with `auth_required: false`. `POST /api/audio/transcribe` accepts JSON field
+  `data_url` (a `data:` base64 URL) and returns `transcript` and `provider`. That is a
+  wire contract, not a licence to import Hermes code.
 - The Claude plugin hook descriptor shape is confirmed against the installed
   `openai-codex/codex` plugin: `hooks/hooks.json` top-level `hooks.Stop[].hooks[]`
-  entries of `{"type": "command", "command": "… ${CLAUDE_PLUGIN_ROOT}/…", "timeout": N}`.
-  Preflight P1 re-confirms the `Stop` payload fields.
-- Herdr custom keybindings live in Herdr's `config.toml` (`herdr config reset-keys`
-  documents "Back up config.toml and remove custom keybindings") — R14's preflight is a
-  read-only probe of that file (KTD13).
+  entries of `{"type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/…\"", "timeout": N}`
+  — interpreter-prefixed. Voice uses `python3` in the same shape (KTD2). Preflight P1
+  re-confirms the `Stop` payload fields.
 - Only `plugins/mission-control/tests/` exists among plugin test trees today, and it
   claims the top-level `tests` package name inside the shared pytest process
   (`plugins/mission-control/tests/__init__.py`). KTD12 keeps `voice` out of that
@@ -178,49 +183,67 @@ rather than editing across the boundary.
 ## Key Technical Decisions
 
 These close the questions the requirements explicitly deferred to planning (state home,
-pane/hook sharing, provider-declaration shape and storage, delivery escaping) plus the
-design forks the child issues leave open. Each is a decision with rationale; workers do
-not re-litigate them.
+pane/hook sharing, provider-declaration shape and storage, delivery escaping, pane
+key presentation) plus the design forks the child issues leave open. Each is a
+decision with rationale; workers do not re-litigate them. Operator decisions D1 and
+D2 are carried, not reopened.
 
 **KTD1 — State home and the pane↔hook seam: one machine-local state directory, shared
 through small JSON files, no daemon.** Runtime state lives in a single directory,
 default `~/.local/state/voice/`, overridable with `VOICE_STATE_DIR` (tests point it at
 a temp dir). Contents: `binding.json` (the sticky binding), `recording.json` (active
 recorder pid + wav path while recording), `playback.json` (active playback pid + audio
-path while speaking), and `refused-transcript.txt` (the R19 transient hold — a single
+path while speaking), `refused-transcript.txt` (the R19 transient hold — a single
 current file, consumed or discarded, never appended, so it is not a transcript log under
-R26). The `Stop` hook and the Voice pane share state only through these files. Writes
-are write-temp-then-`os.replace` (atomic on one filesystem, stdlib). Rationale: the
-non-goals exclude any resident daemon or background listener, a single operator makes
-file-granularity coordination sufficient, and `~/.local/state` survives reboots, which
-sticky binding (R2) requires. Rejected: repo-relative state (wrong scope — worktrees
-multiply it), `/tmp` (cleaned by the OS; binding must persist), sockets/daemons
-(machinery without a requirement).
+R26), and unique `speak-<uuid>.json` payload files (the KTD2 hook→speak handoff —
+`{"text": "<last_assistant_message>"}`, one file per spawn, never reused, deleted by
+the speak child on every exit path). The `Stop` hook and the Voice pane share state only
+through these files. Writes are write-temp-then-`os.replace` (atomic on one filesystem,
+stdlib). Rationale: the non-goals exclude any resident daemon or background listener, a
+single operator makes file-granularity coordination sufficient, and `~/.local/state`
+survives reboots, which sticky binding (R2) requires. Rejected: repo-relative state
+(wrong scope — worktrees multiply it), `/tmp` (cleaned by the OS; binding must persist),
+sockets/daemons (machinery without a requirement), passing the response text on the
+child's stdin (KTD2 closes stdin; R32 forbids inheriting it), or passing it as an argv
+element (long replies must not meet `ARG_MAX`).
 
 **KTD2 — The Stop hook detaches; the harness timeout is a backstop, not a budget.**
 Preflight P2's measurement makes this binding: `Stop` hooks run synchronously.
-`stop_hook.py` therefore does exactly three things: read the hook payload from stdin
+`stop_hook.py` therefore does exactly four things: read the hook payload from stdin
 once; compare `session_id` against `binding.json` (a local file read — no subprocess on
-this path); and, only when bound, spawn the speak pipeline as a fully detached child
-(`start_new_session=True`, stdin explicitly closed, stdout/stderr to devnull, via U1's
-process helper) and exit 0 immediately. All slow work — cleanup, synthesis HTTP,
-playback — happens in the child. `hooks/hooks.json` declares the `Stop` entry with a
-small `timeout` (5 seconds) as a harness-side backstop; the hook's own return is ~30 ms.
-Unbound, mismatched, absent, or unparseable binding → exit 0 with no side effect and no
-sound (R3). The hook never blocks on, waits for, or reads back from the child.
+this path); only when bound, write `last_assistant_message` to a unique
+`speak-<uuid>.json` under the state dir; and spawn U3's `speak.py` as a fully detached
+argv child, then exit 0 immediately. The spawn is
+`[sys.executable, speak_path, payload_path]` with `start_new_session=True`, stdin
+explicitly closed, stdout/stderr to devnull, via U1's process helper.
+`speak_path` is resolved from the hook file as
+`Path(__file__).resolve().parents[2] / "scripts" / "speak.py"` (the portable package
+root, not the Claude extension root). The hook does **not** import `speak`, does **not**
+clean Markdown, and does **not** call Voice Forge — those are U3, concurrent in G2.
+`hooks/hooks.json` declares the `Stop` entry as
+`{"type":"command","command":"python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/stop_hook.py\"","timeout":5}`
+— interpreter-prefixed like the verified `openai-codex/codex` `Stop` hook, 5-second
+timeout as a harness-side backstop; the hook's own return is ~30 ms. Unbound,
+mismatched, absent, or unparseable binding, or empty `last_assistant_message` → exit 0
+with no spawn, no payload file, and no sound (R3). The hook never blocks on, waits for,
+or reads back from the child.
 
 **KTD3 — R32 deadlines without R5 length gates: deadlines derive from the medium, never
 from the text.** Every subprocess gets stdin explicitly closed and a deadline (R32), but
-no deadline may act as a response-length gate (R5). Policy by class: (a) bounded helper
-calls (`herdr agent get`, `herdr pane send-text`) get fixed short timeouts (order of
-10 s); (b) playback's deadline is computed from the synthesized audio's actual duration
-(wav header via the stdlib `wave` module) plus a fixed margin — long replies get long
-deadlines, so nothing is truncated; (c) the capture recorder is spawned with an explicit
-maximum-duration ceiling (`ffmpeg -t`, generous — order of 10 minutes) as its deadline;
-ceiling expiry ends capture but never auto-transcribes — transcription still happens
-only on the operator's explicit stop press (R12); (d) the detached speak child (KTD2)
-cannot be waited on by its parent, so it carries its deadlines internally: a connect/read
-timeout on the synthesis request and the duration-derived playback deadline.
+no deadline may act as a response-length gate (R5). Policy by class, with the numbers
+pinned so workers do not invent them: (a) bounded helper calls (`herdr agent get`,
+`herdr pane send-text`) get a **10-second** timeout; (b) playback's deadline is the
+synthesized audio's actual duration (wav header via the stdlib `wave` module) plus a
+**2-second** margin — long replies get long deadlines, so nothing is truncated; (c) the
+capture recorder is spawned with `ffmpeg -t 600` (10 minutes) as both the media ceiling
+and the subprocess deadline; ceiling expiry ends capture, **deletes the wav**, and never
+auto-transcribes — transcription still happens only on the operator's explicit stop
+press (R12); (d) the detached speak child (KTD2) cannot be waited on by its parent, so it
+carries its deadlines internally: Voice Forge HTTP uses a **10-second connect** timeout
+and a **300-second read** timeout (generous, not scaled from character count — a timeout
+is a named refusal, never truncation or a shortened utterance) plus the duration-derived
+playback deadline. A hang is a named refusal; a long reply that finishes synthesizing
+inside 300 seconds is spoken whole.
 
 **KTD4 — Egress classes: R21's closed set is the enum; "external" is a derived
 predicate, not a fifth value.** `providers.py` defines the egress class as exactly the
@@ -279,7 +302,7 @@ session restarted, new session id) yields silence until re-bound; the pane displ
 bound identity continuously (R4), which makes staleness visible rather than surprising.
 
 **KTD8 — Voice Forge synthesis: request wav, play through the stated player, delete
-after playback.** `speak.py` (U3) POSTs the OpenAI-compatible JSON body — input text,
+after playback.** `speak.py` (U3) POSTs the OpenAI-compatible JSON body — `input` text,
 `voice` = `VOICE_FORGE_VOICE_ID`, `response_format` = `wav` — to
 `{VOICE_FORGE_BASE_URL}/v1/audio/speech` with `urllib.request`, writes the response
 bytes to a temp file under the state dir, plays it with `VOICE_PLAYBACK_BIN` through
@@ -289,24 +312,33 @@ audio file after playback ends, is stopped, or fails (D5's ephemeral posture cov
 synthesized audio as well as recorded audio). wav is chosen so the stdlib `wave` module
 can read the real duration for the deadline. Unreachable/unhealthy Voice Forge or a
 non-2xx response → named refusal, never substitution (R23). `speak.py` exposes two
-entry points: `speak(text)` (used by the hook's detached child and by U5's audible
-refusal with a short fixed refusal phrase) and `stop_playback()` (used by U6). A
-response whose cleaned text is empty (for example, a reply that was only a fenced code
-block) synthesizes nothing and exits silently — that is R7's omission, not a failure.
+importable entry points: `speak(text)` (used by the `__main__` child and by U5's audible
+refusal with a short fixed refusal phrase) and `stop_playback()` (used by U6 and by
+`speak()` itself so a new utterance replaces any still-playing one). It is also a
+runnable child: `python3 speak.py <payload.json>` reads KTD1's `{"text": "..."}`,
+deletes that payload file in a `finally` (malformed payload synthesizes nothing),
+cleans the text (KTD10), then calls `speak()`. A response whose cleaned text is empty
+(for example, a reply that was only a fenced code block) synthesizes nothing and exits
+silently — that is R7's omission, not a failure.
 
 **KTD9 — Hermes transcription: data-URL body, in-memory token, one refresh, one
 retry.** `transcribe.py` (U4) obtains the session token by GETting
 `{VOICE_HERMES_BASE_URL}/` and extracting `window.__HERMES_SESSION_TOKEN__` from the
-served page; holds it in process memory only; POSTs the documented
-`AudioTranscriptionRequest` shape — a base64 audio data URL — to
+served page; holds it in process memory only; POSTs JSON
+`{"data_url": "data:audio/wav;base64,<...>"}` to
 `/api/audio/transcribe?profile={VOICE_HERMES_PROFILE}` with the
-`X-Hermes-Session-Token` header, built on `urllib.request`. On 401 it refreshes the
-token from the root page once and retries once; a second 401 fails by name — never a
-loop. The response's transcript and `provider` field are consumed; the response
-`provider` is the authoritative resolution, and a provider other than the profile's
-expected `xai` is a named refusal, not a silent substitution (R23). The token never
-appears in command arguments, on disk, in logs, or in evidence. `auth_required: false`
-on `/api/health` is never read as anonymous access to protected routes.
+`X-Hermes-Session-Token` header, built on `urllib.request`. The field name is `data_url`
+— that is the live relay's `AudioTranscriptionRequest` (verified 2026-08-25 against the
+acceptance relay at `http://127.0.0.1:8765`, health version `0.20.4`); do not invent
+`audio`, `file`, or `content`. `mime_type` is omitted: the data-URL header already
+carries `audio/wav`. On 401 it refreshes the token from the root page once and retries
+once; a second 401 fails by name — never a loop. The response fields `transcript` and
+`provider` are consumed (`ok` is ignored); the response `provider` is the authoritative
+resolution, and a provider other than the profile's expected `xai` is a named refusal,
+not a silent substitution (R23). The token never appears in command arguments, on disk,
+in logs, or in evidence. `auth_required: false` on `/api/health` is never read as
+anonymous access to protected routes. This unit does not import Hermes code; the field
+name is a wire contract, not a Python dependency.
 
 **KTD10 — Markdown cleanup: strip formatting, omit fenced contents, parse nothing
 fancy.** `text_cleanup.py` (U3) removes fenced code blocks (backtick and tilde fences)
@@ -319,21 +351,26 @@ a small line/regex pass, not a Markdown parser; fidelity beyond the tested class
 explicitly not a version-one goal.
 
 **KTD11 — Delivery: resolve, check, normalize, send-text; the blocked check refuses
-audibly; the race residual is preserved, not patched.** `deliver.py` (U5) resolves the
-bound agent through `herdr agent get` (pane_id + `agent_status` from the closed state
-set `idle|working|blocked|done|unknown`). If `agent_status` is `blocked`, nothing is
-sent: the refusal is spoken through U3's speak entry point, and the transcript is
-retained transiently in `refused-transcript.txt` until the operator explicitly uses or
-discards it — never auto-delivered, never queued (R18, R19). Otherwise the transcript is
+audibly; the race residual is preserved, not patched.** `deliver.py` (U5) exposes three
+module-level entry points: `deliver(text)`, `use_refused()`, and `discard_refused()`.
+`deliver(text)` resolves the bound agent through `herdr agent get` (pane_id +
+`agent_status` from the closed state set `idle|working|blocked|done|unknown`, 10-second
+deadline). If `agent_status` is `blocked`, nothing is sent: the refusal is spoken
+through U3's `speak()` entry point, and the transcript is retained transiently in
+`refused-transcript.txt` until the operator explicitly uses or discards it — never
+auto-delivered, never queued (R18, R19). Otherwise the transcript is
 whitespace-normalized to a single line (speech has no meaningful line structure, and
 this removes any chance a raw newline reaches the terminal as Enter — the escaping
 question the requirements deferred to planning) and delivered with
 `herdr pane send-text <pane_id> <text>` as an argv list, no shell — literal text,
-without Enter, unsubmitted and editable (R16). `herdr pane run` is never invoked. Only
-the bound agent is ever targeted (R17); an unresolvable bound agent is a named error in
-the pane, not a fallback to another target. The check-then-send race is the contract's
-stated residual: narrowed, deliberately not closed here — the guard belongs to Herdr as
-a proposed enhancement, and no workaround machinery is built.
+without Enter, unsubmitted and editable (R16). `use_refused()` reads and deletes the
+hold file then calls `deliver` on that text; `discard_refused()` deletes it. `herdr pane
+run` is never invoked. Only the bound agent is ever targeted (R17); an unresolvable
+bound agent is a named error in the pane, not a fallback to another target. The
+check-then-send race is the contract's stated residual: narrowed, deliberately not
+closed here — the guard belongs to Herdr as a proposed enhancement, and no workaround
+machinery is built. U6 may call these entry points only through an injectable lazy
+import (KTD16); it must not copy send-text into `pane.py`.
 
 **KTD12 — Test seams and CI hermeticity: fakes everywhere, no `__init__.py`, unique
 names.** CI's plugin-test job runs on `ubuntu-latest`, which has no `afplay`, no
@@ -357,11 +394,15 @@ credential-shaped literals — the repo gate scans every text file under `plugin
 
 **KTD13 — R14 keybinding preflight is a read-only probe of Herdr's `config.toml`.**
 Herdr keeps custom keybindings in its `config.toml` (per the CLI's own
-`config reset-keys` help). `preflight.py` locates the standard config path, reads it
-read-only, and reports whether a keybinding invoking `voice stop` is present — reporting
-absence by name (R14) and never writing any Herdr configuration (R15). The voice README
-documents the exact keybinding line for the operator to add (D4). If the file is absent
-or unreadable, preflight reports that state; it never creates or repairs it.
+`config reset-keys` help). Version-one probe path is `~/.config/herdr/config.toml`
+(XDG; verified present on this host 2026-08-25, with custom bindings as
+`[[keys.command]]` entries). `preflight.py` reads that path read-only — tests inject
+the path — and reports whether any binding's command string contains `voice stop`,
+reporting absence by name (R14) and never writing any Herdr configuration (R15). The
+voice README documents a `[[keys.command]]` stanza whose command string contains
+`voice stop`; the operator chooses the key (D4). Preflight does not require a specific
+`type` field. If the file is absent or unreadable, preflight reports that state; it
+never creates or repairs it.
 
 **KTD14 — Package identity: manifest per repository rule; no provenance, no port
 descriptor, no changelog.** `plugins/voice/plugin.json` carries the Agent Plugins
@@ -385,6 +426,24 @@ check is reported by name as not-run (the token, profile, and health probes stil
 degradation is named, never silent. Rejected: a committed wav asset (binary in a
 text-audited package, and a second copy of a phrase the loop can produce for free);
 recording a fresh sample (couples the speech-to-text probe to P6's microphone grant).
+
+**KTD16 — The Voice pane is the listen-path sequencer; same-lane units never import
+each other at module level.** The requirements deferred pane presentation to planning;
+this closes it. U6's pane is the only long-running process, so it sequences the listen
+path without owning it: on `t` while idle it calls U3 `stop_playback()` then U4
+`record.toggle()` (R9 then R10); on `t` while recording, `record.toggle()` returns the
+wav path and the pane then calls U4 `transcribe.transcribe(path)` and U5 `deliver(text)`.
+U4 never imports U5; U6 never implements send-text or HTTP. Because U5 and U6 dispatch
+concurrently, `pane.py` and `voice_cli.py` import `deliver` only inside the key/command
+handler through an injectable seam (default: function-level import); tests fake the
+seam so U6 can land before `deliver.py` exists. The same lazy-import rule applies to
+`use_refused` / `discard_refused`. Keys, processed immediately without waiting for Enter
+via stdlib `tty.setcbreak`/`termios` on the pane's stdin (no `curses`, no third-party
+TUI, no `input()`): `t` toggle recording, `s` stop playback, `u` use refused transcript,
+`d` discard refused transcript, `q` quit the pane. While recording, the pane displays
+the literal `*** RECORDING ***` (R11; tests look for `RECORDING`) next to the bound
+Herdr agent name and session id from `binding.json` (R4). This does not add a G3
+dependency and does not reopen the parent graph.
 
 ## Worker bindings and backend
 
@@ -439,6 +498,14 @@ its owned paths, and raising a cross-boundary conflict on #27 beats editing. Eve
 verifies with the same four commands from the repository root before freeze:
 `python3 scripts/check_repo.py` · `python3 -m unittest discover -s tests` ·
 `python3 -m pytest plugins/voice/tests -q` · `git diff --check`.
+
+**Patterns to follow (every unit).** Portable package layout from `plugins/unifi/` and
+`plugins/mission-control/` (vendor-neutral `scripts/` + `skills/`, Claude files only
+under `com.infiquetra.claude/`). Tests copy `plugins/mission-control/tests/`:
+`sys.path.insert` of `../scripts`, `unittest.TestCase`, no `import pytest` in voice
+tests (R31; CI still collects with pytest). Same-lane collaboration follows KTD2 and
+KTD16: argv and injectable lazy imports, never an import of a file the other G2/G3
+unit has not yet landed.
 
 ### U1. Package foundation, provider declaration contract, and subprocess discipline
 
@@ -515,25 +582,32 @@ and sticky, atomic writes, absent/corrupt read as unbound with the distinction
 reportable to the pane. The client extension is exactly
 `plugins/voice/com.infiquetra.claude/` (matching the unifi and mission-control
 extensions; `plugins/voice/adapters/**` must never be created): its own `plugin.json`,
-and `hooks/hooks.json` declaring the `Stop` entry in the verified
-`{"type":"command","command":"… ${CLAUDE_PLUGIN_ROOT}/hooks/stop_hook.py","timeout":5}`
-shape. `stop_hook.py` implements KTD2 verbatim: stdin JSON once, local binding
-comparison, detached spawn of the speak pipeline only when bound, exit 0 immediately on
-every path. Response text comes only from the payload's `last_assistant_message`; the
-hook never reads the screen or the transcript file.
+and `hooks/hooks.json` declaring the `Stop` entry in the verified interpreter-prefixed
+shape (KTD2). The client `plugin.json` matches `plugins/unifi/com.infiquetra.claude/`
+and `plugins/mission-control/com.infiquetra.claude/` (`name`/`version`/`description`;
+no catalog `$schema` at that nested path — `check_repo.py` validates `$schema` only on
+`plugins/*/plugin.json`). `stop_hook.py` implements KTD2 verbatim: stdin JSON once,
+local binding comparison, unique payload file, detached argv spawn of
+`plugins/voice/scripts/speak.py` only when bound, exit 0 immediately on every path. It
+does not import `speak`. Response text comes only from the payload's
+`last_assistant_message`; the hook never reads the screen or the transcript file.
 
 **Failure modes to cover:** unbound session; mismatched session id; absent state dir;
-corrupt `binding.json`; empty `last_assistant_message` (spawn nothing); hook stdin not
-valid JSON (exit 0 silently — a hook must never break a turn).
+corrupt `binding.json`; empty `last_assistant_message` (spawn nothing, write no
+payload); hook stdin not valid JSON (exit 0 silently — a hook must never break a turn);
+speak.py not yet present on disk (spawn still recorded by the seam; U2 tests never
+import or execute speak.py).
 
 **Test scenarios** (`plugins/voice/tests/`): `test_binding.py` — exactly one binding
 exists at a time; it persists until explicitly changed; rebinding replaces it; nothing
 infers a target from focus or recency; corrupt/absent files read as unbound.
 `test_stop_hook.py` — a mismatched or unbound session returns without spawning and
-produces no sound (spawn seam records zero calls); a bound session spawns exactly one
-detached child and returns without waiting (measured against the fake, not wall
-clock); the hook exits 0 on malformed stdin; `hooks/hooks.json` declares a `Stop`
-entry whose command references the plugin root.
+produces no sound (spawn seam records zero calls); a bound session writes one unique
+payload JSON under the state dir and spawns exactly one detached child whose argv is
+`[sys.executable, …/scripts/speak.py, payload_path]`, stdin closed, new session, no
+wait (measured against the fake, not wall clock); the hook exits 0 on malformed stdin;
+`hooks/hooks.json` declares a `Stop` entry whose command is `python3` plus
+`${CLAUDE_PLUGIN_ROOT}/hooks/stop_hook.py`.
 
 **Verification:** the four run-wide commands, plus #29's acceptance checks (manifest
 path, `Stop` in hooks.json, no `plugins/voice/adapters`, both pytest files green).
@@ -562,7 +636,9 @@ pid, `stop_playback()` terminating it immediately, deletion of the audio file on
 every exit path, and named refusal on unreachable/unhealthy synthesis (R23). Companion
 endpoints (`/health`, `/v1/audio/voices`) belong to U6's preflight, not here. Both
 entry points U5/U6 need — `speak(text)` and `stop_playback()` — are module-level and
-importable.
+importable. `__main__` implements the KTD2 child: read the payload path from argv,
+delete the payload file in `finally`, clean, speak. `speak()` calls `stop_playback()`
+before starting new playback so utterances do not overlap.
 
 **Failure modes to cover:** cleaned text empty (synthesize nothing, exit silently);
 synthesis non-2xx / connection refused / timeout (named refusal); playback binary
@@ -578,7 +654,9 @@ on `urllib.request` via the opener seam, with the cleaned text verbatim; wav byt
 land in the state dir and are deleted after playback and after failure; the playback
 deadline derives from the wav duration; an unreachable Voice Forge raises the named
 refusal rather than substituting; `stop_playback()` terminates the recorded pid; the
-refusal entry point speaks a supplied message; empty cleaned text produces no request.
+refusal entry point speaks a supplied message; empty cleaned text produces no request;
+`__main__` consumes and deletes a payload file even when synthesis is skipped or fails;
+`speak()` stops any current playback before starting a new one.
 
 **Verification:** the four run-wide commands, plus #30's acceptance greps (no
 truncation/ceiling vocabulary in `speak.py`, `/v1/audio/speech` present, no HTTP
@@ -600,13 +678,18 @@ and leave nothing behind.
 `plugins/voice/tests/test_transcribe.py`
 
 **Approach.** `record.py`: toggle semantics (R10) over `recording.json` — first press
-spawns `VOICE_CAPTURE_BIN` (D3) writing a wav under the state dir with the KTD3c
-ceiling as its deadline; second press stops the recorder and hands the file onward;
-an abandoned recording (never stopped, or discarded) produces no transcription
-request at all (R12), and ceiling expiry ends capture without transcribing.
-The audio file is deleted immediately after transcription returns — success and
-failure alike (R25). `transcribe.py` implements KTD9 in full: token from the dashboard
-root held in memory, data-URL request body, profile query parameter,
+spawns `VOICE_CAPTURE_BIN` (D3) with argv
+`[capture_bin, "-f", "avfoundation", "-i", ":0", "-t", "600", wav_path]` writing a wav
+under the state dir (`:0` is the version-one AVFoundation default mic; a non-zero
+ffmpeg exit is a named refusal, not device discovery). `toggle()` returns `None` on
+start and the wav path on an explicit second press. An abandoned recording (never
+stopped, or discarded) and ceiling expiry produce no transcription request (R12) and
+**delete the wav** (D5 ephemeral covers audio that never reached transcription, not
+only R25's after-transcription case). After an explicit stop, the pane (KTD16)
+transcribes; the audio file is deleted immediately after transcription returns —
+success and failure alike (R25). U4 does not import `deliver`. `transcribe.py`
+implements KTD9 in full: token from the dashboard root held in memory, JSON body
+`{"data_url": "data:audio/wav;base64,<...>"}`, profile query parameter,
 `X-Hermes-Session-Token` header, one refresh and one retry on 401, named refusal on
 the second 401 / unreachable relay / unexpected provider, transcript+provider
 consumed, no transcript file written anywhere (R26), no telemetry of any kind (R27),
@@ -615,24 +698,29 @@ boundary is absolute (no `auth.json`, no bearer copy, no `XAI_API_KEY`, no Herme
 import).
 
 **Failure modes to cover:** double start press; stop with no active recording;
-recorder exits early (ceiling or crash); transcription 401→refresh→200;
-401→refresh→401 (named failure, no loop); relay unreachable; response missing
-transcript or naming an unexpected provider; audio deletion on every path including
+recorder exits early (ceiling or crash) — wav deleted, no transcribe; abandoned
+recording — wav deleted, no transcribe; ffmpeg non-zero (named refusal, wav deleted);
+transcription 401→refresh→200; 401→refresh→401 (named failure, no loop); relay
+unreachable; response missing transcript or naming an unexpected provider; request
+body uses `data_url` and no other audio field; audio deletion on every path including
 exception paths.
 
 **Test scenarios** (`plugins/voice/tests/`): `test_record.py` — one press starts and a
-second stops; nothing is transcribed before the second press; an abandoned recording
-issues no request; the audio file is gone after a successful run and after a
-deliberately failed one (retention scenarios named `retention` for #31's `-k` gate);
-the recorder subprocess carries the ceiling deadline and closed stdin.
-`test_transcribe.py` — the request posts a base64 audio data URL to
-`/api/audio/transcribe` with the configured profile query parameter via
-`urllib.request`, with the in-memory token header; a 401 triggers exactly one refresh
-from the root page and one retry (scenarios named `retry`); a second 401 fails by
-name; the token is never written to disk, logged, or placed in command arguments; an
-unreachable relay raises the named refusal; an unexpected response provider raises the
-named refusal; no transcript file is written; no telemetry call is made; no credential
-is read and no Hermes module is imported.
+second stops and returns the wav path; nothing is transcribed before the second press;
+an abandoned recording issues no request and deletes the wav; ceiling expiry deletes
+the wav and issues no request; the audio file is gone after a successful run and after
+a deliberately failed one (retention scenarios named `retention` for #31's `-k` gate);
+the recorder argv includes `-f avfoundation`, `-i :0`, and `-t 600`, and the subprocess
+carries the ceiling deadline and closed stdin.
+`test_transcribe.py` — the request posts JSON `{"data_url": "data:audio/wav;base64,…"}`
+to `/api/audio/transcribe` with the configured profile query parameter via
+`urllib.request`, with the in-memory token header; the body has no `audio`/`file`/
+`content` key; a 401 triggers exactly one refresh from the root page and one retry
+(scenarios named `retry`); a second 401 fails by name; the token is never written to
+disk, logged, or placed in command arguments; an unreachable relay raises the named
+refusal; an unexpected response provider raises the named refusal; no transcript file
+is written; no telemetry call is made; no credential is read and no Hermes module is
+imported.
 
 **Verification:** the four run-wide commands, plus #31's acceptance greps (no
 transcript-log identifiers, no telemetry identifiers, `/api/audio/transcribe`
@@ -654,15 +742,17 @@ when that agent is blocked on a human decision.
 **Owned paths:** `plugins/voice/scripts/deliver.py`,
 `plugins/voice/tests/test_deliver.py`
 
-**Approach.** KTD11 verbatim: resolve the sticky-bound agent with `herdr agent get`
-(pane id + `agent_status` from the closed set); `blocked` → speak the refusal through
-U3 and hold the transcript transiently in `refused-transcript.txt` for explicit use or
-discard (R18, R19); otherwise normalize the transcript to a single line and deliver
-with `herdr pane send-text` (argv list, bounded timeout, stdin closed) — literal text
+**Approach.** KTD11 verbatim: `deliver(text)`, `use_refused()`, `discard_refused()`.
+Resolve the sticky-bound agent with `herdr agent get` (pane id + `agent_status` from
+the closed set, 10-second deadline); `blocked` → speak the refusal through U3 and hold
+the transcript transiently in `refused-transcript.txt` for explicit use or discard
+(R18, R19); otherwise normalize the transcript to a single line and deliver with
+`herdr pane send-text` (argv list, 10-second timeout, stdin closed) — literal text
 without Enter (R16). `herdr pane run` never appears. The bound agent is the only
 target (R17): no broadcast, no fallback, no recency inference. The non-atomic
 check-then-send residual is stated in the module docstring and deliberately not
-patched. Both `herdr` invocations go through U1's process helper.
+patched. Both `herdr` invocations go through U1's process helper. U6 calls these
+entry points through the KTD16 seam; this unit does not import `pane`.
 
 **Failure modes to cover:** blocked agent (refusal spoken, nothing sent, transcript
 held); bound agent unresolvable (named error, nothing sent anywhere else); multi-line
@@ -676,8 +766,10 @@ through `herdr agent get` and calls `herdr pane send-text` with the transcript;
 for #32's `-k` gates); only the bound agent is targeted; a blocked agent receives no
 text and triggers the audible refusal through the U3 seam (scenarios named `blocked`);
 a refused transcript is retained transiently, is never auto-delivered or queued, and
-explicit discard removes it; a multi-line transcript is delivered as one line; the
-send subprocess carries a deadline and closed stdin.
+explicit discard removes it; `use_refused()` delivers once and clears the hold;
+`discard_refused()` deletes the hold without sending; a multi-line transcript is
+delivered as one line; the send subprocess carries a 10-second deadline and closed
+stdin.
 
 **Verification:** the four run-wide commands, plus #32's acceptance greps (zero
 `pane run`, `agent get` + `send-text` present, no clipboard/AppleScript/raw-tty
@@ -704,16 +796,19 @@ playback), U4 (indicator, barge-in)
 **Approach.** The entrypoint is the smallest legitimate portable surface: an Agent
 Skill at `plugins/voice/skills/voice/SKILL.md` (frontmatter constrained to the
 validated six-field allowlist, `name: voice` matching its directory) that documents
-starting the pane and running preflight through the bundled CLI — not a second command
-surface. No MCP server anywhere. `voice_cli.py` is a small argparse CLI:
+starting the pane, the in-pane keys `t`/`s`/`u`/`d`/`q` (KTD16), and running
+preflight through the bundled CLI — not a second command surface. No MCP server anywhere. `voice_cli.py` is a small argparse CLI:
 `pane` (run the pane loop), `bind <agent>` (KTD7), `preflight`, `toggle`, and `stop`
 (the command the D4 Herdr-wide keybinding invokes; terminates playback via U3).
-`pane.py` runs in its own Herdr pane (R13): a single-threaded standard-library loop
-that displays the bound identity continuously alongside recording state (R4), shows a
-loud unmistakable indicator while recording (R11), and handles keys — stop key
-silences playback immediately (R8), toggle starts/stops recording with barge-in
-(starting a recording stops playback first, R9), and the refused-transcript
-use/discard actions (with U5). `preflight.py` implements R22/R23 with KTD13 and KTD15:
+`pane.py` runs in its own Herdr pane (R13) and implements KTD16: a single-threaded
+standard-library loop using `tty.setcbreak`/`termios` so keys apply without Enter
+(no `curses`, no `input()`). It displays the bound Herdr agent name and session id
+continuously alongside recording state (R4), shows the literal `*** RECORDING ***`
+while recording (R11), and handles `t`/`s`/`u`/`d`/`q` as specified in KTD16. Starting
+a recording calls U3 `stop_playback()` first (R9); an explicit second `t` takes the
+wav path from U4 `toggle()`, transcribes through U4, and delivers through the U5 lazy
+import seam — U6 does not implement send-text. `preflight.py` implements R22/R23 with
+KTD13 and KTD15:
 Voice Forge — `GET /health` requiring a usable backend (a healthy process with no
 backend fails), `GET /v1/audio/voices` requiring the configured voice id, then a real
 short synthesis; Hermes — `GET /api/health` (never reading `auth_required: false` as
@@ -732,10 +827,14 @@ provider.
 
 **Test scenarios** (`plugins/voice/tests/`): `test_skill_entrypoint.py` — the skill
 file exists with valid frontmatter limited to the allowed fields, names the CLI that
-starts the pane, and declares no MCP server. `test_pane.py` — bound identity and
-recording state are both displayed; the stop key interrupts playback immediately
-rather than at utterance end (stop seam called on keypress); starting a recording
-stops playback first; the recording indicator is present while recording.
+starts the pane, names the in-pane keys `t`/`s`/`u`/`d`/`q`, and declares no MCP
+server. `test_pane.py` — bound identity and
+recording state are both displayed; `s` interrupts playback immediately rather than at
+utterance end (stop seam called on keypress, not after Enter); `t` while idle stops
+playback first then starts recording; `t` while recording transcribes and calls the
+deliver seam with the transcript; `u`/`d` call the use/discard seams; the literal
+`*** RECORDING ***` is present while recording and absent otherwise; `deliver` is not
+imported at module load.
 `test_preflight.py` — a missing provider is reported by name and never substituted; a
 healthy-but-backend-less Voice Forge fails; a missing voice id fails by name; a
 profile that does not resolve `stt.provider: xai` fails by name; an anonymous relay
@@ -761,7 +860,9 @@ write the run's journal entries.
 
 **Owned paths:** `docs/evidence/voice/acceptance.md`, `plugins/voice/README.md`
 (finalize/verify only — R30 stays owned by U1), `docs/engineering-journal/DECISIONS.md`,
-`docs/engineering-journal/LEARNINGS.md`
+`docs/engineering-journal/LEARNINGS.md`. Repository root `README.md` and
+`docs/README.md` only if a claim in them became untrue — not a routine surface
+(parent shared-file rule).
 
 **Approach.** Execute the full conversational loop against the live, preflighted
 environment and record each acceptance example AE1–AE8 with what was actually
@@ -803,7 +904,10 @@ and U6 concurrently** (G3 — disjoint surfaces; both rebase on the merged G2 st
 journal-writer status). The run's shared-file rules hold throughout: the two
 README touches are serialized by design (U1 implements R30; U7 verifies at the end);
 `plugins/voice/tests/**` is written strictly per-unit, one file set per unit, never
-edited across units; `.github/workflows/ci.yml` is written by nobody.
+edited across units; `.github/workflows/ci.yml` is written by nobody; repository root
+`README.md` and `docs/README.md` are U7 only if a claim became untrue. Same-lane units
+(U2∥U3, U5∥U6) share no owned path and must not import each other at module level
+(KTD2, KTD16).
 
 ## Scope Boundaries
 
@@ -863,15 +967,17 @@ temptations live; two-units-one-surface is a run stop condition.
   this exact defect class, and the rule exists because of it.
 - **Newline-in-transcript submits accidentally**: eliminated by KTD11's single-line
   normalization rather than by escaping games.
+- **Same-lane import of a not-yet-landed module**: prevented by KTD2 (hook spawns
+  speak.py by argv) and KTD16 (pane lazy-imports deliver). Tests fake the seams.
+- **Abandoned or ceiling-expired recordings leaving wav files**: U4 deletes the wav
+  without transcribing (D5 ephemeral, not only R25).
 
 ## Open questions
 
-None blocking. Two details are deliberately left to their owning phase rather than
-guessed here: the exact filesystem path of Herdr's `config.toml` for the R14 probe
-(re-confirmed at run preflight alongside P1–P9 — the CLI documents the file's
-existence, not its path), and the concrete Voice Forge voice id for
-`VOICE_FORGE_VOICE_ID` (a runtime configuration value from the Home Lab deployment
-receipt, proven present by preflight P8; never an operator gate per D1).
+None blocking. One runtime configuration value is not a plan decision: the concrete
+Voice Forge voice id for `VOICE_FORGE_VOICE_ID` (from the Home Lab deployment receipt,
+proven present by preflight P8; never an operator gate per D1). The Herdr
+`config.toml` path is now KTD13 (`~/.config/herdr/config.toml`), not an open question.
 
 ## Unattended decisions log
 
@@ -892,7 +998,12 @@ defensible default chosen:
   the KTD journal mirror is delegated to U7's closeout with this plan as source.
 - **This plan is the only file this session commits** — the run's shared-file rules
   bind the planning commit too.
-- **Lens declarations, KTD1–KTD15, and the per-unit failure-mode sets** were authored
+- **Lens declarations, KTD1–KTD16, and the per-unit failure-mode sets** were authored
   under the authority the contract grants planning ("the plan declares the applicable
   lenses"; the requirements' deferred-to-planning list) and are review targets for
   the plan's own Saga Document Review, not silent defaults.
+- **Pane keys `t`/`s`/`u`/`d`/`q`, unbuffered stdin, ffmpeg `:0` + `-t 600`, helper
+  timeout 10 s, playback margin 2 s, synthesis HTTP 10/300 s, Herdr config path
+  `~/.config/herdr/config.toml`, and Hermes body field `data_url`** were chosen as the
+  smallest defensible closures of questions the requirements deferred to planning or
+  that a worker would otherwise invent. They do not reopen operator decisions D1 or D2.
