@@ -23,7 +23,18 @@ the run-wide implementation plan is
 | [`scripts/providers.py`](scripts/providers.py) | Provider declaration contract: closed egress set, declarations, named refusals |
 | [`scripts/settings.py`](scripts/settings.py) | The one settings reader: stated names, split defaults, absent never means empty |
 | [`scripts/process.py`](scripts/process.py) | Subprocess discipline: closed stdin and a deadline on every child |
-| [`tests/`](tests/) | `unittest` suites for the three modules above |
+| [`scripts/text_cleanup.py`](scripts/text_cleanup.py) | Markdown cleanup for the speak path: formatting syntax stripped, fenced code blocks omitted |
+| [`scripts/speak.py`](scripts/speak.py) | Speak path: synthesize and play one completed response through the declared `voice-forge` provider |
+| [`scripts/record.py`](scripts/record.py) | Capture path: toggled recording tracked in state; nothing transcribed or kept without an explicit stop |
+| [`scripts/transcribe.py`](scripts/transcribe.py) | Transcription path through the declared Hermes relay: session token in process memory only, nothing kept |
+| [`scripts/binding.py`](scripts/binding.py) | Sticky single-agent binding store: one explicit bind, replaced only by an explicit rebind |
+| [`scripts/deliver.py`](scripts/deliver.py) | Delivery path: transcript into the bound agent's input box unsubmitted, or a named audible refusal that holds it |
+| [`scripts/preflight.py`](scripts/preflight.py) | Preflight the declared providers, the stop keybinding, and the executables; report by name, never install or repair |
+| [`scripts/pane.py`](scripts/pane.py) | The Voice pane: the one long-running operator surface and listen-path sequencer |
+| [`scripts/voice_cli.py`](scripts/voice_cli.py) | The one command surface: `pane`, `bind`, `preflight`, `toggle`, `stop` |
+| [`skills/voice/`](skills/voice/SKILL.md) | Agent Skill: documents the CLI and the in-pane keys; adds no second command surface |
+| [`tests/`](tests/) | `unittest` suites for the scripts above, the Stop hook, and the skill entrypoint |
+| [`com.infiquetra.claude/`](com.infiquetra.claude/plugin.json) | Claude client extension directory: manifest, hook descriptor, and the Stop hook |
 
 Claude-specific files — hooks and the client extension — never live in this
 portable core; they belong under the `com.infiquetra.claude/` client
