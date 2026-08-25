@@ -921,3 +921,14 @@ directives, each with the line of reasoning:
   unchanged. T4 re-validated at amendment time: `agy` binary present,
   `agy models` re-listed the id, dry-run receipt matched the recorded
   template.
+- **Post-U2 main reconciliation executed as a merge, not a rebase
+  (2026-08-24)** — the landing model's "branch rebases onto current
+  origin/main after U2 lands" clause was written for the two-branch model;
+  in this single-lane recovery run `land` already delivers U2's content to
+  the lane, and a literal rebase would rewrite fifteen-plus commits
+  including five recorded merge SHAs that closed issues cite as durable
+  evidence. The clause's purpose — the lane incorporates main's state before
+  U5 — is met by merging origin/main into the run branch (`d650d6f`), which
+  verified as a zero-tree-delta graph reconciliation (main's squash-merged
+  snapshots carry content the lane already has). The pre-freeze
+  reconciliation before U8 follows the same form.
