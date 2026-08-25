@@ -1,5 +1,5 @@
 {
-  "schema_version": "2",
+  "schema_version": "3",
   "package": "mission-control",
   "package_root": "plugins/mission-control",
   "package_manifest": "plugin.json",
@@ -55,15 +55,42 @@
       "tests/test_user_defaults.py"
     ],
     "entrypoint_transforms": [
-      "scripts/executor_profile_lint.py",
-      "scripts/sdlc_manager.py",
-      "skills/board/SKILL.md",
-      "skills/flow/SKILL.md",
-      "skills/issues/SKILL.md",
-      "skills/labels/SKILL.md",
-      "skills/metrics/SKILL.md",
-      "skills/milestones/SKILL.md",
-      "skills/rollout/SKILL.md"
+      {
+        "path": "scripts/executor_profile_lint.py",
+        "rule": "resolve-bundled-fleet-module-split"
+      },
+      {
+        "path": "scripts/sdlc_manager.py",
+        "rule": "resolve-bundled-fleet-module-guarded"
+      },
+      {
+        "path": "skills/board/SKILL.md",
+        "rule": "normalize-skill-frontmatter"
+      },
+      {
+        "path": "skills/flow/SKILL.md",
+        "rule": "normalize-skill-frontmatter"
+      },
+      {
+        "path": "skills/issues/SKILL.md",
+        "rule": "normalize-skill-frontmatter"
+      },
+      {
+        "path": "skills/labels/SKILL.md",
+        "rule": "normalize-skill-frontmatter"
+      },
+      {
+        "path": "skills/metrics/SKILL.md",
+        "rule": "normalize-skill-frontmatter"
+      },
+      {
+        "path": "skills/milestones/SKILL.md",
+        "rule": "normalize-skill-frontmatter"
+      },
+      {
+        "path": "skills/rollout/SKILL.md",
+        "rule": "normalize-skill-frontmatter"
+      }
     ],
     "client_byte_copies": [
       "agents/sdlc-operator.md",
@@ -144,7 +171,7 @@
       "Every path carries exactly one classification. An upstream byte copy is overwritten on each synchronization and its digest must equal its source digest exactly; where the portable tree would need a different byte, the repair is authored upstream first. Target-owned portable source is authored in this repository rather than derived from the pinned commit; it records no digest and is never overwritten and never removed here. README.md is the one target-owned path that supersedes an upstream path of the same name: the upstream README documents the Claude Code plugin, so its bytes are deliberately never read and never written, recorded here as a superseded path rather than left unclassified.",
       "The client extension directory com.infiquetra.claude/ mirrors the upstream package root path for path, so every Claude-custody file's origin is readable from its portable path and every one of them stays a byte copy: the four commands and agents/sdlc-operator.md. The Claude Code manifest is the single exception inside that directory: it is lifted out of .claude-plugin/, whose name is a loading convention with no meaning inside the extension directory, and whose portable counterpart already occupies the package root.",
       "scripts/fleet_commons_shim.py is dropped rather than copied, because the build-time Fleet Core bundle replaces it and its resolution ladder is Claude-specific discovery the portable package must not retain. Two entrypoints reach fleet_commons_shim and are therefore deterministic transforms rather than byte copies: scripts/executor_profile_lint.py imports it at module scope (line 35 at the pin) and loads tier_palette through it (line 89), and scripts/sdlc_manager.py imports it inside the _load_intent_envelope function (lines 4283-4287 at the pin) and loads intent_envelope through it. The resolve-bundled-fleet-module rule family rewrites those imports to the generated bundle in the _bundled/ directory, records the source digest, the output digest, and the transform version here, and is re-applied on every synchronization, so a later run cannot silently restore the broken import. This is not a downstream edit smuggled past the byte-copy rule: it is a versioned rule over the pinned source, reproducible from the source bytes alone.",
-      "All seven SKILL.md files carry a when_to_use: frontmatter key that is not among the six fields the open Agent Skills specification permits (SKILL_FRONTMATTER_FIELDS, scripts/check_repo.py). The upstream UniFi skills never carried it, so this package is the first to need the answer: the seven files are transforms, not byte copies. A versioned normalize-skill-frontmatter rule folds the key under the permitted metadata key, deterministically and idempotently, portable copies only; upstream keeps the key because it is functional in Claude Code skill listings. The alternative of normalizing upstream was rejected for exactly that reason. The seven files sit in the entrypoint_transforms class because that is the descriptor's only transform custody; per-path rule selection arrives with the schema version the synchronization unit owns, and this unit deliberately does not anticipate it.",
+      "All seven SKILL.md files carry a when_to_use: frontmatter key that is not among the six fields the open Agent Skills specification permits (SKILL_FRONTMATTER_FIELDS, scripts/check_repo.py). The upstream UniFi skills never carried it, so this package is the first to need the answer: the seven files are transforms, not byte copies. A versioned normalize-skill-frontmatter rule folds the key under the permitted metadata key, deterministically and idempotently, portable copies only; upstream keeps the key because it is functional in Claude Code skill listings. The alternative of normalizing upstream was rejected for exactly that reason. The seven files sit in the entrypoint_transforms class because that is the descriptor's only transform custody; per-path rule selection is the explicit rule field every entry carries since descriptor schema version 3, named above with the rule the synchronization tool applies to each path.",
       "The twenty-one upstream test files are byte copies under plugins/mission-control/tests/, inside the package and therefore inside the provenance closed-set check. The pilot's one-off precedent carried its tests at the repository root, tracked by fleet-core's informal release_surface key that no check validates; a repeat of that shape would ship tests the provenance machinery cannot see. tests/test_prompt_alignment.py is the single test not carried: it is a whole-upstream-repository drift guard, and every premise it holds outside the package's own byte copies fails under the portable layout. It reads the Claude manifest at the package-local .claude-plugin/ path (relocated to com.infiquetra.claude/ here), the root .claude-plugin/marketplace.json and the plugins/saga handoff skill (neither exists in this catalog), the commands and agent file at their upstream paths (relocated), and the package README (superseded). A byte copy could never run here, and editing its content to make it pass would be a custody violation, so the custody decision is recorded here and in the engineering journal instead of shipped as a test that cannot pass.",
       "Publication parity, verified before this descriptor was written: both repositories are public, and the vendored config/project-mappings.json and config/board-schema.json carry real project node IDs that are already public upstream, so byte-copying them introduces no new exposure.",
       "The assessment block encodes the audited safety facts: the plugin calls GitHub exclusively through the gh CLI, which honors GH_TOKEN, GITHUB_TOKEN, and GH_HOST, so both GH_ and GITHUB_ prefixes are stripped from every assessment subprocess even though sdlc_manager.py itself reads only INFIQUETRA_SDLC_PATH (line 135 at the pin). All five package scripts are declared entrypoints and none is excluded: sdlc_manager.py needs PyYAML at module scope (line 83 at the pin), board_census.py imports sdlc_manager from its own directory, sync_template_docs.py imports PyYAML, check_pagination.py is standard-library-only, and executor_profile_lint.py runs only after its transform. The mutating_operations list is the audited subcommand table plus the _open_mapping_pr path (sdlc_manager.py:4664 at the pin), which runs real git worktree add, commit, push, and gh pr create; it is an internal code path rather than a CLI verb and is listed so the safety predicate treats that route as mutating."

@@ -1,0 +1,412 @@
+{
+  "source_repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+  "source_commit": "84eaf042f0e350005f7eddf8e7d80da25c12119d",
+  "source_version": "2.12.2",
+  "source_package_path": "plugins/mission-control",
+  "generated_by": "scripts/sync_vendor_source.py",
+  "notes": [
+    "The portable copy is a derived artifact, never a second writable source. The pinned commit 84eaf042f0e350005f7eddf8e7d80da25c12119d is the audited upstream revision (plugin version 2.12.2); the upstream suite was verified green at it from a disposable scratch clone before this descriptor was written, so a synchronization from this pin derives from a passing source.",
+    "Paths in `files` are relative to this package root, which is what the repository validator resolves. `source_path` is relative to the upstream repository root.",
+    "Every path carries exactly one classification. An upstream byte copy is overwritten on each synchronization and its digest must equal its source digest exactly; where the portable tree would need a different byte, the repair is authored upstream first. Target-owned portable source is authored in this repository rather than derived from the pinned commit; it records no digest and is never overwritten and never removed here. README.md is the one target-owned path that supersedes an upstream path of the same name: the upstream README documents the Claude Code plugin, so its bytes are deliberately never read and never written, recorded here as a superseded path rather than left unclassified.",
+    "The client extension directory com.infiquetra.claude/ mirrors the upstream package root path for path, so every Claude-custody file's origin is readable from its portable path and every one of them stays a byte copy: the four commands and agents/sdlc-operator.md. The Claude Code manifest is the single exception inside that directory: it is lifted out of .claude-plugin/, whose name is a loading convention with no meaning inside the extension directory, and whose portable counterpart already occupies the package root.",
+    "scripts/fleet_commons_shim.py is dropped rather than copied, because the build-time Fleet Core bundle replaces it and its resolution ladder is Claude-specific discovery the portable package must not retain. Two entrypoints reach fleet_commons_shim and are therefore deterministic transforms rather than byte copies: scripts/executor_profile_lint.py imports it at module scope (line 35 at the pin) and loads tier_palette through it (line 89), and scripts/sdlc_manager.py imports it inside the _load_intent_envelope function (lines 4283-4287 at the pin) and loads intent_envelope through it. The resolve-bundled-fleet-module rule family rewrites those imports to the generated bundle in the _bundled/ directory, records the source digest, the output digest, and the transform version here, and is re-applied on every synchronization, so a later run cannot silently restore the broken import. This is not a downstream edit smuggled past the byte-copy rule: it is a versioned rule over the pinned source, reproducible from the source bytes alone.",
+    "All seven SKILL.md files carry a when_to_use: frontmatter key that is not among the six fields the open Agent Skills specification permits (SKILL_FRONTMATTER_FIELDS, scripts/check_repo.py). The upstream UniFi skills never carried it, so this package is the first to need the answer: the seven files are transforms, not byte copies. A versioned normalize-skill-frontmatter rule folds the key under the permitted metadata key, deterministically and idempotently, portable copies only; upstream keeps the key because it is functional in Claude Code skill listings. The alternative of normalizing upstream was rejected for exactly that reason. The seven files sit in the entrypoint_transforms class because that is the descriptor's only transform custody; per-path rule selection is the explicit rule field every entry carries since descriptor schema version 3, named above with the rule the synchronization tool applies to each path.",
+    "The twenty-one upstream test files are byte copies under plugins/mission-control/tests/, inside the package and therefore inside the provenance closed-set check. The pilot's one-off precedent carried its tests at the repository root, tracked by fleet-core's informal release_surface key that no check validates; a repeat of that shape would ship tests the provenance machinery cannot see. tests/test_prompt_alignment.py is the single test not carried: it is a whole-upstream-repository drift guard, and every premise it holds outside the package's own byte copies fails under the portable layout. It reads the Claude manifest at the package-local .claude-plugin/ path (relocated to com.infiquetra.claude/ here), the root .claude-plugin/marketplace.json and the plugins/saga handoff skill (neither exists in this catalog), the commands and agent file at their upstream paths (relocated), and the package README (superseded). A byte copy could never run here, and editing its content to make it pass would be a custody violation, so the custody decision is recorded here and in the engineering journal instead of shipped as a test that cannot pass.",
+    "Publication parity, verified before this descriptor was written: both repositories are public, and the vendored config/project-mappings.json and config/board-schema.json carry real project node IDs that are already public upstream, so byte-copying them introduces no new exposure.",
+    "The assessment block encodes the audited safety facts: the plugin calls GitHub exclusively through the gh CLI, which honors GH_TOKEN, GITHUB_TOKEN, and GH_HOST, so both GH_ and GITHUB_ prefixes are stripped from every assessment subprocess even though sdlc_manager.py itself reads only INFIQUETRA_SDLC_PATH (line 135 at the pin). All five package scripts are declared entrypoints and none is excluded: sdlc_manager.py needs PyYAML at module scope (line 83 at the pin), board_census.py imports sdlc_manager from its own directory, sync_template_docs.py imports PyYAML, check_pagination.py is standard-library-only, and executor_profile_lint.py runs only after its transform. The mutating_operations list is the audited subcommand table plus the _open_mapping_pr path (sdlc_manager.py:4664 at the pin), which runs real git worktree add, commit, push, and gh pr create; it is an internal code path rather than a CLI verb and is listed so the safety predicate treats that route as mutating."
+  ],
+  "removed_from_source": [
+    {
+      "source_path": "plugins/mission-control/scripts/fleet_commons_shim.py",
+      "reason": "scripts/fleet_commons_shim.py: replaced by the build-time Fleet Core bundle; its resolution ladder is Claude-specific runtime discovery, which the portable package must not retain. tests/test_prompt_alignment.py: a whole-upstream-repository drift guard whose non-package premises (the root Claude marketplace manifest, the plugins/saga handoff skill, the package-local .claude-plugin manifest path, the unrelocated commands and agent paths, and the superseded README) all fail under the portable layout, so a byte copy could never run here; the custody decision is finalized in the descriptor and the engineering journal rather than shipped as a test that cannot pass."
+    },
+    {
+      "source_path": "plugins/mission-control/tests/test_prompt_alignment.py",
+      "reason": "scripts/fleet_commons_shim.py: replaced by the build-time Fleet Core bundle; its resolution ladder is Claude-specific runtime discovery, which the portable package must not retain. tests/test_prompt_alignment.py: a whole-upstream-repository drift guard whose non-package premises (the root Claude marketplace manifest, the plugins/saga handoff skill, the package-local .claude-plugin manifest path, the unrelocated commands and agent paths, and the superseded README) all fail under the portable layout, so a byte copy could never run here; the custody decision is finalized in the descriptor and the engineering journal rather than shipped as a test that cannot pass."
+    }
+  ],
+  "files": [
+    {
+      "path": ".gitignore",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/.gitignore",
+      "sha256": "ac2de72f51a815d5d4c3b2c16f8aa800a4c817c4b4f5e054218e300c661b47fa"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/CHANGELOG.md",
+      "sha256": "c2c988af49bf37e65e831211dfdcf307674ed1058610acec0212e71e60003694"
+    },
+    {
+      "path": "com.infiquetra.claude/agents/sdlc-operator.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/agents/sdlc-operator.md",
+      "sha256": "4801323b2a803398ebca16a1dc5b0a1b47a6401eaf31dd2dbeb5152ba340c2ee"
+    },
+    {
+      "path": "com.infiquetra.claude/commands/board.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/commands/board.md",
+      "sha256": "bb75d52c313925696bec76abc054c2b2a6ce50fa1334e02c514219e0baa51968"
+    },
+    {
+      "path": "com.infiquetra.claude/commands/issue.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/commands/issue.md",
+      "sha256": "11cd4e3450f7cc72a62d95a2622955f21d57c89d1f9802a9d28364468a27e761"
+    },
+    {
+      "path": "com.infiquetra.claude/commands/metrics.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/commands/metrics.md",
+      "sha256": "8c103b5d29085113b7c01ed4f317a173c448c0972859396db1c6407a389ac562"
+    },
+    {
+      "path": "com.infiquetra.claude/commands/triage.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/commands/triage.md",
+      "sha256": "3c99880e4cd77e5c185a9b1fafa3317137520e9c66defc933f5a77141ffa292a"
+    },
+    {
+      "path": "com.infiquetra.claude/plugin.json",
+      "classification": "deterministic-transform",
+      "source_path": "plugins/mission-control/.claude-plugin/plugin.json",
+      "source_sha256": "4c08adc427358ed7e9a43f8847619d9ecd9d610ca722198ad735b3c3bca0a6fb",
+      "sha256": "4c08adc427358ed7e9a43f8847619d9ecd9d610ca722198ad735b3c3bca0a6fb",
+      "transform": "relocate-claude-manifest",
+      "transform_version": "1",
+      "transform_rule": "Re-emit the Claude Code manifest under the client extension directory the Agent Plugins 1.0 specification's section 8.2 defines. Version 1 preserves the bytes and derives only the output path, because the source directory name .claude-plugin/ is a Claude Code loading convention with no meaning inside the extension directory, and the portable Agent Plugins manifest already occupies the package root the Claude manifest would otherwise claim."
+    },
+    {
+      "path": "config/board-schema.json",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/config/board-schema.json",
+      "sha256": "0c16f0da386db256c84d82c1fb0defe3cb6d32dd28dc010eb659858c95a59242"
+    },
+    {
+      "path": "config/generated/check_issue_contract_parity.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/config/generated/check_issue_contract_parity.py",
+      "sha256": "6396fc8f5504ae847b3e3578f967b487fd60ed3c7d29d030844b3ecf20a16e61"
+    },
+    {
+      "path": "config/generated/issue_contract_data.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/config/generated/issue_contract_data.py",
+      "sha256": "22fa2b5b77acd739a7a0648d163f3292ddf433903e3f2c97f8c8f2e2feb0afec"
+    },
+    {
+      "path": "config/generated/issue_contract_data.py.sha256",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/config/generated/issue_contract_data.py.sha256",
+      "sha256": "507c195d6459f7bfcef9d2f1cf35c10b2c97810941037d8a12a836611a8eb24d"
+    },
+    {
+      "path": "config/generated/issue_contract_shim.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/config/generated/issue_contract_shim.py",
+      "sha256": "65d972ff3a049ba8103c501d61cdf16266f12eba35c749d76a937fcfe87357ff"
+    },
+    {
+      "path": "config/generated/issue_contract_shim.py.sha256",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/config/generated/issue_contract_shim.py.sha256",
+      "sha256": "a0bfdb871c8a46c436d6fe1b54285d04e003032533265673214afb1bbde9c0be"
+    },
+    {
+      "path": "config/project-mappings.json",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/config/project-mappings.json",
+      "sha256": "297edc4eaac366311d0065aba006a0a32dfc1b04677b476bf78177b58f203401"
+    },
+    {
+      "path": "config/sdlc-schema.json",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/config/sdlc-schema.json",
+      "sha256": "8ead28abf7159c308d4946d3a3fdf714a62181b08332d8d3c8e547446dd0a026"
+    },
+    {
+      "path": "scripts/board_census.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/scripts/board_census.py",
+      "sha256": "85c40692a4247b309131d86d904fbc8fff4b9ece4cf94f63a2eb5d4dfb8c2e17"
+    },
+    {
+      "path": "scripts/check_pagination.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/scripts/check_pagination.py",
+      "sha256": "23deb1fd6b6706bec71b04f45e23ee067651aa86d788930c0b940b7d3fcfebbb"
+    },
+    {
+      "path": "scripts/executor_profile_lint.py",
+      "classification": "deterministic-transform",
+      "source_path": "plugins/mission-control/scripts/executor_profile_lint.py",
+      "source_sha256": "67f1c33e63584b39ebfdb17743494cc41d0c836b62b9c5e695e2b15e591092d1",
+      "sha256": "ef4f289a142058f91cb64422ae929d72dcf0d6cde1d2a9f83095ad7e864ebcd2",
+      "transform": "resolve-bundled-fleet-module-split",
+      "transform_version": "1",
+      "transform_rule": "Rewrite the split module-scope shape of the dropped fleet_commons_shim import. Version 1 matches two sites that must each appear exactly once: a module-scope block inserting the script's own directory on sys.path, a blank line, and `import fleet_commons_shim`, and the separate `BINDING = fleet_commons_shim.load(NAME)` call. It re-emits the block as an insertion of the _bundled/ directory beside the client plus a direct `import NAME` keeping the source's own trailing comment, and re-emits the call as `BINDING = NAME`, rebinding the module the new import bound. The shape is matched whole: either site absent or appearing twice fails the synchronization, because a half-rewritten client would still import the dropped shim or bind nothing. The module scope pays the import at import time where upstream paid it at call time; the consumer's fleet-bundle.json puts the bundle beside the client exactly as for the family's version 1."
+    },
+    {
+      "path": "scripts/sdlc_manager.py",
+      "classification": "deterministic-transform",
+      "source_path": "plugins/mission-control/scripts/sdlc_manager.py",
+      "source_sha256": "a2f263280fe3beb5bb4a704bc1b630fa164168ba51e67defeb4eeca2dabfdb6e",
+      "sha256": "caf762d70588f2736dba890f571b48f183a7cf79e3e784f2a6a101c5c6444fd2",
+      "transform": "resolve-bundled-fleet-module-guarded",
+      "transform_version": "1",
+      "transform_rule": "Rewrite the function-scope guarded shape of the dropped fleet_commons_shim import. Version 1 matches exactly one contiguous block: a binding of the script's own directory, an `if BINDING not in sys.path:` guard around the insert, `import fleet_commons_shim`, a blank line, and `return fleet_commons_shim.load(NAME)`. It re-emits the binding's value as the _bundled/ directory beside the client -- keeping the binding name, which a deterministic rule cannot know is unused beyond the block -- and the import and return as the direct module, preserving the source's own trailing comment and the lazy, call-time import the upstream function documents. The block absent or repeated fails the synchronization, because a half-rewritten loader would still import the dropped shim."
+    },
+    {
+      "path": "scripts/sync_template_docs.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/scripts/sync_template_docs.py",
+      "sha256": "53df4e8f7cba3fb83dca07fb30188e2b991792d578627f67cfe386d45b2a51af"
+    },
+    {
+      "path": "skills/board/SKILL.md",
+      "classification": "deterministic-transform",
+      "source_path": "plugins/mission-control/skills/board/SKILL.md",
+      "source_sha256": "7912ae4dc32b33be6bb964d0ab10a372d9f71696b7911221f231ec3acb4721f7",
+      "sha256": "534d2ef0c3b4b9f82aea2f88b94ae7ce035c3c91b1595d519090cd561055a553",
+      "transform": "normalize-skill-frontmatter",
+      "transform_version": "1",
+      "transform_rule": "Fold a top-level when_to_use frontmatter key under the permitted metadata key. Version 1 reads the YAML frontmatter block line by line -- the repository tooling is standard library only and ships no YAML parser -- and moves the key line and every line of its value, block scalar or inline, two columns in, emitting `metadata:` above it where the key stood. The fold is deterministic and idempotent: a frontmatter without a top-level when_to_use comes back byte-identical, which is what a second application returns, and the body below the frontmatter is never touched. A frontmatter that carries a top-level metadata key beside when_to_use is refused rather than merged, because folding under an existing mapping is a shape this version does not describe; an unterminated frontmatter or a second when_to_use key is refused for the same reason. Portable copies only: the upstream file keeps the key because it is functional in Claude Code skill listings."
+    },
+    {
+      "path": "skills/board/references/graphql-queries.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/skills/board/references/graphql-queries.md",
+      "sha256": "8558b1bce30e6d966fa98cd50307046e55f635119e06e94bb07aec9de41484bc"
+    },
+    {
+      "path": "skills/board/references/kanban-workflow.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/skills/board/references/kanban-workflow.md",
+      "sha256": "9e551fd920951628ee71f39f039243891e62d64b6e23890715534e9605a373c9"
+    },
+    {
+      "path": "skills/flow/SKILL.md",
+      "classification": "deterministic-transform",
+      "source_path": "plugins/mission-control/skills/flow/SKILL.md",
+      "source_sha256": "da0979c3cbc29aa59362ccacd704b8eba961fa24d5c9723698d458f104a06f69",
+      "sha256": "5c37d137c90b221503eb641c49b5b1d2e4577a202a5e5f7a1f5ab53f57de2c2a",
+      "transform": "normalize-skill-frontmatter",
+      "transform_version": "1",
+      "transform_rule": "Fold a top-level when_to_use frontmatter key under the permitted metadata key. Version 1 reads the YAML frontmatter block line by line -- the repository tooling is standard library only and ships no YAML parser -- and moves the key line and every line of its value, block scalar or inline, two columns in, emitting `metadata:` above it where the key stood. The fold is deterministic and idempotent: a frontmatter without a top-level when_to_use comes back byte-identical, which is what a second application returns, and the body below the frontmatter is never touched. A frontmatter that carries a top-level metadata key beside when_to_use is refused rather than merged, because folding under an existing mapping is a shape this version does not describe; an unterminated frontmatter or a second when_to_use key is refused for the same reason. Portable copies only: the upstream file keeps the key because it is functional in Claude Code skill listings."
+    },
+    {
+      "path": "skills/issues/SKILL.md",
+      "classification": "deterministic-transform",
+      "source_path": "plugins/mission-control/skills/issues/SKILL.md",
+      "source_sha256": "945b489c9b28809e9a3bbc74aad4389232de13fd4b2b2dbb815b460f52a33b6e",
+      "sha256": "083bd7ea6be8fc51c17297393574127df9f9d5521a2b23d063650d684393bae7",
+      "transform": "normalize-skill-frontmatter",
+      "transform_version": "1",
+      "transform_rule": "Fold a top-level when_to_use frontmatter key under the permitted metadata key. Version 1 reads the YAML frontmatter block line by line -- the repository tooling is standard library only and ships no YAML parser -- and moves the key line and every line of its value, block scalar or inline, two columns in, emitting `metadata:` above it where the key stood. The fold is deterministic and idempotent: a frontmatter without a top-level when_to_use comes back byte-identical, which is what a second application returns, and the body below the frontmatter is never touched. A frontmatter that carries a top-level metadata key beside when_to_use is refused rather than merged, because folding under an existing mapping is a shape this version does not describe; an unterminated frontmatter or a second when_to_use key is refused for the same reason. Portable copies only: the upstream file keeps the key because it is functional in Claude Code skill listings."
+    },
+    {
+      "path": "skills/issues/references/issue-types.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/skills/issues/references/issue-types.md",
+      "sha256": "624bf8e6cc98d0725f8aee48e3289538036904ea1819d8130d28a3f8cfb7d2bb"
+    },
+    {
+      "path": "skills/issues/references/templates-reference.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/skills/issues/references/templates-reference.md",
+      "sha256": "1296f008e154c96f612390398f54890c5a5310b1d43cd6baf9b39acafeaea4b0"
+    },
+    {
+      "path": "skills/labels/SKILL.md",
+      "classification": "deterministic-transform",
+      "source_path": "plugins/mission-control/skills/labels/SKILL.md",
+      "source_sha256": "5ae5cd25ced85d1dd18c7e8b1ee1f6f500c5831773296c9b699eeafc40df42e4",
+      "sha256": "0daa0f5de9cca3d2ce0a6e79cd7636487227f0621a323ad5a136707ffbeca27d",
+      "transform": "normalize-skill-frontmatter",
+      "transform_version": "1",
+      "transform_rule": "Fold a top-level when_to_use frontmatter key under the permitted metadata key. Version 1 reads the YAML frontmatter block line by line -- the repository tooling is standard library only and ships no YAML parser -- and moves the key line and every line of its value, block scalar or inline, two columns in, emitting `metadata:` above it where the key stood. The fold is deterministic and idempotent: a frontmatter without a top-level when_to_use comes back byte-identical, which is what a second application returns, and the body below the frontmatter is never touched. A frontmatter that carries a top-level metadata key beside when_to_use is refused rather than merged, because folding under an existing mapping is a shape this version does not describe; an unterminated frontmatter or a second when_to_use key is refused for the same reason. Portable copies only: the upstream file keeps the key because it is functional in Claude Code skill listings."
+    },
+    {
+      "path": "skills/labels/references/labels-reference.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/skills/labels/references/labels-reference.md",
+      "sha256": "8983ab92199c3e79735d43b047f0146e6f7f08b161d21af51267e0a896b30266"
+    },
+    {
+      "path": "skills/metrics/SKILL.md",
+      "classification": "deterministic-transform",
+      "source_path": "plugins/mission-control/skills/metrics/SKILL.md",
+      "source_sha256": "d14ede006109594dbf2092a95b2bd6556c82363e9196ae44ca3abea5fd647e10",
+      "sha256": "acd8642af22cc865d75b7839898894e58d204ec0a32ddfcb69ce76071c13683b",
+      "transform": "normalize-skill-frontmatter",
+      "transform_version": "1",
+      "transform_rule": "Fold a top-level when_to_use frontmatter key under the permitted metadata key. Version 1 reads the YAML frontmatter block line by line -- the repository tooling is standard library only and ships no YAML parser -- and moves the key line and every line of its value, block scalar or inline, two columns in, emitting `metadata:` above it where the key stood. The fold is deterministic and idempotent: a frontmatter without a top-level when_to_use comes back byte-identical, which is what a second application returns, and the body below the frontmatter is never touched. A frontmatter that carries a top-level metadata key beside when_to_use is refused rather than merged, because folding under an existing mapping is a shape this version does not describe; an unterminated frontmatter or a second when_to_use key is refused for the same reason. Portable copies only: the upstream file keeps the key because it is functional in Claude Code skill listings."
+    },
+    {
+      "path": "skills/metrics/references/metrics-targets.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/skills/metrics/references/metrics-targets.md",
+      "sha256": "2e2259bf9a2f119ab3b912002853f0e9abd64f55aa707376b8abd07c3b94c935"
+    },
+    {
+      "path": "skills/milestones/SKILL.md",
+      "classification": "deterministic-transform",
+      "source_path": "plugins/mission-control/skills/milestones/SKILL.md",
+      "source_sha256": "a3ecca076ffca47ee4d6de51155895135d2a7542b463e710d61d71a0bdc90fcc",
+      "sha256": "d399c4e6683548ddf2cdbc2cf13a2c3f0a729f81c0a31dddc941cfb4be281676",
+      "transform": "normalize-skill-frontmatter",
+      "transform_version": "1",
+      "transform_rule": "Fold a top-level when_to_use frontmatter key under the permitted metadata key. Version 1 reads the YAML frontmatter block line by line -- the repository tooling is standard library only and ships no YAML parser -- and moves the key line and every line of its value, block scalar or inline, two columns in, emitting `metadata:` above it where the key stood. The fold is deterministic and idempotent: a frontmatter without a top-level when_to_use comes back byte-identical, which is what a second application returns, and the body below the frontmatter is never touched. A frontmatter that carries a top-level metadata key beside when_to_use is refused rather than merged, because folding under an existing mapping is a shape this version does not describe; an unterminated frontmatter or a second when_to_use key is refused for the same reason. Portable copies only: the upstream file keeps the key because it is functional in Claude Code skill listings."
+    },
+    {
+      "path": "skills/milestones/references/objective-workflow.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/skills/milestones/references/objective-workflow.md",
+      "sha256": "a66299e231e2cdc393eac4a702c9012808ddf6768c3d499073658c4d977890d3"
+    },
+    {
+      "path": "skills/rollout/SKILL.md",
+      "classification": "deterministic-transform",
+      "source_path": "plugins/mission-control/skills/rollout/SKILL.md",
+      "source_sha256": "ce5ebc6763479bfbb9401b26f3116e4cb6227bc9a44a7d9ddb786e2f1b10bd2b",
+      "sha256": "66845be685da12dc6055eac84e894d9fe14cb0e6d0edbed51ee0797e1914a9bb",
+      "transform": "normalize-skill-frontmatter",
+      "transform_version": "1",
+      "transform_rule": "Fold a top-level when_to_use frontmatter key under the permitted metadata key. Version 1 reads the YAML frontmatter block line by line -- the repository tooling is standard library only and ships no YAML parser -- and moves the key line and every line of its value, block scalar or inline, two columns in, emitting `metadata:` above it where the key stood. The fold is deterministic and idempotent: a frontmatter without a top-level when_to_use comes back byte-identical, which is what a second application returns, and the body below the frontmatter is never touched. A frontmatter that carries a top-level metadata key beside when_to_use is refused rather than merged, because folding under an existing mapping is a shape this version does not describe; an unterminated frontmatter or a second when_to_use key is refused for the same reason. Portable copies only: the upstream file keeps the key because it is functional in Claude Code skill listings."
+    },
+    {
+      "path": "skills/rollout/references/work-hierarchy.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/skills/rollout/references/work-hierarchy.md",
+      "sha256": "173c2763b8b96c67cb5d3f4a90a302930471dc6a19c180125cea41db7ffe09ed"
+    },
+    {
+      "path": "tests/__init__.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_assign_mimir.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_assign_mimir.py",
+      "sha256": "cd800b23d4c74c13edce15880b87d67e870748e3d971e582ef4e4f9ca73c27dc"
+    },
+    {
+      "path": "tests/test_board_add_multi_project.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_board_add_multi_project.py",
+      "sha256": "629f50adbcb429d075667907812bc230d6db08ca2849422c6359cc844d46251b"
+    },
+    {
+      "path": "tests/test_board_census.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_board_census.py",
+      "sha256": "09559400d3598233aab46531b496f8b53c5fced5fc17a8c4cf467c653fc259e0"
+    },
+    {
+      "path": "tests/test_board_move_exit.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_board_move_exit.py",
+      "sha256": "2f1e050b8bc71c08cef9a927928e1c966f5ba71120a7f7f95b3f0d987e376a7a"
+    },
+    {
+      "path": "tests/test_card_validator.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_card_validator.py",
+      "sha256": "0820e0ca88d5a96848a10022323d571fe5dd070361bc1045b642e71ab2b2c8d0"
+    },
+    {
+      "path": "tests/test_check_pagination.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_check_pagination.py",
+      "sha256": "bce23bc028f1b40f250f181ea265dc6aa2c719361415dd5dc365320cd7d08290"
+    },
+    {
+      "path": "tests/test_flow_subcommands.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_flow_subcommands.py",
+      "sha256": "6261e5b9542e67756703aa11a322dc62d4833ab8c75a9c079d691cc089e82b62"
+    },
+    {
+      "path": "tests/test_graphql_issue_resolution.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_graphql_issue_resolution.py",
+      "sha256": "bb8350963a76635f1de257f768c491901b181873c6ccba4ad34a486a39bf741a"
+    },
+    {
+      "path": "tests/test_issue_contract_parity.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_issue_contract_parity.py",
+      "sha256": "ee0f522d36205e288ffa652792f6c18cb7af02948f1051b33a230600b1aca9ea"
+    },
+    {
+      "path": "tests/test_issue_create_interactive.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_issue_create_interactive.py",
+      "sha256": "aff7ea04513d2547a7660ff61b950177741748a9be2e594762f24c08a9e30751"
+    },
+    {
+      "path": "tests/test_issue_create_prepared.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_issue_create_prepared.py",
+      "sha256": "d1196558df53bcabffb12d5646d67108b237c8fba7d8028f0e0c0485c5775c6b"
+    },
+    {
+      "path": "tests/test_issue_prepare.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_issue_prepare.py",
+      "sha256": "79c30bcb04769200a84202197f912002363559302b572fad8a3c0ad09f037c91"
+    },
+    {
+      "path": "tests/test_issue_prepare_compile_approve.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_issue_prepare_compile_approve.py",
+      "sha256": "c7f99cc02175899032941ce190478887d21e02602e7d2a542545aa81c9f03ba1"
+    },
+    {
+      "path": "tests/test_issue_source_artifacts.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_issue_source_artifacts.py",
+      "sha256": "63a82be3bcbd82d5448438b74cc6a9f079f044814e64223d4454e616cf79ed63"
+    },
+    {
+      "path": "tests/test_pagination_helper.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_pagination_helper.py",
+      "sha256": "0c9bfd4fcd400b0780741d7b2f672b5f9260a487d101c15bc9711d1f00008b89"
+    },
+    {
+      "path": "tests/test_project_mappings_resolution.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_project_mappings_resolution.py",
+      "sha256": "2f73816b77a24f27eb1cc032af5b73cf6aff7668c6c083a7f79e2684027e2865"
+    },
+    {
+      "path": "tests/test_sdlc_draft_revision.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_sdlc_draft_revision.py",
+      "sha256": "143c088dd775aab14031dcb2cc054cf5adcdb029c2de5871e3c0ce49b697d1b8"
+    },
+    {
+      "path": "tests/test_template_sync.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_template_sync.py",
+      "sha256": "ad2929bd0931a4b119cbe3d5db50b44ce53bbd3be7c8a114e9c1c196afed5cea"
+    },
+    {
+      "path": "tests/test_typed_exceptions.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_typed_exceptions.py",
+      "sha256": "1eb23f2173e56e862764ee151c8c434b38db9c5687815d553ec5c2f611cd6f07"
+    },
+    {
+      "path": "tests/test_user_defaults.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_user_defaults.py",
+      "sha256": "3bf93deda62ee74a07ab04e93136f6caa9c7a2f63b29a245ecaecee2c5757415"
+    }
+  ]
+}

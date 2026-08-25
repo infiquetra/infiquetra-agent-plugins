@@ -61,6 +61,13 @@ def variant_config(**custody_overrides: object) -> "port_config.PortConfig":
         field: list(getattr(CONFIG.custody, field)) for field in port_config.CUSTODY_FIELDS
     }
     custody.update({key: list(value) for key, value in custody_overrides.items()})  # type: ignore[arg-type]
+    # Descriptor schema version 3 states the transform rule per entry, so the
+    # serialized table carries objects, not the bare paths the loaded table
+    # exposes for its consumers.
+    custody["entrypoint_transforms"] = [
+        {"path": path, "rule": CONFIG.custody.entrypoint_rules[path]}
+        for path in custody["entrypoint_transforms"]
+    ]
     source = {
         "repository": CONFIG.source.repository,
         "package_path": CONFIG.source.package_path,
@@ -527,6 +534,403 @@ class RefusalTests(SyncFixture):
         self.assertEqual(after, before)
 
 
+# --- the mission-control transform shapes --------------------------------------
+
+
+# The module-scope split shape `executor_profile_lint.py` carries at the
+# mission-control pin: the shim import at module scope, the load call inside a
+# function far away. Reproduced verbatim in the parts the
+# `resolve-bundled-fleet-module-split` rule is defined over, so a rule change
+# that stops matching the pin shape fails here against the shape itself.
+SPLIT_SHAPE_SOURCE = (
+    "import sys\n"
+    "from pathlib import Path\n"
+    "\n"
+    "sys.path.insert(0, str(Path(__file__).resolve().parent))\n"
+    "\n"
+    "import fleet_commons_shim  # noqa: E402  (after the sys.path shim, by design)\n"
+    "\n"
+    "\n"
+    "def lint_body(body: str) -> tuple[int, list[str]]:\n"
+    '    palette = fleet_commons_shim.load("tier_palette")\n'
+    "    return 0, [str(palette)]\n"
+)
+
+# The function-scope guarded-contiguous shape `sdlc_manager.py` carries at the
+# pin inside `_load_intent_envelope`: binding, guard, guarded insert, import,
+# blank line, and the returned load, one contiguous block.
+GUARDED_SHAPE_SOURCE = (
+    "import sys\n"
+    "from pathlib import Path\n"
+    "\n"
+    "\n"
+    "def _load_intent_envelope():\n"
+    '    """Lazy loader."""\n'
+    "    scripts_dir = str(Path(__file__).resolve().parent)\n"
+    "    if scripts_dir not in sys.path:\n"
+    "        sys.path.insert(0, scripts_dir)\n"
+    "    import fleet_commons_shim  # noqa: PLC0415\n"
+    "\n"
+    '    return fleet_commons_shim.load("intent_envelope")\n'
+)
+
+# The frontmatter shape all seven mission-control skills carry at the pin:
+# name, a block-scalar description, a block-scalar when_to_use with blank
+# lines inside it, then the body.
+FRONTMATTER_SHAPE_SOURCE = (
+    "---\n"
+    "name: example\n"
+    "description: |\n"
+    "  A fixture skill.\n"
+    "when_to_use: |\n"
+    "  Use this fixture when:\n"
+    "\n"
+    "  - testing the fold\n"
+    "---\n"
+    "\n"
+    "# Example skill\n"
+)
+
+
+class SplitModuleRuleTests(unittest.TestCase):
+    """`resolve-bundled-fleet-module-split`: one import block, one load call."""
+
+    def transform(self, body: str) -> str:
+        return svs.split_module_transform(body.encode("utf-8"), "scripts/example.py").decode(
+            "utf-8"
+        )
+
+    def test_the_split_shape_is_rewritten_to_the_bundle(self) -> None:
+        rewritten = self.transform(SPLIT_SHAPE_SOURCE)
+        self.assertNotRegex(rewritten, SHIM_USE)
+        self.assertIn(
+            'sys.path.insert(0, str(Path(__file__).resolve().parent / "_bundled"))', rewritten
+        )
+        self.assertIn(
+            "import tier_palette  # noqa: E402  (after the sys.path shim, by design)", rewritten
+        )
+        self.assertIn("    palette = tier_palette", rewritten)
+        # Nothing outside the two matched sites moves.
+        self.assertIn("def lint_body(body: str) -> tuple[int, list[str]]:", rewritten)
+
+    def test_zero_matches_of_either_site_are_refused(self) -> None:
+        with self.assertRaises(svs.SyncError) as no_block:
+            self.transform("palette = 1\n")
+        self.assertIn("found 0", str(no_block.exception))
+        without_call = SPLIT_SHAPE_SOURCE.replace(
+            'palette = fleet_commons_shim.load("tier_palette")', "palette = None"
+        )
+        with self.assertRaises(svs.SyncError) as no_call:
+            self.transform(without_call)
+        message = str(no_call.exception)
+        self.assertIn("load(NAME) call site", message)
+        self.assertIn("found 0", message)
+
+    def test_multiple_matches_are_refused_never_first_match(self) -> None:
+        doubled_block = SPLIT_SHAPE_SOURCE + "\n" + (
+            "sys.path.insert(0, str(Path(__file__).resolve().parent))\n"
+            "\n"
+            "import fleet_commons_shim\n"
+        )
+        with self.assertRaises(svs.SyncError) as two_blocks:
+            self.transform(doubled_block)
+        message = str(two_blocks.exception)
+        self.assertIn("import block", message)
+        self.assertIn("found 2", message)
+        doubled_call = SPLIT_SHAPE_SOURCE + (
+            '\nother = fleet_commons_shim.load("tier_palette")\n'
+        )
+        with self.assertRaises(svs.SyncError) as two_calls:
+            self.transform(doubled_call)
+        self.assertIn("found 2", str(two_calls.exception))
+
+    def test_the_contiguous_v1_shape_does_not_match_the_split_rule(self) -> None:
+        """The frozen rule and the split rule describe disjoint shapes."""
+        with self.assertRaises(svs.SyncError):
+            self.transform(FIXTURE_SHIM_BLOCK + "NETWORK = 1\n")
+
+
+class GuardedModuleRuleTests(unittest.TestCase):
+    """`resolve-bundled-fleet-module-guarded`: one if-guarded contiguous block."""
+
+    def transform(self, body: str) -> str:
+        return svs.guarded_module_transform(body.encode("utf-8"), "scripts/example.py").decode(
+            "utf-8"
+        )
+
+    def test_the_guarded_shape_is_rewritten_to_the_bundle(self) -> None:
+        rewritten = self.transform(GUARDED_SHAPE_SOURCE)
+        self.assertNotRegex(rewritten, SHIM_USE)
+        self.assertIn(
+            '    scripts_dir = str(Path(__file__).resolve().parent / "_bundled")', rewritten
+        )
+        self.assertIn("    if scripts_dir not in sys.path:", rewritten)
+        self.assertIn("        sys.path.insert(0, scripts_dir)", rewritten)
+        self.assertIn("    import intent_envelope  # noqa: PLC0415", rewritten)
+        self.assertIn("    return intent_envelope", rewritten)
+        # The lazy, function-scope import survives: no module-scope import appeared.
+        self.assertIsNone(re.search(r"^import intent_envelope", rewritten, re.MULTILINE))
+
+    def test_zero_matches_are_refused(self) -> None:
+        with self.assertRaises(svs.SyncError) as caught:
+            self.transform("def _load():\n    return None\n")
+        self.assertIn("found 0", str(caught.exception))
+
+    def test_multiple_matches_are_refused_never_first_match(self) -> None:
+        second_body = GUARDED_SHAPE_SOURCE.split("def _load_intent_envelope():\n", 1)[1]
+        doubled = GUARDED_SHAPE_SOURCE + "\n\n" + "def second():\n" + second_body
+        with self.assertRaises(svs.SyncError) as caught:
+            self.transform(doubled)
+        self.assertIn("found 2", str(caught.exception))
+
+    def test_a_block_whose_lines_disagree_on_the_binding_is_refused(self) -> None:
+        mismatched = GUARDED_SHAPE_SOURCE.replace(
+            "    if scripts_dir not in sys.path:", "    if other_dir not in sys.path:"
+        )
+        with self.assertRaises(svs.SyncError):
+            self.transform(mismatched)
+
+
+class FrontmatterRuleTests(unittest.TestCase):
+    """`normalize-skill-frontmatter`: fold when_to_use under metadata."""
+
+    def transform(self, body: str) -> str:
+        return svs.normalize_skill_frontmatter(
+            body.encode("utf-8"), "skills/example/SKILL.md"
+        ).decode("utf-8")
+
+    def test_the_key_is_folded_under_metadata_with_its_value_reindented(self) -> None:
+        rewritten = self.transform(FRONTMATTER_SHAPE_SOURCE)
+        expected = (
+            "---\n"
+            "name: example\n"
+            "description: |\n"
+            "  A fixture skill.\n"
+            "metadata:\n"
+            "  when_to_use: |\n"
+            "    Use this fixture when:\n"
+            "\n"
+            "    - testing the fold\n"
+            "---\n"
+            "\n"
+            "# Example skill\n"
+        )
+        self.assertEqual(rewritten, expected)
+        fields = check_repo.read_frontmatter(rewritten)
+        self.assertIsNotNone(fields)
+        assert fields is not None
+        self.assertEqual(sorted(fields), ["description", "metadata", "name"])
+        for field in fields:
+            self.assertIn(field, check_repo.SKILL_FRONTMATTER_FIELDS)
+        # The body below the frontmatter is untouched.
+        self.assertTrue(rewritten.endswith("# Example skill\n"))
+
+    def test_the_fold_is_deterministic_and_idempotent(self) -> None:
+        once = svs.normalize_skill_frontmatter(
+            FRONTMATTER_SHAPE_SOURCE.encode("utf-8"), "skills/example/SKILL.md"
+        )
+        again = svs.normalize_skill_frontmatter(once, "skills/example/SKILL.md")
+        self.assertEqual(once, again, "a second application is a no-op")
+        self.assertEqual(
+            once,
+            svs.normalize_skill_frontmatter(
+                FRONTMATTER_SHAPE_SOURCE.encode("utf-8"), "skills/example/SKILL.md"
+            ),
+            "the same input always produces the same output",
+        )
+
+    def test_a_frontmatter_without_the_key_is_returned_unchanged(self) -> None:
+        payload = ("---\nname: example\ndescription: fixture\n---\n# body\n").encode("utf-8")
+        self.assertEqual(svs.normalize_skill_frontmatter(payload, "skills/x/SKILL.md"), payload)
+
+    def test_an_unterminated_frontmatter_is_refused(self) -> None:
+        with self.assertRaises(svs.SyncError) as caught:
+            self.transform("---\nname: example\nwhen_to_use: |\n  use it\n")
+        self.assertIn("no closing ---", str(caught.exception))
+
+    def test_a_document_without_frontmatter_is_refused(self) -> None:
+        with self.assertRaises(svs.SyncError):
+            self.transform("# not frontmatter\n")
+
+    def test_two_when_to_use_keys_are_refused(self) -> None:
+        doubled = FRONTMATTER_SHAPE_SOURCE.replace(
+            "---\n\n# Example skill\n", "when_to_use: again\n---\n\n# Example skill\n"
+        )
+        with self.assertRaises(svs.SyncError) as caught:
+            self.transform(doubled)
+        self.assertIn("found 2", str(caught.exception))
+
+    def test_an_existing_metadata_key_beside_the_fold_is_refused(self) -> None:
+        """Folding under an existing mapping is a shape version 1 does not describe."""
+        with_metadata = FRONTMATTER_SHAPE_SOURCE.replace(
+            "when_to_use: |", "metadata:\n  owner: fixture\nwhen_to_use: |"
+        )
+        with self.assertRaises(svs.SyncError) as caught:
+            self.transform(with_metadata)
+        self.assertIn("metadata", str(caught.exception))
+
+
+#: A synthetic upstream shaped like mission-control's Lane A: the two shim
+#: shapes, the frontmatter shape, and the dropped shim itself.
+MISSION_SHAPED_SOURCE: dict[str, str] = {
+    ".claude-plugin/plugin.json": FIXTURE_MANIFEST,
+    "CHANGELOG.md": "# fixture changelog\n",
+    "scripts/split_client.py": SPLIT_SHAPE_SOURCE,
+    "scripts/guarded_client.py": GUARDED_SHAPE_SOURCE,
+    "skills/example/SKILL.md": FRONTMATTER_SHAPE_SOURCE,
+    "scripts/fleet_commons_shim.py": "SHIM = 1\n",
+}
+
+
+def mission_shaped_config(**entrypoint_overrides: object) -> port_config.PortConfig:
+    """A schema-3 descriptor for the mission-shaped fixture, built like the committed ones."""
+    entrypoints = [
+        {"path": "scripts/split_client.py", "rule": svs.SPLIT_BUNDLED_TRANSFORM_NAME},
+        {"path": "scripts/guarded_client.py", "rule": svs.GUARDED_BUNDLED_TRANSFORM_NAME},
+        {"path": "skills/example/SKILL.md", "rule": svs.FRONTMATTER_TRANSFORM_NAME},
+    ]
+    entrypoints = [dict(entry, **entrypoint_overrides) for entry in entrypoints]
+    return port_config.parse(
+        {
+            "schema_version": port_config.SCHEMA_VERSION,
+            "package": CONFIG.name,
+            "package_root": CONFIG.package_root,
+            "package_manifest": CONFIG.package_manifest,
+            "source": {
+                "repository": CONFIG.source.repository,
+                "package_path": CONFIG.source.package_path,
+                "manifest_path": ".claude-plugin/plugin.json",
+                "client_extension_dir": "com.infiquetra.claude",
+            },
+            "custody": {
+                "byte_copies": ["CHANGELOG.md"],
+                "entrypoint_transforms": entrypoints,
+                "dropped_from_source": ["scripts/fleet_commons_shim.py"],
+            },
+            "assessment": {
+                "credential_prefixes": list(CONFIG.assessment.credential_prefixes),
+                "package_scripts": list(CONFIG.assessment.package_scripts),
+                "mutating_operations": sorted(CONFIG.assessment.mutating_operations),
+                "entrypoints": list(CONFIG.assessment.entrypoints),
+                "skill_units": list(CONFIG.assessment.skill_units),
+                "declared_none": list(CONFIG.assessment.declared_none),
+            },
+            "provenance": {
+                "notes": [],
+                "dropped_reason": "Replaced by the build-time Fleet Core bundle.",
+            },
+        },
+        root=CONFIG.root,
+        path=CONFIG.path,
+    )
+
+
+class MissionShapedSyncTests(SyncFixture):
+    """The new rules end-to-end: sync the mission-shaped fixture and read the manifest."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        base = Path(self._temporary.name) / "upstream-mission-shaped"
+        self.commit = make_source_checkout(base, MISSION_SHAPED_SOURCE)
+        self.source = base
+        self.config = mission_shaped_config()
+
+    def synchronize_shaped(self, **keywords: object) -> tuple[list[str], str]:
+        return svs.synchronize(self.config, self.source, self.commit, root=self.target, **keywords)
+
+    def test_each_rule_is_recorded_with_its_name_version_and_digests(self) -> None:
+        self.synchronize_shaped()
+        manifest = json.loads((self.package / "PROVENANCE.json").read_text(encoding="utf-8"))
+        transforms = {
+            entry["path"]: entry
+            for entry in manifest["files"]
+            if entry["classification"] == check_repo.TRANSFORM
+        }
+        expected_rules = {
+            "scripts/split_client.py": (
+                svs.SPLIT_BUNDLED_TRANSFORM_NAME,
+                svs.SPLIT_BUNDLED_TRANSFORM_VERSION,
+            ),
+            "scripts/guarded_client.py": (
+                svs.GUARDED_BUNDLED_TRANSFORM_NAME,
+                svs.GUARDED_BUNDLED_TRANSFORM_VERSION,
+            ),
+            "skills/example/SKILL.md": (
+                svs.FRONTMATTER_TRANSFORM_NAME,
+                svs.FRONTMATTER_TRANSFORM_VERSION,
+            ),
+            # The client manifest is the one transform no descriptor entry
+            # selects: it always relocates under its own rule.
+            f"{CONFIG.source.client_extension_dir}/plugin.json": (
+                svs.MANIFEST_TRANSFORM_NAME,
+                svs.MANIFEST_TRANSFORM_VERSION,
+            ),
+        }
+        self.assertEqual(sorted(transforms), sorted(expected_rules))
+        rewrites = set(expected_rules) - {f"{CONFIG.source.client_extension_dir}/plugin.json"}
+        for path, (name, version) in expected_rules.items():
+            with self.subTest(path=path):
+                entry = transforms[path]
+                self.assertEqual(entry["transform"], name)
+                self.assertEqual(entry["transform_version"], version)
+                for field in ("source_sha256", "sha256"):
+                    self.assertRegex(entry[field], r"^[0-9a-f]{64}$")
+                if path in rewrites:
+                    # The manifest relocation preserves bytes and derives only
+                    # the output path; every rewriting rule must change some.
+                    self.assertNotEqual(
+                        entry["source_sha256"],
+                        entry["sha256"],
+                        "the rewrite changed no byte, so the output still carries "
+                        "the shim shape",
+                    )
+                self.assertTrue(entry["transform_rule"].strip())
+
+    def test_the_transformed_outputs_carry_no_shim_import(self) -> None:
+        self.synchronize_shaped()
+        for relative in ("scripts/split_client.py", "scripts/guarded_client.py"):
+            with self.subTest(client=relative):
+                body = (self.package / relative).read_text(encoding="utf-8")
+                self.assertIsNone(SHIM_USE.search(body))
+        self.assertEqual(check_repo.check_provenance_manifests(self.target), [])
+
+    def test_resync_is_a_noop_and_check_mode_agrees(self) -> None:
+        self.synchronize_shaped()
+        before = tree_snapshot(self.package)
+        written, _ = self.synchronize_shaped()
+        self.assertEqual(written, [])
+        self.assertEqual(tree_snapshot(self.package), before)
+        errors, _ = self.synchronize_shaped(check_only=True)
+        self.assertEqual(errors, [])
+
+    def test_a_rule_name_the_tool_does_not_implement_is_refused(self) -> None:
+        self.config = mission_shaped_config(rule="resolve-bundled-fleet-module-nonexistent")
+        with self.assertRaises(svs.SyncError) as caught:
+            self.synchronize_shaped()
+        message = str(caught.exception)
+        self.assertIn("does not implement", message)
+        self.assertIn("resolve-bundled-fleet-module-nonexistent", message)
+
+    def test_a_path_with_no_rule_named_is_refused(self) -> None:
+        with self.assertRaises(svs.SyncError) as caught:
+            svs.resolve_transform_rule(self.config, "scripts/unlisted.py")
+        self.assertIn("names no transform rule", str(caught.exception))
+
+    def test_rule_names_register_exactly_once(self) -> None:
+        rule = svs.BUNDLED_MODULE_RULE
+        with self.assertRaises(ValueError) as caught:
+            svs._build_rule_registry(rule, rule)
+        self.assertIn("registered twice", str(caught.exception))
+        expected = {
+            svs.MANIFEST_TRANSFORM_NAME,
+            svs.BUNDLED_TRANSFORM_NAME,
+            svs.SPLIT_BUNDLED_TRANSFORM_NAME,
+            svs.GUARDED_BUNDLED_TRANSFORM_NAME,
+            svs.FRONTMATTER_TRANSFORM_NAME,
+        }
+        self.assertEqual(set(svs.TRANSFORM_RULES), expected)
+
+
 # --- target-owned portable source ---------------------------------------------
 
 
@@ -851,7 +1255,23 @@ class ShippedPackageTests(unittest.TestCase):
         self.assertEqual(manifest["$schema"], check_repo.PLUGIN_SCHEMA)
         self.assertEqual(manifest["name"], CONFIG.name)
         self.assertEqual(manifest["name"], self.package.name)
-        self.assertEqual(check_repo.check_plugin_manifests(ROOT), [])
+        errors = check_repo.check_plugin_manifests(ROOT)
+        # The run plan's landing model lets a synchronized tree land before the
+        # target-owned portable manifest its own lane authors (Lane B). That
+        # interim state is legitimate only while it names exactly the packages
+        # whose manifest is missing -- the same condition the port-descriptor
+        # gate reports -- never a defect in a manifest a package ships.
+        incomplete = [
+            config
+            for config in port_config.load_all(ROOT)
+            if config.package_directory.is_dir() and not config.manifest_path.is_file()
+        ]
+        for error in errors:
+            self.assertTrue(
+                any(config.package_root in error for config in incomplete),
+                f"check_plugin_manifests reported a defect the landing model does not "
+                f"expect: {error}",
+            )
 
     def test_the_claude_manifest_is_not_at_the_plugin_root(self) -> None:
         self.assertTrue((self.package / CONFIG.source.client_extension_dir / "plugin.json").is_file())
@@ -928,6 +1348,127 @@ class ShippedPackageTests(unittest.TestCase):
             f"clients resolve {sorted(resolved - declared)}, which fleet-bundle.json "
             "does not declare",
         )
+
+
+# --- the shipped mission-control package ----------------------------------------
+
+
+#: The audited mission-control pin (run plan R4; descriptor provenance notes).
+#: Pinned here on purpose: moving it is a deliberate act that has to change a
+#: test, not a silent drift.
+MISSION_CONTROL_PIN = "84eaf042f0e350005f7eddf8e7d80da25c12119d"
+MISSION_CONTROL_SKILLS = ("board", "flow", "issues", "labels", "metrics", "milestones", "rollout")
+
+
+def _skip_unless_mission_control_shipped(test: unittest.TestCase) -> Path:
+    package = ROOT / "plugins" / "mission-control"
+    if not (package / "PROVENANCE.json").is_file():
+        test.skipTest("the portable mission-control package has not been synchronized yet")
+    return package
+
+
+class MissionControlShippedTests(unittest.TestCase):
+    """The synchronized mission-control tree: child #13's custody outcomes on the real package."""
+
+    def setUp(self) -> None:
+        self.package = _skip_unless_mission_control_shipped(self)
+        self.config = svs.load_config("mission-control", ROOT)
+        self.manifest = json.loads(
+            (self.package / "PROVENANCE.json").read_text(encoding="utf-8")
+        )
+
+    def test_provenance_pins_the_audited_revision(self) -> None:
+        self.assertEqual(self.manifest["source_commit"], MISSION_CONTROL_PIN)
+        self.assertEqual(self.manifest["source_version"], "2.12.2")
+        self.assertEqual(self.manifest["source_repository"], self.config.source.repository)
+
+    def test_the_transformed_entrypoints_resolve_the_bundle_and_never_the_shim(self) -> None:
+        """Import-line correctness is assertable now; the bundle itself lands with Lane C.
+
+        The two rules land the bundle directory differently: the split rule
+        inserts it at module scope, the guarded rule moves the existing
+        function-local binding's value, which the guarded insert then uses.
+        """
+        bundled = f'"{svs.BUNDLE_DIRECTORY_NAME}"'
+        expected = {
+            "scripts/executor_profile_lint.py": (
+                svs.SPLIT_BUNDLED_TRANSFORM_NAME,
+                (
+                    f"sys.path.insert(0, str(Path(__file__).resolve().parent / {bundled}))",
+                    "import tier_palette",
+                    "palette = tier_palette",
+                ),
+            ),
+            "scripts/sdlc_manager.py": (
+                svs.GUARDED_BUNDLED_TRANSFORM_NAME,
+                (
+                    f"scripts_dir = str(Path(__file__).resolve().parent / {bundled})",
+                    "sys.path.insert(0, scripts_dir)",
+                    "import intent_envelope",
+                    "return intent_envelope",
+                ),
+            ),
+        }
+        entries = {entry["path"]: entry for entry in self.manifest["files"]}
+        for relative, (rule_name, fragments) in expected.items():
+            with self.subTest(client=relative):
+                body = (self.package / relative).read_text(encoding="utf-8")
+                self.assertIsNone(
+                    SHIM_USE.search(body), f"{relative} still reaches for the shim"
+                )
+                for fragment in fragments:
+                    self.assertIn(fragment, body)
+                entry = entries[relative]
+                self.assertEqual(entry["classification"], check_repo.TRANSFORM)
+                self.assertEqual(entry["transform"], rule_name)
+                self.assertEqual(
+                    entry["transform_version"], svs.TRANSFORM_RULES[rule_name].version
+                )
+                for field in ("source_sha256", "sha256"):
+                    self.assertRegex(entry[field], r"^[0-9a-f]{64}$")
+                self.assertNotEqual(
+                    entry["source_sha256"], entry["sha256"], "the rewrite changed no byte"
+                )
+
+    def test_all_seven_skills_fold_when_to_use_under_metadata(self) -> None:
+        entries = {entry["path"]: entry for entry in self.manifest["files"]}
+        for skill in MISSION_CONTROL_SKILLS:
+            with self.subTest(skill=skill):
+                relative = f"skills/{skill}/SKILL.md"
+                text = (self.package / relative).read_text(encoding="utf-8")
+                fields = check_repo.read_frontmatter(text)
+                self.assertIsNotNone(fields, f"missing frontmatter in {relative}")
+                assert fields is not None
+                self.assertEqual(fields.get("name"), skill)
+                self.assertNotIn("when_to_use", fields, "the key stayed at top level")
+                self.assertIn("metadata", fields)
+                for field in fields:
+                    self.assertIn(field, check_repo.SKILL_FRONTMATTER_FIELDS)
+                # The fold preserved the key's content.
+                self.assertIn("Use this skill when the user wants to:", text)
+                self.assertNotIn("\nwhen_to_use:", text)
+                entry = entries[relative]
+                self.assertEqual(entry["classification"], check_repo.TRANSFORM)
+                self.assertEqual(entry["transform"], svs.FRONTMATTER_TRANSFORM_NAME)
+
+    def test_the_shim_is_dropped_with_its_reason_recorded(self) -> None:
+        shim = [
+            entry
+            for entry in self.manifest["removed_from_source"]
+            if entry["source_path"] == "plugins/mission-control/scripts/fleet_commons_shim.py"
+        ]
+        self.assertEqual(len(shim), 1)
+        self.assertTrue(shim[0]["reason"].strip())
+        self.assertEqual([str(path) for path in self.package.rglob("fleet_commons_shim.py")], [])
+
+    def test_the_client_custody_files_land_under_the_extension_directory(self) -> None:
+        for relative in self.config.custody.client_byte_copies:
+            with self.subTest(file=relative):
+                target = self.package / self.config.source.client_extension_dir / relative
+                self.assertTrue(target.is_file(), f"client-custody file missing: {relative}")
+        relocated = self.package / self.config.source.client_extension_dir / "plugin.json"
+        self.assertTrue(relocated.is_file())
+        self.assertFalse((self.package / ".claude-plugin").exists())
 
 
 # --- parser-to-parser command surface ------------------------------------------

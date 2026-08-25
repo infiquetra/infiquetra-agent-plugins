@@ -2,6 +2,107 @@
 
 ## 2026-08-24
 
+### Schema 3 moved a graded file: the cycle-14 mutation proof is re-run with U8's evidence, not here
+
+**Author.** Jeff Cox and Qwen (orchestrated unit U3, issue #13)
+
+**Decision.** U3's schema-version-3 change to `scripts/port_config.py` moves
+the bytes of one of the five files `MutationProofBindingTest` grades, so the
+cycle-14 portable-copies mutation proof
+(`docs/evidence/2026-08-24-cycle14-mutation-proof-portable-copies.txt`) binds
+a superseded digest and the binding test fails on every branch carrying this
+change. The proof is re-run and republished with U8's Phase-3 evidence
+collection — evidence bound to the frozen assembled state — not inside this
+unit. Until then the intermediate branch state carries exactly one failure
+beyond the named Lane B/C package-completeness checks (the missing portable
+manifest, resolved by U4): the proof-binding test.
+
+**Rationale.** The binding test exists to fail in exactly this situation — a
+graded file edited without its proof re-run — so the failure is the mechanism
+working, not a defect in this unit. Editing the recorded digests without
+re-running the proof would be the evidence tampering the cycle-7 lesson built
+the test to prevent. The run plan gives the re-run a named home: U8's evidence
+set ("one mutation proof per rule copy with binding tests") is re-collected
+against the frozen branch, at which point the proof rebinds every graded
+file's final bytes.
+
+**Rejected alternatives.** Re-running the proof inside U3 (a full mutation-
+proof cycle is outside a synchronization unit's scope, and the tooling bytes
+are not final until the lanes land); editing the digest lines (tampering);
+amending the binding test to tolerate interim states (weakens the guarantee
+for every future graded-file edit).
+
+**Revisit when.** U8's Phase-3 evidence re-runs the portable-copies proof
+against the frozen assembled branch; this entry is superseded by that proof's
+publication.
+
+**Refs.** `tests/test_site_profile.py` (`MutationProofBindingTest`),
+`docs/evidence/2026-08-24-cycle14-mutation-proof-portable-copies.txt`,
+[run plan U8 evidence set and landing model](../plans/2026-08-24-mission-control-port-run-plan.md),
+child issue #13.
+
+---
+
+### Transform-rule selection is an explicit per-path rule field, validated by two modules
+
+**Author.** Jeff Cox and Qwen (orchestrated unit U3, issue #13)
+
+**Decision.** Descriptor schema version 3 reinterprets
+`custody.entrypoint_transforms`: every entry is an object carrying `path` and
+`rule`, both required and the object closed; a bare path string (the schema-2
+shape) or an entry with no rule name is refused rather than read with an
+assumed default rule. The rule name is validated by two modules:
+`scripts/port_config.py` validates the entry's shape (the descriptor format's
+sole authority), and `scripts/sync_vendor_source.py` validates at plan time
+that the name exists in its `TRANSFORM_RULES` registry. Three rules join the
+existing two: `resolve-bundled-fleet-module-split` v1 (a module-scope import
+block whose load call sits elsewhere in the file),
+`resolve-bundled-fleet-module-guarded` v1 (a function-scope, if-guarded
+contiguous block that returns the loaded module), and
+`normalize-skill-frontmatter` v1 (folds a top-level `when_to_use` under the
+permitted `metadata` key, line-based because the tooling is standard-library
+only). Both committed descriptors migrated in the same commit as the version
+bump; `resolve-bundled-fleet-module` v1 and its committed UniFi provenance
+stay byte-untouched.
+
+**Rationale.** `port_config` cannot know the sync registry without inverting
+the import direction (the sync tool imports `port_config`, never the reverse),
+so existence lives with the registry's owner and shape with the format's
+owner; a typo'd rule name fails at the next synchronization, and
+`tests/test_port_config.py` joins the two so it fails at the gate instead. The
+split rule pays the import at module scope where upstream paid it at call time
+— the lint script always needs the palette when it lints; the guarded rule
+keeps upstream's lazy call-time import and moves only the existing binding's
+value, keeping the binding name a deterministic rule cannot know is unused
+beyond the block. The fold lands where the key stood and refuses a frontmatter
+carrying a top-level `metadata` key beside `when_to_use` — folding under an
+existing mapping is a shape version 1 does not describe — and a frontmatter
+without the key comes back unchanged, which is the idempotence guarantee. The
+Python API keeps `entrypoint_transforms` a tuple of path strings with
+`entrypoint_rules` beside it, so consumers this unit does not own keep
+iterating paths unchanged.
+
+**Rejected alternatives.** A default rule for entries with no rule name
+(selection becomes a default — the failure the version bump exists to refuse);
+a rule-name registry inside `port_config.py` (couples the format authority to
+one tool's rule set and inverts the import direction; also the script-internal
+registry AGENTS.md's custody rule names); merging the fold into an existing
+`metadata` mapping (an undescribed shape); renaming the guarded block's
+directory binding (a byte change beyond the block the rule can see).
+
+**Revisit when.** A third shim shape appears at a future pin (the family grows
+a named rule; an existing rule is never loosened to match it); the open Agent
+Skills specification adopts `when_to_use` (the fold retires); a future port's
+frontmatter carries `when_to_use` beside an existing `metadata` key (the fold
+learns the merge shape and bumps its version).
+
+**Refs.** [run plan KTD1/KTD2/KTD3](../plans/2026-08-24-mission-control-port-run-plan.md),
+child issue #13, `scripts/sync_vendor_source.py` (`TRANSFORM_RULES`,
+`resolve_transform_rule`), `scripts/port_config.py`
+(`_entrypoint_transform_entries`), `ports/README.md`.
+
+---
+
 ### Mission-control fleet-commons closure: three files, with intent_envelope as a recorded deterministic transform (KTD8)
 
 **Author.** Jeff Cox and Claude (execution coordinator for issue #9)

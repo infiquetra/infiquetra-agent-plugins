@@ -1,5 +1,5 @@
 {
-  "schema_version": "2",
+  "schema_version": "3",
   "package": "unifi",
   "package_root": "plugins/unifi",
   "package_manifest": "plugin.json",
@@ -18,8 +18,14 @@
       "skills/unifi-protect/references/protect-api-endpoints.md"
     ],
     "entrypoint_transforms": [
-      "skills/unifi-network/scripts/unifi_network_client.py",
-      "skills/unifi-protect/scripts/unifi_protect_client.py"
+      {
+        "path": "skills/unifi-network/scripts/unifi_network_client.py",
+        "rule": "resolve-bundled-fleet-module"
+      },
+      {
+        "path": "skills/unifi-protect/scripts/unifi_protect_client.py",
+        "rule": "resolve-bundled-fleet-module"
+      }
     ],
     "client_byte_copies": [
       "commands/unifi.md",

@@ -1,0 +1,593 @@
+{
+  "boards": {
+    "asgard": {
+      "fields": [
+        {
+          "dataType": "ASSIGNEES",
+          "id": "PVTF_lADODdfJoc4BZLMHzhULxHo",
+          "name": "Assignees"
+        },
+        {
+          "dataType": "CLOSED",
+          "id": "PVTF_lADODdfJoc4BZLMHzhULxIY",
+          "name": "Closed"
+        },
+        {
+          "dataType": "CREATED",
+          "id": "PVTF_lADODdfJoc4BZLMHzhULxIQ",
+          "name": "Created"
+        },
+        {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BZLMHzhULxYk",
+          "name": "Jeff Needed",
+          "options": [
+            {
+              "id": "a2c74a45",
+              "name": "No"
+            },
+            {
+              "id": "19739274",
+              "name": "Yes"
+            }
+          ]
+        },
+        {
+          "dataType": "LABELS",
+          "id": "PVTF_lADODdfJoc4BZLMHzhULxHw",
+          "name": "Labels"
+        },
+        {
+          "dataType": "LINKED_PULL_REQUESTS",
+          "id": "PVTF_lADODdfJoc4BZLMHzhULxH0",
+          "name": "Linked pull requests"
+        },
+        {
+          "dataType": "MILESTONE",
+          "id": "PVTF_lADODdfJoc4BZLMHzhULxH4",
+          "name": "Milestone"
+        },
+        {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BZLMHzhULxYg",
+          "name": "Mode",
+          "options": [
+            {
+              "id": "0f4386c6",
+              "name": "Incubator"
+            },
+            {
+              "id": "a7a8a642",
+              "name": "Mission"
+            },
+            {
+              "id": "edbe384e",
+              "name": "Rapid Action"
+            }
+          ]
+        },
+        {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BZLMHzhVgDKQ",
+          "name": "Objective",
+          "options": [
+            {
+              "id": "fadfc659",
+              "name": "Team Freya"
+            },
+            {
+              "id": "d1028406",
+              "name": "Team Mimir"
+            },
+            {
+              "id": "dd7f2f45",
+              "name": "The Norns"
+            },
+            {
+              "id": "cb64e085",
+              "name": "The Norns: Next Horizon"
+            }
+          ]
+        },
+        {
+          "dataType": "PARENT_ISSUE",
+          "id": "PVTF_lADODdfJoc4BZLMHzhULxII",
+          "name": "Parent issue"
+        },
+        {
+          "dataType": "REPOSITORY",
+          "id": "PVTF_lADODdfJoc4BZLMHzhULxH8",
+          "name": "Repository"
+        },
+        {
+          "dataType": "REVIEWERS",
+          "id": "PVTF_lADODdfJoc4BZLMHzhULxIE",
+          "name": "Reviewers"
+        },
+        {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BZLMHzhULxYs",
+          "name": "Risk",
+          "options": [
+            {
+              "id": "e88ad8b9",
+              "name": "Critical"
+            },
+            {
+              "id": "09d3e40e",
+              "name": "High"
+            },
+            {
+              "id": "00f9b9a5",
+              "name": "Low"
+            },
+            {
+              "id": "1fe7cb18",
+              "name": "Medium"
+            }
+          ]
+        },
+        {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BZLMHzhULxHs",
+          "name": "Status",
+          "options": [
+            {
+              "id": "b521945f",
+              "name": "Active"
+            },
+            {
+              "id": "337f09c4",
+              "name": "Done"
+            },
+            {
+              "id": "fc10c3d1",
+              "name": "Idea"
+            },
+            {
+              "id": "82c74836",
+              "name": "Ready"
+            },
+            {
+              "id": "84e6c317",
+              "name": "Shaping"
+            },
+            {
+              "id": "4c963384",
+              "name": "Verify"
+            }
+          ]
+        },
+        {
+          "dataType": "SUB_ISSUES_PROGRESS",
+          "id": "PVTF_lADODdfJoc4BZLMHzhULxIM",
+          "name": "Sub-issues progress"
+        },
+        {
+          "dataType": "TEXT",
+          "id": "PVTF_lADODdfJoc4BZLMHzhULxY4",
+          "name": "Target Repository"
+        },
+        {
+          "dataType": "TITLE",
+          "id": "PVTF_lADODdfJoc4BZLMHzhULxHk",
+          "name": "Title"
+        },
+        {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BZLMHzhW-Sr4",
+          "name": "Transfer Target",
+          "options": [
+            {
+              "id": "b9b7af70",
+              "name": "External/Deferred"
+            },
+            {
+              "id": "63b4f3ec",
+              "name": "None"
+            }
+          ]
+        },
+        {
+          "dataType": "UPDATED",
+          "id": "PVTF_lADODdfJoc4BZLMHzhULxIU",
+          "name": "Updated"
+        }
+      ],
+      "id": "PVT_kwDODdfJoc4BZLMH",
+      "number": 2,
+      "title": "Asgard"
+    },
+    "campps": {
+      "fields": [
+        {
+          "dataType": "ASSIGNEES",
+          "id": "PVTF_lADODdfJoc4BanD0zhVdaN0",
+          "name": "Assignees"
+        },
+        {
+          "dataType": "CLOSED",
+          "id": "PVTF_lADODdfJoc4BanD0zhVdaOk",
+          "name": "Closed"
+        },
+        {
+          "dataType": "CREATED",
+          "id": "PVTF_lADODdfJoc4BanD0zhVdaOc",
+          "name": "Created"
+        },
+        {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BanD0zhVmR3Y",
+          "name": "Initiative",
+          "options": [
+            {
+              "id": "4ba0dfd5",
+              "name": "CAMPPS Phase 1a"
+            }
+          ]
+        },
+        {
+          "dataType": "LABELS",
+          "id": "PVTF_lADODdfJoc4BanD0zhVdaN8",
+          "name": "Labels"
+        },
+        {
+          "dataType": "LINKED_PULL_REQUESTS",
+          "id": "PVTF_lADODdfJoc4BanD0zhVdaOA",
+          "name": "Linked pull requests"
+        },
+        {
+          "dataType": "MILESTONE",
+          "id": "PVTF_lADODdfJoc4BanD0zhVdaOE",
+          "name": "Milestone"
+        },
+        {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BanD0zhVgDKY",
+          "name": "Objective",
+          "options": [
+            {
+              "id": "7d69c4d3",
+              "name": "CAMPPS-Phase-1"
+            },
+            {
+              "id": "08725287",
+              "name": "L0 Platform & Contracts"
+            },
+            {
+              "id": "6be0dcb0",
+              "name": "L1 Identity & Tenant"
+            },
+            {
+              "id": "aaa638e3",
+              "name": "L1.5 Post Review - Tenant build-to-spec & metering"
+            },
+            {
+              "id": "a6961340",
+              "name": "L2 Consent & Registration"
+            },
+            {
+              "id": "b554f45e",
+              "name": "L3 Payments"
+            },
+            {
+              "id": "b0f080e3",
+              "name": "L4 Health"
+            },
+            {
+              "id": "01e0945b",
+              "name": "L5 Activities"
+            },
+            {
+              "id": "9768e05a",
+              "name": "L6 Staff"
+            },
+            {
+              "id": "84da52ab",
+              "name": "L7 Admin & Ops"
+            },
+            {
+              "id": "65a9daa5",
+              "name": "L8 Activate Active-Active"
+            }
+          ]
+        },
+        {
+          "dataType": "PARENT_ISSUE",
+          "id": "PVTF_lADODdfJoc4BanD0zhVdaOU",
+          "name": "Parent issue"
+        },
+        {
+          "dataType": "REPOSITORY",
+          "id": "PVTF_lADODdfJoc4BanD0zhVdaOI",
+          "name": "Repository"
+        },
+        {
+          "dataType": "REVIEWERS",
+          "id": "PVTF_lADODdfJoc4BanD0zhVdaOQ",
+          "name": "Reviewers"
+        },
+        {
+          "dataType": "DATE",
+          "id": "PVTF_lADODdfJoc4BanD0zhVmfXA",
+          "name": "Start"
+        },
+        {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BanD0zhVdaN4",
+          "name": "Status",
+          "options": [
+            {
+              "id": "98236657",
+              "name": "Done"
+            },
+            {
+              "id": "47fc9ee4",
+              "name": "In Progress"
+            },
+            {
+              "id": "f75ad846",
+              "name": "Todo"
+            }
+          ]
+        },
+        {
+          "dataType": "SUB_ISSUES_PROGRESS",
+          "id": "PVTF_lADODdfJoc4BanD0zhVdaOY",
+          "name": "Sub-issues progress"
+        },
+        {
+          "dataType": "DATE",
+          "id": "PVTF_lADODdfJoc4BanD0zhVmfXE",
+          "name": "Target"
+        },
+        {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BanD0zhVmurY",
+          "name": "Test Strategy",
+          "options": [
+            {
+              "id": "7129d473",
+              "name": "combine"
+            },
+            {
+              "id": "b80fe200",
+              "name": "endpoint"
+            },
+            {
+              "id": "07146ab1",
+              "name": "event"
+            },
+            {
+              "id": "8f4af30c",
+              "name": "property"
+            },
+            {
+              "id": "78d44498",
+              "name": "schema"
+            }
+          ]
+        },
+        {
+          "dataType": "TITLE",
+          "id": "PVTF_lADODdfJoc4BanD0zhVdaNw",
+          "name": "Title"
+        },
+        {
+          "dataType": "UPDATED",
+          "id": "PVTF_lADODdfJoc4BanD0zhVdaOg",
+          "name": "Updated"
+        }
+      ],
+      "id": "PVT_kwDODdfJoc4BanD0",
+      "number": 4,
+      "title": "campps"
+    },
+    "operations": {
+      "fields": [
+        {
+          "dataType": "ASSIGNEES",
+          "id": "PVTF_lADODdfJoc4BZLMKzhULxKI",
+          "name": "Assignees"
+        },
+        {
+          "dataType": "CLOSED",
+          "id": "PVTF_lADODdfJoc4BZLMKzhULxK4",
+          "name": "Closed"
+        },
+        {
+          "dataType": "CREATED",
+          "id": "PVTF_lADODdfJoc4BZLMKzhULxKw",
+          "name": "Created"
+        },
+        {
+          "dataType": "LABELS",
+          "id": "PVTF_lADODdfJoc4BZLMKzhULxKQ",
+          "name": "Labels"
+        },
+        {
+          "dataType": "LINKED_PULL_REQUESTS",
+          "id": "PVTF_lADODdfJoc4BZLMKzhULxKU",
+          "name": "Linked pull requests"
+        },
+        {
+          "dataType": "MILESTONE",
+          "id": "PVTF_lADODdfJoc4BZLMKzhULxKY",
+          "name": "Milestone"
+        },
+        {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BZLMKzhVgDKU",
+          "name": "Objective",
+          "options": [
+            {
+              "id": "ef264f54",
+              "name": "Fleet Telemetry Baseline Build-Out"
+            },
+            {
+              "id": "bf920ea6",
+              "name": "defects-claude-plugins"
+            },
+            {
+              "id": "4a10eb7a",
+              "name": "improve-claude-plugins"
+            },
+            {
+              "id": "99d468cd",
+              "name": "infiquetra-sdlc-maintentance"
+            },
+            {
+              "id": "14f87794",
+              "name": "team-freya"
+            },
+            {
+              "id": "e9f72ddc",
+              "name": "team-mimir"
+            },
+            {
+              "id": "259bf694",
+              "name": "team-norns"
+            }
+          ]
+        },
+        {
+          "dataType": "PARENT_ISSUE",
+          "id": "PVTF_lADODdfJoc4BZLMKzhULxKo",
+          "name": "Parent issue"
+        },
+        {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BZLMKzhV_XRw",
+          "name": "Priority",
+          "options": [
+            {
+              "id": "012f3328",
+              "name": "P0"
+            },
+            {
+              "id": "4e5a8ef5",
+              "name": "P1"
+            },
+            {
+              "id": "bb19aabc",
+              "name": "P2"
+            },
+            {
+              "id": "0b3bb134",
+              "name": "P3"
+            }
+          ]
+        },
+        {
+          "dataType": "REPOSITORY",
+          "id": "PVTF_lADODdfJoc4BZLMKzhULxKc",
+          "name": "Repository"
+        },
+        {
+          "dataType": "REVIEWERS",
+          "id": "PVTF_lADODdfJoc4BZLMKzhULxKk",
+          "name": "Reviewers"
+        },
+        {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BZLMKzhXE5C8",
+          "name": "Risk",
+          "options": [
+            {
+              "id": "ddf972c9",
+              "name": "Critical"
+            },
+            {
+              "id": "050eb764",
+              "name": "High"
+            },
+            {
+              "id": "1ed0d4d2",
+              "name": "Low"
+            },
+            {
+              "id": "5df69c59",
+              "name": "Medium"
+            }
+          ]
+        },
+        {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BZLMKzhULxKM",
+          "name": "Status",
+          "options": [
+            {
+              "id": "c7334029",
+              "name": "Active"
+            },
+            {
+              "id": "b94c96a2",
+              "name": "Done"
+            },
+            {
+              "id": "9239ec92",
+              "name": "Idea"
+            },
+            {
+              "id": "a53eca31",
+              "name": "Ready"
+            },
+            {
+              "id": "370f1923",
+              "name": "Shaping"
+            },
+            {
+              "id": "1aa600b2",
+              "name": "Verify"
+            }
+          ]
+        },
+        {
+          "dataType": "SUB_ISSUES_PROGRESS",
+          "id": "PVTF_lADODdfJoc4BZLMKzhULxKs",
+          "name": "Sub-issues progress"
+        },
+        {
+          "dataType": "TITLE",
+          "id": "PVTF_lADODdfJoc4BZLMKzhULxKE",
+          "name": "Title"
+        },
+        {
+          "dataType": "UPDATED",
+          "id": "PVTF_lADODdfJoc4BZLMKzhULxK0",
+          "name": "Updated"
+        },
+        {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BZLMKzhV_XYs",
+          "name": "Work Type",
+          "options": [
+            {
+              "id": "3ba4cdc6",
+              "name": "Decision"
+            },
+            {
+              "id": "0eb69127",
+              "name": "Docs"
+            },
+            {
+              "id": "83724dbe",
+              "name": "Infra"
+            },
+            {
+              "id": "40e2b0a2",
+              "name": "Instrumentation"
+            },
+            {
+              "id": "195e338b",
+              "name": "Migration"
+            }
+          ]
+        }
+      ],
+      "id": "PVT_kwDODdfJoc4BZLMK",
+      "number": 3,
+      "title": "Operations"
+    }
+  }
+}

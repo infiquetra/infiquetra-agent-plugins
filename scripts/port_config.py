@@ -38,6 +38,7 @@ repository's tooling.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -60,7 +61,18 @@ CONFIG_SUFFIX = ".json"
 #: is not accepted: a descriptor written against it has exactly the shape this
 #: change exists to refuse, so reading one leniently would keep the hole open for
 #: whichever package had not been migrated yet.
-SCHEMA_VERSION = "2"
+#:
+#: Version 3 reinterprets `custody.entrypoint_transforms`: every entry is an
+#: object carrying the path and the name of the transform rule that rewrites
+#: it, where version 2 carried bare path strings and the synchronization tool
+#: applied its one rewriting rule to every one of them. With more than one rule
+#: in play, selection has to be stated per path or it becomes a script-internal
+#: registry constant -- the custody violation AGENTS.md names. Version 2 is not
+#: accepted: both committed descriptors migrated in the same commit that bumped
+#: the version, and an entry with no rule name is refused for the same reason a
+#: bare string is -- reading either with an assumed default rule would select a
+#: rewrite nobody named.
+SCHEMA_VERSION = "3"
 
 #: Package roots live under this directory. Enforced rather than assumed: the
 #: descriptor is the input that decides which tree a synchronization overwrites
@@ -122,6 +134,13 @@ CUSTODY_FIELDS = (
     "superseded_by_target_owned",
     "dropped_from_source",
 )
+
+#: The fields one `entrypoint_transforms` entry carries (schema version 3).
+#: Closed like every other object here. `rule` names the transform the
+#: synchronization tool applies to `path`; the tool refuses a name it does not
+#: implement, so a typo in the entry fails at synchronization rather than
+#: selecting a rewrite by default.
+ENTRYPOINT_TRANSFORM_ENTRY_FIELDS = ("path", "rule")
 
 
 class PortConfigError(Exception):
@@ -195,6 +214,59 @@ def _relative_path(value: str, where: str) -> str:
     return value
 
 
+def _entrypoint_transform_entries(
+    document: dict[str, Any], where: str
+) -> tuple[tuple[str, ...], dict[str, str]]:
+    """The schema-3 `entrypoint_transforms` entries: paths, and the rule each names.
+
+    Absent means empty, like every other custody class. Present, every entry is
+    an object stating both fields: a bare path string is the version-2 shape the
+    version bump exists to replace, and an entry with no rule name would select
+    a rewrite by assumed default -- the setting-that-silently-did-not-take-effect
+    failure every closed object here prevents. The rule name is validated as a
+    name only; which names exist is the synchronization tool's registry to say,
+    and it refuses one it does not implement.
+    """
+    if "entrypoint_transforms" not in document:
+        return (), {}
+    value = document["entrypoint_transforms"]
+    _require(
+        isinstance(value, list), f"{where}.entrypoint_transforms must be a list of entries"
+    )
+    assert isinstance(value, list)
+    paths: list[str] = []
+    rules: dict[str, str] = {}
+    for index, entry in enumerate(value):
+        entry_where = f"{where}.entrypoint_transforms[{index}]"
+        _require(
+            isinstance(entry, dict),
+            f"{entry_where} must be an object with the fields "
+            f"{', '.join(ENTRYPOINT_TRANSFORM_ENTRY_FIELDS)}; a bare path string is the "
+            f"schema-2 shape, and schema {SCHEMA_VERSION} names the transform rule every "
+            "rewritten path carries",
+        )
+        assert isinstance(entry, dict)
+        _closed(entry, ENTRYPOINT_TRANSFORM_ENTRY_FIELDS, entry_where)
+        path = entry.get("path")
+        rule = entry.get("rule")
+        _require(
+            isinstance(path, str) and path.strip() != "",
+            f"{entry_where} is missing a non-empty path",
+        )
+        assert isinstance(path, str)
+        _require(
+            isinstance(rule, str) and rule.strip() != "",
+            f"{entry_where} is missing a non-empty rule name: schema {SCHEMA_VERSION} "
+            "selects the transform rule explicitly, so an entry without one would be "
+            "read with an assumed default",
+        )
+        assert isinstance(rule, str)
+        _relative_path(path, f"{entry_where}.path")
+        paths.append(path)
+        rules[path] = rule
+    return tuple(paths), rules
+
+
 class SourceConfig:
     """Where the derived tree comes from."""
 
@@ -214,9 +286,16 @@ class SourceConfig:
 
 
 class CustodyTable:
-    """Every upstream path, classified exactly once."""
+    """Every upstream path, classified exactly once.
 
-    __slots__ = CUSTODY_FIELDS
+    `entrypoint_transforms` stays a tuple of path strings -- that is what the
+    classification, the assessment, and the regression tests iterate -- and the
+    per-path rule name each schema-3 descriptor entry carries rides beside it
+    in `entrypoint_rules`, complete for every path or the validator refused the
+    descriptor.
+    """
+
+    __slots__ = CUSTODY_FIELDS + ("entrypoint_rules",)
 
     def __init__(
         self,
@@ -225,12 +304,20 @@ class CustodyTable:
         client_byte_copies: tuple[str, ...],
         superseded_by_target_owned: tuple[str, ...],
         dropped_from_source: tuple[str, ...],
+        *,
+        entrypoint_rules: Mapping[str, str] | None = None,
     ) -> None:
         self.byte_copies = byte_copies
         self.entrypoint_transforms = entrypoint_transforms
         self.client_byte_copies = client_byte_copies
         self.superseded_by_target_owned = superseded_by_target_owned
         self.dropped_from_source = dropped_from_source
+        #: The transform rule each entrypoint-transform path is rewritten by,
+        #: keyed by path. Schema version 3 states it per entry; a table built
+        #: without one (the pre-version-3 tests) carries no selection at all,
+        #: which the synchronization tool reports as an unnamed rule rather
+        #: than defaulting.
+        self.entrypoint_rules = dict(entrypoint_rules) if entrypoint_rules else {}
 
     def declared(self) -> tuple[str, ...]:
         """Every upstream-relative path the table names, in declaration order.
@@ -450,11 +537,18 @@ def parse(document: object, *, root: Path, path: Path) -> PortConfig:
     custody_values = {
         field: _string_tuple(custody_document, field, f"{where}.custody")
         for field in CUSTODY_FIELDS
+        if field != "entrypoint_transforms"
     }
+    entrypoint_paths, entrypoint_rules = _entrypoint_transform_entries(
+        custody_document, f"{where}.custody"
+    )
+    custody_values["entrypoint_transforms"] = entrypoint_paths
     for field, values in custody_values.items():
+        if field == "entrypoint_transforms":
+            continue  # each entry's path was validated with its rule above
         for value in values:
             _relative_path(value, f"{where}.custody.{field}")
-    custody = CustodyTable(**custody_values)
+    custody = CustodyTable(**custody_values, entrypoint_rules=entrypoint_rules)
 
     declared = custody.declared()
     duplicates = sorted({name for name in declared if declared.count(name) > 1})

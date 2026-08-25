@@ -21,12 +21,24 @@ Three classifications, and every path in the derived tree is exactly one of them
   authored upstream first; a downstream edit is a defect, not a transform.
 * **deterministic transform** — derived from a source file by a versioned,
   repeatable rule, recording the source digest, the output digest, and the
-  transform version. There are two rules. `relocate-claude-manifest` lifts the
-  Claude manifest out of `.claude-plugin/` into the client extension directory.
-  `resolve-bundled-fleet-module` rewrites each client's module-scope import of
-  the dropped `fleet_commons_shim` into an import of the build-time Fleet Core
+  transform version. Which rule rewrites a path is stated per entry in the
+  descriptor's `custody.entrypoint_transforms` table (schema version 3); the
+  upstream client manifest always relocates under `relocate-claude-manifest`.
+  The rules this tool implements are its `TRANSFORM_RULES` registry, and a
+  descriptor naming one it does not implement is refused rather than matched
+  by default. `relocate-claude-manifest` lifts the Claude manifest out of
+  `.claude-plugin/` into the client extension directory. The
+  `resolve-bundled-fleet-module` family rewrites a client's import of the
+  dropped `fleet_commons_shim` into an import of the build-time Fleet Core
   bundle this package ships, which is what gives the portable package a working
-  entrypoint at all.
+  entrypoint at all: version 1 matches the single contiguous three-line block;
+  `resolve-bundled-fleet-module-split` matches a module-scope import block
+  whose load call sits elsewhere in the file; and
+  `resolve-bundled-fleet-module-guarded` matches a function-scope, if-guarded
+  block that returns the loaded module. `normalize-skill-frontmatter` folds a
+  `when_to_use` frontmatter key under the permitted `metadata` key,
+  deterministically and idempotently, so a skill the open Agent Skills
+  specification does not permit upstream still passes the repository gate here.
 * **target-owned portable source** — authored here rather than derived from the
   pinned commit. It is never overwritten and never removed by synchronization,
   which is what stops this script from silently destroying the portable
@@ -56,6 +68,7 @@ import json
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +87,15 @@ MANIFEST_TRANSFORM_VERSION = "1"
 BUNDLED_TRANSFORM_NAME = "resolve-bundled-fleet-module"
 BUNDLED_TRANSFORM_VERSION = "1"
 
+SPLIT_BUNDLED_TRANSFORM_NAME = "resolve-bundled-fleet-module-split"
+SPLIT_BUNDLED_TRANSFORM_VERSION = "1"
+
+GUARDED_BUNDLED_TRANSFORM_NAME = "resolve-bundled-fleet-module-guarded"
+GUARDED_BUNDLED_TRANSFORM_VERSION = "1"
+
+FRONTMATTER_TRANSFORM_NAME = "normalize-skill-frontmatter"
+FRONTMATTER_TRANSFORM_VERSION = "1"
+
 GENERATED_BY = "scripts/sync_vendor_source.py"
 
 PROVENANCE_FILENAME = check_repo.PROVENANCE_FILENAME
@@ -85,9 +107,14 @@ TARGET_OWNED = check_repo.TARGET_OWNED
 #
 # * `byte_copies` -- files whose custody is the portable core. Their path inside
 #   the portable package is their path inside the upstream package, unchanged.
-# * `entrypoint_transforms` -- executable entrypoints that keep their
-#   upstream-relative path but are not byte copies, because upstream reaches a
-#   shared primitive through a client-specific shim the portable package drops.
+# * `entrypoint_transforms` -- files that keep their upstream-relative path but
+#   are not byte copies, because upstream reaches a shared primitive through a
+#   client-specific shim the portable package drops, or carries a frontmatter
+#   key the open Agent Skills specification does not permit. Since descriptor
+#   schema version 3 every entry names the transform rule that rewrites its
+#   path; `plan_sync` looks the name up in `TRANSFORM_RULES` and refuses one it
+#   does not implement, so rule selection is the descriptor's data rather than
+#   a constant in this file.
 # * `client_byte_copies` -- files whose custody is the client adapter. The
 #   client extension directory mirrors the upstream package root path for path,
 #   so a reader can recover the origin of every adapter file from its portable
@@ -249,17 +276,36 @@ BUNDLED_TRANSFORM_RULE = (
 
 
 class TransformRule:
-    """One versioned, repeatable rule and the metadata a manifest entry records."""
+    """One versioned, repeatable rule and the metadata a manifest entry records.
 
-    __slots__ = ("name", "version", "rule")
+    `apply` rewrites one source payload and names the file in its errors; it is
+    part of the rule's identity so `TRANSFORM_RULES` can dispatch a descriptor's
+    per-path selection without a second table mapping names onto functions.
+    """
 
-    def __init__(self, name: str, version: str, rule: str) -> None:
+    __slots__ = ("name", "version", "rule", "apply")
+
+    def __init__(
+        self,
+        name: str,
+        version: str,
+        rule: str,
+        apply: Callable[[bytes, str], bytes],
+    ) -> None:
         self.name = name
         self.version = version
         self.rule = rule
+        self.apply = apply
 
 
-def bundled_module_transform(payload: bytes, *, target_path: str) -> bytes:
+def _decode_utf8(payload: bytes, path: str) -> str:
+    try:
+        return payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SyncError(f"{path} is not UTF-8: {exc}") from exc
+
+
+def bundled_module_transform(payload: bytes, target_path: str) -> bytes:
     """Transform `resolve-bundled-fleet-module`, version 1.
 
     The rule: find the one upstream block that puts the client's own directory
@@ -282,10 +328,7 @@ def bundled_module_transform(payload: bytes, *, target_path: str) -> bytes:
     and `tests/test_client_entrypoints.py` runs the shipped scripts, so a
     declaration that stops writing beside a client fails loudly.
     """
-    try:
-        body = payload.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise SyncError(f"{target_path} is not UTF-8: {exc}") from exc
+    body = _decode_utf8(payload, target_path)
 
     matches = list(UPSTREAM_SHIM_IMPORT.finditer(body))
     if len(matches) != 1:
@@ -310,7 +353,7 @@ def bundled_module_transform(payload: bytes, *, target_path: str) -> bytes:
     return rewritten.encode("utf-8")
 
 
-def relocate_claude_manifest(payload: bytes, *, source_path: str) -> bytes:
+def relocate_claude_manifest(payload: bytes, source_path: str) -> bytes:
     """Transform `relocate-claude-manifest`, version 1.
 
     The rule: read the Claude Code manifest from `.claude-plugin/plugin.json`
@@ -340,6 +383,297 @@ def relocate_claude_manifest(payload: bytes, *, source_path: str) -> bytes:
     return payload
 
 
+#: The comment the `resolve-bundled-fleet-module` family writes where the shim
+#: import stood. Version 1 of the family carries the same prose inline in its
+#: frozen replacement text; the newer rules render it from here so one family
+#: explains the bundle the same way in every shape it rewrites.
+BUNDLE_REPLACEMENT_COMMENT = (
+    "The build-time Fleet Core bundle replaces the upstream fleet_commons_shim, whose",
+    "resolution ladder is Claude-specific runtime discovery this package must not",
+    "retain. scripts/bundle_fleet_module.py writes the bundle, so the module is on",
+    "disk at install time and Fleet Core is never installed separately.",
+)
+
+
+def _bundle_comment(prefix: str) -> str:
+    return "".join(f"{prefix}# {line}\n" for line in BUNDLE_REPLACEMENT_COMMENT)
+
+
+#: The module-scope split shape: an insert of the script's own directory plus a
+#: shim import at module scope, separated by a blank line, with the
+#: `fleet_commons_shim.load(NAME)` call somewhere else in the file. Matched in
+#: two parts because the shape is split; each part must match exactly once, and
+#: a file the pair does not describe fails loudly instead of being half-
+#: rewritten. The contiguous three-line shape of `resolve-bundled-fleet-module`
+#: v1 cannot match here: that rule's import follows the insert with no blank
+#: line between them, and this part requires one.
+SPLIT_IMPORT_BLOCK = re.compile(
+    r"^sys\.path\.insert\(0, str\(Path\(__file__\)\.resolve\(\)\.parent\)\)\n"
+    r"\n"
+    r"import fleet_commons_shim(?P<import_tail>[^\n]*)\n",
+    re.MULTILINE,
+)
+
+SPLIT_LOAD_CALL = re.compile(
+    r"^(?P<indent>[ ]*)(?P<binding>[A-Za-z_][A-Za-z0-9_]*) = "
+    r"fleet_commons_shim\.load\(\"(?P<module>[A-Za-z_][A-Za-z0-9_]*)\"\)$",
+    re.MULTILINE,
+)
+
+SPLIT_BUNDLED_TRANSFORM_RULE = (
+    "Rewrite the split module-scope shape of the dropped fleet_commons_shim import. Version 1 "
+    "matches two sites that must each appear exactly once: a module-scope block inserting the "
+    "script's own directory on sys.path, a blank line, and `import fleet_commons_shim`, and the "
+    f"separate `BINDING = fleet_commons_shim.load(NAME)` call. It re-emits the block as an "
+    f"insertion of the {BUNDLE_DIRECTORY_NAME}/ directory beside the client plus a direct "
+    "`import NAME` keeping the source's own trailing comment, and re-emits the call as "
+    "`BINDING = NAME`, rebinding the module the new import bound. The shape is matched whole: "
+    "either site absent or appearing twice fails the synchronization, because a half-rewritten "
+    "client would still import the dropped shim or bind nothing. The module scope pays the "
+    "import at import time where upstream paid it at call time; the consumer's fleet-bundle.json "
+    "puts the bundle beside the client exactly as for the family's version 1."
+)
+
+
+def split_module_transform(payload: bytes, target_path: str) -> bytes:
+    """Transform `resolve-bundled-fleet-module-split`, version 1.
+
+    The rule: find the one module-scope `sys.path` insert + blank line +
+    `import fleet_commons_shim` block and the one far-away
+    `fleet_commons_shim.load(NAME)` call, and re-emit the block as an insertion
+    of the generated bundle directory plus a direct import of NAME, and the
+    call as a rebinding of the imported module.
+
+    Mission-control's `executor_profile_lint.py` carries this shape at the
+    porting pin: the import at module scope, the `.load("tier_palette")` inside
+    the lint function. Neither half matches `resolve-bundled-fleet-module` v1's
+    contiguous three-line block, which is why the family grew a named rule for
+    this shape instead of loosening the frozen one.
+    """
+    body = _decode_utf8(payload, target_path)
+
+    blocks = list(SPLIT_IMPORT_BLOCK.finditer(body))
+    if len(blocks) != 1:
+        raise SyncError(
+            f"{target_path}: rule {SPLIT_BUNDLED_TRANSFORM_NAME} expected exactly one "
+            f"module-scope fleet_commons_shim import block (sys.path insert, blank line, "
+            f"import), found {len(blocks)}; a shape this rule cannot match exactly once is "
+            "a synchronization stop, never a first match"
+        )
+    calls = list(SPLIT_LOAD_CALL.finditer(body))
+    if len(calls) != 1:
+        raise SyncError(
+            f"{target_path}: rule {SPLIT_BUNDLED_TRANSFORM_NAME} expected exactly one "
+            f"fleet_commons_shim.load(NAME) call site, found {len(calls)}; a shape this rule "
+            "cannot match exactly once is a synchronization stop, never a first match"
+        )
+    block, call = blocks[0], calls[0]
+    if not block.end() <= call.start():
+        raise SyncError(
+            f"{target_path}: rule {SPLIT_BUNDLED_TRANSFORM_NAME} matched its call site before "
+            "its import block; the split shape puts the module-scope block first, so this file "
+            "carries a shape the rule does not describe"
+        )
+    module = call.group("module")
+    replacement_block = (
+        "sys.path.insert(0, str(Path(__file__).resolve().parent / "
+        f'"{BUNDLE_DIRECTORY_NAME}"))\n'
+        + _bundle_comment(prefix="")
+        + f"import {module}{block.group('import_tail')}\n"
+    )
+    replacement_call = f"{call.group('indent')}{call.group('binding')} = {module}"
+    rewritten = (
+        body[: block.start()]
+        + replacement_block
+        + body[block.end() : call.start()]
+        + replacement_call
+        + body[call.end() :]
+    )
+    return rewritten.encode("utf-8")
+
+
+#: The function-scope guarded-contiguous shape: a binding of the script's own
+#: directory, an `if BINDING not in sys.path:` guard around the insert, the
+#: shim import, a blank line, and a `return` of the loaded module -- one
+#: contiguous block inside a function. The indent is captured and re-emitted so
+#: the rule holds wherever the function sits, and the binding name is
+#: back-referenced so the three lines must agree on it.
+GUARDED_CONTIGUOUS_BLOCK = re.compile(
+    r"^(?P<indent>[ ]*)(?P<dir_binding>[A-Za-z_][A-Za-z0-9_]*) = "
+    r"str\(Path\(__file__\)\.resolve\(\)\.parent\)\n"
+    r"(?P=indent)if (?P=dir_binding) not in sys\.path:\n"
+    r"(?P=indent)    sys\.path\.insert\(0, (?P=dir_binding)\)\n"
+    r"(?P=indent)import fleet_commons_shim(?P<import_tail>[^\n]*)\n"
+    r"\n"
+    r"(?P=indent)return fleet_commons_shim\.load\(\"(?P<module>[A-Za-z_][A-Za-z0-9_]*)\"\)$",
+    re.MULTILINE,
+)
+
+GUARDED_BUNDLED_TRANSFORM_RULE = (
+    "Rewrite the function-scope guarded shape of the dropped fleet_commons_shim import. Version "
+    "1 matches exactly one contiguous block: a binding of the script's own directory, an `if "
+    "BINDING not in sys.path:` guard around the insert, `import fleet_commons_shim`, a blank "
+    "line, and `return fleet_commons_shim.load(NAME)`. It re-emits the binding's value as the "
+    f"{BUNDLE_DIRECTORY_NAME}/ directory beside the client -- keeping the binding name, which a "
+    "deterministic rule cannot know is unused beyond the block -- and the import and return as "
+    "the direct module, preserving the source's own trailing comment and the lazy, call-time "
+    "import the upstream function documents. The block absent or repeated fails the "
+    "synchronization, because a half-rewritten loader would still import the dropped shim."
+)
+
+
+def guarded_module_transform(payload: bytes, target_path: str) -> bytes:
+    """Transform `resolve-bundled-fleet-module-guarded`, version 1.
+
+    The rule: find the one function-scope, if-guarded contiguous block that
+    inserts the script's directory, imports `fleet_commons_shim`, and returns
+    the module it loads, and re-emit it so the guarded insert points at the
+    generated bundle directory and the function imports and returns the module
+    directly.
+
+    Mission-control's `sdlc_manager.py` carries this shape at the porting pin
+    inside `_load_intent_envelope`: the lazy loader stays lazy -- the import
+    still happens at call time -- but resolves the build-time bundle instead of
+    the dropped shim. The binding keeps its upstream name; only its value
+    moves, which is the smallest change that cannot break a use of the binding
+    the block does not see.
+    """
+    body = _decode_utf8(payload, target_path)
+
+    matches = list(GUARDED_CONTIGUOUS_BLOCK.finditer(body))
+    if len(matches) != 1:
+        raise SyncError(
+            f"{target_path}: rule {GUARDED_BUNDLED_TRANSFORM_NAME} expected exactly one "
+            f"if-guarded fleet_commons_shim block (binding, guard, insert, import, return "
+            f"load), found {len(matches)}; a shape this rule cannot match exactly once is a "
+            "synchronization stop, never a first match"
+        )
+    match = matches[0]
+    indent = match.group("indent")
+    dir_binding = match.group("dir_binding")
+    module = match.group("module")
+    replacement = (
+        f"{indent}{dir_binding} = str(Path(__file__).resolve().parent / "
+        f'"{BUNDLE_DIRECTORY_NAME}")\n'
+        f"{indent}if {dir_binding} not in sys.path:\n"
+        f"{indent}    sys.path.insert(0, {dir_binding})\n"
+        + _bundle_comment(prefix=indent)
+        + f"{indent}import {module}{match.group('import_tail')}\n"
+        "\n"
+        f"{indent}return {module}"
+    )
+    rewritten = body[: match.start()] + replacement + body[match.end() :]
+    return rewritten.encode("utf-8")
+
+
+#: The open Agent Skills key `when_to_use` is folded under. Permitted by the
+#: specification, read by `check_repo.SKILL_FRONTMATTER_FIELDS`; a skill that
+#: carries it at top level fails the repository gate, so the portable copy
+#: moves it rather than dropping it and upstream keeps it, because Claude Code
+#: skill listings read it.
+FRONTMATTER_WHEN_TO_USE_KEY = "when_to_use"
+FRONTMATTER_METADATA_KEY = "metadata"
+FRONTMATTER_DELIMITER_LINE = "---"
+
+#: A top-level frontmatter key line: column zero, the key shape
+#: `check_repo.FRONTMATTER_KEY` defines, never an indented continuation.
+FRONTMATTER_TOP_LEVEL_KEY = re.compile(r"^(?P<key>[A-Za-z0-9][A-Za-z0-9_.-]*):")
+
+FRONTMATTER_TRANSFORM_RULE = (
+    "Fold a top-level when_to_use frontmatter key under the permitted metadata key. Version 1 "
+    "reads the YAML frontmatter block line by line -- the repository tooling is standard "
+    "library only and ships no YAML parser -- and moves the key line and every line of its "
+    "value, block scalar or inline, two columns in, emitting `metadata:` above it where the "
+    "key stood. The fold is deterministic and idempotent: a frontmatter without a top-level "
+    "when_to_use comes back byte-identical, which is what a second application returns, and "
+    "the body below the frontmatter is never touched. A frontmatter that carries a top-level "
+    "metadata key beside when_to_use is refused rather than merged, because folding under an "
+    "existing mapping is a shape this version does not describe; an unterminated frontmatter "
+    "or a second when_to_use key is refused for the same reason. Portable copies only: the "
+    "upstream file keeps the key because it is functional in Claude Code skill listings."
+)
+
+
+def normalize_skill_frontmatter(payload: bytes, target_path: str) -> bytes:
+    """Transform `normalize-skill-frontmatter`, version 1.
+
+    The rule: move the one top-level `when_to_use` key of a skill's frontmatter
+    under a `metadata` key emitted where the key stood, re-indenting its value
+    block beneath it. A file with no top-level `when_to_use` is returned
+    unchanged, which makes the transform idempotent: applied to its own output
+    it is a no-op.
+
+    All seven mission-control `SKILL.md` files carry the key at the porting
+    pin, and `when_to_use` is not one of the six fields the open Agent Skills
+    specification permits, so a byte copy of any of them would fail
+    `check_skill_frontmatter` on the assembled branch. The fold preserves the
+    key's content -- the `metadata` mapping is a permitted field -- instead of
+    deleting it.
+    """
+    body = _decode_utf8(payload, target_path)
+    lines = body.split("\n")
+    if not lines or lines[0].strip() != FRONTMATTER_DELIMITER_LINE:
+        raise SyncError(
+            f"{target_path}: rule {FRONTMATTER_TRANSFORM_NAME} expected a YAML frontmatter "
+            "block opening with --- on the first line"
+        )
+    closing = None
+    for index in range(1, len(lines)):
+        if lines[index].strip() == FRONTMATTER_DELIMITER_LINE:
+            closing = index
+            break
+    if closing is None:
+        raise SyncError(
+            f"{target_path}: rule {FRONTMATTER_TRANSFORM_NAME} found no closing --- for the "
+            "frontmatter block"
+        )
+
+    key_indices = [
+        index
+        for index in range(1, closing)
+        if FRONTMATTER_TOP_LEVEL_KEY.match(lines[index])
+        and FRONTMATTER_TOP_LEVEL_KEY.match(lines[index]).group("key")
+        == FRONTMATTER_WHEN_TO_USE_KEY
+    ]
+    if not key_indices:
+        # Nothing to fold: a second application lands here too, which is the
+        # idempotence guarantee stated by the rule.
+        return payload
+    if len(key_indices) != 1:
+        raise SyncError(
+            f"{target_path}: rule {FRONTMATTER_TRANSFORM_NAME} expected exactly one top-level "
+            f"{FRONTMATTER_WHEN_TO_USE_KEY} key, found {len(key_indices)}"
+        )
+    metadata_indices = [
+        index
+        for index in range(1, closing)
+        if FRONTMATTER_TOP_LEVEL_KEY.match(lines[index])
+        and FRONTMATTER_TOP_LEVEL_KEY.match(lines[index]).group("key")
+        == FRONTMATTER_METADATA_KEY
+    ]
+    if metadata_indices:
+        raise SyncError(
+            f"{target_path}: rule {FRONTMATTER_TRANSFORM_NAME} refuses a frontmatter that "
+            f"carries a top-level {FRONTMATTER_METADATA_KEY} key beside "
+            f"{FRONTMATTER_WHEN_TO_USE_KEY}; folding under an existing mapping is a shape "
+            "this version does not describe"
+        )
+
+    key_index = key_indices[0]
+    value_end = key_index + 1
+    while value_end < closing and (
+        not lines[value_end].strip() or lines[value_end][0] in " \t"
+    ):
+        value_end += 1
+
+    folded = [f"{FRONTMATTER_METADATA_KEY}:"]
+    folded.append(f"  {lines[key_index]}")
+    for line in lines[key_index + 1 : value_end]:
+        folded.append(f"  {line}" if line.strip() else line)
+    rewritten_lines = lines[:key_index] + folded + lines[value_end:]
+    return "\n".join(rewritten_lines).encode("utf-8")
+
+
 RELOCATE_MANIFEST_RULE = TransformRule(
     MANIFEST_TRANSFORM_NAME,
     MANIFEST_TRANSFORM_VERSION,
@@ -350,13 +684,88 @@ RELOCATE_MANIFEST_RULE = TransformRule(
     "convention with no meaning inside the extension directory, and the "
     "portable Agent Plugins manifest already occupies the package root the "
     "Claude manifest would otherwise claim.",
+    relocate_claude_manifest,
 )
 
 BUNDLED_MODULE_RULE = TransformRule(
     BUNDLED_TRANSFORM_NAME,
     BUNDLED_TRANSFORM_VERSION,
     BUNDLED_TRANSFORM_RULE,
+    bundled_module_transform,
 )
+
+SPLIT_BUNDLED_MODULE_RULE = TransformRule(
+    SPLIT_BUNDLED_TRANSFORM_NAME,
+    SPLIT_BUNDLED_TRANSFORM_VERSION,
+    SPLIT_BUNDLED_TRANSFORM_RULE,
+    split_module_transform,
+)
+
+GUARDED_BUNDLED_MODULE_RULE = TransformRule(
+    GUARDED_BUNDLED_TRANSFORM_NAME,
+    GUARDED_BUNDLED_TRANSFORM_VERSION,
+    GUARDED_BUNDLED_TRANSFORM_RULE,
+    guarded_module_transform,
+)
+
+FRONTMATTER_RULE = TransformRule(
+    FRONTMATTER_TRANSFORM_NAME,
+    FRONTMATTER_TRANSFORM_VERSION,
+    FRONTMATTER_TRANSFORM_RULE,
+    normalize_skill_frontmatter,
+)
+
+
+def _build_rule_registry(*rules: TransformRule) -> dict[str, TransformRule]:
+    """Every rule this tool implements, by name.
+
+    The descriptor's per-path selection resolves against this table, so a name
+    registered twice is a bug that must fail at import, and a descriptor entry
+    naming an absent one is refused by `plan_sync` rather than matched by some
+    default rule.
+    """
+    registry: dict[str, TransformRule] = {}
+    for rule in rules:
+        if rule.name in registry:
+            raise ValueError(f"transform rule name registered twice: {rule.name}")
+        registry[rule.name] = rule
+    return registry
+
+
+TRANSFORM_RULES = _build_rule_registry(
+    RELOCATE_MANIFEST_RULE,
+    BUNDLED_MODULE_RULE,
+    SPLIT_BUNDLED_MODULE_RULE,
+    GUARDED_BUNDLED_MODULE_RULE,
+    FRONTMATTER_RULE,
+)
+
+
+def resolve_transform_rule(config: PortConfig, relative: str) -> TransformRule:
+    """The rule the descriptor names for `relative`, or a refusal.
+
+    Schema version 3 states the selection per entrypoint-transform path. The
+    state is validated as a name only -- which names exist is this module's
+    registry to say, so an entry naming a rule this tool does not implement
+    fails here at plan time rather than being matched by some default rewrite,
+    and a path with no rule named has nothing to apply.
+    """
+    rule_name = config.custody.entrypoint_rules.get(relative)
+    if rule_name is None:
+        raise SyncError(
+            f"{config.source.package_path}/{relative}: the custody table names no transform "
+            "rule for this path; descriptor schema version 3 states the rule every "
+            "entrypoint-transforms entry is rewritten by, so a synchronization never has to "
+            "assume one"
+        )
+    rule = TRANSFORM_RULES.get(rule_name)
+    if rule is None:
+        raise SyncError(
+            f"{config.source.package_path}/{relative}: the custody table names the transform "
+            f"rule {rule_name!r}, which this tool does not implement; the implemented rules "
+            f"are {', '.join(sorted(TRANSFORM_RULES))}"
+        )
+    return rule
 
 
 # --- planning -----------------------------------------------------------------
@@ -459,14 +868,15 @@ def plan_sync(config: PortConfig, source: Path, commit: str) -> list[PlannedFile
         planned.append(PlannedFile(relative, relative, BYTE_COPY, payload, payload))
     for relative in config.custody.entrypoint_transforms:
         payload = read_source_file(config, source, commit, relative)
+        rule = resolve_transform_rule(config, relative)
         planned.append(
             PlannedFile(
                 relative,
                 relative,
                 TRANSFORM,
                 payload,
-                bundled_module_transform(payload, target_path=relative),
-                BUNDLED_MODULE_RULE,
+                rule.apply(payload, relative),
+                rule,
             )
         )
     extension_dir = config.source.client_extension_dir
