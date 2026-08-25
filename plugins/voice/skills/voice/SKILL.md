@@ -55,13 +55,14 @@ are always visible together.
 ## Preflight before first use
 
 Run `preflight` and fix what it names. It proves, by provider and
-prerequisite name: Voice Forge health with a usable backend, the
+prerequisite name: Voice Forge health with a loaded backend, the
 configured voice id, one real short synthesis; the Hermes relay health,
-its session token, the configured profile resolving the `xai`
-speech-to-text provider, and one synthesized sample round trip; the
-Herdr-wide `voice stop` keybinding presence; and the capture and playback
-executables. Preflight reads and probes only — it never installs, writes,
-or repairs anything.
+its session token, the configured profile resolved among the relay's
+profiles, and one synthesized sample round trip that comes back a
+non-empty transcript from the `xai` speech-to-text provider — the round
+trip is the speech-to-text guarantee; the Herdr-wide `voice stop`
+keybinding presence; and the capture and playback executables. Preflight
+reads and probes only — it never installs, writes, or repairs anything.
 
 ## Settings and privacy
 

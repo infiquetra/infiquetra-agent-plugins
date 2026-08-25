@@ -42,7 +42,7 @@ _REFRESHED_PAGE = (
 
 
 def _ok_payload(
-    transcript: str = "example transcript", provider: str = "xai"
+    transcript: str = "example transcript", provider: str | None = "xai"
 ) -> tuple[int, bytes]:
     body = {"transcript": transcript, "provider": provider, "ok": True}
     return 200, json.dumps(body).encode("utf-8")
@@ -231,6 +231,51 @@ class RefusalTests(TranscribeTestCase):
         with self.assertRaises(providers.ProviderRefusal) as caught:
             transcribe.transcribe(wav, open_url=opener)
         self.assertIn("another-provider", caught.exception.reason)
+
+    def test_silence_is_refused_as_nothing_to_deliver_not_substitution(
+        self,
+    ) -> None:
+        # The relay maps silence, no-speech, and hallucination-filtered
+        # audio to {"ok": true, "transcript": "", "provider": null} (live
+        # v0.20.4). That is nothing to deliver — not a provider
+        # substitution (review F07).
+        wav = self.write_wav()
+        silence = json.dumps(
+            {"ok": True, "transcript": "", "provider": None}
+        ).encode("utf-8")
+        opener = _OpenerSeam([(200, _TOKEN_PAGE), (200, silence)])
+        with self.assertRaises(providers.ProviderRefusal) as caught:
+            transcribe.transcribe(wav, open_url=opener)
+        self.assertEqual(caught.exception.provider, providers.HERMES_XAI)
+        self.assertIn("nothing to deliver", caught.exception.reason)
+        self.assertNotIn("resolved None", caught.exception.reason)
+        self.assertFalse(
+            wav.exists(), "the silence refusal still deletes the audio (R25)"
+        )
+
+    def test_a_whitespace_transcript_with_no_provider_is_silence_too(
+        self,
+    ) -> None:
+        wav = self.write_wav()
+        silence = json.dumps(
+            {"ok": True, "transcript": "   ", "provider": None}
+        ).encode("utf-8")
+        opener = _OpenerSeam([(200, _TOKEN_PAGE), (200, silence)])
+        with self.assertRaises(providers.ProviderRefusal) as caught:
+            transcribe.transcribe(wav, open_url=opener)
+        self.assertIn("nothing to deliver", caught.exception.reason)
+
+    def test_a_non_empty_transcript_with_no_provider_is_still_substitution(
+        self,
+    ) -> None:
+        # The security boundary stays intact: delivered content without the
+        # declared provider is a substitution, never silence.
+        wav = self.write_wav()
+        opener = _OpenerSeam([(200, _TOKEN_PAGE), _ok_payload(provider=None)])
+        with self.assertRaises(providers.ProviderRefusal) as caught:
+            transcribe.transcribe(wav, open_url=opener)
+        self.assertIn("resolved None", caught.exception.reason)
+        self.assertIn("nothing substitutes", caught.exception.reason)
 
     def test_a_response_without_a_transcript_is_refused(self) -> None:
         wav = self.write_wav()

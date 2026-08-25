@@ -18,7 +18,12 @@ live relay:
 - The response fields ``transcript`` and ``provider`` are consumed (``ok``
   is ignored). The response provider is the authoritative resolution: a
   provider other than the expected one is a named refusal, never a silent
-  substitution (R23).
+  substitution (R23). The one carve-out is the relay's own silence mapping:
+  silence, no-speech, and hallucination-filtered audio answer
+  ``{"ok": true, "transcript": "", "provider": null}`` — an empty
+  transcript with no provider is refused as nothing to deliver, not as a
+  substitution. Delivered content without the declared provider is still a
+  substitution refusal; that boundary is intact.
 
 Retention (D5): the audio file is deleted as soon as transcription returns —
 success and failure alike, on every exit path including the exception paths
@@ -224,6 +229,15 @@ def _transcribe(path: Path, *, open_url: Callable) -> Transcription:
         )
     provider = result.get("provider")
     if provider != EXPECTED_PROVIDER:
+        if provider is None and not transcript.strip():
+            # The relay maps silence, no-speech, and hallucination-filtered
+            # audio to an empty transcript with no provider. That is nothing
+            # to deliver — not a substitution for the declared provider.
+            raise providers.ProviderRefusal(
+                providers.HERMES_XAI,
+                "the relay delivered an empty transcript with no provider: "
+                "silence — there is nothing to deliver",
+            )
         raise providers.ProviderRefusal(
             providers.HERMES_XAI,
             f"the relay resolved {provider!r}, not the expected "
