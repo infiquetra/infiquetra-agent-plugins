@@ -260,6 +260,60 @@ class AbandonedAndCeilingTests(RecordTestCase):
         self.assertFalse(self.recording_file().exists())
 
 
+class LiveStateTests(RecordTestCase):
+    """The liveness query the pane restores on start (F01)."""
+
+    def test_no_state_reads_as_inactive(self) -> None:
+        self.assertFalse(record.is_active(alive=_alive))
+
+    def test_a_live_recorder_reads_as_active(self) -> None:
+        record.start(spawn=_RecorderSeam(), alive=_alive)
+        self.assertTrue(record.is_active(alive=_alive))
+
+    def test_a_dead_recorder_reads_as_inactive(self) -> None:
+        self.write_stale_recording()
+        self.assertFalse(record.is_active(alive=_dead))
+
+    def test_a_corrupt_state_reads_as_inactive(self) -> None:
+        self.recording_file().write_text("{not json", encoding="utf-8")
+        self.assertFalse(record.is_active(alive=_alive))
+
+
+class PaneExitAbandonTests(RecordTestCase):
+    """Pane-exit abandonment (F01): end the capture, delete it, transcribe nothing."""
+
+    def test_abandon_with_no_active_recording_is_a_noop(self) -> None:
+        reap = _ReapSeam()
+        self.assertFalse(record.abandon(alive=_alive, reap=reap))
+        self.assertEqual(reap.pids, [])
+
+    def test_abandon_terminates_a_live_recorder_and_deletes_the_capture(self) -> None:
+        reap = _ReapSeam()
+        record.start(spawn=_RecorderSeam(), alive=_alive)
+        wav_path = Path(self.read_recording()["wav_path"])
+        wav_path.write_bytes(_AUDIO_BYTES)  # the recorder wrote its wav
+        self.assertTrue(record.abandon(alive=_alive, reap=reap))
+        self.assertEqual(reap.pids, [_FakeRecorder.pid])
+        self.assertFalse(wav_path.exists(), "the abandoned wav is deleted")
+        self.assertFalse(self.recording_file().exists())
+
+    def test_abandon_of_a_dead_recorder_cleans_up_without_reaping(self) -> None:
+        wav_path = self.write_stale_recording()
+        reap = _ReapSeam()
+        self.assertTrue(record.abandon(alive=_dead, reap=reap))
+        self.assertEqual(reap.pids, [])
+        self.assertFalse(wav_path.exists())
+        self.assertFalse(self.recording_file().exists())
+
+    def test_a_toggle_after_abandon_starts_a_fresh_recording(self) -> None:
+        record.start(spawn=_RecorderSeam(), alive=_alive)
+        record.abandon(alive=_alive, reap=_ReapSeam())
+        seam = _RecorderSeam()
+        self.assertIsNone(record.toggle(spawn=seam, alive=_alive, reap=_ReapSeam()))
+        self.assertEqual(len(seam.calls), 1)
+        self.assertEqual(self.read_recording()["pid"], _FakeRecorder.pid)
+
+
 class RetentionTests(RecordTestCase):
     """Audio is gone after a successful run and after a deliberately failed one.
 

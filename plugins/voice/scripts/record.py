@@ -11,7 +11,10 @@ after an explicit stop it returns the wav path, and the Voice pane sequences
 transcription. A recording that never reaches an explicit stop — abandoned,
 or ended by the capture ceiling — is deleted, not transcribed: the ephemeral
 posture (D5) covers audio that never reached transcription, not only the
-after-transcription case (R25).
+after-transcription case (R25). The pane abandons through :func:`abandon`
+when it quits, so the detached recorder never outlives the pane; the CLI
+``toggle`` command keeps its start-and-exit behaviour, because its recorder
+is meant to outlive that one process until the next explicit press.
 
 The recorder is the operator-supplied capture executable (D3) with the macOS
 AVFoundation input device. The argv is fixed: ``-f avfoundation``, ``-i :0``
@@ -43,6 +46,8 @@ __all__ = [
     "toggle",
     "start",
     "stop",
+    "abandon",
+    "is_active",
 ]
 
 #: The capture ceiling in seconds (KTD3c): both the media ceiling and the
@@ -244,3 +249,39 @@ def toggle(
         _abandon(active)
     start(spawn=spawn, alive=alive)
     return None
+
+
+def is_active(*, alive: Callable[[int], bool] = _pid_alive) -> bool:
+    """Whether a recording is live right now: state present, recorder running.
+
+    The pane restores this on start so a recorder left over from an earlier
+    pane — or started by the CLI ``toggle`` command — is recognised as
+    recording rather than mistaken for idle. A stale state — a recorder that
+    already exited at the ceiling or crashed — reads as inactive; the toggle
+    cleans it up on the next press.
+    """
+    active = _read_active()
+    if active is None:
+        return False
+    return alive(active["pid"])
+
+
+def abandon(
+    *,
+    alive: Callable[[int], bool] = _pid_alive,
+    reap: Callable[[int], None] = _terminate_and_reap,
+) -> bool:
+    """Abandon the active recording: end the capture, delete it, transcribe nothing.
+
+    The pane-exit path (R12, D5): a live recorder is terminated and reaped so
+    the microphone stops with the pane, its wav is deleted, and the state is
+    cleared. Nothing on this path ever issues a transcription request.
+    Returns whether an active recording existed to abandon.
+    """
+    active = _read_active()
+    if active is None:
+        return False
+    if alive(active["pid"]):
+        reap(active["pid"])
+    _abandon(active)
+    return True
