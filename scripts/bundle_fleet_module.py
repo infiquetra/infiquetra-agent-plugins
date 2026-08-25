@@ -125,9 +125,9 @@ def _validate_against_schema(
 ) -> None:
     """Validate against the closed subset this schema actually uses.
 
-    Draft 2020-12, standard library only: type, const, minLength, minItems,
-    pattern, required, properties, additionalProperties=false, items. Unknown
-    schema keywords are ignored rather than invented.
+    Draft 2020-12, standard library only: type, const, enum, minLength, minItems,
+    pattern, required, properties, additionalProperties=false, items, if/then/else.
+    Unknown schema keywords are ignored rather than invented.
     """
     expected_type = schema.get("type")
     if expected_type is not None and _type_name(instance) != expected_type:
@@ -138,6 +138,11 @@ def _validate_against_schema(
     if "const" in schema and instance != schema["const"]:
         errors.append(
             f"unsupported value {instance!r} in {location} (expected {schema['const']!r})"
+        )
+
+    if "enum" in schema and instance not in schema["enum"]:
+        errors.append(
+            f"unsupported value {instance!r} in {location} (expected one of {schema['enum']!r})"
         )
 
     if expected_type == "string":
@@ -166,28 +171,34 @@ def _validate_against_schema(
                 )
         return
 
-    if expected_type != "object":
-        return
+    if isinstance(instance, dict) and (expected_type is None or expected_type == "object"):
+        properties = schema.get("properties")
+        allowed = set(properties) if isinstance(properties, dict) else set()
+        if schema.get("additionalProperties") is False:
+            for key in instance:
+                if key not in allowed:
+                    errors.append(f"unexpected field {key!r} in {location}")
+        for key in schema.get("required", []):
+            if key not in instance:
+                errors.append(f"missing field {key!r} in {location}")
+        if isinstance(properties, dict):
+            for key, subschema in properties.items():
+                if key in instance and isinstance(subschema, dict):
+                    _validate_against_schema(
+                        instance[key],
+                        subschema,
+                        location=_join_path(location, key),
+                        errors=errors,
+                    )
 
-    assert isinstance(instance, dict)
-    properties = schema.get("properties")
-    allowed = set(properties) if isinstance(properties, dict) else set()
-    if schema.get("additionalProperties") is False:
-        for key in instance:
-            if key not in allowed:
-                errors.append(f"unexpected field {key!r} in {location}")
-    for key in schema.get("required", []):
-        if key not in instance:
-            errors.append(f"missing field {key!r} in {location}")
-    if isinstance(properties, dict):
-        for key, subschema in properties.items():
-            if key in instance and isinstance(subschema, dict):
-                _validate_against_schema(
-                    instance[key],
-                    subschema,
-                    location=_join_path(location, key),
-                    errors=errors,
-                )
+    if "if" in schema and isinstance(schema["if"], dict):
+        if_errors: list[str] = []
+        _validate_against_schema(instance, schema["if"], location=location, errors=if_errors)
+        if not if_errors:
+            if "then" in schema and isinstance(schema["then"], dict):
+                _validate_against_schema(instance, schema["then"], location=location, errors=errors)
+        elif "else" in schema and isinstance(schema["else"], dict):
+            _validate_against_schema(instance, schema["else"], location=location, errors=errors)
 
 
 def validate_declaration(
@@ -254,13 +265,22 @@ def _safe_relative(raw: str, *, origin: str) -> Path:
 
 
 class PlannedCopy:
-    __slots__ = ("name", "source", "destination", "source_rel")
+    __slots__ = ("name", "source", "destination", "source_rel", "is_data")
 
-    def __init__(self, name: str, source: Path, destination: Path, source_rel: Path) -> None:
+    def __init__(
+        self,
+        name: str,
+        source: Path,
+        destination: Path,
+        source_rel: Path,
+        *,
+        is_data: bool = False,
+    ) -> None:
         self.name = name
         self.source = source
         self.destination = destination
         self.source_rel = source_rel
+        self.is_data = is_data
 
 
 def load_declaration(path: Path, *, origin: str, root: Path | None = None) -> dict[str, Any]:
@@ -295,8 +315,9 @@ def plan_copies(
     for index, entry in enumerate(modules):
         if not isinstance(entry, dict):
             raise BundleError(f"{origin} modules[{index}] must be an object")
-        name = entry["name"]
-        assert isinstance(name, str)
+        name = entry.get("name")
+        if not isinstance(name, str):
+            raise BundleError(f"missing name in {origin} modules[{index}]")
         source_rel = source_path_for(name)
         source = fleet_core / source_rel
         if not source.is_file():
@@ -321,7 +342,7 @@ def plan_copies(
             if prior is not None:
                 raise BundleError(
                     f"destination {dest_key} is declared twice "
-                    f"(modules {prior!r} and {name!r}) in {origin}"
+                    f"(entries {prior!r} and {name!r}) in {origin}"
                 )
             seen_destinations[dest_key] = name
             planned.append(
@@ -330,8 +351,56 @@ def plan_copies(
                     source=source,
                     destination=consumer / dest_rel,
                     source_rel=source_rel,
+                    is_data=False,
                 )
             )
+
+    data_entries = payload.get("data")
+    if data_entries is not None:
+        if not isinstance(data_entries, list):
+            raise BundleError(f"{origin} data must be an array")
+        for index, entry in enumerate(data_entries):
+            if not isinstance(entry, dict):
+                raise BundleError(f"{origin} data[{index}] must be an object")
+            name = entry.get("name")
+            if not isinstance(name, str):
+                raise BundleError(f"missing name in {origin} data[{index}]")
+            source_rel = FLEET_COMMONS_DIR / name
+            source = fleet_core / source_rel
+            if not source.is_file():
+                raise BundleError(
+                    f"data file {name} is absent from the portable Fleet Core "
+                    f"(expected {source.relative_to(root) if source.is_relative_to(root) else source})"
+                )
+            raw_destinations = entry.get("destinations")
+            if raw_destinations is None:
+                destinations = [DEFAULT_BUNDLE_DIR / name]
+            else:
+                if not isinstance(raw_destinations, list):
+                    raise BundleError(f"{origin} data[{index}] destinations must be an array")
+                destinations = [
+                    _safe_relative(item, origin=f"{origin} data[{index}] destinations")
+                    for item in raw_destinations
+                    if isinstance(item, str)
+                ]
+            for dest_rel in destinations:
+                dest_key = dest_rel.as_posix()
+                prior = seen_destinations.get(dest_key)
+                if prior is not None:
+                    raise BundleError(
+                        f"destination {dest_key} is declared twice "
+                        f"(entries {prior!r} and {name!r}) in {origin}"
+                    )
+                seen_destinations[dest_key] = name
+                planned.append(
+                    PlannedCopy(
+                        name=name,
+                        source=source,
+                        destination=consumer / dest_rel,
+                        source_rel=source_rel,
+                        is_data=True,
+                    )
+                )
     return planned
 
 
@@ -365,13 +434,27 @@ def write_if_changed(path: Path, text: str) -> bool:
     return True
 
 
+def write_bytes_if_changed(path: Path, data: bytes) -> bool:
+    """Write ``data`` only when the existing bytes differ. Returns True if written."""
+    if path.is_file() and path.read_bytes() == data:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return True
+
+
 def generate_consumer(root: Path, consumer: Path) -> list[Path]:
     pin = read_pin(root / "plugins" / FLEET_CORE_PLUGIN)
     written: list[Path] = []
     for copy in plan_copies(root, consumer):
-        text = render_bundle(copy.source, pin, copy.source_rel)
-        if write_if_changed(copy.destination, text):
-            written.append(copy.destination)
+        if copy.is_data:
+            source_bytes = copy.source.read_bytes()
+            if write_bytes_if_changed(copy.destination, source_bytes):
+                written.append(copy.destination)
+        else:
+            text = render_bundle(copy.source, pin, copy.source_rel)
+            if write_if_changed(copy.destination, text):
+                written.append(copy.destination)
     return written
 
 
@@ -395,9 +478,10 @@ def presence_errors(root: Path, consumer: Path, planned: list[PlannedCopy]) -> l
     errors: list[str] = []
     for copy in planned:
         if not copy.destination.is_file():
+            kind = "data file" if copy.is_data else "module"
             errors.append(
                 f"missing generated bundle: {_relative(root, copy.destination)} "
-                f"(module {copy.name})"
+                f"({kind} {copy.name})"
             )
 
     # Every generated bundle under the consumer, not just the default directory:
@@ -415,9 +499,27 @@ def presence_errors(root: Path, consumer: Path, planned: list[PlannedCopy]) -> l
 
 
 def check_copy(root: Path, copy: PlannedCopy) -> list[str]:
-    """Verify one generated bundle's stamp. Presence is ``presence_errors``' job."""
+    """Verify one generated bundle's stamp or data byte-equality. Presence is ``presence_errors``' job."""
     relative = _relative(root, copy.destination)
     if not copy.destination.is_file():
+        return []
+
+    if copy.is_data:
+        try:
+            actual_bytes = copy.destination.read_bytes()
+        except OSError as exc:
+            return [f"unreadable generated bundle {relative}: {exc}"]
+        try:
+            source_bytes = copy.source.read_bytes()
+        except OSError as exc:
+            return [f"unreadable source file {_relative(root, copy.source)}: {exc}"]
+        if actual_bytes != source_bytes:
+            actual_digest = check_repo.sha256_bytes(actual_bytes)
+            source_digest = check_repo.sha256_bytes(source_bytes)
+            return [
+                f"stale source: {copy.name} in {relative} "
+                f"(bundle {actual_digest}, source {source_digest})"
+            ]
         return []
 
     try:

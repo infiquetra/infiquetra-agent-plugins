@@ -407,6 +407,30 @@
       "classification": "upstream-byte-copy",
       "source_path": "plugins/mission-control/tests/test_user_defaults.py",
       "sha256": "3bf93deda62ee74a07ab04e93136f6caa9c7a2f63b29a245ecaecee2c5757415"
+    },
+    {
+      "path": "README.md",
+      "classification": "target-owned"
+    },
+    {
+      "path": "fleet-bundle.json",
+      "classification": "target-owned"
+    },
+    {
+      "path": "plugin.json",
+      "classification": "target-owned"
+    },
+    {
+      "path": "scripts/_bundled/intent_envelope.py",
+      "classification": "target-owned"
+    },
+    {
+      "path": "scripts/_bundled/models.json",
+      "classification": "target-owned"
+    },
+    {
+      "path": "scripts/_bundled/tier_palette.py",
+      "classification": "target-owned"
     }
   ]
 }

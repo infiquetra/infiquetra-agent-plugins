@@ -1,0 +1,26 @@
+{
+  "$schema": "../../schemas/fleet-bundle.schema.json",
+  "schema_version": "2",
+  "modules": [
+    {
+      "name": "intent_envelope",
+      "destinations": [
+        "scripts/_bundled/intent_envelope.py"
+      ]
+    },
+    {
+      "name": "tier_palette",
+      "destinations": [
+        "scripts/_bundled/tier_palette.py"
+      ]
+    }
+  ],
+  "data": [
+    {
+      "name": "models.json",
+      "destinations": [
+        "scripts/_bundled/models.json"
+      ]
+    }
+  ]
+}
