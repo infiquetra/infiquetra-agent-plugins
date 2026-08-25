@@ -37,7 +37,10 @@ first and reaches this repository by re-synchronization.
 
 | Item | Kind |
 |---|---|
+| `fleet_commons/intent_envelope.py` | Python module |
+| `fleet_commons/models.json` | data file |
 | `fleet_commons/retry_backoff.py` | Python module |
+| `fleet_commons/tier_palette.py` | Python module |
 
 ## Deferred: present upstream, absent here
 
@@ -51,13 +54,10 @@ first and reaches this repository by re-synchronization.
 | `fleet_commons/delegation_audit.py` | Python module |
 | `fleet_commons/delegation_state.py` | Python module |
 | `fleet_commons/effort_rider.py` | Python module |
-| `fleet_commons/intent_envelope.py` | Python module |
 | `fleet_commons/liveness_engine.py` | Python module |
-| `fleet_commons/models.json` | data file |
 | `fleet_commons/output_attestation.py` | Python module |
 | `fleet_commons/plugin_resolution.py` | Python module |
 | `fleet_commons/render_tier_table.py` | Python module |
-| `fleet_commons/tier_palette.py` | Python module |
 | `fleet_commons/tier_policy.json` | data file |
 | `fleet_commons/tier_resolver.py` | Python module |
 | `fleet_commons_shim.py` | Python module |
@@ -67,5 +67,5 @@ first and reaches this repository by re-synchronization.
 | Basis | Python modules | Data files | Total |
 |---|---|---|---|
 | Upstream inventory | 16 | 3 | 19 |
-| Ported by this package | 1 | 0 | 1 |
-| Deferred | 15 | 3 | 18 |
+| Ported by this package | 3 | 1 | 4 |
+| Deferred | 13 | 2 | 15 |

@@ -255,16 +255,22 @@ restated here.
 ## Worker bindings and backend
 
 Backend is **inline** for every unit (operator-decided for this run; recorded in
-this plan's frontmatter). Bindings carry the contract's deterministic dispatch
-rule: with this graph the ready-unit count never exceeds 3, so every
-implementation unit lands on Qwen; Muse/Agy engage only if more than 4 genuinely
-independent units are ready simultaneously, which the graph does not produce.
-Grok is review-only and appears in no dispatch decision.
+this plan's frontmatter). *(Sixth-pass operator amendment, 2026-08-24: Qwen's
+off-peak operating window ended mid-run — every not-yet-launched implementation
+unit dispatches to Antigravity first, Muse spillover, and no new Qwen dispatch
+is authorized for the remainder of this run unless the operator amends the
+contract again. Prospective only: U0–U4 and the U2 re-dispatch executed on Qwen
+and stand as history.)* Bindings carry the contract's deterministic dispatch
+rule: with this graph the ready-unit count never exceeds 3, so every remaining
+implementation unit lands on Antigravity; Muse engages only if more than 4
+genuinely independent units are ready simultaneously, which the graph does not
+produce. Grok is review-only and appears in no dispatch decision.
 
 | Role | Binding | Effort authority | Cap |
 | --- | --- | --- | --- |
-| Every implementation unit U0–U9 | Qwen, pinned `qwen3.8-max-preview` (template T2) | xhigh via `~/.qwen/settings.json` `model.reasoningEffort` (no CLI effort flag; S0 asserts the readback) | 4 |
-| Spillover, in order | OpenCode Muse `opencode/muse-spark-1.2-contributor-free` variant xhigh (T3), then Antigravity `gemini-3.7-flash-high` (T4) | per contract | 4 each |
+| U0–U4 + the U2 re-dispatch (executed; history) | Qwen, pinned `qwen3.8-max-preview` (template T2) | xhigh via `~/.qwen/settings.json` `model.reasoningEffort` (no CLI effort flag; S0 asserted the readback) | 4 |
+| Every remaining implementation unit (U5–U9) | Antigravity, `gemini-3.7-flash-high` (template T4; sixth-pass amendment 2026-08-24, T4 re-validated at amendment time) | effort encoded in the model id | 4 |
+| Spillover, in order | OpenCode Muse `opencode/muse-spark-1.2-contributor-free` variant xhigh (T3) | per contract | 4 (Qwen excluded from new dispatches — sixth pass) |
 | Every review (per-unit + U8 integration) | Grok `grok-4.6 --reasoning-effort xhigh` (T5), grok.com login | flag-carried | 4, separate pool |
 
 ## Implementation Units
@@ -534,7 +540,7 @@ U3 transforms resolve to; refresh provenance to close the set.
 onto main after U2 lands) · **Lands into:** `port/mission-control` (4th branch
 merge)
 
-**Worker:** Qwen @ xhigh (T2) · **Backend:** inline
+**Worker:** Antigravity `gemini-3.7-flash-high` (T4; sixth-pass amendment 2026-08-24 — originally Qwen T2) · **Backend:** inline
 
 **Smallest viable change:** one new target-owned
 `plugins/mission-control/fleet-bundle.json` naming `intent_envelope`,
@@ -599,7 +605,7 @@ and the floor declaration sites include the new package.
 **Child issue:** #16 · **Group:** G3 (serial) · **Depends on:** U3, U4, U5 ·
 **Lands into:** `port/mission-control` (5th branch merge)
 
-**Worker:** Qwen @ xhigh (T2) · **Backend:** inline
+**Worker:** Antigravity `gemini-3.7-flash-high` (T4; sixth-pass amendment 2026-08-24 — originally Qwen T2) · **Backend:** inline
 
 **Smallest viable change:** three bounded edits — (1) `.github/workflows/ci.yml`
 `plugin-tests` job gains the `plugins/*/tests` glob and `pyyaml` (KTD4), with
@@ -653,7 +659,7 @@ agreement asserted wherever a rule exists in more than one copy.
 **Child issue:** #17 · **Group:** G4 (serial) · **Depends on:** U6 · **Lands
 into:** `port/mission-control` (6th branch merge)
 
-**Worker:** Qwen @ xhigh (T2) · **Backend:** inline
+**Worker:** Antigravity `gemini-3.7-flash-high` (T4; sixth-pass amendment 2026-08-24 — originally Qwen T2) · **Backend:** inline
 
 **Smallest viable change:** class-first corpora and authority-derivation tests
 for exactly the Phase 0 rule inventory (U1's entry criterion): the card
@@ -697,7 +703,7 @@ main as one green PR.
 **Child issue:** #18 · **Group:** G5 (serial) · **Depends on:** U7 · **Lands
 into:** branch → main (3rd main merge; the integration review point)
 
-**Worker:** Qwen @ xhigh (T2) · **Backend:** inline
+**Worker:** Antigravity `gemini-3.7-flash-high` (T4; sixth-pass amendment 2026-08-24 — originally Qwen T2) · **Backend:** inline
 
 **Smallest viable change:** the runbook Phase 3 sequence, in order: verify →
 freeze (exact commit, clean tree, recorded) → evidence bound to the frozen
@@ -753,7 +759,7 @@ parent's completion evidence is posted.
 **Child issue:** #19 · **Group:** G6 (serial) · **Depends on:** U0, U8 ·
 **Lands into:** main (4th main merge, last; rebases onto U0's corrected README)
 
-**Worker:** Qwen @ xhigh (T2) · **Backend:** inline
+**Worker:** Antigravity `gemini-3.7-flash-high` (T4; sixth-pass amendment 2026-08-24 — originally Qwen T2) · **Backend:** inline
 
 **Smallest viable change:** README Status narrative + package table gain
 mission-control (building on U0's corrected baseline); `llms.txt` one Packages
@@ -902,3 +908,16 @@ directives, each with the line of reasoning:
   precedent deliberately not followed, for that reason), and verbatim
   byte-equality staleness with no in-file stamp or sidecar (the canonical
   digest already lives in fleet-core's `PROVENANCE.json`).
+- **Worker-pool re-vendor (sixth-pass operator amendment, 2026-08-24):
+  Antigravity first for all remaining units** — the operator amended #9 after
+  the Qwen off-peak operating window ended: every not-yet-launched
+  implementation unit (U5–U9) dispatches to Antigravity
+  `gemini-3.7-flash-high` (T4, max 4), OpenCode Muse second (max 4), and no
+  new Qwen dispatch is authorized for the remainder of this run unless the
+  operator amends the contract again. Prospective only — completed, landed,
+  and under-review Qwen work (U0–U4, the U2 re-dispatch) stands unchanged as
+  history. Review contract (Grok 4.6 xhigh), agents wrapper, Herdr placement,
+  the 6-session workspace cap, dependency graph, and merge serialization are
+  unchanged. T4 re-validated at amendment time: `agy` binary present,
+  `agy models` re-listed the id, dry-run receipt matched the recorded
+  template.
