@@ -2,6 +2,285 @@
 
 ## 2026-08-25
 
+### Voice plugin version one: one run-wide plan, seven units, acceptance with recorded findings
+
+**Author.** Jeff Cox and Qwen (orchestrated run `orch-2026-08-25-voice`, U7
+closeout, [#34](https://github.com/infiquetra/infiquetra-agent-plugins/issues/34))
+
+**Decision.** The `voice` package was built as seven units (U1–U7, issues
+#28–#34) from one run-wide implementation plan with exact-once ownership of
+requirements R1–R33 and a closed four-lane dependency graph; backend `inline`
+for every unit with external orchestration supplying pools and gates. U7 ran
+the R33 acceptance against the live deployment and recorded the results —
+conditional pass with nine numbered findings — in
+[`docs/evidence/voice/acceptance.md`](../evidence/voice/acceptance.md). This
+closeout mirrors the plan's KTD1–KTD16 into the entries below, all of which
+survived contact with implementation; the findings record where the live
+environment diverged from a probe contract without changing a KTD.
+
+**Rationale.** A single plan preserved the contract's unit boundaries,
+shared-file collision rules, and exact-once requirement ownership across
+seven worker sessions; running acceptance against the real Voice Forge and
+Hermes deployment — rather than the hermetic fakes the suite requires — is
+what surfaced four contract drifts no unit test could see.
+
+**Rejected alternatives.** Per-unit plans (would re-fragment the cross-unit
+contracts the parent settled); accepting on the hermetic suite alone (would
+have shipped preflight probes that fail against the deployed services).
+
+**Revisit when.** The acceptance findings (F1–F9 in the evidence file) are
+scheduled for repair, or an attended pass covers the two human-shaped gaps
+(live voice input; the blocked-state refusal branch).
+
+**Refs.** Parent #27, children #28–#34,
+[run plan](../plans/2026-08-25-voice-plugin-implementation-plan.md),
+[requirements](../brainstorms/2026-08-25-voice-plugin-requirements.md),
+[`docs/evidence/voice/acceptance.md`](../evidence/voice/acceptance.md).
+
+### Voice state lives in machine-local JSON files, and the Claude Stop hook detaches (KTD1, KTD2)
+
+**Author.** Jeff Cox and Qwen (voice run U7 closeout, #34)
+
+**Decision.** Runtime state is one machine-local directory (default
+`~/.local/state/voice`, overridable via `VOICE_STATE_DIR`) shared between the
+`Stop` hook and the Voice pane through small JSON files written
+temp-then-`os.replace`: `binding.json`, `recording.json`, `playback.json`, a
+single current `refused-transcript.txt`, and unique per-spawn
+`speak-<uuid>.json` payload files. No daemon. The hook does exactly four
+things — read the payload from stdin once, compare `session_id` against the
+binding with a local file read, write the payload file when bound, spawn
+`speak.py` as a fully detached child (new session, stdin closed, streams to
+devnull) — and exits 0 immediately. The harness timeout in `hooks.json` is a
+backstop, not a budget; every hook path, including malformed input, exits 0.
+
+**Rationale.** Claude Code runs `Stop` hooks synchronously — measured on this
+host: a blocking 8 s hook delayed turn settle by 8.19 s while a detaching
+hook returned in 0.030 s (see the LEARNINGS entry). The non-goals exclude any
+resident daemon; one operator makes file-granularity coordination sufficient;
+`~/.local/state` survives reboots, which sticky binding requires. Live
+acceptance measured hook returns of 0.04–0.05 s while children spoke for up
+to ~40 s.
+
+**Rejected alternatives.** Repo-relative state (worktrees multiply it);
+`/tmp` (cleaned by the OS; the binding must persist); sockets or a daemon
+(machinery without a requirement); the response text on the child's stdin
+(R32 closes stdin) or as an argv element (long replies must not meet
+`ARG_MAX`).
+
+**Revisit when.** Version one's non-goals change — a resident listener,
+multi-session arbitration, or a second hook needing the same seam.
+
+**Refs.** [plan](../plans/2026-08-25-voice-plugin-implementation-plan.md)
+KTD1/KTD2, `plugins/voice/com.infiquetra.claude/hooks/stop_hook.py`,
+`plugins/voice/scripts/binding.py`,
+[`docs/evidence/voice/acceptance.md`](../evidence/voice/acceptance.md) AE1.
+
+### Voice deadlines derive from the medium, never from the text (KTD3)
+
+**Author.** Jeff Cox and Qwen (voice run U7 closeout, #34)
+
+**Decision.** Every subprocess Voice starts carries closed stdin and a
+deadline, pinned by class so workers never invent numbers: bounded helper
+calls (`herdr agent get`, `herdr pane send-text`) 10 s; playback deadline =
+the synthesized wav's actual duration (stdlib `wave` header read) plus 2 s
+margin; capture recorder `ffmpeg -t 600` as both media ceiling and deadline;
+the detached speak child carries its deadlines internally (10 s connect,
+300 s read for synthesis, then the duration-derived playback deadline). A
+deadline that passes is a named refusal — never truncation, never a shortened
+utterance.
+
+**Rationale.** R5 forbids any length gate; deriving the playback deadline
+from the audio's own duration is what lets a long reply get a long deadline
+and be spoken whole. Acceptance spoke a 75-word reply through a continuous
+~28–30 s playback window with no deadline firing in any success path.
+
+**Rejected alternatives.** Fixed playback timeouts (truncate long replies);
+deadlines scaled from character count (a length gate by another name).
+
+**Revisit when.** A streaming synthesis backend replaces whole-wav responses
+and the "duration known before playback" assumption goes with it.
+
+**Refs.** [plan](../plans/2026-08-25-voice-plugin-implementation-plan.md)
+KTD3, `plugins/voice/scripts/process.py`, `plugins/voice/scripts/speak.py`,
+`plugins/voice/scripts/record.py`.
+
+### Closed egress set with external as predicate; declarations built in code; stated settings (KTD4, KTD5, KTD6)
+
+**Author.** Jeff Cox and Qwen (voice run U7 closeout, #34)
+
+**Decision.** The egress class is exactly R21's four literals — `on-device`,
+`local-network`, `named-remote-service`, `unofficial-remote-endpoint` — and
+"external" is the predicate over that set true for the two remote classes,
+never a fifth value. `providers.py` builds exactly two declarations from the
+stated settings (`voice-forge`, text-to-speech, `local-network`;
+`hermes-xai`, speech-to-text, `named-remote-service`), each carrying
+invocation-or-endpoint, capabilities, egress class, and the *name* of any
+credential environment variable — both credential names empty, because Hermes
+owns the upstream credential and the loopback session token is a transport
+detail. There is no provider config file in version one. `settings.py` is the
+one settings reader: stated names, split defaults (`VOICE_FORGE_*` carry
+none), absent never treated as empty, no setting carries a secret, and
+`VOICE_RETENTION` accepts exactly `ephemeral`.
+
+**Rationale.** The speech-to-text route is external even though its transport
+is loopback — Hermes is transport, xAI is the named service, and a loopback
+address never downgrades the class; writing `external` as an enum value would
+have broken the closed set. Both providers are settled operator decisions
+(D1/D2), so a config registry buys nothing until a third provider exists.
+
+**Rejected alternatives.** A `providers.toml`/JSON registry (revisit when a
+provider beyond D1/D2 is actually declared); `external` as a fifth egress
+value; silent defaults for deployment-specific settings (a default base URL
+would hard-code a deployment).
+
+**Revisit when.** A third provider is actually declared (then: the config
+file); acceptance finding F7 is scheduled — no runtime path consults
+`retention()` yet, so a mis-stated posture is silently ignored rather than
+refused by name.
+
+**Refs.** [plan](../plans/2026-08-25-voice-plugin-implementation-plan.md)
+KTD4/KTD5/KTD6, `plugins/voice/scripts/providers.py`,
+`plugins/voice/scripts/settings.py`,
+[`docs/evidence/voice/acceptance.md`](../evidence/voice/acceptance.md)
+findings F3/F7.
+
+### Bind-time single-speaker join; delivery refuses blocked agents audibly and holds the transcript (KTD7, KTD11)
+
+**Author.** Jeff Cox and Qwen (voice run U7 closeout, #34)
+
+**Decision.** `bind` resolves the chosen Herdr agent once through `herdr
+agent get` and stores agent name, Claude session id, and pane id; the binding
+is single-valued and sticky, changing only on explicit rebind. The hook
+compares its payload's `session_id` against the stored value with a pure
+local read — no `herdr` call on the hot path. Delivery re-resolves pane id
+and `agent_status` at send time; a `blocked` agent receives nothing — the
+refusal is spoken through the speak path and the transcript is held in one
+current file (replaced, never appended) until the operator explicitly uses or
+discards it. Otherwise the transcript is whitespace-normalized to a single
+line and sent with `herdr pane send-text` — literal text, no Enter, never
+`herdr pane run`. Only the bound agent is ever targeted. The check-then-send
+race is the contract's stated residual: narrowed by checking immediately
+before send, deliberately not closed here.
+
+**Rationale.** Keystrokes to a blocked agent are choices, not text (R18);
+single-line normalization eliminates newline-as-Enter without escaping games;
+the guard belongs to Herdr's delivery command as a proposed enhancement, and
+no workaround machinery is built in the plugin.
+
+**Rejected alternatives.** Focus or recency inference for the target;
+queueing or auto-retrying refused transcripts; escaping games for newlines;
+race-closing machinery inside `voice`.
+
+**Revisit when.** Herdr ships a guarded `send-text` — the residual closes at
+the right layer and the proposal should be filed upstream.
+
+**Refs.** [plan](../plans/2026-08-25-voice-plugin-implementation-plan.md)
+KTD7/KTD11, `plugins/voice/scripts/deliver.py`,
+`plugins/voice/scripts/binding.py`,
+[`docs/evidence/voice/acceptance.md`](../evidence/voice/acceptance.md)
+AE1/AE8 and finding F4.
+
+### Provider wire contracts: wav synthesis with duration-derived playback; data_url transcription with one refresh and one retry; synthesized preflight sample (KTD8, KTD9, KTD15)
+
+**Author.** Jeff Cox and Qwen (voice run U7 closeout, #34)
+
+**Decision.** `speak.py` POSTs the OpenAI-compatible body — `input`, `voice`,
+`response_format: wav` — plays the response through the operator-stated
+player under the duration-derived deadline, records `playback.json` for stop
+and barge-in, and deletes the audio on every exit path. `transcribe.py` holds
+the loopback session token in process memory only — never persisted, printed,
+logged, or carried in an argument — and POSTs `{"data_url":
+"data:audio/wav;base64,..."}` with the `X-Hermes-Session-Token` header; on
+401 it refreshes the token from the root page once and retries once, never a
+loop; it consumes `transcript` and `provider` (a provider other than `xai`
+is a named refusal), ignores `ok`, and deletes the wav on every path.
+Preflight proves the speech-to-text route with a short synthesized sample
+rather than a bundled binary or a fresh microphone recording.
+
+**Rationale.** The field names are the live relay's wire contract, verified
+against the acceptance relay (v0.20.4) before and during this run — not an
+invention; the live round trip returned the phrase verbatim with `provider:
+xai`. Refusing a mismatched provider rather than substituting keeps R23
+absolute.
+
+**Rejected alternatives.** Invented request fields (`audio`, `file`,
+`content`); retry loops around the 401 refresh; a committed wav fixture
+(binary in a text-audited package); a mic-coupled probe (couples the STT
+proof to the microphone grant).
+
+**Revisit when.** The relay's request or response shape changes; acceptance
+finding F3 is scheduled — the relay's silence mapping omits `provider`,
+which the guard currently surfaces as a mismatch refusal instead of a quiet
+"nothing to deliver".
+
+**Refs.** [plan](../plans/2026-08-25-voice-plugin-implementation-plan.md)
+KTD8/KTD9/KTD15, `plugins/voice/scripts/speak.py`,
+`plugins/voice/scripts/transcribe.py`, `plugins/voice/scripts/preflight.py`.
+
+### Markdown cleanup strips formatting and omits fenced contents; parses nothing fancy (KTD10)
+
+**Author.** Jeff Cox and Qwen (voice run U7 closeout, #34)
+
+**Decision.** `text_cleanup.py` is a small line/regex pass: fenced code
+blocks (backtick and tilde) go contents-and-fences first, then formatting
+syntax is stripped so it is not spoken — headings, emphasis/strong markers,
+list and blockquote markers, horizontal rules, link syntax (keep the text,
+drop the URL), inline-code backticks, table pipes. No length gate, ceiling,
+truncation, sentence parsing, or summarisation exists anywhere on the path;
+fidelity beyond the tested classes is explicitly not a version-one goal.
+
+**Rationale.** R5–R7 need the formatting gone and the fenced contents
+omitted; a real Markdown parser carries weight the requirement does not ask
+for, and the observed live cleanup of a reply carrying bold, a link, and a
+fenced function spoke exactly the prose and nothing else.
+
+**Rejected alternatives.** A real Markdown parser; any form of truncation or
+sentence budget.
+
+**Revisit when.** Spoken-formatting fidelity becomes an actual operator
+complaint rather than an assumed one.
+
+**Refs.** [plan](../plans/2026-08-25-voice-plugin-implementation-plan.md)
+KTD10, `plugins/voice/scripts/text_cleanup.py`,
+[`docs/evidence/voice/acceptance.md`](../evidence/voice/acceptance.md)
+R6/R7 rows.
+
+### Hermetic seams everywhere, read-only keybinding probe, authored-here identity, pane as lazy-import sequencer (KTD12, KTD13, KTD14, KTD16)
+
+**Author.** Jeff Cox and Qwen (voice run U7 closeout, #34)
+
+**Decision.** No unit test may touch the network, spawn a platform binary, or
+shell out to `herdr`: HTTP goes through an opener seam per module,
+subprocesses through the runner seam, paths through `VOICE_STATE_DIR`.
+`plugins/voice/tests/` ships no `__init__.py` so the shared pytest process
+keeps one `tests` package, and the voice test basenames and script module
+names collide with nothing collected. The R14 keybinding preflight reads
+Herdr's `config.toml` read-only and reports absence by name; voice never
+writes any Herdr configuration. The package carries no `PROVENANCE.json`, no
+port descriptor, and no `CHANGELOG.md`, and its README states that plainly.
+The pane is the listen-path sequencer and the only long-running process; it
+imports `deliver` only inside the key handler through an injectable seam, and
+same-lane units never import each other at module level.
+
+**Rationale.** CI's ubuntu runners have no `afplay`, no AVFoundation device,
+no Herdr, and no live providers, so real-world behaviour is proven by
+preflight and acceptance instead of unit tests; mission-control already
+claims the top-level `tests` package name in the shared pytest process; R15
+and R30 are structural, not aspirational; U5 and U6 dispatched concurrently.
+The CI glob collected 509 plugin tests in one process at the final commit
+with no namespace collision.
+
+**Rejected alternatives.** An `__init__.py` in voice tests (shadows the
+claimed package); a curses or third-party TUI; module-level imports across
+the G3 lane boundary.
+
+**Revisit when.** A future package reuses a voice module name (CI catches
+it); first external release (then: the changelog).
+
+**Refs.** [plan](../plans/2026-08-25-voice-plugin-implementation-plan.md)
+KTD12/KTD13/KTD14/KTD16, `plugins/voice/scripts/preflight.py`,
+`plugins/voice/scripts/pane.py`, `plugins/voice/README.md`.
+
 ### Async worker watchers trigger on branch commits and runner liveness, never agent status
 
 **Author.** Jeff Cox and Claude (mission-control migration retrospective,

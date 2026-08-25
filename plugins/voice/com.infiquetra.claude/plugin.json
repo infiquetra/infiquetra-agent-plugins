@@ -1,0 +1,16 @@
+{
+  "name": "voice",
+  "version": "0.1.0",
+  "description": "Claude client extension for the voice package: the Stop hook that lets the one explicitly bound session speak its completed response through the portable voice loop.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+  "keywords": [
+    "voice",
+    "stop-hook",
+    "speech",
+    "conversational-loop"
+  ]
+}
