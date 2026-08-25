@@ -50,13 +50,13 @@ non-overlapping: all 33 requirements appear once, and no requirement appears twi
 
 | Unit | Child | Purpose | Lane | Depends on | Requirements owned | Owned surface |
 | --- | --- | --- | --- | --- | --- | --- |
-| U1 | #28 | Package foundation, provider declaration contract, retention setting, subprocess discipline | G1 | — | R20, R21, R23, R24, R28, R29, R30, R31, R32 | `plugins/voice/{__init__.py,plugin.json,README.md,providers.py,settings.py,process.py}` |
-| U2 | #29 | Claude adapter: `Stop` hook, binding store, single-speaker guard | G2 | U1 | R1, R2, R3 | `plugins/voice/binding.py`, `plugins/voice/adapters/claude/**` |
-| U3 | #30 | Speak path: Markdown cleanup, code-block omission, synthesis invocation | G2 | U1 | R5, R6, R7 | `plugins/voice/text_cleanup.py`, `plugins/voice/speak.py` |
-| U4 | #31 | Listen path: toggle recording, hosted transcription, audio deletion, no log, no telemetry | G2 | U1 | R10, R12, R25, R26, R27 | `plugins/voice/record.py`, `plugins/voice/transcribe.py` |
-| U5 | #32 | Deliver path: unsubmitted insertion, bound-only target, blocked refusal, transient retention | G3 | U1, U2, U4 | R16, R17, R18, R19 | `plugins/voice/deliver.py` |
-| U6 | #33 | Voice pane and preflight: identity and recording display, stop key, barge-in, provider and keybinding preflight | G3 | U1, U2, U3, U4 | R4, R8, R9, R11, R13, R14, R15, R22 | `plugins/voice/{pane.py,cli.py,preflight.py}` |
-| U7 | #34 | Acceptance evidence, README truth statement, journal closeout | G4 | U1–U6 | R33 | `docs/evidence/voice/**`, `plugins/voice/README.md` (final), `docs/engineering-journal/**` |
+| U1 | #28 | Package foundation, provider declaration contract, retention posture, subprocess discipline. **Implements R30.** | G1 | — | R20, R21, R23, R24, R28, R29, R30, R31, R32 | `plugins/voice/{plugin.json,README.md}`, `plugins/voice/scripts/{providers,settings,process}.py` |
+| U2 | #29 | Claude client extension: `Stop` hook, binding store, single-speaker guard | G2 | U1 | R1, R2, R3 | `plugins/voice/com.infiquetra.claude/**`, `plugins/voice/scripts/binding.py` |
+| U3 | #30 | Speak path: Markdown cleanup, code-block omission, synthesis invocation | G2 | U1 | R5, R6, R7 | `plugins/voice/scripts/{text_cleanup,speak}.py` |
+| U4 | #31 | Listen path: toggle recording, hosted transcription, ephemeral retention | G2 | U1 | R10, R12, R25, R26, R27 | `plugins/voice/scripts/{record,transcribe}.py` |
+| U5 | #32 | Deliver path: unsubmitted `herdr pane send-text`, bound-only target, **audible** blocked refusal, transient retention | G3 | U1, U2, **U3**, U4 | R16, R17, R18, R19 | `plugins/voice/scripts/deliver.py` |
+| U6 | #33 | Agent Skill entrypoint, Voice pane controls, provider and keybinding preflight | G3 | U1, U2, U3, U4 | R4, R8, R9, R11, R13, R14, R15, R22 | `plugins/voice/skills/voice/SKILL.md`, `plugins/voice/scripts/{voice_cli,pane,preflight}.py` |
+| U7 | #34 | Acceptance evidence, README **verification**, journal closeout | G4 | U1–U6 | R33 | `docs/evidence/voice/**`, `plugins/voice/README.md` (finalize only), `docs/engineering-journal/**` |
 
 All seven child issues exist and are linked as native sub-issues of this issue.
 
@@ -71,14 +71,14 @@ to fill it.
        │ U1 │─────▶│ U2 │───────────┬─────▶┌────┐
        └────┘      └────┘           │      │ U5 │────┐
           │        ┌────┐           │      └────┘    │
-          ├───────▶│ U3 │───────┐   │                ├───▶┌────┐
+          ├───────▶│ U3 │───────┬───┤                ├───▶┌────┐
           │        └────┘       │   │                │    │ U7 │
           │        ┌────┐       │   │      ┌────┐    │    └────┘
           └───────▶│ U4 │───────┴───┴─────▶│ U6 │────┘
                    └────┘                  └────┘
 
-U1 → everything (package root, provider contract, subprocess helper)
-U5 ← U2 (binding target) + U4 (transcript)
+U1 → everything (portable package root, provider contract, subprocess helper)
+U5 ← U2 (sticky binding) + U3 (audible refusal, R18) + U4 (transcript)
 U6 ← U2 (identity display) + U3 (stop playback) + U4 (indicator, barge-in)
 U7 ← all six (end-to-end acceptance)
 ```
@@ -90,9 +90,11 @@ raises the conflict instead of editing.
 | Surface | Sole writer | Rule for everyone else |
 | --- | --- | --- |
 | `plugins/voice/` package root, `plugin.json` | U1 | Add new modules only; never edit U1's files |
-| `plugins/voice/providers.py`, `settings.py`, `process.py` | U1 | Import and consume; never modify |
-| `plugins/voice/binding.py` | U2 | Read the binding through U2's interface |
-| `plugins/voice/README.md` | U1 creates, **U7 finalizes** | Serialized: no other unit writes it |
+| `plugins/voice/com.infiquetra.claude/**` (Claude client extension) | U2 | Portable core never writes here; `plugins/voice/adapters/**` must not exist |
+| `plugins/voice/skills/voice/**`, `scripts/voice_cli.py` | U6 | The portable Agent Skill entrypoint and its CLI |
+| `plugins/voice/scripts/{providers,settings,process}.py` | U1 | Import and consume; never modify |
+| `plugins/voice/scripts/binding.py` | U2 | Read the binding through U2's interface |
+| `plugins/voice/README.md` | **U1 implements R30**; U7 verifies and finalizes | Serialized. U7 verifies the R30 truth; it never re-owns R30 |
 | `plugins/voice/tests/**` | Per-unit test files, named for the module under test | Never edit another unit's test file |
 | `docs/engineering-journal/DECISIONS.md`, `LEARNINGS.md` | **U7 only** | Hard rule: these files are newest-first inserts, so two writers guarantee a conflict and displace every line anchor below |
 | `.github/workflows/ci.yml` | **Nobody** | CI already globs `plugins/*/tests`; a unit that thinks it needs a CI edit has hit a stop condition |
@@ -134,26 +136,44 @@ safety requirement, not ceremony.
 
 ### Files expected to change
 
-- `plugins/voice/__init__.py`
 - `plugins/voice/plugin.json`
 - `plugins/voice/README.md`
-- `plugins/voice/providers.py`
-- `plugins/voice/settings.py`
-- `plugins/voice/process.py`
-- `plugins/voice/binding.py`
-- `plugins/voice/adapters/claude/stop_hook.py`
-- `plugins/voice/text_cleanup.py`
-- `plugins/voice/speak.py`
-- `plugins/voice/record.py`
-- `plugins/voice/transcribe.py`
-- `plugins/voice/deliver.py`
-- `plugins/voice/pane.py`
-- `plugins/voice/cli.py`
-- `plugins/voice/preflight.py`
+- `plugins/voice/scripts/providers.py`
+- `plugins/voice/scripts/settings.py`
+- `plugins/voice/scripts/process.py`
+- `plugins/voice/scripts/binding.py`
+- `plugins/voice/com.infiquetra.claude/plugin.json`
+- `plugins/voice/com.infiquetra.claude/hooks/hooks.json`
+- `plugins/voice/com.infiquetra.claude/hooks/stop_hook.py`
+- `plugins/voice/scripts/text_cleanup.py`
+- `plugins/voice/scripts/speak.py`
+- `plugins/voice/scripts/record.py`
+- `plugins/voice/scripts/transcribe.py`
+- `plugins/voice/scripts/deliver.py`
+- `plugins/voice/skills/voice/SKILL.md`
+- `plugins/voice/scripts/voice_cli.py`
+- `plugins/voice/scripts/pane.py`
+- `plugins/voice/scripts/preflight.py`
 - `plugins/voice/tests/`
 - `docs/evidence/voice/`
 - `docs/engineering-journal/DECISIONS.md`
 - `docs/engineering-journal/LEARNINGS.md`
+
+**Package layout, derived from this repository — not invented.** Portable core lives at
+`plugins/voice/` with vendor-neutral `scripts/` and `skills/`, matching
+`plugins/unifi/` and `plugins/mission-control/`. The Claude client extension is exactly
+`plugins/voice/com.infiquetra.claude/`, carrying its own `plugin.json` like the other
+two packages, with the `Stop` hook declared in a `hooks/hooks.json` descriptor at that
+extension root per the current Claude plugin contract. `plugins/voice/adapters/**` is
+wrong and must never be created.
+
+**Portable runnable surface.** The accepted ideation requires runnable portable
+behaviour to be reached through an Agent Skill or a Model Context Protocol server, and
+version one rejects a listening MCP tool. The entrypoint is therefore the smallest
+Agent Skill — `plugins/voice/skills/voice/SKILL.md` — plus its bundled CLI at
+`plugins/voice/scripts/voice_cli.py`, giving the installed package a discoverable way
+to start the Voice pane. No MCP server is added.
+
 
 No change is expected to `.github/workflows/ci.yml`; the existing `plugins/*/tests`
 glob already collects a new package's tests.
@@ -242,6 +262,25 @@ Control's `flow set-field`. No worker or reviewer writes board state.
 Objective field on the parent and on every executable child: `improve-agent-plugins`
 (live option id `f39edb7a`, discovered from the live board, never a label).
 
+### Fresh-preflight proof gates
+
+Planning may not rely on any of these until preflight proves it live. Each is a
+named, observable proof, not an assumption. **Stop the run on a failed or unexplained
+proof** — do not repair a launcher or redesign the run during preflight.
+
+| # | Must be proven | How it is proven | If it fails |
+| --- | --- | --- | --- |
+| P1 | The current Claude `Stop` hook event fires and supplies `last_assistant_message` | Register a throwaway `Stop` hook and observe the field arrive with the completed response | U2 and U3 are unbuildable as specified; stop and re-derive the hook contract |
+| P2 | Hook execution is asynchronous and does not stall the turn | Observe the session continue while a deliberately slow hook runs | R1's non-stalling guarantee is unmet; stop |
+| P3 | The Claude hook session identifier joins to Herdr `agent_session.value` | Compare the hook's session id against `herdr agent list` output for the same pane | The binding cannot be resolved; stop — this is the join the whole product rests on |
+| P4 | `herdr agent get <agent>` resolves a bound agent to its `pane_id` | Run it against a live agent and read `pane_id` | U5 cannot address a delivery target; stop |
+| P5 | `herdr pane send-text <pane_id> "<text>"` delivers literal text **without** Enter | Send text to a live pane and confirm it sits unsubmitted and editable | R16 is unmet and the loop cannot close; stop |
+| P6 | Terminal microphone permission is granted (decision D3) | Capture a short sample with `/opt/homebrew/bin/ffmpeg` via AVFoundation | U4 parks; recording cannot be exercised |
+| P7 | Every launch template in the per-run vendor table dry-runs cleanly | `agents --dry-run …` for each row | Stop; the affected role has no validated launcher |
+
+Preflight is run once, immediately before dispatch, even though this contract already
+records earlier receipts. Record the results in the opening run comment on this issue.
+
 ### Stop conditions
 
 The run halts and asks the operator when any of these occurs:
@@ -258,7 +297,7 @@ The run halts and asks the operator when any of these occurs:
 ### Acceptance criteria
 
 - [ ] All seven child issues are closed with a truthful terminal state: `gh issue list --repo infiquetra/infiquetra-agent-plugins --state open --label capability` lists no `voice` child.
-- [ ] The package exists with its portable core and Claude adapter separated: `test -d plugins/voice/adapters/claude && test -f plugins/voice/providers.py` exits 0.
+- [ ] Portable core and the Claude client extension are separated at the conventional paths: `test -d plugins/voice/com.infiquetra.claude && test -f plugins/voice/scripts/providers.py && ! test -d plugins/voice/adapters` exits 0.
 - [ ] Repository validation passes at the final merged commit: `python3 scripts/check_repo.py` prints `Repository validation passed.`
 - [ ] The whole suite passes including the new package: `python3 -m unittest discover -s tests` reports `OK`.
 - [ ] The package's own tests pass under the CI collector: `python3 -m pytest plugins/voice/tests -q` reports no failures.
@@ -266,7 +305,8 @@ The run halts and asks the operator when any of these occurs:
 - [ ] Every requirement R1–R33 maps to a merged unit and a passing test, evidenced in `docs/evidence/voice/`: `ls docs/evidence/voice/` lists the acceptance record.
 - [ ] The end-to-end loop is manually verified per R33 and recorded: `grep -c "R33" docs/evidence/voice/acceptance.md` returns at least 1.
 - [ ] The multi-session silence check passes per AE1, recorded in the same acceptance evidence.
-- [ ] The README states the absent provenance manifest and port descriptor plainly per R30: `grep -iE "provenance|port descriptor" plugins/voice/README.md` returns a match.
+- [ ] The README states the absent provenance manifest and port descriptor plainly per R30, implemented by U1 and verified by U7: `grep -iE "provenance|port descriptor" plugins/voice/README.md` returns a match.
+- [ ] The portable Agent Skill entrypoint exists and no MCP server was added: `test -f plugins/voice/skills/voice/SKILL.md && ! grep -riq "mcpServers" plugins/voice/` exits 0.
 
 ### Verification
 
@@ -277,7 +317,7 @@ python3 scripts/check_repo.py
 python3 -m unittest discover -s tests
 python3 -m pytest plugins/voice/tests -q
 git diff --check
-gh pr checks <final-merge-pr> 
+gh pr checks <final-merge-pr>
 ```
 
 Expected: validation passes, the suite reports `OK`, the package tests report no
@@ -292,17 +332,23 @@ durable; and any pool that never ran disclosed as unexercised.
 
 ### Operator decision table
 
-These are genuine human gates. The run parks the affected unit in a draft pull
-request linked with `Relates to`, continues independent lanes, and records the ruling
-as a durable comment. No unit invents an answer.
+Five of the six decisions are settled by operator ruling and are **closed**. Exactly
+one remains genuinely open. The run continues unattended through the closed ones and
+pauses only for D2 or a genuine stop condition outside its authority.
 
-| # | Decision | Why it cannot be inferred | If no ruling arrives |
+| # | Decision | Status | Ruling |
 | --- | --- | --- | --- |
-| D1 | Which text-to-speech provider to declare, and its egress class | R20 and R24 put provider choice, credentials, and billing outside the plugin | U3 lands with the declaration contract and no declared provider; the loop stays unproven |
-| D2 | Which hosted speech-to-text provider to declare | Same; "hosted" also makes egress external by design, which R21 requires be stated | U4 lands unproven; U7 acceptance cannot complete |
-| D3 | Which capture tool records audio, and confirmation that the terminal holds microphone permission | The requirements assume the terminal grants microphone access and inherits it; that assumption is stated, not verified | U4 parks; recording cannot be exercised |
-| D4 | Whether the operator adds the Herdr-wide `voice stop` keybinding | R14 preflights its presence; R15 forbids Voice writing Herdr config, so only the operator can add it | U6 reports the absence, which satisfies R14; the third stop form stays unavailable |
-| D5 | The retention setting's written default | R28 requires the empty case be something a person wrote down, not a silent default | U1 parks the setting rather than choosing for the operator |
+| D1 | Text-to-speech provider and egress class | **RESOLVED** | `/usr/bin/say`, egress class `on-device`, for the first text-to-speech acceptance proof. Declared like any other provider — `voice` still ships no implementation and still refuses by name rather than substituting |
+| D2 | Hosted speech-to-text provider, its credential variable name, and its external egress declaration | **PENDING — the only open decision** | Not decided. Do not infer, default, or select one. U4 builds against the U1 declaration contract and parks rather than choosing |
+| D3 | Audio capture tool and microphone permission | **RESOLVED** | `/opt/homebrew/bin/ffmpeg` using the macOS AVFoundation input device. Terminal microphone permission is confirmed during preflight (gate P6), not assumed at run time |
+| D4 | The Herdr-wide `voice stop` keybinding | **RESOLVED — yes** | The operator adds the documented keybinding. `voice` only preflights and reports its presence (R14) and never writes Herdr configuration (R15) |
+| D5 | Retention posture | **RESOLVED — ephemeral** | Temporary audio deleted after both success and failure; no `voice` transcript log; no telemetry. Planning chooses the smallest clear setting *name*; the behaviour is settled and is written down rather than defaulted (R28) |
+
+**How D2 parks.** U4 preserves its work in a draft pull request linked with
+`Relates to`, the coordinator marks the unit parked and moves its board card, and
+independent lanes continue. The operator's ruling is recorded as a durable comment and
+the same unit resumes — no replacement unit is created for completed work.
+
 
 ### Authority
 
@@ -316,9 +362,17 @@ elsewhere. Pre-existing artifacts and unrelated sessions are never touched.
 
 ### Run posture
 
-Intended to run unattended, but only after the operator approves this completed
-contract and a fresh preflight passes. Unattended means it does not need routine
-supervision; it does not mean the decision gates above are answered by an agent.
+**This becomes an unattended run only after the operator approves this contract and a
+fresh preflight passes green.** Both conditions are required; neither is assumed.
+
+Once running, it continues without routine supervision. It pauses for exactly two
+things: the pending D2 provider ruling, and a genuine stop condition outside its
+authority. It does not pause to confirm work it is already authorized to do, and it
+never answers an operator decision gate on the operator's behalf.
+
+**The coordinator is the sole Operations-board writer**, and keeps parent and child
+Status fields current as dependencies satisfy, units dispatch, reviews pass, pull
+requests merge, and closeout completes. Workers and reviewers never write board state.
 
 ### Handoff maturity
 
@@ -338,7 +392,9 @@ covering all seven units before any dispatch.
 
 ### Recommended Tier Band
 
-opus/high
+`opus/high` — **generated default, NOT authoritative.** The per-run vendor table above
+is the authority: Saga Plan runs on Claude Fable 5 (`claude-fable-5`) at maximum
+effort. Ignore this generated band wherever the two disagree.
 
 ### Intent envelope
 
