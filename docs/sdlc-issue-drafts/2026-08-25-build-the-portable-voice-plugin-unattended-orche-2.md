@@ -278,7 +278,7 @@ proof** — do not repair a launcher or redesign the run during preflight.
 | P6 | Terminal microphone permission is granted (decision D3) | Capture a short sample with `/opt/homebrew/bin/ffmpeg` via AVFoundation | U4 parks; recording cannot be exercised |
 | P7 | Every launch template in the per-run vendor table dry-runs cleanly | `agents --dry-run …` for each row | Stop; the affected role has no validated launcher |
 | P8 | **Voice Forge text-to-speech is reachable and can actually synthesize** (decision D1) | Resolve `VOICE_FORGE_BASE_URL` from the Home Lab deployment receipt; `GET /health` and require a **usable backend**, not merely a healthy process; `GET /v1/audio/voices` and require the configured `VOICE_FORGE_VOICE_ID` to be present; then `POST /v1/audio/speech` with a short real phrase and verify the response is non-empty, playable audio | **Stop. Do not substitute another text-to-speech provider.** A healthy process with no available backend fails this gate |
-| P9 | **Hermes relay speech-to-text resolves xAI and actually transcribes** (decision D2) | `GET {VOICE_HERMES_BASE_URL}/api/health` and require healthy; prove the configured `VOICE_HERMES_PROFILE` exists and resolves `stt.provider: xai` **without displaying any credential**; `POST /api/audio/transcribe?profile=mimir-engineer` with a short real audio sample and require `provider` = `xai` plus a non-empty expected transcript; confirm `voice` never read `auth.json` and stored no bearer | **Stop. Do not substitute another speech-to-text provider.** |
+| P9 | **Hermes relay speech-to-text resolves xAI and actually transcribes** (decision D2) | `GET {VOICE_HERMES_BASE_URL}/api/health` and require healthy — noting that `auth_required: false` disables only the external OAuth/cookie gate and is **not** proof that protected routes accept anonymous requests. Obtain the loopback session token in memory from `GET {VOICE_HERMES_BASE_URL}/`, then prove `/api/profiles` is callable with `X-Hermes-Session-Token` (HTTP 200) and that the configured `VOICE_HERMES_PROFILE` is present. Verify the profile resolves `stt.provider` = `xai` **without exposing any credential** — the transcription response's own `provider` field is the authoritative resolution. Then `POST /api/audio/transcribe?profile=mimir-engineer` with the same header and a short real audio sample, requiring `provider` = `xai` and the expected non-empty transcript. Confirm `voice` never read `auth.json` and never persisted or logged the session token | **Stop. Do not substitute another speech-to-text provider, and never disable Hermes authentication.** |
 
 Preflight is run once, immediately before dispatch, even though this contract already
 records earlier receipts. Record the results in the opening run comment on this issue.
@@ -316,6 +316,7 @@ The run halts and asks the operator when any of these occurs:
 - [ ] The README states the absent provenance manifest and port descriptor plainly per R30, implemented by U1 and verified by U7: `grep -iE "provenance|port descriptor" plugins/voice/README.md` returns a match.
 - [ ] The portable Agent Skill entrypoint exists and no MCP server was added: `test -f plugins/voice/skills/voice/SKILL.md && ! grep -riq "mcpServers" plugins/voice/` exits 0.
 - [ ] No credential is read or stored by the package: `grep -riE "auth\.json|XAI_API_KEY|Bearer " plugins/voice/scripts/` returns no output.
+- [ ] The Hermes session token is never persisted or logged: `grep -riE "HERMES_SESSION_TOKEN.*(open\(|write|log|print)" plugins/voice/scripts/` returns no output.
 - [ ] No Hermes internals are imported and no HTTP dependency was added: `grep -riE "^import hermes|from hermes|import requests|import httpx" plugins/voice/scripts/` returns no output.
 - [ ] No provider endpoint is hard-coded to an IP address: `grep -rE "https?://[0-9]{1,3}(\.[0-9]{1,3}){3}" plugins/voice/scripts/` returns no output.
 
@@ -350,7 +351,7 @@ authority.
 | # | Decision | Status | Ruling |
 | --- | --- | --- | --- |
 | D1 | Text-to-speech provider and egress class | **RESOLVED** | **Voice Forge on the Mac mini**, reached over the local network. Egress class **`local-network`** — not `on-device`. Configured through non-secret `VOICE_FORGE_BASE_URL` (from the Home Lab deployment receipt) and `VOICE_FORGE_VOICE_ID` (a registered Voice Forge voice). No IP address is hard-coded. Synthesis uses `POST /v1/audio/speech` with Voice Forge's OpenAI-compatible request shape |
-| D2 | Speech-to-text provider, credential owner, and egress declaration | **RESOLVED** | **xAI Grok speech-to-text through the local Hermes relay.** `voice` calls `POST {VOICE_HERMES_BASE_URL}/api/audio/transcribe?profile={VOICE_HERMES_PROFILE}`, acceptance values `http://127.0.0.1:8765` and `mimir-engineer`. **Credential variable in `voice`: none.** Credential owner: Hermes xAI OAuth. **Effective audio egress: `external`**, because Hermes forwards the audio to xAI |
+| D2 | Speech-to-text provider, credential owner, and egress declaration | **RESOLVED** | **xAI Grok speech-to-text through the local Hermes relay.** `voice` calls `POST {VOICE_HERMES_BASE_URL}/api/audio/transcribe?profile={VOICE_HERMES_PROFILE}`, acceptance values `http://127.0.0.1:8765` and `mimir-engineer`, attaching the in-memory loopback `X-Hermes-Session-Token` read from the local dashboard root. **No new credential environment variable.** Credential owner: Hermes xAI OAuth. **Effective audio egress: `external`**, because Hermes forwards the audio to xAI |
 | D3 | Audio capture tool and microphone permission | **RESOLVED** | `/opt/homebrew/bin/ffmpeg` using the macOS AVFoundation input device. Terminal microphone permission is confirmed during preflight (gate P6), not assumed at run time |
 | D4 | The Herdr-wide `voice stop` keybinding | **RESOLVED — yes** | The operator adds the documented keybinding. `voice` only preflights and reports its presence (R14) and never writes Herdr configuration (R15) |
 | D5 | Retention posture | **RESOLVED — ephemeral** | Temporary audio deleted after both success and failure; no `voice` transcript log; no telemetry. Planning chooses the smallest clear setting *name*; the behaviour is settled and written down rather than defaulted (R28) |
@@ -361,6 +362,26 @@ refresh, service management, billing, and credentials all remain outside the plu
 `auth.json`, copy a bearer, import Hermes internals, or require an `XAI_API_KEY`. The
 Home Lab System Update session owns upgrading the Mac mini Voice Forge installation and
 making it reachable; this run neither modifies Home Lab nor waits on that session.
+
+**Loopback session token — how `voice` calls the relay.** `auth_required: false` on
+`/api/health` means Hermes' external OAuth/cookie gate is disabled. It does **not** make
+protected API routes anonymous: the running dashboard requires its rotating loopback
+session token on non-public routes, and an anonymous call returns `401`.
+
+`voice` uses the same supported client flow as Hermes Desktop:
+
+1. `GET {VOICE_HERMES_BASE_URL}/` and read the injected `window.__HERMES_SESSION_TOKEN__`
+   value from the served page.
+2. Hold it **in process memory only** and send it as the `X-Hermes-Session-Token` header
+   on `/api/audio/transcribe` requests.
+3. On `401`, refresh the token once from the local root page and retry **once**, because
+   the token rotates when Hermes restarts. **One refresh, one retry — never a loop.**
+
+The token is a transport detail, not a declared credential: no new environment variable
+is introduced, and `VOICE_HERMES_BASE_URL` and `VOICE_HERMES_PROFILE` are unchanged.
+`voice` must never read `auth.json`, copy the xAI OAuth bearer, persist or log the
+session token, pass it in command arguments or evidence, or disable Hermes
+authentication.
 
 Both providers are reached over plain HTTP behind the U1 declaration contract, so the
 provider boundary stays replaceable. `voice` depends on no Hermes Python module and no
