@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import binding  # noqa: E402
 import pane  # noqa: E402
 import providers  # noqa: E402
+import record  # noqa: E402
 import transcribe  # noqa: E402
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
@@ -63,6 +64,37 @@ class _Seam:
         return self._result
 
 
+class _FakeRecorder:
+    """The recorder a spawn seam returns instead of a platform binary."""
+
+    pid = 4242
+
+
+class _SpawnSeam:
+    """Records the recorder spawn instead of spawning a platform binary."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[list[str], dict]] = []
+
+    def __call__(self, command, **kwargs):
+        self.calls.append((command, kwargs))
+        return _FakeRecorder()
+
+
+class _ReapSeam:
+    """Records the terminate-and-reap step instead of signalling a pid."""
+
+    def __init__(self) -> None:
+        self.pids: list[int] = []
+
+    def __call__(self, pid: int) -> None:
+        self.pids.append(pid)
+
+
+def _alive(pid: int) -> bool:
+    return True
+
+
 class PaneTestBase(unittest.TestCase):
     """Shared fixture: a temp state dir and inert settings."""
 
@@ -85,6 +117,11 @@ class PaneTestBase(unittest.TestCase):
         self.read_binding_report = _Seam(
             "read_binding_report", result=_bound_report()
         )
+        # Neither carries the shared order list: the restore seam fires at
+        # construction and the abandon seam at quit, and the key-order
+        # assertions below count keypress sequences only.
+        self.abandon_recording = _Seam("abandon_recording", result=False)
+        self.read_recording_active = _Seam("read_recording_active", result=False)
 
     def make_pane(self) -> pane.VoicePane:
         return pane.VoicePane(
@@ -95,6 +132,8 @@ class PaneTestBase(unittest.TestCase):
             use_refused=self.use_refused,
             discard_refused=self.discard_refused,
             read_binding_report=self.read_binding_report,
+            abandon_recording=self.abandon_recording,
+            read_recording_active=self.read_recording_active,
         )
 
 
@@ -133,6 +172,16 @@ class DisplayTests(PaneTestBase):
         joined = "\n".join(self.make_pane().status_lines())
         self.assertIn("unreadable", joined)
 
+    def test_a_leftover_live_recorder_is_restored_as_recording_on_start(self) -> None:
+        # F01: a recorder left running by an earlier pane (or by the CLI
+        # toggle) must be recognised, never mistaken for idle.
+        self.read_recording_active._result = True
+        session = self.make_pane()
+        self.assertTrue(session.recording)
+        joined = "\n".join(session.status_lines())
+        self.assertIn(pane.RECORDING_INDICATOR, joined)
+        self.assertNotIn("recording: idle", joined)
+
 
 class KeyTests(PaneTestBase):
     def test_s_stops_playback_immediately_on_keypress(self) -> None:
@@ -170,6 +219,20 @@ class KeyTests(PaneTestBase):
         self.assertTrue(session.recording)
         self.assertEqual(len(self.transcribe_path.calls), 0)
         self.assertEqual(len(self.deliver.calls), 0)
+
+    def test_t_on_a_restored_recording_is_an_explicit_stop_and_delivers(self) -> None:
+        # F01: once the leftover recorder is recognised, the operator's press
+        # is an informed explicit stop — the capture is transcribed and
+        # delivered, exactly as a press on a recording the pane started.
+        self.read_recording_active._result = True
+        session = self.make_pane()
+        wav_path = Path(tempfile.gettempdir()) / "capture-leftover.wav"
+        self.toggle._result = wav_path
+        session.handle_key("t")
+        self.assertEqual(self.order, ["stop_playback", "toggle", "transcribe", "deliver"])
+        self.assertEqual(self.transcribe_path.calls[0][0], (wav_path,))
+        self.assertEqual(self.deliver.calls[0][0], (self.transcription.transcript,))
+        self.assertFalse(session.recording)
 
     def test_u_and_d_call_the_use_and_discard_seams(self) -> None:
         session = self.make_pane()
@@ -237,15 +300,110 @@ class RunLoopTests(PaneTestBase):
         self.assertEqual(exit_code, 0)
         # One start press and one stop press reached the toggle seam; the
         # dedicated stop key and both toggle presses each stop playback
-        # first (R9), so three stop calls in total.
+        # first (R9), and the quit cleanup stops playback once more (F01),
+        # so four stop calls in total.
         self.assertEqual(len(self.toggle.calls), 2)
-        self.assertEqual(len(self.stop_playback.calls), 3)
+        self.assertEqual(len(self.stop_playback.calls), 4)
         joined = "\n".join(written)
         self.assertIn("*** RECORDING ***", joined)
 
     def test_run_reports_end_of_input_as_a_clean_exit(self) -> None:
         exit_code, _written = self._run([])
         self.assertEqual(exit_code, 0)
+
+    def test_q_after_t_leaves_no_live_recorder_and_transcribes_nothing(
+        self,
+    ) -> None:
+        # F01: quitting after a start press abandons the capture — nothing
+        # keeps recording after the pane is gone, and nothing that was
+        # captured is transcribed or delivered.
+        self.abandon_recording._result = True  # a recording runs at the quit
+        exit_code, written = self._run(["t", "q"])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(len(self.abandon_recording.calls), 1)
+        self.assertEqual(len(self.transcribe_path.calls), 0)
+        self.assertEqual(len(self.deliver.calls), 0)
+        joined = "\n".join(written)
+        self.assertIn("recording abandoned", joined)
+        self.assertIn("[voice] pane stopped", joined)
+
+    def test_q_while_recording_is_active_abandons_without_delivering(
+        self,
+    ) -> None:
+        # F01's run-loop gap: the pane starts with a restored live recorder
+        # and the operator quits without pressing the toggle.
+        self.read_recording_active._result = True
+        self.abandon_recording._result = True  # the restored recorder is live
+        exit_code, written = self._run(["q"])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(len(self.abandon_recording.calls), 1)
+        self.assertEqual(len(self.transcribe_path.calls), 0)
+        self.assertEqual(len(self.deliver.calls), 0)
+        self.assertEqual(len(self.toggle.calls), 0)
+        joined = "\n".join(written)
+        self.assertIn("recording abandoned", joined)
+
+    def test_end_of_input_while_recording_also_abandons(self) -> None:
+        self.abandon_recording._result = True  # a recording runs at the quit
+        exit_code, _written = self._run(["t"])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(len(self.abandon_recording.calls), 1)
+        self.assertEqual(len(self.transcribe_path.calls), 0)
+        self.assertEqual(len(self.deliver.calls), 0)
+
+    def test_keyboard_interrupt_while_recording_also_abandons(self) -> None:
+        self.abandon_recording._result = True  # a recording runs at the quit
+        written: list[str] = []
+        keys = iter(["t"])
+
+        def read_key() -> str:
+            try:
+                return next(keys)
+            except StopIteration:
+                raise KeyboardInterrupt() from None
+
+        exit_code = pane.run(
+            pane=self.make_pane(),
+            read_key=read_key,
+            write_line=written.append,
+        )
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(len(self.abandon_recording.calls), 1)
+        self.assertEqual(len(self.transcribe_path.calls), 0)
+        self.assertEqual(len(self.deliver.calls), 0)
+        self.assertIn("[voice] pane stopped", "\n".join(written))
+
+    def test_t_then_q_terminates_a_real_recorder_and_clears_the_state(
+        self,
+    ) -> None:
+        # F01 end-to-end through the real capture module (KTD12 seams for
+        # the spawn and reap, so no platform binary runs): after the quit
+        # the recorder pid was reaped and no recording state is left for a
+        # later pane to mistake for idle.
+        spawn = _SpawnSeam()
+        reap = _ReapSeam()
+        session = pane.VoicePane(
+            stop_playback=self.stop_playback,
+            toggle=lambda: record.toggle(spawn=spawn, alive=_alive, reap=reap),
+            transcribe_path=self.transcribe_path,
+            deliver=self.deliver,
+            use_refused=self.use_refused,
+            discard_refused=self.discard_refused,
+            read_binding_report=self.read_binding_report,
+            abandon_recording=lambda: record.abandon(alive=_alive, reap=reap),
+            read_recording_active=lambda: record.is_active(alive=_alive),
+        )
+        stream = iter(["t", "q", ""])
+        exit_code = pane.run(pane=session, read_key=lambda: next(stream))
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(len(spawn.calls), 1)
+        self.assertEqual(reap.pids, [_FakeRecorder.pid])
+        self.assertEqual(len(self.transcribe_path.calls), 0)
+        self.assertEqual(len(self.deliver.calls), 0)
+        self.assertFalse(
+            (Path(os.environ["VOICE_STATE_DIR"]) / "recording.json").exists(),
+            "the quit left no recording state behind",
+        )
 
 
 class LazyDeliveryImportTests(unittest.TestCase):

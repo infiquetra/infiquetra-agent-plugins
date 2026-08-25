@@ -21,7 +21,13 @@ third-party TUI, no ``input()``).
 - ``s`` stop playback immediately (R8).
 - ``u`` use a refused transcript, ``d`` discard it — the delivery seam
   owns the transient hold (R19).
-- ``q`` quit the pane.
+- ``q`` quit the pane. Quitting abandons any active recording without
+  transcribing it and stops any playback (R12, D5), so the detached
+  recorder never outlives the pane and keeps the microphone live.
+
+On start the pane restores the live recording state from the capture
+state, so a recorder left over from an earlier pane — or started by the
+CLI ``toggle`` command — shows as recording, never as idle.
 
 The pane sequences the listen path without owning it: it never implements
 send-text and never does HTTP itself. Delivery is imported lazily inside
@@ -106,7 +112,12 @@ def toggle_once(
 
 
 class VoicePane:
-    """One pane's state machine: the seams, the indicator, and the keys."""
+    """One pane's state machine: the seams, the indicator, and the keys.
+
+    Construction restores the live recording state, so a recorder left
+    over from an earlier pane is recognised rather than mistaken for
+    idle; quitting abandons any active capture without transcribing it.
+    """
 
     def __init__(
         self,
@@ -118,6 +129,8 @@ class VoicePane:
         use_refused: Callable[[], None] = _use_refused_default,
         discard_refused: Callable[[], None] = _discard_refused_default,
         read_binding_report: Callable[[], binding.BindingReport] = binding.read_binding_report,
+        abandon_recording: Callable[[], bool] = record.abandon,
+        read_recording_active: Callable[[], bool] = record.is_active,
     ) -> None:
         self._stop_playback = stop_playback
         self._toggle = toggle
@@ -126,7 +139,8 @@ class VoicePane:
         self._use_refused = use_refused
         self._discard_refused = discard_refused
         self._read_binding_report = read_binding_report
-        self.recording = False
+        self._abandon_recording = abandon_recording
+        self.recording = read_recording_active()
 
     def status_lines(self) -> list[str]:
         """The bound identity alongside the recording state (R4, R11).
@@ -190,6 +204,32 @@ class VoicePane:
             return [f"voice: {error}"]
         return [success]
 
+    def quit_cleanup(self) -> list[str]:
+        """Pane-exit cleanup: abandon any live capture, then stop playback.
+
+        The microphone stops with the pane (R12, D5): an active recording is
+        abandoned — the recorder terminated, the wav deleted, nothing
+        transcribed — before playback stops. The CLI ``toggle`` command does
+        not share this path; starting a recording and exiting is its
+        intended behaviour. Returns operator-facing messages for the exit.
+        """
+        messages: list[str] = []
+        try:
+            abandoned = self._abandon_recording()
+        except Exception as error:
+            messages.append(f"voice: {error}")
+        else:
+            self.recording = False
+            if abandoned:
+                messages.append(
+                    "recording abandoned — capture deleted, nothing transcribed"
+                )
+        try:
+            self._stop_playback()
+        except Exception as error:
+            messages.append(f"voice: {error}")
+        return messages
+
 
 class _TerminalKeys:
     """Single-character reads under ``tty.setcbreak``, restored on exit.
@@ -241,6 +281,9 @@ def run(
 
     The status lines redraw after every keypress, so the bound identity
     and the recording state stay visible for the life of the pane (R4).
+    On every exit — ``q``, end of input, or the operator's interrupt — an
+    active recording is abandoned without transcribing and playback stops,
+    so nothing keeps capturing or playing after the pane is gone (R12, D5).
     """
     session = pane if pane is not None else VoicePane()
     output = output_stream if output_stream is not None else sys.stdout
@@ -270,5 +313,7 @@ def run(
                     emit(line)
     except KeyboardInterrupt:
         pass  # The operator left the pane; the terminal is restored below.
+    for message in session.quit_cleanup():
+        emit(message)
     emit("[voice] pane stopped")
     return 0
