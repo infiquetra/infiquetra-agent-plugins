@@ -12,8 +12,18 @@ ported module, this package is re-synchronized and takes that version.
 
 ## Unreleased
 
-No release tag, because nothing in the ported bytes moved. This section records
-a catalog-level contract change that this package's own documentation states.
+The entries under Changed record catalog-level contract changes that moved no
+ported bytes; they carry no release tag. The entries under Added record the
+slice expansion of 2026-08-24, which added ported files at the existing pin
+without moving any byte already here. Neither group advances the package
+version: this package's version tracks the upstream Fleet Core version its
+bytes derive from (0.25.2 at commit `3b5faa6c`), and upstream's 0.25.3 release
+of 2026-08-24 changed `retry_backoff.py`, which this pin deliberately does not
+take — a repin would churn UniFi's bundles and invalidate its committed
+matrix. Naming this package "0.25.3" while it still carries 0.25.2's
+`retry_backoff` bytes would collide with the real upstream release, and
+inventing any other number would imply the second writable source this
+changelog's convention exists to prevent.
 
 ### Changed
 
@@ -39,6 +49,35 @@ a catalog-level contract change that this package's own documentation states.
   source it is derived from, so the lower floor this catalog used to document
   was a promise nothing upstream was keeping. The decision and its reasoning are
   recorded in the repository's engineering journal.
+
+### Added
+
+- **The mission-control closure joins the slice: three files at the same pin.**
+  `scripts/fleet_commons/intent_envelope.py`,
+  `scripts/fleet_commons/tier_palette.py`, and the
+  `scripts/fleet_commons/models.json` registry are ported at fleet-core pin
+  `3b5faa6c`. Mission-control's shipped surface reaches exactly this closure:
+  its issue-capture path loads the envelope module's parse/render surface, and
+  `IntentEnvelope.validate()` reaches the tier palette whenever a parsed
+  envelope carries `spend_envelope.tier_ceiling`; the palette reads its sibling
+  registry at import time, so the data file rides the slice. The resolver leg
+  behind `recommend_tier` has zero callers in either consumer and stays
+  deferred.
+- **`tier_palette.py` and `models.json` are pure byte copies**; the repository
+  validator recomputes their digests against `PROVENANCE.json` on every run.
+  **`intent_envelope.py` ports under this package's existing
+  `deterministic-transform` custody class** with the new named rule
+  `resolve-fleet-commons-sibling` version 1: the module's Claude-Code-specific
+  discovery-shim import block and its two shim load call sites become
+  same-directory sibling resolution — placement-independent, so the identical
+  file works in this package and in any generated `_bundled/` copy a consuming
+  plugin carries. A deferred name (`tier_resolver`) fails at call time naming
+  the missing sibling path, never at import. Every other line is a byte copy.
+- **The deferred inventory is regenerated**, so exactly the three rows move
+  from deferred to ported and every other deferral stays explicit; the
+  provenance manifest classifies all three files and names them, with the two
+  new target-owned tests, in the release surface. The decision is KTD8 in
+  `docs/plans/2026-08-24-mission-control-port-run-plan.md`.
 
 ## [0.25.2] - 2026-08-22
 

@@ -33,6 +33,28 @@
       "classification": "upstream-byte-copy",
       "source_path": "plugins/fleet-core/scripts/fleet_commons/retry_backoff.py",
       "sha256": "2aa7fd26bb0fb40dbbd0b7a14ae34f24c473561648695346edaa60079ac63021"
+    },
+    {
+      "path": "scripts/fleet_commons/intent_envelope.py",
+      "classification": "deterministic-transform",
+      "source_path": "plugins/fleet-core/scripts/fleet_commons/intent_envelope.py",
+      "source_sha256": "5157fa303a92152ec9af0ef2a8f8e7543a46351d84282e076854ac2a2f9d201a",
+      "sha256": "c4e9b522c73e23a875ae85baa5e45687f4bfaae84fa3ead11af1d4c730d50b98",
+      "transform": "resolve-fleet-commons-sibling",
+      "transform_version": "1",
+      "transform_rule": "Replace the upstream module-scope sys.path insert plus fleet-commons discovery-shim import block (lines 79-83 of the source) with a `_load_sibling(name)` helper that resolves `<name>.py` from this file's own directory, and replace the discovery shim's two `.load(...)` call sites for tier_resolver and tier_palette (lines 166 and 170 of the source) with `_load_sibling(\"tier_resolver\")` and `_load_sibling(\"tier_palette\")`. Add `import importlib.util` as the first standard-library import. Sibling resolution is placement-independent by construction: the identical transformed file works in plugins/fleet-core/scripts/fleet_commons/ and in any generated _bundled/ copy a consuming plugin carries, because a module is always loaded from the directory holding this file. `_load_sibling` mirrors the discovery shim's load contract: lazy, cached in sys.modules under a `_fleet_commons_<name>@<sibling directory>` key, and a name with no sibling file (the deferred tier_resolver) raises RuntimeError at call time naming the resolved missing sibling path, never at import. Every other line is copied byte for byte."
+    },
+    {
+      "path": "scripts/fleet_commons/models.json",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/fleet-core/scripts/fleet_commons/models.json",
+      "sha256": "8b50e821e12d56d555e2c2f087df2f568fda48c20987840d2d5a3bfa7a362f83"
+    },
+    {
+      "path": "scripts/fleet_commons/tier_palette.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/fleet-core/scripts/fleet_commons/tier_palette.py",
+      "sha256": "b14ff89f155c0043e72bf028b937bdb6e3e7b4ebbfbf919683d88a8764ef9e28"
     }
   ],
   "derived_files": [
@@ -54,7 +76,12 @@
       "plugins/fleet-core/PROVENANCE.json",
       "plugins/fleet-core/CHANGELOG.md",
       "plugins/fleet-core/scripts/fleet_commons/retry_backoff.py",
-      "tests/test_retry_backoff.py"
+      "plugins/fleet-core/scripts/fleet_commons/intent_envelope.py",
+      "plugins/fleet-core/scripts/fleet_commons/models.json",
+      "plugins/fleet-core/scripts/fleet_commons/tier_palette.py",
+      "tests/test_retry_backoff.py",
+      "tests/test_intent_envelope.py",
+      "tests/test_tier_palette.py"
     ],
     "package_documentation": [
       "plugins/fleet-core/README.md",
