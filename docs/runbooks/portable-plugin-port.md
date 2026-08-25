@@ -1,6 +1,7 @@
 # Runbook: porting a Claude plugin into the portable catalog
 
-**Version 1.0.0** · Adopted 2026-08-23 · Derived from the UniFi pilot
+**Version 1.1.0** · Adopted 2026-08-23 · Amended 2026-08-25 from the
+[mission-control retrospective](../retros/issue-9-2026-08-25.md) · Derived from the UniFi pilot
 
 Record the version you followed in the port's plan and its saga tick. Change the
 minor version when a step is added or reordered; the major when the phase
@@ -22,6 +23,7 @@ Do not begin porting until every line is true.
 - [ ] The client roster and assessment method are scripted in `scripts/assess_clients.py`, not to be re-derived. Print the plan with `python3 scripts/assess_clients.py --package <package>` before running it.
 - [ ] The Python floor is decided and a matching interpreter exists.
 - [ ] Non-goals are written down.
+- [ ] The repository's allowed merge methods are read (`gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed`) before any plan, review contract, or PR text states a merge form.
 
 ---
 
@@ -49,6 +51,7 @@ For each validation rule, in this order:
 - [ ] Name the **authority** for it, and **derive it at test time** rather than restating it. A test that rebuilds the rule's premise from its authority fails when the premise moves; a copied constant does not.
 - [ ] Write the **class corpus** — every member of the input class, in every vulnerable shape — *before* the rule ships.
 - [ ] Where a rule exists in more than one copy, assert agreement on **verdicts**, not on constants, patterns, or helper outputs.
+- [ ] Record every capable-of-failing probe as a **captured transcript** — the exact command and its output pasted verbatim, never reconstructed after the fact.
 
 ## Phase 3 — Freeze and gather evidence (serial)
 
@@ -57,6 +60,7 @@ For each validation rule, in this order:
 - [ ] Freeze the candidate: exact commit recorded, working tree clean.
 - [ ] **One** client matrix run and **one** readback, bound to the shipped fingerprint.
 - [ ] Mutation proof per rule copy, bound by test to the committed blobs.
+- [ ] Every evidence binding names **content** — the package tree hash or file digests, never a commit id. A freeze record pins the package tree hash, not its own commit.
 
 ## Phase 4 — Review (2 reviewers in parallel, **maximum 3 rounds**)
 
@@ -90,8 +94,19 @@ All required, on the exact frozen commit.
 - [ ] One fingerprint-bound matrix and readback.
 - [ ] Mutation proof per rule copy, bound by test to committed blobs.
 - [ ] Provenance digests equal across every copy of a byte-copied path.
+- [ ] Every hand-authored catalog or identity row (a version, a pin, a count) is derived from its authority file or pinned by a test in the same commit.
 
 ---
+
+## Unit loop (when the port runs as orchestrated units)
+
+Per dispatched unit, in order. The mission-control port ran this loop fourteen
+times for fourteen review acceptances.
+
+- [ ] Verify the unit's claims first-hand in its worktree — re-run every gate; probe evidence claims, never relay them.
+- [ ] Settle the unit, then submit the frozen revision for review with every deviation or ambiguity stated as an explicit judgment item.
+- [ ] On acceptance: land, persist the typed review artifacts, and close the child with its base → frozen → merged SHA chain.
+- [ ] Keep record-only branches (review controllers, doc reviews, blocked units) `merge=false` so landing can never pick them up.
 
 ## Reusable assets
 
@@ -184,3 +199,4 @@ satisfied one.
 - Deriving a fix from the failing example rather than from the rule's predicate.
 - Adding a guard scoped to the instance just repaired.
 - Editing evidence to match a moved tree. Re-run it, and preserve the superseded record with its reason.
+- A fleet harness that refuses globally on one client's true variance. Record it as that row's blocked outcome with the reason named; a hard raise on an unanticipated package shape makes the whole assessment unrunnable.
