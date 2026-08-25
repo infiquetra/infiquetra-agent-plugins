@@ -241,10 +241,10 @@ Running Voice with a fleet of concurrent agents produces sound from exactly one 
 - `docs/ideation/2026-08-25-voice-plugin-ideation.md` — the ideation run this brainstorm consumes, including the rejections retained with reasons.
 - `AGENTS.md:52-53` — commands, hooks, native agent definitions, permissions, and client runtime integration belong in explicit vendor adapters.
 - `docs/cross-vendor-plugin-architecture-brief.md:27-31,46-56,61-63,93-104` — what Agent Plugins 1.0 does not standardise, the portable package shape, the Herdr execution boundary, and the ten-client compatibility table.
-- `docs/engineering-journal/DECISIONS.md:748` — a client's real executable is supplied by the operator, never discovered. Governs every provider path and both join keys.
-- `docs/engineering-journal/LEARNINGS.md:468` and `DECISIONS.md:817` — a setting whose empty value disables a control must never be optional; absent must never mean empty. Governs egress class and retention.
-- `docs/engineering-journal/LEARNINGS.md:571` — a self-started subprocess must never inherit the parent's standard input, and needs a deadline regardless. Carried by R32.
-- `docs/engineering-journal/LEARNINGS.md:187` — state what the mechanism established, not what it was for. Governs how the blocked-state residual is described.
+- `docs/engineering-journal/DECISIONS.md:790` — a client's real executable is supplied by the operator, never discovered. Governs every provider path and both join keys.
+- `docs/engineering-journal/LEARNINGS.md:492` and `DECISIONS.md:859` — a setting whose empty value disables a control must never be optional; absent must never mean empty. Governs egress class and retention.
+- `docs/engineering-journal/LEARNINGS.md:595` — a self-started subprocess must never inherit the parent's standard input, and needs a deadline regardless. Carried by R32.
+- `docs/engineering-journal/LEARNINGS.md:211` — state what the mechanism established, not what it was for. Governs how the blocked-state residual is described.
 - `scripts/check_repo.py` — a package with no provenance manifest is not an error, because a package authored in this repository has no upstream to pin. `plugins/fleet-core/` is the working precedent for a skill-less, scripts-only package with no port descriptor.
 - Claude Code hooks documentation — the `Stop` event, the `last_assistant_message` field and the recommendation to prefer it over the transcript, asynchronous hook execution, and plugin-provided hooks declared at the plugin root. Cited by source name only; no durable capture lives in this repository, so archive the relevant excerpts before implementation relies on these field semantics.
 - `claude-interface` (local prior art, read-only) — proves the `Stop`-hook-to-speech path and supplies the counter-examples: four per-terminal injection strategies, no push-to-talk, and a cross-session process kill that makes it unusable on a fleet.
