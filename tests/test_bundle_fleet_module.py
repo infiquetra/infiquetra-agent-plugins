@@ -54,8 +54,11 @@ def make_repo(
     *,
     modules: dict[str, str] | None = None,
     declaration_modules: list[dict[str, object]] | None = None,
+    data_files: dict[str, str | bytes] | None = None,
+    declaration_data: list[dict[str, object]] | None = None,
     consumer: str = "unifi",
     plugin_manifest: bool = True,
+    schema_version: str = "1",
     extra_declaration: dict[str, object] | None = None,
 ) -> Path:
     """Build a repository-shaped tree with portable Fleet Core and one consumer."""
@@ -64,6 +67,14 @@ def make_repo(
     fleet = root / "plugins" / "fleet-core"
     for name, body in modules.items():
         write(fleet / "scripts" / "fleet_commons" / f"{name}.py", body)
+    if data_files:
+        for name, content in data_files.items():
+            path = fleet / "scripts" / "fleet_commons" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(content, bytes):
+                path.write_bytes(content)
+            else:
+                path.write_text(content, encoding="utf-8")
     write(fleet / check_repo.PROVENANCE_FILENAME, json.dumps(PIN, indent=2) + "\n")
     write(
         fleet / "plugin.json",
@@ -81,7 +92,10 @@ def make_repo(
     declared = declaration_modules
     if declared is None:
         declared = [{"name": name} for name in modules]
-    payload: dict[str, object] = {"schema_version": "1", "modules": declared}
+    payload: dict[str, object] = {"schema_version": schema_version, "modules": declared}
+    if declaration_data is not None:
+        payload["data"] = declaration_data
+        payload["schema_version"] = "2"
     if extra_declaration:
         payload.update(extra_declaration)
 
@@ -225,6 +239,88 @@ class GenerateTests(unittest.TestCase):
                 check_repo.sha256_text(RETRY_BODY),
             )
 
+    def test_data_file_is_verbatim_byte_copy_with_no_stamp(self) -> None:
+        models_body = '{"schema_version": 2, "models": {"sonnet": {"rank": 1}}}\n'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(
+                Path(tmp),
+                data_files={"models.json": models_body},
+                declaration_data=[{"name": "models.json"}],
+            )
+            consumer = root / "plugins" / "unifi"
+            written = bfm.generate_consumer(root, consumer)
+            bundled = consumer / "scripts" / "_bundled" / "models.json"
+            self.assertEqual(written, [bundled_path(root), bundled])
+
+            self.assertEqual(bundled.read_bytes(), models_body.encode("utf-8"))
+            stamp_lines, payload = check_repo.split_bundle_stamp(bundled.read_text(encoding="utf-8"))
+            self.assertIsNone(stamp_lines, "data file must carry no in-file stamp block")
+            self.assertEqual(payload, models_body)
+            self.assertEqual(bfm.check_consumer(root, consumer), [])
+            self.assertEqual(check_repo.check_bundled_files(root), [])
+
+    def test_data_file_generate_is_idempotent_and_rewrites_nothing(self) -> None:
+        models_body = '{"schema_version": 2, "models": {}}\n'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(
+                Path(tmp),
+                data_files={"models.json": models_body},
+                declaration_data=[{"name": "models.json"}],
+            )
+            consumer = root / "plugins" / "unifi"
+            first = bfm.generate_consumer(root, consumer)
+            bundled = consumer / "scripts" / "_bundled" / "models.json"
+            self.assertEqual(first, [bundled_path(root), bundled])
+            mtime = bundled.stat().st_mtime_ns
+            before = tree_snapshot(root)
+
+            second = bfm.generate_consumer(root, consumer)
+
+            self.assertEqual(second, [])
+            self.assertEqual(bundled.stat().st_mtime_ns, mtime)
+            self.assertEqual(tree_snapshot(root), before)
+
+    def test_absent_data_file_fails_loudly_and_writes_no_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(
+                Path(tmp),
+                declaration_data=[{"name": "missing.json"}],
+            )
+            consumer = root / "plugins" / "unifi"
+            with self.assertRaises(bfm.BundleError) as caught:
+                bfm.generate_consumer(root, consumer)
+
+            self.assertIn("missing.json", str(caught.exception))
+            self.assertIn("absent from the portable Fleet Core", str(caught.exception))
+            self.assertFalse((consumer / "scripts" / "_bundled" / "missing.json").exists())
+
+    def test_declaration_of_multiple_modules_and_data_file(self) -> None:
+        models_body = '{"schema_version": 2}\n'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(
+                Path(tmp),
+                modules={
+                    "alpha": ALPHA_BODY,
+                    "beta": BETA_BODY,
+                },
+                declaration_modules=[{"name": "alpha"}, {"name": "beta"}],
+                data_files={"models.json": models_body},
+                declaration_data=[{"name": "models.json"}],
+            )
+            consumer = root / "plugins" / "unifi"
+            written = bfm.generate_consumer(root, consumer)
+            bundled_dir = consumer / "scripts" / "_bundled"
+            self.assertEqual(
+                sorted(path.name for path in written),
+                ["alpha.py", "beta.py", "models.json"],
+            )
+            self.assertEqual(
+                sorted(path.name for path in bundled_dir.iterdir() if path.is_file()),
+                ["alpha.py", "beta.py", "models.json"],
+            )
+            self.assertEqual(bfm.check_consumer(root, consumer), [])
+            self.assertEqual(check_repo.check_bundled_files(root), [])
+
 
 class CheckModeTests(unittest.TestCase):
     def test_stale_source_is_not_reported_as_tampering(self) -> None:
@@ -258,6 +354,44 @@ class CheckModeTests(unittest.TestCase):
             self.assertEqual(len(errors), 1, msg=errors)
             self.assertIn("tampering", errors[0])
             self.assertNotIn("stale source", errors[0])
+
+    def test_data_file_stale_source_is_reported(self) -> None:
+        models_body = '{"schema_version": 2, "models": {}}\n'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(
+                Path(tmp),
+                data_files={"models.json": models_body},
+                declaration_data=[{"name": "models.json"}],
+            )
+            consumer = root / "plugins" / "unifi"
+            bfm.generate_consumer(root, consumer)
+            source = root / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "models.json"
+            source.write_text('{"schema_version": 2, "models": {"new": {}}}\n', encoding="utf-8")
+
+            errors = bfm.check_consumer(root, consumer)
+
+            self.assertEqual(len(errors), 1, msg=errors)
+            self.assertIn("stale source", errors[0])
+            self.assertIn("models.json", errors[0])
+
+    def test_data_file_tampering_is_reported_as_stale_source(self) -> None:
+        models_body = '{"schema_version": 2, "models": {}}\n'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(
+                Path(tmp),
+                data_files={"models.json": models_body},
+                declaration_data=[{"name": "models.json"}],
+            )
+            consumer = root / "plugins" / "unifi"
+            bfm.generate_consumer(root, consumer)
+            bundled = consumer / "scripts" / "_bundled" / "models.json"
+            bundled.write_text('{"schema_version": 2, "tampered": true}\n', encoding="utf-8")
+
+            errors = bfm.check_consumer(root, consumer)
+
+            self.assertEqual(len(errors), 1, msg=errors)
+            self.assertIn("stale source", errors[0])
+            self.assertIn("models.json", errors[0])
 
     def test_check_mode_writes_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -297,6 +431,19 @@ class CheckRepoIntegrationTests(unittest.TestCase):
             self.assertEqual(check_repo.check_plugin_manifests(root), [])
             self.assertEqual(check_repo.check_fleet_bundle_declarations(root), [])
 
+    def test_data_file_generate_then_repository_bundle_checks_pass(self) -> None:
+        models_body = '{"schema_version": 2}\n'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(
+                Path(tmp),
+                data_files={"models.json": models_body},
+                declaration_data=[{"name": "models.json"}],
+            )
+            bfm.generate_consumer(root, root / "plugins" / "unifi")
+            self.assertEqual(check_repo.check_bundled_files(root), [])
+            self.assertEqual(check_repo.check_fleet_bundle_outputs(root), [])
+            self.assertEqual(check_repo.check_fleet_bundle_declarations(root), [])
+
     def test_seeded_stale_source_fails_check_repo_with_stale_source_not_stale_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(Path(tmp))
@@ -310,6 +457,24 @@ class CheckRepoIntegrationTests(unittest.TestCase):
             self.assertIn("stale source", errors[0])
             self.assertIn("retry_backoff", errors[0])
             self.assertNotIn("stale bundle", errors[0])
+
+    def test_data_file_seeded_stale_source_fails_check_repo(self) -> None:
+        models_body = '{"schema_version": 2}\n'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(
+                Path(tmp),
+                data_files={"models.json": models_body},
+                declaration_data=[{"name": "models.json"}],
+            )
+            bfm.generate_consumer(root, root / "plugins" / "unifi")
+            source = root / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "models.json"
+            source.write_text('{"schema_version": 2, "changed": true}\n', encoding="utf-8")
+
+            errors = check_repo.check_bundled_files(root)
+
+            self.assertEqual(len(errors), 1, msg=errors)
+            self.assertIn("stale source", errors[0])
+            self.assertIn("models.json", errors[0])
 
     def test_seeded_hand_edit_fails_check_repo_with_stale_bundle_not_stale_source(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -326,6 +491,24 @@ class CheckRepoIntegrationTests(unittest.TestCase):
             self.assertEqual(len(errors), 1, msg=errors)
             self.assertIn("stale bundle", errors[0])
             self.assertNotIn("stale source", errors[0])
+
+    def test_data_file_seeded_hand_edit_fails_check_repo(self) -> None:
+        models_body = '{"schema_version": 2}\n'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(
+                Path(tmp),
+                data_files={"models.json": models_body},
+                declaration_data=[{"name": "models.json"}],
+            )
+            bfm.generate_consumer(root, root / "plugins" / "unifi")
+            bundled = root / "plugins" / "unifi" / "scripts" / "_bundled" / "models.json"
+            bundled.write_text('{"schema_version": 2, "hand_edit": true}\n', encoding="utf-8")
+
+            errors = check_repo.check_bundled_files(root)
+
+            self.assertEqual(len(errors), 1, msg=errors)
+            self.assertIn("stale source", errors[0])
+            self.assertIn("models.json", errors[0])
 
     def test_a_declared_module_that_was_never_generated_fails_check_repo(self) -> None:
         """The blind spot that let a package ship with no working entrypoint.
@@ -464,6 +647,7 @@ class LiveTreeTests(unittest.TestCase):
         consumers = bfm.discover_consumers(ROOT)
         names = {path.name for path in consumers}
         self.assertIn("unifi", names)
+        self.assertIn("mission-control", names)
 
     def test_live_declaration_plans_retry_backoff_from_fleet_core(self) -> None:
         consumer = ROOT / "plugins" / "unifi"
@@ -493,6 +677,24 @@ class LiveTreeTests(unittest.TestCase):
                 client.parent / check_repo.BUNDLE_DIRECTORY_NAME / "retry_backoff.py"
             ).resolve()
             self.assertIn(expected, written, f"nothing writes the bundle {relative} imports")
+
+    def test_live_mission_control_declaration_plans_modules_and_data_from_fleet_core(self) -> None:
+        consumer = ROOT / "plugins" / "mission-control"
+        planned = bfm.plan_copies(ROOT, consumer)
+        self.assertEqual(
+            {copy.name for copy in planned},
+            {"intent_envelope", "tier_palette", "models.json"},
+        )
+        for copy in planned:
+            self.assertTrue(copy.source.is_file())
+            self.assertTrue(copy.destination.is_file())
+        data_copies = [copy for copy in planned if copy.is_data]
+        self.assertEqual(len(data_copies), 1)
+        self.assertEqual(data_copies[0].name, "models.json")
+
+    def test_live_mission_control_bundled_files_are_fresh(self) -> None:
+        consumer = ROOT / "plugins" / "mission-control"
+        self.assertEqual(bfm.check_consumer(ROOT, consumer), [])
 
 
 if __name__ == "__main__":

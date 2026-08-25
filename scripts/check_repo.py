@@ -619,6 +619,29 @@ def check_bundled_files(root: Path) -> list[str]:
             continue
         stamp_lines, payload = split_bundle_stamp(text)
         if stamp_lines is None:
+            if path.suffix != ".py":
+                fleet_core = root / "plugins" / FLEET_CORE_PLUGIN_NAME
+                source_file = fleet_core / "scripts" / "fleet_commons" / path.name
+                if not source_file.is_file():
+                    errors.append(
+                        f"stale source: {path.name} in {relative}: source file missing: "
+                        f"{source_file.relative_to(root) if source_file.is_relative_to(root) else source_file}"
+                    )
+                    continue
+                try:
+                    actual_bytes = path.read_bytes()
+                    source_bytes = source_file.read_bytes()
+                except OSError as exc:
+                    errors.append(f"unreadable generated bundle {relative}: {exc}")
+                    continue
+                if actual_bytes != source_bytes:
+                    actual_digest = sha256_bytes(actual_bytes)
+                    source_digest = sha256_bytes(source_bytes)
+                    errors.append(
+                        f"stale source: {path.name} in {relative} "
+                        f"(bundle {actual_digest}, source {source_digest})"
+                    )
+                continue
             errors.append(f"unstamped generated bundle: {relative}")
             continue
         stamp = parse_bundle_stamp(stamp_lines)
