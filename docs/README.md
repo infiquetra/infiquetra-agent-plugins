@@ -21,6 +21,11 @@
   is the approved run plan for the mission-control package port. It has been
   executed and completed across all implementation units under porting runbook
   v1.0.0.
+- [Mission Control migration retrospective](retros/issue-9-2026-08-25.md)
+  is the evidence-based retrospective of that run: what made the unattended
+  execution work, every deviation with its mechanism, the lessons folded into
+  runbook v1.1.0, and the upstream filing dispositions including the one
+  declined proposal.
 - [PR #6 independent code reviews](code-reviews/2026-08-24-pr-6-code-review-index.md)
   indexes the five review rounds that preceded the porting tools being merged,
   each preserved byte-for-byte with the revision it reviewed and its digest.
