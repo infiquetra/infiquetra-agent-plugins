@@ -329,9 +329,19 @@ class DescriptorAndLayoutTests(StopHookTestCase):
         commands = [
             entry["command"] for entry in entries if entry.get("type") == "command"
         ]
+        # ``${CLAUDE_PLUGIN_ROOT}`` is the *installed package root*, which is
+        # plugins/voice/ -- not this client extension. Claude installs the
+        # package root so the portable core travels with the hook, so the
+        # command has to walk down into the extension. Asserting the resolved
+        # path exists as well as its spelling: a command that merely looks
+        # plausible fails only after a successful install.
         self.assertIn(
-            'python3 "${CLAUDE_PLUGIN_ROOT}/hooks/stop_hook.py"', commands
+            'python3 "${CLAUDE_PLUGIN_ROOT}/com.infiquetra.claude/hooks/stop_hook.py"',
+            commands,
         )
+        for command in commands:
+            relative = command.split("${CLAUDE_PLUGIN_ROOT}/", 1)[1].rstrip('"')
+            self.assertTrue((_PACKAGE / relative).is_file())
         for entry in entries:
             self.assertEqual(entry["timeout"], 5)
 

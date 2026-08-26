@@ -1,0 +1,35 @@
+{
+  "name": "infiquetra-agent-plugins",
+  "owner": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "metadata": {
+    "description": "Claude Code distribution of the Infiquetra portable Agent Plugins catalog. Each entry installs a portable package together with its Claude client extension; the packages themselves stay vendor-neutral.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "voice",
+      "source": "./plugins/voice",
+      "version": "0.1.0",
+      "description": "A spoken conversational loop for one explicitly bound, Herdr-managed Claude Code session: the bound session speaks its completed response, the operator answers by voice, and the transcript lands editable and unsubmitted in that same session's input box.",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "license": "MIT",
+      "keywords": [
+        "voice",
+        "speech",
+        "text-to-speech",
+        "speech-to-text",
+        "herdr",
+        "conversational-loop",
+        "accessibility"
+      ],
+      "category": "development"
+    }
+  ]
+}

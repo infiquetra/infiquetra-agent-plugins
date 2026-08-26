@@ -611,8 +611,21 @@ class PromptAlignmentAuditTests(unittest.TestCase):
         self.assertFalse((PACKAGE / ".claude-plugin" / "plugin.json").exists())
         self.assertTrue((PACKAGE / "com.infiquetra.claude" / "plugin.json").exists())
 
-        # 2. Marketplace is absent from repo root
-        self.assertFalse((ROOT / ".claude-plugin" / "marketplace.json").exists())
+        # 2. Mission Control is not published through a Claude marketplace.
+        #    A repo-root marketplace exists since 2026-08-25, when the `voice`
+        #    package became installable from this repository, so its mere
+        #    presence no longer carries this premise. What matters for Mission
+        #    Control is unchanged and is what is checked: no entry names it, so
+        #    nothing here installs it as a Claude plugin.
+        marketplace = ROOT / ".claude-plugin" / "marketplace.json"
+        if marketplace.exists():
+            listed = {
+                entry.get("name")
+                for entry in json.loads(marketplace.read_text(encoding="utf-8")).get(
+                    "plugins", []
+                )
+            }
+            self.assertNotIn("mission-control", listed)
 
         # 3. Client extensions are relocated under com.infiquetra.claude/
         self.assertFalse((PACKAGE / "agents" / "sdlc-operator.md").exists())

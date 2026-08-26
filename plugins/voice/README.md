@@ -19,7 +19,8 @@ the run-wide implementation plan is
 
 | Path | What it is |
 |---|---|
-| [`plugin.json`](plugin.json) | Agent Plugins 1.0 manifest |
+| [`plugin.json`](plugin.json) | Agent Plugins 1.0 manifest — the portable, vendor-neutral one |
+| [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json) | Claude Code packaging manifest. A different specification, required by the Claude CLI to sit at the installed package root. Holds no behaviour: it declares the hooks path into `com.infiquetra.claude/` and the portable skills directory |
 | [`scripts/providers.py`](scripts/providers.py) | Provider declaration contract: closed egress set, declarations, named refusals |
 | [`scripts/settings.py`](scripts/settings.py) | The one settings reader: stated names, split defaults, absent never means empty |
 | [`scripts/process.py`](scripts/process.py) | Subprocess discipline: closed stdin and a deadline on every child |
@@ -39,6 +40,31 @@ the run-wide implementation plan is
 Claude-specific files — hooks and the client extension — never live in this
 portable core; they belong under the `com.infiquetra.claude/` client
 extension directory.
+
+## Installing into Claude Code
+
+The repository is a Claude marketplace. From a checkout:
+
+```bash
+claude plugin marketplace add /path/to/infiquetra-agent-plugins
+claude plugin install voice@infiquetra-agent-plugins
+```
+
+Claude installs the **package root** — this directory — so the portable core
+travels with the client extension. That is required rather than tidy: the Stop
+hook imports the core and spawns [`scripts/speak.py`](scripts/speak.py) from
+it, so an install carrying only `com.infiquetra.claude/` would validate, then
+fail at the first spoken response. The reasoning and the rejected alternatives
+are recorded in
+[`docs/engineering-journal/DECISIONS.md`](../../docs/engineering-journal/DECISIONS.md).
+
+Installing does not configure anything. Both providers are still declared by
+the operator, and `voice preflight` still has to pass before the loop runs —
+see [Settings](#settings) and
+[The Herdr-wide stop keybinding](#the-herdr-wide-stop-keybinding).
+
+Restart Claude Code after installing: the Stop hook is registered at session
+start.
 
 ## Providers are declared, never discovered
 

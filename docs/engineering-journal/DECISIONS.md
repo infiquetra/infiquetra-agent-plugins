@@ -2,6 +2,63 @@
 
 ## 2026-08-25
 
+### Claude installs the package root; the client extension keeps the behaviour
+
+**Author.** Jeff Cox and Claude (Voice packaging follow-up, branch
+`orch/voice-claude-packaging`)
+
+**Decision.** The Claude Code distribution of a package in this catalog is the
+*package root*, not its `com.infiquetra.claude/` client extension. For `voice`
+that means `.claude-plugin/plugin.json` sits at `plugins/voice/`, the
+repository carries a Claude marketplace at `.claude-plugin/marketplace.json`
+whose entry names `./plugins/voice` as its source, and the Claude manifest
+declares every component by path into the client extension
+(`"hooks": "./com.infiquetra.claude/hooks/hooks.json"`) rather than holding any
+behaviour itself. `plugins/voice/plugin.json` is untouched and remains the
+portable Agent Plugins manifest.
+
+**Rationale.** Two facts about the installed Claude CLI (2.1.246) decide this,
+and neither is visible from the repository:
+
+1. Claude resolves a plugin only at `<root>/.claude-plugin/plugin.json`. There
+   is no fallback to `<root>/plugin.json`, so the extension's portable manifest
+   read to the CLI as no manifest at all: `claude plugin validate
+   plugins/voice/com.infiquetra.claude` failed with "No manifest found in
+   directory."
+2. An install copies exactly the directory a marketplace entry's `source`
+   names, and nothing above it. Verified by installing a probe marketplace and
+   reading the cache.
+
+The Stop hook imports the portable core and spawns `scripts/speak.py` from it,
+resolving both with `Path(__file__).resolve().parents[2]`. Installing only the
+extension would therefore copy the hook without the core it calls: the plugin
+would install and validate cleanly, then fail at the first spoken response. A
+probe install proved the chosen layout resolves that path correctly inside the
+cache and that Claude registers both the Stop hook and the Voice skill from it.
+
+**Rejected alternatives.** Duplicating or vendoring the portable core inside
+the client extension (this catalog does not keep a second writable copy of a
+package, and the operator ruled it out). Pointing the hook at a checkout via an
+environment variable (an installed plugin that silently depends on a working
+tree at a known path is not installed). Relying on the marketplace entry's
+inline metadata alone — that does validate the *marketplace*, but `claude
+plugin validate plugins/voice` still fails without the manifest, and the
+package must validate on its own.
+
+**Consequence for the repository boundary.** `CLAUDE.md` says Claude-specific
+marketplace metadata belongs in an explicit Claude adapter. These two files are
+the exception the CLI's contract forces, and the exception is narrow on
+purpose: both are pure distribution metadata that name paths and hold no
+command, hook body, agent, or permission. Every Claude *behaviour* remains
+inside `com.infiquetra.claude/`. `tests/test_claude_plugin_packaging.py`
+enforces both halves — that the manifests exist where Claude looks, and that no
+`hooks/`, `agents/`, or `commands/` directory appears at the portable root.
+
+**Revisit when.** Claude Code supports a manifest location other than
+`<root>/.claude-plugin/`, or a marketplace source that installs a directory
+while rooting the plugin beneath it. Either would let the packaging manifest
+move inside the adapter with no other change.
+
 ### Voice plugin version one: one run-wide plan, seven units, acceptance with recorded findings
 
 **Author.** Jeff Cox and Qwen (orchestrated run `orch-2026-08-25-voice`, U7

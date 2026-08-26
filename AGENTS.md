@@ -50,7 +50,10 @@ git diff --check
   [port descriptor](ports/README.md) under `ports/`, never as a constant inside
   a script.
 - Put commands, hooks, native agent definitions, permissions, and client runtime
-  integration in explicit vendor adapters.
+  integration in explicit vendor adapters. A vendor's own packaging manifest is
+  the one thing that may sit outside its adapter, and only where that vendor's
+  tooling refuses to look anywhere else; it carries paths into the adapter, never
+  behaviour.
 - Do not claim a vendor package is generated or portable until the relevant
   build and live compatibility checks prove it.
 - Treat existing vendor repositories as authoritative until a recorded custody

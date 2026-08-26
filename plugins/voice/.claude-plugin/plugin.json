@@ -1,0 +1,19 @@
+{
+  "name": "voice",
+  "version": "0.1.0",
+  "description": "A spoken conversational loop for one explicitly bound, Herdr-managed Claude Code session. Claude installs this package root so the portable core travels with the client extension; every Claude-specific behaviour is declared out of com.infiquetra.claude/.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+  "license": "MIT",
+  "keywords": [
+    "voice",
+    "speech",
+    "herdr",
+    "conversational-loop"
+  ],
+  "hooks": "./com.infiquetra.claude/hooks/hooks.json",
+  "skills": "./skills/"
+}
