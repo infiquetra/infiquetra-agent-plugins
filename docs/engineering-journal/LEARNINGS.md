@@ -2,6 +2,34 @@
 
 ## 2026-08-25
 
+### `claude plugin update` compares versions, not commits
+
+**Author.** Jeff Cox and Claude (voice stop-command follow-up)
+
+**Context.** Immediately after merging the stop-keybinding fix, updating the
+installed plugin so the operator would get it.
+
+**Evidence.** `claude plugin marketplace update` succeeded, then
+`claude plugin update voice@infiquetra-agent-plugins` answered "voice is
+already at the latest version (0.1.0)" — and the cache still held the previous
+content: `com.infiquetra.claude/scripts/install_launcher.py` was absent, the
+cached `preflight.py` contained zero occurrences of `command_is_runnable`, and
+`installed_plugins.json` recorded `gitCommitSha` `bb6d7c9` while `main` was at
+`01fb2a4`.
+
+**Mechanism.** The update check is a version comparison. The marketplace
+refresh pulls new *marketplace* metadata, but the plugin is only re-copied when
+its declared version differs from the installed one. A fix that changes
+behaviour without bumping the version therefore lands on `main`, passes CI, and
+never reaches the running plugin — while both commands report success. The
+reported "latest version" is true and irrelevant, which is what makes it
+expensive: it reads as confirmation.
+
+**Generalizable rule.** A behaviour change to a published package is not
+delivered until its version changes; treat the version bump as part of the fix,
+not as release ceremony. Where the version is declared in more than one file,
+check the copies against each other in the test suite rather than by hand.
+
 ### A probe that matches text instead of resolving it reports a false green
 
 **Author.** Jeff Cox and Claude (voice stop-command follow-up, branch

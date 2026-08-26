@@ -1,6 +1,6 @@
 {
   "name": "voice",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Claude client extension for the voice package: the Stop hook that lets the one explicitly bound session speak its completed response through the portable voice loop.",
   "author": {
     "name": "Infiquetra",
