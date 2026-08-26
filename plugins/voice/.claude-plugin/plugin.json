@@ -1,6 +1,6 @@
 {
   "name": "voice",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A spoken conversational loop for one explicitly bound, Herdr-managed Claude Code session. Claude installs this package root so the portable core travels with the client extension; every Claude-specific behaviour is declared out of com.infiquetra.claude/.",
   "author": {
     "name": "Infiquetra",

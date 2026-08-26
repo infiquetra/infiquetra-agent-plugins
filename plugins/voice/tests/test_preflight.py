@@ -525,7 +525,13 @@ class KeybindingProbeTests(PreflightTestBase):
         # marker, and nothing stopped. Reporting that as healthy is worse than
         # not probing, because it retires the operator's own suspicion.
         self.voice_launcher.unlink()
-        result = preflight.probe_keybinding(self.keybinding_path)
+        # PATH is *replaced*, not prepended: this host may well have a real
+        # `voice` installed -- the operator's own launcher lives at
+        # ~/.local/bin/voice -- and a test that only removed the fixture's copy
+        # would pass or fail depending on whose machine ran it. This assertion
+        # is about a PATH with no launcher on it at all.
+        with mock.patch.dict(os.environ, {"PATH": self.bin_dir.name}):
+            result = preflight.probe_keybinding(self.keybinding_path)
         self.assertEqual(result.status, preflight.CHECK_FAILED)
         self.assertIn("cannot run it", result.detail)
         self.assertIn("not on PATH", result.detail)
@@ -569,7 +575,7 @@ class KeybindingProbeTests(PreflightTestBase):
         # Firing a stop as a side effect of asking whether a stop is possible
         # would be its own defect.
         witness = Path(self.bin_dir.name) / "witness"
-        launcher = Path(self.bin_dir.name) / "voice"
+        launcher = self.voice_launcher
         launcher.write_text(
             f"#!/bin/sh\ntouch {witness}\n", encoding="utf-8"
         )
