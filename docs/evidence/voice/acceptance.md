@@ -321,3 +321,57 @@ direct observation or named-refusal evidence. Two R33 inputs are inherently
 human-shaped and remain for an attended pass: speaking into the microphone
 (F5) and parking the bound agent on a permission prompt for AE5 (F4). No
 silent omissions: every gap is a numbered finding.
+
+## Finding disposition as of 2026-08-26
+
+The verdict above is the acceptance record as it stood on 2026-08-25 and is not
+revised. This section is the running ledger of what has since happened to
+F1–F9, so a later reader is not left inferring it from commit history.
+
+| Finding | State | Evidence |
+|---|---|---|
+| F1 — Voice Forge health probe contract drift | **closed** | Probe now accepts `ok: true` with a non-empty `backends_loaded` (`plugins/voice/scripts/preflight.py`, `_backends_loaded`). Live preflight reports "process healthy with a loaded backend". |
+| F2 — Hermes profile probe expects an absent `stt` surface | **closed** | The `stt` assertion is gone (zero occurrences in `preflight.py`); the transcribe round trip is the speech-to-text guarantee, and it passes with `provider: xai`. |
+| F3 — relay silence refused as provider substitution | **closed** | An empty transcript with an absent provider is now refused as "nothing to deliver" (`plugins/voice/scripts/transcribe.py`). The substitution guard is unchanged for a non-empty transcript carrying an unexpected provider. |
+| F4 — AE5's blocked-state branch not exercised live | **open** | Still requires an attended pass with the bound agent parked on a permission prompt. Covered hermetically in `plugins/voice/tests/test_deliver.py`. |
+| F5 — capture device `:0` is the iPhone Continuity microphone | **open** | Environmental, not a code defect. D3 pins `:0` by design; the human-voice half of the loop needs a person speaking into that microphone. |
+| F6 — millisecond flush race can leave an orphan capture wav | **open** | No stray-capture sweep exists. Narrow and artificial: it requires a dead recorder that never wrote a frame. |
+| F7 — `VOICE_RETENTION` is read and tested but never consulted | **open** | `settings.retention()` still has no caller outside its own tests. Behaviour stays safe because the package is structurally ephemeral, but KTD6's "refused by name" contract is decorative until a runtime or preflight path calls it. |
+| F8 — the D4 operator keybinding was not added | **closed** | See below. |
+| F9 / code-review F10 — catalog claim drifted | **closed** | Both `docs/README.md` and the root `README.md` now scope the derived-artifact claim to *ported* packages and state that `voice` is authored here with no upstream pin. |
+
+### F8 closed — the operator keybinding is configured and verified runnable
+
+Closing F8 needed two things that did not exist when it was filed: a stop
+command that stays valid across plugin updates, and a probe that could tell a
+working binding from a plausible-looking one. Both landed first
+(PR [#40](https://github.com/infiquetra/infiquetra-agent-plugins/pull/40),
+released as `0.2.0` in
+PR [#41](https://github.com/infiquetra/infiquetra-agent-plugins/pull/41)).
+
+Operator configuration, reported 2026-08-26:
+
+- Launcher installed at `~/.local/bin/voice`; `command -v voice` resolves it and
+  `voice stop` executed.
+- Herdr custom command added: `prefix+shift+v`, `type = "shell"`,
+  `command = "voice stop"`, description "stop voice playback".
+- `herdr config check` passed; `herdr server reload-config` applied with no
+  diagnostics.
+
+Independently verified in this repository on 2026-08-26, against the `0.2.0`
+install the registry records:
+
+```
+ok  herdr-config: herdr keybinding containing 'voice stop'
+      — 'voice stop' runs /Users/jefcox/.local/bin/voice
+verdict: 10 ok, 0 failed, 0 not-run — pass
+```
+
+The full run covers real Voice Forge synthesis and a live xAI transcription
+round trip (relay 0.20.5). That green line is worth trusting specifically
+because the probe resolves the configured command rather than matching its
+text — the false-green defect this finding's closure depended on. Voice wrote
+no Herdr configuration at any point; the operator made every change.
+
+**Not yet done:** the attended microphone acceptance (F4 and F5) remains
+outstanding and starts only when the operator asks.
