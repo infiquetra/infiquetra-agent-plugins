@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """The voice command surface: one small CLI over the portable package.
 
 Commands:

@@ -149,9 +149,18 @@ class PreflightTestBase(unittest.TestCase):
         self.keybinding_path.write_text(GOOD_KEYBINDING_TOML, encoding="utf-8")
         self.capture_bin = Path(self.bin_dir.name) / "capture-bin"
         self.playback_bin = Path(self.bin_dir.name) / "playback-bin"
-        for binary in (self.capture_bin, self.playback_bin):
+        # A resolvable `voice` on PATH. Before the runnability change this
+        # fixture did not need one, which is precisely how the probe came to
+        # report a launcher that did not exist as healthy.
+        self.voice_launcher = Path(self.bin_dir.name) / "voice"
+        for binary in (self.capture_bin, self.playback_bin, self.voice_launcher):
             binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             binary.chmod(0o755)
+        path_patch = mock.patch.dict(
+            os.environ, {"PATH": self.bin_dir.name + os.pathsep + os.environ["PATH"]}
+        )
+        path_patch.start()
+        self.addCleanup(path_patch.stop)
         env = mock.patch.dict(
             os.environ,
             {
@@ -494,9 +503,10 @@ class KeybindingProbeTests(PreflightTestBase):
         self.assertIn("voice stop", result.detail)
         self.assertEqual(self.keybinding_path.read_bytes(), before)
 
-    def test_config_with_voice_stop_passes(self) -> None:
+    def test_config_with_a_runnable_voice_stop_passes(self) -> None:
         result = preflight.probe_keybinding(self.keybinding_path)
         self.assertEqual(result.status, preflight.CHECK_OK)
+        self.assertIn(str(self.voice_launcher), result.detail)
 
     def test_probe_does_not_require_a_specific_type_field(self) -> None:
         self.keybinding_path.write_text(
@@ -508,6 +518,64 @@ class KeybindingProbeTests(PreflightTestBase):
         )
         result = preflight.probe_keybinding(self.keybinding_path)
         self.assertEqual(result.status, preflight.CHECK_OK)
+
+    def test_the_marker_alone_does_not_pass_when_nothing_can_run(self) -> None:
+        # The regression. `voice stop` was the documented binding while no
+        # `voice` existed on PATH: the key parsed, the command matched the
+        # marker, and nothing stopped. Reporting that as healthy is worse than
+        # not probing, because it retires the operator's own suspicion.
+        self.voice_launcher.unlink()
+        result = preflight.probe_keybinding(self.keybinding_path)
+        self.assertEqual(result.status, preflight.CHECK_FAILED)
+        self.assertIn("cannot run it", result.detail)
+        self.assertIn("not on PATH", result.detail)
+
+    def test_a_stale_script_path_beside_a_real_interpreter_fails(self) -> None:
+        # `python3` resolves perfectly well while the script beside it does
+        # not. Checking only the program would call this runnable.
+        self.keybinding_path.write_text(
+            "[[keys.command]]\n"
+            'key = "f9"\n'
+            'command = "python3 /nonexistent/voice_cli.py stop"\n',
+            encoding="utf-8",
+        )
+        result = preflight.probe_keybinding(self.keybinding_path)
+        self.assertEqual(result.status, preflight.CHECK_FAILED)
+        self.assertIn("does not exist", result.detail)
+
+    def test_an_absolute_launcher_path_is_accepted_when_executable(self) -> None:
+        self.keybinding_path.write_text(
+            "[[keys.command]]\n"
+            'key = "f9"\n'
+            f'command = "{self.voice_launcher} stop"\n',
+            encoding="utf-8",
+        )
+        result = preflight.probe_keybinding(self.keybinding_path)
+        self.assertEqual(result.status, preflight.CHECK_OK)
+
+    def test_a_present_but_non_executable_launcher_fails(self) -> None:
+        self.voice_launcher.chmod(0o644)
+        self.keybinding_path.write_text(
+            "[[keys.command]]\n"
+            'key = "f9"\n'
+            f'command = "{self.voice_launcher} stop"\n',
+            encoding="utf-8",
+        )
+        result = preflight.probe_keybinding(self.keybinding_path)
+        self.assertEqual(result.status, preflight.CHECK_FAILED)
+        self.assertIn("not executable", result.detail)
+
+    def test_the_probe_never_executes_the_configured_command(self) -> None:
+        # Firing a stop as a side effect of asking whether a stop is possible
+        # would be its own defect.
+        witness = Path(self.bin_dir.name) / "witness"
+        launcher = Path(self.bin_dir.name) / "voice"
+        launcher.write_text(
+            f"#!/bin/sh\ntouch {witness}\n", encoding="utf-8"
+        )
+        launcher.chmod(0o755)
+        preflight.probe_keybinding(self.keybinding_path)
+        self.assertFalse(witness.exists())
 
     def test_unparseable_config_is_reported_by_name(self) -> None:
         self.keybinding_path.write_text("[ not toml", encoding="utf-8")

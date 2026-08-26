@@ -2,6 +2,43 @@
 
 ## 2026-08-25
 
+### A probe that matches text instead of resolving it reports a false green
+
+**Author.** Jeff Cox and Claude (voice stop-command follow-up, branch
+`orch/voice-stop-launcher`)
+
+**Context.** Voice preflight checks an operator-owned Herdr keybinding that
+must invoke the package's stop path. The operator caught the defect before
+acting on the documented instruction.
+
+**Evidence.** `plugins/voice/scripts/preflight.py` tested
+`if KEYBINDING_MARKER in command` — a substring match on `"voice stop"`. The
+package README documented exactly that binding, and `command -v voice` returned
+nothing: the installed `scripts/voice_cli.py` had no shebang and no executable
+bit, and no `voice` existed on `PATH`. Following the documentation would have
+produced a green preflight for a key that parsed, ran, and stopped nothing.
+
+**Mechanism.** The probe and the requirement were about different things.
+The requirement is *can this stop playback*; the probe asked *does this string
+appear*. Those agree only while the documented spelling happens to be
+executable, and nothing enforced that. The failure is worse than an absent
+probe, because a green line retires the operator's own suspicion — the one
+thing that actually caught it here. The same file already knew better:
+`probe_executable`, twenty lines below, checked `os.access(path, os.X_OK)`.
+The keybinding probe simply never adopted the standard its neighbour used.
+
+**Compounding cause.** No stable path exists to bind to. Claude installs under
+`~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`, a version bump
+creates a new directory (73 orphaned version directories on this host), and
+there is no `current` or `latest` symlink. So the honest command could not be
+written down at all until a launcher resolved the install at invocation time
+from Claude's own registry, which Claude rewrites on every update.
+
+**Generalizable rule.** A readiness check must resolve the thing it claims is
+ready, not pattern-match the text that names it; and when a check reports on
+something an operator configures, verify the configured value the way the
+runtime will consume it.
+
 ### Claude Code runs Stop hooks synchronously — a hook that does real work must detach
 
 **Author.** Jeff Cox and Qwen (voice run, #29/#34)

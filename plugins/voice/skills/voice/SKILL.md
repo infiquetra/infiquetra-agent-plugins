@@ -61,7 +61,9 @@ its session token, the configured profile resolved among the relay's
 profiles, and one synthesized sample round trip that comes back a
 non-empty transcript from the `xai` speech-to-text provider — the round
 trip is the speech-to-text guarantee; the Herdr-wide `voice stop`
-keybinding presence; and the capture and playback executables. Preflight
+keybinding, checked by resolving its command rather than matching its
+text, because containing `voice stop` and being able to stop anything
+are different claims; and the capture and playback executables. Preflight
 reads and probes only — it never installs, writes, or repairs anything.
 
 ## Settings and privacy
