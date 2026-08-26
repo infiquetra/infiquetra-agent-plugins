@@ -333,10 +333,10 @@ F1–F9, so a later reader is not left inferring it from commit history.
 | F1 — Voice Forge health probe contract drift | **closed** | Probe now accepts `ok: true` with a non-empty `backends_loaded` (`plugins/voice/scripts/preflight.py`, `_backends_loaded`). Live preflight reports "process healthy with a loaded backend". |
 | F2 — Hermes profile probe expects an absent `stt` surface | **closed** | The `stt` assertion is gone (zero occurrences in `preflight.py`); the transcribe round trip is the speech-to-text guarantee, and it passes with `provider: xai`. |
 | F3 — relay silence refused as provider substitution | **closed** | An empty transcript with an absent provider is now refused as "nothing to deliver" (`plugins/voice/scripts/transcribe.py`). The substitution guard is unchanged for a non-empty transcript carrying an unexpected provider. |
-| F4 — AE5's blocked-state branch not exercised live | **open** | Still requires an attended pass with the bound agent parked on a permission prompt. Covered hermetically in `plugins/voice/tests/test_deliver.py`. |
-| F5 — capture device `:0` is the iPhone Continuity microphone | **open** | Environmental, not a code defect. D3 pins `:0` by design; the human-voice half of the loop needs a person speaking into that microphone. |
-| F6 — millisecond flush race can leave an orphan capture wav | **open** | No stray-capture sweep exists. Narrow and artificial: it requires a dead recorder that never wrote a frame. |
-| F7 — `VOICE_RETENTION` is read and tested but never consulted | **open** | `settings.retention()` still has no caller outside its own tests. Behaviour stays safe because the package is structurally ephemeral, but KTD6's "refused by name" contract is decorative until a runtime or preflight path calls it. |
+| F4 — AE5's blocked-state branch not exercised live | **closed** | Closed on operator attestation of the attended pass (2026-08-26), alongside the hermetic coverage in `plugins/voice/tests/test_deliver.py`. See "Attended pass" below. |
+| F5 — capture device `:0` is the iPhone Continuity microphone | **closed** | Never a code defect — D3 pins `:0` by design. The human-voice half of the loop was exercised in the attended pass; closed on operator attestation (2026-08-26). See "Attended pass" below. |
+| F6 — millisecond flush race can leave an orphan capture wav | **open, tracked** | No stray-capture sweep exists. Narrow and artificial: it requires a dead recorder that never wrote a frame. Not a release blocker; carried to [#43](https://github.com/infiquetra/infiquetra-agent-plugins/issues/43). |
+| F7 — `VOICE_RETENTION` is read and tested but never consulted | **open, tracked** | `settings.retention()` still has no caller outside its own tests, re-verified at `958eb50`. Behaviour stays safe because the package is structurally ephemeral, but KTD6's "refused by name" contract is decorative until a runtime or preflight path calls it. Not a release blocker; carried to [#44](https://github.com/infiquetra/infiquetra-agent-plugins/issues/44). |
 | F8 — the D4 operator keybinding was not added | **closed** | See below. |
 | F9 / code-review F10 — catalog claim drifted | **closed** | Both `docs/README.md` and the root `README.md` now scope the derived-artifact claim to *ported* packages and state that `voice` is authored here with no upstream pin. |
 
@@ -373,5 +373,35 @@ because the probe resolves the configured command rather than matching its
 text — the false-green defect this finding's closure depended on. Voice wrote
 no Herdr configuration at any point; the operator made every change.
 
-**Not yet done:** the attended microphone acceptance (F4 and F5) remains
-outstanding and starts only when the operator asks.
+### Attended pass — closed on operator attestation, 2026-08-26
+
+F4 and F5 were the two acceptance inputs the unattended run could not reach:
+the bound agent parked on a permission prompt, and a person speaking into the
+capture device. The operator reports both were exercised on the evening of
+2026-08-25 and considers the attended tests complete.
+
+**This is an operator attestation, not a machine-verified result, and is
+recorded as one.** No transcript, recording, or state snapshot from that
+session was captured into this repository, and this repository did not observe
+it. Nothing below should be read as a reproduced test: the distinction between
+what was measured here and what was reported to us is the reason this
+paragraph exists rather than a green row on its own.
+
+What *is* verified here, and what the attestation rests on top of:
+
+- The delivery seam the attended pass exercises is the same one AE8 drove live,
+  observed placing text unsubmitted and editable in the bound agent's composer
+  with that session still `done` rather than `working`.
+- The blocked-state branch is covered hermetically in
+  `plugins/voice/tests/test_deliver.py`: a blocked agent receives nothing, the
+  hold file is written, the audible refusal is spoken, `DeliveryRefusal` is
+  raised, and `use_refused` / `discard_refused` stay explicit-only.
+- Capture device `:0` opens and produces valid 48 kHz mono wav, measured during
+  the unattended run. What it could not supply was a human voice, which is
+  precisely what the attended pass supplied.
+- Live preflight passes 10 ok, 0 failed, 0 not-run against the installed
+  `0.2.1` package, including real Voice Forge synthesis and a live xAI
+  transcription round trip.
+
+No new test run was invented to close these, and no attended acceptance was
+re-run.
