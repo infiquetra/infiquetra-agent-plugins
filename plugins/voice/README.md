@@ -122,20 +122,62 @@ honoured.
 
 ## The Herdr-wide stop keybinding
 
-Voice preflight checks — and never writes — one operator-owned keybinding: a
-Herdr-wide binding whose command invokes the package's stop path. Add a
-`[[keys.command]]` entry to `~/.config/herdr/config.toml` whose `command`
-string contains `voice stop`; the key itself is yours to choose:
+Voice preflights — and never writes — one operator-owned keybinding: a
+Herdr-wide binding whose command invokes the package's stop path.
+
+### First, put `voice` on PATH
+
+Claude installs a plugin under a *versioned* directory, and a version bump
+creates a new one rather than reusing the old. There is no `current` or
+`latest` symlink, so **no path inside an installed package is stable**, and a
+keybinding written against one stops working at the next release without
+announcing it: the key still exists, the command still parses, nothing runs.
+
+So the binding invokes a small launcher that resolves the current install at
+invocation time, from Claude's own plugin registry — which Claude rewrites on
+every install and update. Write it once:
+
+```bash
+python3 ~/.claude/plugins/cache/infiquetra-agent-plugins/voice/*/com.infiquetra.claude/scripts/install_launcher.py
+```
+
+That writes `~/.local/bin/voice` and nothing else. It refuses to overwrite a
+`voice` it did not generate unless you pass `--force`, and `--print` shows the
+file without writing it. Confirm with `command -v voice`.
+
+The launcher follows version bumps on its own; you never edit the keybinding
+again.
+
+### Then add the binding
 
 ```toml
 [[keys.command]]
 key = "<your key here>"
+type = "shell"
 command = "voice stop"
 description = "stop voice playback"
 ```
 
-Voice reports the keybinding's absence by name; it never creates or repairs
-any Herdr configuration.
+The key is yours to choose. `type = "shell"` runs the command detached in the
+background, which is what a stop key wants — `pane` and `popup` would open a
+terminal to stop audio.
+
+Voice reports this binding's absence by name; it never creates or repairs any
+Herdr configuration.
+
+### What preflight actually checks
+
+Preflight resolves the configured command rather than pattern-matching it: it
+confirms the program is on `PATH` (or is an existing executable file) and that
+any `.py` script named beside it exists. It never *runs* the command — firing a
+stop as a side effect of asking whether a stop is possible would be its own
+defect.
+
+This matters because containing the text `voice stop` and being able to stop
+anything are different claims, and they came apart here: the binding was
+documented before any `voice` existed on `PATH`. A probe that reported that as
+healthy would have been worse than no probe, because it retires your own
+suspicion.
 
 ## Subprocess discipline
 

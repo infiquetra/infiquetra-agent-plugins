@@ -39,6 +39,8 @@ import http.client
 import json
 import os
 import re
+import shlex
+import shutil
 import tomllib
 import urllib.error
 import urllib.request
@@ -68,6 +70,8 @@ __all__ = [
     "probe_hermes_profile",
     "probe_sample_round_trip",
     "probe_keybinding",
+    "command_is_runnable",
+    "command_names_stop_path",
     "probe_executable",
     "run_all",
     "format_report",
@@ -97,8 +101,13 @@ SAMPLE_FILE_PREFIX = "preflight-sample-"
 #: The operator's Herdr custom keybindings live here (KTD13, XDG).
 DEFAULT_KEYBINDING_PATH = Path("~/.config/herdr/config.toml")
 
-#: The keybinding probe looks for this in any binding's command string.
+#: The documented binding, and what the probe reports by name.
 KEYBINDING_MARKER = "voice stop"
+
+#: The package CLI, for recognizing a binding that invokes it directly rather
+#: than through the launcher. Both forms are legitimate; only the launcher form
+#: survives a version bump, which is why it is the one documented.
+KEYBINDING_CLI = "voice_cli.py"
 
 _TOKEN_HEADER = "X-Hermes-Session-Token"
 #: The wire contract of KTD9: the session token is served on the dashboard
@@ -552,20 +561,99 @@ def probe_keybinding(config_path: Path | str | None = None) -> ProbeResult:
             CHECK_FAILED,
             f"{path} does not parse as TOML",
         )
-    for command in _keybinding_commands(config):
-        if KEYBINDING_MARKER in command:
-            return ProbeResult(
-                "herdr-config",
-                check,
-                CHECK_OK,
-                "a keybinding command contains " f"{KEYBINDING_MARKER!r}",
-            )
+    marked = [
+        command for command in _keybinding_commands(config) if command_names_stop_path(command)
+    ]
+    if not marked:
+        return ProbeResult(
+            "herdr-config",
+            check,
+            CHECK_FAILED,
+            f"no keybinding command contains {KEYBINDING_MARKER!r}",
+        )
+    reasons = []
+    for command in marked:
+        runnable, detail = command_is_runnable(command)
+        if runnable:
+            return ProbeResult("herdr-config", check, CHECK_OK, detail)
+        reasons.append(detail)
     return ProbeResult(
         "herdr-config",
         check,
         CHECK_FAILED,
-        f"no keybinding command contains {KEYBINDING_MARKER!r}",
+        "a keybinding names the stop path but cannot run it: " + "; ".join(reasons),
     )
+
+
+def command_names_stop_path(command: str) -> bool:
+    """Whether a binding command invokes the package's stop path, in either form.
+
+    Two spellings reach the same stop, and a probe that knew only one would be
+    wrong in a different direction each time:
+
+    - ``voice stop`` -- through the launcher. The documented form, because it is
+      the only one that survives a Claude plugin version bump.
+    - ``... voice_cli.py ... stop`` -- straight at the package CLI. Legitimate,
+      and pinned to a versioned install directory, so it goes stale on update.
+
+    Matching only the first would report a working direct binding as absent.
+    """
+    if KEYBINDING_MARKER in command:
+        return True
+    return KEYBINDING_CLI in command and "stop" in command.split()
+
+
+def command_is_runnable(command: str) -> tuple[bool, str]:
+    """Whether a configured keybinding command could actually execute.
+
+    Containing the marker only proves the operator *meant* the stop path. It
+    does not prove anything runs, and the two came apart in practice: the
+    documented binding was ``voice stop`` while no ``voice`` existed on
+    ``PATH``, so the binding parsed, the key worked, and nothing happened. A
+    probe that reported that as healthy is worse than no probe, because it
+    retires the operator's own suspicion.
+
+    Two things are checked, and neither executes the command -- a preflight that
+    fires a stop as a side effect of asking whether a stop is possible would be
+    its own defect:
+
+    1. The program resolves: a bare name is looked up on ``PATH``; a path is
+       checked for existence and the executable bit.
+    2. Every script argument that names a ``.py`` file exists. This is what
+       catches an interpreter invocation whose script path went stale --
+       ``python3`` resolves perfectly well while the script beside it does not.
+
+    Returns the verdict and the sentence the report shows either way.
+    """
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False, f"{command!r} does not parse as a shell command"
+    if not tokens:
+        return False, "the keybinding command is empty"
+
+    program, *arguments = tokens
+    if os.sep in program or program.startswith("~"):
+        resolved = Path(program).expanduser()
+        if not resolved.is_file():
+            return False, f"{program!r} does not exist"
+        if not os.access(resolved, os.X_OK):
+            return False, f"{program!r} is present but not executable"
+        located = str(resolved)
+    else:
+        found = shutil.which(program)
+        if found is None:
+            return False, f"{program!r} is not on PATH"
+        located = found
+
+    for argument in arguments:
+        if not argument.endswith(".py"):
+            continue
+        script = Path(argument).expanduser()
+        if not script.is_file():
+            return False, f"{program!r} resolves but its script {argument!r} does not exist"
+
+    return True, f"{KEYBINDING_MARKER!r} runs {located}"
 
 
 def probe_executable(owner: str, stated_path: str) -> ProbeResult:
