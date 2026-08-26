@@ -12,7 +12,7 @@
     {
       "name": "voice",
       "source": "./plugins/voice",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "description": "A spoken conversational loop for one explicitly bound, Herdr-managed Claude Code session: the bound session speaks its completed response, the operator answers by voice, and the transcript lands editable and unsubmitted in that same session's input box.",
       "author": {
         "name": "Infiquetra",

@@ -254,6 +254,30 @@ class MarketplaceEntryTests(unittest.TestCase):
             _load(PORTABLE_MANIFEST).get("version"),
         )
 
+    def test_all_four_version_sites_agree(self) -> None:
+        # A content change that does not bump the version never reaches an
+        # installed plugin: `claude plugin update` compares versions, not
+        # commits, and answers "already at the latest version" while the cache
+        # still holds the old bytes. So a release means editing four files, and
+        # four hand-edited copies of one number is exactly the shape that
+        # drifts. Presence is asserted too: a site that lost its version would
+        # otherwise pass by being absent.
+        sites = {
+            "marketplace entry": _marketplace_entry().get("version"),
+            "claude manifest": _load(CLAUDE_MANIFEST).get("version"),
+            "portable manifest": _load(PORTABLE_MANIFEST).get("version"),
+            "client extension manifest": _load(EXTENSION / "plugin.json").get("version"),
+        }
+        for name, value in sites.items():
+            with self.subTest(site=name):
+                self.assertIsInstance(value, str, f"{name} states no version")
+                self.assertTrue(value.strip())
+        self.assertEqual(
+            len(set(sites.values())),
+            1,
+            f"version sites disagree: {sites}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
