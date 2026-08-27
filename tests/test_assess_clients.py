@@ -1467,6 +1467,45 @@ class EntrypointPathTest(unittest.TestCase):
                 )
                 self.assertEqual(len(argvs), len(CONFIG.assessment.entrypoints))
 
+    def test_agent_launcher_entrypoint_is_deliverable_to_every_skill_scoped_client(self) -> None:
+        """agent-launcher's single entrypoint sits inside its single skill unit.
+
+        The not-blocked shape this asserts is the UniFi geometry above; the
+        mission-control blocked-in-advance test is the negative control this
+        package must not resemble (its entrypoints sit at the package root).
+        """
+        al_config = port_config.load("agent-launcher", ROOT)
+        for name in ("OpenCode", "Gemini CLI", "Muse", "Hermes"):
+            plan = harness.plan_for(name)
+            spec = plan.stage("invocation")
+            with self.subTest(client=name):
+                blocked = harness.stage_blocked_reason(al_config, plan, spec)
+                self.assertIsNone(blocked)
+                paths = harness.entrypoint_paths(al_config, plan)
+                self.assertEqual(len(paths), len(al_config.assessment.entrypoints))
+                for path, relative in zip(paths, al_config.assessment.entrypoints):
+                    unit = relative.split("/", 2)[1]
+                    self.assertEqual(path, f"{plan.invocation_root}/{unit}/{relative.split('/', 2)[2]}")
+
+    def test_describe_plan_does_not_raise_for_agent_launcher_shape(self) -> None:
+        """Plan print renders an unblocked invocation for every skill-scoped client.
+
+        OpenAI Codex's load and invocation stay statically blocked by that
+        client's own plan — it refuses the package root — which is a client
+        property recorded in every matrix, not an agent-launcher geometry
+        block; the four skill-scoped clients must show no invocation block.
+        """
+        al_config = port_config.load("agent-launcher", ROOT)
+        plan_text = harness.describe_plan(al_config)
+        self.assertIn("Assessment plan for agent-launcher", plan_text)
+        for name in ("OpenCode", "Gemini CLI", "Muse", "Hermes"):
+            with self.subTest(skill_scoped_client=name):
+                section = plan_text.split(f"## {name}")[1].split("## ")[0]
+                self.assertIn("invocation  <python>", section)
+                self.assertNotIn("invocation  blocked in advance", section)
+        codex = plan_text.split("## OpenAI Codex")[1].split("## ")[0]
+        self.assertIn("blocked in advance", codex)
+
     def test_skill_scoped_plan_with_mixed_entrypoints_blocks_and_names_undeliverable_subset(self) -> None:
         """Mixed deliverable and undeliverable entrypoints block, naming only undeliverable."""
         variant = port_config.parse(
