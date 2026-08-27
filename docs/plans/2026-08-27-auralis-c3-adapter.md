@@ -38,6 +38,17 @@ claim, F5 by the closed Markdown grammar in U2 — and the cycle-2 disposition t
 beside the cycle-1 table at the end of this document. Nothing recorded as closed was
 reopened.
 
+**Revised a third time 2026-08-27** against the cycle-3 focused re-review at
+[`docs/reviews/2026-08-27-auralis-c3-adapter-plan-doc-review-cycle3.md`](../reviews/2026-08-27-auralis-c3-adapter-plan-doc-review-cycle3.md),
+which closed F3 and adjudicated F5 still partially closed: the class table's rejecting
+rows gave illustrative spellings a literal matcher could satisfy while missing valid
+forms. This revision completes F5 and touches nothing else — every rejecting row now
+states a precise matching rule (the full marker set, the full separator set, and the
+permitted trailing context), every class gains a test scenario a literal-spelling
+implementation would fail, and the class table is declared the gate's self-contained
+normative grammar. The cycle-3 row extends the cycle-2 disposition table at the end of
+this document; nothing recorded as closed was touched.
+
 ## Problem Frame
 
 Auralis V1 is a private, single-operator macOS application that gives one bound,
@@ -834,6 +845,25 @@ claim is construct coverage of the stated inventory, not parser equivalence. On 
 rejection surface, over-detection inside a class is safe — the guarded boundary is the
 stated non-class list, each entry with an accepting test.
 
+**Grammar authority — the class table is the grammar (cycle-3 F5).** Of the two
+acceptable closures — pin an external base-Markdown specification and version, or make
+the plan's own class table the self-contained grammar — this plan takes the second: the
+class table below, the block-indentation rule, and the stated non-class list are
+together the gate's **normative grammar**, and the implementation and its tests are
+held to these rows, not to any external document. Why: the recognizers are deliberately
+line-and-inline regexes serving a cooperative resubmission contract — R121's consumer
+is an agent told to resubmit plain text, and a missed form costs one stray spoken
+character — so pinning an external specification would create a parser-conformance
+obligation out of proportion to this boundary, while the self-contained table keeps
+KTD1 literally true: the module documents the boundary's whole authority. The
+completeness rule above records the informative derivation source (base Markdown's
+construct list plus the two named extensions); the derivation is informative, the rows
+are normative. Each rejecting row is therefore written as a **matching rule** — the
+full marker set, the full separator set, and the permitted trailing context (a space, a
+tab, or the end of the line, wherever the row says so) — never an example spelling. An
+implementation that matches only the literal characters an illustration happens to use
+(only `1.` and `1)`, only a space after `#`) does not satisfy its row.
+
 **The block-indentation rule (stated once, for every line-anchored class).** Markdown
 allows up to three spaces of indentation before any block construct, so every
 line-anchored class below matches at a **line anchor** — the start of a line followed by
@@ -844,24 +874,24 @@ block form rejects under its own class; at four it rejects as indented code.
 
 | Detected class | Reason |
 |---|---|
-| Fenced code block (a ``` ``` `` or `~~~` fence at a line anchor) | `fenced_code_block` |
-| Indented code block (a line indented 4+ spaces or a tab, outside a continuation of plain prose) | `markdown_formatting` (class `indented_code_block` in the detail) |
-| ATX heading (`#` … `######` + space, at a line anchor) | `markdown_formatting` |
-| Setext heading (a non-blank line followed by a line-anchored underline of only `=` or `-`) | `markdown_formatting` |
-| List marker (`-`/`+`/`*`/`1.`/`1)` + space, at a line anchor) | `markdown_formatting` |
-| Blockquote marker (`>` at a line anchor) | `markdown_formatting` |
-| Horizontal rule (at a line anchor) | `markdown_formatting` |
-| Table pipe row | `markdown_formatting` |
-| Link-reference definition (`[label]: destination` at a line anchor) | `markdown_formatting` |
+| Fenced code block (at a line anchor, a run of three or more backticks or three or more tildes; the rest of the line — the info string — may be anything, including nothing) | `fenced_code_block` |
+| Indented code block (a non-blank line whose leading whitespace is four or more spaces, or contains a tab, outside a continuation of plain prose) | `markdown_formatting` (class `indented_code_block` in the detail) |
+| ATX heading (at a line anchor, one to six `#`, followed by a space, a tab, or the end of the line — the empty heading, `#` through `######` alone on a line, is valid Markdown and rejects) | `markdown_formatting` |
+| Setext heading (a non-blank line followed by a line-anchored underline: a run of one or more `=` or one or more `-` — one character kind, any length — followed by nothing but optional spaces or tabs) | `markdown_formatting` |
+| List marker (at a line anchor, a bullet marker — `-`, `+`, or `*` — or an ordered marker — one to nine ASCII digits of any value followed by `.` or `)` — with either marker followed by a space, a tab, or the end of the line) | `markdown_formatting` |
+| Blockquote marker (`>` at a line anchor; no following space or text is required) | `markdown_formatting` |
+| Horizontal rule (at a line anchor, three or more `-`, `_`, or `*`, all the same character, with only spaces or tabs permitted between and after them and nothing else on the line) | `markdown_formatting` |
+| Table pipe row (a line containing one or more pipe characters at any position — GitHub-flavored table rows require no leading or trailing pipe, so one rule covers header, delimiter, and data rows) | `markdown_formatting` |
+| Link-reference definition (at a line anchor, `[`, one or more characters containing no unescaped `]`, then `]:`, followed by a space, a tab, the destination text, or the end of the line — the destination may sit on the next line) | `markdown_formatting` |
 | Hard line break (a non-final line ending in two or more spaces, or ending in a backslash) | `markdown_formatting` (class `hard_line_break` in the detail) |
-| Raw HTML (an open or closing tag such as `<b>`, `</div>`, `<br/>`, or a comment `<!-- … -->`) | `markdown_formatting` (class `raw_html` in the detail) |
-| Backslash escape (a backslash immediately before an ASCII punctuation character) | `markdown_formatting` (class `backslash_escape` in the detail) |
-| Emphasis / strong pairs (`*`, `**`, `_`, `__`, word-edge-guarded) | `markdown_formatting` |
-| Strikethrough pair (`~~` … `~~`) | `markdown_formatting` (class `strikethrough` in the detail) |
-| Inline code span (backticks) | `markdown_formatting` |
-| Inline link / image (bracketed text followed immediately by a parenthesized destination, with or without a leading `!`) | `markdown_formatting` |
-| Reference-style link (`[text][label]`, `[text][]`) | `markdown_formatting` |
-| Autolink (`<scheme://…>` or `<name@host>` in angle brackets) | `markdown_formatting` |
+| Raw HTML (`<` immediately followed by any of: an ASCII letter — an open tag; `/` then an ASCII letter — a closing tag; `!--` — a comment; `!` then an ASCII letter — a declaration; `?` — a processing instruction; or `![CDATA[` — a character-data section; the opener alone rejects, no closing `>` required) | `markdown_formatting` (class `raw_html` in the detail) |
+| Backslash escape (a backslash immediately before any of the thirty-two ASCII punctuation characters — U+0021–U+002F, U+003A–U+0040, U+005B–U+0060, U+007B–U+007E; a backslash before any other character is not this class) | `markdown_formatting` (class `backslash_escape` in the detail) |
+| Emphasis / strong pairs (a delimiter run of one or more `*` or one or more `_`, any length, immediately followed by non-whitespace, matched later by a same-character run immediately preceded by non-whitespace; `_` runs must additionally sit at word edges — not flanked on the outside by a letter, digit, or underscore — which is what accepts `snake_case`) | `markdown_formatting` |
+| Strikethrough pair (a run of one or two `~` immediately followed by non-whitespace, matched later by an equal-length run immediately preceded by non-whitespace — covering both the two-tilde published form and the one-tilde form GitHub also renders) | `markdown_formatting` (class `strikethrough` in the detail) |
+| Inline code span (a run of one or more backticks matched later in the text by a second run of exactly equal length) | `markdown_formatting` |
+| Inline link / image (a `[` … `]` pair — the text may be empty — immediately followed, with no intervening character, by a `(` … `)` pair — the destination may be empty — with or without a leading `!`) | `markdown_formatting` |
+| Reference-style link (a `[` … `]` pair immediately followed by a second `[` … `]` pair, the second either empty — the collapsed form — or carrying any label — the full form; a single bracketed span with no second pair is the accepted `[sic]` non-class) | `markdown_formatting` |
+| Autolink (`<`, then a scheme — an ASCII letter followed by one to thirty-one letters, digits, `+`, `.`, or `-` — then `:`, then zero or more characters none of which is whitespace, `<`, or `>`, then `>`; no `//` is required, so `<mailto:…>` forms match; or `<`, an email shape — one or more non-whitespace characters other than `<` or `>`, `@`, one or more such characters — then `>`) | `markdown_formatting` |
 
 Stated non-classes (accepted as plain, each a named accepting test): arithmetic asterisks
 (`2 * 3`), identifier underscores (`snake_case`), mid-sentence hyphens, spaced comparison
@@ -910,6 +940,24 @@ budget — and the module exposes no other write path**. CLI: `voice policy show
   example). Plus the seam scenario: the same list marker at three leading spaces rejects
   as a list, at four as indented code — rejected on both sides of the boundary, with no
   depth at which it passes.
+- **Every rejecting class additionally has at least one rule-not-spelling scenario** — a
+  case a literal transcription of a cycle-2 example spelling would miss, proving the
+  row's full marker set, separator set, and trailing context: an ordered-list marker
+  other than `1` (`7. item`), a multi-digit ordered marker (`12) item`), and a bullet
+  marker at the end of a line (a line holding only `-`); an empty ATX heading (`##`
+  alone on a line) and a tab-delimited one (`#`, a tab, then text); a fence run of four
+  backticks; a tab-indented code line; a one-character setext underline (a paragraph
+  line followed by a lone `=`); a blockquote with no space after the `>`; a spaced
+  horizontal rule (`- - -`) and an underscore one (`___`); a pipe row with no leading or
+  trailing pipe (`cell | cell`); a link-reference definition with a multi-word label; a
+  hard break of three trailing spaces; an attribute-carrying raw-HTML tag
+  (`<div class="x">`) and a non-tag opener (a declaration or a processing instruction);
+  a backslash escape of a bracket (`\[`); a three-asterisk emphasis run (`***text***`);
+  a one-tilde strikethrough pair (`~text~`); a two-backtick code span; an inline link
+  whose bracketed text is empty (`[]` immediately followed by a parenthesized
+  destination); a full reference link with a multi-word label; and an autolink
+  whose scheme is not followed by `//` (`<mailto:ops@example.com>`). Each yields its
+  class's stated reason.
 - **Every stated non-class has an accepting scenario**: arithmetic asterisks, identifier
   underscores, mid-sentence hyphens, `x < y`, a bare `[sic]`, a colon-labelled line, a
   bare spoken URL, `AT&T;` mid-sentence, a backslash-before-letter path (`C:\Users`),
@@ -1323,6 +1371,26 @@ same operating rule:
   and R121 grounds Markdown rejection, not HTML sanitization; the exclusion is documented
   and tested rather than silently absent, which is what keeps the class table closed.
 
+Decisions taken during the 2026-08-27 cycle-3 plan repair (finding F5 only), same
+operating rule:
+
+- **Grammar authority: the plan's class table is itself the normative grammar**, chosen
+  over pinning an external base-Markdown specification and version (both closures were
+  acceptable to the review). The recognizers are deliberately line-and-inline regexes
+  serving a cooperative resubmission contract, so an external pin would buy a
+  parser-conformance obligation out of proportion to a boundary where a missed form
+  costs one resubmission prompt — and KTD1 already names the module the boundary's
+  documented authority. The external construct list stays recorded in the completeness
+  rule as the informative derivation source.
+- **Strikethrough runs match one or two tildes**, chosen over the strict two-tilde
+  published spelling: GitHub also renders the one-tilde form, and over-detection inside
+  a rejecting class is safe, so the wider rule covers both readings rather than leaking
+  one.
+- **The pipe-row rule is any line containing a pipe character**, chosen over recognizing
+  only delimiter-shaped rows: GitHub-flavored table rows require no leading or trailing
+  pipe, one rule covers header, delimiter, and data rows in a single line-level regex,
+  and no stated accepting non-class contains a pipe.
+
 ## Doc-review disposition (2026-08-27)
 
 Where each finding of
@@ -1349,9 +1417,14 @@ was repaired in this document.
 Where the two findings the cycle-2 focused re-review at
 [`2026-08-27-auralis-c3-adapter-plan-doc-review-cycle2.md`](../reviews/2026-08-27-auralis-c3-adapter-plan-doc-review-cycle2.md)
 recorded as partially closed were completed in this document. The ten findings that
-review recorded as closed are untouched; the cycle-1 table above stands as history.
+review recorded as closed are untouched; the cycle-1 table above stands as history. The
+cycle-3 focused re-review at
+[`2026-08-27-auralis-c3-adapter-plan-doc-review-cycle3.md`](../reviews/2026-08-27-auralis-c3-adapter-plan-doc-review-cycle3.md)
+then adjudicated these repairs — F3 closed, F5 still partially closed — and the cycle-3
+repair extends this same table with the final F5 row below.
 
 | Finding | Cycle-2 repair |
 |---|---|
 | F3 (the R122 test claimed an end-to-end proof it does not deliver) | New section "The joint AE36 test — executable home, owner, and procedure": the joint test executes in `infiquetra/auralis` — the only process space that can call the in-process `acceptFallback()` (`lib/src/core/bridge/turn_coordinator.dart:537` at the pinned revision) — owned by the C5 slice with a Dart harness standing in, following an eight-step procedure that starts with the real C3 rejection over the adapter's MCP pipes, submits no replacement, completes the turn, drives `acceptFallback()` in process, and closes on the `GET /v1/current` assertion that the same captured turn reads `fallback_accepted`; recorded as a named cross-repository dependency, with no bridge route added. The in-repository test is renamed `test_r122_adapter_boundary.py` (cycle-1 name `test_r122_end_to_end.py`), and its scenario, the R122 requirement row, U4, and the acceptance mapping now claim only the adapter-side half |
 | F5 (the Markdown table closed the cycle-1 examples, not the defect class) | U2's gate contract now states its completeness rule — every construct of base Markdown plus GitHub-flavored pipe tables and strikethrough is disposed of as a rejecting class, a structural non-class, or a named prose-collision non-class, with none left without a rule — adds the block-indentation rule (every line-anchored class matches after zero to three leading spaces; four or more, or a tab, is indented code, so no indentation depth passes the gate), and adds the previously missing classes: hard line break in both syntaxes (two trailing spaces, and the backslash form), raw HTML, backslash escape, and strikethrough. Every class keeps at least one rejecting scenario, every line-anchored class gains a three-space-indented rejecting variant plus the three-vs-four-space seam scenario, and the ordinary-punctuation accepting cases are retained and extended |
+| F5 (cycle 3: the rejecting rows still gave illustrative spellings — `1.`/`1)` plus space, `#` plus space — that a literal matcher could satisfy while missing `2.`, `12.`, a valid empty heading, or a tab) | Every rejecting row of the U2 class table now states a matching rule — the full marker set, the full separator set, and the permitted trailing context: the ordered-list marker is one to nine ASCII digits of any value followed by `.` or `)` and then a space, a tab, or the end of the line; the ATX heading is one to six `#` followed by a space, a tab, or the end of the line, so the valid empty heading rejects; and the sixteen remaining rows were audited to the same standard (fence runs of three or more characters, the complete horizontal-rule and pipe-row rules, all six raw-HTML opener forms, the enumerated backslash-escape punctuation set, autolinks with no required `//`, equal-length code-span runs, one-or-two-tilde strikethrough runs, and the rest as the table states). Every rejecting class gains a rule-not-spelling test scenario a literal-spelling implementation would fail — for ordered lists a non-`1` and a multi-digit marker, for ATX an empty and a tab-delimited heading — and every existing rejecting and accepting case is kept. The class table, block-indentation rule, and non-class list are declared the gate's self-contained normative grammar, chosen over pinning an external specification; the grammar-authority paragraph in U2 and the cycle-3 unattended-decisions entries record the choice and the why |
