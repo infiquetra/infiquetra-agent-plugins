@@ -26,6 +26,13 @@
   execution work, every deviation with its mechanism, the lessons folded into
   runbook v1.1.0, and the upstream filing dispositions including the one
   declined proposal.
+- [Agent Launcher port run plan](plans/2026-08-27-agent-launcher-port-plan.md)
+  is the approved run plan for the agent-launcher package port, executed under
+  porting runbook v1.1.0. Document review blocked cycle 1 with eleven findings,
+  returned PROCEED in cycle 2 with two residual wording findings, and a
+  closing verification pass confirmed both repaired
+  ([reviews/2026-08-27-agent-launcher-port-plan-doc-review.md](reviews/2026-08-27-agent-launcher-port-plan-doc-review.md),
+  [reviews/2026-08-27-agent-launcher-port-plan-doc-review-r2.md](reviews/2026-08-27-agent-launcher-port-plan-doc-review-r2.md)).
 - [PR #6 independent code reviews](code-reviews/2026-08-24-pr-6-code-review-index.md)
   indexes the five review rounds that preceded the porting tools being merged,
   each preserved byte-for-byte with the revision it reviewed and its digest.
@@ -34,6 +41,11 @@
 
 ## Evidence
 
+- [Agent Launcher ten-client compatibility matrix](evidence/2026-08-27-agent-launcher-compatibility-matrix.md)
+  records what every installed coding-agent client did with the portable
+  agent-launcher package across four stages with fingerprint-bound
+  verification, with post-activation readback in
+  [evidence/2026-08-27-agent-launcher-post-activation-readback.md](evidence/2026-08-27-agent-launcher-post-activation-readback.md).
 - [Mission Control ten-client compatibility matrix](evidence/2026-08-25-mission-control-compatibility-matrix.md)
   records what every installed coding-agent client did with the portable
   mission-control package across four stages with fingerprint-bound verification.

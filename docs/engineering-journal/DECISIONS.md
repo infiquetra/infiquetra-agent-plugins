@@ -77,6 +77,38 @@ manifest (a command in a metadata-only file — the declaration is a string path
 **Revisit when.** A bridge v2 adds content adjudication or changes identifier custody, or
 the Claude client changes plugin MCP-server lifecycle. The full per-decision revisit
 conditions are in the plan's KTD section.
+### The agent-launcher port carries the contract as a byte copy and supersedes the Claude-runtime docs
+
+**Author.** Jeff Cox and Qwen Code (issue #22, branch `port/agent-launcher`,
+run plan `docs/plans/2026-08-27-agent-launcher-port-plan.md`, runbook v1.1.0)
+
+**Decision.** The accepted upstream plugin's launch contract
+(`skills/agent-launcher/scripts/launcher.py`) is pure standard library and
+vendor-gated, so it lands as an unmodified upstream byte copy — its Claude
+account-verification block is explicit documented behavior for `vendor ==
+"claude"`, not a vendor-specific hidden path, and forking the bytes downstream
+is barred by the custody rule. The upstream `SKILL.md` and `README.md` are
+superseded by target-owned portable docs rather than carried: the upstream
+skill resolves its script through `CLAUDE_PLUGIN_ROOT` with a fallback ladder
+into the Claude plugin cache, and carrying those bytes would be the exact
+"copy Claude-specific behavior" failure the port exists to avoid. The upstream
+test suite is dropped with a recorded reason (its remaining premises —
+Orchestrate ingestion, the root marketplace, `parents[3]` repo-root
+resolution — cannot cross the port boundary), and the portable suite under
+`plugins/agent-launcher/tests/` re-proves the portable contract from
+`parents[1]`. The assessment declares no credential prefixes (the launcher
+reads no credentials) via `declared_none`, names `launch` and `close` as its
+mutating verbs so the harness blocks them, and keeps no marketplace entry:
+catalog distribution stays withheld pending an operator decision, locked by a
+packaging test. The ten-client matrix records 7 clients working directly, 3
+through an adapter, none failed, bound to the package fingerprint with a
+post-activation readback; evidence is content-bound, and an accepted repair
+that moves the fingerprint supersedes the record rather than renumbering it.
+
+**Refs.** [`ports/agent-launcher.json`](../../ports/agent-launcher.json),
+[`plugins/agent-launcher/PROVENANCE.json`](../../plugins/agent-launcher/PROVENANCE.json),
+[the compatibility matrix](../evidence/2026-08-27-agent-launcher-compatibility-matrix.md),
+[the run plan](../plans/2026-08-27-agent-launcher-port-plan.md)
 
 ## 2026-08-25
 

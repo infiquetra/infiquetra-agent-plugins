@@ -1,0 +1,13 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "agent-launcher",
+  "version": "1.0.0",
+  "description": "Portable agent-launcher package: the shared single-session launch contract — create one verified coding-agent session through the installed agents wrapper, verify it through Herdr, deliver a prompt, and close only a session the launch owns — derived from infiquetra-claude-plugins at the 1.0.0 revision. The Claude Code manifest lives under the com.infiquetra.claude client extension directory; the portable manifest, the package README, and the portable skill are authored here.",
+  "keywords": [
+    "agent-launcher",
+    "agents",
+    "herdr",
+    "launch",
+    "sessions"
+  ]
+}
