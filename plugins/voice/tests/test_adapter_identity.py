@@ -34,14 +34,16 @@ def _valid_herdr_envelope(
 ) -> str:
     return json.dumps(
         {
-            "type": "agent_list",
-            "agents": [
-                {
-                    "pane_id": pane_id,
-                    "terminal_id": terminal_id,
-                    "agent_session": {"value": session_id},
-                }
-            ],
+            "result": {
+                "type": "agent_list",
+                "agents": [
+                    {
+                        "pane_id": pane_id,
+                        "terminal_id": terminal_id,
+                        "agent_session": {"value": session_id},
+                    }
+                ],
+            }
         }
     )
 
@@ -166,8 +168,20 @@ class IdentityRefusalTests(unittest.TestCase):
                 adapter_identity.resolve_adapter_identity(run_process=fake_run)
             self.assertIn("not a JSON object", caught.exception.reason)
 
+    def test_refusal_when_envelope_result_is_missing_or_not_dict(self) -> None:
+        payload = json.dumps({"type": "agent_list"})
+        fake_run = mock.Mock(return_value=_FakeCompletedProcess(payload))
+        env = {
+            settings.HERDR_PANE_ID: "w1:p1",
+            settings.HERDR_BIN_PATH: "/bin/herdr",
+        }
+        with mock.patch.dict(os.environ, env, clear=True):
+            with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
+                adapter_identity.resolve_adapter_identity(run_process=fake_run)
+            self.assertIn("not a JSON object", caught.exception.reason)
+
     def test_refusal_when_envelope_type_is_wrong(self) -> None:
-        payload = json.dumps({"type": "other_list", "agents": []})
+        payload = json.dumps({"result": {"type": "other_list", "agents": []}})
         fake_run = mock.Mock(return_value=_FakeCompletedProcess(payload))
         env = {
             settings.HERDR_PANE_ID: "w1:p1",
@@ -179,7 +193,7 @@ class IdentityRefusalTests(unittest.TestCase):
             self.assertIn("expected 'agent_list'", caught.exception.reason)
 
     def test_refusal_when_agents_is_not_list(self) -> None:
-        payload = json.dumps({"type": "agent_list", "agents": {}})
+        payload = json.dumps({"result": {"type": "agent_list", "agents": {}}})
         fake_run = mock.Mock(return_value=_FakeCompletedProcess(payload))
         env = {
             settings.HERDR_PANE_ID: "w1:p1",
@@ -188,19 +202,21 @@ class IdentityRefusalTests(unittest.TestCase):
         with mock.patch.dict(os.environ, env, clear=True):
             with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
                 adapter_identity.resolve_adapter_identity(run_process=fake_run)
-            self.assertIn("'agents' is not a list", caught.exception.reason)
+            self.assertIn("not a list", caught.exception.reason)
 
     def test_refusal_when_zero_pane_matches(self) -> None:
         payload = json.dumps(
             {
-                "type": "agent_list",
-                "agents": [
-                    {
-                        "pane_id": "other_pane",
-                        "terminal_id": "t1",
-                        "agent_session": {"value": "s1"},
-                    }
-                ],
+                "result": {
+                    "type": "agent_list",
+                    "agents": [
+                        {
+                            "pane_id": "other_pane",
+                            "terminal_id": "t1",
+                            "agent_session": {"value": "s1"},
+                        }
+                    ],
+                }
             }
         )
         fake_run = mock.Mock(return_value=_FakeCompletedProcess(payload))
@@ -216,19 +232,21 @@ class IdentityRefusalTests(unittest.TestCase):
     def test_refusal_when_multiple_pane_matches(self) -> None:
         payload = json.dumps(
             {
-                "type": "agent_list",
-                "agents": [
-                    {
-                        "pane_id": "w1:p1",
-                        "terminal_id": "t1",
-                        "agent_session": {"value": "s1"},
-                    },
-                    {
-                        "pane_id": "w1:p1",
-                        "terminal_id": "t2",
-                        "agent_session": {"value": "s2"},
-                    },
-                ],
+                "result": {
+                    "type": "agent_list",
+                    "agents": [
+                        {
+                            "pane_id": "w1:p1",
+                            "terminal_id": "t1",
+                            "agent_session": {"value": "s1"},
+                        },
+                        {
+                            "pane_id": "w1:p1",
+                            "terminal_id": "t2",
+                            "agent_session": {"value": "s2"},
+                        },
+                    ],
+                }
             }
         )
         fake_run = mock.Mock(return_value=_FakeCompletedProcess(payload))
@@ -267,12 +285,11 @@ class IdentityRefusalTests(unittest.TestCase):
                             adapter_identity.resolve_adapter_identity()
                     continue
 
-                payload = json.dumps({"type": "agent_list", "agents": [record]})
+                payload = json.dumps({"result": {"type": "agent_list", "agents": [record]}})
                 fake_run = mock.Mock(return_value=_FakeCompletedProcess(payload))
                 with mock.patch.dict(os.environ, test_env, clear=True):
                     with self.assertRaises(adapter_identity.IdentityRefusal):
                         adapter_identity.resolve_adapter_identity(run_process=fake_run)
-
 
 if __name__ == "__main__":
     unittest.main()

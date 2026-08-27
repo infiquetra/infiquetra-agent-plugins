@@ -130,6 +130,12 @@ class _BridgeHTTPRequestHandler(BaseHTTPRequestHandler):
                 self._send_transport_error(status, error_code)
             return
 
+        # Check one-shot rendering 500 error simulation (§8; F08)
+        if path == "/v1/rendering" and method == "POST" and self.server.stub.rendering_500_count > 0:
+            self.server.stub.rendering_500_count -= 1
+            self._send_transport_error(500, "internal_error")
+            return
+
         # Processing precedence (§7):
         # 1. Path matching: non-existent path -> 404 not_found
         valid_paths = {"/v1/health", "/v1/current", "/v1/presence", "/v1/rendering"}
@@ -469,6 +475,7 @@ class BridgeStub:
         self.current_binding: dict[str, Any] | None = None
         self.current_turn: dict[str, Any] | None = None
         self.drop_rendering_responses_count = 0
+        self.rendering_500_count = 0
         self.path_status_overrides: dict[str, tuple[int, str]] = {}
         self.requests: list[CapturedRequest] = []
 
@@ -523,6 +530,9 @@ class BridgeStub:
 
     def drop_next_rendering_response(self) -> None:
         self.drop_rendering_responses_count += 1
+
+    def fail_next_rendering_500(self, count: int = 1) -> None:
+        self.rendering_500_count += count
 
     def write_discovery_file(
         self,
