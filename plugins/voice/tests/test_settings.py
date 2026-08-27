@@ -28,6 +28,8 @@ _RESOLVERS = {
     settings.PLAYBACK_BIN: settings.playback_bin,
     settings.STATE_DIR: settings.state_dir,
     settings.RETENTION: settings.retention,
+    settings.HERDR_PANE_ID: settings.herdr_pane_id,
+    settings.HERDR_BIN_PATH: settings.herdr_bin_path,
 }
 
 
@@ -197,6 +199,8 @@ class NoSecretsTests(unittest.TestCase):
                 "VOICE_PLAYBACK_BIN",
                 "VOICE_STATE_DIR",
                 "VOICE_RETENTION",
+                "HERDR_PANE_ID",
+                "HERDR_BIN_PATH",
             ),
         )
 
@@ -218,6 +222,52 @@ class NoSecretsTests(unittest.TestCase):
             os.environ, {settings.HERMES_PROFILE: "second"}, clear=True
         ):
             self.assertEqual(settings.hermes_profile(), "second")
+
+
+class HerdrSettingTests(unittest.TestCase):
+    """The Herdr environment settings resolve stated values and carry no default (KTD9; §5)."""
+
+    def test_herdr_settings_are_refused_by_name_when_unset(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(settings.SettingsRefusal) as caught:
+                settings.herdr_pane_id()
+            self.assertEqual(caught.exception.name, "HERDR_PANE_ID")
+            self.assertIn("not set", caught.exception.reason)
+
+            with self.assertRaises(settings.SettingsRefusal) as caught:
+                settings.herdr_bin_path()
+            self.assertEqual(caught.exception.name, "HERDR_BIN_PATH")
+            self.assertIn("not set", caught.exception.reason)
+
+    def test_herdr_settings_are_refused_by_name_when_empty(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                settings.HERDR_PANE_ID: "",
+                settings.HERDR_BIN_PATH: "   ",
+            },
+            clear=True,
+        ):
+            with self.assertRaises(settings.SettingsRefusal) as caught:
+                settings.herdr_pane_id()
+            self.assertEqual(caught.exception.name, "HERDR_PANE_ID")
+            self.assertIn("empty", caught.exception.reason)
+
+            with self.assertRaises(settings.SettingsRefusal) as caught:
+                settings.herdr_bin_path()
+            self.assertEqual(caught.exception.name, "HERDR_BIN_PATH")
+            self.assertIn("empty", caught.exception.reason)
+
+    def test_herdr_settings_resolve_when_stated(self) -> None:
+        env = {
+            settings.HERDR_PANE_ID: "w1:p2",
+            settings.HERDR_BIN_PATH: "/usr/local/bin/herdr",
+        }
+        with mock.patch.dict(os.environ, env, clear=True):
+            self.assertEqual(settings.herdr_pane_id(), "w1:p2")
+            self.assertEqual(
+                settings.herdr_bin_path(), "/usr/local/bin/herdr"
+            )
 
 
 if __name__ == "__main__":
