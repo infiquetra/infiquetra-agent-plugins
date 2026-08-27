@@ -73,6 +73,22 @@ def test_skill_cleanup_example_redirects_the_receipt(skill_text: str) -> None:
     assert "close --tab-id <tab_id> --receipt-json <receipt.json>" not in skill_text
 
 
+def test_skill_launch_example_delivers_a_prompt(skill_text: str) -> None:
+    """launch sends the task and records delivery; the documented create path
+    must carry --prompt, because a promptless launch sends an empty task and
+    exits nonzero when the session stays idle."""
+    assert '--prompt "<first instruction>" > receipt.json' in skill_text
+
+
+def test_skill_keep_list_names_the_receipt_keys(skill_text: str) -> None:
+    """The handoff list must name keys the launch receipt actually prints."""
+    section = skill_text.split("## Verify, then hand off", 1)[1]
+    for key in ("`tab_id`", "`pane`", "`agent_name`", "`workspace`", "`owned`", "`reused`"):
+        assert key in section
+    for absent in ("`pane_id`", "`workspace_id`", "`tab_name`", "`session`"):
+        assert absent not in skill_text
+
+
 def test_skill_frontmatter_name_matches_the_directory(skill_text: str) -> None:
     assert skill_text.startswith("---\n")
     frontmatter = skill_text.split("---\n", 2)[1]

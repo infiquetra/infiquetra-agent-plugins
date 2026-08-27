@@ -118,14 +118,16 @@ and committed evidence:
     unit.
   - 3 work through an adapter (Claude Code session-scoped through the
     local-plugin flag; OpenAI Codex on the marketplace manifest it names and
-    this package does not ship; Grok on the wrapper trust its install
-    required).
+    this package does not ship; Grok placed, discovered, and loaded cleanly
+    with its install trust supplied, while its invocation stayed blocked
+    because the harness's capture did not resolve the client-generated plugin
+    id into its command template).
   - 0 failed, 0 unsupported. The single entrypoint answered `--help` from
     every client-resolved copy, credential-free, on the floor interpreter.
   - Evidence is bound to the package fingerprint, with post-activation
     readback in
     [`docs/evidence/2026-08-27-agent-launcher-post-activation-readback.md`](docs/evidence/2026-08-27-agent-launcher-post-activation-readback.md)
-    and 0 survivors across 8 mutation classes in the proof
+    and 0 survivors across 11 mutation classes in the proof
     [`docs/evidence/2026-08-27-agent-launcher-mutation-proof-portable-docs.txt`](docs/evidence/2026-08-27-agent-launcher-mutation-proof-portable-docs.txt).
 
 What remains open is distribution, not compatibility. OpenAI Codex needs a

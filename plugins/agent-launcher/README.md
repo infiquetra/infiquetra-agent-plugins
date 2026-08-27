@@ -48,10 +48,14 @@ python3 skills/agent-launcher/scripts/launcher.py roster
 ```
 
 `roster` asks the live `agents` wrapper what this machine can launch and
-intersects that with the vendors the contract knows how to tier; it prints
-nothing on a machine without the wrapper. `preview` and `launch` additionally
+intersects that with the vendors the contract knows how to tier; with the
+wrapper present but listing nothing usable it prints nothing, and with no
+wrapper on PATH it stops before printing, naming the missing binary — the
+contract's no-fallback rule. `preview` and `launch` additionally
 require Herdr, and `launch` always dry-runs first and refuses `--skip-preview`.
-A launch writes one JSON receipt to stdout; `close` acts only on the tab that
+A launch writes one JSON receipt to stdout; pass `--prompt` with the first
+instruction (a launch with no prompt sends an empty task and exits nonzero when
+the session stays idle). `close` acts only on the tab that
 receipt proves this launch created.
 
 ## Adapter-specific limitations

@@ -162,6 +162,7 @@ def test_malformed_receipt_stops_launch(
     wrapper.write_text("#!/bin/sh\necho not-json\n")
     wrapper.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
+    monkeypatch.setattr(launcher, "list_tab_ids", lambda *_a, **_k: frozenset())
     monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
     unit = launcher.LaunchRequest(name="broken", vendor="codex", worktree=str(tmp_path))
     with pytest.raises(SystemExit, match="JSON"):
@@ -175,6 +176,7 @@ def test_nonzero_wrapper_exit_stops_launch(
     wrapper.write_text("#!/bin/sh\necho fail >&2\nexit 3\n")
     wrapper.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
+    monkeypatch.setattr(launcher, "list_tab_ids", lambda *_a, **_k: frozenset())
     unit = launcher.LaunchRequest(name="failing", vendor="codex", worktree=str(tmp_path))
     with pytest.raises(SystemExit, match="command failed"):
         launcher.launch(unit)
@@ -199,6 +201,7 @@ def test_prompt_delivery_failure_records_undelivered(
     wrapper.write_text("#!/bin/sh\ncat <<'EOF'\n" + json.dumps(receipt) + "\nEOF\n")
     wrapper.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
+    monkeypatch.setattr(launcher, "list_tab_ids", lambda *_a, **_k: frozenset())
     monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
     monkeypatch.setattr(launcher, "verify_unit_preflight", lambda *a, **k: {})
     monkeypatch.setattr(launcher, "send", lambda *a, **k: None)
@@ -434,7 +437,15 @@ def test_herdr_readback_receipt_separates_confirmed_from_requested(
 def test_herdr_cwd_mismatch_closes_owned_session(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    closed: list[str] = []
+    """An owned session is closed through herdr when its cwd disagrees; the
+    close must be a real herdr tab close, proved through the run seam."""
+    commands: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        commands.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(launcher, "run", fake_run)
     monkeypatch.setattr(
         launcher,
         "agent_row",
@@ -445,15 +456,18 @@ def test_herdr_cwd_mismatch_closes_owned_session(
             "agent": "codex",
         },
     )
-    monkeypatch.setattr(
-        launcher, "close_run_session", lambda unit: closed.append(unit.tab_id or "")
-    )
     unit = launcher.LaunchRequest(
-        name="reviewer", vendor="codex", worktree="/tmp/wt", pane_id="pane-1", tab_id="tab-1"
+        name="reviewer",
+        vendor="codex",
+        worktree="/tmp/wt",
+        pane_id="pane-1",
+        tab_id="tab-1",
+        owned=True,
+        launch_receipt={"tab_id": "tab-1", "owned": True},
     )
     with pytest.raises(SystemExit, match="working directory"):
         launcher.verify_unit_preflight(unit, "pane-1", ready=True)
-    assert closed == ["tab-1"]
+    assert ["herdr", "tab", "close", "tab-1"] in commands
 
 
 def test_kind_mismatch_stops_before_prompt(
@@ -527,6 +541,7 @@ def test_failed_launch_persists_tab_id_for_close(
     )
     wrapper.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
+    monkeypatch.setattr(launcher, "list_tab_ids", lambda *_a, **_k: frozenset())
     monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
     monkeypatch.setattr(
         launcher,
@@ -537,9 +552,11 @@ def test_failed_launch_persists_tab_id_for_close(
     with pytest.raises(SystemExit, match="preflight failed"):
         launcher.launch(unit)
     assert unit.tab_id == "tab-recover"
+    assert unit.owned is True
     assert unit.launch_receipt["tab_id"] == "tab-recover"
     assert unit.launch_receipt["agent_name"] == "reviewer-2"
     assert unit.launch_receipt["reused"] is False
+    assert unit.launch_receipt["owned"] is True
 
 
 def test_cli_undelivered_prompt_exits_nonzero(

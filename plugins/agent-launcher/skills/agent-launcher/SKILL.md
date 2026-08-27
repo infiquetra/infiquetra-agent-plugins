@@ -35,7 +35,7 @@ S="<package-root>/skills/agent-launcher/scripts/launcher.py"
 
 python3 "$S" roster                                        # vendors this machine can launch that this contract can drive
 python3 "$S" preview --vendor <tool> --task <tab-name> --cwd "$PWD" --model <model> --effort <effort>
-python3 "$S" launch  --vendor <tool> --task <tab-name> --cwd "$PWD" --model <model> --effort <effort> > receipt.json
+python3 "$S" launch  --vendor <tool> --task <tab-name> --cwd "$PWD" --model <model> --effort <effort> --prompt "<first instruction>" > receipt.json
 python3 "$S" close --receipt-json receipt.json
 ```
 
@@ -43,11 +43,13 @@ python3 "$S" close --receipt-json receipt.json
 receipt to stdout (redirect it to `receipt.json` as above). It verifies live Herdr
 state (kind, pane, cwd, workspace, readiness; model and permission stay
 `requested_only` because `herdr agent list` does not publish them) before any
-prompt is sent. `close` reads `tab_id` and `owned` from that receipt. `owned` is
-true only when the receipt `tab_id` was **not** in the Herdr workspace tab set
-snapshotted immediately before the wrapper ran. The wrapper's `reused` bit means
-the *workspace* already existed, which is the common case inside Herdr, and is not
-tab ownership.
+prompt is sent. Pass `--prompt`: launch sends the task and records delivery, and
+a launch with no prompt sends an empty task, records `prompt_undelivered` when
+the session stays idle, and exits nonzero. `close` reads `tab_id` and `owned`
+from that receipt. `owned` is true only when the receipt `tab_id` was **not** in
+the Herdr workspace tab set snapshotted immediately before the wrapper ran. The
+wrapper's `reused` bit means the *workspace* already existed, which is the common
+case inside Herdr, and is not tab ownership.
 
 **Stop conditions (carried verbatim from the shared contract):**
 
@@ -86,8 +88,10 @@ this machine, asked every run.
 
 ## Verify, then hand off
 
-The creation command prints one JSON object; keep `agent`, `agent_name`,
-`pane_id`, `reused`, `session`, `tab_id`, `tab_name`, `workspace_id`. Read
+The creation command prints one JSON receipt; keep `tab_id`, `pane`,
+`agent_name`, `workspace`, `owned`, and `reused` from it — those are the keys
+launch prints, and the Herdr handoff runs against them. `prompt_delivered` and
+`confirmed_against_herdr` in the same receipt say what the launch proved. Read
 `agent_name` back rather than assuming the name you asked for — the wrapper
 uniquifies collisions. Never close a tab with `owned` false or missing. Then use
 the `herdr` skill against those exact IDs, and from that point on: `herdr agent

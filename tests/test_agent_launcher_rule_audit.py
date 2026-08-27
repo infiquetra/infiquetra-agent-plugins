@@ -20,6 +20,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -35,6 +36,14 @@ SKILL = PACKAGE / "skills" / "agent-launcher" / "SKILL.md"
 README = PACKAGE / "README.md"
 GUARD_SOURCE = PACKAGE / "tests" / "test_portable_docs.py"
 PROOF_DOCUMENT = ROOT / "docs" / "evidence" / "2026-08-27-agent-launcher-mutation-proof-portable-docs.txt"
+
+#: The keep-list the portable skill must carry: the receipt keys launch prints,
+#: in order, allowing prose and line breaks between them.
+KEEP_LIST_PATTERN = re.compile(r"keep `tab_id`.*?`reused`", re.S)
+
+#: Names the superseded upstream keep-list carried that the launch receipt does
+#: not print; none may re-enter the portable skill.
+STALE_KEEP_LIST_NAMES = ("`pane_id`", "`workspace_id`", "`tab_name`", "`session`")
 
 #: The six upstream paths at the pin (git ls-tree plugins/agent-launcher/),
 #: each with the classification the port decided. Derived against, not in
@@ -125,6 +134,12 @@ def _skill_guard_problems(text: str, constants: dict[str, tuple[str, ...]]) -> l
         problems.append("forbidden:tab-id close form")
     if "canonical `herdr` skill" not in text or "does not ship a copy" not in text:
         problems.append("missing:herdr dependency declaration")
+    if '--prompt "<first instruction>" > receipt.json' not in text:
+        problems.append("missing:launch prompt example")
+    if not KEEP_LIST_PATTERN.search(text):
+        problems.append("missing:receipt keep-list")
+    if any(name in text for name in STALE_KEEP_LIST_NAMES):
+        problems.append("forbidden:stale keep-list name")
     return problems
 
 
@@ -169,6 +184,12 @@ class DocGuardMutationCorpusTest(unittest.TestCase):
             "herdr dependency declaration removed": self.skill.replace(
                 "canonical `herdr` skill", "herdr skill"
             ),
+            "launch prompt flag removed": self.skill.replace(
+                ' --prompt "<first instruction>" > receipt.json', " > receipt.json", 1
+            ),
+            "receipt keep-list mangled": KEEP_LIST_PATTERN.sub(
+                "keep `agent`, `pane_id`, and `session`", self.skill, count=1
+            ),
         }
         for name, mutated in mutations.items():
             with self.subTest(mutation=name):
@@ -190,6 +211,9 @@ class DocGuardMutationCorpusTest(unittest.TestCase):
             ),
             "registry limitation removed": self.readme.replace(
                 "no vendor or model registry", "a vendor and model registry", 1
+            ),
+            "wrapper requirement removed": self.readme.replace(
+                "installed `agents` wrapper and Herdr", "installed tooling", 1
             ),
         }
         for name, mutated in mutations.items():

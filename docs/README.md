@@ -28,8 +28,11 @@
   declined proposal.
 - [Agent Launcher port run plan](plans/2026-08-27-agent-launcher-port-plan.md)
   is the approved run plan for the agent-launcher package port, executed under
-  porting runbook v1.1.0 after a three-cycle document review (verdict PROCEED,
-  zero findings on the final revision).
+  porting runbook v1.1.0. Document review blocked cycle 1 with eleven findings,
+  returned PROCEED in cycle 2 with two residual wording findings, and a
+  closing verification pass confirmed both repaired
+  ([reviews/2026-08-27-agent-launcher-port-plan-doc-review.md](reviews/2026-08-27-agent-launcher-port-plan-doc-review.md),
+  [reviews/2026-08-27-agent-launcher-port-plan-doc-review-r2.md](reviews/2026-08-27-agent-launcher-port-plan-doc-review-r2.md)).
 - [PR #6 independent code reviews](code-reviews/2026-08-24-pr-6-code-review-index.md)
   indexes the five review rounds that preceded the porting tools being merged,
   each preserved byte-for-byte with the revision it reviewed and its digest.
