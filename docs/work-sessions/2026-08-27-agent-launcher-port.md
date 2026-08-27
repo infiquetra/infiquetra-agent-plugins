@@ -1,9 +1,11 @@
 # Work session — agent-launcher portable port (issue #22)
 
 Date: 2026-08-27. Branch: `port/agent-launcher`. Backend: inline. Plan:
-`docs/plans/2026-08-27-agent-launcher-port-plan.md` (doc-review PROCEED at
-`8daee79`, three cycles, zero findings on the final revision). Runbook:
-`docs/runbooks/portable-plugin-port.md` v1.1.0.
+`docs/plans/2026-08-27-agent-launcher-port-plan.md`. Document review blocked
+cycle 1 with eleven findings, returned PROCEED in cycle 2 with two residual
+wording findings, and a closing verification pass confirmed both repaired
+(`docs/reviews/2026-08-27-agent-launcher-port-plan-doc-review.md`, `-r2.md`).
+Runbook: `docs/runbooks/portable-plugin-port.md` v1.1.0.
 
 ## What was built
 

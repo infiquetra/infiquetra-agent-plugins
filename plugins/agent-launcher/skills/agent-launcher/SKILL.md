@@ -43,9 +43,10 @@ python3 "$S" close --receipt-json receipt.json
 receipt to stdout (redirect it to `receipt.json` as above). It verifies live Herdr
 state (kind, pane, cwd, workspace, readiness; model and permission stay
 `requested_only` because `herdr agent list` does not publish them) before any
-prompt is sent. Pass `--prompt`: launch sends the task and records delivery, and
-a launch with no prompt sends an empty task, records `prompt_undelivered` when
-the session stays idle, and exits nonzero. `close` reads `tab_id` and `owned`
+prompt is sent. Pass `--prompt`: launch sends the task and records delivery in
+the receipt's `prompt_delivered` key; a launch with no prompt sends an empty
+task, and when the session stays idle the receipt records `prompt_delivered`
+false and the command exits nonzero. `close` reads `tab_id` and `owned`
 from that receipt. `owned` is true only when the receipt `tab_id` was **not** in
 the Herdr workspace tab set snapshotted immediately before the wrapper ran. The
 wrapper's `reused` bit means the *workspace* already existed, which is the common
