@@ -30,6 +30,14 @@ every unit.
 all twelve findings (F1–F12) are repaired — the per-finding disposition table is at the
 end of this document.
 
+**Revised again 2026-08-27** against the cycle-2 focused re-review at
+[`docs/reviews/2026-08-27-auralis-c3-adapter-plan-doc-review-cycle2.md`](../reviews/2026-08-27-auralis-c3-adapter-plan-doc-review-cycle2.md),
+which recorded ten findings closed and two (F3, F5) partially closed. Both are completed
+in this revision — F3 by the joint AE36 test section and the bounded adapter-boundary
+claim, F5 by the closed Markdown grammar in U2 — and the cycle-2 disposition table sits
+beside the cycle-1 table at the end of this document. Nothing recorded as closed was
+reopened.
+
 ## Problem Frame
 
 Auralis V1 is a private, single-operator macOS application that gives one bound,
@@ -146,13 +154,13 @@ part of it is observable at this slice boundary, and where it is traced.
 |---|---|---|---|
 | R20 | The bound agent authors the spoken rendering; Auralis and its adapter never compose, summarize, shorten, or rewrite response content | No code path in the adapter transforms rendering text; the gate rejects, never repairs; accepted text is forwarded byte-identical | `plugins/voice/tests/test_rendering_gate.py`, `plugins/voice/tests/test_mcp_server.py` |
 | R21 | Auralis exposes an MCP surface through which the bound agent submits an authored spoken rendering for the current turn | The adapter *is* that surface in the agent's process space: an MCP stdio server with a `submit_spoken_rendering` tool that forwards to `POST /v1/rendering` | `plugins/voice/tests/test_mcp_server.py` |
-| R22 | A turn completed without an authored rendering falls back to the cleaned full written response rather than silence | C3 owns this requirement, but its mechanism is C5's in-process `acceptFallback()` (see "The R22/R23 fallback seam"). The adapter's share: submit only gated plain text, never fabricate a submission, let the turn complete with no accepted authored rendering, and durably record that completion. Fallback initiation, content sourcing, and speech are Core/C5 (joint AE36) | `plugins/voice/tests/test_stop_hook.py`, `plugins/voice/tests/test_r122_end_to_end.py`; joint AE36 |
+| R22 | A turn completed without an authored rendering falls back to the cleaned full written response rather than silence | C3 owns this requirement, but its mechanism is C5's in-process `acceptFallback()` (see "The R22/R23 fallback seam"). The adapter's share: submit only gated plain text, never fabricate a submission, let the turn complete with no accepted authored rendering, and durably record that completion. Fallback initiation, content sourcing, and speech are Core/C5 (joint AE36) | `plugins/voice/tests/test_stop_hook.py`, `plugins/voice/tests/test_r122_adapter_boundary.py`; joint AE36 |
 | R23 | A fallback turn is visibly marked as a fallback, distinguishable from an authored response | The distinguishing mark is Core's `fallback_accepted` turn state (contract §6.4), written when C5 calls `acceptFallback()`. The adapter's share: keep the two outcomes disjoint in its own record (`fallback` vs `authored`) so the adapter-side evidence agrees with the Core-side mark (joint AE36) | `plugins/voice/tests/test_stop_hook.py`, `plugins/voice/tests/test_turn_record.py`; joint AE36 |
 | R25 | No persistent verbosity mode; preferences are carried to the agent as instructions; no adapter content decision | The policy module renders preferences to instruction text only; the adapter has no verbosity state that alters content and no transformation path | `plugins/voice/tests/test_voice_policy.py` |
 | R106 | For every turn, tell the agent whether the turn originated through Auralis | UserPromptSubmit hook queries `GET /v1/current`, matches identity, and injects an explicit originated/not-originated signal on every turn while bound | `plugins/voice/tests/test_user_prompt_submit_hook.py` |
 | R107 | Carry the operator's current voice policy and preferences, including an armed one-shot Brief Next Turn override, to the agent as instructions; transmit, never apply | Policy (with armed override) rides the same injection on Auralis-originated turns; the one-shot is consumed on transmission | `plugins/voice/tests/test_user_prompt_submit_hook.py`, `plugins/voice/tests/test_voice_policy.py` |
 | R121 | The agent-facing surface accepts plain spoken text only; Markdown or fenced code is rejected at submission with a named reason; never silently cleaned or reformatted | The gate rejects with `fenced_code_block` or `markdown_formatting` before anything reaches the wire; resubmission of plain text is accepted (AE26) | `plugins/voice/tests/test_rendering_gate.py`, `plugins/voice/tests/test_mcp_server.py` |
-| R122 | A rendering rejected under R121 with no acceptable replacement before turn completion falls back under R22, marked as a fallback | The turn record carries the rejection(s) with named reasons; completion capture then records outcome `fallback` — the full rejection-to-fallback path is observable in adapter state | `plugins/voice/tests/test_mcp_server.py`, `plugins/voice/tests/test_stop_hook.py` |
+| R122 | A rendering rejected under R121 with no acceptable replacement before turn completion falls back under R22, marked as a fallback | The turn record carries the rejection(s) with named reasons; completion capture then records outcome `fallback` — the **adapter-side half** of the rejection-to-fallback path, observable in adapter state. The Core-side half — the same turn marked `fallback_accepted` — is observable only in `infiquetra/auralis` and is proven by the joint AE36 test (see "The joint AE36 test" section) | `plugins/voice/tests/test_mcp_server.py`, `plugins/voice/tests/test_stop_hook.py`, `plugins/voice/tests/test_r122_adapter_boundary.py`; joint AE36 |
 
 ## High-level design
 
@@ -247,6 +255,94 @@ contract already assigns C5 the API — and the joint acceptance AE36 is where t
 cross-boundary behaviour is proven. If C5's implementation cannot source the written
 response, that is C5/C10's finding to surface in their slice; nothing in this plan papers
 over it, and no adapter-local JSON label is claimed to substitute for the Core-side mark.
+The executable form of that proof — where it runs, who owns it, and the step-by-step
+procedure — is the next section.
+
+## The joint AE36 test — executable home, owner, and procedure
+
+The cycle-2 doc review asked where the joint rejection-to-fallback proof actually
+executes. Plainly: **it cannot execute in this repository.** `acceptFallback()` is an
+in-process Dart API on Core's turn coordinator
+(`lib/src/core/bridge/turn_coordinator.dart:537` in `infiquetra/auralis` at the pinned
+revision `695cd0ecfddf44e0d6e3386da318bd5fde4a1926`, returning a `RenderingDisposition`);
+it is deliberately not one of the frozen five wire routes, so no Python process in this
+repository can drive it. The only wire-observable turn state is `GET /v1/current`, whose
+`turn.state` is exactly one of `open`, `authored_accepted`, `fallback_accepted`,
+`canceled` — and that `fallback_accepted` is observable there is already proven by Core's
+own suite (`test/core/bridge/bridge_server_test.dart` lines 391, 424, and 431 at the same
+revision, which drive `acceptFallback()` on a fresh open turn and read the state back over
+the wire).
+
+**Executable home: `infiquetra/auralis`.** The joint AE36 test is a Dart-side integration
+test in the `auralis` repository — the only process space that can both make the
+`acceptFallback()` call and host the turn state the closing assertion reads. It lands
+beside Core's existing bridge tests (the exact file path is the `auralis` lane's custody;
+this plan fixes the procedure and the obligations, not another repository's file layout).
+
+**Owner: the C5 slice in `infiquetra/auralis`, with a Dart-side harness standing in until
+C5 is built.** C5 is the production caller of `acceptFallback()` and is not yet built, so
+the test's C5 role is played by a Dart test harness making the same in-process call C5
+will make. This is a **named cross-repository dependency of this plan**: the joint AE36
+test is an obligation on the `auralis` repository, recorded here, in the
+acceptance-mapping row for AE36, and in U5's acceptance evidence note as an open item
+until the joint run closes it — not left implied.
+
+**What C3 must supply — all already guaranteed by U3/U5, nothing new.** The joint test
+consumes this repository's adapter as a black box: processes launchable at their declared
+argv from an installed-root-shaped copy of `plugins/voice` (U3's executable-entrypoint
+discipline, pinned by U5's packaging test), bridge discovery through the `HOME`-relative
+`bridge.json` location the contract's §2 fixes (no code seam needed), state directed by
+`VOICE_STATE_DIR`, and identity through the two KTD9 environment names backed by a
+stand-in Herdr executable fixture answering `agent list` with exactly one pane. If any of
+those stops being launchable that way, this repository — not the joint test — is broken.
+
+**The procedure.** Each step names the process, the repository it runs in, and the call:
+
+1. **Start Core (`auralis`, in-process).** The Dart test constructs the real turn
+   coordinator and bridge server on a loopback port and writes a real discovery
+   `bridge.json` under a temporary `HOME`'s `Library/Application Support/Auralis/`.
+2. **Start the adapter (this repository, as a subprocess).** The test launches the real
+   MCP server at its declared argv with `HOME`, `VOICE_STATE_DIR`, and the two KTD9
+   identity names pointed at the fixtures above. The server discovers the bridge and
+   registers presence over the real wire (`PUT /v1/presence`); Core's binding epoch binds
+   that identity.
+3. **Open the voice turn (`auralis`, in-process).** The harness starts a turn on the
+   coordinator exactly as C5 will on recording, so `GET /v1/current` shows an open turn
+   for the bound identity. The test holds this turn's `(binding_id, turn_id)` pair — the
+   join key for every later assertion.
+4. **Capture at prompt time (this repository, as a subprocess).** The real
+   `user_prompt_submit_hook.py` runs with a stdin payload for the bound session; it reads
+   `GET /v1/current` and writes the captured pair into the adapter's turn record.
+5. **The real C3 rejection (this repository, over the MCP pipes).** The test calls
+   `tools/call submit_spoken_rendering` with Markdown text. The gate answers the named
+   `rejected_content` reason; Core observes no `POST /v1/rendering` for the pair, and the
+   turn stays `open`.
+6. **No replacement; the turn completes (this repository, as a subprocess).** Nothing
+   further is submitted. The real `stop_hook.py` runs with a Stop payload for the same
+   session; the adapter records outcome `fallback` and spawns no speech.
+7. **Drive the fallback (`auralis`, in-process — the call this repository cannot
+   make).** The harness, standing in for C5, calls
+   `acceptFallback({bindingId: <captured binding_id>, turnId: <captured turn_id>,
+   text: <the harness's stand-in cleaned written response>})` on the same coordinator and
+   checks the returned `RenderingDisposition` reports acceptance.
+8. **The closing assertion (`auralis`, over the wire).** `GET /v1/current` now reports
+   the **same turn** — `turn_id` equal to the step-3 pair's — in state
+   **`fallback_accepted`**. That is the R23 mark, on the very turn whose rendering the
+   real C3 gate rejected in step 5, reached with no replacement, no fabricated
+   submission, and no sixth route.
+
+Every wire interaction in the procedure uses only the five frozen routes; the one call
+outside them (`acceptFallback()`) is made in-process by the Dart harness, exactly as C5
+will make it in production. No bridge route is added or proposed.
+
+**What this repository's own suite claims after this correction.** The in-repository test
+formerly named as the end-to-end R122 proof is renamed
+`plugins/voice/tests/test_r122_adapter_boundary.py` (U4) and claims exactly its half:
+real prompt hook → real MCP server process → real Stop hook → the adapter record's
+named-rejection-then-`fallback` trail for the captured pair. The Core-side
+`fallback_accepted` half is proven only by the joint AE36 test above. Neither half alone
+is R122's end-to-end proof; the join between them is the shared `(binding_id, turn_id)`
+pair.
 
 ## Key Technical Decisions
 
@@ -571,7 +667,7 @@ guessing. Deadline behaviour is tested with a stubbed clock at each owning bound
 ## Implementation Units
 
 Waves: U1 and U2 are independent; U3 depends on U1+U2; U4 depends on U1+U2+U3 (its
-end-to-end scenario launches U3's real server process); U5 lands last. All unit file
+adapter-boundary scenario launches U3's real server process); U5 lands last. All unit file
 sets are disjoint. Backend is inline for every unit, so execution order is simply
 U1 → U2 → U3 → U4 → U5.
 
@@ -593,7 +689,7 @@ and closed-set scenarios).
 
 **Shared stub fixture custody.** `plugins/voice/tests/bridge_stub.py` is the one stub
 fixture every bridge-facing suite uses (U1's own suites, U3's server suites, U4's hook
-suites, and the U4 end-to-end scenario). It is owned by U1 alone; no other unit edits it.
+suites, and the U4 adapter-boundary scenario). It is owned by U1 alone; no other unit edits it.
 It is a plain module (no `test_` prefix, so neither `unittest` discovery nor the CI
 `pytest` job collects it as a suite), holding the stdlib `http.server` stub that speaks
 the contract literals plus its request-capture surface, and is imported by sibling suites
@@ -712,33 +808,76 @@ contract** — a closed, enumerated class list documented in the module as the b
 authority (KTD1). The paired-marker and line-anchor recognizers of
 [`text_cleanup.py`](../../plugins/voice/scripts/text_cleanup.py) seed the overlapping
 classes, but the cleanup pass's documented scope does not bound the gate: the gate adds
-the Markdown forms the cleanup pass never needed. The full class list, with the reason
-each class yields:
+the Markdown forms the cleanup pass never needed.
+
+**The completeness rule — how the class table is closed, not merely long.** The
+recognizer's construct inventory is the block and inline construct list of base Markdown
+(its leaf blocks, container blocks, and inline constructs) plus the two GitHub-flavored
+extensions a coding agent routinely emits: pipe tables and strikethrough. (Full
+GitHub-flavored linkification is deliberately not in the inventory — it would reject bare
+spoken URLs, an accepted non-class below.) Every construct in that inventory is disposed
+of in exactly one of three stated ways; none is left without a rule:
+
+1. a **rejecting class** in the table below;
+2. a **structural non-class** — ordinary newlines and blank-line paragraph breaks are how
+   plain multi-paragraph speech text is written, never formatting (this disposes of the
+   paragraph, blank-line, and soft-line-break productions);
+3. a **prose-collision non-class** — a construct whose recognizer cannot be separated
+   from ordinary spoken punctuation at acceptable false-positive cost is deliberately
+   accepted, documented in the module with its rationale, and given an accepting test.
+   The single member is the HTML entity reference (`&amp;`, `&#39;`): its shape collides
+   with ordinary prose such as `AT&T;` mid-sentence, and R121's ground is Markdown
+   rejection, not HTML sanitization.
+
+The recognizers are line-and-inline regexes, not a Markdown parser; the completeness
+claim is construct coverage of the stated inventory, not parser equivalence. On a
+rejection surface, over-detection inside a class is safe — the guarded boundary is the
+stated non-class list, each entry with an accepting test.
+
+**The block-indentation rule (stated once, for every line-anchored class).** Markdown
+allows up to three spaces of indentation before any block construct, so every
+line-anchored class below matches at a **line anchor** — the start of a line followed by
+zero to three optional spaces — while a line indented four or more spaces (or with a
+leading tab) is itself the indented-code-block class. No indentation depth exempts block
+syntax from rejection: at three spaces a list, heading, blockquote, fence, or any other
+block form rejects under its own class; at four it rejects as indented code.
 
 | Detected class | Reason |
 |---|---|
-| Fenced code block (``` ``` `` or `~~~`) | `fenced_code_block` |
+| Fenced code block (a ``` ``` `` or `~~~` fence at a line anchor) | `fenced_code_block` |
 | Indented code block (a line indented 4+ spaces or a tab, outside a continuation of plain prose) | `markdown_formatting` (class `indented_code_block` in the detail) |
-| ATX heading (`#` … `######` + space) | `markdown_formatting` |
-| Setext heading (a non-blank line followed by an underline of only `=` or `-`) | `markdown_formatting` |
+| ATX heading (`#` … `######` + space, at a line anchor) | `markdown_formatting` |
+| Setext heading (a non-blank line followed by a line-anchored underline of only `=` or `-`) | `markdown_formatting` |
+| List marker (`-`/`+`/`*`/`1.`/`1)` + space, at a line anchor) | `markdown_formatting` |
+| Blockquote marker (`>` at a line anchor) | `markdown_formatting` |
+| Horizontal rule (at a line anchor) | `markdown_formatting` |
+| Table pipe row | `markdown_formatting` |
+| Link-reference definition (`[label]: destination` at a line anchor) | `markdown_formatting` |
+| Hard line break (a non-final line ending in two or more spaces, or ending in a backslash) | `markdown_formatting` (class `hard_line_break` in the detail) |
+| Raw HTML (an open or closing tag such as `<b>`, `</div>`, `<br/>`, or a comment `<!-- … -->`) | `markdown_formatting` (class `raw_html` in the detail) |
+| Backslash escape (a backslash immediately before an ASCII punctuation character) | `markdown_formatting` (class `backslash_escape` in the detail) |
 | Emphasis / strong pairs (`*`, `**`, `_`, `__`, word-edge-guarded) | `markdown_formatting` |
+| Strikethrough pair (`~~` … `~~`) | `markdown_formatting` (class `strikethrough` in the detail) |
 | Inline code span (backticks) | `markdown_formatting` |
 | Inline link / image (bracketed text followed immediately by a parenthesized destination, with or without a leading `!`) | `markdown_formatting` |
-| Reference-style link (`[text][label]`, `[text][]`) and link-reference definition (`[label]: destination` at line start) | `markdown_formatting` |
+| Reference-style link (`[text][label]`, `[text][]`) | `markdown_formatting` |
 | Autolink (`<scheme://…>` or `<name@host>` in angle brackets) | `markdown_formatting` |
-| List marker (`-`/`+`/`*`/`1.`/`1)` + space at line start) | `markdown_formatting` |
-| Blockquote marker (`>` at line start) | `markdown_formatting` |
-| Horizontal rule | `markdown_formatting` |
-| Table pipe row | `markdown_formatting` |
 
-Stated non-classes (accepted as plain, each a named negative test): arithmetic asterisks
-(`2 * 3`), identifier underscores (`snake_case`), mid-sentence hyphens, comparison angle
-brackets (`x < y`), a bare bracketed aside (`[sic]` — without a matching reference
-definition it is not a link, and definitions themselves are rejected), a colon-labelled
-line (`note: …`), and a bare spoken URL (not an autolink without angle brackets; base
-Markdown does not linkify bare URLs). The gate exports a verdict (`plain`, or a named
-rejection with detected classes and first offending line) and has no transformation
-function at all; the class table above is the module's documented contract and the test
+Stated non-classes (accepted as plain, each a named accepting test): arithmetic asterisks
+(`2 * 3`), identifier underscores (`snake_case`), mid-sentence hyphens, spaced comparison
+angle brackets (`x < y` — a space after `<` cannot open a raw-HTML tag), a bare bracketed
+aside (`[sic]` — without a matching reference definition it is not a link, and
+definitions themselves are rejected), a colon-labelled line (`note: …`), a bare spoken
+URL (not an autolink without angle brackets; base Markdown does not linkify bare URLs,
+which is one reason the inventory stays base Markdown), an ampersand in prose even
+directly before a semicolon (`AT&T;` — the entity-reference prose-collision non-class
+above), a backslash before a letter or digit (a Windows path such as `C:\Users`),
+trailing spaces on the text's final line or on a line before a blank line (Markdown
+strips them; they are not a hard break, and they are invisible in speech), and blank-line
+paragraph separation (the structural non-class). The gate exports a verdict (`plain`, or
+a named rejection with detected classes and first offending line) and has no
+transformation function at all; the class table above, together with the completeness
+rule and the block-indentation rule, is the module's documented contract and the test
 suite's checklist. `voice_policy.py` follows the `binding.py` store pattern:
 atomic write-replace, absent-vs-corrupt reported by name; fields are stated preference
 instruction lines plus the `brief_next_turn` one-shot; `consume_brief_next_turn()` is
@@ -760,11 +899,22 @@ budget — and the module exposes no other write path**. CLI: `voice policy show
   core, both named-reason halves the card requires).
 - **Every row of the class table has at least one rejecting scenario** — including the
   forms beyond the cleanup pass's scope: a setext heading, a reference-style link, a
-  link-reference definition, an autolink, and an indented code block each yield their
-  stated reason and class.
+  link-reference definition, an autolink, an indented code block, a hard line break in
+  **both** syntaxes (a non-final line ending in two trailing spaces, and one ending in a
+  backslash), a raw HTML tag and an HTML comment, a backslash escape (`\*`), and a
+  strikethrough pair each yield their stated reason and class.
+- **Every line-anchored class additionally has a three-space-indented rejecting
+  variant** — a three-space-indented list marker, ATX heading, blockquote, fence,
+  horizontal rule, setext underline, and link-reference definition each still reject
+  under their own class (the block-indentation rule proven per class, not per cited
+  example). Plus the seam scenario: the same list marker at three leading spaces rejects
+  as a list, at four as indented code — rejected on both sides of the boundary, with no
+  depth at which it passes.
 - **Every stated non-class has an accepting scenario**: arithmetic asterisks, identifier
-  underscores, mid-sentence hyphens, `x < y`, a bare `[sic]`, a colon-labelled line, and
-  a bare spoken URL each pass as `plain`.
+  underscores, mid-sentence hyphens, `x < y`, a bare `[sic]`, a colon-labelled line, a
+  bare spoken URL, `AT&T;` mid-sentence, a backslash-before-letter path (`C:\Users`),
+  trailing spaces on the final line and on a line before a blank line, and a
+  multi-paragraph plain text separated by blank lines each pass as `plain`.
 - A submission containing both a fence and emphasis yields `fenced_code_block` (stated
   precedence).
 - The gate exposes no function that returns modified text (R20 asserted structurally: the
@@ -884,13 +1034,16 @@ budget table),
 `plugins/voice/tests/test_user_prompt_submit_hook.py` (new),
 `plugins/voice/tests/test_pre_tool_use_hook.py` (new),
 `plugins/voice/tests/test_stop_hook.py` (edit: bridged-branch scenarios),
-`plugins/voice/tests/test_r122_end_to_end.py` (new: the cross-boundary
-rejection-to-fallback proof below).
+`plugins/voice/tests/test_r122_adapter_boundary.py` (new: the adapter-boundary
+rejection-to-fallback record proof below; named in cycle 1 as `test_r122_end_to_end.py`
+and renamed because the adapter suite proves the adapter-side half only — the Core-side
+half is the joint AE36 test).
 
 **Requirements:** R106, R107 (transmission), R22/R23 (adapter share per the fallback
-seam), R122 (completion half and the end-to-end path), PreToolUse capture per X1.
+seam), R122 (completion half and the adapter-boundary evidence path; the Core-side half
+is the joint AE36 test), PreToolUse capture per X1.
 
-**Depends on:** U1, U2, U3 (the end-to-end scenario launches U3's real server process).
+**Depends on:** U1, U2, U3 (the adapter-boundary scenario launches U3's real server process).
 
 **Backend:** inline.
 
@@ -912,12 +1065,13 @@ rows; every expiry path still exits 0.
 **Test scenarios** (`plugins/voice/tests/test_user_prompt_submit_hook.py`,
 `plugins/voice/tests/test_pre_tool_use_hook.py`,
 `plugins/voice/tests/test_stop_hook.py`,
-`plugins/voice/tests/test_r122_end_to_end.py`):
+`plugins/voice/tests/test_r122_adapter_boundary.py`):
 
-- **R122 end to end, at the production boundaries** (`test_r122_end_to_end.py` — the
-  scenario exists because a helper-level assertion cannot prove the path; it must fail if
-  the submission record schema, the session/identifier join, the completion handoff, or
-  the fallback marker drifts). Every boundary is the real one: the U1 stub bridge shows
+- **R122 at the adapter boundary, across the production processes**
+  (`test_r122_adapter_boundary.py` — the scenario exists because a helper-level assertion
+  cannot prove the path; it must fail if the submission record schema, the
+  session/identifier join, the completion handoff, or the fallback marker drifts). Every
+  boundary on the adapter's side is the real one: the U1 stub bridge shows
   an open turn bound to the resolved identity; the **real `user_prompt_submit_hook.py`**
   runs as a subprocess with a real stdin payload and writes the captured pair into the
   turn record; the **real MCP server process** (U3's declared argv, real pipes) receives
@@ -928,7 +1082,13 @@ rows; every expiry path still exits 0.
   assertion reads the turn record through the production module: the same turn —
   identified by the captured `(binding_id, turn_id)` — now carries outcome `fallback`,
   the earlier named rejection still present, no speak child spawned. The joined artifact
-  was written by the production processes end to end, not assembled by the test.
+  was written entirely by the production processes, not assembled by the test. **What
+  this scenario proves — and only this:** the adapter-side half of R122 (named rejection,
+  no replacement, completion, and the durable `fallback` outcome for the captured pair).
+  It does not observe Core's `fallback_accepted` mark and cannot — `acceptFallback()` is
+  an in-process Dart API in `infiquetra/auralis`, unreachable from this repository's
+  Python suite. The Core-side half is proven only by the joint AE36 test (see "The joint
+  AE36 test — executable home, owner, and procedure").
 
 - The card-named origin test: with the stub showing an open turn bound to this session,
   the injected context states the turn originated through Auralis and a rendering is
@@ -946,8 +1106,8 @@ rows; every expiry path still exits 0.
   nothing is recorded; the hook writes no stdout on any path and exits 0 on malformed
   input (permission flow provably untouched at the hook contract level).
 - Stop hook: wire-bound with the captured turn unaccepted → no speak spawn, outcome
-  `fallback` recorded (R122's terminal half; with a prior gate rejection in the record,
-  the record now shows the full named-rejection-then-fallback path); wire-bound with an
+  `fallback` recorded (R122's adapter-side terminal half; with a prior gate rejection in
+  the record, the record now shows the named-rejection-then-fallback trail); wire-bound with an
   accepted rendering → outcome `authored`, no speak spawn; unbound or bridge-unavailable
   → the existing 0.2.1 spawn behaviour, asserted by the existing suite continuing to
   pass unmodified in those scenarios.
@@ -992,8 +1152,10 @@ namespaces apart): the AE26 test evidence, the R-to-test trace for all nine requ
 the performed manual check from U4, AE34 joint-readiness status, the wire-pin provenance
 (source revision `695cd0ecfddf44e0d6e3386da318bd5fde4a1926` and snapshot SHA-256) with the
 not-yet-merged flag restated, the R22/R23 cross-slice dependency on C5 restated for the
-AE36 closeout, and the record of the guard-mutation checks U1 and U2 performed (each
-guard: relaxed, named failing test observed, restored).
+AE36 closeout — including the joint AE36 test's executable home (`infiquetra/auralis`)
+and its procedure reference, held open until the joint run closes it — and the record of
+the guard-mutation checks U1 and U2 performed (each guard: relaxed, named failing test
+observed, restored).
 
 **Test expectation:** the extended `tests/test_claude_plugin_packaging.py` scenarios
 (version agreement at four sites including the new value; `mcpServers` is a path into the
@@ -1054,8 +1216,10 @@ honestly in the plan, the evidence note, and AE34.
   `test_stop_hook.py` and the U4 manual check.
 - **False-positive plain-text rejections.** Over-eager detectors would reject honest
   spoken prose (an asterisk in "2 * 3", an underscore in a module name). Contained by
-  reusing the 0.2.1-proven paired-marker recognizers and by explicit plain-prose
-  acceptance scenarios in `test_rendering_gate.py`.
+  reusing the 0.2.1-proven paired-marker recognizers and by the stated non-class list in
+  U2 — every accepting case, including the entity-collision, path-backslash, and
+  trailing-whitespace cases the closed grammar added, is a named scenario in
+  `test_rendering_gate.py`.
 - **State races between hook processes and the MCP server.** Contained by KTD11: every
   turn-record mutation is a locked read-apply-write transaction through
   `turn_record.mutate`, proven by deterministic interleaving tests; atomic write-replace
@@ -1072,9 +1236,9 @@ honestly in the plan, the evidence note, and AE34.
 
 | Acceptance | Where it lands |
 |---|---|
-| AE26 — Markdown rejected, not cleaned; plain resubmission accepted (covers R121, R20) | Runnable at this boundary: `test_rendering_gate.py` + the `test_mcp_server.py` AE26 scenario (in-process and at the declared executable), plus the R122 end-to-end proof in `test_r122_end_to_end.py`; evidence recorded in `docs/evidence/voice/auralis-c3-acceptance.md` (U5) |
+| AE26 — Markdown rejected, not cleaned; plain resubmission accepted (covers R121, R20) | Runnable at this boundary: `test_rendering_gate.py` + the `test_mcp_server.py` AE26 scenario (in-process and at the declared executable), plus the adapter-boundary R122 record proof in `test_r122_adapter_boundary.py`; evidence recorded in `docs/evidence/voice/auralis-c3-acceptance.md` (U5) |
 | AE34 — joint bridge acceptance with C10 | Readiness from this side: U1/U3 green against the independent-literals stub; the joint run itself is coordinator-scheduled across repositories |
-| AE19, AE23, AE35, AE36 — joint with C5/C10/C1 | Out of this slice's hands; the adapter contributions they consume (presence, origin, submission, fallback-outcome recording) are the tested surfaces above. AE36 in particular is where the named R22/R23 cross-slice dependency on C5's `acceptFallback()` path is proven end to end |
+| AE19, AE23, AE35, AE36 — joint with C5/C10/C1 | Out of this slice's hands; the adapter contributions they consume (presence, origin, submission, fallback-outcome recording) are the tested surfaces above. AE36 in particular is where the named R22/R23 cross-slice dependency on C5's `acceptFallback()` path is proven end to end — its executable home (`infiquetra/auralis`), owner (the C5 slice, Dart harness standing in), and step-by-step procedure are specified in "The joint AE36 test — executable home, owner, and procedure", and the obligation is recorded there as a named cross-repository dependency |
 
 ## Verification
 
@@ -1138,6 +1302,27 @@ operating rule:
   byte-equivalent retry decisively mean the earlier acceptance, and an extra wire read
   would add failure modes without adding information.
 
+Decisions taken during the 2026-08-27 cycle-2 plan repair (findings F3 and F5 only),
+same operating rule:
+
+- **AE36 joint-test home: the `auralis` repository** — forced rather than chosen:
+  `acceptFallback()` is an in-process Dart API and the five-route wire is frozen, so no
+  test in this repository can drive or observe the fallback transition, and the only
+  alternative (a sixth route) is forbidden by the review and by C10's acceptance.
+- **The in-repository R122 test renamed `test_r122_adapter_boundary.py`** — the cycle-1
+  name `test_r122_end_to_end.py` itself carried the overclaim F3 records; the cycle-1
+  disposition table below keeps the old name as accurate history of that cycle.
+- **Markdown grammar inventory: base Markdown's construct list plus GitHub-flavored pipe
+  tables and strikethrough** — the cycle-1 table already treated pipe tables as in scope,
+  and those two extensions are the forms a coding agent actually emits. Chosen over "base
+  Markdown only" (would leave the agent-typical `~~…~~` unrejected) and over the full
+  GitHub-flavored grammar (its bare-URL linkification would reject bare spoken URLs, an
+  accepted non-class since cycle 1).
+- **HTML entity references are a named prose-collision non-class, not a rejecting
+  class** — the `&name;` shape collides with ordinary prose such as `AT&T;` mid-sentence,
+  and R121 grounds Markdown rejection, not HTML sanitization; the exclusion is documented
+  and tested rather than silently absent, which is what keeps the class table closed.
+
 ## Doc-review disposition (2026-08-27)
 
 Where each finding of
@@ -1158,3 +1343,15 @@ was repaired in this document.
 | F10 (adjective timeouts) | Normative "Timeout budget" table: every HTTP, subprocess, lock, and hook deadline is a number with a named on-expiry behaviour; hooks.json entries state `timeout: 5`; clock/deadline scenarios assigned |
 | F11 (token/identifier grammar untested) | U1 scenarios for base64url alphabet, padding, and length violations and for uppercase / non-UUID / wrong-version Core identifiers, each asserting no request follows; every guard mutation-checked once and recorded in the U5 acceptance note |
 | F12 (moving-branch requirement links) | Frontmatter `origin:`, the namespace note, and the unattended-decisions log all use the immutable commit permalink at `b49de1ba4d39cbd8a1e582d72bddca85bf528f8a` |
+
+## Cycle-2 doc-review disposition (2026-08-27)
+
+Where the two findings the cycle-2 focused re-review at
+[`2026-08-27-auralis-c3-adapter-plan-doc-review-cycle2.md`](../reviews/2026-08-27-auralis-c3-adapter-plan-doc-review-cycle2.md)
+recorded as partially closed were completed in this document. The ten findings that
+review recorded as closed are untouched; the cycle-1 table above stands as history.
+
+| Finding | Cycle-2 repair |
+|---|---|
+| F3 (the R122 test claimed an end-to-end proof it does not deliver) | New section "The joint AE36 test — executable home, owner, and procedure": the joint test executes in `infiquetra/auralis` — the only process space that can call the in-process `acceptFallback()` (`lib/src/core/bridge/turn_coordinator.dart:537` at the pinned revision) — owned by the C5 slice with a Dart harness standing in, following an eight-step procedure that starts with the real C3 rejection over the adapter's MCP pipes, submits no replacement, completes the turn, drives `acceptFallback()` in process, and closes on the `GET /v1/current` assertion that the same captured turn reads `fallback_accepted`; recorded as a named cross-repository dependency, with no bridge route added. The in-repository test is renamed `test_r122_adapter_boundary.py` (cycle-1 name `test_r122_end_to_end.py`), and its scenario, the R122 requirement row, U4, and the acceptance mapping now claim only the adapter-side half |
+| F5 (the Markdown table closed the cycle-1 examples, not the defect class) | U2's gate contract now states its completeness rule — every construct of base Markdown plus GitHub-flavored pipe tables and strikethrough is disposed of as a rejecting class, a structural non-class, or a named prose-collision non-class, with none left without a rule — adds the block-indentation rule (every line-anchored class matches after zero to three leading spaces; four or more, or a tab, is indented code, so no indentation depth passes the gate), and adds the previously missing classes: hard line break in both syntaxes (two trailing spaces, and the backslash form), raw HTML, backslash escape, and strikethrough. Every class keeps at least one rejecting scenario, every line-anchored class gains a three-space-indented rejecting variant plus the three-vs-four-space seam scenario, and the ordinary-punctuation accepting cases are retained and extended |
