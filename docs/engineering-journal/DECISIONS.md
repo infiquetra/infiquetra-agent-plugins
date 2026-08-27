@@ -1,5 +1,46 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-08-27
+
+### Auralis C3 adapter plan: the R121 gate lives in the adapter surface, and the MCP server is the adapter's long-lived process
+
+**Author.** Claude for Jeff Cox (Auralis C3 planning, issue #46, branch
+`orch/auralis-c3-adapter-plan-c3-adapter`)
+
+**Decision.** The plan at
+[`docs/plans/2026-08-27-auralis-c3-adapter.md`](../plans/2026-08-27-auralis-c3-adapter.md)
+extends the voice package into the Claude adapter end of the Auralis local bridge, with
+two load-bearing choices and eight supporting ones (KTD1–KTD10 in the plan). First: the
+plain-spoken-text rule (Auralis requirement R121) is enforced in the adapter's Model
+Context Protocol submission tool, not on the wire — the bridge contract's adjudication
+vocabulary carries no content-form reason, Core accepts text verbatim, and the tool
+answers with a three-class result vocabulary (adapter content rejections
+`fenced_code_block` / `markdown_formatting`, Core rejections relayed verbatim, and named
+availability conditions), never a cleaned rewrite. Second: the plugin-declared MCP stdio
+server is the adapter's one long-lived process, so the bridge presence-renewal loop lives
+in it, while every Claude hook stays an ephemeral one-shot client; submissions target the
+`(binding_id, turn_id)` pair captured at prompt time, never a fresh snapshot at
+submission time.
+
+**Rationale.** The agent-facing surface is the only place R121 *can* live without a
+cross-lane wire change; splitting the reason vocabulary keeps adapter judgment, Core
+judgment, and availability impossible to confuse. Plugin MCP servers persist for the
+session (verified against current Claude Code documentation), which meets the lease
+cadence no hook process can hold; the prompt-time pair makes Core's own
+`turn_not_current` adjudication the arbiter of staleness instead of silently retargeting
+a late rendering.
+
+**Rejected alternatives.** Repairing submissions with the existing cleanup pass (R121
+forbids repair); asking C10 for a wire-level content reason (Core custody); a separate
+presence daemon (new lifecycle surface, nothing needs it); fresh identifier reads at
+submission (wrong-turn hazard); an inline `mcpServers` object in the Claude packaging
+manifest (a command in a metadata-only file — the declaration is a string path into
+`com.infiquetra.claude/` instead).
+
+**Revisit when.** A bridge v2 adds content adjudication or changes identifier custody, or
+the Claude client changes plugin MCP-server lifecycle. The full per-decision revisit
+conditions are in the plan's KTD section.
+
 ## 2026-08-25
 
 ### Claude installs the package root; the client extension keeps the behaviour
