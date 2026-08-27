@@ -60,10 +60,6 @@
       "classification": "target-owned"
     },
     {
-      "path": "tests/__init__.py",
-      "classification": "target-owned"
-    },
-    {
       "path": "tests/test_launcher_contract.py",
       "classification": "target-owned"
     },
