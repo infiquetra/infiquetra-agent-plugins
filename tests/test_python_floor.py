@@ -75,6 +75,7 @@ DECLARATION_SITES = (
     "plugins/fleet-core/README.md",
     "plugins/fleet-core/CHANGELOG.md",
     "plugins/mission-control/README.md",
+    "plugins/agent-launcher/README.md",
 )
 
 #: Suffixes worth scanning for a stale floor token. Anything else in the tree is

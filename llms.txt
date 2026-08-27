@@ -23,6 +23,7 @@
 
 ## Packages
 
+- [Agent Launcher package](plugins/agent-launcher/README.md): Portable agent-launcher package carrying the shared single-session launch contract, derived from a pinned upstream revision with its Claude adapter under `com.infiquetra.claude/`.
 - [Mission Control package](plugins/mission-control/README.md): Portable mission-control package for SDLC management, derived from a pinned upstream revision with its Claude adapter under `com.infiquetra.claude/`.
 - [UniFi package](plugins/unifi/README.md): Portable UniFi package derived from a pinned upstream revision, with its Claude adapter under `com.infiquetra.claude/`.
 - [Fleet Core package](plugins/fleet-core/README.md): Portable Fleet Core source carrying the shared rate-limit retry, intent envelope, and tier palette modules.

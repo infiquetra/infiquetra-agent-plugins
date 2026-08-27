@@ -12,7 +12,7 @@ no such decision has been made.
 
 ## Status
 
-Two portable plugin packages have been ported and assessed across all ten
+Three portable plugin packages have been ported and assessed across all ten
 coding-agent clients installed on the operator's machine:
 
 1. **`unifi` pilot** — The first portability pilot ported the Claude Code
@@ -31,6 +31,14 @@ coding-agent clients installed on the operator's machine:
    (version 2.12.2) in `infiquetra-claude-plugins`, with 266 ported tests in
    continuous integration, the validation rule audit, and a full ten-client
    compatibility assessment.
+3. **`agent-launcher` package** — Ported under runbook
+   [v1.1.0](docs/runbooks/portable-plugin-port.md) and the approved run plan
+   ([`docs/plans/2026-08-27-agent-launcher-port-plan.md`](docs/plans/2026-08-27-agent-launcher-port-plan.md)),
+   delivering an 11-file portable package derived from upstream commit
+   `8269f84b` (version 1.0.0, the shared single-session launch contract
+   accepted in `infiquetra-claude-plugins` issue #777) with a target-owned
+   portable contract suite, the packaging smoke and rule-audit guards, and a
+   full ten-client compatibility assessment.
 
 Custody did not move. Existing vendor repositories remain the runtime sources of
 truth. The *ported* packages under [`plugins/`](plugins/) are derived artifacts:
@@ -89,6 +97,36 @@ and committed evidence:
     [`docs/evidence/2026-08-25-mission-control-post-activation-readback.md`](docs/evidence/2026-08-25-mission-control-post-activation-readback.md)
     and 0 survivors across 68 anchors in mutation proof
     [`docs/evidence/2026-08-25-cycle16-mutation-proof-portable-copies.txt`](docs/evidence/2026-08-25-cycle16-mutation-proof-portable-copies.txt).
+- **Agent launcher ships the shared launch contract as one entrypoint.** Pinned
+  to `8269f84b` (v1.0.0), the package provides one Agent Skill
+  (`agent-launcher`) over the byte-copied contract script
+  ([`plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`](plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py)):
+  create one session through the installed `agents` wrapper, verify it through
+  Herdr, deliver a prompt, and close only a session the launch proved it owns.
+  The upstream skill and README are superseded by target-owned portable docs —
+  the upstream skill's Claude-runtime discovery ladder never crosses the port
+  boundary — and the upstream test suite's remaining repo-wide premises are
+  dropped with a recorded reason; the target-owned suite under
+  [`plugins/agent-launcher/tests/`](plugins/agent-launcher/tests/) re-proves
+  the portable contract on `python>=3.12`.
+- **Agent launcher ten-client assessment: 7 directly, 3 via adapter, none
+  failed.** The
+  [agent-launcher compatibility matrix](docs/evidence/2026-08-27-agent-launcher-compatibility-matrix.md)
+  records:
+  - 7 work directly (Cursor Agent, Qwen, OpenCode, Gemini CLI, Muse, Agy,
+    Hermes), the four skill-scoped clients among them placing the single skill
+    unit.
+  - 3 work through an adapter (Claude Code session-scoped through the
+    local-plugin flag; OpenAI Codex on the marketplace manifest it names and
+    this package does not ship; Grok on the wrapper trust its install
+    required).
+  - 0 failed, 0 unsupported. The single entrypoint answered `--help` from
+    every client-resolved copy, credential-free, on the floor interpreter.
+  - Evidence is bound to the package fingerprint, with post-activation
+    readback in
+    [`docs/evidence/2026-08-27-agent-launcher-post-activation-readback.md`](docs/evidence/2026-08-27-agent-launcher-post-activation-readback.md)
+    and 0 survivors across 8 mutation classes in the proof
+    [`docs/evidence/2026-08-27-agent-launcher-mutation-proof-portable-docs.txt`](docs/evidence/2026-08-27-agent-launcher-mutation-proof-portable-docs.txt).
 
 What remains open is distribution, not compatibility. OpenAI Codex needs a
 marketplace manifest to be reachable at all, and Cursor Agent's marketplace
@@ -101,10 +139,12 @@ decisions are recorded in the journal's
 
 The record of the work, in the order a new reader should take it:
 
-- [Mission Control ten-client compatibility matrix](docs/evidence/2026-08-25-mission-control-compatibility-matrix.md)
+- [Agent launcher ten-client compatibility matrix](docs/evidence/2026-08-27-agent-launcher-compatibility-matrix.md),
+  [Mission Control ten-client compatibility matrix](docs/evidence/2026-08-25-mission-control-compatibility-matrix.md)
   and [UniFi ten-client compatibility matrix](docs/evidence/2026-08-22-unifi-compatibility-matrix.md)
   — what each client did with each package, stage by stage, with evidence.
-- [Mission Control port run plan](docs/plans/2026-08-24-mission-control-port-run-plan.md)
+- [Agent launcher port run plan](docs/plans/2026-08-27-agent-launcher-port-plan.md),
+  [Mission Control port run plan](docs/plans/2026-08-24-mission-control-port-run-plan.md)
   and [UniFi pilot plan](docs/plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md)
   — the approved plans the work followed.
 - [Cross-vendor plugin architecture brief](docs/cross-vendor-plugin-architecture-brief.md)
@@ -119,6 +159,7 @@ The record of the work, in the order a new reader should take it:
 | [`plugins/unifi/`](plugins/unifi/README.md) | Ported (pilot) | Portable UniFi network and protect management | `818fd684` (v2.0.6) |
 | [`plugins/fleet-core/`](plugins/fleet-core/README.md) | Ported (vertical slice) | Shared rate-limit retry, intent envelope, tier palette, and models registry | `3b5faa6c` (v0.25.2) |
 | [`plugins/mission-control/`](plugins/mission-control/README.md) | Ported | SDLC management on Operations, Asgard, and CAMPPS boards | `84eaf042` (v2.12.2) |
+| [`plugins/agent-launcher/`](plugins/agent-launcher/README.md) | Ported | Shared single-session launch contract: create, verify, prompt, and owned-close one coding-agent session | `8269f84b` (v1.0.0) |
 
 ### Portable Fleet Core scope
 
