@@ -1,4 +1,7 @@
-<!-- matrix-status: current -->
+<!-- matrix-status: superseded -->
+<!-- superseded-by: 2026-08-27-agent-launcher-compatibility-matrix.md -->
+<!-- superseded-reason: The CI repair removed plugins/agent-launcher/tests/__init__.py (its second tests package name collided in pytest's default import mode and broke the ported-plugin-tests CI job); the package tree moved, so the assessment was re-run and the record re-bound. -->
+
 
 # Ten-client compatibility matrix — portable agent-launcher package
 
@@ -10,16 +13,13 @@ derived artifact from an upstream Claude Code plugin in
 document records what happened when that package was put in front of every coding-agent
 client installed on the operator's machine, on 27 August 2026.
 
-This is the current record, re-bound after the CI repair removed the
-package's `tests/__init__.py` (a second `tests` package name broke pytest's
-default-mode collection in the ported-plugin-tests CI job). The three earlier
-records are preserved unmodified as
+This is the current record, re-bound to the repaired package tree after the
+code-review cycle-2 fixes changed the portable skill. The two earlier records
+are preserved unmodified as
 `2026-08-27-agent-launcher-compatibility-matrix-pre-cycle2-repair.md` (first
-frozen tree),
+frozen tree) and
 `2026-08-27-agent-launcher-compatibility-matrix-pre-cycle3-repair.md`
-(post-cycle-1 tree), and
-`2026-08-27-agent-launcher-compatibility-matrix-pre-pr-ci-repair.md`
-(post-cycle-2 tree), each superseded by this document. All four runs
+(post-cycle-1 tree), each superseded by this document. All three runs
 observed identical client behavior; only the bound fingerprint moved.
 
 The point of the exercise is to learn which clients can consume a portable
@@ -84,7 +84,7 @@ Held identical across all ten:
   exercised here by explicit path rather than assumed.
 - **The assessed copy is the shipped tree.** The package root handed to each
   client was a scratch copy of `plugins/agent-launcher/`, fingerprinted before the
-  run at 10 files, `fca8657f…`, equal to the source tree, and recomputed after
+  run at 11 files, `7e6dc844…`, equal to the source tree, and recomputed after
   the run and still equal — so no client mutated what was assessed.
 
 ## The status rubric
@@ -181,8 +181,8 @@ at version 1.0.0 with its manifest description.
   "package": {
     "name": "agent-launcher",
     "version": "1.0.0",
-    "file_count": 10,
-    "tree_sha256": "fca8657f7cf65082d9ef20b40a1121eb00ba92eb94948d4f68c492045e725484"
+    "file_count": 11,
+    "tree_sha256": "7e6dc8448a3474d3974c13e9518c8c5ce9d76bff6ae6229ea91accb3d478ad82"
   },
   "method": {
     "stages": [
@@ -191,7 +191,7 @@ at version 1.0.0 with its manifest description.
       "load",
       "invocation"
     ],
-    "isolation": "Each client ran against its own empty home directory in a scratch area, so no assessment read or wrote the operator's real client configuration; every result reflects a first-run install. The package root handed to each client was a scratch copy of the shipped tree, fingerprinted before the run at 10 files, fca8657f..., equal to the source tree, and recomputed after the run and still equal. Cursor Agent is the single established exception: it keeps its authentication in the user's home, so it was assessed against the real home with read-only session-scoped probes that write no client state. Two launcher wrappers on this machine (Grok and Agy auto-trust, and Qwen's herdr wrapper) resolve their real binary through the client home; under an isolated home that lookup fails, so the run supplies each wrapper's own documented override naming the real executable. That is a property of the operator's launcher arrangement and of this method's isolated home, not of the package; recording a package failure for it would be false. This is the fourth run of the day: the CI repair removed the package's tests/__init__.py (a second tests package name broke pytest's default-mode collection in CI), moving the tree, so the earlier current record was superseded and this run re-binds the matrix; all four runs observed identical client behavior.",
+    "isolation": "Each client ran against its own empty home directory in a scratch area, so no assessment read or wrote the operator's real client configuration; every result reflects a first-run install. The package root handed to each client was a scratch copy of the shipped tree, fingerprinted before the run at 11 files, 7e6dc844..., equal to the source tree, and recomputed after the run and still equal. Cursor Agent is the single established exception: it keeps its authentication in the user's home, so it was assessed against the real home with read-only session-scoped probes that write no client state. Two launcher wrappers on this machine (Grok and Agy auto-trust, and Qwen's herdr wrapper) resolve their real binary through the client home; under an isolated home that lookup fails, so the run supplies each wrapper's own documented override naming the real executable. That is a property of the operator's launcher arrangement and of this method's isolated home, not of the package; recording a package failure for it would be false. This is the third run of the day: each code-review repair batch that moved the package tree superseded the earlier current record and re-ran this assessment (KTD10); the two superseded records are preserved beside this one, and all three runs observed identical client behavior.",
     "credentials": "No client was authenticated and no credential was supplied at any stage. The package declares no credential variable prefixes (its launcher reads no credentials), so no environment variables were stripped beyond the scratch-home redirections. Where a client would need credentials before reporting state, the stage would be recorded blocked with the requirement named; none did.",
     "network": "No remote API call was made at any stage. The invocation stage runs the single declared package entrypoint with its credential-free --help action, so argparse answers it and no request leaves the machine. No mutating operation was invoked and no command passed a write confirmation (--confirm); the harness safety rule blocks the launcher's launch and close verbs in advance."
   },

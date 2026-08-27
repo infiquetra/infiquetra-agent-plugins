@@ -12,18 +12,20 @@ not the binding itself.
 ## The frozen candidate
 
 - **Package tree.** `plugins/agent-launcher/`, 11 files, tree digest
-  `7e6dc8448a3474d3974c13e9518c8c5ce9d76bff6ae6229ea91accb3d478ad82`,
+  `fca8657f7cf65082d9ef20b40a1121eb00ba92eb94948d4f68c492045e725484`,
   recomputed with
   `python3 scripts/check_compatibility_matrix.py --print-fingerprint agent-launcher`
   and equal to the fingerprint recorded in the matrix before and after the run.
-- **Frozen at commit `c064e5b8d4e8c7cc7cccef3e8bdcbdf1637a8cf4`.** Two
-  code-review repair batches changed the package documentation and tests and
-  moved the fingerprint each time, so the matrix was superseded twice, the
-  assessment re-run against each repaired tree, and this readback re-bound to
-  the final tree (the two superseded records are preserved beside the current
-  matrix). Any later commit that moved `plugins/agent-launcher/` would retire
-  this readback and the matrix, and the re-run obligation in the plan's KTD10
-  would apply.
+- **Frozen at commit `35288e34c9915fc1912c9ae862570ce4fbeca6f5`.** Three repair
+  batches changed the package tree — the code-review cycle-1 documentation and
+  test repairs, the cycle-2 skill wording repair, and the CI repair that removed
+  `tests/__init__.py` (a second `tests` package name broke pytest's
+  default-mode collection) — and each moved the fingerprint, so the matrix was
+  superseded three times, the assessment re-run against each repaired tree, and
+  this readback re-bound to the final tree (the three superseded records are
+  preserved beside the current matrix). Any later commit that moved
+  `plugins/agent-launcher/` would retire this readback and the matrix, and the
+  re-run obligation in the plan's KTD10 would apply.
 - **Upstream pin.** `infiquetra-claude-plugins` commit
   `8269f84b01065ac96d162431ce00ebd42003dd5f` (plugin version 1.0.0), recorded
   in `plugins/agent-launcher/PROVENANCE.json` and re-verified by
@@ -41,7 +43,7 @@ not the binding itself.
 |---|---|---|
 | Pinned upstream release | commit `8269f84b01065ac96d162431ce00ebd42003dd5f`, manifest version `1.0.0` | read from the upstream checkout; suite green at the pin from a disposable scratch clone (36 passed) |
 | Synchronization pin | `plugins/agent-launcher/PROVENANCE.json` records that same commit and version | verified by `scripts/sync_vendor_source.py --check` |
-| Portable package tree | 11 files, tree digest `7e6dc844…d82` | recomputed with `--print-fingerprint agent-launcher` |
+| Portable package tree | 10 files, tree digest `fca8657f…484` | recomputed with `--print-fingerprint agent-launcher` |
 
 ## Installed-version and digest readback
 
@@ -50,10 +52,10 @@ recomputed at readback time from the run workspace:
 
 | Client | Install unit | Client-reported version | Client-reported digest | Recomputed from installed bytes |
 |---|---|---|---|---|
-| Claude Code | package root (session-scoped) | not reported (session-scoped listing says version unknown) | none reported | 11 files, digest equal to the source package |
-| Grok | package root (installed-plugin id) | not reported | none reported | 11 files, digest equal to the source package |
-| Agy | package root (re-validated installed copy) | not reported | none reported | 11 files, digest equal to the source package |
-| Qwen | copied extension | package version `1.0.0` with manifest description | none reported | the 11 package files equal to the source, plus one client bookkeeping file the installer adds of its own |
+| Claude Code | package root (session-scoped) | not reported (session-scoped listing says version unknown) | none reported | 10 files, digest equal to the source package |
+| Grok | package root (installed-plugin id) | not reported | none reported | 10 files, digest equal to the source package |
+| Agy | package root (re-validated installed copy) | not reported | none reported | 10 files, digest equal to the source package |
+| Qwen | copied extension | package version `1.0.0` with manifest description | none reported | the 10 package files equal to the source, plus one client bookkeeping file the installer adds of its own |
 | OpenCode | skill directory | not reported | none reported | 2 files, digest equal to the source skill unit |
 | Gemini CLI | linked skill | not reported | none reported | 2 files, digest equal to the source skill unit |
 | Muse | skill directory (user scope) | not reported | content digest reported by the forced JSON install | 2 files, digest equal to the source skill unit |
@@ -104,8 +106,8 @@ real session remains the operator's act under the contract.
   "release": {
     "name": "agent-launcher",
     "version": "1.0.0",
-    "file_count": 11,
-    "tree_sha256": "7e6dc8448a3474d3974c13e9518c8c5ce9d76bff6ae6229ea91accb3d478ad82",
+    "file_count": 10,
+    "tree_sha256": "fca8657f7cf65082d9ef20b40a1121eb00ba92eb94948d4f68c492045e725484",
     "upstream_commit": "8269f84b01065ac96d162431ce00ebd42003dd5f",
     "units": {
       "agent-launcher": {
@@ -126,8 +128,8 @@ real session remains the operator's act under the contract.
       "install_unit": "package-root",
       "reported_version": null,
       "reported_digest": null,
-      "recomputed_file_count": 11,
-      "recomputed_tree_sha256": "a3a0e8ebf11a3c7d82da02b7c6fa132566844a9131c9d1854321bf9b25e17364",
+      "recomputed_file_count": 10,
+      "recomputed_tree_sha256": "dd84f7ef88bd1fe28708be486bfa82703991f39607af958d5301907eaf335fb4",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },
@@ -159,8 +161,8 @@ real session remains the operator's act under the contract.
       "install_unit": "copied-extension",
       "reported_version": "1.0.0",
       "reported_digest": null,
-      "recomputed_file_count": 12,
-      "recomputed_tree_sha256": "65b5f22ac3c91009c3ff924c559f027d55dbf56815352860a31d5ce9084862d3",
+      "recomputed_file_count": 11,
+      "recomputed_tree_sha256": "deab3b328117a2ccac0bdf58d6542e5149a69dbabb9787fc28beb7f320859a64",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },
@@ -170,8 +172,8 @@ real session remains the operator's act under the contract.
       "install_unit": "package-root",
       "reported_version": null,
       "reported_digest": null,
-      "recomputed_file_count": 11,
-      "recomputed_tree_sha256": "a3a0e8ebf11a3c7d82da02b7c6fa132566844a9131c9d1854321bf9b25e17364",
+      "recomputed_file_count": 10,
+      "recomputed_tree_sha256": "dd84f7ef88bd1fe28708be486bfa82703991f39607af958d5301907eaf335fb4",
       "matches_release": true,
       "entrypoints_exit_zero": null
     },
@@ -214,8 +216,8 @@ real session remains the operator's act under the contract.
       "install_unit": "package-root",
       "reported_version": null,
       "reported_digest": null,
-      "recomputed_file_count": 11,
-      "recomputed_tree_sha256": "a3a0e8ebf11a3c7d82da02b7c6fa132566844a9131c9d1854321bf9b25e17364",
+      "recomputed_file_count": 10,
+      "recomputed_tree_sha256": "dd84f7ef88bd1fe28708be486bfa82703991f39607af958d5301907eaf335fb4",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },
@@ -234,7 +236,7 @@ real session remains the operator's act under the contract.
   "mutation_proof_verification": {
     "disposition": "verified_by_digest_recheck",
     "proof_document": "docs/evidence/2026-08-27-agent-launcher-mutation-proof-portable-docs.txt",
-    "frozen_candidate_commit": "c064e5b8d4e8c7cc7cccef3e8bdcbdf1637a8cf4",
+    "frozen_candidate_commit": "35288e34c9915fc1912c9ae862570ce4fbeca6f5",
     "graded_file_digests": {
       "plugins/agent-launcher/skills/agent-launcher/SKILL.md": "1cf2f0071b2d6983b8666f1754700aebd1633e6ebf044e8fd96f80c350a8839d",
       "plugins/agent-launcher/README.md": "cb09cc58a3ddad6376f5e34a4c6079a6573119f629546a016822f22c8de7c663"

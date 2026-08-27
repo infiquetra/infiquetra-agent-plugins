@@ -145,3 +145,22 @@ reruns reliability and agent-usability, which fail only on the advisory
 byte-copy residuals, so the expected terminal outcome is
 `cycle_cap_best_available` with the four residuals reported for the
 upstream filing.
+
+## Post-review: CI repair (same day)
+
+Cycle 3 returned `cycle_cap_best_available` at `46fa4b7` (all independent
+gates passed; zero unresolved actionable fix requests; the four advisory
+byte-copy residuals reported for the upstream filing). The PR's first CI run
+then failed the ported-plugin-tests job: this package's `tests/__init__.py`
+created a second pytest package named `tests`, and every mission-control test
+module failed collection with `ModuleNotFoundError` in pytest's default import
+mode. The repair removed the marker (`35288e3`, the voice precedent ships
+package tests without one; the catalog's test filenames are unique), re-synced
+PROVENANCE, and proved the glob run green (597 passed). The tree moved, so the
+evidence loop ran a third time per KTD10: the post-cycle-2 record was
+superseded to
+`2026-08-27-agent-launcher-compatibility-matrix-pre-pr-ci-repair.md`, the
+assessment re-executed (identical client behavior; fingerprint `fca8657f…`,
+10 files), and the current matrix and readback were re-bound to the final
+freeze at `35288e3`. All four assessment records of the day are preserved;
+nothing was renumbered.
