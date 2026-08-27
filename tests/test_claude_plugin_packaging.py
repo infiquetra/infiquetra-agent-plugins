@@ -159,6 +159,17 @@ class DeclaredComponentPathTests(unittest.TestCase):
             "belong in the portable core",
         )
 
+    def test_the_mcp_servers_declaration_points_into_the_client_extension(self) -> None:
+        mcp_servers = _load(CLAUDE_MANIFEST).get("mcpServers")
+        self.assertIsInstance(mcp_servers, str, "the mcpServers path must be declared")
+        resolved = (PLUGIN_ROOT / mcp_servers).resolve()
+        self.assertTrue(
+            resolved.is_relative_to(EXTENSION.resolve()),
+            f"mcpServers path {mcp_servers!r} must live under "
+            f"{EXTENSION.relative_to(ROOT)}; Claude-specific behaviour does not "
+            "belong in the portable core",
+        )
+
     def test_no_claude_convention_directory_sits_at_the_portable_root(self) -> None:
         for name in CLAUDE_CONVENTION_DIRS:
             with self.subTest(directory=name):
@@ -213,6 +224,36 @@ class HookRuntimePathTests(unittest.TestCase):
             "the hook resolves the portable core outside the installed root",
         )
         self.assertTrue((core / "speak.py").is_file())
+
+
+class MCPRuntimePathTests(unittest.TestCase):
+    """The MCP server declaration paths and command resolution."""
+
+    def test_the_mcp_server_command_resolves_from_the_installed_plugin_root(
+        self,
+    ) -> None:
+        # ``${CLAUDE_PLUGIN_ROOT}`` expands to the installed package root.
+        # The declared command and args must be byte-for-byte the literals
+        # U3's executable-entrypoint scenario launches so declaration and proof
+        # cannot drift apart.
+        mcp_file = PLUGIN_ROOT / _load(CLAUDE_MANIFEST)["mcpServers"]
+        self.assertTrue(mcp_file.is_file(), f"{mcp_file} is missing")
+        servers = _load(mcp_file)
+        self.assertTrue(servers, "the mcpServers descriptor declares no server")
+        for name, config in servers.items():
+            with self.subTest(server=name):
+                command = config.get("command")
+                self.assertEqual(command, "python3")
+                args = config.get("args")
+                self.assertIsInstance(args, list)
+                self.assertEqual(args, ["${CLAUDE_PLUGIN_ROOT}/scripts/mcp_server.py"])
+                for arg in args:
+                    self.assertIn("${CLAUDE_PLUGIN_ROOT}", arg)
+                    relative = arg.split("${CLAUDE_PLUGIN_ROOT}", 1)[1].lstrip("/")
+                    self.assertTrue(
+                        (PLUGIN_ROOT / relative).is_file(),
+                        f"{relative} does not exist under the installed root",
+                    )
 
 
 class MarketplaceEntryTests(unittest.TestCase):
@@ -276,6 +317,11 @@ class MarketplaceEntryTests(unittest.TestCase):
             len(set(sites.values())),
             1,
             f"version sites disagree: {sites}",
+        )
+        self.assertEqual(
+            list(sites.values())[0],
+            "0.3.0",
+            f"version must be 0.3.0, got {sites}",
         )
 
 

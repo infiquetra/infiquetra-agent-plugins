@@ -2,6 +2,41 @@
 
 ## 2026-08-27
 
+### Auralis C3 adapter packaging: voice 0.3.0, mcpServers path into client extension, and acceptance evidence note
+
+**Author.** Claude for Jeff Cox (Auralis C3 adapter U5 closeout, issue #46, branch
+`orch/auralis-c3-adapter-build-c3-u5`)
+
+**Decision.** Packaging for the Auralis C3 Claude adapter (`voice` 0.3.0) extends the Claude
+packaging layout pinned on 2026-08-25: `plugins/voice/.claude-plugin/plugin.json` gains
+`"mcpServers": "./com.infiquetra.claude/mcp/servers.json"` pointing to the server configuration
+inside the client extension, keeping the packaging manifest pure distribution metadata
+without command strings. Version is bumped to `0.3.0` across all four sites bound by
+`tests/test_claude_plugin_packaging.py` (`plugins/voice/plugin.json`,
+`plugins/voice/.claude-plugin/plugin.json`, `plugins/voice/com.infiquetra.claude/plugin.json`,
+`.claude-plugin/marketplace.json`). Acceptance evidence for the nine C3 slice requirements is
+captured in [`docs/evidence/voice/auralis-c3-acceptance.md`](../evidence/voice/auralis-c3-acceptance.md),
+recording the five-route wire pin, the AE26 reject-then-accept proof across in-process and
+declared-argv subprocess layers, and the joint AE36 cross-repository dependency on
+`infiquetra/auralis`.
+
+**Rationale.** Preserves the repository boundary rule (packaging manifest carries paths into
+the client extension; behaviour and commands live under `com.infiquetra.claude/`). Four-site
+version agreement prevents `claude plugin update` cache-staleness bugs. A dedicated
+acceptance note keeps the Auralis V1 requirements namespace separate from the earlier 0.2.x
+voice ledger.
+
+**Rejected alternatives.** Inline `mcpServers` object in the packaging manifest (violates
+metadata-only manifest rule); bumping version at only some sites (fails packaging test);
+merging C3 evidence into the 0.2.x `acceptance.md` (collides the two R-ID numbering schemes).
+
+**Revisit when.** Claude Code changes plugin MCP server manifest resolution, or the Auralis
+Bridge Contract v2 merges.
+
+**Refs.** [`docs/plans/2026-08-27-auralis-c3-adapter.md`](../plans/2026-08-27-auralis-c3-adapter.md),
+[`docs/evidence/voice/auralis-c3-acceptance.md`](../evidence/voice/auralis-c3-acceptance.md),
+`tests/test_claude_plugin_packaging.py`.
+
 ### Auralis C3 plan repair: a tracked byte-pinned wire snapshot, a locked turn-record transaction, and a gate-owned rejected-syntax contract
 
 **Author.** Claude for Jeff Cox (Auralis C3 plan repair against the blocking doc review,
