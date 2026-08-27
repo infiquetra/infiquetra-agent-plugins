@@ -103,10 +103,12 @@ boundary and on the PR head.
 R6. The supported-client matrix is committed under `docs/evidence/` as one current,
 fingerprint-bound record (bound to `(file_count, tree_sha256)`), validated by
 `scripts/check_compatibility_matrix.py`; blocked stages carry honest reasons, never blank
-ones. Exactly one record is `current` at any time: an accepted repair that moves the
-fingerprint freezes the successor tree, re-runs only the evidence whose binding moved, and
-marks the replaced record superseded with its successor and reason — it is never edited or
-renumbered. This is the runbook's evidence loop, not a lifetime one-run promise.
+ones. Exactly one record per package is `current` at any time — unifi and mission-control
+keep their own current matrices; this port adds agent-launcher's: an accepted repair that
+moves the fingerprint freezes the successor tree, re-runs only the evidence whose binding
+moved, and marks the replaced record superseded with its successor and reason — it is
+never edited or renumbered. This is the runbook's evidence loop, not a lifetime one-run
+promise.
 
 R7. Packaging smoke coverage exists for the generated package: relocated Claude
 manifest identity/version agreement, portable manifest validity, and the no-marketplace
@@ -213,12 +215,12 @@ chatter.
 KTD10. Evidence is content-bound and kept current, not run-once. Every matrix record
 binds to `(file_count, tree_sha256)` from `scripts/check_compatibility_matrix.py
 --print-fingerprint agent-launcher` on the frozen tree, and mutation proofs bind to the
-guarded blobs' digests, never to commit ids. One committed matrix is `current` at any
-time: the first freeze captures it; an accepted repair that moves the fingerprint
-(Phase 4, installed `/code-review` controller, three-cycle ceiling) freezes the
-successor, re-runs only the evidence whose binding moved, and supersedes the replaced
-record with successor and reason (`LEARNINGS.md`: "A re-synchronization does not
-renumber the evidence it invalidates"; the eight superseded unifi matrices are the
+guarded blobs' digests, never to commit ids. Exactly one record per package is
+`current`: the first freeze captures agent-launcher's; an accepted repair that moves the
+fingerprint (Phase 4, installed `/code-review` controller, three-cycle ceiling) freezes
+the successor, re-runs only the evidence whose binding moved, and supersedes the
+replaced record with successor and reason (`DECISIONS.md`, "A re-synchronization does
+not renumber the evidence it invalidates"; the eight superseded unifi matrices are the
 precedent). Repairs that touch only docs or repo metadata outside the package do not
 move the fingerprint and do not re-run evidence.
 
@@ -394,10 +396,10 @@ tests`.
 ### U4. Freeze and Phase-3 evidence: fingerprint, ten-client matrix, readback
 
 Freeze the candidate tree and gather the runbook Phase-3 evidence bound to it, keeping
-exactly one matrix record `current` (R6).
+exactly one agent-launcher matrix record `current` (R6).
 
 **Goal:** the shipped tree carries one current fingerprint-bound matrix and one
-readback, both validated, and the floor is verified from staged bytes.
+readback for this package, both validated, and the floor is verified from staged bytes.
 
 **Requirements:** R6.
 
