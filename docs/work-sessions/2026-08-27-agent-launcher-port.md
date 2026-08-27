@@ -81,3 +81,47 @@ supersede-and-rerun, never renumber (KTD10).
 Submit the frozen implementation revision for code review through the Code
 Review controller tab (`wCC:p6`, installed Saga `/code-review`), then PR,
 CI, and merge per the operator sequence.
+
+## Code-review cycle 1 → repair cycle (same day)
+
+Cycle 1 at `60e30f5` returned `repairs_requested`: independent gates all
+passed; six lenses failed the numeric floors on twelve findings. Eight were
+actionable here (fix groups fix-2a9e5c55a826, fix-ea724133f0b8,
+fix-2a0799d391f8, fix-d3fdc17756aa, fix-270dd854e004) and were validated
+against the code before repair:
+
+- F-1/F-2 (P1): the portable skill's launch example now carries `--prompt`,
+  and the keep-list names the receipt keys launch actually prints
+  (`tab_id`, `pane`, `agent_name`, `workspace`, `owned`, `reused`), guarded
+  against the stale upstream names.
+- F-3 (P2): the package README states roster's missing-wrapper stop.
+- F-5/F-6 (P2): launch tests stub `list_tab_ids` (no live herdr), the
+  cwd-mismatch close test proves ownership through the real herdr tab-close
+  seam, and the failed-launch persist test asserts `owned`.
+- F-7 (P2): the README mutation corpus gains the wrapper-and-Herdr class.
+- F-8 (P2): the catalog's Grok adapter reason matches the matrix.
+- F-12 (P3): the docs index states the doc-review cycles accurately.
+
+F-4/F-9/F-10/F-11 sit in the byte-copied `launcher.py`; the reviewer routed
+them advisory → human (upstream filing). They are recorded as residuals, not
+patched downstream (custody rule), and become upstream filings in the
+closeout follow-up.
+
+The repairs moved the graded bytes and the package tree, so the runbook
+evidence loop ran as the plan's KTD10 prescribes: the mutation proof was
+re-run (now eleven classes, zero survivors) and republished with new footer
+digests; the first matrix record was superseded to
+`2026-08-27-agent-launcher-compatibility-matrix-pre-cycle2-repair.md` with
+successor and reason; the assessment was re-executed against the repaired
+tree (identical client behavior; fingerprint moved from `65beaf76…` to
+`c9689c2f…`); the current matrix and the readback were re-bound to the
+repaired tree at frozen candidate `6b7fc57`. Nothing was renumbered.
+
+Checks after the repair batch: `check_repo.py` passed; matrix validator
+passed (both records); 771 unittest OK; 46 package tests passed;
+`git diff --check` clean.
+
+## Next step (cycle 2)
+
+Resubmit the repaired revision to the same Code Review controller; cycle 2
+reruns the failing lenses only.
