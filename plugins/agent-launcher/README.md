@@ -26,6 +26,7 @@ patch.
 | [`skills/agent-launcher/SKILL.md`](skills/agent-launcher/SKILL.md) | The portable skill: contract, stop conditions, and package-relative discovery (target-owned; supersedes the upstream skill) |
 | [`skills/agent-launcher/scripts/launcher.py`](skills/agent-launcher/scripts/launcher.py) | The shared launch contract: preview, launch, verify, deliver, owned close (byte copy) |
 | `com.infiquetra.claude/plugin.json` | Relocated Claude Code manifest (adapter metadata only) |
+| [`tests/`](tests/) | The portable contract suite, authored here (target-owned) |
 
 The upstream `README.md` and `skills/agent-launcher/SKILL.md` are superseded
 rather than copied: the upstream README documents the Claude plugin, and the
