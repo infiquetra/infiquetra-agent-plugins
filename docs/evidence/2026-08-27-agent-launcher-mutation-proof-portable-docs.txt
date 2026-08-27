@@ -1,0 +1,36 @@
+# Mutation proof — agent-launcher portable documentation guards
+# Run: 2026-08-27, branch port/agent-launcher, repository infiquetra-agent-plugins.
+# Republished twice after review repairs changed the graded bytes: first when
+# the code-review cycle-1 fixes (fix-2a9e5c55a826, fix-ea724133f0b8) grew the
+# corpus from eight to eleven classes, and again when the cycle-2 fix
+# fix-eddba59df99e corrected the SKILL's delivery-failure receipt key. Each
+# republication retires the earlier footer digests, never renumbering them.
+# Bound by content: the digests below name the committed blobs
+# exercised, never a commit id. The binding test is
+# tests/test_agent_launcher_rule_audit.py MutationProofBindingTest; the guard
+# under proof is plugins/agent-launcher/tests/test_portable_docs.py, whose
+# corpus constants the audit derives at test time (ast) rather than restating.
+#
+# Method: each mutation class was applied to a scratch copy of the graded bytes
+# and graded with the audit predicate (the guard's verdict restated over the
+# derived constants). Every mutation flips the verdict; the committed bytes pass
+# every guard. Zero survivors.
+#
+# Skill mutations (plugins/agent-launcher/skills/agent-launcher/SKILL.md):
+#   M1 claude cache ladder re-inserted (~/.claude/plugins/cache fallback) -> guard fired
+#   M2 a stop condition removed -> guard fired
+#   M3 receipt redirect removed (> receipt.json -> > /dev/null) -> guard fired
+#   M4 forbidden close form re-inserted (close --tab-id <tab_id> --receipt-json <receipt.json>) -> guard fired
+#   M5 herdr dependency declaration removed -> guard fired
+#   M6 launch prompt flag removed (--prompt dropped from the launch example) -> guard fired
+#   M7 receipt keep-list mangled (stale upstream key names re-inserted) -> guard fired
+#
+# README mutations (plugins/agent-launcher/README.md):
+#   M8 portable framing removed (Portable Agent Plugins 1.0 package) -> guard fired
+#   M9 claude-only account limitation inverted -> guard fired
+#   M10 no-registry limitation inverted -> guard fired
+#   M11 wrapper-and-Herdr requirement removed -> guard fired
+#
+# Committed-blob control: both graded files pass every guard (zero problems).
+plugins/agent-launcher/skills/agent-launcher/SKILL.md sha256:1cf2f0071b2d6983b8666f1754700aebd1633e6ebf044e8fd96f80c350a8839d
+plugins/agent-launcher/README.md sha256:cb09cc58a3ddad6376f5e34a4c6079a6573119f629546a016822f22c8de7c663

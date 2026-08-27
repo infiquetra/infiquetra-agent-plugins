@@ -1,0 +1,71 @@
+{
+  "source_repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+  "source_commit": "8269f84b01065ac96d162431ce00ebd42003dd5f",
+  "source_version": "1.0.0",
+  "source_package_path": "plugins/agent-launcher",
+  "generated_by": "scripts/sync_vendor_source.py",
+  "notes": [
+    "The portable copy is a derived artifact, never a second writable source. The pinned commit 8269f84b01065ac96d162431ce00ebd42003dd5f is the audited upstream revision (plugin version 1.0.0, accepted under infiquetra-claude-plugins#777); the upstream suite was verified green at it from a disposable scratch clone before this descriptor was written (36 passed in plugins/agent-launcher/tests), so a synchronization from this pin derives from a passing source. The five non-test source files are unchanged since the accepted release commit 28a881b3; only the dropped test file moved after it.",
+    "Paths in `files` are relative to this package root, which is what the repository validator resolves. `source_path` is relative to the upstream repository root.",
+    "Every path carries exactly one classification. skills/agent-launcher/scripts/launcher.py and CHANGELOG.md are upstream byte copies: the launcher is the shared single-session launch contract itself, pure standard library and self-contained, so it carries unchanged. Where the portable tree would need a different byte, the repair is authored upstream first. Target-owned portable source is authored in this repository rather than derived from the pinned commit; it records no digest and is never overwritten and never removed here.",
+    "README.md and skills/agent-launcher/SKILL.md are superseded by target-owned replacements rather than byte copies. The upstream README documents the Claude Code plugin, and the upstream SKILL.md resolves its script through CLAUDE_PLUGIN_ROOT with a fallback ladder into the Claude plugin cache — Claude-runtime discovery that would let a non-Claude client run the launcher from a Claude plugin install instead of from the assessed package. Carrying those bytes would be the vendor-specific copying the port exists to avoid, so their upstream bytes are deliberately never read and never written, and the portable skill and README adapt the same contract with package-relative discovery. This is the issue's stop condition answered in custody rather than in a fork: no vendor-specific hidden path ships.",
+    "The client extension directory com.infiquetra.claude/ holds only the relocated Claude Code manifest. The plugin carries no commands, agents, or hooks, and its skill is adapted rather than mirrored, so there are no client byte copies. The Claude Code manifest is lifted out of .claude-plugin/, whose name is a loading convention with no meaning inside the extension directory, by the relocate-claude-manifest rule; the rule preserves the bytes and derives only the output path.",
+    "tests/test_launcher_contract.py is dropped rather than copied. Most of the suite is the portable contract, but five of its tests assert premises of infiquetra-claude-plugins itself — that Orchestrate ingests the launcher rather than keeping a private copy, that Orchestrate's plugin.json declares the dependency array, and that the root Claude marketplace enumerates the plugin — and the file resolves the upstream repository root as parents[3]. None of those premises crosses the port boundary, and editing the content to make it pass would be a custody violation, so the portable suite under plugins/agent-launcher/tests/ re-proves the portable contract resolved from parents[1], and the custody decision is recorded here and in the engineering journal instead of shipping a test that cannot pass.",
+    "Adapter-specific limitations, documented here and in the portable README and SKILL.md: (a) the launcher's account verification applies only to vendor claude and reads Claude transcript roots and statusline evidence from the operator's machine; every other vendor passes through it untouched; (b) the package requires the installed agents wrapper and Herdr on the machine — an absent wrapper is a stop before launch, not a fallback; (c) the launcher keeps no vendor or model roster of its own: its flag tables are the shared contract's own tables, and availability is asked of the live wrapper every run, so this port adds no registry; (d) OpenCode variant selection and the qwen typing-limit file handover are interactive behaviors of the shared contract, unchanged by the port.",
+    "The assessment block encodes the audited safety facts: launcher.py is standard-library-only and its --help is answered by argparse before any external command runs. Its mutating verbs are launch, which creates a Herdr session through the wrapper, and close, which closes a tab the launch proved it owns; preview, argv, and roster are read-only and are not listed. The launcher reads no credential variables: CLAUDE_PERSONAL_PROJECTS and CLAUDE_COMPANY_PROJECTS name transcript locations, not secrets, so credential_prefixes is genuinely empty and named in declared_none rather than defaulted away."
+  ],
+  "removed_from_source": [
+    {
+      "source_path": "plugins/agent-launcher/tests/test_launcher_contract.py",
+      "reason": "tests/test_launcher_contract.py: the upstream contract suite's remaining repo-wide premises — Orchestrate's ingestion of the launcher and its dependency declaration, the root Claude marketplace entry, and the parents[3] repository-root resolution — cannot cross the port boundary, so a byte copy could never run here; the portable suite under plugins/agent-launcher/tests/ re-proves the portable contract, and the custody decision is finalized in the descriptor and the engineering journal rather than shipped as a test that cannot pass."
+    }
+  ],
+  "files": [
+    {
+      "path": "CHANGELOG.md",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/agent-launcher/CHANGELOG.md",
+      "sha256": "974540d5c3a504ef51b87338fc26e584c41cc774bfbd3f49cb60cbdc8d71558b"
+    },
+    {
+      "path": "com.infiquetra.claude/plugin.json",
+      "classification": "deterministic-transform",
+      "source_path": "plugins/agent-launcher/.claude-plugin/plugin.json",
+      "source_sha256": "cb82e8faacaa89d801b16ab3a9bfb07f48733ee05bbc4f4421a84d33dde42123",
+      "sha256": "cb82e8faacaa89d801b16ab3a9bfb07f48733ee05bbc4f4421a84d33dde42123",
+      "transform": "relocate-claude-manifest",
+      "transform_version": "1",
+      "transform_rule": "Re-emit the Claude Code manifest under the client extension directory the Agent Plugins 1.0 specification's section 8.2 defines. Version 1 preserves the bytes and derives only the output path, because the source directory name .claude-plugin/ is a Claude Code loading convention with no meaning inside the extension directory, and the portable Agent Plugins manifest already occupies the package root the Claude manifest would otherwise claim."
+    },
+    {
+      "path": "skills/agent-launcher/scripts/launcher.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py",
+      "sha256": "96a0feb77a9ea438cbda597cbc2b5c485e94923756b3e5bab6951b8d1a324788"
+    },
+    {
+      "path": ".gitignore",
+      "classification": "target-owned"
+    },
+    {
+      "path": "README.md",
+      "classification": "target-owned"
+    },
+    {
+      "path": "plugin.json",
+      "classification": "target-owned"
+    },
+    {
+      "path": "skills/agent-launcher/SKILL.md",
+      "classification": "target-owned"
+    },
+    {
+      "path": "tests/test_launcher_contract.py",
+      "classification": "target-owned"
+    },
+    {
+      "path": "tests/test_portable_docs.py",
+      "classification": "target-owned"
+    }
+  ]
+}
