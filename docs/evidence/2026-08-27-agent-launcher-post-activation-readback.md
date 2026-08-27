@@ -12,16 +12,16 @@ not the binding itself.
 ## The frozen candidate
 
 - **Package tree.** `plugins/agent-launcher/`, 11 files, tree digest
-  `c9689c2f90c9f137e9b7939cd7714394d2408b2a6116cbed7d10cd06497a4d95`,
+  `7e6dc8448a3474d3974c13e9518c8c5ce9d76bff6ae6229ea91accb3d478ad82`,
   recomputed with
   `python3 scripts/check_compatibility_matrix.py --print-fingerprint agent-launcher`
   and equal to the fingerprint recorded in the matrix before and after the run.
-- **Frozen at commit `6b7fc57d1d9adaf0e95655d62baabd84d5da9dbd`.** The
-  code-review cycle-1 repairs changed the package documentation and tests and
-  moved the fingerprint, so the matrix was superseded, the assessment re-run
-  against the repaired tree, and this readback re-bound (the earlier binding
-  at `29a2975` lived in the superseded matrix's contemporaneous readback
-  pass). Any later commit that moved `plugins/agent-launcher/` would retire
+- **Frozen at commit `c064e5b8d4e8c7cc7cccef3e8bdcbdf1637a8cf4`.** Two
+  code-review repair batches changed the package documentation and tests and
+  moved the fingerprint each time, so the matrix was superseded twice, the
+  assessment re-run against each repaired tree, and this readback re-bound to
+  the final tree (the two superseded records are preserved beside the current
+  matrix). Any later commit that moved `plugins/agent-launcher/` would retire
   this readback and the matrix, and the re-run obligation in the plan's KTD10
   would apply.
 - **Upstream pin.** `infiquetra-claude-plugins` commit
@@ -41,7 +41,7 @@ not the binding itself.
 |---|---|---|
 | Pinned upstream release | commit `8269f84b01065ac96d162431ce00ebd42003dd5f`, manifest version `1.0.0` | read from the upstream checkout; suite green at the pin from a disposable scratch clone (36 passed) |
 | Synchronization pin | `plugins/agent-launcher/PROVENANCE.json` records that same commit and version | verified by `scripts/sync_vendor_source.py --check` |
-| Portable package tree | 11 files, tree digest `c9689c2f…d95` | recomputed with `--print-fingerprint agent-launcher` |
+| Portable package tree | 11 files, tree digest `7e6dc844…d82` | recomputed with `--print-fingerprint agent-launcher` |
 
 ## Installed-version and digest readback
 
@@ -75,7 +75,7 @@ verified by SHA-256 digest re-check against the proof footer:
 
 | Graded file | Proof footer digest | Recomputed at readback | Match |
 |---|---|---|---|
-| `plugins/agent-launcher/skills/agent-launcher/SKILL.md` | `3b85544a2a611dab5c19b3cbcd354e32d45be42504fa611bdc3970a4f051d53f` | `3b85544a2a611dab5c19b3cbcd354e32d45be42504fa611bdc3970a4f051d53f` | YES |
+| `plugins/agent-launcher/skills/agent-launcher/SKILL.md` | `1cf2f0071b2d6983b8666f1754700aebd1633e6ebf044e8fd96f80c350a8839d` | `1cf2f0071b2d6983b8666f1754700aebd1633e6ebf044e8fd96f80c350a8839d` | YES |
 | `plugins/agent-launcher/README.md` | `cb09cc58a3ddad6376f5e34a4c6079a6573119f629546a016822f22c8de7c663` | `cb09cc58a3ddad6376f5e34a4c6079a6573119f629546a016822f22c8de7c663` | YES |
 
 `MutationProofBindingTest` in `tests/test_agent_launcher_rule_audit.py` passed
@@ -105,12 +105,12 @@ real session remains the operator's act under the contract.
     "name": "agent-launcher",
     "version": "1.0.0",
     "file_count": 11,
-    "tree_sha256": "c9689c2f90c9f137e9b7939cd7714394d2408b2a6116cbed7d10cd06497a4d95",
+    "tree_sha256": "7e6dc8448a3474d3974c13e9518c8c5ce9d76bff6ae6229ea91accb3d478ad82",
     "upstream_commit": "8269f84b01065ac96d162431ce00ebd42003dd5f",
     "units": {
       "agent-launcher": {
         "file_count": 2,
-        "tree_sha256": "82f04e10f68501c70c4125511610b69117736259b7ddb307489c84ab2aebb3dc"
+        "tree_sha256": "6b525a4e9f0715473cc1fd2372202ea53bf3bd129f504b7c989c0d647abd1a8b"
       }
     }
   },
@@ -127,7 +127,7 @@ real session remains the operator's act under the contract.
       "reported_version": null,
       "reported_digest": null,
       "recomputed_file_count": 11,
-      "recomputed_tree_sha256": "44cc50a0e1533db2bafe342e2f2445b3a49acb542c03a36905bd8555b321cd93",
+      "recomputed_tree_sha256": "a3a0e8ebf11a3c7d82da02b7c6fa132566844a9131c9d1854321bf9b25e17364",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },
@@ -160,7 +160,7 @@ real session remains the operator's act under the contract.
       "reported_version": "1.0.0",
       "reported_digest": null,
       "recomputed_file_count": 12,
-      "recomputed_tree_sha256": "3ad5e16de8d889df624d0796932056d9b4560cc2e308b2a48b75f9d0d57b684d",
+      "recomputed_tree_sha256": "65b5f22ac3c91009c3ff924c559f027d55dbf56815352860a31d5ce9084862d3",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },
@@ -171,7 +171,7 @@ real session remains the operator's act under the contract.
       "reported_version": null,
       "reported_digest": null,
       "recomputed_file_count": 11,
-      "recomputed_tree_sha256": "44cc50a0e1533db2bafe342e2f2445b3a49acb542c03a36905bd8555b321cd93",
+      "recomputed_tree_sha256": "a3a0e8ebf11a3c7d82da02b7c6fa132566844a9131c9d1854321bf9b25e17364",
       "matches_release": true,
       "entrypoints_exit_zero": null
     },
@@ -182,7 +182,7 @@ real session remains the operator's act under the contract.
       "reported_version": null,
       "reported_digest": null,
       "recomputed_file_count": 2,
-      "recomputed_tree_sha256": "82f04e10f68501c70c4125511610b69117736259b7ddb307489c84ab2aebb3dc",
+      "recomputed_tree_sha256": "6b525a4e9f0715473cc1fd2372202ea53bf3bd129f504b7c989c0d647abd1a8b",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },
@@ -193,7 +193,7 @@ real session remains the operator's act under the contract.
       "reported_version": null,
       "reported_digest": null,
       "recomputed_file_count": 2,
-      "recomputed_tree_sha256": "82f04e10f68501c70c4125511610b69117736259b7ddb307489c84ab2aebb3dc",
+      "recomputed_tree_sha256": "6b525a4e9f0715473cc1fd2372202ea53bf3bd129f504b7c989c0d647abd1a8b",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },
@@ -204,7 +204,7 @@ real session remains the operator's act under the contract.
       "reported_version": null,
       "reported_digest": {"algorithm": "client-defined content digest"},
       "recomputed_file_count": 2,
-      "recomputed_tree_sha256": "82f04e10f68501c70c4125511610b69117736259b7ddb307489c84ab2aebb3dc",
+      "recomputed_tree_sha256": "6b525a4e9f0715473cc1fd2372202ea53bf3bd129f504b7c989c0d647abd1a8b",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },
@@ -215,7 +215,7 @@ real session remains the operator's act under the contract.
       "reported_version": null,
       "reported_digest": null,
       "recomputed_file_count": 11,
-      "recomputed_tree_sha256": "44cc50a0e1533db2bafe342e2f2445b3a49acb542c03a36905bd8555b321cd93",
+      "recomputed_tree_sha256": "a3a0e8ebf11a3c7d82da02b7c6fa132566844a9131c9d1854321bf9b25e17364",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },
@@ -226,7 +226,7 @@ real session remains the operator's act under the contract.
       "reported_version": null,
       "reported_digest": null,
       "recomputed_file_count": 2,
-      "recomputed_tree_sha256": "82f04e10f68501c70c4125511610b69117736259b7ddb307489c84ab2aebb3dc",
+      "recomputed_tree_sha256": "6b525a4e9f0715473cc1fd2372202ea53bf3bd129f504b7c989c0d647abd1a8b",
       "matches_release": true,
       "entrypoints_exit_zero": true
     }
@@ -234,9 +234,9 @@ real session remains the operator's act under the contract.
   "mutation_proof_verification": {
     "disposition": "verified_by_digest_recheck",
     "proof_document": "docs/evidence/2026-08-27-agent-launcher-mutation-proof-portable-docs.txt",
-    "frozen_candidate_commit": "6b7fc57d1d9adaf0e95655d62baabd84d5da9dbd",
+    "frozen_candidate_commit": "c064e5b8d4e8c7cc7cccef3e8bdcbdf1637a8cf4",
     "graded_file_digests": {
-      "plugins/agent-launcher/skills/agent-launcher/SKILL.md": "3b85544a2a611dab5c19b3cbcd354e32d45be42504fa611bdc3970a4f051d53f",
+      "plugins/agent-launcher/skills/agent-launcher/SKILL.md": "1cf2f0071b2d6983b8666f1754700aebd1633e6ebf044e8fd96f80c350a8839d",
       "plugins/agent-launcher/README.md": "cb09cc58a3ddad6376f5e34a4c6079a6573119f629546a016822f22c8de7c663"
     },
     "all_digests_match_proof_footer": true,

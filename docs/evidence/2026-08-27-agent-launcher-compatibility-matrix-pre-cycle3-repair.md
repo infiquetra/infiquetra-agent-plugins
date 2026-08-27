@@ -1,4 +1,7 @@
-<!-- matrix-status: current -->
+<!-- matrix-status: superseded -->
+<!-- superseded-by: 2026-08-27-agent-launcher-compatibility-matrix.md -->
+<!-- superseded-reason: Code-review cycle-2 repairs (fix-eddba59df99e) changed the portable skill bytes; the assessment was re-run and the record re-bound to the repaired fingerprint. -->
+
 
 # Ten-client compatibility matrix — portable agent-launcher package
 
@@ -11,13 +14,11 @@ document records what happened when that package was put in front of every codin
 client installed on the operator's machine, on 27 August 2026.
 
 This is the current record, re-bound to the repaired package tree after the
-code-review cycle-2 fixes changed the portable skill. The two earlier records
-are preserved unmodified as
-`2026-08-27-agent-launcher-compatibility-matrix-pre-cycle2-repair.md` (first
-frozen tree) and
-`2026-08-27-agent-launcher-compatibility-matrix-pre-cycle3-repair.md`
-(post-cycle-1 tree), each superseded by this document. All three runs
-observed identical client behavior; only the bound fingerprint moved.
+code-review cycle-1 fixes changed the package documentation and tests. The
+earlier record against the first frozen tree is preserved unmodified as
+`2026-08-27-agent-launcher-compatibility-matrix-pre-cycle2-repair.md`,
+superseded by this document. The two runs observed identical client behavior;
+only the bound fingerprint moved.
 
 The point of the exercise is to learn which clients can consume a portable
 package and which cannot, before anyone commits to a distribution path. It is a
@@ -81,7 +82,7 @@ Held identical across all ten:
   exercised here by explicit path rather than assumed.
 - **The assessed copy is the shipped tree.** The package root handed to each
   client was a scratch copy of `plugins/agent-launcher/`, fingerprinted before the
-  run at 11 files, `7e6dc844…`, equal to the source tree, and recomputed after
+  run at 11 files, `c9689c2f…`, equal to the source tree, and recomputed after
   the run and still equal — so no client mutated what was assessed.
 
 ## The status rubric
@@ -179,7 +180,7 @@ at version 1.0.0 with its manifest description.
     "name": "agent-launcher",
     "version": "1.0.0",
     "file_count": 11,
-    "tree_sha256": "7e6dc8448a3474d3974c13e9518c8c5ce9d76bff6ae6229ea91accb3d478ad82"
+    "tree_sha256": "c9689c2f90c9f137e9b7939cd7714394d2408b2a6116cbed7d10cd06497a4d95"
   },
   "method": {
     "stages": [
@@ -188,7 +189,7 @@ at version 1.0.0 with its manifest description.
       "load",
       "invocation"
     ],
-    "isolation": "Each client ran against its own empty home directory in a scratch area, so no assessment read or wrote the operator's real client configuration; every result reflects a first-run install. The package root handed to each client was a scratch copy of the shipped tree, fingerprinted before the run at 11 files, 7e6dc844..., equal to the source tree, and recomputed after the run and still equal. Cursor Agent is the single established exception: it keeps its authentication in the user's home, so it was assessed against the real home with read-only session-scoped probes that write no client state. Two launcher wrappers on this machine (Grok and Agy auto-trust, and Qwen's herdr wrapper) resolve their real binary through the client home; under an isolated home that lookup fails, so the run supplies each wrapper's own documented override naming the real executable. That is a property of the operator's launcher arrangement and of this method's isolated home, not of the package; recording a package failure for it would be false. This is the third run of the day: each code-review repair batch that moved the package tree superseded the earlier current record and re-ran this assessment (KTD10); the two superseded records are preserved beside this one, and all three runs observed identical client behavior.",
+    "isolation": "Each client ran against its own empty home directory in a scratch area, so no assessment read or wrote the operator's real client configuration; every result reflects a first-run install. The package root handed to each client was a scratch copy of the shipped tree, fingerprinted before the run at 11 files, c9689c2f..., equal to the source tree, and recomputed after the run and still equal. Cursor Agent is the single established exception: it keeps its authentication in the user's home, so it was assessed against the real home with read-only session-scoped probes that write no client state. Two launcher wrappers on this machine (Grok and Agy auto-trust, and Qwen's herdr wrapper) resolve their real binary through the client home; under an isolated home that lookup fails, so the run supplies each wrapper's own documented override naming the real executable. That is a property of the operator's launcher arrangement and of this method's isolated home, not of the package; recording a package failure for it would be false. This is the second run of the day: code-review cycle-1 repairs changed the package documentation and tests, moving the fingerprint, so the earlier current record was superseded and this run re-binds the matrix to the repaired tree.",
     "credentials": "No client was authenticated and no credential was supplied at any stage. The package declares no credential variable prefixes (its launcher reads no credentials), so no environment variables were stripped beyond the scratch-home redirections. Where a client would need credentials before reporting state, the stage would be recorded blocked with the requirement named; none did.",
     "network": "No remote API call was made at any stage. The invocation stage runs the single declared package entrypoint with its credential-free --help action, so argparse answers it and no request leaves the machine. No mutating operation was invoked and no command passed a write confirmation (--confirm); the harness safety rule blocks the launcher's launch and close verbs in advance."
   },

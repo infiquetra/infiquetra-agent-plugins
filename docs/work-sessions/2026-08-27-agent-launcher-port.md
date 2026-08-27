@@ -123,7 +123,25 @@ Checks after the repair batch: `check_repo.py` passed; matrix validator
 passed (both records); 771 unittest OK; 46 package tests passed;
 `git diff --check` clean.
 
-## Next step (cycle 2)
+Cycle 2 resolved all eight actionable findings; four of the six failing
+lenses passed. It added two P3 findings, both repaired (`c064e5b`):
+F-13 — the skill now names the receipt key launch prints
+(`prompt_delivered` records false) instead of the internal status string;
+F-14 — this work session stated the doc-review history accurately. That
+repair moved the graded SKILL bytes and the package tree again, so the
+evidence loop ran a second time: the mutation proof was republished (eleven
+classes, zero survivors, new SKILL digest), the post-cycle-1 record was
+superseded to
+`2026-08-27-agent-launcher-compatibility-matrix-pre-cycle3-repair.md`, the
+assessment was re-executed (identical client behavior; fingerprint moved to
+`7e6dc844…`), and the current matrix and readback were re-bound to the
+final tree frozen at `c064e5b`. Nothing was renumbered; all three runs are
+preserved.
 
-Resubmit the repaired revision to the same Code Review controller; cycle 2
-reruns the failing lenses only.
+## Next step (cycle 3)
+
+Resubmit the repaired revision to the same Code Review controller; cycle 3
+reruns reliability and agent-usability, which fail only on the advisory
+byte-copy residuals, so the expected terminal outcome is
+`cycle_cap_best_available` with the four residuals reported for the
+upstream filing.
