@@ -3,7 +3,7 @@ title: Auralis C3 Claude adapter implementation plan
 type: feat
 status: active
 date: 2026-08-27
-origin: https://github.com/infiquetra/auralis/blob/main/docs/brainstorms/2026-08-26-auralis-v1-requirements.md
+origin: https://github.com/infiquetra/auralis/blob/b49de1ba4d39cbd8a1e582d72bddca85bf528f8a/docs/brainstorms/2026-08-26-auralis-v1-requirements.md
 backend: inline
 ---
 
@@ -25,6 +25,11 @@ Base for the run: `f981ed4` on `origin/main`, re-resolved at planning preflight 
 2026-08-27 and verified equal to `origin/main` at that time. Backend is **inline** for
 every unit.
 
+**Revised 2026-08-27** against the blocking document review at
+[`docs/reviews/2026-08-27-auralis-c3-adapter-plan-doc-review.md`](../reviews/2026-08-27-auralis-c3-adapter-plan-doc-review.md);
+all twelve findings (F1–F12) are repaired — the per-finding disposition table is at the
+end of this document.
+
 ## Problem Frame
 
 Auralis V1 is a private, single-operator macOS application that gives one bound,
@@ -40,26 +45,41 @@ later proves interoperation with C10.
 
 **R-ID namespace note.** Every R-number in this document (R20, R121, …) is an Auralis V1
 requirements-document ID from
-[`2026-08-26-auralis-v1-requirements.md`](https://github.com/infiquetra/auralis/blob/main/docs/brainstorms/2026-08-26-auralis-v1-requirements.md)
-pinned at `b49de1b`. The voice package's own earlier plan and acceptance ledger use a
+[`2026-08-26-auralis-v1-requirements.md`](https://github.com/infiquetra/auralis/blob/b49de1ba4d39cbd8a1e582d72bddca85bf528f8a/docs/brainstorms/2026-08-26-auralis-v1-requirements.md),
+an immutable commit permalink at revision `b49de1ba4d39cbd8a1e582d72bddca85bf528f8a`
+(verified present at that revision on 2026-08-27; the short form `b49de1b` used elsewhere
+in run artifacts resolves to this full SHA). The voice package's own earlier plan and acceptance ledger use a
 *different* R1–R33 numbering from the voice 0.2.x run; the two namespaces do not overlap in
 meaning, and this plan never uses the voice-run numbering.
 
-## Wire authority — and the one honest flag on it
+## Wire authority — the pin, and the one honest flag on it
 
-The normative wire contract is **Auralis Bridge Contract v1**, authored by C10, whose Code
-Review is accepted. A verbatim working copy is committed in this repository at
-[`docs/bridge-v1-from-c10.md`](../bridge-v1-from-c10.md); it defines discovery,
-authentication, the five routes, request/response bodies, transport errors, processing
-precedence, the adjudication order and rejection vocabulary, identifier semantics, retry
-rules, and extension rules, and it names C3 as its consumer.
+The normative wire contract is **Auralis Bridge Contract v1**, authored by capability
+slice C10 in `infiquetra/auralis`, whose Saga Code Review is accepted. Its authoritative
+home is `docs/bridge/bridge-v1.md` in `infiquetra/auralis` at revision
+`695cd0ecfddf44e0d6e3386da318bd5fde4a1926` (the accepted-review revision, currently on the
+`auralis` run branch `orch/auralis-v1-phase1`). Because this repository's implementation
+and CI run from clean checkouts that cannot see another repository's unmerged branch, a
+**tracked byte-identical snapshot** of that exact revision is committed here at
+[`docs/bridge-v1-from-c10.md`](../bridge-v1-from-c10.md). The snapshot carries no local
+header or edit of any kind, so its integrity is checkable by hash alone:
 
-**Flag:** that contract currently lives on the `auralis` run branch and has **not yet
-merged to `auralis` main**. This adapter's wire assumptions are therefore pinned to the
-committed document copy above, not to a released artifact. Mitigations: every wire literal
-is centralized in one module (U1) and one stub fixture, so a contract change before merge
-is a bounded re-touch; the joint acceptance AE34 re-validates the wire against the real
-Core before the run closes.
+- Snapshot SHA-256: `eb47d141e5c1b87bae0bd1c0799386a3aa8806635251db14fc806469b5db19eb`.
+- Reproduction: `git -C <auralis checkout> show 695cd0ecfddf44e0d6e3386da318bd5fde4a1926:docs/bridge/bridge-v1.md | shasum -a 256`
+  yields the same digest (verified 2026-08-27).
+
+The contract defines discovery, authentication, the five routes, request/response bodies,
+transport errors, processing precedence, the adjudication order and rejection vocabulary,
+identifier semantics, retry rules, and extension rules, and it names C3 as its consumer.
+Every contract citation in this plan (a "§" reference) is a section of that snapshot.
+
+**Flag:** the contract has **not yet merged to `auralis` main**. This adapter's wire
+assumptions are pinned to the accepted-review revision above, not to a released artifact.
+Mitigations: every wire literal is centralized in one module (U1) and one stub fixture
+(`plugins/voice/tests/bridge_stub.py`, U1), so a contract change before merge is a bounded
+re-touch; the joint acceptance AE34 re-validates the wire against the real Core before the
+run closes. If C10 amends the contract, the snapshot is refreshed by the same
+extract-and-hash procedure and the new revision and digest are recorded here.
 
 C10's own acceptance stub deliberately imports no production bridge library, so the wire is
 provable from independent literals on both sides. This adapter's tests stand on the same
@@ -91,8 +111,11 @@ discipline (KTD9).
 - Markdown-recognition precedent for the R121 gate already exists in the package: the
   speak path's cleanup pass defines exact regex classes for fences, headings, emphasis,
   links, inline code, lists, blockquotes, horizontal rules, and table pipes
-  ([`text_cleanup.py:27`](../../plugins/voice/scripts/text_cleanup.py)). The gate reuses
-  the *recognizer* class definitions and never the transformation (R121 forbids repair).
+  ([`text_cleanup.py:27`](../../plugins/voice/scripts/text_cleanup.py)). Its own module
+  docstring bounds it as a small line-and-regex cleanup whose fidelity beyond the tested
+  classes is not a goal — so it *seeds* the gate's overlapping detector classes but does
+  not bound them: the gate owns a complete rejected-syntax contract of its own (KTD1,
+  U2), and never the transformation (R121 forbids repair).
 - Claude Code platform facts, verified against current documentation on 2026-08-27
   (plugins-reference and hooks pages at code.claude.com):
   - `.claude-plugin/plugin.json` `mcpServers` accepts a **string path** to a separate
@@ -123,8 +146,8 @@ part of it is observable at this slice boundary, and where it is traced.
 |---|---|---|---|
 | R20 | The bound agent authors the spoken rendering; Auralis and its adapter never compose, summarize, shorten, or rewrite response content | No code path in the adapter transforms rendering text; the gate rejects, never repairs; accepted text is forwarded byte-identical | `plugins/voice/tests/test_rendering_gate.py`, `plugins/voice/tests/test_mcp_server.py` |
 | R21 | Auralis exposes an MCP surface through which the bound agent submits an authored spoken rendering for the current turn | The adapter *is* that surface in the agent's process space: an MCP stdio server with a `submit_spoken_rendering` tool that forwards to `POST /v1/rendering` | `plugins/voice/tests/test_mcp_server.py` |
-| R22 | A turn completed without an authored rendering falls back to the cleaned full written response rather than silence | Adapter half: completion capture detects "turn completed while still open" and records the fallback outcome; fallback speech itself is Core/C5 (joint AE36) | `plugins/voice/tests/test_stop_hook.py`; joint AE36 |
-| R23 | A fallback turn is visibly marked as a fallback, distinguishable from an authored response | Adapter half: the turn record marks outcome `fallback` distinctly from `authored`; the audible/visible marking is Core-side (`fallback_accepted` turn state) | `plugins/voice/tests/test_stop_hook.py`, `plugins/voice/tests/test_turn_record.py` |
+| R22 | A turn completed without an authored rendering falls back to the cleaned full written response rather than silence | C3 owns this requirement, but its mechanism is C5's in-process `acceptFallback()` (see "The R22/R23 fallback seam"). The adapter's share: submit only gated plain text, never fabricate a submission, let the turn complete with no accepted authored rendering, and durably record that completion. Fallback initiation, content sourcing, and speech are Core/C5 (joint AE36) | `plugins/voice/tests/test_stop_hook.py`, `plugins/voice/tests/test_r122_end_to_end.py`; joint AE36 |
+| R23 | A fallback turn is visibly marked as a fallback, distinguishable from an authored response | The distinguishing mark is Core's `fallback_accepted` turn state (contract §6.4), written when C5 calls `acceptFallback()`. The adapter's share: keep the two outcomes disjoint in its own record (`fallback` vs `authored`) so the adapter-side evidence agrees with the Core-side mark (joint AE36) | `plugins/voice/tests/test_stop_hook.py`, `plugins/voice/tests/test_turn_record.py`; joint AE36 |
 | R25 | No persistent verbosity mode; preferences are carried to the agent as instructions; no adapter content decision | The policy module renders preferences to instruction text only; the adapter has no verbosity state that alters content and no transformation path | `plugins/voice/tests/test_voice_policy.py` |
 | R106 | For every turn, tell the agent whether the turn originated through Auralis | UserPromptSubmit hook queries `GET /v1/current`, matches identity, and injects an explicit originated/not-originated signal on every turn while bound | `plugins/voice/tests/test_user_prompt_submit_hook.py` |
 | R107 | Carry the operator's current voice policy and preferences, including an armed one-shot Brief Next Turn override, to the agent as instructions; transmit, never apply | Policy (with armed override) rides the same injection on Auralis-originated turns; the one-shot is consumed on transmission | `plugins/voice/tests/test_user_prompt_submit_hook.py`, `plugins/voice/tests/test_voice_policy.py` |
@@ -164,7 +187,66 @@ When the turn settles, the extended **Stop hook** (`stop_hook.py`, U4) reconcile
 session is wire-bound and the voice turn ended without an accepted authored rendering, it
 records outcome `fallback`; if a rendering was accepted, outcome `authored`. While
 wire-bound it suppresses the legacy local speak path — Auralis owns speech — and when not
-wire-bound the 0.2.1 behaviour is byte-for-byte unchanged.
+wire-bound the 0.2.1 behaviour is byte-for-byte unchanged. The recorded outcome is
+adapter-side *evidence* of the turn's disposition, not the fallback mechanism itself; the
+mechanism is Core/C5's, per the seam below.
+
+## The R22/R23 fallback seam — who does what
+
+C3 owns requirements R22 and R23, but the mechanism that satisfies them lives in Auralis
+Core: the contract's downstream-consumption table (§9) assigns `acceptFallback()` to
+capability slice C5 (Audio), which calls it prior to fallback speech, exactly as it calls
+`startTurn()` on recording and `cancelTurn()` on barge-in. `acceptFallback()` is an
+in-process Core API. It is deliberately **not** one of the five wire routes, and this plan
+neither invents a wire operation for it nor asks C10 for one. This section states the
+ownership boundary explicitly so the split cannot be misread as a missing path.
+
+**What the adapter (C3) is responsible for.**
+
+- Rejecting a non-plain-text authored rendering at submission with a named reason under
+  R121 (`fenced_code_block` / `markdown_formatting`), forwarding nothing to the wire, and
+  never cleaning, rewriting, or substituting content.
+- Never fabricating a submission: when no acceptable rendering is authored (including the
+  R122 case — a named rejection with no replacement), the adapter lets the turn complete
+  with **no accepted authored rendering**. On the wire this is simply the absence of an
+  accepted `POST /v1/rendering` for the captured `(binding_id, turn_id)`; the turn slot
+  Core holds for that pair stays in state `open` as far as C3's actions are concerned.
+- Durably recording the adapter-side view: the turn record carries the named rejection(s)
+  and the settled outcome (`fallback` vs `authored`, disjoint), which is the observable
+  R122 evidence trail at this repository's boundary.
+- Suppressing the legacy local speak path while wire-bound, so Core's fallback speech is
+  never doubled by a local one.
+
+**What Core and C5 are responsible for** (inside `infiquetra/auralis`, out of C3's
+custody).
+
+- Deciding the fallback moment for a turn that has no accepted authored rendering, and
+  initiating fallback speech: C5 calls `acceptFallback()` prior to fallback speech (§9).
+- Sourcing the fallback content — R22's "cleaned full written response". How Core obtains
+  the completed written response is Core-side design inside C10/C5's custody; no committed
+  wire route carries it, and the adapter neither can nor should supply it.
+- Marking the fallback visibly: `acceptFallback()` transitions the turn to the
+  `fallback_accepted` state (§6.4), the Core-side mark R23 requires, distinguishable from
+  `authored_accepted`.
+
+**How R22 and R23 are therefore discharged.** R22's condition ("turn completed without an
+authored rendering") is jointly produced: the adapter guarantees no un-gated or fabricated
+rendering is ever accepted, and Core observes the absence of an accepted rendering for the
+turn. R22's action (speak the full written response instead of silence) and R23's mark
+(`fallback_accepted`) are executed entirely by Core/C5 through `acceptFallback()`. The
+adapter's `fallback` outcome record is the C3-side half of the evidence; the Core-side
+half is the turn state. The two halves are joined at the acceptance boundary, not on the
+wire.
+
+**Named cross-slice dependency (satisfied at AE36, not by C3 alone).** C3 cannot alone
+make a fallback audible or marked. For R22/R23 to hold end to end, C5 must (a) detect the
+fallback moment for an unrendered completed turn, (b) obtain the turn's completed full
+written response by a Core-side mechanism, and (c) call `acceptFallback()` so the turn is
+spoken and marked `fallback_accepted`. That is a legitimate dependency on C5's slice — the
+contract already assigns C5 the API — and the joint acceptance AE36 is where the
+cross-boundary behaviour is proven. If C5's implementation cannot source the written
+response, that is C5/C10's finding to surface in their slice; nothing in this plan papers
+over it, and no adapter-local JSON label is claimed to substitute for the Core-side mark.
 
 ## Key Technical Decisions
 
@@ -175,9 +257,13 @@ the wire. The tool result vocabulary has three disjoint classes: `rejected_conte
 adapter-owned reasons (`fenced_code_block`, `markdown_formatting`), `rejected_by_core`
 relaying the wire's adjudication vocabulary verbatim (`no_binding` … `empty_rendering`),
 and `unavailable` with a named operational condition (`bridge_unavailable`, `not_bound`,
-`no_current_turn`, `transport_error`). Precedence for content reasons: any fence yields
+`no_current_turn`, `transport_error`, `turn_record_busy`). Precedence for content reasons: any fence yields
 `fenced_code_block`; otherwise any other detected class yields `markdown_formatting`, with
-the detected classes and first offending line named in the detail.
+the detected classes and first offending line named in the detail. The gate enforces a
+**complete, closed rejected-syntax contract owned by the gate itself** — the full class
+list is enumerated in U2's design notes — not the narrower recognizer set of the speak
+path's cleanup pass, whose documented scope (a small line-and-regex cleanup, fidelity
+beyond its tested classes explicitly not a goal) is too small to prove R121.
 
 **Rationale.** The bridge's adjudication order (contract §6.5) contains no plain-text
 reason — Core accepts text verbatim — so the agent-facing surface is the only place R121
@@ -302,7 +388,10 @@ transport error, no epoch — the legacy 0.2.1 behaviour runs unchanged.
 double-speak every turn. Failing toward the legacy path keeps voice 0.2.1 users whole when
 Auralis is absent or broken. The reconciliation half is C3's contribution to R22/R23/R122:
 it is the adapter-side detector and durable marker of "completed without an accepted
-rendering."
+rendering." It is evidence, not the fallback mechanism — fallback speech and the
+`fallback_accepted` mark are Core/C5's through `acceptFallback()`, per "The R22/R23
+fallback seam" above; the Stop hook hands nothing to Core and needs no wire route to do
+its half.
 
 **Rejected.** Removing the legacy speak path (breaks the shipped standalone voice loop);
 suppressing on mere `bridge.json` existence (a stale file would silence a working local
@@ -364,21 +453,33 @@ spec changes.
 **Decision.** Bridge tests run against a stdlib `http.server` stub speaking the literal
 shapes of [`docs/bridge-v1-from-c10.md`](../bridge-v1-from-c10.md) — the same
 independent-literals discipline as C10's acceptance stub, with no shared helpers across
-the repository boundary. Token fixtures are inert example values (the secret-free check in
-`check_repo.py` stays green). The bridge discovery path
+the repository boundary. The stub lives in one owned fixture module,
+`plugins/voice/tests/bridge_stub.py` (U1). Token fixtures are inert example values (the
+secret-free check in `check_repo.py` stays green). The bridge discovery path
 (`~/Library/Application Support/Auralis/bridge.json`) is a module constant with a
-parameter seam for tests; **no new environment settings are added** — the closed
-`SETTING_NAMES` set in [`settings.py:81`](../../plugins/voice/scripts/settings.py) is
-untouched, because the contract fixes the location and an env override would just be a
-second way to break discovery.
+parameter seam for tests — **no `VOICE_BRIDGE_FILE` override is added**, because the
+contract fixes the location and an env override would just be a second way to break
+discovery. The two environment values the contract's §5 identity rule mandates
+(`HERDR_PANE_ID`, `HERDR_BIN_PATH`) are **read through `settings.py`, the package's sole
+environment reader**: its closed `SETTING_NAMES` tuple
+([`settings.py:81`](../../plugins/voice/scripts/settings.py)) is extended from eight to
+ten stated names, both with no default (absent or empty → the module's named refusal,
+which `adapter_identity.py` reports as "register and submit nothing" per §5). The set
+stays closed and secret-free; no module outside `settings.py` reads the environment.
 
 **Rationale.** Two ends proving one wire from two independent readings of the same
 document is the run's stated bridge-acceptance design; parameter seams follow the
-package's hermetic-seams decision (2026-08-25) and keep the settings surface closed.
+package's hermetic-seams decision (2026-08-25). Routing the contract-mandated identity
+names through the settings module preserves the package's one-reader rule *and* the
+closed-set rule — the set is extended in its owning module, not bypassed by a second
+reader — and the refusal-by-name semantics of `_stated` are exactly the §5 failure
+posture.
 
 **Rejected.** Sharing stub or fixture code with `infiquetra/auralis` (the contract
 explicitly forbids cross-repository test helpers); a `VOICE_BRIDGE_FILE` setting (opens a
-misconfiguration class the contract exists to prevent).
+misconfiguration class the contract exists to prevent); `adapter_identity.py` reading
+`HERDR_PANE_ID` / `HERDR_BIN_PATH` directly (a second environment reader, violating the
+settings module's stated contract).
 
 **Revisit when.** The contract's discovery location changes (it would arrive as a v2).
 
@@ -404,11 +505,75 @@ card mandates extending the voice package, and a second package would duplicate 
 **Revisit when.** The Claude CLI changes manifest resolution (same revisit condition as
 the 2026-08-25 packaging decision).
 
+### KTD11 — Turn-record mutations are one locked transaction; atomic replace is only the torn-write defense
+
+**Decision.** Four processes mutate one turn record (the UserPromptSubmit hook creates
+it, the MCP server appends submissions, the PreToolUse hook appends observations, the
+Stop hook settles the outcome). Every mutation goes through **one entrypoint**,
+`turn_record.mutate(fn)`, which serializes writers with an exclusive `fcntl.flock` lock
+on a sidecar lock file (`<record>.lock` beside the record in the state directory) and
+performs the whole read-current → apply → atomic write-replace sequence *inside* the
+critical section. Lock acquisition is a non-blocking attempt retried on a monotonic
+deadline (budget in the timeout table below); an expired deadline is a named refusal
+(`turn_record_busy`), never a blind write. No writer anywhere in the adapter performs its
+own read-modify-replace on the record; atomic `os.replace` remains solely the torn-write
+defense for readers.
+
+**Rationale.** Atomic replacement makes each write complete but does nothing about two
+writers reading the same prior document and each replacing it — the lost-update
+interleaving that could erase a named R121 rejection or an accepted disposition and flip
+the R122 result. An exclusive advisory lock held across read-apply-write is the smallest
+standard-library construct that makes each mutation a transaction; `fcntl.flock` works on
+both the macOS target and the Linux CI runner, and a sidecar lock file keeps the record
+itself replaceable while locked. This is the same defect family that has bitten this run
+twice in Core, which is why the mechanism is specified here rather than left to an
+implementer's comment.
+
+**Rejected.** Atomic replace alone with "one writer per field family" (two processes can
+still interleave read-modify-replace on the whole file — the exact reviewed defect);
+`O_CREAT|O_EXCL` lock files (stale-lock cleanup on crash becomes its own protocol; flock
+releases with the process); an SQLite record (heavier machinery than one single-turn JSON
+document warrants, and the package's stores are uniformly JSON files).
+
+**Revisit when.** The record outgrows a single turn or gains cross-process readers with
+consistency needs beyond one file.
+
+## Timeout budget (normative numbers)
+
+Every deadline in this plan is a number here; units cite this table instead of saying
+"short" or "stated". All HTTP calls are loopback. Behaviours on expiry are named; no
+expiry may surface as acceptance or as a broken turn.
+
+| Operation | Owner | Budget | On expiry |
+|---|---|---:|---|
+| HTTP connect (any bridge call) | U1 `bridge_client.py` | 250 ms | Named `transport_error`; fail closed |
+| `GET /v1/health`, `GET /v1/current` (overall per call) | U1 | 1,000 ms | Named `transport_error`; caller treats bridge as unavailable |
+| `PUT /v1/presence`, `DELETE /v1/presence` (overall) | U1 (server presence thread) | 2,000 ms | Renewal failure → 1 Hz re-discovery per §8; never blocks the tool path |
+| `POST /v1/rendering` (overall, per attempt) | U1 | 2,000 ms | Named `transport_error`; lost-response retry rules per §8 (single byte-equivalent retry) |
+| Herdr `agent list` subprocess | U1 `adapter_identity.py` | 2,000 ms | Named identity refusal; register and submit nothing (§5) |
+| Turn-record lock acquisition (`mutate`) | U2 `turn_record.py` | 500 ms (10 ms retry interval, monotonic clock) | Named `turn_record_busy`; per-writer behaviour below |
+| UserPromptSubmit hook (hooks.json `timeout`) | U4 | 5 s (package convention, matches Stop) | Client kills the hook; no injection that turn |
+| — internal budget: discovery read + identity + one GET + record write | U4 | ≤ 3,500 ms worst case (sum of rows above) | Any internal expiry → emit nothing, exit 0 |
+| PreToolUse hook (hooks.json `timeout`) | U4 | 5 s | Client kills the hook; observation lost, permission flow untouched |
+| Stop hook (hooks.json `timeout`, existing) | U4 | 5 s (unchanged) | Client kills the hook |
+| — internal budget: one bridge snapshot on the KTD6 branch | U4 | 1,000 ms | Bridge doubt → legacy 0.2.1 path runs |
+| Presence renewal cadence | U3 | at/before `renew_after_ms` (5,000 ms) per §6.2 | Missed renewal → re-registration path; lease expiry is Core's to enforce |
+
+Per-writer behaviour on `turn_record_busy`: the UserPromptSubmit hook emits no injection
+and exits 0 (an uncaptured turn later reads as `no_current_turn`); the PreToolUse hook
+drops the observation and exits 0; the MCP server answers the tool call
+`unavailable` / `turn_record_busy` without touching the wire; the Stop hook falls toward
+the safe side — while wire-bound it still suppresses local speech (suppression is decided
+by the binding epoch, not by the record) and leaves the outcome unsettled rather than
+guessing. Deadline behaviour is tested with a stubbed clock at each owning boundary
+(U1/U2 scenarios), never with wall-clock sleeps.
+
 ## Implementation Units
 
-Waves: U1 and U2 are independent; U3 and U4 both depend on U1+U2 and touch disjoint
-files; U5 lands last. Backend is inline for every unit, so execution order is simply
-U1 → U2 → U3 → U4 → U5. No two units edit the same file.
+Waves: U1 and U2 are independent; U3 depends on U1+U2; U4 depends on U1+U2+U3 (its
+end-to-end scenario launches U3's real server process); U5 lands last. All unit file
+sets are disjoint. Backend is inline for every unit, so execution order is simply
+U1 → U2 → U3 → U4 → U5.
 
 ### U1. Bridge wire client and adapter identity resolver
 
@@ -417,8 +582,24 @@ contract, `adapter_identity.py` answers who this adapter is.
 
 **Files:** `plugins/voice/scripts/bridge_client.py` (new),
 `plugins/voice/scripts/adapter_identity.py` (new),
+`plugins/voice/scripts/settings.py` (edit: extend `SETTING_NAMES` with `HERDR_PANE_ID`
+and `HERDR_BIN_PATH`, both no-default, per KTD9),
+`plugins/voice/tests/bridge_stub.py` (new: the shared independent-literals bridge stub —
+see below),
 `plugins/voice/tests/test_bridge_client.py` (new),
-`plugins/voice/tests/test_adapter_identity.py` (new).
+`plugins/voice/tests/test_adapter_identity.py` (new),
+`plugins/voice/tests/test_settings.py` (edit: the two new stated names' presence, refusal,
+and closed-set scenarios).
+
+**Shared stub fixture custody.** `plugins/voice/tests/bridge_stub.py` is the one stub
+fixture every bridge-facing suite uses (U1's own suites, U3's server suites, U4's hook
+suites, and the U4 end-to-end scenario). It is owned by U1 alone; no other unit edits it.
+It is a plain module (no `test_` prefix, so neither `unittest` discovery nor the CI
+`pytest` job collects it as a suite), holding the stdlib `http.server` stub that speaks
+the contract literals plus its request-capture surface, and is imported by sibling suites
+under the package's existing explicit `sys.path.insert` test convention. Wire literals
+live in exactly two places: `bridge_client.py` (production) and `bridge_stub.py` (test) —
+the two independent readings KTD9 requires.
 
 **Requirements:** wire substrate for R21, R106, R122 — discovery (§2), authentication
 (§3), wire rules (§4), identity (§5), the five routes (§6), transport errors and
@@ -430,38 +611,77 @@ precedence (§7), identifier/retry/fail-closed semantics (§8) of
 **Backend:** inline.
 
 **Design notes.** `bridge_client.py`: strict discovery (exact four keys, exact types,
-literal host, port range, 43-char token shape, file mode `0600`, any deviation reads
+literal host, port range, full token grammar — exactly 43 characters drawn only from the
+base64url alphabet `[A-Za-z0-9_-]`, no `=` padding — file mode `0600`, any deviation reads
 "unavailable" — never a default port or token); bearer header on every request; closed
-JSON request bodies with `schema: 1`; stated short timeouts on every call (`http.client`
-over loopback, deadline discipline per the package convention); a total error mapping of
-the §7 table; fail-closed on unknown status, unknown error code, or malformed response;
-retry rules as first-class behavior — 1 Hz re-discovery until registration, single
-byte-equivalent retry after 500 only, never retry 4xx, byte-equivalent-only retry for lost
-rendering responses. `adapter_identity.py`: the §5 rule verbatim — `HERDR_PANE_ID` from
-the environment, `HERDR_BIN_PATH` executed with `agent list` under the package's
-subprocess discipline (`process.py`), envelope check `result.type == "agent_list"`,
-exactly-one pane match, all three components non-empty, and the never-copy-from-
-`GET /v1/current` rule stated in the module contract. Every failure is a named refusal;
-any failure means register and submit nothing.
+JSON request bodies with `schema: 1`; the numeric deadlines of the timeout budget table on
+every call (`http.client` over loopback, monotonic-clock deadline discipline); a total
+error mapping of the §7 table; fail-closed on unknown status, unknown error code, or
+malformed response; **Core-identifier grammar validation** — `binding_id` and `turn_id`
+read from `GET /v1/current` must be opaque lowercase UUID v4 strings per §8, and a
+malformed, uppercase, or wrong-version identifier means the snapshot is refused (treated
+as bridge-unavailable) and the pair is never captured or carried; retry rules as
+first-class behavior — 1 Hz re-discovery until registration, single byte-equivalent retry
+after 500 only, never retry 4xx, byte-equivalent-only retry for lost rendering responses.
+**Lost-response retry context (the `duplicate_rendering` reconciliation):** when a
+rendering response is lost after the request may have reached Core, the client marks the
+in-flight submission as a byte-equivalent retry; if that retry answers
+`duplicate_rendering`, the contract's §8 sentence ("an earlier acceptance returns
+`duplicate_rendering` while that turn remains current") makes the disposition decidable —
+the earlier identical submission was accepted — so the client returns **accepted** with
+detail `accepted_on_retry`, never a rejection. Outside that retry context,
+`duplicate_rendering` relays verbatim as `rejected_by_core` (terminal for the pair per
+§6.5 — the result detail states an authored rendering was already accepted, so the agent
+is never invited to submit a replacement). `adapter_identity.py`: the §5 rule verbatim —
+`HERDR_PANE_ID` and `HERDR_BIN_PATH` resolved **through `settings.py`'s extended stated
+set** (KTD9), the executable run with `agent list` under the package's subprocess
+discipline (`process.py`) inside its 2,000 ms deadline, envelope check
+`result.type == "agent_list"`, exactly-one pane match, all three components non-empty, and
+the never-copy-from-`GET /v1/current` rule stated in the module contract. Every failure is
+a named refusal; any failure means register and submit nothing.
 
 **Test scenarios** (`plugins/voice/tests/test_bridge_client.py`,
-`plugins/voice/tests/test_adapter_identity.py`):
+`plugins/voice/tests/test_adapter_identity.py`,
+`plugins/voice/tests/test_settings.py`):
 
 - Discovery: a valid file parses; each malformation (missing, partial JSON, wrong type
   per member, extra key, `schema: 2`, empty token, mode `0644`) independently reads
   unavailable, and no default is ever substituted.
+- Token grammar (the §2 literal, one fixture per violation): a 42- and a 44-character
+  token; a 43-character token containing a non-base64url character (`+`, `/`); a token
+  carrying `=` padding — each reads unavailable, and **no presence or rendering request
+  follows** (asserted against the stub's request capture).
+- Core-identifier grammar (the §8 literal): a `GET /v1/current` snapshot whose
+  `binding_id` or `turn_id` is uppercase, not a UUID at all, or a UUID of the wrong
+  version — each refuses the snapshot, captures no pair, and no rendering request ever
+  carries the malformed value.
 - Auth: the header is `Authorization: Bearer <token>` byte-exact; a stub returning 401
   yields a named unauthorized condition and triggers re-discovery, never acceptance.
 - Each of the five routes round-trips its documented 200 body against the stub; response
   parsing requires all documented members and ignores unknown ones.
 - Transport errors: each §7 row maps to its named condition; an undocumented status and
   an unknown error code both fail closed.
+- Deadlines: with a stubbed clock, a call exceeding its timeout-budget row yields the
+  named `transport_error` (never acceptance, never a hang); the deadline values asserted
+  are the table's numbers.
 - Retry: after a stubbed 500 the client performs at most one byte-identical retry and
   only after a health re-check; a 400 is never retried; the rendering retry path resends
   byte-identical bodies with the same identifiers.
+- Lost-response reconciliation (the F8 case): the stub accepts a rendering but drops the
+  response; the client's single byte-equivalent retry answers `duplicate_rendering`; the
+  client returns accepted with detail `accepted_on_retry`. The same
+  `duplicate_rendering` reason *outside* retry context relays as `rejected_by_core`.
 - Identity: the happy path copies the three components exactly; missing env var, missing
   executable, malformed envelope, zero matches, two matches, and an empty component each
   produce a named refusal.
+- Settings: `HERDR_PANE_ID` and `HERDR_BIN_PATH` are stated members of `SETTING_NAMES`;
+  absent and empty each produce the module's named refusal (no default); the closed-set
+  regression (nothing outside the ten-name tuple is read) still holds.
+
+Each grammar and validation guard above is **mutation-checked once during
+implementation**: the guard is deliberately relaxed, the named test is observed failing,
+and the guard is restored — recorded in the U5 acceptance note so a permanently green
+suite cannot hide a vacuous guard.
 
 **Verification:** `cd plugins/voice && python3 -m unittest discover -s tests -v`;
 `python3 scripts/check_repo.py`; `git diff --check`.
@@ -487,19 +707,48 @@ submissions, dispositions, outcome marking).
 
 **Backend:** inline.
 
-**Design notes.** `rendering_gate.py` reuses the recognizer regex classes of
-[`text_cleanup.py`](../../plugins/voice/scripts/text_cleanup.py) (fences, ATX headings,
-emphasis/strong pairs, inline code, links/images, list markers, blockquotes, horizontal
-rules, table pipes) as *detectors* with the KTD1 reason precedence; it exports a verdict
-(`plain`, or a named rejection with detected classes and first offending line) and has no
-transformation function at all. `voice_policy.py` follows the `binding.py` store pattern:
+**Design notes.** `rendering_gate.py` owns the **complete R121 rejected-syntax
+contract** — a closed, enumerated class list documented in the module as the boundary's
+authority (KTD1). The paired-marker and line-anchor recognizers of
+[`text_cleanup.py`](../../plugins/voice/scripts/text_cleanup.py) seed the overlapping
+classes, but the cleanup pass's documented scope does not bound the gate: the gate adds
+the Markdown forms the cleanup pass never needed. The full class list, with the reason
+each class yields:
+
+| Detected class | Reason |
+|---|---|
+| Fenced code block (``` ``` `` or `~~~`) | `fenced_code_block` |
+| Indented code block (a line indented 4+ spaces or a tab, outside a continuation of plain prose) | `markdown_formatting` (class `indented_code_block` in the detail) |
+| ATX heading (`#` … `######` + space) | `markdown_formatting` |
+| Setext heading (a non-blank line followed by an underline of only `=` or `-`) | `markdown_formatting` |
+| Emphasis / strong pairs (`*`, `**`, `_`, `__`, word-edge-guarded) | `markdown_formatting` |
+| Inline code span (backticks) | `markdown_formatting` |
+| Inline link / image (bracketed text followed immediately by a parenthesized destination, with or without a leading `!`) | `markdown_formatting` |
+| Reference-style link (`[text][label]`, `[text][]`) and link-reference definition (`[label]: destination` at line start) | `markdown_formatting` |
+| Autolink (`<scheme://…>` or `<name@host>` in angle brackets) | `markdown_formatting` |
+| List marker (`-`/`+`/`*`/`1.`/`1)` + space at line start) | `markdown_formatting` |
+| Blockquote marker (`>` at line start) | `markdown_formatting` |
+| Horizontal rule | `markdown_formatting` |
+| Table pipe row | `markdown_formatting` |
+
+Stated non-classes (accepted as plain, each a named negative test): arithmetic asterisks
+(`2 * 3`), identifier underscores (`snake_case`), mid-sentence hyphens, comparison angle
+brackets (`x < y`), a bare bracketed aside (`[sic]` — without a matching reference
+definition it is not a link, and definitions themselves are rejected), a colon-labelled
+line (`note: …`), and a bare spoken URL (not an autolink without angle brackets; base
+Markdown does not linkify bare URLs). The gate exports a verdict (`plain`, or a named
+rejection with detected classes and first offending line) and has no transformation
+function at all; the class table above is the module's documented contract and the test
+suite's checklist. `voice_policy.py` follows the `binding.py` store pattern:
 atomic write-replace, absent-vs-corrupt reported by name; fields are stated preference
 instruction lines plus the `brief_next_turn` one-shot; `consume_brief_next_turn()` is
 atomic; `render_instructions()` produces the injected text and applies nothing.
 `turn_record.py`: one current-turn JSON file in the state directory, replaced at each turn
 origin; carries `session_id`, the captured `(binding_id, turn_id)`, origin, submissions
 with dispositions and reasons, tool-use observations, and the settled outcome
-(`authored` / `fallback`). CLI: `voice policy show` and
+(`authored` / `fallback`); **all mutations run through the single `mutate(fn)`
+entrypoint — the KTD11 flock transaction with the timeout table's 500 ms acquisition
+budget — and the module exposes no other write path**. CLI: `voice policy show` and
 `voice policy brief-next-turn` verbs on the existing parser in
 [`voice_cli.py:156`](../../plugins/voice/scripts/voice_cli.py).
 
@@ -509,12 +758,19 @@ with dispositions and reasons, tool-use observations, and the settled outcome
 - Gate rejects a fenced code block with reason `fenced_code_block`, and Markdown emphasis
   with reason `markdown_formatting`, each naming the detected class and line (the AE26
   core, both named-reason halves the card requires).
+- **Every row of the class table has at least one rejecting scenario** — including the
+  forms beyond the cleanup pass's scope: a setext heading, a reference-style link, a
+  link-reference definition, an autolink, and an indented code block each yield their
+  stated reason and class.
+- **Every stated non-class has an accepting scenario**: arithmetic asterisks, identifier
+  underscores, mid-sentence hyphens, `x < y`, a bare `[sic]`, a colon-labelled line, and
+  a bare spoken URL each pass as `plain`.
 - A submission containing both a fence and emphasis yields `fenced_code_block` (stated
   precedence).
-- Plain spoken text — including text with underscores in identifiers, arithmetic
-  asterisks avoided by the paired-marker rules, and ordinary hyphens mid-sentence — passes
-  as `plain`; the gate exposes no function that returns modified text (R20 asserted
-  structurally: the module's public surface is verdicts only).
+- The gate exposes no function that returns modified text (R20 asserted structurally: the
+  module's public surface is verdicts only); each detector class is mutation-checked once
+  during implementation (relaxed → named test fails → restored), recorded in the U5
+  acceptance note.
 - Policy: arming `brief_next_turn` then consuming it yields the brief instruction exactly
   once; a second consume reports unarmed; corrupt and absent store states are reported by
   name; `render_instructions()` output contains the stated preferences verbatim and
@@ -523,6 +779,13 @@ with dispositions and reasons, tool-use observations, and the settled outcome
 - Turn record: origin write replaces the previous turn's record; submissions and
   dispositions append; outcome settles once; a record for a different `session_id` is
   refused by name.
+- **Interleaving (the KTD11 proof, deterministic — no sleeps, no luck):** two concurrent
+  `mutate` calls from separate threads, each holding its own file descriptor, with an
+  event-controlled pause injected inside the first writer's critical section; the second
+  writer provably does not enter until the first completes, and the final record contains
+  **both** updates (the lost-update case a bare read-modify-replace would produce is the
+  failing assertion). A third scenario holds the lock past the 500 ms acquisition budget
+  (stubbed clock) and observes the named `turn_record_busy` refusal, never a blind write.
 
 **Verification:** same three commands as U1.
 
@@ -544,12 +807,30 @@ gating locally, forwarding verbatim, relaying dispositions, and running presence
 record; no captured pair for this session → `unavailable` / `no_current_turn`; gate the
 text (KTD1) → `rejected_content` with the named reason, recorded, nothing on the wire;
 otherwise `POST /v1/rendering` with the captured pair and byte-identical text →
-`accepted` or `rejected_by_core` with the wire reason relayed verbatim, recorded either
-way; transport failure → `unavailable` with the named condition, fail-closed (never
-reported as accepted). Presence thread per KTD2: discovery at 1 Hz until registered,
-renewal at the response's `renew_after_ms`, re-discovery on 401 or connection refusal,
-best-effort `DELETE` on stdin EOF, and the thread never writes to stdout. In-process
-tests drive the server loop over injected byte streams; the bridge side is the U1 stub.
+`accepted` (including the U1 client's `accepted_on_retry` reconciliation for a lost
+response answered `duplicate_rendering`) or `rejected_by_core` with the wire reason
+relayed verbatim, recorded either way; transport failure → `unavailable` with the named
+condition, fail-closed (never reported as accepted). All record writes go through
+`turn_record.mutate` (KTD11); the server holds no other write path. Presence thread per
+KTD2: discovery at 1 Hz until registered, renewal at the response's `renew_after_ms`,
+re-discovery on 401 or connection refusal, best-effort `DELETE` on stdin EOF, and the
+thread never writes to stdout.
+
+**Two test layers, per the repository's executable-entrypoint rule** (`AGENTS.md`: a
+package entrypoint must be run the way a user runs it — component tests alone have
+shipped broken imports before; see `tests/test_client_entrypoints.py`). Fine-grained
+scenarios drive the server loop in process over injected byte streams with the U1 stub.
+On top of that, one **process-level scenario launches the exact declared argv** —
+`python3 <installed-root>/scripts/mcp_server.py`, the byte-for-byte expansion of the
+`servers.json` declaration (`${CLAUDE_PLUGIN_ROOT}` → the installed root) — as a real
+subprocess from an installed-root-shaped directory (the `plugins/voice` tree copied to a
+temporary directory, exercising imports as installed), with real stdin/stdout pipes.
+Environment for the subprocess uses only existing stated seams: `VOICE_STATE_DIR` and the
+two KTD9 identity names point at test fixtures, and `HOME` points at a temporary home
+whose `Library/Application Support/Auralis/bridge.json` names the U1 stub's live port —
+no new setting and no code-level seam is needed. U5's packaging test pins the
+`servers.json` declaration to the same command/args literals this scenario launches, so
+the declaration and the proof cannot drift apart (independent-literals discipline, KTD9).
 
 **Test scenarios** (`plugins/voice/tests/test_mcp_server.py`):
 
@@ -572,7 +853,21 @@ tests drive the server loop over injected byte streams; the bridge side is the U
   cadence (stubbed clock), re-registers after a token rotation (401 → re-discovery), and
   sends `DELETE` on shutdown; identity-resolution failure means no registration and the
   tool reports `unavailable` / `not_bound`.
-- Every submission and disposition appears in the turn record (the R122 evidence trail).
+- Lost-response reconciliation at the surface (the F8 case end to end at this layer): the
+  stub accepts the first `POST /v1/rendering` but drops the response; the single
+  byte-equivalent retry answers `duplicate_rendering`; the tool result is **accepted**
+  with detail `accepted_on_retry`, the turn record's disposition is an authored
+  acceptance (so KTD6 reconciliation must read `authored`, never `fallback`), and the
+  result invites no replacement submission.
+- **Executable entrypoint (the declared process, as Claude runs it):** launch the exact
+  declared argv from the installed-root-shaped directory over real process pipes and
+  complete, in order: MCP `initialize`, `tools/list` (exactly `submit_spoken_rendering`),
+  a rejected `tools/call` (Markdown → named `rejected_content` reason), and an accepted
+  `tools/call` (plain text → forwarded to the stub, `accepted` relayed). This scenario
+  fails on a broken import, a wrong interpreter floor, a framing error, or stray stdout —
+  none of which the in-process layer can catch.
+- Every submission and disposition appears in the turn record (the R122 evidence trail),
+  written through `turn_record.mutate` only.
 
 **Verification:** same three commands as U1.
 
@@ -584,15 +879,18 @@ The client-extension half: two new hooks, the Stop-hook extension, and the hook 
 `plugins/voice/com.infiquetra.claude/hooks/pre_tool_use_hook.py` (new),
 `plugins/voice/com.infiquetra.claude/hooks/stop_hook.py` (edit),
 `plugins/voice/com.infiquetra.claude/hooks/hooks.json` (edit: add `UserPromptSubmit` and
-`PreToolUse` entries with stated timeouts),
+`PreToolUse` entries, `timeout: 5` each, matching the existing Stop entry and the timeout
+budget table),
 `plugins/voice/tests/test_user_prompt_submit_hook.py` (new),
 `plugins/voice/tests/test_pre_tool_use_hook.py` (new),
-`plugins/voice/tests/test_stop_hook.py` (edit: bridged-branch scenarios).
+`plugins/voice/tests/test_stop_hook.py` (edit: bridged-branch scenarios),
+`plugins/voice/tests/test_r122_end_to_end.py` (new: the cross-boundary
+rejection-to-fallback proof below).
 
-**Requirements:** R106, R107 (transmission), R22/R23 (adapter half), R122 (completion
-half), PreToolUse capture per X1.
+**Requirements:** R106, R107 (transmission), R22/R23 (adapter share per the fallback
+seam), R122 (completion half and the end-to-end path), PreToolUse capture per X1.
 
-**Depends on:** U1, U2.
+**Depends on:** U1, U2, U3 (the end-to-end scenario launches U3's real server process).
 
 **Backend:** inline.
 
@@ -605,11 +903,32 @@ rendered policy instructions with the one-shot consumed on transmission; on a bo
 non-originated turn emit the explicit negative; on any unavailable state emit nothing.
 `pre_tool_use_hook.py` implements KTD7 (observe-only, scoped, allow-list filtered, no
 output ever). `stop_hook.py` gains the KTD6 branch ahead of the legacy path, using only
-cheap local reads plus one bridge snapshot, preserving the detach discipline.
+cheap local reads plus one bridge snapshot (1,000 ms deadline; on expiry, bridge doubt →
+legacy path), preserving the detach discipline. All three hooks mutate the turn record
+only through `turn_record.mutate` (KTD11), with the per-writer `turn_record_busy`
+behaviour of the timeout budget table. Hook internal deadlines are the timeout table's
+rows; every expiry path still exits 0.
 
 **Test scenarios** (`plugins/voice/tests/test_user_prompt_submit_hook.py`,
 `plugins/voice/tests/test_pre_tool_use_hook.py`,
-`plugins/voice/tests/test_stop_hook.py`):
+`plugins/voice/tests/test_stop_hook.py`,
+`plugins/voice/tests/test_r122_end_to_end.py`):
+
+- **R122 end to end, at the production boundaries** (`test_r122_end_to_end.py` — the
+  scenario exists because a helper-level assertion cannot prove the path; it must fail if
+  the submission record schema, the session/identifier join, the completion handoff, or
+  the fallback marker drifts). Every boundary is the real one: the U1 stub bridge shows
+  an open turn bound to the resolved identity; the **real `user_prompt_submit_hook.py`**
+  runs as a subprocess with a real stdin payload and writes the captured pair into the
+  turn record; the **real MCP server process** (U3's declared argv, real pipes) receives
+  `tools/call submit_spoken_rendering` with Markdown and answers the named
+  `rejected_content` reason — the stub's request capture proves **nothing was forwarded**
+  to `POST /v1/rendering`; **no replacement is submitted**; the **real `stop_hook.py`**
+  then runs as a subprocess with a Stop payload for the same `session_id`, and the
+  assertion reads the turn record through the production module: the same turn —
+  identified by the captured `(binding_id, turn_id)` — now carries outcome `fallback`,
+  the earlier named rejection still present, no speak child spawned. The joined artifact
+  was written by the production processes end to end, not assembled by the test.
 
 - The card-named origin test: with the stub showing an open turn bound to this session,
   the injected context states the turn originated through Auralis and a rendering is
@@ -665,11 +984,16 @@ needs.
 **Design notes.** Version `0.3.0` per KTD10 at all four sites. The new
 `servers.json` declares the stdio server with `${CLAUDE_PLUGIN_ROOT}`-anchored command;
 the packaging test grows assertions that the declaration is a string path resolving into
-`com.infiquetra.claude/` and that the declared script exists. The new acceptance note is
+`com.infiquetra.claude/`, that the declared script exists, and that the declared
+command/args are byte-for-byte the literals U3's executable-entrypoint scenario launches
+(the declaration and its proof cannot drift apart). The new acceptance note is
 this slice's own ledger (separate file from the 0.2.x ledger to keep the two R-ID
 namespaces apart): the AE26 test evidence, the R-to-test trace for all nine requirements,
-the performed manual check from U4, AE34 joint-readiness status, and the wire-pin flag
-from this plan restated.
+the performed manual check from U4, AE34 joint-readiness status, the wire-pin provenance
+(source revision `695cd0ecfddf44e0d6e3386da318bd5fde4a1926` and snapshot SHA-256) with the
+not-yet-merged flag restated, the R22/R23 cross-slice dependency on C5 restated for the
+AE36 closeout, and the record of the guard-mutation checks U1 and U2 performed (each
+guard: relaxed, named failing test observed, restored).
 
 **Test expectation:** the extended `tests/test_claude_plugin_packaging.py` scenarios
 (version agreement at four sites including the new value; `mcpServers` is a path into the
@@ -694,9 +1018,11 @@ Out of scope (true non-goals, from the card and the parent):
 - Cleaning, rewriting, or reformatting any authored rendering (R121 — the gate rejects).
 - Any content decision from preferences (R25 — transmit only).
 - Any permission decision from the PreToolUse hook (stop condition 4; KTD7).
-- Sourcing the fallback's written-response text to Core. No committed route carries it;
-  how Core obtains the text it speaks on fallback is Core-side design inside C10/C5's
-  custody, and this plan neither implements nor invents it.
+- Sourcing the fallback's written-response text to Core, initiating fallback speech, or
+  marking the turn `fallback_accepted`. Those are Core/C5's through the in-process
+  `acceptFallback()` API (contract §9) — see "The R22/R23 fallback seam", which names the
+  cross-slice dependency and where it is proven (AE36). No committed wire route carries
+  the written response, and this plan neither implements nor invents one.
 - Board writes, PR merge, issue closure — coordinator-owned per the card.
 - The open voice findings F6 (#43) and F7 (#44) — tracked separately, untouched here.
 
@@ -711,11 +1037,13 @@ Deferred to follow-up work (real work, later slices or extensions):
 ## Risks and pre-mortem
 
 The most likely failure first: **the pinned contract moves before it merges.** The bridge
-document this adapter builds against is accepted at review but unmerged in `auralis`; if
+contract this adapter builds against is accepted at review but unmerged in `auralis`; if
 C10 amends a literal (a reason string, a member name), the adapter would pass its own
-tests and fail the joint acceptance. Contained by centralizing every literal in
-`bridge_client.py` plus one stub fixture (a contract diff is a one-module re-touch), and
-surfaced honestly in the plan, the evidence note, and AE34.
+tests and fail the joint acceptance. Contained by the tracked byte-pinned snapshot (a
+divergence is detectable by hash, and a refresh is one extract-and-record step per the
+wire-authority section) and by centralizing every literal in `bridge_client.py` plus the
+one stub fixture `bridge_stub.py` (a contract diff is a bounded re-touch), and surfaced
+honestly in the plan, the evidence note, and AE34.
 
 - **Harness-behavior assumptions.** Context injection visibility and MCP server lifetime
   are platform behaviors verified against current documentation, not testable hermetically.
@@ -728,22 +1056,25 @@ surfaced honestly in the plan, the evidence note, and AE34.
   spoken prose (an asterisk in "2 * 3", an underscore in a module name). Contained by
   reusing the 0.2.1-proven paired-marker recognizers and by explicit plain-prose
   acceptance scenarios in `test_rendering_gate.py`.
-- **State races between hook processes and the MCP server.** All shared state uses the
-  package's atomic write-replace pattern; records are single-turn and single-writer per
-  field family (origin by the prompt hook, submissions by the server, outcome by the Stop
-  hook). A torn read reads as absent, which every consumer treats as a named unavailable
-  state.
+- **State races between hook processes and the MCP server.** Contained by KTD11: every
+  turn-record mutation is a locked read-apply-write transaction through
+  `turn_record.mutate`, proven by deterministic interleaving tests; atomic write-replace
+  remains only the torn-write defense for readers (a torn read reads as absent, a named
+  unavailable state). Field-family conventions (origin by the prompt hook, submissions by
+  the server, outcome by the Stop hook) still describe who writes what, but the lock —
+  not the convention — is what prevents lost updates.
 - **Per-prompt latency.** The prompt hook adds one `bridge.json` read, at most one Herdr
-  subprocess call, and one loopback GET, all deadline-bounded, with the cheap
-  no-bridge-file exit first — a session with no Auralis pays one `stat()`.
+  subprocess call, and one loopback GET, bounded by the timeout budget table (worst case
+  ≤ 3,500 ms inside the 5 s hook timeout), with the cheap no-bridge-file exit first — a
+  session with no Auralis pays one `stat()`.
 
 ## Acceptance mapping
 
 | Acceptance | Where it lands |
 |---|---|
-| AE26 — Markdown rejected, not cleaned; plain resubmission accepted (covers R121, R20) | Runnable at this boundary: `test_rendering_gate.py` + the `test_mcp_server.py` AE26 scenario; evidence recorded in `docs/evidence/voice/auralis-c3-acceptance.md` (U5) |
+| AE26 — Markdown rejected, not cleaned; plain resubmission accepted (covers R121, R20) | Runnable at this boundary: `test_rendering_gate.py` + the `test_mcp_server.py` AE26 scenario (in-process and at the declared executable), plus the R122 end-to-end proof in `test_r122_end_to_end.py`; evidence recorded in `docs/evidence/voice/auralis-c3-acceptance.md` (U5) |
 | AE34 — joint bridge acceptance with C10 | Readiness from this side: U1/U3 green against the independent-literals stub; the joint run itself is coordinator-scheduled across repositories |
-| AE19, AE23, AE35, AE36 — joint with C5/C10/C1 | Out of this slice's hands; the adapter contributions they consume (presence, origin, submission, fallback marking) are the tested surfaces above |
+| AE19, AE23, AE35, AE36 — joint with C5/C10/C1 | Out of this slice's hands; the adapter contributions they consume (presence, origin, submission, fallback-outcome recording) are the tested surfaces above. AE36 in particular is where the named R22/R23 cross-slice dependency on C5's `acceptFallback()` path is proven end to end |
 
 ## Verification
 
@@ -773,8 +1104,57 @@ known set with the most defensible option:
   document by its section markers, not its name.
 - **`origin:` frontmatter is the cross-repository requirements-document URL** — the
   upstream WHAT lives in `infiquetra/auralis`, so no repo-relative path exists; the URL
-  pinned at `b49de1b` is the honest trace.
-- **R22/R23 read as split requirements** — the adapter half (detect completion without an
-  accepted rendering, mark the outcome durably) is planned here; the speaking half is
-  Core/C5's, proven jointly at AE36. The alternative reading — that C3 must make fallback
-  audible — would require owning speech, which the card forbids.
+  is an immutable commit permalink at `b49de1ba4d39cbd8a1e582d72bddca85bf528f8a`, never a
+  moving branch.
+- **R22/R23 read as slice-owned requirements discharged across the C3/C5 seam** — the
+  adapter share (submit only gated text, never fabricate, record the completion durably)
+  is planned here; fallback initiation, content, speech, and the `fallback_accepted` mark
+  are Core/C5's through `acceptFallback()`, proven jointly at AE36 (see "The R22/R23
+  fallback seam"). The alternative reading — that C3 must make fallback audible — would
+  require owning speech, which the card forbids.
+
+Decisions taken during the 2026-08-27 plan repair (doc-review findings F1–F12), same
+operating rule:
+
+- **F1 pin mechanism: a tracked byte-identical snapshot** of the contract at the
+  accepted-review revision, hash-verifiable against `infiquetra/auralis`
+  (`695cd0e…`, SHA-256 recorded in the wire-authority section). Chosen over an
+  external permalink alone because a clean checkout of *this* repository — including the
+  hosted `Validate` CI — must resolve the plan's links and read the contract without
+  access to another repository's unmerged branch; chosen over deleting the reference
+  because the plan must stay traceable to a specific revision of a specific document.
+- **F4 transaction mechanism: `fcntl.flock` on a sidecar lock file** (KTD11). Chosen
+  over `O_CREAT|O_EXCL` lock files (crash-stale locks need their own cleanup protocol;
+  flock releases with the process) and over SQLite (disproportionate to one single-turn
+  JSON document).
+- **F7 reconciliation: extend the closed `SETTING_NAMES` set inside `settings.py`**
+  rather than adding a second environment reader — the sole-reader rule is the package's
+  load-bearing invariant; the closed set is extended in its owning module (KTD9).
+- **F5 classing: indented code blocks reject under `markdown_formatting`** with class
+  `indented_code_block` named in the detail — the two-reason vocabulary is settled by
+  KTD1/AE26, and `fenced_code_block` stays literally about fences.
+- **F8 reconciliation source: the retry context plus the contract's §8 sentence**, not an
+  extra `GET /v1/current` corroboration read — §8 makes `duplicate_rendering` on a
+  byte-equivalent retry decisively mean the earlier acceptance, and an extra wire read
+  would add failure modes without adding information.
+
+## Doc-review disposition (2026-08-27)
+
+Where each finding of
+[`2026-08-27-auralis-c3-adapter-plan-doc-review.md`](../reviews/2026-08-27-auralis-c3-adapter-plan-doc-review.md)
+was repaired in this document.
+
+| Finding | Repair |
+|---|---|
+| F1 (wire pin not committed) | The snapshot `docs/bridge-v1-from-c10.md` is now a **tracked** file, byte-identical (SHA-256-verified) to `docs/bridge/bridge-v1.md` in `infiquetra/auralis` at accepted revision `695cd0e…`; the wire-authority section states the provenance, digest, and refresh procedure. Clean checkouts and CI resolve every link |
+| F2 (no R22/R23 path) | New section "The R22/R23 fallback seam": C3 owns the requirements, C5's in-process `acceptFallback()` (contract §9) is the mechanism, responsibilities on each side are enumerated, and the cross-slice dependency on C5 is named and routed to AE36. R22/R23 table rows, KTD6, and scope boundaries rewritten to match |
+| F3 (R122 proved only via fixtures) | New `plugins/voice/tests/test_r122_end_to_end.py` (U4, now depending on U3): real prompt hook, real MCP server process at the declared argv, real Stop hook, one production-written turn record asserted end to end |
+| F4 (lost updates on the turn record) | New KTD11: every mutation is a locked read-apply-write transaction through `turn_record.mutate` (`fcntl.flock`, sidecar lock, 500 ms budget, named `turn_record_busy` refusal), with deterministic interleaving tests; atomic replace demoted to torn-write defense only |
+| F5 (incomplete Markdown detector) | The gate owns a complete, closed rejected-syntax contract (class table in U2) including setext headings, reference links and definitions, autolinks, and indented code; stated non-classes get named negative tests; `text_cleanup.py` is a seed, not a bound |
+| F6 (MCP server never run as declared) | U3 gains the executable-entrypoint scenario: the exact declared argv launched from an installed-root-shaped directory over real pipes through initialize / tools list / rejected call / accepted call; U5's packaging test pins `servers.json` to the same literals |
+| F7 (identity reads outside `settings.py`) | `SETTING_NAMES` extended to ten names inside `settings.py` (sole reader preserved); `settings.py` and `test_settings.py` assigned to U1; KTD9 rewritten |
+| F8 (`duplicate_rendering` after lost acceptance) | U1 defines the retry-context reconciliation (`accepted_on_retry`, never fallback, never a replacement invitation), grounded in §8; scenarios at both the client (U1) and the tool surface (U3) |
+| F9 (stub with no owner) | `plugins/voice/tests/bridge_stub.py` named, owned by U1 alone, import contract stated |
+| F10 (adjective timeouts) | Normative "Timeout budget" table: every HTTP, subprocess, lock, and hook deadline is a number with a named on-expiry behaviour; hooks.json entries state `timeout: 5`; clock/deadline scenarios assigned |
+| F11 (token/identifier grammar untested) | U1 scenarios for base64url alphabet, padding, and length violations and for uppercase / non-UUID / wrong-version Core identifiers, each asserting no request follows; every guard mutation-checked once and recorded in the U5 acceptance note |
+| F12 (moving-branch requirement links) | Frontmatter `origin:`, the namespace note, and the unattended-decisions log all use the immutable commit permalink at `b49de1ba4d39cbd8a1e582d72bddca85bf528f8a` |

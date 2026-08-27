@@ -2,6 +2,43 @@
 
 ## 2026-08-27
 
+### Auralis C3 plan repair: a tracked byte-pinned wire snapshot, a locked turn-record transaction, and a gate-owned rejected-syntax contract
+
+**Author.** Claude for Jeff Cox (Auralis C3 plan repair against the blocking doc review,
+issue #46, branch `orch/auralis-c3-adapter-plan-c3-repair`)
+
+**Decision.** The repair of
+[`docs/plans/2026-08-27-auralis-c3-adapter.md`](../plans/2026-08-27-auralis-c3-adapter.md)
+(doc-review findings F1–F12, disposition table at the plan's end) fixes four load-bearing
+choices. First: the wire contract is pinned by a **tracked byte-identical snapshot**
+([`docs/bridge-v1-from-c10.md`](../bridge-v1-from-c10.md)) of
+`docs/bridge/bridge-v1.md` in `infiquetra/auralis` at accepted revision
+`695cd0ecfddf44e0d6e3386da318bd5fde4a1926`, SHA-256
+`eb47d141e5c1b87bae0bd1c0799386a3aa8806635251db14fc806469b5db19eb` — a clean checkout and
+the hosted CI must resolve the plan's links without reading another repository's unmerged
+branch, and byte-identity keeps the pin hash-verifiable. Second: the shared per-turn
+record is mutated only through one `fcntl.flock`-serialized read-apply-write entrypoint
+(plan KTD11); atomic write-replace is only the torn-write defense, because whole-file
+replacement cannot prevent two writers from erasing each other's updates. Third: the R121
+rendering gate owns a complete, closed rejected-syntax contract (setext headings,
+reference links, autolinks, indented code included) rather than inheriting the speak-path
+cleanup recognizers, whose documented scope is narrower than Markdown. Fourth: the two
+Herdr identity values the bridge contract mandates are read through `settings.py`'s
+extended closed `SETTING_NAMES` set, preserving the package's sole-environment-reader
+rule instead of adding a second reader.
+
+**Rejected alternatives.** An external permalink as the only wire pin (CI and clean
+implementation checkouts cannot resolve it); deleting the contract reference (the plan
+must stay traceable to a specific revision); `O_CREAT|O_EXCL` lock files (crash-stale
+locks need their own cleanup protocol) and SQLite (disproportionate to one single-turn
+JSON document); "one writer per field family" as a concurrency claim (the reviewed
+lost-update defect); direct environment reads in `adapter_identity.py` (breaks the stated
+sole-reader contract).
+
+**Revisit when.** The C10 contract merges to `auralis` main (the snapshot then re-pins to
+the merged revision), the turn record outgrows a single turn, or a bridge v2 changes the
+wire.
+
 ### Auralis C3 adapter plan: the R121 gate lives in the adapter surface, and the MCP server is the adapter's long-lived process
 
 **Author.** Claude for Jeff Cox (Auralis C3 planning, issue #46, branch
