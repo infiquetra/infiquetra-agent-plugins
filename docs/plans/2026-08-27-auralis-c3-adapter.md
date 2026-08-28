@@ -1212,9 +1212,9 @@ packaging and documentation; behavior is covered by U1–U4.
 
 **Verification:** full card set — `cd plugins/voice && python3 -m unittest discover -s
 tests -v`, `python3 scripts/check_repo.py`, repo-root
-`python3 -m unittest discover -s tests -v`, `git diff --check`; plus
-`claude plugin validate plugins/voice` as the installability probe the packaging decision
-used.
+`python3 -m unittest discover -s tests -v`, `python3 -m pytest plugins/*/tests -q`,
+`git diff --check`; plus `claude plugin validate plugins/voice` as the installability probe
+the packaging decision used.
 
 ## Scope Boundaries
 
@@ -1294,6 +1294,7 @@ honestly in the plan, the evidence note, and AE34.
 cd plugins/voice && python3 -m unittest discover -s tests -v
 cd ../.. && python3 scripts/check_repo.py
 python3 -m unittest discover -s tests -v
+python3 -m pytest plugins/*/tests -q
 git diff --check
 ```
 

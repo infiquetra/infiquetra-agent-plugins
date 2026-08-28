@@ -30,8 +30,9 @@ The byte-identical snapshot is committed in this repository at
 | Command | Result |
 |---|---|
 | `python3 scripts/check_repo.py` | `Repository validation passed.` |
-| `python3 -m unittest discover -s tests -v` | All tests pass (`Ran 799 tests ... OK`) |
-| `python3 -m unittest discover -s plugins/voice/tests -v` | All 23 test modules pass |
+| `python3 -m unittest discover -s tests -v` | All tests pass (`Ran 773 tests ... OK`) |
+| `python3 -m unittest discover -s plugins/voice/tests -v` | All 23 test modules pass (450 tests) |
+| `python3 -m pytest plugins/*/tests -q` | `762 passed, 282 subtests passed in 26.91s` |
 | `claude plugin validate plugins/voice --strict` | `✔ Validation passed` |
 | `git diff --check` | Clean (no trailing whitespace or whitespace errors) |
 
@@ -106,28 +107,30 @@ In accordance with U4 and the plan's verification instructions:
 During the implementation of U1 and U2, every validation guard and detector was mutation-tested (relaxed -> verified named test failure -> restored):
 
 1. **U1 Token and Identifier Grammar Guards (`test_bridge_client.py`):**
-   - Base64url token alphabet guard: mutated to accept `+` and `/` -> `test_invalid_token_rejected_before_http` failed -> restored.
-   - Base64url padding guard: mutated to accept `=` -> `test_padded_token_rejected` failed -> restored.
-   - Token length guard: mutated to accept 32 chars -> `test_short_token_rejected` failed -> restored.
-   - Core UUID version guard: mutated to accept UUIDv1 -> `test_non_v4_uuid_rejected` failed -> restored.
-   - Core UUID lowercase guard: mutated to accept uppercase -> `test_uppercase_uuid_rejected` failed -> restored.
+   - Base64url token alphabet guard: mutated to accept `+` and `/` -> `test_token_grammar_violations_refuse_and_make_no_wire_requests` subtests failed -> restored.
+   - Base64url padding guard: mutated to accept `=` -> `test_token_grammar_violations_refuse_and_make_no_wire_requests` subtest failed -> restored.
+   - Token length guard: mutated to accept 32 chars -> `test_token_grammar_violations_refuse_and_make_no_wire_requests` subtests failed -> restored.
+   - Core UUID version guard: mutated to accept UUIDv1 -> `test_malformed_uppercase_or_wrong_version_identifier_refuses_snapshot` subtests failed -> restored.
+   - Core UUID lowercase guard: mutated to accept uppercase -> `test_malformed_uppercase_or_wrong_version_identifier_refuses_snapshot` subtests failed -> restored.
 2. **U2 Rendering Gate Detector Classes (`test_rendering_gate.py`):**
-   - Fenced code block detector: relaxed to require 4 backticks -> `test_fenced_code_block_rejected` failed -> restored.
-   - Indented code block detector: relaxed -> `test_indented_code_block_rejected` failed -> restored.
-   - ATX heading detector: relaxed -> `test_atx_heading_rejected` failed -> restored.
-   - Setext heading detector: relaxed -> `test_setext_heading_rejected` failed -> restored.
-   - List marker detector: relaxed -> `test_list_markers_rejected` failed -> restored.
-   - Blockquote detector: relaxed -> `test_blockquote_rejected` failed -> restored.
-   - Horizontal rule detector: relaxed -> `test_horizontal_rule_rejected` failed -> restored.
-   - Table pipe detector: relaxed -> `test_table_pipes_rejected` failed -> restored.
-   - Hard line break detector: relaxed -> `test_hard_line_break_rejected` failed -> restored.
-   - Raw HTML detector: relaxed -> `test_raw_html_rejected` failed -> restored.
-   - Backslash escape detector: relaxed -> `test_backslash_escape_rejected` failed -> restored.
-   - Emphasis / strong pair detector: relaxed -> `test_emphasis_and_strong_rejected` failed -> restored.
-   - Strikethrough detector: relaxed -> `test_strikethrough_rejected` failed -> restored.
-   - Inline code span detector: relaxed -> `test_code_span_rejected` failed -> restored.
-   - Autolink detector: relaxed -> `test_autolink_rejected` failed -> restored.
-   - Flock transaction deadline guard (`test_turn_record.py`): mutated to ignore deadline -> `test_flock_timeout_refuses_with_turn_record_busy` failed -> restored.
+   - Fenced code block detector: relaxed to require 4 backticks -> `test_gate_rejects_fenced_code_block` and `test_fenced_code_block_backticks` failed -> restored.
+   - Indented code block detector: relaxed -> `test_indented_code_block` and `test_tab_indented_code_line` failed -> restored.
+   - ATX heading detector: relaxed -> `test_atx_heading`, `test_empty_atx_heading`, `test_tab_delimited_atx_heading` failed -> restored.
+   - Setext heading detector: relaxed -> `test_setext_heading` and `test_one_character_setext_underline` failed -> restored.
+   - List marker detector: relaxed -> `test_list_marker`, `test_ordered_list_marker_non_one`, `test_multi_digit_ordered_marker_parenthesis`, `test_bullet_marker_at_end_of_line` failed -> restored.
+   - Blockquote detector: relaxed -> `test_blockquote` and `test_blockquote_no_space_after_gt` failed -> restored.
+   - Horizontal rule detector: relaxed -> `test_horizontal_rule`, `test_spaced_horizontal_rule`, `test_underscore_horizontal_rule` failed -> restored.
+   - Table pipe detector: relaxed -> `test_table_pipe_row` and `test_pipe_row_no_leading_or_trailing_pipe` failed -> restored.
+   - Link reference definition detector: relaxed -> `test_link_reference_definition` and `test_link_ref_def_multi_word_label` failed -> restored.
+   - Hard line break detector: relaxed -> `test_hard_line_break_trailing_spaces`, `test_hard_line_break_backslash`, `test_hard_break_three_trailing_spaces` failed -> restored.
+   - Raw HTML detector: relaxed -> `test_raw_html_tag_and_comment` and `test_raw_html_attribute_tag_and_non_tag_openers` failed -> restored.
+   - Backslash escape detector: relaxed -> `test_backslash_escape` and `test_backslash_escape_bracket` failed -> restored.
+   - Emphasis / strong pair detector: relaxed -> `test_gate_rejects_markdown_emphasis`, `test_emphasis_strong`, `test_three_asterisk_emphasis_run` failed -> restored.
+   - Strikethrough detector: relaxed -> `test_strikethrough` and `test_one_tilde_strikethrough` failed -> restored.
+   - Inline code span detector: relaxed -> `test_inline_code_span` and `test_two_backtick_code_span` failed -> restored.
+   - Inline and reference link detector: relaxed -> `test_inline_link_image`, `test_inline_link_empty_bracket_text`, `test_reference_link` failed -> restored.
+   - Autolink detector: relaxed -> `test_autolink` failed -> restored.
+   - Flock transaction deadline guard (`test_turn_record.py`): mutated to ignore deadline -> `test_lock_acquisition_timeout_raises_turn_record_busy` and `test_stubbed_clock_acquisition_budget_refusal` failed -> restored.
 
 ---
 
