@@ -548,8 +548,11 @@ class BridgeClient:
         }
 
         # Attempt 1
-        lost_response = False
         server_error_500 = False
+        lost_response = False
+        status = 0
+        data: dict[str, Any] = {}
+
         try:
             status, data = self._request(
                 "POST",
@@ -559,38 +562,44 @@ class BridgeClient:
                 conn,
             )
         except BridgeTransportError as err:
-            # Check if this could be a lost response
-            lost_response = True
-            err_msg = str(err)
-            status, data = 0, {}
+            if err.status_code == 500:
+                server_error_500 = True
+            elif err.status_code is not None:
+                # Received an HTTP response with a status code (e.g. 4xx client error, invalid JSON).
+                # Section 8: 4xx Client Errors must not be retried without correcting the request or contract violation.
+                raise
+            else:
+                # No response status received: transport error / network failure before response -> lost response
+                lost_response = True
 
-        if not lost_response:
+        if not (server_error_500 or lost_response):
+            if status == 200:
+                return self._parse_rendering_200(data, is_retry=False)
             if status == 401:
                 self.reset_connection()
                 raise BridgeUnauthorized("unauthorized rendering submission")
             if status == 500:
                 server_error_500 = True
-            elif status != 200:
+            else:
+                # 4xx client error or other status (§8: must not be retried)
                 err_code = data.get("error", "unknown_error")
-                if err_code not in _VALID_ERROR_CODES:
-                    raise BridgeTransportError(
-                        f"rendering submission failed with unknown error: status {status}, code {err_code}",
-                        status_code=status,
-                        error_code=err_code,
-                    )
                 raise BridgeTransportError(
-                    f"rendering submission rejected at transport: status {status}, code {err_code}",
+                    f"rendering submission rejected: status {status}, code {err_code}",
                     status_code=status,
                     error_code=err_code,
                 )
-            else:
-                return self._parse_rendering_200(data, is_retry=False)
 
         # Retry logic per §8
         if server_error_500:
             # Confirm health first per §8
             try:
-                self.get_health()
+                health = self.get_health()
+                if health.status != "ok":
+                    raise BridgeTransportError(
+                        f"500 Internal Error and health check reported status {health.status!r}",
+                        status_code=500,
+                        error_code="internal_error",
+                    )
             except Exception as health_err:
                 raise BridgeTransportError(
                     f"500 Internal Error and health check failed: {health_err}",
@@ -599,15 +608,26 @@ class BridgeClient:
                 ) from health_err
 
             # One byte-identical retry
-            status, data = self._request(
-                "POST",
-                "/v1/rendering",
-                body,
-                RENDERING_TIMEOUT_SECONDS,
-                conn,
-            )
+            try:
+                status, data = self._request(
+                    "POST",
+                    "/v1/rendering",
+                    body,
+                    RENDERING_TIMEOUT_SECONDS,
+                    conn,
+                )
+            except BridgeTransportError as retry_err:
+                raise BridgeTransportError(
+                    f"rendering retry after 500 failed: {retry_err}",
+                    status_code=retry_err.status_code or 500,
+                    error_code=retry_err.error_code or "internal_error",
+                ) from retry_err
+
             if status == 200:
                 return self._parse_rendering_200(data, is_retry=False)
+            if status == 401:
+                self.reset_connection()
+                raise BridgeUnauthorized("unauthorized rendering submission on retry")
             err_code = data.get("error", "unknown_error")
             raise BridgeTransportError(
                 f"rendering retry after 500 failed with status {status}: {err_code}",
@@ -616,7 +636,7 @@ class BridgeClient:
             )
 
         if lost_response:
-            # Single byte-equivalent retry for lost rendering response
+            # Single byte-equivalent retry for lost rendering response (§8; F8)
             try:
                 status, data = self._request(
                     "POST",
@@ -628,11 +648,15 @@ class BridgeClient:
             except BridgeTransportError as retry_err:
                 raise BridgeTransportError(
                     f"rendering submission failed and retry also failed: {retry_err}",
-                    error_code="transport_error",
+                    status_code=retry_err.status_code,
+                    error_code=retry_err.error_code or "transport_error",
                 ) from retry_err
 
             if status == 200:
                 return self._parse_rendering_200(data, is_retry=True)
+            if status == 401:
+                self.reset_connection()
+                raise BridgeUnauthorized("unauthorized rendering submission on retry")
             err_code = data.get("error", "unknown_error")
             raise BridgeTransportError(
                 f"rendering retry after lost response failed with status {status}: {err_code}",

@@ -106,6 +106,7 @@ class PresenceWorker:
             identity = self.identity_resolver()
         except IdentityRefusal:
             self.registered_identity = None
+            self.bridge_client.reset_connection()
             return False
 
         try:
@@ -117,11 +118,16 @@ class PresenceWorker:
                 self.renewal_count += 1
             return True
         except BridgeUnauthorized:
+            self.registered_identity = None
             self.bridge_client.reset_connection()
             return False
         except (BridgeUnavailable, BridgeTransportError, BridgeError, OSError):
+            self.registered_identity = None
+            self.bridge_client.reset_connection()
             return False
         except Exception:
+            self.registered_identity = None
+            self.bridge_client.reset_connection()
             return False
 
     def delete_presence(self) -> bool:
@@ -141,6 +147,7 @@ class PresenceWorker:
                 identity = self.identity_resolver()
             except IdentityRefusal:
                 self.registered_identity = None
+                self.bridge_client.reset_connection()
                 if self._stop_event.wait(1.0):
                     break
                 continue
@@ -157,13 +164,18 @@ class PresenceWorker:
                 if self._stop_event.wait(renew_seconds):
                     break
             except BridgeUnauthorized:
+                self.registered_identity = None
                 self.bridge_client.reset_connection()
                 if self._stop_event.wait(1.0):
                     break
             except (BridgeUnavailable, BridgeTransportError, BridgeError, OSError):
+                self.registered_identity = None
+                self.bridge_client.reset_connection()
                 if self._stop_event.wait(1.0):
                     break
             except Exception:
+                self.registered_identity = None
+                self.bridge_client.reset_connection()
                 if self._stop_event.wait(1.0):
                     break
 
@@ -361,19 +373,6 @@ class MCPServer:
                     detail={"detail": detail_str} if detail_str != "accepted" else None,
                     path=self.turn_record_path,
                 )
-            except TurnRecordBusy:
-                return {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": json.dumps(
-                                {"disposition": "unavailable", "reason": "turn_record_busy"},
-                                sort_keys=True,
-                            ),
-                        }
-                    ],
-                    "isError": False,
-                }
             except Exception:
                 pass
 
@@ -399,19 +398,6 @@ class MCPServer:
                     reason=resp.reason,
                     path=self.turn_record_path,
                 )
-            except TurnRecordBusy:
-                return {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": json.dumps(
-                                {"disposition": "unavailable", "reason": "turn_record_busy"},
-                                sort_keys=True,
-                            ),
-                        }
-                    ],
-                    "isError": False,
-                }
             except Exception:
                 pass
 

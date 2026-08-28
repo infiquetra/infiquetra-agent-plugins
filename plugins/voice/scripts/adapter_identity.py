@@ -141,14 +141,20 @@ def resolve_adapter_identity(
     if not isinstance(envelope, dict):
         raise IdentityRefusal("Herdr output envelope is not a JSON object")
 
-    if envelope.get("type") != "agent_list":
+    result = envelope.get("result")
+    if not isinstance(result, dict):
         raise IdentityRefusal(
-            f"Herdr envelope type is {envelope.get('type')!r}, expected 'agent_list'"
+            f"Herdr envelope 'result' is not a JSON object, got {type(result).__name__}"
         )
 
-    agents = envelope.get("agents")
+    if result.get("type") != "agent_list":
+        raise IdentityRefusal(
+            f"Herdr envelope result.type is {result.get('type')!r}, expected 'agent_list'"
+        )
+
+    agents = result.get("agents")
     if not isinstance(agents, list):
-        raise IdentityRefusal("Herdr envelope 'agents' is not a list")
+        raise IdentityRefusal("Herdr envelope result.agents is not a list")
 
     matching = [
         agent
