@@ -382,6 +382,52 @@ class AE26AndSurfaceRenderingTests(unittest.TestCase):
         self.assertEqual(tool_payload["disposition"], "unavailable")
         self.assertEqual(tool_payload["reason"], "not_bound")
 
+    def test_gating_turn_record_busy_returns_unavailable_without_touching_wire(self) -> None:
+        turn_record.init_turn(
+            session_id=self.identity.agent_session_id,
+            binding_id=VALID_UUID_1,
+            turn_id=VALID_UUID_2,
+            path=self.record_path,
+        )
+
+        with mock.patch("mcp_server.record_submission", side_effect=turn_record.TurnRecordBusy("lock busy")):
+            payload = self._call_submit("Heading:\n# Title", req_id=10)
+
+        self.assertEqual(payload["disposition"], "unavailable")
+        self.assertEqual(payload["reason"], "turn_record_busy")
+        self.assertEqual(self.stub.requests, [])
+
+    def test_accepted_rendering_with_turn_record_busy_after_wire_still_returns_accepted(self) -> None:
+        turn_record.init_turn(
+            session_id=self.identity.agent_session_id,
+            binding_id=VALID_UUID_1,
+            turn_id=VALID_UUID_2,
+            path=self.record_path,
+        )
+
+        with mock.patch("mcp_server.record_submission", side_effect=turn_record.TurnRecordBusy("lock busy")):
+            payload = self._call_submit("Plain text rendering accepted by wire", req_id=11)
+
+        self.assertEqual(payload["disposition"], "accepted")
+        self.assertEqual(payload["detail"], "accepted")
+        rendering_requests = [r for r in self.stub.requests if r.path == "/v1/rendering"]
+        self.assertEqual(len(rendering_requests), 1)
+
+    def test_rejected_rendering_with_turn_record_busy_after_wire_still_returns_rejected(self) -> None:
+        turn_record.init_turn(
+            session_id=self.identity.agent_session_id,
+            binding_id=VALID_UUID_1,
+            turn_id=VALID_UUID_2,
+            path=self.record_path,
+        )
+        self.stub.set_turn(VALID_UUID_3, VALID_UUID_1, state="open")
+
+        with mock.patch("mcp_server.record_submission", side_effect=turn_record.TurnRecordBusy("lock busy")):
+            payload = self._call_submit("Plain text rendering targeting old turn", req_id=12)
+
+        self.assertEqual(payload["disposition"], "rejected_by_core")
+        self.assertEqual(payload["reason"], "turn_not_current")
+
 
 class LostResponseReconciliationSurfaceTests(unittest.TestCase):
     """Surface-level lost response reconciliation tests (F8; §8)."""
@@ -516,6 +562,30 @@ class PresenceLifecycleTests(unittest.TestCase):
         # Next tick re-discovers new token and succeeds
         self.assertTrue(worker.tick())
 
+    def test_presence_re_discovery_on_connection_refusal(self) -> None:
+        worker = PresenceWorker(
+            bridge_client_instance=self.client,
+            identity_resolver=lambda: self.identity,
+        )
+        self.assertTrue(worker.tick())
+        self.assertEqual(worker.registration_count, 1)
+
+        # Stop the stub to simulate connection refusal / bridge down
+        self.stub.stop()
+
+        # Tick fails and resets connection + registered_identity
+        self.assertFalse(worker.tick())
+        self.assertIsNone(worker.registered_identity)
+
+        # Restart stub on a new port and write new discovery file
+        self.stub = BridgeStub().start()
+        self.stub.set_binding(VALID_UUID_1, self.identity.to_dict())
+        self.stub.write_discovery_file(self.temp_dir.name)
+
+        # Next tick re-reads discovery, connects to new stub, and registers anew
+        self.assertTrue(worker.tick())
+        self.assertEqual(worker.registration_count, 2)
+
 
 class ExecutableEntrypointTests(unittest.TestCase):
     """Declared MCP server entrypoint subprocess test (AGENTS.md executable entrypoint rule)."""
@@ -545,7 +615,7 @@ class ExecutableEntrypointTests(unittest.TestCase):
         self.herdr_path = Path(self.temp_dir.name) / "mock_herdr"
         mock_herdr_code = (
             "#!/bin/sh\n"
-            'echo \'{"type": "agent_list", "agents": [{"pane_id": "pane-subproc-1", "terminal_id": "term-subproc-1", "agent_session": {"value": "session-subproc-1"}}]}\'\n'
+            'echo \'{"result": {"type": "agent_list", "agents": [{"pane_id": "pane-subproc-1", "terminal_id": "term-subproc-1", "agent_session": {"value": "session-subproc-1"}}]}}\'\n'
         )
         self.herdr_path.write_text(mock_herdr_code, encoding="utf-8")
         os.chmod(self.herdr_path, 0o755)
@@ -579,7 +649,7 @@ class ExecutableEntrypointTests(unittest.TestCase):
         env["PYTHONDONTWRITEBYTECODE"] = "1"
 
         proc = subprocess.Popen(
-            [sys.executable, str(server_script)],
+            ["python3", str(server_script)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
