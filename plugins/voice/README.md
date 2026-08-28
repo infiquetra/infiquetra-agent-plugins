@@ -20,7 +20,7 @@ the run-wide implementation plan is
 | Path | What it is |
 |---|---|
 | [`plugin.json`](plugin.json) | Agent Plugins 1.0 manifest — the portable, vendor-neutral one |
-| [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json) | Claude Code packaging manifest. A different specification, required by the Claude CLI to sit at the installed package root. Holds no behaviour: it declares the hooks path into `com.infiquetra.claude/` and the portable skills directory |
+| [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json) | Claude Code packaging manifest. A different specification, required by the Claude CLI to sit at the installed package root. Holds no behaviour: it declares the hooks and MCP server paths into `com.infiquetra.claude/` and the portable skills directory |
 | [`scripts/providers.py`](scripts/providers.py) | Provider declaration contract: closed egress set, declarations, named refusals |
 | [`scripts/settings.py`](scripts/settings.py) | The one settings reader: stated names, split defaults, absent never means empty |
 | [`scripts/process.py`](scripts/process.py) | Subprocess discipline: closed stdin and a deadline on every child |
@@ -32,10 +32,16 @@ the run-wide implementation plan is
 | [`scripts/deliver.py`](scripts/deliver.py) | Delivery path: transcript into the bound agent's input box unsubmitted, or a named audible refusal that holds it |
 | [`scripts/preflight.py`](scripts/preflight.py) | Preflight the declared providers, the stop keybinding, and the executables; report by name, never install or repair |
 | [`scripts/pane.py`](scripts/pane.py) | The Voice pane: the one long-running operator surface and listen-path sequencer |
-| [`scripts/voice_cli.py`](scripts/voice_cli.py) | The one command surface: `pane`, `bind`, `preflight`, `toggle`, `stop` |
+| [`scripts/voice_cli.py`](scripts/voice_cli.py) | The one command surface: `pane`, `bind`, `preflight`, `toggle`, `stop`, `policy` |
+| [`scripts/bridge_client.py`](scripts/bridge_client.py) | Bridge client for Auralis loopback HTTP bridge: discovery, presence, and rendering submission |
+| [`scripts/adapter_identity.py`](scripts/adapter_identity.py) | Three-part adapter identity resolver (`agent_session_id`, `pane_id`, `terminal_id`) |
+| [`scripts/rendering_gate.py`](scripts/rendering_gate.py) | Plain-spoken-text rendering gate: rejects Markdown/fences with named reasons (R121, R20) |
+| [`scripts/voice_policy.py`](scripts/voice_policy.py) | Voice policy and preferences store: renders instructions, consumes Brief Next Turn override (R25, R107) |
+| [`scripts/turn_record.py`](scripts/turn_record.py) | Current turn record store: locked read-apply-write transactions (`fcntl.flock`) for turn state (KTD11) |
+| [`scripts/mcp_server.py`](scripts/mcp_server.py) | Model Context Protocol (MCP) stdio server: `submit_spoken_rendering` tool and presence renewal loop (R21, KTD2, KTD8) |
 | [`skills/voice/`](skills/voice/SKILL.md) | Agent Skill: documents the CLI and the in-pane keys; adds no second command surface |
 | [`tests/`](tests/) | `unittest` suites for the scripts above, the Stop hook, and the skill entrypoint |
-| [`com.infiquetra.claude/`](com.infiquetra.claude/plugin.json) | Claude client extension directory: manifest, hook descriptor, and the Stop hook |
+| [`com.infiquetra.claude/`](com.infiquetra.claude/plugin.json) | Claude client extension directory: manifest, hook descriptor, MCP server declaration, and hooks |
 
 Claude-specific files — hooks and the client extension — never live in this
 portable core; they belong under the `com.infiquetra.claude/` client
@@ -113,6 +119,8 @@ non-sensitive.
 | `VOICE_PLAYBACK_BIN` | `/usr/bin/afplay` | Playback executable, supplied by the operator, never discovered |
 | `VOICE_STATE_DIR` | `~/.local/state/voice` | Machine-local runtime state directory |
 | `VOICE_RETENTION` | none — must be stated | Retention posture; version one accepts exactly `ephemeral` |
+| `HERDR_PANE_ID` | none — refused by name when unset | Current Herdr pane identifier (`w1:p1` or integer) for Auralis bridge adapter identity |
+| `HERDR_BIN_PATH` | none — refused by name when unset | Path to Herdr executable for resolving session and terminal identity |
 
 Retention behaviour is a stated setting rather than a silent default: the
 empty case — audio deleted after success and failure, no transcript log, no
@@ -178,6 +186,47 @@ anything are different claims, and they came apart here: the binding was
 documented before any `voice` existed on `PATH`. A probe that reported that as
 healthy would have been worse than no probe, because it retires your own
 suspicion.
+
+## Auralis bridge adapter
+
+The package also provides the Claude Code adapter for the Auralis V1
+conversational loop (capability slice C3), specified in
+[`docs/plans/2026-08-27-auralis-c3-adapter.md`](../../docs/plans/2026-08-27-auralis-c3-adapter.md).
+Auralis Core (repository `infiquetra/auralis`) exposes a loopback HTTP bridge
+governed by the five-route Auralis Bridge Contract v1 (`GET /v1/health`,
+`PUT /v1/presence`, `DELETE /v1/presence`, `GET /v1/current`, `POST /v1/rendering`).
+
+### Adapter architecture and lifecycle
+
+1. **Long-lived MCP process ([`scripts/mcp_server.py`](scripts/mcp_server.py))**:
+   The stdio Model Context Protocol (MCP) server declared in
+   [`com.infiquetra.claude/mcp/servers.json`](com.infiquetra.claude/mcp/servers.json)
+   persists for the Claude session. It runs a background presence thread that registers
+   and renews presence (`PUT /v1/presence`) on the contract lease cadence and sends
+   `DELETE /v1/presence` on clean shutdown (KTD2). It exposes the `submit_spoken_rendering`
+   tool through which the agent submits its authored spoken rendering.
+2. **Plain-spoken-text rendering gate ([`scripts/rendering_gate.py`](scripts/rendering_gate.py))**:
+   Submissions are locally validated before reaching the wire (KTD1; R121, R20). Markdown
+   formatting or fenced code blocks are rejected with named reasons (`fenced_code_block`,
+   `markdown_formatting`) and never reformatted or cleaned. Accepted plain text is
+   forwarded byte-identical to `POST /v1/rendering` using the prompt-time captured turn
+   identifiers.
+3. **Turn origin and policy injection ([`com.infiquetra.claude/hooks/user_prompt_submit_hook.py`](com.infiquetra.claude/hooks/user_prompt_submit_hook.py))**:
+   At prompt submission, the hook queries `GET /v1/current`, matches adapter identity,
+   captures `(binding_id, turn_id)` into [`scripts/turn_record.py`](scripts/turn_record.py),
+   and injects explicit context telling the agent whether the turn originated via voice,
+   that a spoken rendering is expected, and the operator's current voice policy instructions
+   rendered by [`scripts/voice_policy.py`](scripts/voice_policy.py) (including any armed
+   one-shot Brief Next Turn override, consumed on transmission; R106, R107).
+4. **PreToolUse observation ([`com.infiquetra.claude/hooks/pre_tool_use_hook.py`](com.infiquetra.claude/hooks/pre_tool_use_hook.py))**:
+   Observes tool use on voice-originated turns and appends observations to the current turn
+   record (KTD7). It is observe-only and never emits permission decisions.
+5. **Completion reconciliation ([`com.infiquetra.claude/hooks/stop_hook.py`](com.infiquetra.claude/hooks/stop_hook.py))**:
+   When the turn completes, the Stop hook reconciles the turn record: if wire-bound and an
+   authored rendering was accepted, outcome is recorded as `authored`; if the voice turn
+   completed without an accepted rendering, outcome is recorded as `fallback` (KTD6; R22,
+   R23, R122). While wire-bound, the legacy local speak path is suppressed so Auralis retains
+   sole speech custody.
 
 ## Subprocess discipline
 

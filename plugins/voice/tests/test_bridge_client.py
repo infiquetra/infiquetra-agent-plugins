@@ -18,8 +18,10 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import bridge_client  # noqa: E402
 from adapter_identity import AdapterIdentity  # noqa: E402
 from bridge_client import (  # noqa: E402
+    CONNECT_TIMEOUT_SECONDS,
     CURRENT_TIMEOUT_SECONDS,
     HEALTH_TIMEOUT_SECONDS,
     PRESENCE_TIMEOUT_SECONDS,
@@ -391,9 +393,18 @@ class TransportErrorsAndDeadlinesTests(unittest.TestCase):
             self.assertEqual(caught.exception.status_code, 502)
 
     def test_deadline_budget_enforcement_with_stubbed_clock(self) -> None:
+        # Verify normative constants from the timeout budget table (§1, §4, §8)
+        self.assertEqual(bridge_client.CONNECT_TIMEOUT_SECONDS, 0.250)
+        self.assertEqual(bridge_client.HEALTH_TIMEOUT_SECONDS, 1.000)
+        self.assertEqual(bridge_client.CURRENT_TIMEOUT_SECONDS, 1.000)
+        self.assertEqual(bridge_client.PRESENCE_TIMEOUT_SECONDS, 2.000)
+        self.assertEqual(bridge_client.RENDERING_TIMEOUT_SECONDS, 2.000)
+
         identity = AdapterIdentity("s-1", "p-1", "t-1")
         with BridgeStub() as stub:
             stub.write_discovery_file(self.bridge_path)
+            stub.set_binding(VALID_UUID_1, identity.to_dict())
+            stub.set_turn(VALID_UUID_2, VALID_UUID_1, "open")
 
             # Simulated clock that advances past the deadline immediately
             current_time = 1000.0
@@ -406,8 +417,29 @@ class TransportErrorsAndDeadlinesTests(unittest.TestCase):
 
             client = BridgeClient(bridge_file=self.bridge_path, clock=advancing_clock)
 
+            # Route 1: GET /v1/health
             with self.assertRaises(BridgeTransportError) as caught:
                 client.get_health()
+            self.assertEqual(caught.exception.error_code, "transport_error")
+
+            # Route 2: GET /v1/current
+            with self.assertRaises(BridgeTransportError) as caught:
+                client.get_current()
+            self.assertEqual(caught.exception.error_code, "transport_error")
+
+            # Route 3: PUT /v1/presence
+            with self.assertRaises(BridgeTransportError) as caught:
+                client.put_presence(identity)
+            self.assertEqual(caught.exception.error_code, "transport_error")
+
+            # Route 4: DELETE /v1/presence
+            with self.assertRaises(BridgeTransportError) as caught:
+                client.delete_presence(identity)
+            self.assertEqual(caught.exception.error_code, "transport_error")
+
+            # Route 5: POST /v1/rendering
+            with self.assertRaises(BridgeTransportError) as caught:
+                client.submit_rendering(identity, VALID_UUID_1, VALID_UUID_2, "text")
             self.assertEqual(caught.exception.error_code, "transport_error")
 
 
@@ -427,43 +459,59 @@ class RetryAndLostResponseTests(unittest.TestCase):
             stub.set_turn(VALID_UUID_2, VALID_UUID_1, "open")
             client = BridgeClient(bridge_file=self.bridge_path)
 
-            # Set 500 error on first attempt
-            stub.path_status_overrides["/v1/rendering"] = (500, "internal_error")
-
-            # Remove 500 override when health check is called during retry
-            orig_health = stub.health_status
-
-            def health_hook() -> None:
-                stub.path_status_overrides.pop("/v1/rendering", None)
-
-            # We can test that it retries and succeeds if health check passes
-            # Let's verify health check is performed
+            # Instruct stub to fail the next rendering POST with 500 internal_error
+            stub.fail_next_rendering_500(count=1)
             stub.requests.clear()
 
-            # Custom handler: first POST returns 500, GET /v1/health returns 200, second POST returns 200
-            call_count = 0
+            # Submit rendering: client sends POST (fails 500) -> GET /v1/health (200 ok) -> retry POST (200 accepted)
+            resp = client.submit_rendering(
+                identity, VALID_UUID_1, VALID_UUID_2, "retry text"
+            )
+            self.assertEqual(resp.disposition, "accepted")
+            self.assertEqual(resp.detail, "accepted")
 
-            def custom_post(payload: dict) -> None:
-                nonlocal call_count
-                call_count += 1
-                if call_count == 1:
-                    stub.path_status_overrides["/v1/rendering"] = (500, "internal_error")
-                else:
-                    stub.path_status_overrides.pop("/v1/rendering", None)
+            # Assert wire interaction sequence: POST /v1/rendering, GET /v1/health, POST /v1/rendering
+            self.assertEqual(len(stub.requests), 3)
+            self.assertEqual([r.method for r in stub.requests], ["POST", "GET", "POST"])
+            self.assertEqual(
+                [r.path for r in stub.requests],
+                ["/v1/rendering", "/v1/health", "/v1/rendering"],
+            )
 
-            stub.path_status_overrides["/v1/rendering"] = (500, "internal_error")
+            # Assert byte-identical request payload and headers on retry (§8; F08)
+            self.assertEqual(stub.requests[0].raw_body, stub.requests[2].raw_body)
+            self.assertEqual(stub.requests[0].body, stub.requests[2].body)
+            self.assertEqual(
+                stub.requests[0].headers.get("Authorization"),
+                stub.requests[2].headers.get("Authorization"),
+            )
 
-            # In the client: on 500, it calls get_health(), then retries
-            # If health check returns 200 and rendering retry returns 200:
-            def simulate_health():
-                stub.path_status_overrides.pop("/v1/rendering", None)
-                return "ok"
+    def test_500_retry_aborts_when_health_check_fails(self) -> None:
+        identity = AdapterIdentity("s-1", "p-1", "t-1")
+        with BridgeStub() as stub:
+            stub.write_discovery_file(self.bridge_path)
+            stub.set_binding(VALID_UUID_1, identity.to_dict())
+            stub.set_turn(VALID_UUID_2, VALID_UUID_1, "open")
+            client = BridgeClient(bridge_file=self.bridge_path)
 
-            with mock.patch.object(client, "get_health", side_effect=simulate_health):
-                resp = client.submit_rendering(
+            stub.fail_next_rendering_500(count=1)
+            stub.path_status_overrides["/v1/health"] = (500, "internal_error")
+            stub.requests.clear()
+
+            with self.assertRaises(BridgeTransportError) as caught:
+                client.submit_rendering(
                     identity, VALID_UUID_1, VALID_UUID_2, "retry text"
                 )
-                self.assertEqual(resp.disposition, "accepted")
+            self.assertEqual(caught.exception.status_code, 500)
+            self.assertEqual(caught.exception.error_code, "internal_error")
+
+            # Only 2 wire requests were made (no retry POST sent)
+            self.assertEqual(len(stub.requests), 2)
+            self.assertEqual([r.method for r in stub.requests], ["POST", "GET"])
+            self.assertEqual(
+                [r.path for r in stub.requests],
+                ["/v1/rendering", "/v1/health"],
+            )
 
     def test_400_is_never_retried(self) -> None:
         identity = AdapterIdentity("s-1", "p-1", "t-1")

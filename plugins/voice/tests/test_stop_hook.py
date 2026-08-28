@@ -1,10 +1,13 @@
-"""Tests for the Claude ``Stop`` hook and its descriptor (R1, R3; KTD1, KTD2, KTD12).
+"""Tests for the Claude ``Stop`` hook and its descriptor (R1, R3, R22, R23, R122; KTD1, KTD2, KTD6, KTD11, KTD12).
 
 The spawn seam is injected at the Popen level through U1's real
 ``process.spawn_detached``, so the suite asserts the detached-child
 contract (argv, closed stdin, new session, no wait) against a fake rather
 than a wall clock or a platform binary. U2 never imports or executes
 ``speak.py``: the hook hands the text off by argv and file.
+
+Wire-bound tests assert KTD6 bridged reconciliation (authored vs fallback)
+and local speech suppression against a local BridgeStub and Herdr fixture.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -22,17 +26,24 @@ from unittest.mock import patch
 _PACKAGE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_PACKAGE / "scripts"))
 sys.path.insert(0, str(_PACKAGE / "com.infiquetra.claude" / "hooks"))
+sys.path.insert(0, str(_PACKAGE / "tests"))
 
 import binding  # noqa: E402
+from bridge_stub import DEFAULT_STUB_TOKEN, BridgeStub  # noqa: E402
 import process  # noqa: E402
 import stop_hook  # noqa: E402
+import turn_record  # noqa: E402
 
 AGENT = "example-agent"
 BOUND_SESSION = "example-session-bound"
 OTHER_SESSION = "example-session-other"
 PANE_ID = "example-pane-one"
+TERMINAL_ID = "example-term-one"
 BOUND_AT = "2026-08-25T00:00:00+00:00"
 RESPONSE_TEXT = "Example response text for the spoken loop."
+
+VALID_UUID_1 = "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+VALID_UUID_2 = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
 
 
 class _FakeChild:
@@ -70,9 +81,18 @@ class StopHookTestCase(unittest.TestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.state_dir = Path(temporary.name)
+        self.root = Path(temporary.name)
+        self.state_dir = self.root / "state"
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.home_dir = self.root / "home"
+        self.home_dir.mkdir(parents=True, exist_ok=True)
+
         environment = patch.dict(
-            os.environ, {"VOICE_STATE_DIR": str(self.state_dir)}
+            os.environ,
+            {
+                "VOICE_STATE_DIR": str(self.state_dir),
+                "HOME": str(self.home_dir),
+            },
         )
         environment.start()
         self.addCleanup(environment.stop)
@@ -193,9 +213,6 @@ class DetachedSpawnTests(StopHookTestCase):
         files = self.speak_files()
         self.assertEqual(len(files), 2)
         self.assertEqual(len(self.seam.calls), 2)
-        # Payload names carry unique random uuids, so chronological call
-        # order and lexicographic file order are unrelated: compare the
-        # spawned paths and the files on disk as sets, never by position.
         spawned_paths = sorted(command[2] for command, _kwargs in self.seam.calls)
         self.assertEqual(spawned_paths, [str(path) for path in files])
         for path in files:
@@ -205,8 +222,6 @@ class DetachedSpawnTests(StopHookTestCase):
             )
 
     def test_the_spawn_is_recorded_whether_or_not_speak_has_landed(self) -> None:
-        # U3's speak.py lands concurrently; the hook spawns by argv either
-        # way and never checks existence, so the seam records the call.
         self.bind()
         self.assertEqual(self.run_hook_payload(), 0)
         self.assertEqual(len(self.seam.calls), 1)
@@ -220,7 +235,6 @@ class SpawnFailureCleanupTests(StopHookTestCase):
         self.attempts: list[list[str]] = []
 
     def failing_spawn(self, error: Exception):
-        """Route the real ``spawn_detached`` through a Popen seam that refuses."""
         attempts = self.attempts
 
         def refuse(command, **kwargs):
@@ -263,9 +277,7 @@ class SpawnFailureCleanupTests(StopHookTestCase):
 
     def test_a_cleanup_failure_still_exits_zero(self) -> None:
         self.bind()
-        with (
-            patch.object(Path, "unlink", side_effect=OSError("disk gone")),
-        ):
+        with patch.object(Path, "unlink", side_effect=OSError("disk gone")):
             result = self.run_hook_payload(
                 spawn_side_effect=self.failing_spawn(OSError("spawn refused"))
             )
@@ -312,38 +324,212 @@ class NeverBreakTheTurnTests(StopHookTestCase):
         self.assertEqual(self.seam.calls, [])
 
 
+class WireBoundReconciliationTests(StopHookTestCase):
+    """Tests for the KTD6 bridged reconciliation and local speech suppression branch."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        # Set up BridgeStub
+        self.stub = BridgeStub()
+        self.stub.start()
+        self.addCleanup(self.stub.stop)
+
+        # Write discovery bridge.json
+        self.bridge_dir = self.home_dir / "Library" / "Application Support" / "Auralis"
+        self.bridge_dir.mkdir(parents=True, exist_ok=True)
+        self.bridge_file = self.bridge_dir / "bridge.json"
+        bridge_payload = {
+            "schema": 1,
+            "host": "127.0.0.1",
+            "port": self.stub.port,
+            "token": DEFAULT_STUB_TOKEN,
+        }
+        self.bridge_file.write_text(json.dumps(bridge_payload), encoding="utf-8")
+        os.chmod(self.bridge_file, stat.S_IRUSR | stat.S_IWUSR)
+
+        # Mock Herdr script
+        self.herdr_path = self.root / "fake_herdr"
+        herdr_envelope = {
+            "type": "agent_list",
+            "agents": [
+                {
+                    "pane_id": PANE_ID,
+                    "terminal_id": TERMINAL_ID,
+                    "agent_session": {"value": BOUND_SESSION},
+                }
+            ],
+        }
+        mock_herdr_code = (
+            f"#!/usr/bin/env python3\n"
+            f"import sys\n"
+            f"sys.stdout.write({json.dumps(json.dumps(herdr_envelope))} + '\\n')\n"
+        )
+        self.herdr_path.write_text(mock_herdr_code, encoding="utf-8")
+        os.chmod(self.herdr_path, 0o755)
+
+        self.env_patcher_bridge = patch.dict(
+            os.environ,
+            {
+                "HERDR_PANE_ID": PANE_ID,
+                "HERDR_BIN_PATH": str(self.herdr_path),
+            },
+        )
+        self.env_patcher_bridge.start()
+        self.addCleanup(self.env_patcher_bridge.stop)
+
+        self.identity_dict = {
+            "agent_session_id": BOUND_SESSION,
+            "pane_id": PANE_ID,
+            "terminal_id": TERMINAL_ID,
+        }
+
+    def test_wire_bound_with_accepted_rendering_settles_authored_and_suppresses_speech(
+        self,
+    ) -> None:
+        self.stub.set_binding(VALID_UUID_1, self.identity_dict)
+        self.stub.set_turn(VALID_UUID_2, VALID_UUID_1, state="authored_accepted")
+
+        # Initialize turn record with an accepted submission
+        turn_record.init_turn(
+            session_id=BOUND_SESSION,
+            binding_id=VALID_UUID_1,
+            turn_id=VALID_UUID_2,
+            path=self.state_dir / turn_record.TURN_RECORD_FILENAME,
+        )
+        turn_record.record_submission(
+            session_id=BOUND_SESSION,
+            text="Spoken rendering",
+            disposition="accepted",
+            path=self.state_dir / turn_record.TURN_RECORD_FILENAME,
+        )
+
+        # Also have local legacy binding present
+        self.bind(session_id=BOUND_SESSION)
+
+        result = self.run_hook_payload()
+        self.assertEqual(result, 0)
+        # Suppresses local speak spawn
+        self.assertEqual(self.seam.calls, [])
+        self.assertEqual(self.speak_files(), [])
+
+        # Reconciled outcome is authored
+        rec = turn_record.read_turn_record(self.state_dir / turn_record.TURN_RECORD_FILENAME)
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec.outcome, turn_record.OUTCOME_AUTHORED)  # type: ignore[union-attr]
+
+    def test_wire_bound_without_accepted_rendering_settles_fallback_and_suppresses_speech(
+        self,
+    ) -> None:
+        self.stub.set_binding(VALID_UUID_1, self.identity_dict)
+        self.stub.set_turn(VALID_UUID_2, VALID_UUID_1, state="open")
+
+        # Initialize turn record with a rejected submission (R122 path)
+        turn_record.init_turn(
+            session_id=BOUND_SESSION,
+            binding_id=VALID_UUID_1,
+            turn_id=VALID_UUID_2,
+            path=self.state_dir / turn_record.TURN_RECORD_FILENAME,
+        )
+        turn_record.record_submission(
+            session_id=BOUND_SESSION,
+            text="**Markdown**",
+            disposition="rejected_content",
+            reason="markdown_formatting",
+            path=self.state_dir / turn_record.TURN_RECORD_FILENAME,
+        )
+
+        # Also have local legacy binding present
+        self.bind(session_id=BOUND_SESSION)
+
+        result = self.run_hook_payload()
+        self.assertEqual(result, 0)
+        # Suppresses local speak spawn
+        self.assertEqual(self.seam.calls, [])
+        self.assertEqual(self.speak_files(), [])
+
+        # Reconciled outcome is fallback
+        rec = turn_record.read_turn_record(self.state_dir / turn_record.TURN_RECORD_FILENAME)
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec.outcome, turn_record.OUTCOME_FALLBACK)  # type: ignore[union-attr]
+
+    def test_wire_bound_with_no_turn_record_still_suppresses_speech(self) -> None:
+        self.stub.set_binding(VALID_UUID_1, self.identity_dict)
+        self.bind(session_id=BOUND_SESSION)
+
+        result = self.run_hook_payload()
+        self.assertEqual(result, 0)
+        self.assertEqual(self.seam.calls, [])
+        self.assertEqual(self.speak_files(), [])
+
+    def test_bridge_unavailable_falls_back_to_legacy_speak_path(self) -> None:
+        self.stub.stop()
+        self.bind(session_id=BOUND_SESSION)
+
+        result = self.run_hook_payload()
+        self.assertEqual(result, 0)
+        # Spawns through legacy path
+        self.assertEqual(len(self.seam.calls), 1)
+        self.assertEqual(len(self.speak_files()), 1)
+
+    def test_bridge_bound_to_different_session_falls_back_to_legacy_speak_path(
+        self,
+    ) -> None:
+        other_identity = {
+            "agent_session_id": "session-other",
+            "pane_id": "pane-other",
+            "terminal_id": "term-other",
+        }
+        self.stub.set_binding(VALID_UUID_1, other_identity)
+        self.bind(session_id=BOUND_SESSION)
+
+        result = self.run_hook_payload()
+        self.assertEqual(result, 0)
+        # Spawns through legacy path
+        self.assertEqual(len(self.seam.calls), 1)
+        self.assertEqual(len(self.speak_files()), 1)
+
+    def test_turn_record_busy_on_wire_bound_still_suppresses_speech(self) -> None:
+        self.stub.set_binding(VALID_UUID_1, self.identity_dict)
+        self.bind(session_id=BOUND_SESSION)
+
+        with patch.object(
+            turn_record,
+            "settle_outcome",
+            side_effect=turn_record.TurnRecordBusy("turn_record_busy"),
+        ):
+            result = self.run_hook_payload()
+            self.assertEqual(result, 0)
+            self.assertEqual(self.seam.calls, [])
+            self.assertEqual(self.speak_files(), [])
+
+
 class DescriptorAndLayoutTests(StopHookTestCase):
     """The client extension matches the repository's extension convention."""
 
-    def test_hooks_json_declares_the_stop_entry(self) -> None:
+    def test_hooks_json_declares_the_required_entries(self) -> None:
         descriptor_path = (
             _PACKAGE / "com.infiquetra.claude" / "hooks" / "hooks.json"
         )
         descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
-        self.assertIn("Stop", descriptor["hooks"])
-        entries = [
-            entry
-            for group in descriptor["hooks"]["Stop"]
-            for entry in group["hooks"]
-        ]
-        commands = [
-            entry["command"] for entry in entries if entry.get("type") == "command"
-        ]
-        # ``${CLAUDE_PLUGIN_ROOT}`` is the *installed package root*, which is
-        # plugins/voice/ -- not this client extension. Claude installs the
-        # package root so the portable core travels with the hook, so the
-        # command has to walk down into the extension. Asserting the resolved
-        # path exists as well as its spelling: a command that merely looks
-        # plausible fails only after a successful install.
-        self.assertIn(
-            'python3 "${CLAUDE_PLUGIN_ROOT}/com.infiquetra.claude/hooks/stop_hook.py"',
-            commands,
-        )
-        for command in commands:
-            relative = command.split("${CLAUDE_PLUGIN_ROOT}/", 1)[1].rstrip('"')
-            self.assertTrue((_PACKAGE / relative).is_file())
-        for entry in entries:
-            self.assertEqual(entry["timeout"], 5)
+
+        for hook_name in ("UserPromptSubmit", "PreToolUse", "Stop"):
+            with self.subTest(hook_name=hook_name):
+                self.assertIn(hook_name, descriptor["hooks"])
+                entries = [
+                    entry
+                    for group in descriptor["hooks"][hook_name]
+                    for entry in group["hooks"]
+                ]
+                commands = [
+                    entry["command"]
+                    for entry in entries
+                    if entry.get("type") == "command"
+                ]
+                for command in commands:
+                    relative = command.split("${CLAUDE_PLUGIN_ROOT}/", 1)[1].rstrip('"')
+                    self.assertTrue((_PACKAGE / relative).is_file())
+                for entry in entries:
+                    self.assertEqual(entry["timeout"], 5)
 
     def test_the_client_manifest_exists_with_an_identity(self) -> None:
         manifest_path = _PACKAGE / "com.infiquetra.claude" / "plugin.json"
