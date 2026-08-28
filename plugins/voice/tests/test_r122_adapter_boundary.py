@@ -82,14 +82,16 @@ class R122AdapterBoundaryTests(unittest.TestCase):
         # Write mock Herdr script
         self.herdr_path = self.root / "fake_herdr"
         herdr_envelope = {
-            "type": "agent_list",
-            "agents": [
-                {
-                    "pane_id": PANE_ID,
-                    "terminal_id": TERMINAL_ID,
-                    "agent_session": {"value": AGENT_SESSION_ID},
-                }
-            ],
+            "result": {
+                "type": "agent_list",
+                "agents": [
+                    {
+                        "pane_id": PANE_ID,
+                        "terminal_id": TERMINAL_ID,
+                        "agent_session": {"value": AGENT_SESSION_ID},
+                    }
+                ],
+            }
         }
         mock_herdr_code = (
             f"#!/usr/bin/env python3\n"
