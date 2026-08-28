@@ -12,8 +12,8 @@
     {
       "name": "voice",
       "source": "./plugins/voice",
-      "version": "0.2.1",
-      "description": "A spoken conversational loop for one explicitly bound, Herdr-managed Claude Code session: the bound session speaks its completed response, the operator answers by voice, and the transcript lands editable and unsubmitted in that same session's input box.",
+      "version": "0.3.0",
+      "description": "A spoken conversational loop and Auralis bridge adapter for one explicitly bound, Herdr-managed Claude Code session: the bound session receives voice context, submits authored spoken renderings, and speaks completed responses.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"

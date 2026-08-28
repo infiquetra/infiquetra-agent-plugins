@@ -1,28 +1,26 @@
-"""The Claude Code ``Stop`` hook for the voice package.
+"""The Claude Code ``Stop`` hook for the voice package (R22, R23, R122; KTD6).
 
-Claude runs ``Stop`` hooks synchronously, so a hook that does the speaking
-itself would stall every turn settle by the length of the speech. This hook
-therefore detaches (KTD2): it reads the hook payload from standard input
-once, compares the payload's ``session_id`` against the sticky binding with
-a pure local file read, and — only when this session is the bound one —
-writes the response text to a unique payload file and starts the speak
-script as a fully detached child. If that spawn fails, it removes the
-payload it just wrote, so a failed hook never leaves an orphaned file
-behind; the speak child owns the payload on every path once it starts. It
-then exits 0 immediately. It never blocks on, waits for, or reads back from
-the child; the harness timeout in ``hooks.json`` is a backstop, not a
-budget.
+Claude runs ``Stop`` hooks synchronously.
 
-Only the bound session may speak (R3): unbound, mismatched, absent, or
-unreadable binding, or an empty ``last_assistant_message``, reads as
-silence — no spawn, no payload file, no sound. The response text comes
-only from the payload's ``last_assistant_message``; this hook never reads
-the screen or the transcript file. A hook must never break a turn, so
-every path — including malformed input and unexpected failure — exits 0.
+When this session is wire-bound to an active Auralis bridge (KTD6):
+1. Resolves adapter identity and queries the bridge via ``GET /v1/current``.
+2. When the active binding epoch matches this session's adapter identity:
+   - Suppresses the legacy local speak path (Auralis owns speech custody);
+   - Reconciles the turn record: if the captured turn reached an accepted
+     authored rendering, records outcome ``authored``; otherwise records
+     outcome ``fallback`` (R22, R23, R122; KTD6);
+   - Exits 0 immediately without spawning a detached speak child.
 
-The hook does not import the speak script, clean Markdown, or call the
-speech provider: it hands the text off by argv and file (KTD1/KTD2) and
-the speak path owns the rest.
+On any bridge doubt (discovery failure, transport error, no active binding epoch,
+or session mismatch), falls through to the legacy 0.2.1 standalone voice loop:
+- Compares ``session_id`` against the local sticky binding;
+- Only when bound, writes the response text to a unique payload file and
+  spawns ``speak.py`` as a fully detached child (KTD2);
+- If the spawn fails, cleans up the payload file;
+- Exits 0 immediately.
+
+A hook must never break a turn, so every path — including malformed input and
+unexpected errors — exits 0.
 """
 
 from __future__ import annotations
@@ -36,9 +34,12 @@ _PACKAGE_SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 if str(_PACKAGE_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_PACKAGE_SCRIPTS))
 
+import adapter_identity  # noqa: E402
 import binding  # noqa: E402
+import bridge_client  # noqa: E402
 import process  # noqa: E402
 import settings  # noqa: E402
+import turn_record  # noqa: E402
 
 #: The speak script the detached child runs, resolved from this hook file
 #: to the portable package root. The hook spawns it by argv and never
@@ -69,6 +70,46 @@ def main() -> int:
         session_id = payload.get("session_id")
         if not isinstance(session_id, str) or not session_id:
             return 0
+
+        # KTD6: Check if this session is wire-bound to an active Auralis bridge
+        is_wire_bound = False
+        try:
+            identity = adapter_identity.resolve_adapter_identity()
+            if adapter_identity.matches_session(identity, session_id):
+                # Check bridge snapshot with internal 1,000 ms budget (timeout budget table)
+                client = bridge_client.BridgeClient()
+                snapshot = client.get_current()
+                if (
+                    snapshot.binding is not None
+                    and snapshot.binding.identity == identity
+                ):
+                    is_wire_bound = True
+        except Exception:
+            # Any bridge doubt -> fall through to legacy path
+            is_wire_bound = False
+
+        if is_wire_bound:
+            # Wire-bound: reconcile turn record outcome and suppress local speech
+            try:
+                rec = turn_record.read_turn_record()
+                if rec is not None and rec.session_id == session_id:
+                    has_accepted = any(
+                        sub.get("disposition") == "accepted"
+                        for sub in rec.submissions
+                        if isinstance(sub, dict)
+                    )
+                    outcome = (
+                        turn_record.OUTCOME_AUTHORED
+                        if has_accepted
+                        else turn_record.OUTCOME_FALLBACK
+                    )
+                    turn_record.settle_outcome(session_id=session_id, outcome=outcome)
+            except Exception:
+                # On busy or error, leave outcome unsettled; still suppress speech
+                pass
+            return 0
+
+        # Legacy 0.2.1 speak path
         record = binding.read_binding()
         if record is None or record.session_id != session_id:
             return 0
@@ -83,9 +124,7 @@ def main() -> int:
             )
         except Exception:
             # The spawn failed, so no child will consume this payload: remove
-            # it so failed hooks do not accumulate orphaned files. The removal
-            # is best-effort — a failure there still reads as silence through
-            # the outer guard.
+            # it so failed hooks do not accumulate orphaned files.
             payload_path.unlink(missing_ok=True)
             return 0
     except Exception:
