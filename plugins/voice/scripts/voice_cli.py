@@ -15,6 +15,7 @@ Commands:
   sequencer (KTD16).
 - ``stop`` — stop playback immediately; the command the operator's
   Herdr-wide stop keybinding invokes (R8 support).
+- ``policy`` — inspect or configure voice policy (``show``, ``brief-next-turn``).
 
 This CLI is the only command surface the package ships; the Agent Skill
 documents it rather than adding a second one. The heavy modules are
@@ -153,6 +154,20 @@ def _stop() -> int:
     return 0
 
 
+def _policy(policy_args: argparse.Namespace) -> int:
+    import voice_policy
+
+    if policy_args.policy_command == "show":
+        policy = voice_policy.read_policy()
+        print(json.dumps(policy.to_payload(), indent=2, sort_keys=True))
+        return 0
+    if policy_args.policy_command == "brief-next-turn":
+        voice_policy.arm_brief_next_turn()
+        print("armed brief next turn override")
+        return 0
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="voice_cli.py",
@@ -172,6 +187,16 @@ def main(argv: list[str] | None = None) -> int:
         "toggle", help="one recording toggle press: start, or stop and deliver"
     )
     subparsers.add_parser("stop", help="stop playback immediately")
+    policy_parser = subparsers.add_parser(
+        "policy", help="inspect or configure voice policy"
+    )
+    policy_subparsers = policy_parser.add_subparsers(
+        dest="policy_command", required=True
+    )
+    policy_subparsers.add_parser("show", help="show current voice policy")
+    policy_subparsers.add_parser(
+        "brief-next-turn", help="arm brief next turn override"
+    )
     arguments = parser.parse_args(argv)
     if arguments.command == "pane":
         return _pane()
@@ -183,6 +208,8 @@ def main(argv: list[str] | None = None) -> int:
         return _toggle()
     if arguments.command == "stop":
         return _stop()
+    if arguments.command == "policy":
+        return _policy(arguments)
     parser.error(f"unknown command {arguments.command!r}")
     return 2  # Unreached; parser.error exits.
 

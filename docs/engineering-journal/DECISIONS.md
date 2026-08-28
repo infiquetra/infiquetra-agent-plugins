@@ -2,6 +2,116 @@
 
 ## 2026-08-27
 
+### Auralis C3 adapter packaging: voice 0.3.0, mcpServers path into client extension, and acceptance evidence note
+
+**Author.** Claude for Jeff Cox (Auralis C3 adapter U5 closeout, issue #46, branch
+`orch/auralis-c3-adapter-build-c3-u5`)
+
+**Decision.** Packaging for the Auralis C3 Claude adapter (`voice` 0.3.0) extends the Claude
+packaging layout pinned on 2026-08-25: `plugins/voice/.claude-plugin/plugin.json` gains
+`"mcpServers": "./com.infiquetra.claude/mcp/servers.json"` pointing to the server configuration
+inside the client extension, keeping the packaging manifest pure distribution metadata
+without command strings. Version is bumped to `0.3.0` across all four sites bound by
+`tests/test_claude_plugin_packaging.py` (`plugins/voice/plugin.json`,
+`plugins/voice/.claude-plugin/plugin.json`, `plugins/voice/com.infiquetra.claude/plugin.json`,
+`.claude-plugin/marketplace.json`). Acceptance evidence for the nine C3 slice requirements is
+captured in [`docs/evidence/voice/auralis-c3-acceptance.md`](../evidence/voice/auralis-c3-acceptance.md),
+recording the five-route wire pin, the AE26 reject-then-accept proof across in-process and
+declared-argv subprocess layers, and the joint AE36 cross-repository dependency on
+`infiquetra/auralis`.
+
+**Rationale.** Preserves the repository boundary rule (packaging manifest carries paths into
+the client extension; behaviour and commands live under `com.infiquetra.claude/`). Four-site
+version agreement prevents `claude plugin update` cache-staleness bugs. A dedicated
+acceptance note keeps the Auralis V1 requirements namespace separate from the earlier 0.2.x
+voice ledger.
+
+**Rejected alternatives.** Inline `mcpServers` object in the packaging manifest (violates
+metadata-only manifest rule); bumping version at only some sites (fails packaging test);
+merging C3 evidence into the 0.2.x `acceptance.md` (collides the two R-ID numbering schemes).
+
+**Revisit when.** Claude Code changes plugin MCP server manifest resolution, or the Auralis
+Bridge Contract v2 merges.
+
+**Refs.** [`docs/plans/2026-08-27-auralis-c3-adapter.md`](../plans/2026-08-27-auralis-c3-adapter.md),
+[`docs/evidence/voice/auralis-c3-acceptance.md`](../evidence/voice/auralis-c3-acceptance.md),
+`tests/test_claude_plugin_packaging.py`.
+
+### Auralis C3 plan repair: a tracked byte-pinned wire snapshot, a locked turn-record transaction, and a gate-owned rejected-syntax contract
+
+**Author.** Claude for Jeff Cox (Auralis C3 plan repair against the blocking doc review,
+issue #46, branch `orch/auralis-c3-adapter-plan-c3-repair`)
+
+**Decision.** The repair of
+[`docs/plans/2026-08-27-auralis-c3-adapter.md`](../plans/2026-08-27-auralis-c3-adapter.md)
+(doc-review findings F1–F12, disposition table at the plan's end) fixes four load-bearing
+choices. First: the wire contract is pinned by a **tracked byte-identical snapshot**
+([`docs/bridge-v1-from-c10.md`](../bridge-v1-from-c10.md)) of
+`docs/bridge/bridge-v1.md` in `infiquetra/auralis` at accepted revision
+`695cd0ecfddf44e0d6e3386da318bd5fde4a1926`, SHA-256
+`eb47d141e5c1b87bae0bd1c0799386a3aa8806635251db14fc806469b5db19eb` — a clean checkout and
+the hosted CI must resolve the plan's links without reading another repository's unmerged
+branch, and byte-identity keeps the pin hash-verifiable. Second: the shared per-turn
+record is mutated only through one `fcntl.flock`-serialized read-apply-write entrypoint
+(plan KTD11); atomic write-replace is only the torn-write defense, because whole-file
+replacement cannot prevent two writers from erasing each other's updates. Third: the R121
+rendering gate owns a complete, closed rejected-syntax contract (setext headings,
+reference links, autolinks, indented code included) rather than inheriting the speak-path
+cleanup recognizers, whose documented scope is narrower than Markdown. Fourth: the two
+Herdr identity values the bridge contract mandates are read through `settings.py`'s
+extended closed `SETTING_NAMES` set, preserving the package's sole-environment-reader
+rule instead of adding a second reader.
+
+**Rejected alternatives.** An external permalink as the only wire pin (CI and clean
+implementation checkouts cannot resolve it); deleting the contract reference (the plan
+must stay traceable to a specific revision); `O_CREAT|O_EXCL` lock files (crash-stale
+locks need their own cleanup protocol) and SQLite (disproportionate to one single-turn
+JSON document); "one writer per field family" as a concurrency claim (the reviewed
+lost-update defect); direct environment reads in `adapter_identity.py` (breaks the stated
+sole-reader contract).
+
+**Revisit when.** The C10 contract merges to `auralis` main (the snapshot then re-pins to
+the merged revision), the turn record outgrows a single turn, or a bridge v2 changes the
+wire.
+
+### Auralis C3 adapter plan: the R121 gate lives in the adapter surface, and the MCP server is the adapter's long-lived process
+
+**Author.** Claude for Jeff Cox (Auralis C3 planning, issue #46, branch
+`orch/auralis-c3-adapter-plan-c3-adapter`)
+
+**Decision.** The plan at
+[`docs/plans/2026-08-27-auralis-c3-adapter.md`](../plans/2026-08-27-auralis-c3-adapter.md)
+extends the voice package into the Claude adapter end of the Auralis local bridge, with
+two load-bearing choices and eight supporting ones (KTD1–KTD10 in the plan). First: the
+plain-spoken-text rule (Auralis requirement R121) is enforced in the adapter's Model
+Context Protocol submission tool, not on the wire — the bridge contract's adjudication
+vocabulary carries no content-form reason, Core accepts text verbatim, and the tool
+answers with a three-class result vocabulary (adapter content rejections
+`fenced_code_block` / `markdown_formatting`, Core rejections relayed verbatim, and named
+availability conditions), never a cleaned rewrite. Second: the plugin-declared MCP stdio
+server is the adapter's one long-lived process, so the bridge presence-renewal loop lives
+in it, while every Claude hook stays an ephemeral one-shot client; submissions target the
+`(binding_id, turn_id)` pair captured at prompt time, never a fresh snapshot at
+submission time.
+
+**Rationale.** The agent-facing surface is the only place R121 *can* live without a
+cross-lane wire change; splitting the reason vocabulary keeps adapter judgment, Core
+judgment, and availability impossible to confuse. Plugin MCP servers persist for the
+session (verified against current Claude Code documentation), which meets the lease
+cadence no hook process can hold; the prompt-time pair makes Core's own
+`turn_not_current` adjudication the arbiter of staleness instead of silently retargeting
+a late rendering.
+
+**Rejected alternatives.** Repairing submissions with the existing cleanup pass (R121
+forbids repair); asking C10 for a wire-level content reason (Core custody); a separate
+presence daemon (new lifecycle surface, nothing needs it); fresh identifier reads at
+submission (wrong-turn hazard); an inline `mcpServers` object in the Claude packaging
+manifest (a command in a metadata-only file — the declaration is a string path into
+`com.infiquetra.claude/` instead).
+
+**Revisit when.** A bridge v2 adds content adjudication or changes identifier custody, or
+the Claude client changes plugin MCP-server lifecycle. The full per-decision revisit
+conditions are in the plan's KTD section.
 ### The agent-launcher port carries the contract as a byte copy and supersedes the Claude-runtime docs
 
 **Author.** Jeff Cox and Qwen Code (issue #22, branch `port/agent-launcher`,

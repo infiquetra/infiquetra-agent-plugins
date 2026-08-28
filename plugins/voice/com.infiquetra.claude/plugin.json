@@ -1,7 +1,7 @@
 {
   "name": "voice",
-  "version": "0.2.1",
-  "description": "Claude client extension for the voice package: the Stop hook that lets the one explicitly bound session speak its completed response through the portable voice loop.",
+  "version": "0.3.0",
+  "description": "Claude client extension for the voice package: hooks and Model Context Protocol (MCP) server for Auralis bridge integration and the spoken conversational loop.",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"

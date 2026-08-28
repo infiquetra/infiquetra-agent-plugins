@@ -42,6 +42,8 @@ __all__ = [
     "PLAYBACK_BIN",
     "STATE_DIR",
     "RETENTION",
+    "HERDR_PANE_ID",
+    "HERDR_BIN_PATH",
     "forge_base_url",
     "forge_voice_id",
     "hermes_base_url",
@@ -50,6 +52,8 @@ __all__ = [
     "playback_bin",
     "state_dir",
     "retention",
+    "herdr_pane_id",
+    "herdr_bin_path",
 ]
 
 
@@ -75,6 +79,8 @@ CAPTURE_BIN = "VOICE_CAPTURE_BIN"
 PLAYBACK_BIN = "VOICE_PLAYBACK_BIN"
 STATE_DIR = "VOICE_STATE_DIR"
 RETENTION = "VOICE_RETENTION"
+HERDR_PANE_ID = "HERDR_PANE_ID"
+HERDR_BIN_PATH = "HERDR_BIN_PATH"
 
 #: The closed set of settings this package reads. Nothing outside this tuple
 #: is ever read from the environment, and no member may carry a secret.
@@ -87,6 +93,8 @@ SETTING_NAMES = (
     PLAYBACK_BIN,
     STATE_DIR,
     RETENTION,
+    HERDR_PANE_ID,
+    HERDR_BIN_PATH,
 )
 
 DEFAULT_HERMES_BASE_URL = "http://127.0.0.1:8765"
@@ -174,3 +182,13 @@ def retention() -> str:
             f"{RETENTION_EPHEMERAL!r} and refuses other postures by name",
         )
     return value
+
+
+def herdr_pane_id() -> str:
+    """Herdr pane identifier for the current process session. No default."""
+    return _stated(HERDR_PANE_ID, None)
+
+
+def herdr_bin_path() -> str:
+    """Path to the Herdr CLI executable. No default."""
+    return _stated(HERDR_BIN_PATH, None)
