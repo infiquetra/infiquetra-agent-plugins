@@ -66,7 +66,7 @@ The byte-identical snapshot is committed in this repository at
   2. `tools/list` returns `submit_spoken_rendering` with closed input schema.
   3. `tools/call submit_spoken_rendering` with Markdown heading and bold returns `rejected_content` (`markdown_formatting`).
   4. `tools/call submit_spoken_rendering` with plain text returns `accepted`.
-- **Adapter-boundary rejection-to-fallback lifecycle:** `plugins/voice/tests/test_r122_adapter_boundary.py::R122AdapterBoundaryTests::test_r122_rejected_rendering_with_no_replacement_settles_as_fallback` drives the complete multi-process sequence: real `user_prompt_submit_hook.py` subprocess -> real `mcp_server.py` subprocess rejecting Markdown -> no replacement -> real `stop_hook.py` subprocess recording outcome `fallback`.
+- **Adapter-boundary rejection-to-fallback lifecycle:** `plugins/voice/tests/test_r122_adapter_boundary.py::R122AdapterBoundaryTests::test_r122_adapter_boundary_rejection_no_replacement_settles_fallback` drives the complete multi-process sequence: real `user_prompt_submit_hook.py` subprocess -> real `mcp_server.py` subprocess rejecting Markdown -> no replacement -> real `stop_hook.py` subprocess recording outcome `fallback`.
 
 ### AE34 — Joint bridge acceptance with Core (C10): **READY**
 
