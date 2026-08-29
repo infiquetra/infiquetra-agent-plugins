@@ -31,6 +31,7 @@ __all__ = [
     "TurnSnapshot",
     "CurrentSnapshot",
     "RenderingResponse",
+    "ApprovalResponse",
     "BridgeError",
     "BridgeUnavailable",
     "BridgeUnauthorized",
@@ -41,6 +42,7 @@ __all__ = [
     "CURRENT_TIMEOUT_SECONDS",
     "PRESENCE_TIMEOUT_SECONDS",
     "RENDERING_TIMEOUT_SECONDS",
+    "APPROVAL_TIMEOUT_SECONDS",
     "read_discovery",
     "BridgeClient",
 ]
@@ -53,6 +55,7 @@ HEALTH_TIMEOUT_SECONDS = 1.000
 CURRENT_TIMEOUT_SECONDS = 1.000
 PRESENCE_TIMEOUT_SECONDS = 2.000
 RENDERING_TIMEOUT_SECONDS = 2.000
+APPROVAL_TIMEOUT_SECONDS = 55.000
 
 _TOKEN_REGEX = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _UUID_V4_REGEX = re.compile(
@@ -182,6 +185,17 @@ class RenderingResponse:
     turn_id: str
     reason: str | None = None
     detail: str | None = None
+
+
+@dataclass(frozen=True)
+class ApprovalResponse:
+    """Response from POST /v1/approval."""
+
+    tool_use_id: str
+    decision: str  # "allow" or "defer"
+    reason: str
+    snapshot: dict[str, Any] | None = None
+    schema: int = 1
 
 
 def read_discovery(bridge_file: Path | str | None = None) -> BridgeConnection:
@@ -703,3 +717,111 @@ class BridgeClient:
             )
         else:
             raise BridgeTransportError(f"unknown rendering disposition: {disp!r}")
+
+    def request_approval(
+        self,
+        identity: AdapterIdentity,
+        binding_id: str,
+        session_id: str,
+        tool_use_id: str,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        permission_mode: str,
+        cwd: str,
+    ) -> ApprovalResponse:
+        """Call POST /v1/approval and hold for the Core's decision."""
+        conn = self.get_connection()
+        body = {
+            "schema": 1,
+            "identity": identity.to_dict(),
+            "binding_id": binding_id,
+            "session_id": session_id,
+            "tool_use_id": tool_use_id,
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+            "permission_mode": permission_mode,
+            "cwd": cwd,
+        }
+        status, data = self._request(
+            "POST",
+            "/v1/approval",
+            body,
+            APPROVAL_TIMEOUT_SECONDS,
+            conn,
+        )
+        if status == 401:
+            self.reset_connection()
+            raise BridgeUnauthorized("unauthorized approval request")
+        if status != 200:
+            err_code = data.get("error", "unknown_error")
+            raise BridgeTransportError(
+                f"approval POST returned status {status}: {err_code}",
+                status_code=status,
+                error_code=err_code,
+            )
+
+        schema_val = data.get("schema")
+        if type(schema_val) is not int or schema_val != 1:
+            raise BridgeTransportError(
+                f"approval response schema must be 1, got {schema_val!r}",
+                status_code=status,
+                error_code="unsupported_schema",
+            )
+
+        resp_tool_use_id = data.get("tool_use_id")
+        decision = data.get("decision")
+        reason = data.get("reason")
+        if (
+            not isinstance(resp_tool_use_id, str)
+            or not isinstance(decision, str)
+            or not isinstance(reason, str)
+        ):
+            raise BridgeTransportError(
+                "approval response missing or invalid required string fields",
+                status_code=status,
+                error_code="invalid_request",
+            )
+
+        if decision == "allow":
+            expected_keys = {"schema", "tool_use_id", "decision", "reason", "snapshot"}
+            if set(data.keys()) != expected_keys:
+                raise BridgeTransportError(
+                    f"unexpected keys in allow response: {set(data.keys())}",
+                    status_code=status,
+                    error_code="invalid_request",
+                )
+            snapshot = data.get("snapshot")
+            if not isinstance(snapshot, dict):
+                raise BridgeTransportError(
+                    "approval response with allow decision missing snapshot object",
+                    status_code=status,
+                    error_code="invalid_request",
+                )
+            return ApprovalResponse(
+                tool_use_id=resp_tool_use_id,
+                decision="allow",
+                reason=reason,
+                snapshot=snapshot,
+                schema=1,
+            )
+        elif decision == "defer":
+            expected_keys = {"schema", "tool_use_id", "decision", "reason"}
+            if set(data.keys()) != expected_keys:
+                raise BridgeTransportError(
+                    f"unexpected keys in defer response: {set(data.keys())}",
+                    status_code=status,
+                    error_code="invalid_request",
+                )
+            return ApprovalResponse(
+                tool_use_id=resp_tool_use_id,
+                decision="defer",
+                reason=reason,
+                snapshot=None,
+                schema=1,
+            )
+        else:
+            raise BridgeTransportError(
+                f"unknown approval decision: {decision!r}",
+                status_code=status,
+                error_code="invalid_request",
+            )
