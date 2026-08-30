@@ -2,125 +2,107 @@
 date: 2026-08-30
 kind: doc-review
 target: docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md
-reviewed_revision: b164026b8e2367d1d3e828d0c3d8bfc06ae9b702
+reviewed_revision: 40832204f804c832020408311ad19af724cc280d
 branch: orch-agent-plugins-50
 classification: issue-derived implementation plan
 blocked: true
-cycles: 3
+cycles: 4
 ---
 
 # Doc Review — Mission Control 2.15.2 resync plan
 
-Amendment 1 at `b164026` is not ready to drive U2: after the new rule lands, `LiveDocumentTest` stays red through freeze while #54 still requires `unittest discover` `OK`.
+Amendment 2 at `4083220` closes D5–D7 and the #54/#55/#56 half of D4, but U1b is still red at U1's completion, so D4 stays open and `/work` stays blocked.
 
 ## Applied fixes
 
-Cycle 1 applied five evidence-backed plan edits; those plus the author's D1 and D2 repairs landed in `82dcb1c`. Cycle 2 applied none.
+Cycle 1: five plan edits, later in `82dcb1c`. Cycle 2: none. Cycle 3: four plan edits, later in `8cd5fec`. Cycle 4: none — verifying the author's Amendment 2 only.
 
-Cycle 3 applied four plan edits at this working tree, none of them a coordinator decision:
-
-- KTD14 and U2 deliverable 6 now name the match unit: one `_find_package_root` plus one module-scope call; the two `.claude-plugin` sites inside the function are not two matches; a concatenated-string search hits only the error text.
-- §6.2 no longer claims "No two of the three share a JSON key." U1 and U2 share `custody.byte_copies` and write disjoint members.
-- U2's leftover "Test expectation: none authored" and "does not touch that file" now agree with Amendment 1's rule-coverage ownership.
-
-`plugins/mission-control/` was not modified. The 34 uncommitted paths there are the stopped U2 sync and were left untouched.
+`plugins/mission-control/` was not modified. The 34 uncommitted paths there remain the stopped U2 sync.
 
 ## Readiness summary
 
-Cycle 2's PROCEED still holds for the pre-amendment plan. Amendment 1 / KTD14 is the only material under review. `/work` is blocked on D4.
+Cycle 2's PROCEED still holds for the pre-amendment plan. Cycle 3's other conclusions stand. This pass judged only D4–D7 plus the six-vs-nine commit count.
 
 | review-result field | value |
 | --- | --- |
 | target path | `docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md` |
-| reviewed repository revision | `b164026b8e2367d1d3e828d0c3d8bfc06ae9b702` (`git rev-parse HEAD` matched; subject `docs(mission-control): record the sync_template_docs custody decision as plan Amendment 1`). Working tree carries 34 uncommitted paths under `plugins/mission-control/` only — preserved, not a dirty-tree blocker. |
+| reviewed repository revision | `40832204f804c832020408311ad19af724cc280d` (`git rev-parse HEAD` matched; subject `docs(mission-control): repair all four cycle-3 doc-review findings as plan Amendment 2`). Working tree carries 34 uncommitted paths under `plugins/mission-control/` only — preserved, not a dirty-tree blocker. |
 | origin contract | [infiquetra/infiquetra-agent-plugins#50](https://github.com/infiquetra/infiquetra-agent-plugins/issues/50) and children [#51](https://github.com/infiquetra/infiquetra-agent-plugins/issues/51)–[#56](https://github.com/infiquetra/infiquetra-agent-plugins/issues/56) |
-| classification | issue-derived implementation plan; issue-phase rubrics applied to Amendment 1 only |
+| classification | issue-derived implementation plan; issue-phase rubrics applied to Amendment 2 / D4–D7 only |
 | rubric phase | issue (three cores; three extras applied by judgment) |
 | blocked | yes |
-| finding counts | P0: 0; P1: 1 open (D4); P2: 1 open (D5); P3: 2 open (D6, D7). D1–D3 closed. |
-| applied fixes | cycle 1: five plan edits (in `82dcb1c`); cycle 2: none; cycle 3: four plan edits listed above |
+| finding counts | P0: 0; P1: 1 open (D4); P2: 1 open (D8, new); P3: 0 open. D1–D3, D5–D7 closed. |
+| applied fixes | cycle 4: none |
 | override rationale | none |
 | review artifact | `docs/reviews/2026-08-30-issue-50-mission-control-resync-plan-doc-review.md` |
 | linked issue / plan | #50; saga tick `.claude/saga/sagas/issue-50/20260830-204750.md`; destination merge; inline |
 
-## Cycle 3 — Amendment 1 only
+## Cycle 4 — D4–D7 and the commit count
 
-HEAD `b164026b8e2367d1d3e828d0c3d8bfc06ae9b702` was confirmed before this pass. Cycle-2 PROCEED at `82dcb1c` is not re-opened. Only Amendment 1 / KTD14 / §14 was judged.
+HEAD `40832204f804c832020408311ad19af724cc280d` was confirmed before this pass. Live #50–#56 `updatedAt` values are still the 2026-08-30T19:22–19:24Z creation stamps; no issue body was rewritten.
 
-### First-hand reproduction
+### D4 — still open (P1)
 
-At pin `3b2b7083`, `plugins/mission-control/scripts/sync_template_docs.py` defines `_find_package_root()` at line 17, walks for `.claude-plugin/plugin.json` at line 20, raises `RuntimeError` at line 22, and calls that function at module scope on line 27. The committed portable copy at this SHA still uses the old `parents[3]` form; the working-tree file is the untransformed 2.15.2 bytes from the stopped U2 sync.
+The three-way cycle claim is true in code. `check_package_binding` compares live `file_count` and `tree_sha256` (`scripts/check_compatibility_matrix.py` 406–440), so any byte under `plugins/mission-control/` invalidates a `matrix-status: current` document. `check_document_status` accepts a superseded stamp only when the named successor exists and is itself current (lines 496–525). After U2, discover is red on the pin constants (U4 / #55) and on `LiveDocumentTest` (U5 / #56). U3 is the last package-root writer, so the package is not final until U3a. No ordering of six single-commit units can give #54, #55, and #56 a green discover each.
 
-Imported from a throwaway tree that had `com.infiquetra.claude/plugin.json` and no `.claude-plugin/`:
+"Met at the unit's completion" is a legitimate reading of those three issues: each AC says the command "reports `OK`" and does not say it must do so at every intermediate commit. It does not narrow the criterion if the completion commit is actually green, with no expected-red list. That is different from the cycle-2 option of moving #54's gate to freeze. Freeze still follows U3's package-root work: U3a is the last edit inside `plugins/mission-control/`; §8.1 step 7 records the fingerprint there; U3b and U4b stay outside the package root.
 
-```
-RuntimeError: package root containing .claude-plugin/plugin.json not found from
-  …/plugins/mission-control/scripts/sync_template_docs.py
-```
+The U3/U4/U5 split works: U4a clears pins, U3a freezes the tree, U5 clears `LiveDocumentTest` and meets #56, U3b meets #54, U4b meets #55. U2 may stay red on those two tests because #53 has no discover AC.
 
-The pin file has two `.claude-plugin` sites: the Path check at line 20 (`parent / ".claude-plugin" / "plugin.json"`) and the concatenated string in the error text at line 23 (the only `.claude-plugin/plugin.json` substring). A replace of that substring updates the error and leaves the walk looking for `.claude-plugin`.
+U1b does not land green. KTD15 claims the reclassification "changes no behaviour on its own, because the rule it names does not run until U2." That is false. `tests/test_port_config.py` `CommittedDescriptorTest.test_every_entrypoint_transform_entry_names_a_rule_the_sync_tool_implements` (lines 561–575) loads every descriptor and asserts each `entrypoint_transforms` rule is in `svs.TRANSFORM_RULES`. U1b names a rule U2 has not registered. `unittest discover` fails at U1's completion. #52's own AC requires discover `OK`. U1's verification `--check` would refuse the same unimplemented name (`resolve_transform_rule`). Sequencing the rule after the descriptor is the inverted prerequisite; choosing the opposite order would be a new coordinator decision, not a safe fix.
 
-`tests/test_site_profile.py` `MutationProofBindingTest.GRADED` (lines 1083–1089) is exactly `plugins/unifi/scripts/site_profile.py`, `scripts/check_repo.py`, `scripts/check_compatibility_matrix.py`, `scripts/port_config.py`, `scripts/assess_clients.py`. `scripts/sync_vendor_source.py` is not graded. The Amendment 1 claim is true.
+Leftover text still measures #54 at the U4a→U3a rebase (§2.6, R39, the §5 ASCII "gates, lands 2nd / green"). The U3 unit section and §8.1 are correct; those three leftovers are not. They do not independently reopen the #54 half once U3b is followed, but they will stop a worker who gates U3a on discover `OK`.
 
-### The seven amendment questions
+### D5 — closed
 
-1. **Custody path vs upstream filing.** Legitimate under this repository's contract and precedent. §2.7's table row sends a *byte-copy content* change upstream; reclassifying the path out of `upstream-byte-copy` is the other class the runbook already runs. #53's own stop table names "upstream filing or a recorded custody decision." `normalize-skill-frontmatter` is the same shape: upstream keeps a form that is correct for Claude and unusable verbatim in the portable layout; a versioned rule transforms it from source bytes alone. The fleet split/guarded pair is the same pattern for an import. Filing would ask upstream to stop using `.claude-plugin/`, which is their layout. Not a downstream patch of copied content.
+Descriptor reclassification is U1b. The transform rule is U2. Rule coverage is U4a. #53 out-of-scope holds verbatim: "No edit to `ports/mission-control.json`" and "No downstream test edits." Live #53 `updatedAt` is still 2026-08-30T19:23:49Z with zero comments.
 
-2. **Rejected alternatives.** (a) hand-edit, (b) drop like the shim, (c) file-and-stop are honest. The shim drop does not fit: nothing replaces this file, and it is a declared entrypoint. Dummy `.claude-plugin/` in the portable tree is an unlisted fourth hack (D7).
+### D6 — closed
 
-3. **Rule tightness.** After the cycle-3 match-unit fill: single-shape, exactly-one function-plus-call, refuse if missing/duplicated, idempotent on already-portable input, reproducible from source bytes, `--check` / provenance digests via the existing transform record (`test_every_transform_records_source_output_rule_and_version`). The worker still writes the Python. That part can drive work. The *gate* around it cannot (D4).
+The descriptor is again two writers, U1 then U3, matching #50's shaping. §15.1 names the one unfixable gap: `scripts/sync_vendor_source.py` is absent from #50's files-expected list, issues are not edited, the operator may add it when the parent is next touched, and no #50 checkbox, ruling, or stop is affected. That disclosure is adequate.
 
-4. **File ownership.** Three sequenced writers on `ports/mission-control.json` survive single-writer discipline once the false "no shared JSON key" sentence is corrected: U1 and U2 share a key and write disjoint members; U3's key is disjoint; later-writer-changes-earlier-region still holds. `scripts/sync_vendor_source.py` is U2 sole writer. `tests/test_sync_vendor_source.py` is U2 then U4 on disjoint tests.
+### D7 — closed
 
-5. **Disclosure.** Honest. §14 and KTD14 state the section postdates the `82dcb1c` PROCEED, was a coordinator decision, the planner recorded it, and the rule is unwritten.
+KTD14 rejected alternative (d) now names the dummy `.claude-plugin/` plant and gives four disqualifying reasons. The cycle-3 gap is filled.
 
-6. **#50 / #53 / inherited ACs.** No #50 or #53 acceptance checkbox is narrowed. #50's "except the recorded transforms" still covers a fifth rule. #53's sync / `--check` / 71 files / digest / pytest lines still hold. #53 *out-of-scope* ("No edit to `ports/mission-control.json`"; "No downstream test edits") contradicts the amendment (D5). #54's `unittest discover` `OK` becomes unreachable after U2 (D4) — that is an inherited AC the amendment does not acknowledge as moved.
+### Commit count — operator decision (D8, P2)
 
-7. **Graded set.** `scripts/sync_vendor_source.py` is outside the cycle-16 graded set. Adding a rule there does not retire the proof. `port_config.py` validates rule names as names only; the registry lives in the synchronizer. U2's stop if `port_config.py` seems required is sound.
+§2.3 still says "Six child-scoped commits, one per unit." KTD15 produces nine child-scoped commits (U0, U1a, U1b, U2, U4a, U3a, U5, U3b, U4b). #50's AC is six *units* closed, each recording base / frozen / merged; that unit count is a compatible reading, and §8.1 step 14 says a two-commit unit records both frozen SHAs. The *commit* count is not a compatible reading of §2.3's "one per unit," and §8.2 still says "The six child-scoped commits." Nine vs six changes the SHA record and the review binding. The operator must approve the deviation; the plan must not treat nine as six.
 
-### D4 — open (P1)
+### Formal issue-rubric results (Amendment 2 / D4–D7 only)
 
-§14.1 records that after resync, `test_check_compatibility_matrix.LiveDocumentTest.test_the_no_argument_run_validates_every_committed_matrix` fails because `ccm.main([])` validates every committed matrix, and the current mission-control matrix still binds the old 64-file / `651ac28a…` fingerprint. That is first-hand: `docs/evidence/2026-08-25-mission-control-compatibility-matrix.md` is `matrix-status: current` with those numbers; `check_repo.py` does not invoke the checker (Q5).
-
-The amendment then says the failure is U5's, is a separate coordinator call, and that the graph, KTD10, and freeze-after-U3 did not change.
-
-Followed literally:
-
-- U2's stop fires on any discover failure other than the three pin constants and the six import/collection errors. After the new rule those six clear. `LiveDocumentTest` remains. U2 stops.
-- U3 rebases onto U4 and must get discover `OK` (#54 AC; §8.1 step 4c; cycle-2 D1). `LiveDocumentTest` is still red. #54 cannot close.
-- Freeze (step 5, before U5) requires all four gates green. The test that U5 is supposed to clear is red, so freeze cannot happen and U5 cannot start.
-
-Filling U2/U3/freeze expected-red lists, or moving freeze after U5, or giving U3 a second discover exception, would invent the coordinator call §14.1 left open. Not a safe fix. Cycle-2 D1 forbade narrowing #54's discover-OK line.
-
-### Formal issue-rubric results (Amendment 1 only)
-
-| rubric | cycle 2 (whole plan) | cycle 3 (amendment) | evidence |
+| rubric | cycle 3 | cycle 4 | evidence |
 | --- | --- | --- | --- |
-| Acceptance criteria clarity | PASS | BLOCK | R40/R41 are testable; U3/#54 discover-OK and freeze-green are not, once §14.1's failure is real |
-| Devil's advocate | PASS | REVISE | custody path is the smallest useful slice; the unresolved LiveDocumentTest / #54 collision is failure-mode blindness |
-| Specification fidelity | PASS | BLOCK | #53 ACs unweakened; #54 discover-OK becomes unreachable; #53 out-of-scope contradicts the amendment (D5) |
-| Context completeness | PASS | PASS | after the match-unit fill, files, precedent, and test file are named |
-| Issue sizing | PASS | PASS | one custody reclassification, one unit |
-| Prerequisite mapping | PASS | BLOCK | U5 is now a hidden prerequisite of U2's commit, U3's gate, and freeze; §14.1 names it and does not schedule it |
+| Acceptance criteria clarity | BLOCK | BLOCK | #54/#55/#56 completion gates are now scheduled; #52's discover-OK at U1b is not |
+| Devil's advocate | REVISE | REVISE | two-commit split is the right slice for #54–#56; U1b / registry-join is the remaining failure mode |
+| Specification fidelity | BLOCK | REVISE | D5 closed; #52 discover-OK still unreachable at U1 completion |
+| Context completeness | PASS | PASS | KTD15 names commits, owners, and freeze point |
+| Issue sizing | PASS | PASS | no new unit; three units split |
+| Prerequisite mapping | BLOCK | BLOCK | U2's rule registry is a prerequisite of U1b naming the rule; the sequence has them backwards |
 
-## Cycle 2 verification (unchanged)
+## Cycle 3 (unchanged conclusions)
 
-HEAD `82dcb1cdd5e74e0f5ae47a3aa86d67a67b35bba3` was clean before that pass. Only D1 and D2 were re-checked. Both closed. See the cycle-2 text in the previous revision of this artifact; the dispositions stand.
+Bound `b164026`. D4 was the #54/`LiveDocumentTest`/freeze collision. D5–D7 were the #53 out-of-scope, #50 shaping, and dummy-marker gaps. Custody path, precedent, graded-set, and match-unit conclusions stand.
+
+## Cycle 2 (unchanged)
+
+Bound `82dcb1c`. D1 and D2 closed. PROCEED on the pre-amendment plan stands.
 
 ## Remaining findings by priority
 
 | id | priority | status | disposition |
 | --- | --- | --- | --- |
-| D1 | P1 | closed | landing order serialized; two-wide work kept; #54 unweakened at `82dcb1c` |
-| D2 | P3 | closed | all six unit blocks uniform against R36 |
-| D3 | P1 | closed | match unit filled from the cited pin lines; concatenated-string trap named |
-| D4 | P1 | open | `LiveDocumentTest` unnamed in U2's stop and in U3/freeze gates; #54 discover-OK unreachable until U5; coordinator call not taken |
-| D5 | P2 | open | live #53 out-of-scope still forbids descriptor and `test_sync_vendor_source.py` edits; ACs not narrowed; issues unedited |
-| D6 | P3 | open | #50 shaping still says the descriptor has exactly two writers (U1 then U3) and omits `scripts/sync_vendor_source.py` from files-expected |
-| D7 | P3 | open | rejected alternatives omit planting a dummy `.claude-plugin/` marker; not a contract path |
+| D1 | P1 | closed | landing order serialized at `82dcb1c` |
+| D2 | P3 | closed | R36 uniform at `82dcb1c` |
+| D3 | P1 | closed | match unit filled at cycle 3 |
+| D4 | P1 | open | three-way cycle is real; #54/#55/#56 completion split works; U1b is red on the live registry-join test and #52 discover-OK |
+| D5 | P2 | closed | #53 out-of-scope holds; issues unedited |
+| D6 | P3 | closed | two writers restored; files-expected gap disclosed in §15.1 |
+| D7 | P3 | closed | dummy `.claude-plugin/` is KTD14 (d) |
+| D8 | P2 | open | nine child-scoped commits vs §2.3 "six … one per unit" — operator must approve |
 
 ## Residual risk from limited evidence
 
-The six named import/collection failures were not re-executed on this dirty tree; the import `RuntimeError` was reproduced in a throwaway portable-shaped tree, and the two suite files that import `sync_template_docs` (`tests/test_client_entrypoints.py`, `tests/test_mission_control_rule_audit.py`) are present in-repo. `LiveDocumentTest` was not re-run; the failure follows from `ccm.main([])` plus the committed current mission-control matrix bytes.
+The registry-join failure at U1b was read from the test and `resolve_transform_rule`, not executed against an edited descriptor. `LiveDocumentTest` and the two U2 reds were not re-run on the dirty tree; they follow from the same checker and pin-constant code cycle 3 already cited.
 
-The local upstream checkout HEAD may not sit at `3b2b7083`. Pin reads used `git show 3b2b7083:`.
+The local upstream checkout HEAD may not sit at `3b2b7083`. Pin reads in earlier cycles used `git show 3b2b7083:`.
