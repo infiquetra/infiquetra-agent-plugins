@@ -121,6 +121,80 @@ approval route shape.
 [`docs/evidence/voice/auralis-c3-acceptance.md`](../evidence/voice/auralis-c3-acceptance.md),
 `plugins/voice/tests/test_pre_tool_use_hook.py`, `tests/test_claude_plugin_packaging.py`.
 
+### Mission Control 2.15.2 resync U1: eight new upstream tests classified — seven hermetic byte copies, one exclusion — and the prompt-alignment drop re-verified at the new pin
+
+**Author.** Claude for Jeff Cox (U1 of issue #50, child #52, branch `orch-agent-plugins-50`)
+
+**Decision.** (1) The seven hermetic upstream tests that 2.15.2 adds
+(`test_lifecycle_field_boards.py`, `test_lifecycle_field_identity.py`,
+`test_lifecycle_field_mutation.py`, `test_lifecycle_field_routing.py`,
+`test_lifecycle_writer_census.py`, `test_option_identity.py`,
+`test_sdlc_manager_optional_deps.py`) are classified `upstream-byte-copy` in
+`ports/mission-control.json` (`custody.byte_copies` grows 42 → 49). Each claim
+was re-verified first-hand against the pinned upstream, not inherited from the
+issue text: six patch `_graphql` at the `sdlc_manager` module level so no live
+GitHub call can occur, and their docstrings state it; the seventh
+(`test_lifecycle_writer_census.py`) is a static AST census over
+`sdlc_manager.py` source using only the standard library; and
+`test_sdlc_manager_optional_deps.py` spawns a subprocess of the test's own
+interpreter (`sys.executable -c`) with `sys.modules['yaml']` forced to `None` —
+package-internal and hermetic. A grep over all seven found no external
+checkout, no marketplace or sibling-plugin premise, no network call, and no
+credential. (2) `tests/test_card_validator_agreement.py` is excluded by
+operator ruling 2 and recorded in `custody.dropped_from_source` (2 → 3
+entries), with its reason appended to the single `provenance.dropped_reason`
+string (KTD3 — the mapping alternative is a descriptor schema change that
+touches the graded `scripts/port_config.py`). (3) `provenance.notes` were
+refreshed in the same commit, because `scripts/sync_vendor_source.py` copies
+them verbatim into `PROVENANCE.json`: the notes now name pin
+`3b2b7083fdda8e39e213b5f4acf9f8301d60dd52` and version 2.15.2; the four
+line-number claims were re-verified at the pin by `git show` and grep
+(`_load_intent_envelope` guarded import block 5134–5140,
+`INFIQUETRA_SDLC_PATH` read at 136, `_open_mapping_pr` at 5552,
+`executor_profile_lint.py` still 35 and 89); the PyYAML claim was rewritten —
+upstream filing #828 moved the import into the `_load_live_mimir_coverage`
+function at line 3436, so the module-scope claim at line 83 is false at the
+new pin, and the notes now state that PyYAML remains required because
+`scripts/sync_template_docs.py:14` and `tests/test_template_sync.py:7` still
+import it at module scope, so the continuous-integration install line stays
+and only the justification changed; and the test count moved from
+twenty-one to twenty-eight byte-copied test files (30 at the pin minus the two
+dropped). (4) The `test_prompt_alignment.py` drop was re-verified at
+`3b2b7083` and holds: the pinned file still reads the root
+`.claude-plugin/marketplace.json` (line 41) and the sibling
+`plugins/saga/skills/handoff/SKILL.md` (line 231), neither of which this
+catalog hosts. The drop stands, and the re-verification is recorded here
+rather than implied.
+
+**Rationale.** The agreement test loads an authority module from outside any
+repository — searching `HOME_LAB_PATH`, then `INFIQUETRA_HOME_LAB_PATH`, then
+`~/workspace/infiquetra/home-lab`, then `~/workspace/home-lab`, then sibling
+directories — and skips loudly when absent; its own docstring states this
+repository's continuous integration never exercises it. Carrying it would make
+a test's verdict depend on what else happens to be on the machine's disk,
+which is the defect class `QUEUED.md` already names about the link checker: a
+gate that reports the environment rather than the repository. The tool's
+unclassified-paths refusal changed shape after this edit: it now reports real
+content drift (byte-copy divergences and missing synchronized files for the
+seven new tests), which is U2's input rather than a refusal.
+
+**Rejected alternatives.** (a) Carry the agreement test and let it skip at
+runtime — deadweight that misrepresents its own coverage; the recorded
+`test_prompt_alignment.py` drop already rejected exactly this. (b) Carry it
+with a repository-local stub of the home-lab authority module — makes the
+portable copy assert agreement with a fake, which is worse than not asserting
+it. (c) Classify it as a byte copy to make the tool stop complaining — the
+tool refuses on *unclassified*, not on *wrongly classified*, so this would
+silence the error and ship the defect.
+
+**Revisit when** the home-lab authority module becomes available as a pinned,
+in-repository dependency, or upstream moves either dropped test's premises so
+they hold under the portable layout.
+
+**Refs.** [`ports/mission-control.json`](../../ports/mission-control.json),
+[`docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md`](../plans/2026-08-30-issue-50-mission-control-resync-plan.md),
+issue #52, `tests/test_sdlc_manager_optional_deps.py` (upstream, at the pin).
+
 ## 2026-08-27
 
 ### Auralis C3 adapter packaging: voice 0.3.0, mcpServers path into client extension, and acceptance evidence note
