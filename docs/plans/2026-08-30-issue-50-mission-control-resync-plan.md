@@ -276,6 +276,12 @@ python3 -m pytest plugins/mission-control/tests -q   # expect: N passed
 git diff --check                                     # expect: no output
 ```
 
+**U2 is the only unit with a gate exception**, and it is documented: the three
+`test_sync_vendor_source` pin constants may be red until U4 (§8.1 step 3, unit U2).
+No other unit carries an exception. U3 in particular does not need one, because it
+rebases onto U4's commit before gating (KTD10), so its `unittest discover` run is
+green outright.
+
 The runbook additionally requires the floor interpreter be confirmed **by explicit
 path, never as `python3`** (entry criteria and Phase 0). The default `python3` on
 this machine is 3.14.7; the declared floor and the continuous-integration
@@ -286,6 +292,11 @@ once on the floor:
 FLOOR_PY="$(command -v python3.12)"   # the declared floor, resolved by name, never `python3`
 "$FLOOR_PY" -m pytest plugins/mission-control/tests -q
 ```
+
+Every unit's verification block below assumes `FLOOR_PY` was exported this way at
+the start of that unit's session. All six blocks run the same five lines — the four
+mandated gates plus the floor run — so R36 is uniform and no unit's block is a
+narrower gate than another's.
 
 If the floor run needs third-party packages the interpreter lacks
 (`pytest`, `pyyaml`, `requests`, `urllib3` — the set `.github/workflows/ci.yml`
@@ -354,7 +365,7 @@ owned by exactly one unit.
 | R9 | U1 | `tests/test_card_validator_agreement.py` is recorded in `custody.dropped_from_source` with a stated reason in `provenance.dropped_reason` | `custody.dropped_from_source` grows 2 → 3 |
 | R10 | U1 | `--check` no longer refuses for unclassified paths and instead reports real content drift | `python3 scripts/sync_vendor_source.py --package mission-control --source ../infiquetra-claude-plugins --commit 3b2b7083 --check` |
 | R11 | U1 | `provenance.notes` names pin `3b2b7083` and version `2.15.2`, and no longer claims PyYAML is imported at module scope in `sdlc_manager.py` | inspection of `ports/mission-control.json` |
-| R12 | U1 | The three surviving line-number claims are correct at the new pin | `grep -n` against the pinned upstream files (unit U1) |
+| R12 | U1 | The four surviving line-number claims are correct at the new pin | `grep -n` against the pinned upstream files (unit U1) |
 | R13 | U1 | The `test_prompt_alignment.py` drop is re-verified at the new pin and the re-verification recorded | `DECISIONS.md` entry citing the two failed premises |
 | R14 | U1 | A `DECISIONS.md` entry records the agreement-test exclusion and the re-verified drop, each with rejected alternatives and a revisit condition | inspection |
 | R15 | U2 | The synchronization completes and round-trips clean: re-running with `--check` prints a match line naming `3b2b7083` and exits 0 | the two commands in unit U2 |
@@ -381,6 +392,7 @@ owned by exactly one unit.
 | R36 | all | The four mandated gates are green at each unit's frozen commit, plus the floor-interpreter package run | §2.6 |
 | R37 | all | No live GitHub mutation from any build, test, or assessment step | run-level stop condition; assessment runs read-only verbs only |
 | R38 | all | Unrelated dirty files, branches, worktrees, and sessions are preserved untouched | `git status --porcelain` before and after each unit, compared |
+| R39 | U3, U4 | U4's child-scoped commit precedes U3's on `orch-agent-plugins-50`, and U3 is rebased onto it before gating, so U3's `unittest discover` reports `OK` with no exception (KTD10) | `git log --oneline` shows U4's commit as U3's parent; U3's gate transcript shows `OK` |
 
 ---
 
@@ -548,18 +560,47 @@ run before that would describe bytes that no longer exist.
 fingerprint does not care what a file means, only what its bytes are.
 **Revisit when.** Never; this is arithmetic, not preference.
 
-### KTD10 — U3 and U4 run concurrently at exactly two workers
+### KTD10 — U3 and U4 work concurrently at two workers, but land in a fixed order: U4 first, then U3 rebased onto it
 
-**Chosen.** Two concurrent workers, U3 and U4, both branching from the integrated
-post-U2 commit.
-**Why.** U4 is fingerprint-neutral: it touches only `tests/` (and `ports/` if
-needed), both outside the package root, so it cannot disturb the freeze. Their file
-sets are disjoint (§6). Two is inside the concurrency cap of three for a fleet
-running above Haiku.
-**Rejected.** (a) Full serialization — no correctness gain, straight wall-clock
-loss. (b) Three-wide — nothing else is ready; U5 needs the freeze and U0–U2 are
-done.
-**Revisit when.** U3's scope grows to touch a file U4 owns; then serialize.
+**Chosen.** Two concurrent workers, U3 and U4, both starting work from the
+integrated post-U2 commit. **The landing order is serialized: U4 commits first;
+U3 then rebases onto U4's commit, runs its gates on that integrated tree, and
+commits second.**
+
+**Why.** Concurrency and commit order are different things, and conflating them
+is what produced doc-review finding D1. After U2, `python3 -m unittest discover -s
+tests` is red on exactly three constants in `tests/test_sync_vendor_source.py`
+(`MISSION_CONTROL_PIN` at line 1359, the `source_version` assertion at line 1382,
+and the roster the frontmatter checks drive). Issue #54 requires that command to
+report `OK` for U3, and U3 does not own that file — U4 does. If both units cut
+independent commits from the post-U2 tree, U3's implementer faces a suite that is
+red for a reason U3 is forbidden to fix, and the only ways out are stopping on a
+red gate or reaching into U4's file and breaking ownership. Rebasing U3 onto U4
+removes the contradiction without touching a single acceptance criterion: U3's
+`unittest discover` then runs on a tree where the pin constants are already
+repaired, and reports `OK` with **no exception clause of any kind**.
+
+Nothing about the declared graph changes. `U0 → U1 → U2 → {U3, U4} → freeze → U5`
+still holds, "at most two-wide" still holds — it caps concurrent *workers*, and
+never required two independent commit bases — and the freeze still follows U3,
+which is still the last unit to touch bytes inside the package root. The wall-clock
+overlap is preserved: U3's implementer does its reading, its verb-table analysis,
+and its test authoring while U4 runs, and pays only a rebase at the end.
+
+**Rejected.** (a) **Both units commit independently from post-U2** — the original
+wording, and the defect D1 names: U3's #54 gate cannot pass. (b) **Give U3 the same
+named pin-constant exception U2 carries, and move #54's `unittest discover` OK line
+to freeze integration** — the reviewer's second option, and it is the one that
+narrows an inherited acceptance criterion. #54's criteria are inherited from the
+issue and are not the plan's to weaken; a gate moved to a later checkpoint is a
+weaker gate, whatever it is called. Rejected on that ground alone. (c) **Full
+serialization of the work as well as the landing** — gives up the overlap for
+nothing, since the file sets are disjoint and only the commit order was ever the
+problem. (d) **Three-wide** — nothing else is ready; U5 needs the freeze and U0–U2
+are done.
+
+**Revisit when.** U3's scope grows to touch a file U4 owns (then serialize the work
+too), or a future run gives U3 a gate that no longer depends on U4's file.
 
 ### KTD11 — The replacement readback keeps a `cycle_16_verification` equivalent
 
@@ -623,12 +664,18 @@ U1 (#52)  port descriptor: custody + provenance notes     ← unblocks everythin
 U2 (#53)  run the synchronization; the pin actually moves
    │
    ├──────────────┬──────────────┐
-   ▼              ▼              │   at most two concurrent workers
-U3 (#54)       U4 (#55)          │   U3: target-owned surface + verb table
-target-owned   downstream pins   │   U4: fingerprint-neutral (tests/ only)
-   │              │              │
-   └──────┬───────┘              │
-          ▼                      │
+   ▼              ▼              │   at most two concurrent WORKERS
+U4 (#55)       U3 (#54)          │   U4: fingerprint-neutral (tests/ only)
+downstream     target-owned      │   U3: target-owned surface + verb table
+pins           surface           │
+   │              ┊              │   work overlaps; the LANDING is serialized
+   │ lands 1st    ┊ work runs    │
+   └──────────────┤ concurrently │
+                  ▼              │
+            U3 rebases onto U4,  │   U3's `unittest discover` gate then runs
+            gates, lands 2nd     │   green on the integrated tree — no exception
+                  │              │
+                  ▼              │
     FREEZE INTEGRATION  ─────────┘   fingerprint final; nothing may touch
           │                          plugins/mission-control/ after this point
           ▼
@@ -648,6 +695,13 @@ U5 (#56)  fresh ten-client assessment, readback, supersession, bindings
 - **U2 → U4.** The whole `test_sync_vendor_source.py` pin class is guarded on
   `plugins/mission-control/PROVENANCE.json` existing and matching, so U4's edit is
   only meaningful — and only green — after U2.
+- **U4 ⇒ U3 — a landing-order edge, not a work-order edge (KTD10).** The two
+  units' *work* overlaps; their *commits* do not. After U2 the repository suite is
+  red on three constants in `tests/test_sync_vendor_source.py` that U4 owns and U3
+  may not touch, and issue #54 requires `python3 -m unittest discover -s tests` to
+  report `OK` for U3. So U4 commits first, U3 rebases onto U4's commit, and U3's
+  gate runs on a tree where those constants are already repaired. This is the only
+  ordering under which both units' inherited acceptance criteria hold as written.
 - **{U3, U4} → freeze.** U3 edits two files inside the package root, so the
   fingerprint is not final until it lands (KTD9). U4 cannot move the fingerprint at
   all, which is what makes the concurrency safe.
@@ -657,6 +711,12 @@ U5 (#56)  fresh ten-client assessment, readback, supersession, bindings
 
 **Concurrency cap.** Maximum two in-flight workers at any moment, reached only in
 the U3/U4 pair. Every other point in the graph is single-file.
+
+**"Two-wide" caps workers, not commit bases.** The run declaration's "at most two
+workers" is a concurrency limit on people or agents doing work at once. It does not
+say — and this plan does not assume — that the two units cut independent commits
+from a shared base. U4 lands first and U3 rebases onto it (KTD10); both units are
+still in flight at the same time, which is what the cap governs.
 
 **Freeze integration, concretely.** After both U3 and U4 have committed to
 `orch-agent-plugins-50`:
@@ -774,7 +834,8 @@ assumed one.
    | Phase 0: "classify every path" | **narrowed** | only the eight new upstream paths need classification (U1) |
    | Phase 1: three parallel lanes A/B/C | **replaced** | Lane C (bundling) is empty — fleet-core is unchanged; Lanes A and B become serialized units U2 and U3 because U3 edits inside the package root and must precede the freeze |
    | Phase 2: full rule audit | **narrowed** | the four transform premises are re-proven at the new pin (U2, R19) and the verb table is re-audited (U3); the rule inventory itself is unchanged |
-   | Phase 3: freeze and evidence | **kept in full** | this is U5, and ruling 3 strengthens it |
+   | Phase 3: freeze and evidence | **kept, except mutation-proof re-run** | the matrix, readback, freeze, and content bindings are U5; a new mutation proof is out of scope because the five graded files are untouched (§2.8, KTD11) |
+   | Phase 3: "Mutation proof per rule copy" | **skipped** | cycle-16 proof still stands; re-running it would edit a graded file or the proof document, both forbidden |
    | Phase 4: review | **kept in full** | §2.4 |
 
 **Files owned.** `docs/plans/2026-08-30-mission-control-resync-u0-entry-criteria.md`
@@ -795,7 +856,8 @@ git -C "$SCRATCH/upstream" checkout --quiet 3b2b7083
 git -C "$SCRATCH/upstream" show 3b2b7083:plugins/mission-control/.claude-plugin/plugin.json
 
 # the upstream suite, green, in the scratch clone — transcript pasted verbatim
-#   (follow the upstream repository's own documented suite invocation)
+# documented at 3b2b7083:README.md (Development / Setup)
+( cd "$SCRATCH/upstream" && uv sync --locked --extra dev && uv run pytest )
 
 for r in 379d2350 1111de33 3b2b7083; do \
   printf "%s %s\n" "$r" "$(git -C "$SCRATCH/upstream" rev-parse $r:plugins/mission-control)"; done
@@ -805,8 +867,12 @@ gh repo view infiquetra/infiquetra-agent-plugins \
   --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed
 
 python3 scripts/assess_clients.py --package mission-control    # plan only; runs nothing
+
+# The four mandated gates plus the floor run (R36 — uniform across every unit)
 python3 scripts/check_repo.py
 python3 -m unittest discover -s tests
+python3 -m pytest plugins/mission-control/tests -q
+"$FLOOR_PY" -m pytest plugins/mission-control/tests -q
 git diff --check
 rm -rf "$SCRATCH"
 ```
@@ -884,7 +950,9 @@ provenance manifest. **This unit unblocks the entire run.**
    | `executor_profile_lint.py` shim import at line 35, `tier_palette` at line 89 | **still correct** — the file is unchanged | keep |
    | `sdlc_manager.py` `_load_intent_envelope` at lines 4283–4287 | moved; the function is now defined at line **5129** and its guarded shim import sits at line **5138** | restate with the new lines |
    | `sdlc_manager.py` reads `INFIQUETRA_SDLC_PATH` at line 135 | now line **136** | restate |
+   | `sdlc_manager.py` `_open_mapping_pr` at line 4664 | moved; the function is now defined at line **5552** | restate |
    | `sdlc_manager.py` needs PyYAML at module scope, line 83 | **false** — upstream filing #828 moved the import into a function; `import yaml` now appears at line **3436**, indented | rewrite the claim, and state that PyYAML is still required because `scripts/sync_template_docs.py:14` and `tests/test_template_sync.py:7` still import it at module scope, so the continuous-integration install line stays; only the justification changes |
+   | "The twenty-one upstream test files are byte copies" | stale after the seven new byte copies land; upstream at the pin has 30 test files, two dropped (`test_prompt_alignment.py`, `test_card_validator_agreement.py`), so 28 are byte copies | rewrite the count to twenty-eight |
 
 4. **Re-verify the `test_prompt_alignment.py` drop at the new pin and record it.**
    Its premises still fail: the upstream file at `3b2b7083` still requires a sibling
@@ -925,12 +993,13 @@ python3 -c "import json;c=json.load(open('ports/mission-control.json'))['custody
 git -C ../infiquetra-claude-plugins show 3b2b7083:plugins/mission-control/scripts/executor_profile_lint.py \
   | grep -n "fleet_commons_shim\|tier_palette"
 git -C ../infiquetra-claude-plugins show 3b2b7083:plugins/mission-control/scripts/sdlc_manager.py \
-  | grep -n "INFIQUETRA_SDLC_PATH\|import yaml\|_load_intent_envelope"
+  | grep -n "INFIQUETRA_SDLC_PATH\|import yaml\|_load_intent_envelope\|_open_mapping_pr"
 
-# Gates
+# Gates (R36 — the four mandated, plus the floor run)
 python3 scripts/check_repo.py
 python3 -m unittest discover -s tests
 python3 -m pytest plugins/mission-control/tests -q
+"$FLOOR_PY" -m pytest plugins/mission-control/tests -q
 git diff --check
 ```
 
@@ -1033,6 +1102,7 @@ git diff --name-only <base>..HEAD -- plugins/fleet-core \
 # Gates, including the floor interpreter
 python3 scripts/check_repo.py
 python3 -m unittest discover -s tests
+# expect: FAIL only on the three MISSION_CONTROL_PIN / source_version assertions; do not edit that file
 python3 -m pytest plugins/mission-control/tests -q
 "$FLOOR_PY" -m pytest plugins/mission-control/tests -q
 git diff --check
@@ -1077,6 +1147,20 @@ recurring.
 
 **This is the last unit permitted to touch bytes inside
 `plugins/mission-control/`. The package fingerprint is final when it lands.**
+
+**Base and landing order (KTD10, R39).** U3's work begins from the post-U2 commit
+and runs concurrently with U4. **U3's commit does not.** Before running its gates,
+U3 rebases onto **U4's commit**, which is its base for every `<base>..HEAD`
+comparison below.
+
+The reason is issue #54's own acceptance criterion. After U2, `python3 -m unittest
+discover -s tests` is red on three constants in `tests/test_sync_vendor_source.py`
+— a file U4 owns and U3 must not touch. Gating U3 on the post-U2 tree would put
+#54's `OK` requirement out of reach for a reason U3 is forbidden to fix. Rebased
+onto U4, U3's gate runs on a tree where those constants are already repaired and
+reports `OK` outright. **U3 carries no pin-constant exception; U2 is the only unit
+that does (§2.6).** If U4 has not committed yet, U3 waits — it does not gate early,
+and it never edits `tests/test_sync_vendor_source.py`.
 
 **Deliverables.**
 
@@ -1217,6 +1301,13 @@ truthfulness (does the prose match the tables?).
 
 **Objective.** Perform the deliberate act the pin constants exist to force, and
 bring the whole repository suite back to green on the resynchronized package.
+
+**Base and landing order (KTD10, R39).** U4's base is the **post-U2 commit**, and
+**U4 lands first of the concurrent pair** — before U3. Every `<base>..HEAD`
+comparison below is against that post-U2 commit. U4 is the unit that turns the
+repository suite green again after U2, which is exactly why it lands first: U3's
+own `unittest discover` gate is only reachable on a tree that already carries this
+unit's repair.
 
 **Deliverables.**
 
@@ -1404,10 +1495,12 @@ python3 scripts/assess_clients.py --package mission-control --execute \
 python3 scripts/check_compatibility_matrix.py docs/evidence/<new-matrix>.md
 python3 scripts/check_compatibility_matrix.py docs/evidence/2026-08-25-mission-control-compatibility-matrix.md
 
-# Bindings, gates, and the graded-file proof
+# Bindings, gates, and the graded-file proof (R36 — the four mandated, plus the floor run)
 python3 -m unittest tests.test_check_compatibility_matrix -v
-python3 -m unittest discover -s tests
 python3 scripts/check_repo.py
+python3 -m unittest discover -s tests
+python3 -m pytest plugins/mission-control/tests -q
+"$FLOOR_PY" -m pytest plugins/mission-control/tests -q
 git diff --check
 git diff --name-only <base>..HEAD -- scripts/ plugins/unifi/scripts/site_profile.py | wc -l   # expect: 0
 git diff --name-only <base>..HEAD -- plugins/mission-control | wc -l                          # expect: 0
@@ -1447,7 +1540,9 @@ ordering; graded-file containment; honest failure attribution.
 | 1 | **U0** commits the entry-criteria note | four gates green; the pin proven green in a scratch clone |
 | 2 | **U1** commits the descriptor custody and notes refresh | four gates green; `--check` refusal has changed shape |
 | 3 | **U2** commits the synchronization | four gates green **except** the three named `test_sync_vendor_source` pin constants, recorded by name; `--check` round-trips clean; 71 files |
-| 4 | **U3** and **U4** run concurrently from the post-U2 commit, at most two workers | each commits only after its own gates pass |
+| 4a | **U3** and **U4** both begin work from the post-U2 commit, at most two workers | — |
+| 4b | **U4 commits first** (base: the post-U2 commit) | U4's four gates green plus the floor run; `git diff --name-only <base>..HEAD -- plugins/mission-control \| wc -l` prints `0` |
+| 4c | **U3 rebases onto U4's commit**, re-runs its gates on that integrated tree, and commits second | U3's four gates green plus the floor run, with **no pin-constant exception** — `unittest discover` reports `OK` outright, as #54 requires |
 | 5 | **Freeze integration** on `orch-agent-plugins-50` | all four gates green, tree clean, fingerprint recorded (§5) |
 | 6 | **U5** commits the fresh evidence and bindings | four gates green; both new documents validate; supersession chain accepted |
 | 7 | **Review** — two independent reviewers in parallel, maximum three rounds, each bound to the frozen revision (§2.4) | all confirmed findings batched into one repair per round |
@@ -1710,3 +1805,66 @@ custody and acceptance are decided per path and per command, never by a count.
 - [ ] Both superseded documents carry `matrix-status: superseded`, a `superseded-by` naming a current successor, and a `superseded-reason`.
 - [ ] No path under `plugins/mission-control/` differs from its upstream source except the recorded transforms, proven by the `--check` round-trip.
 - [ ] No graded file changed; the cycle-16 mutation proof still stands.
+
+
+---
+
+## 13. Doc-review disposition — cycle 1
+
+**Artifact.** `docs/reviews/2026-08-30-issue-50-mission-control-resync-plan-doc-review.md`
+· **Bound revision.** `1e4da2be8dd2d1256f1e61765629ecf6a0571de9` · **Verdict.**
+BLOCK · **Cycle.** 1 · **Findings.** P0: 0 · P1: 1 · P2: 0 · P3: 1.
+
+Both findings are repaired in this revision. The operator's standing rule is that
+every finding is repaired, not only P0 and P1.
+
+| id | priority | disposition | where |
+|---|---|---|---|
+| D1 | P1 | **Repaired** — landing order serialized: U4 commits first, U3 rebases onto it and then gates | KTD10, §5 (diagram, edge list, concurrency note), §8.1 steps 4a–4c, §2.6, U3 and U4 unit sections, R39 |
+| D2 | P3 | **Repaired, and widened to the class** — U5's block gained the package pytest and floor runs, and so did U0's and U1's, which carried the same omission the reviewer did not reach | U0, U1, U5 verification blocks; §2.6 |
+
+### D1 — the option taken, and why
+
+**Taken: keep the concurrency, serialize the landing.** U3 and U4 still work at the
+same time from the post-U2 commit — "at most two-wide" caps concurrent workers, and
+never required two independent commit bases. U4 commits first. U3 then rebases onto
+U4's commit, runs its gates on that integrated tree, and commits second. On that
+tree the three `test_sync_vendor_source` pin constants are already repaired, so
+U3's `python3 -m unittest discover -s tests` reports `OK` outright and issue #54's
+acceptance criterion holds exactly as written.
+
+**Rejected: give U3 U2's pin-constant exception and move #54's `unittest discover`
+OK line to freeze integration.** The reviewer offered this as the second option and
+it is the cheaper edit, but it narrows an acceptance criterion this plan inherited
+rather than authored. A gate moved to a later checkpoint is a weaker gate whatever
+it is called, and #54's criteria are not the plan's to weaken. Rejected on that
+ground alone.
+
+Nothing else moved. The declared graph `U0 → U1 → U2 → {U3, U4} → freeze → U5` is
+unchanged, the two-worker cap is unchanged, the freeze still follows U3, file
+ownership is unchanged — U3 still may not touch `tests/test_sync_vendor_source.py`
+— and no child issue was edited. The change is a landing-order constraint, which is
+plan-level by construction.
+
+### D2 — repaired as a class
+
+The reviewer filed D2 against U5. Auditing all six verification blocks against R36
+showed the omission was not unique to it: **U0** omitted both the package pytest
+run and the floor run, **U1** omitted the floor run, and **U5** omitted both. All
+three are repaired, and §2.6 now states the uniformity explicitly so a later unit
+cannot quietly ship a narrower block. R36 was not narrowed, which was the
+alternative the finding allowed.
+
+### The reviewer's five applied fixes — carried, and re-verified first-hand
+
+The reviewer left five evidence-backed edits uncommitted in the working tree. All
+five are kept, and the three load-bearing factual claims were re-verified against
+the pinned upstream before being committed under this plan's name:
+
+| Applied fix | Re-verification |
+|---|---|
+| U0's upstream suite named as `uv sync --locked --extra dev` then `uv run pytest` | `git -C ../infiquetra-claude-plugins show 3b2b7083:README.md` — the two commands appear at lines 78 and 81 |
+| `_open_mapping_pr` added to the U1 notes-refresh table, 4664 → 5552 | `grep -n "^def _open_mapping_pr"` against the file at both pins prints `4664` and `5552` |
+| The descriptor's "twenty-one upstream test files" claim corrected to twenty-eight | `git -C ../infiquetra-claude-plugins ls-tree -r --name-only 3b2b7083 plugins/mission-control/tests/` counts 30 `.py` files; two are dropped by custody, leaving 28 byte copies |
+| R12 widened from three surviving line-number claims to four, and the U1 `grep` extended to match | follows from the `_open_mapping_pr` row above |
+| U0's Phase 3 skip row split so the mutation-proof re-run is explicitly skipped | consistent with §2.8 and KTD11; the five graded files are untouched by this run |
