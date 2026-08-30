@@ -1,5 +1,65 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-08-30
+
+### Spoken approval forwarding in PreToolUse supersedes KTD7 and lifts plan stop-condition 4 for Unit U6
+
+**Author.** Claude for Jeff Cox (Auralis C3 adapter U6 approval hook completion, issue #46, branch `orch/auralis-c3-adapter-build-c3-u6-approval-hook`)
+
+**Decision.** The Claude Code adapter's `PreToolUse` hook (`com.infiquetra.claude/hooks/pre_tool_use_hook.py`) is updated for Unit U6 (C8 Prerequisite 1) to actively forward tool execution approval requests to Auralis Core via `POST /v1/approval`. This supersedes the previous observe-only posture declared in KTD7 and lifts plan stop-condition 4 ("Any permission decision from the PreToolUse hook") exclusively for the spoken-approval route.
+Specifically:
+1. When covered by an active bridge binding, the hook forwards the full 9-key structured request (`schema`, `identity`, `binding_id`, `session_id`, `tool_use_id`, `tool_name`, `tool_input`, `permission_mode`, `cwd`) to `POST /v1/approval` and awaits Core's decision.
+2. The hook emits `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}` strictly and exclusively when Core returns `decision: "allow"` with an exact match on `tool_use_id` AND a canonically complete snapshot match across `tool_use_id`, `tool_name`, `tool_input`, `cwd`, and `classification` (`result: "voice_approvable"`, `permission_mode: original_mode`).
+3. On every other outcome — Core `defer` decision, snapshot mismatch, identifier mismatch, missing payload field, transport error, socket close, 401/500 status, or timeout — the hook defers fail-closed (exits 0 with no stdout output, leaving the tool decision entirely to Claude Code's native UI prompt).
+4. No secondary allow-list or independent tool classifier is added to the adapter; classification authority belongs exclusively to Auralis Core per R78 and KTD4.
+
+**Rationale.** KTD7 originally adopted an observe-only posture because C3 did not yet have an approval surface on the bridge wire. With C8 Prerequisite 1 landing the normative `POST /v1/approval` endpoint in Auralis Core, spoken tool approval requires the adapter hook to forward requests and emit the `allow` decision when approved by voice. Restricting emission to verified canonical snapshot equality and failing closed on any deviation preserves safety invariants without double-classifying.
+
+**Rejected alternatives.** Independent allow-list filtering in the adapter hook (violates Core's classification custody and proportionality rule); emitting `deny` decisions from the hook (the hook's contract is to allow approved voice actions or defer to standard UI interaction).
+
+**Revisit when.** Auralis Bridge Contract v2 changes approval wire formats, or Claude Code changes PreToolUse hook output schema.
+
+**Refs.** [`docs/plans/2026-08-27-auralis-c3-adapter.md`](../plans/2026-08-27-auralis-c3-adapter.md),
+[`docs/bridge-v1-from-c10.md`](../bridge-v1-from-c10.md),
+`plugins/voice/com.infiquetra.claude/hooks/pre_tool_use_hook.py`,
+`plugins/voice/tests/test_pre_tool_use_hook.py`.
+
+### Auralis bridge v1 contract snapshot refresh and voice 0.4.0 approval-hook release
+
+**Author.** Claude for Jeff Cox (Auralis C3 adapter completion & U6 approval hook, branch
+`orch/auralis-c3-adapter-build-c3-u6-approval-hook`)
+
+**Decision.**
+1. Refreshed [`docs/bridge-v1-from-c10.md`](../bridge-v1-from-c10.md) to a byte-identical
+tracked snapshot of `docs/bridge/bridge-v1.md` on `infiquetra/auralis` `main` at commit
+`0d1faf6ac146ee69cc5c63eea4229f6a0c09cf82` (SHA-256
+`9b78f4a417700c27b3650858597bd5b968fa69302c0dff589301476b8d30c059`), incorporating the
+6th route (`POST /v1/approval`), closed 9-key request validation, allow/defer response schemas,
+60s/55s/50s nested timeout discipline (KTD15), and `applyConfirmedForBinding()`.
+2. Bumped the voice plugin version from `0.3.0` to `0.4.0` across all five declaration sites
+(`plugins/voice/.claude-plugin/plugin.json`, `plugins/voice/plugin.json`,
+`plugins/voice/com.infiquetra.claude/plugin.json`, `.claude-plugin/marketplace.json`,
+`plugins/voice/scripts/mcp_server.py`) and locked by `tests/test_claude_plugin_packaging.py`.
+3. Documented `PreToolUse` tool approval forwarding and validation in `plugins/voice/README.md`
+and captured acceptance evidence across all 24 U6 approval test cases in
+[`docs/evidence/voice/auralis-c3-acceptance.md`](../evidence/voice/auralis-c3-acceptance.md).
+
+**Rationale.** Unit U6 introduces spoken tool approval routing into the Claude Code adapter —
+a functional capability addition beyond the initial 0.3.0 bridge baseline. Tracking the
+normative Auralis contract hash and synchronizing all five version sites guarantees release
+integrity and prevents package cache staleness in Claude Code plugins.
+
+**Rejected alternatives.** Leaving the contract snapshot at 5 routes (diverges from
+production Core); bumping version selectively (violates 5-site agreement invariant);
+omitting fail-closed deferral on transport errors (risks unapproved execution).
+
+**Revisit when.** Auralis bridge contract v2 introduces protocol schema changes or changes
+approval route shape.
+
+**Refs.** [`docs/bridge-v1-from-c10.md`](../bridge-v1-from-c10.md),
+[`docs/evidence/voice/auralis-c3-acceptance.md`](../evidence/voice/auralis-c3-acceptance.md),
+`plugins/voice/tests/test_pre_tool_use_hook.py`, `tests/test_claude_plugin_packaging.py`.
+
 ## 2026-08-27
 
 ### Auralis C3 adapter packaging: voice 0.3.0, mcpServers path into client extension, and acceptance evidence note

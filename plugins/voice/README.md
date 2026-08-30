@@ -193,8 +193,9 @@ The package also provides the Claude Code adapter for the Auralis V1
 conversational loop (capability slice C3), specified in
 [`docs/plans/2026-08-27-auralis-c3-adapter.md`](../../docs/plans/2026-08-27-auralis-c3-adapter.md).
 Auralis Core (repository `infiquetra/auralis`) exposes a loopback HTTP bridge
-governed by the five-route Auralis Bridge Contract v1 (`GET /v1/health`,
-`PUT /v1/presence`, `DELETE /v1/presence`, `GET /v1/current`, `POST /v1/rendering`).
+governed by the six-route Auralis Bridge Contract v1 (`GET /v1/health`,
+`PUT /v1/presence`, `DELETE /v1/presence`, `GET /v1/current`, `POST /v1/rendering`,
+`POST /v1/approval`).
 
 ### Adapter architecture and lifecycle
 
@@ -218,9 +219,12 @@ governed by the five-route Auralis Bridge Contract v1 (`GET /v1/health`,
    that a spoken rendering is expected, and the operator's current voice policy instructions
    rendered by [`scripts/voice_policy.py`](scripts/voice_policy.py) (including any armed
    one-shot Brief Next Turn override, consumed on transmission; R106, R107).
-4. **PreToolUse observation ([`com.infiquetra.claude/hooks/pre_tool_use_hook.py`](com.infiquetra.claude/hooks/pre_tool_use_hook.py))**:
-   Observes tool use on voice-originated turns and appends observations to the current turn
-   record (KTD7). It is observe-only and never emits permission decisions.
+4. **PreToolUse observation and approval forwarding ([`com.infiquetra.claude/hooks/pre_tool_use_hook.py`](com.infiquetra.claude/hooks/pre_tool_use_hook.py))**:
+   Handles tool observation and spoken approval forwarding (KTD7; C8 Prerequisite 1):
+   - First, records best-effort tool observations into the turn record if the active turn originated via Auralis.
+   - Second, verifies active bridge binding coverage via `GET /v1/current`. If covered, forwards the approval request to `POST /v1/approval` and holds the connection open awaiting Core's decision (under a 60s hook / 55s client timeout budget exceeding Core's 50s hold deadline).
+   - Third, validates Core's response: exact request identifier match, `decision: "allow"`, and complete canonical action snapshot match (`tool_use_id`, `tool_name`, canonical `tool_input`, `cwd`, and `classification.result == "voice_approvable"` with matching `permission_mode`). Emits `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}` only on exact match.
+   - On every other path (Core deferral, snapshot mismatch, transport failure, timeout, or unbound session), defers silently with no stdout and exits 0 (fail-closed discipline).
 5. **Completion reconciliation ([`com.infiquetra.claude/hooks/stop_hook.py`](com.infiquetra.claude/hooks/stop_hook.py))**:
    When the turn completes, the Stop hook reconciles the turn record: if wire-bound and an
    authored rendering was accepted, outcome is recorded as `authored`; if the voice turn

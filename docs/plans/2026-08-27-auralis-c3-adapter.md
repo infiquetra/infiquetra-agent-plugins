@@ -1227,7 +1227,7 @@ Out of scope (true non-goals, from the card and the parent):
   marking only.
 - Cleaning, rewriting, or reformatting any authored rendering (R121 — the gate rejects).
 - Any content decision from preferences (R25 — transmit only).
-- Any permission decision from the PreToolUse hook (stop condition 4; KTD7).
+- Any permission decision from the PreToolUse hook (stop condition 4; KTD7). [NOTE: Lifted on 2026-08-30 for Unit U6 / C8 Prerequisite 1 — PreToolUse now forwards to POST /v1/approval and emits permissionDecision: "allow" exclusively on verified Core allow decisions with canonical snapshot matching; see docs/engineering-journal/DECISIONS.md entry 2026-08-30].
 - Sourcing the fallback's written-response text to Core, initiating fallback speech, or
   marking the turn `fallback_accepted`. Those are Core/C5's through the in-process
   `acceptFallback()` API (contract §9) — see "The R22/R23 fallback seam", which names the

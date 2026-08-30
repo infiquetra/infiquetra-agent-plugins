@@ -43,6 +43,7 @@ Standard library only, matching the rest of this suite.
 from __future__ import annotations
 
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -76,8 +77,19 @@ PLUGIN_NAME = "voice"
 CLAUDE_CONVENTION_DIRS = ("hooks", "agents", "commands")
 
 
+MCP_SERVER = PLUGIN_ROOT / "scripts" / "mcp_server.py"
+
+
 def _load(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _mcp_server_version() -> str:
+    content = MCP_SERVER.read_text(encoding="utf-8")
+    match = re.search(r'"serverInfo":\s*\{[^}]*"version":\s*"([^"]+)"', content)
+    if not match:
+        raise AssertionError(f"no serverInfo.version in {MCP_SERVER.relative_to(ROOT)}")
+    return match.group(1)
 
 
 def _marketplace_entry() -> dict:
@@ -295,12 +307,12 @@ class MarketplaceEntryTests(unittest.TestCase):
             _load(PORTABLE_MANIFEST).get("version"),
         )
 
-    def test_all_four_version_sites_agree(self) -> None:
+    def test_all_five_version_sites_agree(self) -> None:
         # A content change that does not bump the version never reaches an
         # installed plugin: `claude plugin update` compares versions, not
         # commits, and answers "already at the latest version" while the cache
-        # still holds the old bytes. So a release means editing four files, and
-        # four hand-edited copies of one number is exactly the shape that
+        # still holds the old bytes. So a release means editing five files, and
+        # five hand-edited copies of one number is exactly the shape that
         # drifts. Presence is asserted too: a site that lost its version would
         # otherwise pass by being absent.
         sites = {
@@ -308,6 +320,7 @@ class MarketplaceEntryTests(unittest.TestCase):
             "claude manifest": _load(CLAUDE_MANIFEST).get("version"),
             "portable manifest": _load(PORTABLE_MANIFEST).get("version"),
             "client extension manifest": _load(EXTENSION / "plugin.json").get("version"),
+            "mcp server serverInfo": _mcp_server_version(),
         }
         for name, value in sites.items():
             with self.subTest(site=name):
@@ -320,8 +333,8 @@ class MarketplaceEntryTests(unittest.TestCase):
         )
         self.assertEqual(
             list(sites.values())[0],
-            "0.3.0",
-            f"version must be 0.3.0, got {sites}",
+            "0.4.0",
+            f"version must be 0.4.0, got {sites}",
         )
 
 

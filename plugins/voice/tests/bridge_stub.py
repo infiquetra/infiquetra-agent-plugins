@@ -138,7 +138,7 @@ class _BridgeHTTPRequestHandler(BaseHTTPRequestHandler):
 
         # Processing precedence (§7):
         # 1. Path matching: non-existent path -> 404 not_found
-        valid_paths = {"/v1/health", "/v1/current", "/v1/presence", "/v1/rendering"}
+        valid_paths = {"/v1/health", "/v1/current", "/v1/presence", "/v1/rendering", "/v1/approval"}
         if path not in valid_paths:
             self._send_transport_error(404, "not_found")
             return
@@ -149,6 +149,7 @@ class _BridgeHTTPRequestHandler(BaseHTTPRequestHandler):
             "/v1/current": ["GET"],
             "/v1/presence": ["PUT", "DELETE"],
             "/v1/rendering": ["POST"],
+            "/v1/approval": ["POST"],
         }
         if method not in allowed_methods[path]:
             allow_header = ", ".join(allowed_methods[path])
@@ -217,6 +218,9 @@ class _BridgeHTTPRequestHandler(BaseHTTPRequestHandler):
                 return
             elif path == "/v1/rendering" and method == "POST":
                 self._handle_post_rendering(payload)
+                return
+            elif path == "/v1/approval" and method == "POST":
+                self._handle_post_approval(payload)
                 return
 
         elif method == "GET":
@@ -448,6 +452,79 @@ class _BridgeHTTPRequestHandler(BaseHTTPRequestHandler):
             },
         )
 
+    def _handle_post_approval(self, payload: dict[str, Any]) -> None:
+        # Validate exact 9-key closed shape (§6.6)
+        expected_keys = {
+            "schema",
+            "identity",
+            "binding_id",
+            "session_id",
+            "tool_use_id",
+            "tool_name",
+            "tool_input",
+            "permission_mode",
+            "cwd",
+        }
+        if set(payload.keys()) != expected_keys:
+            self._send_transport_error(400, "invalid_request")
+            return
+
+        identity = payload.get("identity")
+        if not self._validate_identity_dict(identity):
+            self._send_transport_error(400, "invalid_request")
+            return
+
+        for str_field in ("binding_id", "session_id", "tool_use_id", "tool_name", "permission_mode", "cwd"):
+            val = payload.get(str_field)
+            if not isinstance(val, str) or not val:
+                self._send_transport_error(400, "invalid_request")
+                return
+
+        if not isinstance(payload.get("tool_input"), dict):
+            self._send_transport_error(400, "invalid_request")
+            return
+
+        tool_use_id = payload["tool_use_id"]
+        tool_name = payload["tool_name"]
+        tool_input = payload["tool_input"]
+        permission_mode = payload["permission_mode"]
+        cwd = payload["cwd"]
+
+        if self.server.stub.approval_response_handler is not None:
+            resp_payload = self.server.stub.approval_response_handler(payload)
+            self._send_json(200, resp_payload)
+            return
+
+        decision = self.server.stub.approval_decision
+        if decision == "allow":
+            snapshot = self.server.stub.approval_snapshot_override or {
+                "tool_use_id": tool_use_id,
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+                "cwd": cwd,
+                "read_back": f"Run {tool_name}",
+                "classification": {
+                    "result": "voice_approvable",
+                    "allow_list_entry": tool_name,
+                    "permission_mode": permission_mode,
+                },
+            }
+            resp_payload = {
+                "schema": 1,
+                "tool_use_id": tool_use_id,
+                "decision": "allow",
+                "reason": self.server.stub.approval_reason or "approved",
+                "snapshot": snapshot,
+            }
+        else:
+            resp_payload = {
+                "schema": 1,
+                "tool_use_id": tool_use_id,
+                "decision": "defer",
+                "reason": self.server.stub.approval_reason or "visual_route_reason",
+            }
+        self._send_json(200, resp_payload)
+
 
 class _StubHTTPServer(HTTPServer):
     def __init__(self, server_address: tuple[str, int], stub: BridgeStub) -> None:
@@ -478,6 +555,10 @@ class BridgeStub:
         self.rendering_500_count = 0
         self.path_status_overrides: dict[str, tuple[int, str]] = {}
         self.requests: list[CapturedRequest] = []
+        self.approval_decision: str = "allow"
+        self.approval_reason: str = "approved"
+        self.approval_snapshot_override: dict[str, Any] | None = None
+        self.approval_response_handler: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
         self._server: _StubHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -527,6 +608,16 @@ class BridgeStub:
 
     def clear_turn(self) -> None:
         self.current_turn = None
+
+    def set_approval_response(
+        self,
+        decision: str = "allow",
+        reason: str = "approved",
+        snapshot: dict[str, Any] | None = None,
+    ) -> None:
+        self.approval_decision = decision
+        self.approval_reason = reason
+        self.approval_snapshot_override = snapshot
 
     def drop_next_rendering_response(self) -> None:
         self.drop_rendering_responses_count += 1

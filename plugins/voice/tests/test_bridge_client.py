@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bridge_client  # noqa: E402
 from adapter_identity import AdapterIdentity  # noqa: E402
 from bridge_client import (  # noqa: E402
+    APPROVAL_TIMEOUT_SECONDS,
     CONNECT_TIMEOUT_SECONDS,
     CURRENT_TIMEOUT_SECONDS,
     HEALTH_TIMEOUT_SECONDS,
@@ -399,6 +400,11 @@ class TransportErrorsAndDeadlinesTests(unittest.TestCase):
         self.assertEqual(bridge_client.CURRENT_TIMEOUT_SECONDS, 1.000)
         self.assertEqual(bridge_client.PRESENCE_TIMEOUT_SECONDS, 2.000)
         self.assertEqual(bridge_client.RENDERING_TIMEOUT_SECONDS, 2.000)
+        self.assertEqual(bridge_client.APPROVAL_TIMEOUT_SECONDS, 55.000)
+        self.assertTrue(
+            50.0 < bridge_client.APPROVAL_TIMEOUT_SECONDS < 60.0,
+            "APPROVAL_TIMEOUT_SECONDS must be nested between 50s Core hold and 60s hook deadline",
+        )
 
         identity = AdapterIdentity("s-1", "p-1", "t-1")
         with BridgeStub() as stub:

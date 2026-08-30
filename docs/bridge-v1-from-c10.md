@@ -99,7 +99,7 @@ A missing environment value, missing executable, command or envelope failure, ze
 
 ## 6. Endpoints
 
-The Version 1 surface consists of five route operations across four distinct paths:
+The Version 1 surface consists of six route operations across five distinct paths:
 
 | Method and Path | Request Body | HTTP 200 Response | State Effect |
 |---|---|---|---|
@@ -108,6 +108,7 @@ The Version 1 surface consists of five route operations across four distinct pat
 | `DELETE /v1/presence` | `{"schema":1,"identity":<identity>}` | `{"schema":1,"disposition":"absent"}` | Removes the lease for the identity if present. |
 | `GET /v1/current` | *(none)* | `{"schema":1,"binding":<binding|null>,"turn":<turn|null>}` | None. |
 | `POST /v1/rendering` | `{"schema":1,"identity":<identity>,"binding_id":"...","turn_id":"...","text":"..."}` | Accepted or Rejected response shape | Renews identity lease, then synchronously adjudicates the rendering. |
+| `POST /v1/approval` | `{"schema":1,"identity":<identity>,"binding_id":"...","session_id":"...","tool_use_id":"...","tool_name":"...","tool_input":{...},"permission_mode":"...","cwd":"..."}` | Allow or Defer response shape | Holds connection open for Core approval decision. |
 
 ---
 
@@ -266,6 +267,75 @@ Submitted authored renderings are adjudicated in the following strict order:
 
 ---
 
+### 6.6 `POST /v1/approval`
+Submits a tool approval request from an adapter's `PreToolUse` hook and holds the connection open for Core adjudication.
+
+**Request Body:**
+```json
+{
+  "schema": 1,
+  "identity": {
+    "agent_session_id": "session-exact",
+    "pane_id": "workspace-and-pane-exact",
+    "terminal_id": "terminal-exact"
+  },
+  "binding_id": "opaque",
+  "session_id": "sess-exact",
+  "tool_use_id": "toolu_exact",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "path/to/file.dart"
+  },
+  "permission_mode": "manual",
+  "cwd": "/path/to/cwd"
+}
+```
+
+**Allow Response:**
+```json
+{
+  "schema": 1,
+  "tool_use_id": "toolu_exact",
+  "decision": "allow",
+  "reason": "approved",
+  "snapshot": {
+    "classification": {
+      "result": "voice_approvable",
+      "allow_list_entry": "Read",
+      "permission_mode": "manual"
+    },
+    "cwd": "/path/to/cwd",
+    "read_back": "Read the file path/to/file.dart",
+    "tool_input": {
+      "file_path": "path/to/file.dart"
+    },
+    "tool_name": "Read",
+    "tool_use_id": "toolu_exact"
+  }
+}
+```
+
+**Defer Response:**
+```json
+{
+  "schema": 1,
+  "tool_use_id": "toolu_exact",
+  "decision": "defer",
+  "reason": "visual_route_reason"
+}
+```
+
+#### Request and Response Rules
+- Request shape is closed: every member is required, no extra members permitted, and `schema` must be `1`.
+- `cwd` is validated for presence and string type only; it feeds read-back rendering and snapshot identity and never classification.
+- The route captures the request identifier and complete action snapshot at receipt and binds them one-to-one to the request.
+- The connection is held open for up to 50 seconds for Core adjudication.
+- On allow, the response carries `decision: "allow"`, `reason: "approved"`, and the complete canonical snapshot document.
+- On defer, the response carries `decision: "defer"`, the specific route reason, and no `snapshot` member.
+- Transport errors follow Section 7.
+
+---
+
 ## 7. Transport Errors and Precedence
 
 Non-200 responses return `Content-Type: application/json; charset=utf-8` and a JSON body formatted as:
@@ -282,7 +352,7 @@ Non-200 responses return `Content-Type: application/json; charset=utf-8` and a J
 | 400 | `unsupported_schema` | `schema` exists as an integer but is not 1. |
 | 401 | `unauthorized` | The bearer header is missing, repeated, malformed, or wrong. |
 | 404 | `not_found` | The path is not one of the five exact paths. |
-| 405 | `method_not_allowed` | The path exists under another method; `Allow` is `GET` for health/current, `PUT, DELETE` for presence, and `POST` for rendering. |
+| 405 | `method_not_allowed` | The path exists under another method; `Allow` is `GET` for health/current, `PUT, DELETE` for presence, and `POST` for rendering and approval. |
 | 413 | `body_too_large` | More than 1,048,576 raw body bytes arrive. |
 | 415 | `unsupported_media_type` | A body-bearing request is not `application/json` or declares a non-UTF-8 charset. |
 | 500 | `internal_error` | An unexpected server exception occurs; no exception detail is returned. |
@@ -292,6 +362,7 @@ Non-200 responses return `Content-Type: application/json; charset=utf-8` and a J
 - `GET /v1/current` -> `Allow: GET`
 - `/v1/presence` -> `Allow: PUT, DELETE`
 - `POST /v1/rendering` -> `Allow: POST`
+- `POST /v1/approval` -> `Allow: POST`
 
 ### Processing Precedence
 Requests are evaluated in the following exact order:
@@ -324,6 +395,7 @@ Requests are evaluated in the following exact order:
 ### Extension Rules
 - Future additions within Version 1 introduce new `/v1/` paths.
 - Any new turn-scoped request, response, or event must carry both `binding_id` and `turn_id`.
+- Any new binding-scoped request, response, or event carries `binding_id` and `identity` and no `turn_id`.
 - Breaking field changes, meaning changes, or validation modifications require incrementing the protocol version to `/v2` and `schema: 2`.
 
 ---
@@ -333,5 +405,5 @@ Requests are evaluated in the following exact order:
 - **C3 (Adapter - `infiquetra/infiquetra-agent-plugins`):** Runs the presence renewal loop, implements the wire contract, verifies identity equality, and carries Core-assigned identifiers through MCP.
 - **C5 (Audio):** Calls `startTurn()` on recording, `acceptFallback()` prior to fallback speech, and `cancelTurn()` on barge-in. Consumes `RenderingAccepted` and `BindingRetirement` events.
 - **C7 (Rolling Text View):** Appends spoken text only upon playback confirmation from C5.
-- **C8 (Approvals):** Uses `applyConfirmed()` with C2 binding confirmations to guard approval delivery.
+- **C8 (Approvals):** Uses `applyConfirmedForBinding()` with C2 binding confirmations to guard approval delivery.
 - **C9 (Diagnostic Logging):** Implements durable logging sink for `BridgeLog` events without sensitive data or text payload.

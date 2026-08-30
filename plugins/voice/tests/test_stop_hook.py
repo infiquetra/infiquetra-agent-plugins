@@ -531,7 +531,8 @@ class DescriptorAndLayoutTests(StopHookTestCase):
                     relative = command.split("${CLAUDE_PLUGIN_ROOT}/", 1)[1].rstrip('"')
                     self.assertTrue((_PACKAGE / relative).is_file())
                 for entry in entries:
-                    self.assertEqual(entry["timeout"], 5)
+                    expected_timeout = 60 if hook_name == "PreToolUse" else 5
+                    self.assertEqual(entry["timeout"], expected_timeout)
 
     def test_the_client_manifest_exists_with_an_identity(self) -> None:
         manifest_path = _PACKAGE / "com.infiquetra.claude" / "plugin.json"
