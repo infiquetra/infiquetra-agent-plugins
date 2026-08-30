@@ -23,7 +23,6 @@
       "config/sdlc-schema.json",
       "scripts/board_census.py",
       "scripts/check_pagination.py",
-      "scripts/sync_template_docs.py",
       "skills/board/references/graphql-queries.md",
       "skills/board/references/kanban-workflow.md",
       "skills/issues/references/issue-types.md",
@@ -69,6 +68,10 @@
       {
         "path": "scripts/sdlc_manager.py",
         "rule": "resolve-bundled-fleet-module-guarded"
+      },
+      {
+        "path": "scripts/sync_template_docs.py",
+        "rule": "resolve-package-root-marker"
       },
       {
         "path": "skills/board/SKILL.md",
