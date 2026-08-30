@@ -323,6 +323,64 @@ Then the freeze can follow the sync directly, the assessment has a final tree
 immediately, and every unit can complete in one commit.
 
 
+### Mission Control 2.15.2 resync: register a transform rule before anything names it, and six commits is provably unreachable
+
+**Author.** Claude for Jeff Cox (Amendment 3 to the issue #50 run plan, repairing
+doc-review cycle 4, branch `orch-agent-plugins-50`)
+
+**Decision.** The new package-root transform rule is sequenced **registration first,
+registry test second, descriptor third, synchronization fourth** — U2a, U4a, U1b,
+U2b. And the run's landing shape is recorded as **eleven child-scoped commits, not
+the six the run declaration assumes**, escalated to the operator as an explicit
+question rather than absorbed as a compatible reading.
+
+**Rationale.** Two committed tests fix the order, and neither is a plan choice.
+`tests/test_port_config.py::CommittedDescriptorTest.test_every_entrypoint_transform_entry_names_a_rule_the_sync_tool_implements`
+asserts that every rule a port descriptor names is present in
+`sync_vendor_source.TRANSFORM_RULES`, so a descriptor edit that names an
+unregistered rule fails the repository suite — which is exactly what the previous
+amendment scheduled, claiming a reclassification "changes no behaviour on its own."
+It does. `scripts/sync_vendor_source.py`'s `resolve_transform_rule` refuses the same
+unregistered name, so `--check` would refuse too.
+
+Correcting that surfaced a second constraint in the same area that neither the
+amendment nor the review had reached:
+`tests/test_sync_vendor_source.py::MissionShapedSyncTests.test_rule_names_register_exactly_once`
+asserts `set(TRANSFORM_RULES)` equals a literal five-element set of name constants,
+so registering a sixth rule fails it. That file belongs to U4 under #55, and #53
+forbids U2 from editing downstream tests, so the registration and its registry
+repair are two different units' commits by construction.
+
+On the commit count: a six-commit shape was searched for before the deviation was
+recorded, and it does not exist. Four prerequisites each force a split
+independently — a descriptor may only name a registered rule; registering a rule
+breaks a test another unit owns; the pin constants can only move after the
+synchronization rewrites the provenance manifest; and the evidence can only be
+re-bound after the last package-root edit, which is the unit whose own gate the
+evidence unblocks. Add that #52, #54, #55 and #56 each require `unittest discover`
+to report `OK`, and the minimum is eleven commits. The alternative to eleven is not
+six commits; it is six commits plus three narrowed acceptance criteria, and
+narrowing a gate is what an earlier review finding already rejected once.
+
+The general rule worth carrying: **a registry and the data that selects from it are
+joined by a test, so the writer of the registry entry must land before the writer of
+the selection — even when the natural unit order runs the other way.** Ownership
+decides *who* does a thing; a join test decides *when*.
+
+**Rejected alternatives.** *Letting U2 register the rule and repair the registry test
+in one commit* — contradicts #53's "No downstream test edits. U4 owns those."
+*Letting U1 register the rule beside its descriptor edit* — contradicts #52's "This
+unit changes the descriptor only." *Naming the red tests as expected in each unit's
+gate* — the narrowing already rejected. *Running the ten-client assessment twice
+under the supersede-and-re-run evidence loop* — legitimate, and the agent-launcher
+port did exactly that, but it spends a second operator-attended session to save one
+commit; kept as the fallback only if eleven commits is refused.
+
+**Revisit when** a resynchronization introduces no new transform rule and makes no
+target-owned edit inside the package root. Both join constraints and the freeze
+constraint fall away together, and six commits becomes reachable.
+
+
 ## 2026-08-27
 
 ### Auralis C3 adapter packaging: voice 0.3.0, mcpServers path into client extension, and acceptance evidence note
