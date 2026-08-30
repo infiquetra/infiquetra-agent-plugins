@@ -927,6 +927,7 @@ class MissionShapedSyncTests(SyncFixture):
             svs.SPLIT_BUNDLED_TRANSFORM_NAME,
             svs.GUARDED_BUNDLED_TRANSFORM_NAME,
             svs.FRONTMATTER_TRANSFORM_NAME,
+            svs.PACKAGE_ROOT_MARKER_TRANSFORM_NAME,
         }
         self.assertEqual(set(svs.TRANSFORM_RULES), expected)
 
