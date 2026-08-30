@@ -2,6 +2,67 @@
 
 ## 2026-08-30
 
+### Mission Control 2.15.2 resync run plan: bind the identity surface, route around the graded files, freeze after the last package edit
+
+**Author.** Jeff Cox and Claude (Saga Plan for issue #50)
+
+**Decision.** The Mission Control resynchronization run plan
+([docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md](../plans/2026-08-30-issue-50-mission-control-resync-plan.md))
+fixes thirteen plan-level choices inside the operator-settled contract of issue
+#50. Six are load-bearing enough to record here. (1) **The identity surface is
+bound, never retyped**: `plugins/mission-control/plugin.json`'s version is
+derived by test from `PROVENANCE.json`'s `source_version`, and the root
+`README.md`'s file count, test counts, and Packages-table row are pinned by a
+test that recomputes them from disk (KTD5, KTD6). (2) **The third dropped path
+extends the existing single `provenance.dropped_reason` string** rather than
+promoting it to a per-path mapping, because the mapping is a descriptor schema
+change and `scripts/port_config.py` is graded (KTD3). (3) **The new evidence
+bindings are added as parallel mission-control classes in
+`tests/test_check_compatibility_matrix.py`**, never by teaching the graded
+`scripts/check_compatibility_matrix.py` and never by parameterizing UniFi's live
+classes (KTD4). (4) **The fingerprint freeze follows U3, not U2**, because U3 is
+the last unit that edits bytes inside the package root, and U4 is made
+fingerprint-neutral by construction so the two may run concurrently (KTD9,
+KTD10). (5) **The replacement post-activation readback keeps a
+`cycle_16_verification` block** with the five graded-file digests recomputed at
+the new freeze, turning it into a positive statement that the resync retired no
+mutation proof (KTD11). (6) **The run lands as one squash-merged pull request**;
+`mergeCommitAllowed` is false and every commit on `main` since #35 is a squash,
+so each child records its base and frozen SHAs from the branch alongside the
+shared merged SHA (KTD8).
+
+**Rationale.** The #9 run's only review finding was a hand-transcribed identity
+row with no derivation and no pin test; retyping five version and count claims
+one release later reproduces that defect exactly, so the plan closes the class
+rather than the instance. The five cycle-16 graded files still match the proof's
+footer digests on the current tree, and a resynchronization needs none of them,
+so every place a unit might reach for one has a named non-graded alternative
+decided in advance rather than discovered under pressure. The package
+fingerprint is computed from every byte under the package root, which makes the
+freeze point arithmetic rather than preference. And `check_document_status`
+refuses a superseded stamp while the document's fingerprint still identifies the
+package, so the supersession order — land the resync, run the assessment,
+publish the successor as current, only then stamp the predecessor — is enforced
+by code, not by discipline.
+
+**Rejected alternatives.** *Retyping the version and count claims* with reviewer
+discipline as the control — that is precisely what failed in #9's U9. *A
+per-path `dropped_reason` mapping* and *teaching the compatibility checker about
+mission-control* — both cleaner, both retire the cycle-16 mutation proof for a
+cosmetic gain. *Parameterizing the existing UniFi binding classes* — risks live
+passing bindings on a package this run does not touch. *Freezing after U2 and
+treating U3's edits as documentation-only* — the fingerprint does not care what a
+file means. *Rebase-merging to keep six commits on `main`* — allowed by settings,
+but rebase rewrites the SHAs anyway, so the traceability gain over recording
+branch SHAs is marginal and it would be this repository's first non-squash
+landing. *Carrying `tests/test_card_validator_agreement.py` and letting it skip
+at runtime* — the same call the `test_prompt_alignment.py` drop already rejected.
+
+**Revisit when** a fourth package needs evidence bindings (the moment
+parameterization earns its risk), or when a funded unit re-runs the mutation
+proof and the graded-file constraints that shape KTD3 and KTD4 no longer apply.
+
+
 ### Spoken approval forwarding in PreToolUse supersedes KTD7 and lifts plan stop-condition 4 for Unit U6
 
 **Author.** Claude for Jeff Cox (Auralis C3 adapter U6 approval hook completion, issue #46, branch `orch/auralis-c3-adapter-build-c3-u6-approval-hook`)

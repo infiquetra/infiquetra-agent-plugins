@@ -1,3 +1,14 @@
+---
+title: "Implementation plan — resynchronize the portable Mission Control package from upstream 2.12.2 to 2.15.2"
+type: feat
+status: active
+date: 2026-08-30
+origin: https://github.com/infiquetra/infiquetra-agent-plugins/issues/50
+backend: inline
+scope_class: deep
+deepened: 2026-08-30
+---
+
 # Implementation plan — resynchronize the portable Mission Control package from upstream 2.12.2 to 2.15.2
 
 **Issue.** [infiquetra/infiquetra-agent-plugins#50](https://github.com/infiquetra/infiquetra-agent-plugins/issues/50) ·
@@ -123,7 +134,32 @@ this session:
 | Whitespace gate | no output | `git diff --check` |
 | Package fingerprint | 64 files, tree `651ac28a79b4e2e8823c5aa5960659bcd22903e2059afdb9544e13a071de1682` | `python3 scripts/check_compatibility_matrix.py --print-fingerprint mission-control` |
 | Package test files | 21 | `ls plugins/mission-control/tests/*.py \| wc -l` |
-| Floor interpreter present | `/opt/homebrew/bin/python3.12` | `ls /opt/homebrew/bin/python3.12` |
+| Floor interpreter present | yes — resolves to `/opt/homebrew/bin/python3.12` on this machine | `command -v python3.12` |
+
+### 1.5 What the engineering journal already settles
+
+This repository has no `STRATEGY.md`, so the durable direction anchor for this
+work is the engineering journal. Nine entries bear directly on this run, and the
+plan honours all nine rather than re-deriving them.
+
+| Journal entry | What it settles for this run | Where it lands |
+|---|---|---|
+| LEARNINGS — *Regenerating a build artifact retires the observational evidence bound to it* | Regeneration is exactly what retires the matrix and the readback. This is the mechanism behind operator ruling 3. | U5, risk 3 |
+| LEARNINGS — *A bound digest names the tree, not the forty stages that assessed it* | A fingerprint proves identity, not assessment. Re-binding a digest is not the same act as re-running the forty stages. | U5, KTD11 |
+| LEARNINGS — *A default interpreter is not evidence for a declared floor* | The local `python3` is 3.14.7; the declared floor is 3.12. Every package-suite run also runs on the floor. | §2.6, risk 12 |
+| LEARNINGS — *A test that asserts on the machine it runs on reports the machine, not the code* | The precise reason the card-validator agreement test is excluded rather than carried-and-skipped. | KTD2, U1 |
+| LEARNINGS — *A byte copy imports the upstream platform floor along with the upstream fix* | Why `requires-python` is re-read at the new pin instead of assumed. | R4, U0 |
+| LEARNINGS — *Two portable slices of one upstream repository can legitimately pin two revisions* | Mission Control may move while Fleet Core stays put; that is not drift. | §9, R20 |
+| LEARNINGS — *Package-root entrypoints must be blocked in advance for skill-scoped clients* | The assessment-harness quirk U5 inherits; a blocked row is the honest record. | U5 |
+| DECISIONS — *A whole-repository drift guard is dropped when its premises cannot cross the port boundary* | The `test_prompt_alignment.py` precedent the agreement-test exclusion follows, including its explicitly rejected "carry it and skip at runtime" alternative. | KTD2, U1 |
+| DECISIONS — *Schema 3 moved a graded file: the cycle-14 mutation proof is re-run with U8's evidence, not here* | Touching a graded file is a funded re-run, never a side effect. This is why KTD3 and KTD4 route around `scripts/port_config.py` and `scripts/check_compatibility_matrix.py`. | KTD3, KTD4, §2.8 |
+
+Two further decisions constrain the target-owned surface: *Ported tests live
+inside the package, under the provenance closed-set check* (why the seven new
+tests are byte copies **inside** the package, U1) and *The portable
+mission-control README's runnable surface is usage probes* (why U3 may edit the
+portable README's tables and prose but may not introduce a runnable command that
+invokes a mutating verb).
 
 ---
 
@@ -198,13 +234,13 @@ this work, in any unit, for any reason.
   ```
 
   **A merge commit is forbidden. This run lands as one pull request,
-  squash-merged into `main`.** See decision D8 for why squash over rebase, and
+  squash-merged into `main`.** See decision KTD8 for why squash over rebase, and
   open question Q1 for the operator confirmation this plan requests.
 - **Per-child SHA record.** Each child issue records three commits: its **base**
   (the branch SHA it started from), its **frozen** commit (its own child-scoped
   commit on `orch-agent-plugins-50`), and the **merged** commit (the single squash
   SHA on `main`, shared by all six). That satisfies #50's acceptance criterion
-  under squash; see D8.
+  under squash; see KTD8.
 
 ### 2.4 The review contract
 
@@ -247,7 +283,8 @@ interpreter are both 3.12. So every unit that runs the package suite also runs i
 once on the floor:
 
 ```bash
-/opt/homebrew/bin/python3.12 -m pytest plugins/mission-control/tests -q
+FLOOR_PY="$(command -v python3.12)"   # the declared floor, resolved by name, never `python3`
+"$FLOOR_PY" -m pytest plugins/mission-control/tests -q
 ```
 
 If the floor run needs third-party packages the interpreter lacks
@@ -317,14 +354,14 @@ owned by exactly one unit.
 | R9 | U1 | `tests/test_card_validator_agreement.py` is recorded in `custody.dropped_from_source` with a stated reason in `provenance.dropped_reason` | `custody.dropped_from_source` grows 2 → 3 |
 | R10 | U1 | `--check` no longer refuses for unclassified paths and instead reports real content drift | `python3 scripts/sync_vendor_source.py --package mission-control --source ../infiquetra-claude-plugins --commit 3b2b7083 --check` |
 | R11 | U1 | `provenance.notes` names pin `3b2b7083` and version `2.15.2`, and no longer claims PyYAML is imported at module scope in `sdlc_manager.py` | inspection of `ports/mission-control.json` |
-| R12 | U1 | The three surviving line-number claims are correct at the new pin | `grep -n` against the pinned upstream files (§7.2) |
+| R12 | U1 | The three surviving line-number claims are correct at the new pin | `grep -n` against the pinned upstream files (unit U1) |
 | R13 | U1 | The `test_prompt_alignment.py` drop is re-verified at the new pin and the re-verification recorded | `DECISIONS.md` entry citing the two failed premises |
 | R14 | U1 | A `DECISIONS.md` entry records the agreement-test exclusion and the re-verified drop, each with rejected alternatives and a revisit condition | inspection |
-| R15 | U2 | The synchronization completes and round-trips clean: re-running with `--check` prints a match line naming `3b2b7083` and exits 0 | the two commands in §7.3 |
+| R15 | U2 | The synchronization completes and round-trips clean: re-running with `--check` prints a match line naming `3b2b7083` and exits 0 | the two commands in unit U2 |
 | R16 | U2 | `PROVENANCE.json` records `source_commit` `3b2b7083…` and `source_version` `2.15.2` | `python3 -c "import json;d=json.load(open('plugins/mission-control/PROVENANCE.json'));print(d['source_commit'],d['source_version'])"` |
 | R17 | U2 | The package holds exactly 71 files | `git ls-files plugins/mission-control \| wc -l` prints `71` |
 | R18 | U2 | The excluded agreement test is absent from the package | `test ! -e plugins/mission-control/tests/test_card_validator_agreement.py` |
-| R19 | U2 | All four transform premises are proven to hold at the new pin rather than assumed | the transform-premise checks in §7.3 |
+| R19 | U2 | All four transform premises are proven to hold at the new pin rather than assumed | the transform-premise checks in unit U2 |
 | R20 | U2 | No fleet-core repin and no bundle regeneration | `git diff --name-only <base>..HEAD -- plugins/fleet-core plugins/mission-control/scripts/_bundled plugins/mission-control/fleet-bundle.json \| wc -l` prints `0` |
 | R21 | U3 | `assessment.mutating_operations` contains `set-options` and does not contain `create-option` | `python3 -c "import json;m=json.load(open('ports/mission-control.json'))['assessment']['mutating_operations'];print('set-options' in m, 'create-option' in m)"` prints `True False` |
 | R22 | U3 | The portable README's verb table lists `set-options` as mutating for `fields`, lists `create-option` as read-only, and no longer lists `update` under `rollout` — in the same commit as the descriptor and the test constants | `python3 -m unittest tests.test_mission_control_readme -v` |
@@ -347,14 +384,14 @@ owned by exactly one unit.
 
 ---
 
-## 4. Key technical decisions
+## 4. Key Technical Decisions
 
 Each decision names what was chosen, why, what was rejected, and when to revisit
-it. Decisions D1, D2, D12 and the substance of D4 restate operator rulings and are
+it. Decisions KTD1, KTD2, KTD12 and the substance of KTD4 restate operator rulings and are
 not open; the rest are planner calls made under "never stop on a question", and
 each records the option taken and the reason.
 
-### D1 — Pin the accepted merge `3b2b7083`, not the version-landing commit
+### KTD1 — Pin the accepted merge `3b2b7083`, not the version-landing commit
 
 **Chosen.** `3b2b7083` (operator ruling 1).
 **Why.** Three commits carry version 2.15.2 with two distinct package trees.
@@ -369,7 +406,7 @@ target; the pin must name bytes, not a branch.
 **Revisit when.** Upstream releases a version above 2.15.2 and a further resync is
 scheduled.
 
-### D2 — Exclude the card-validator agreement test; do not carry-and-skip it
+### KTD2 — Exclude the card-validator agreement test; do not carry-and-skip it
 
 **Chosen.** Record `tests/test_card_validator_agreement.py` in the descriptor's
 `dropped_from_source` (operator ruling 2).
@@ -390,7 +427,7 @@ classified*, so this would silence the error and ship the defect.
 **Revisit when.** The home-lab authority module becomes available as a pinned,
 in-repository dependency.
 
-### D3 — Extend the single `provenance.dropped_reason` string; do not make it a map
+### KTD3 — Extend the single `provenance.dropped_reason` string; do not make it a map
 
 **Chosen.** Append the agreement test's reason to the existing single
 `provenance.dropped_reason` string in `ports/mission-control.json`.
@@ -408,7 +445,7 @@ table names.
 **Revisit when.** A separate, funded unit is willing to re-run the cycle-16
 mutation proof; then the mapping is the right shape.
 
-### D4 — Add the evidence bindings to the test file, never to the checker script
+### KTD4 — Add the evidence bindings to the test file, never to the checker script
 
 **Chosen.** Add parallel mission-control binding classes to
 `tests/test_check_compatibility_matrix.py`.
@@ -425,7 +462,7 @@ on a package this run is not touching.
 **Revisit when.** A third package needs bindings; at that point parameterization
 earns its risk and should be done as its own unit with UniFi re-verified.
 
-### D5 — Derive the package manifest version instead of retyping it
+### KTD5 — Derive the package manifest version instead of retyping it
 
 **Chosen.** `plugins/mission-control/plugin.json` carries `2.15.2`, and a new test
 asserts it equals `PROVENANCE.json`'s `source_version`, on the pattern already
@@ -437,7 +474,7 @@ release later.
 #9's U9 Packages table.
 **Revisit when.** Never; this is the closing move on a known defect class.
 
-### D6 — Pin the root README's counts by test rather than retype or generate them
+### KTD6 — Pin the root README's counts by test rather than retype or generate them
 
 **Chosen.** Update the root `README.md` claims and add a pin test in
 `tests/test_mission_control_rule_audit.py` that recomputes the file count and the
@@ -456,7 +493,7 @@ the cost.
 **Revisit when.** A third package's row goes stale, which would argue for one
 shared catalog-row test instead of per-package pins.
 
-### D7 — `DECISIONS.md` has three sequential writers, appending under distinct anchors
+### KTD7 — `DECISIONS.md` has three sequential writers, appending under distinct anchors
 
 **Chosen.** U1, U3, and U5 each append their own dated entry to
 `docs/engineering-journal/DECISIONS.md`, in that order, never concurrently.
@@ -477,7 +514,7 @@ share a writable file" rule. The issue bodies mandate the three edits (#52, #54,
 #56 all list `DECISIONS.md` under *Files expected to change*), and issue bodies
 win. Recorded as open question Q6.
 
-### D8 — One pull request, squash-merged
+### KTD8 — One pull request, squash-merged
 
 **Chosen.** A single pull request from `orch-agent-plugins-50` into `main`,
 **squash-merged**.
@@ -500,7 +537,7 @@ forbidden.
 **Revisit when.** The operator answers Q1 the other way; the switch is a
 one-setting change at merge time and costs the plan nothing.
 
-### D9 — The freeze follows U3, not U2
+### KTD9 — The freeze follows U3, not U2
 
 **Chosen.** Freeze the package fingerprint after U3's commit is integrated.
 **Why.** The fingerprint is computed from every byte under
@@ -511,7 +548,7 @@ run before that would describe bytes that no longer exist.
 fingerprint does not care what a file means, only what its bytes are.
 **Revisit when.** Never; this is arithmetic, not preference.
 
-### D10 — U3 and U4 run concurrently at exactly two workers
+### KTD10 — U3 and U4 run concurrently at exactly two workers
 
 **Chosen.** Two concurrent workers, U3 and U4, both branching from the integrated
 post-U2 commit.
@@ -524,7 +561,7 @@ loss. (b) Three-wide — nothing else is ready; U5 needs the freeze and U0–U2 
 done.
 **Revisit when.** U3's scope grows to touch a file U4 owns; then serialize.
 
-### D11 — The replacement readback keeps a `cycle_16_verification` equivalent
+### KTD11 — The replacement readback keeps a `cycle_16_verification` equivalent
 
 **Chosen.** The new post-activation readback carries a `cycle_16_verification`
 block with the same key name, the same `proof_document` reference, the five graded
@@ -542,7 +579,7 @@ continuity with the cycle-16 artifact a reader would go looking for.
 **Revisit when.** A future run edits a graded file and re-runs the proof at a new
 cycle number; the block then names that cycle.
 
-### D12 — `fields create-option` becomes read-only, with a positive no-write guard
+### KTD12 — `fields create-option` becomes read-only, with a positive no-write guard
 
 **Chosen.** Move `create-option` from the mutating set to the read-only set, add
 `set-options` to the mutating set, and add a guard test proving `create-option`
@@ -562,7 +599,7 @@ over-declares, which pollutes the audited table and makes the README's disclosur
 false in the other direction.
 **Revisit when.** Upstream changes either handler's implementation.
 
-### D13 — Evidence documents are dated by their assessment date, not by plan date
+### KTD13 — Evidence documents are dated by their assessment date, not by plan date
 
 **Chosen.** The new matrix and readback filenames carry the date the ten-client
 assessment actually ran, following the shipped convention
@@ -612,7 +649,7 @@ U5 (#56)  fresh ten-client assessment, readback, supersession, bindings
   `plugins/mission-control/PROVENANCE.json` existing and matching, so U4's edit is
   only meaningful — and only green — after U2.
 - **{U3, U4} → freeze.** U3 edits two files inside the package root, so the
-  fingerprint is not final until it lands (D9). U4 cannot move the fingerprint at
+  fingerprint is not final until it lands (KTD9). U4 cannot move the fingerprint at
   all, which is what makes the concurrency safe.
 - **freeze → U5.** The assessment must describe the bytes that ship. If any byte
   under `plugins/mission-control/` changes after the assessment runs, that run's
@@ -628,7 +665,7 @@ the U3/U4 pair. Every other point in the graph is single-file.
 python3 scripts/check_repo.py
 python3 -m unittest discover -s tests
 python3 -m pytest plugins/mission-control/tests -q
-/opt/homebrew/bin/python3.12 -m pytest plugins/mission-control/tests -q
+"$FLOOR_PY" -m pytest plugins/mission-control/tests -q
 git diff --check
 git status --porcelain                                              # expect clean
 python3 scripts/check_compatibility_matrix.py --print-fingerprint mission-control
@@ -672,7 +709,7 @@ a disjoint region.
 | Path | Writers, in order | Disjoint regions |
 |---|---|---|
 | `ports/mission-control.json` | **U1**, then **U3** | U1 writes `custody.byte_copies`, `custody.dropped_from_source`, `provenance.notes`, `provenance.dropped_reason`. U3 writes **only** `assessment.mutating_operations`. The two units share no JSON key. |
-| `docs/engineering-journal/DECISIONS.md` | **U1**, then **U3**, then **U5** | Append-only. Each unit adds its own dated `## ` section and edits no line another unit wrote. See D7. |
+| `docs/engineering-journal/DECISIONS.md` | the plan commit, then **U1**, then **U3**, then **U5** | Append-only. The plan commit lands the run-level KTD entry before any unit starts; each unit then adds its own dated entry and edits no line another writer wrote. See KTD7. |
 
 **The rule for both.** A later writer that finds it must change an earlier
 writer's region stops and reports. That is not a merge conflict to resolve; it is
@@ -695,7 +732,7 @@ evidence that the earlier unit's decision was wrong, and the operator decides.
 
 ---
 
-## 7. Per-unit execution
+## 7. Implementation Units
 
 Common to every unit: backend **inline**; branch `orch-agent-plugins-50`; no
 worktrees, branches, sessions, subagents, or issues created; unrelated dirty files
@@ -704,7 +741,7 @@ unit's own; the four gates in §2.6 run before the unit commits.
 
 ---
 
-### 7.1 U0 — issue #51 — Verify entry criteria and prove the pin
+### U0. Verify entry criteria and prove the pin — issue #51
 
 **Objective.** Close the runbook's entry criteria for this resynchronization and
 record the result, so every later unit builds on a proven pin rather than an
@@ -717,7 +754,7 @@ assumed one.
      running the upstream suite green — the exact command and its exact output,
      pasted, never reconstructed after the fact (runbook Phase 2 capture rule).
    - The pin's manifest version readback (`2.15.2`).
-   - The three-revision package-tree comparison table (D1), with the reason the
+   - The three-revision package-tree comparison table (KTD1), with the reason the
      accepted merge was pinned rather than the version-landing commit.
    - The Python floor readback (`requires-python = ">=3.12"`).
    - The repository's allowed merge methods, read from `gh repo view`, recorded
@@ -743,6 +780,11 @@ assumed one.
 **Files owned.** `docs/plans/2026-08-30-mission-control-resync-u0-entry-criteria.md`
 only. **U0 changes nothing else** — not `ports/mission-control.json`, not anything
 under `plugins/mission-control/`, not the runbook.
+
+**Test scenarios.** `Test expectation: none — this unit produces a recorded
+verification artifact, not code.` Its evidence is the captured transcript of each
+command and its exact output, pasted verbatim per runbook Phase 2's capture rule.
+A reconstructed transcript does not satisfy this unit.
 
 **Verification.**
 
@@ -781,7 +823,7 @@ was proven green from a disposable scratch clone.
 | The upstream suite is not green at `3b2b7083` in a clean scratch clone | **Stop the whole run.** Ruling 1 makes this the entry gate; no later unit may proceed on an unproven pin. |
 | The three-revision tree comparison does not reproduce the recorded digests | Stop. The pin analysis is wrong and must be redone before anything is classified. |
 | `requires-python` at the pin is above `>=3.12` | Stop. The floor is part of the synchronization contract. |
-| `gh repo view` shows the merge policy has changed since this plan was written | Report it; §2.3 and D8 are amended prospectively, never retroactively. |
+| `gh repo view` shows the merge policy has changed since this plan was written | Report it; §2.3 and KTD8 are amended prospectively, never retroactively. |
 | The scratch clone cannot be made disposable (no writable temp, no network) | Stop and report. Reusing the local read-only checkout is **not** the same act and must not be substituted. |
 
 **Predeclared review dimensions.** Evidence integrity (is the transcript real and
@@ -790,7 +832,7 @@ support the pin choice?); documentation accuracy.
 
 ---
 
-### 7.2 U1 — issue #52 — Port descriptor: custody and the provenance-notes refresh
+### U1. Port descriptor: custody and the provenance-notes refresh — issue #52
 
 **Objective.** Assign custody to every upstream path 2.15.2 adds, and refresh the
 descriptor prose that the synchronization tool copies verbatim into the generated
@@ -823,7 +865,7 @@ provenance manifest. **This unit unblocks the entire run.**
 
 2. **The eighth path excluded** — `tests/test_card_validator_agreement.py` appended
    to `custody.dropped_from_source` (2 → 3 entries), with its reason appended to the
-   single `provenance.dropped_reason` string (D3). The reason must name the concrete
+   single `provenance.dropped_reason` string (KTD3). The reason must name the concrete
    mechanism: the test loads an authority module from outside any repository,
    searching `HOME_LAB_PATH`, `INFIQUETRA_HOME_LAB_PATH`,
    `~/workspace/infiquetra/home-lab`, `~/workspace/home-lab`, then sibling
@@ -852,12 +894,21 @@ provenance manifest. **This unit unblocks the entire run.**
    rather than leaving it implied.
 
 5. **A `DECISIONS.md` entry** recording the agreement-test exclusion and the
-   re-verified drop, each with rejected alternatives and a revisit condition (D2,
-   D3).
+   re-verified drop, each with rejected alternatives and a revisit condition (KTD2,
+   KTD3).
 
 **Files owned.** `ports/mission-control.json` (custody + provenance regions only —
 **not** `assessment.mutating_operations`, which is U3's) and
 `docs/engineering-journal/DECISIONS.md` (append only).
+
+**Test scenarios.** `Test expectation: none authored by this unit.` The gate is
+the synchronization tool's own refusal changing verdict, which is a behavioural
+check no new test would improve on.
+
+`tests/test_port_config.py` changes **if and only if** the descriptor's shape
+changes. On the verified analysis it does not, because every edit appends to
+arrays that already exist (KTD3). If that file needs an edit, the scope assumption
+is wrong — stop rather than widen the unit.
 
 **Verification.**
 
@@ -892,7 +943,7 @@ naming the PyYAML claim as corrected rather than merely renumbered.
 
 | Condition | Action |
 |---|---|
-| The descriptor edit requires a change to `scripts/port_config.py` | **Stop and escalate.** It is graded. Adding entries to arrays that already exist needs no schema change; if it seems to, the edit is wrong (see D3). |
+| The descriptor edit requires a change to `scripts/port_config.py` | **Stop and escalate.** It is graded. Adding entries to arrays that already exist needs no schema change; if it seems to, the edit is wrong (see KTD3). |
 | `--check` still refuses after custody is complete, for a reason other than unclassified paths | Stop and report the new refusal verbatim rather than widening the unit. |
 | A new upstream path fits none of the existing custody classes | Stop. A new class is a recorded decision, not an inline choice. |
 | Any upstream edit is required to make custody work | Upstream filing, never a downstream patch. |
@@ -906,7 +957,7 @@ pin?).
 
 ---
 
-### 7.3 U2 — issue #53 — Run the synchronization
+### U2. Run the synchronization — issue #53
 
 **Objective.** Derive the portable package from upstream `3b2b7083`: regenerate
 every byte copy, re-apply all four transform rules, relocate the Claude manifest,
@@ -944,6 +995,17 @@ left unsettled — stop and say so.
 target-owned: `README.md`, `plugin.json`, `fleet-bundle.json`, and
 `scripts/_bundled/` are authored here and the tool never writes them.
 
+**Test scenarios.** `Test expectation: none authored by this unit.` The seven new
+upstream test files arrive as byte copies and are never edited here; editing a
+byte copy to make it pass is the custody violation this arrangement exists to
+prevent.
+
+Scenarios exercised by existing tests:
+`plugins/mission-control/tests/` — all 21 existing files plus the 7 new ones must
+pass on the floor interpreter after the sync.
+`tests/test_sync_vendor_source.py` — expected **red** on exactly the three named
+pin constants, repaired by U4; any other failure in that file is a stop.
+
 **Verification.**
 
 ```bash
@@ -972,7 +1034,7 @@ git diff --name-only <base>..HEAD -- plugins/fleet-core \
 python3 scripts/check_repo.py
 python3 -m unittest discover -s tests
 python3 -m pytest plugins/mission-control/tests -q
-/opt/homebrew/bin/python3.12 -m pytest plugins/mission-control/tests -q
+"$FLOOR_PY" -m pytest plugins/mission-control/tests -q
 git diff --check
 ```
 
@@ -1006,7 +1068,7 @@ boundary (did anything target-owned get overwritten?); shipped-behavior parity.
 
 ---
 
-### 7.4 U3 — issue #54 — Target-owned surface, verb reclassification, and the no-write guard
+### U3. Target-owned surface, verb reclassification, and the no-write guard — issue #54
 
 **Objective.** Update every hand-authored file that states an upstream fact about
 the package, correct the audited mutating-verb table under ruling 4, and — where a
@@ -1062,9 +1124,9 @@ recurring.
 
    | Site | Current claim | Treatment |
    |---|---|---|
-   | `plugins/mission-control/plugin.json` | `"version": "2.12.2"` and a description reading "derived from infiquetra-claude-plugins at the 2.12.2 revision" | update, **and** bind by a test to `PROVENANCE.json`'s `source_version` (D5), on the `tests/test_agent_launcher_packaging.py` pattern |
+   | `plugins/mission-control/plugin.json` | `"version": "2.12.2"` and a description reading "derived from infiquetra-claude-plugins at the 2.12.2 revision" | update, **and** bind by a test to `PROVENANCE.json`'s `source_version` (KTD5), on the `tests/test_agent_launcher_packaging.py` pattern |
    | `plugins/mission-control/README.md:12` | "upstream plugin version 2.12.2" | update; covered by the README test file U3 already owns |
-   | root `README.md:30–31` | "a 64-file portable package derived from upstream commit `84eaf042` (version 2.12.2), with 266 ported tests" | update, and pin by a test that recomputes from disk (D6) |
+   | root `README.md:30–31` | "a 64-file portable package derived from upstream commit `84eaf042` (version 2.12.2), with 266 ported tests" | update, and pin by a test that recomputes from disk (KTD6) |
    | root `README.md:71–75` | "ships 64 portable files and 266 CI tests … Pinned to `84eaf042` (v2.12.2) … Twenty-one test files (266 tests)" | update, and pin |
    | root `README.md:163` | Packages-table row reading `` `84eaf042` (v2.12.2) `` | update, and pin — **this is the exact cell shape that produced the #9 run's only review finding** |
 
@@ -1074,13 +1136,37 @@ recurring.
    Deriving a count inside `scripts/check_repo.py` is a stop condition (graded).
 
 5. **A `DECISIONS.md` entry** for the verb reclassification and the derivation
-   pattern, with rejected alternatives and a revisit condition (D12, D5, D6).
+   pattern, with rejected alternatives and a revisit condition (KTD12, KTD5, KTD6).
 
 **Files owned.** `ports/mission-control.json` (**only**
 `assessment.mutating_operations`), `plugins/mission-control/plugin.json`,
 `plugins/mission-control/README.md`, root `README.md`,
 `tests/test_mission_control_readme.py`, `tests/test_mission_control_rule_audit.py`,
 `docs/engineering-journal/DECISIONS.md` (append).
+
+**Test scenarios.**
+
+`tests/test_mission_control_rule_audit.py` — **create-option no-write guard.**
+Invoking the `fields create-option` path must never reach a write operation; the
+test fails if a mutation constant is reached. Negative proof required: mutate the
+guard locally so it goes red, capture the transcript, revert.
+
+`tests/test_mission_control_rule_audit.py` — **manifest-version derivation.**
+`plugins/mission-control/plugin.json`'s `version` equals
+`plugins/mission-control/PROVENANCE.json`'s `source_version`; a hand-edited
+manifest fails.
+
+`tests/test_mission_control_rule_audit.py` — **root README Packages-row pin.** The
+row's revision and version equal `PROVENANCE.json`'s; a stale row fails rather
+than sits. This is the #9 finding's exact cell.
+
+`tests/test_mission_control_rule_audit.py` — **root README counts.** The stated
+package file count and package test count are **recomputed from disk** and
+compared; a retyped stale count fails.
+
+`tests/test_mission_control_readme.py` — **the three-way lock.** The descriptor's
+audited verb set equals `MUTATING_VERBS`; every audited verb appears in the
+portable README; no fenced README command invokes a mutating verb.
 
 **Verification.**
 
@@ -1101,7 +1187,7 @@ python3 -c "import json;m=json.load(open('ports/mission-control.json'))['assessm
 python3 scripts/check_repo.py
 python3 -m unittest discover -s tests
 python3 -m pytest plugins/mission-control/tests -q
-/opt/homebrew/bin/python3.12 -m pytest plugins/mission-control/tests -q
+"$FLOOR_PY" -m pytest plugins/mission-control/tests -q
 git diff --check
 ```
 
@@ -1127,7 +1213,7 @@ truthfulness (does the prose match the tables?).
 
 ---
 
-### 7.5 U4 — issue #55 — Downstream pin repair and full-suite re-green
+### U4. Downstream pin repair and full-suite re-green — issue #55
 
 **Objective.** Perform the deliberate act the pin constants exist to force, and
 bring the whole repository suite back to green on the resynchronized package.
@@ -1160,6 +1246,21 @@ bring the whole repository suite back to green on the resynchronized package.
 `plugins/mission-control/` may change in this unit** — that is what makes the
 U3/U4 concurrency safe.
 
+**Test scenarios.**
+
+`tests/test_sync_vendor_source.py` — **the deliberate pin move.**
+`PROVENANCE.json`'s `source_commit` equals `MISSION_CONTROL_PIN` at the new pin,
+and `source_version` equals `2.15.2`. The class is guarded on `PROVENANCE.json`
+existing, so it is silent before U2 and load-bearing after it.
+
+`tests/test_sync_vendor_source.py` — **skill-roster confirmation.**
+`MISSION_CONTROL_SKILLS` matches the shipped roster and drives the seven
+skill-frontmatter checks. Re-derive the tuple against `ls
+plugins/mission-control/skills`; do not copy it forward.
+
+Regression scope: the full `tests/` discovery must return to `OK` with no
+failures and no errors, at 773 plus whatever U3 added.
+
 **Verification.**
 
 ```bash
@@ -1169,7 +1270,7 @@ ls plugins/mission-control/skills          # expect exactly the seven recorded n
 python3 scripts/check_repo.py
 python3 -m unittest discover -s tests
 python3 -m pytest plugins/mission-control/tests -q
-/opt/homebrew/bin/python3.12 -m pytest plugins/mission-control/tests -q
+"$FLOOR_PY" -m pytest plugins/mission-control/tests -q
 git diff --check
 
 # Fingerprint neutrality
@@ -1195,7 +1296,7 @@ constant supposed to change?); regression coverage; fingerprint neutrality.
 
 ---
 
-### 7.6 U5 — issue #56 — Fresh assessment, readback, supersession, and bindings
+### U5. Fresh assessment, readback, supersession, and bindings — issue #56
 
 **Objective.** Re-establish the observational evidence that says what the
 resynchronized package is, and bind it so a future resynchronization can never
@@ -1222,7 +1323,7 @@ recorded. U5 is the run's **real checkpoint**; no synthetic checkpoint precedes 
 3. **Re-capture the fingerprint** after the run and prove it is identical (R29).
 4. **Publish the new compatibility matrix** and the **new post-activation
    readback**, both bound to the new fingerprint, both `matrix-status: current`.
-   The readback keeps a `cycle_16_verification` block per D11.
+   The readback keeps a `cycle_16_verification` block per KTD11.
 5. **Only then, supersede the two old documents.** The ordering is enforced by
    code, not policy: `check_document_status()` requires a superseded document to
    name a `superseded-by` successor that exists and is **itself current**, plus a
@@ -1232,7 +1333,7 @@ recorded. U5 is the run's **real checkpoint**; no synthetic checkpoint precedes 
    (`<!-- matrix-status: current -->`); the old readback carries **no** directive
    block today and needs one added at its head, following the shape used by
    `docs/evidence/2026-08-22-unifi-compatibility-matrix-pre-resync.md`.
-6. **Add the binding classes** to `tests/test_check_compatibility_matrix.py` (D4):
+6. **Add the binding classes** to `tests/test_check_compatibility_matrix.py` (KTD4):
    - a mission-control **matrix**-binding class asserting the recorded fingerprint,
      package name, and version against the live package;
    - a mission-control **readback**-binding class asserting the `release` block, the
@@ -1251,7 +1352,7 @@ recorded. U5 is the run's **real checkpoint**; no synthetic checkpoint precedes 
    record uses `release` and `readbacks` keys rather than `package` and `clients`,
    so pointing the checker at it reports "`$.package`: missing or not an object, so
    nothing binds the record to a tree". The binding therefore has to come from the
-   test file, which is the second reason D4 lands there.
+   test file, which is the second reason KTD4 lands there.
 7. **Prove the bindings can fail**: mutate a recorded fingerprint locally so both
    new classes go red, capture the transcript verbatim, revert, re-run green.
 8. **Journal.** A `DECISIONS.md` entry for the supersession and the binding pattern,
@@ -1264,6 +1365,26 @@ directives only — **never** their numbers),
 `tests/test_check_compatibility_matrix.py`,
 `docs/engineering-journal/DECISIONS.md` (append),
 `docs/engineering-journal/QUEUED.md`.
+
+**Test scenarios.**
+
+`tests/test_check_compatibility_matrix.py` — **mission-control matrix binding
+class.** The new matrix's recorded `file_count`, `tree_sha256`, package name, and
+version equal the live package's; a drifted fingerprint fails.
+
+`tests/test_check_compatibility_matrix.py` — **mission-control readback binding
+class.** The `release` block's `upstream_commit` and `version` equal
+`PROVENANCE.json`'s; all seven per-skill-unit fingerprints match; every
+`readbacks` entry is asserted. No `profile_states` assertions — that block is a
+UniFi concept and mission-control's record does not carry it.
+
+`tests/test_check_compatibility_matrix.py` — **supersession chain.** Each
+superseded document names a `superseded-by` successor that exists and is itself
+current, plus a `superseded-reason`.
+
+**Negative proof required.** Mutate a recorded fingerprint locally so both new
+binding classes go red, capture the transcript verbatim, revert, re-run green. A
+binding that has never been seen to fail is not evidence.
 
 **Verification.**
 
@@ -1305,7 +1426,7 @@ changed.
 | The package tree digest differs before and after an assessment run | **Discard that run's record.** It describes bytes that no longer exist. |
 | A supersession stamp is refused by the checker | Stop. **Fix the ordering, never the guard.** The refusal means the successor is not yet current — that is the guard working. |
 | Editing an evidence number would clear a failure | Stop. Re-run the assessment or leave it red. Refreshing numbers without re-running is precisely the failure the binding exists to catch. |
-| A binding would require editing `scripts/check_compatibility_matrix.py` or another graded file | Stop and escalate (D4, §2.8). |
+| A binding would require editing `scripts/check_compatibility_matrix.py` or another graded file | Stop and escalate (KTD4, §2.8). |
 | A client's real binary cannot be supplied | Record that client **blocked** with the requirement named. **Never infer the binary, never skip the client.** |
 | A client fails for a harness reason (e.g. an isolated home stripping authentication) | Record it **blocked** with the requirement named. A failure attributed to the package when the harness caused it is a false record. |
 | Any verification harness found unsound | Discard that round's evidence and re-run. |
@@ -1331,7 +1452,7 @@ ordering; graded-file containment; honest failure attribution.
 | 6 | **U5** commits the fresh evidence and bindings | four gates green; both new documents validate; supersession chain accepted |
 | 7 | **Review** — two independent reviewers in parallel, maximum three rounds, each bound to the frozen revision (§2.4) | all confirmed findings batched into one repair per round |
 | 8 | **Open one pull request** from `orch-agent-plugins-50` into `main` | the pull-request body states the merge form the policy actually allows |
-| 9 | **Squash-merge** (D8) | acceptance criteria on #50 all checked |
+| 9 | **Squash-merge** (KTD8) | acceptance criteria on #50 all checked |
 | 10 | **Close #51–#56**, each recording its base, frozen, and merged commit; then close **#50** | per-child SHA record complete (§2.3) |
 
 ### 8.2 What is landed, and what is not
@@ -1386,7 +1507,7 @@ fingerprint-bound evidence.
   unchanged upstream across this window; regenerating would churn the UniFi bundles
   and invalidate UniFi's committed matrix.
 - **No return of `tests/test_prompt_alignment.py`.** Its premises still fail at the
-  new pin (§7.2 deliverable 4).
+  new pin (unit U1 deliverable 4).
 - **No change to any of the five graded files** (§2.8), and no re-run of the
   cycle-16 mutation proof.
 - **No runbook amendment.** U0 records which steps a resync skips; changing the
@@ -1397,6 +1518,21 @@ fingerprint-bound evidence.
 - **No worktrees, branches, sessions, subagents, or issues created by any unit.**
 - **No disturbance of unrelated dirty files, branches, worktrees, or sessions**
   anywhere on this machine.
+
+### 9.1 Deferred to follow-up work — distinct from the non-goals above
+
+These are **not** permanent non-goals. Each is real work this run deliberately
+declines to carry, with the condition that would justify picking it up.
+
+| Deferred item | Why it is not in this run | Pick it up when |
+|---|---|---|
+| Turn `provenance.dropped_reason` into a per-path mapping | The shape is right, but it is a descriptor schema change and forces an edit to the graded `scripts/port_config.py` (KTD3) | a funded unit is willing to re-run the cycle-16 mutation proof |
+| Parameterize `tests/test_check_compatibility_matrix.py` over both packages instead of duplicating classes | Duplication is the cheaper risk today; parameterizing puts UniFi's live bindings at stake for no gain (KTD4) | a third package needs bindings — then do it as its own unit with UniFi re-verified |
+| A runbook v1.2.0 resync phase structure | Amending the runbook is explicitly out of scope for #51; U0 records the deviation instead | this is now the second resync writing the same deviation table (open question Q4) |
+| Wire the mission-control matrix and readback into a blocking continuous-integration gate | Both #55 and #56 forbid a new blocking gate without a separate decision; the new binding classes already run under the mandated `unittest` discovery | the operator answers Q5 asking for a gate |
+| Close or annotate the eight consumed upstream filings (`infiquetra-claude-plugins` #818–#822, #828–#830) | Upstream is never touched by this work, and no unit owns an upstream write | this repin lands on `main` (open question Q7) |
+| One shared catalog-row pin test covering every package's root-README row | This run pins mission-control's row only; generalizing on one data point is premature (KTD6) | a third package's row goes stale |
+| Per-client remediation for any client the fresh assessment records failed or blocked | Coverage is mandatory, passing is not; remediation is a separate operator decision | the operator reviews U5's ten client statuses |
 
 ---
 
@@ -1425,7 +1561,7 @@ reproducing the identical defect at 2.16.0 — with the added cost that the next
 will believe the surface is checked because this run "handled" it.
 
 **The mitigation is structural, not procedural.** U3 does not retype these claims;
-it binds them (D5, D6): the manifest version is derived from `PROVENANCE.json`, and
+it binds them (KTD5, KTD6): the manifest version is derived from `PROVENANCE.json`, and
 the root README's counts and Packages row are pinned by a test that recomputes from
 disk. Reviewers are briefed to check for any identity claim that is still merely
 typed — that is a predeclared review dimension for U3.
@@ -1434,13 +1570,13 @@ typed — that is a predeclared review dimension for U3.
 
 | # | Risk | Mechanism | Mitigation | Owner |
 |---|---|---|---|---|
-| 2 | **The generated provenance file contradicts itself** | `sync_vendor_source.py` copies `provenance.notes` verbatim into `PROVENANCE.json`. Stale notes ship a file whose header says 2.15.2 while its own prose says 2.12.2, and nothing catches it. One claim is not merely stale but **false** at the new pin: PyYAML is no longer imported at module scope. | The notes refresh is a first-class U1 deliverable with its own acceptance line and its own verification commands, not a tidy-up (§7.2). | U1 |
-| 3 | **An assessment run is invalidated by a later byte change** | Any edit inside `plugins/mission-control/` after the assessment retires it. | The freeze follows U3, not U2 (D9); U4 is fingerprint-neutral by construction and proves it (R27); U5 captures the fingerprint before *and* after the run (R29). | U3, U4, U5 |
-| 4 | **The verb change breaks the three-file lock** | `tests/test_mission_control_readme.py` asserts the descriptor's audited verb set equals its own constant *and* that every audited verb appears in the README. Change one, the suite goes red. | All four artifacts move in one U3 commit, with the lock test as the gate (§7.4). | U3 |
+| 2 | **The generated provenance file contradicts itself** | `sync_vendor_source.py` copies `provenance.notes` verbatim into `PROVENANCE.json`. Stale notes ship a file whose header says 2.15.2 while its own prose says 2.12.2, and nothing catches it. One claim is not merely stale but **false** at the new pin: PyYAML is no longer imported at module scope. | The notes refresh is a first-class U1 deliverable with its own acceptance line and its own verification commands, not a tidy-up (unit U1). | U1 |
+| 3 | **An assessment run is invalidated by a later byte change** | Any edit inside `plugins/mission-control/` after the assessment retires it. | The freeze follows U3, not U2 (KTD9); U4 is fingerprint-neutral by construction and proves it (R27); U5 captures the fingerprint before *and* after the run (R29). | U3, U4, U5 |
+| 4 | **The verb change breaks the three-file lock** | `tests/test_mission_control_readme.py` asserts the descriptor's audited verb set equals its own constant *and* that every audited verb appears in the README. Change one, the suite goes red. | All four artifacts move in one U3 commit, with the lock test as the gate (unit U3). | U3 |
 | 5 | **A transform rule is relaxed to fit new upstream bytes** | The rules assert "expected exactly one" match by design. Widening one to accept a second shape stops it proving the thing it exists to prove — and it fails *quietly* forever after. | Hard stop condition in U2 with no exception path; reviewers briefed on rule soundness as a dimension. | U2 |
-| 6 | **A custody class is chosen to make the tool stop complaining** | The tool refuses on *unclassified*, not on *wrongly classified*. Classifying the agreement test as a byte copy would silence the error and ship the defect. | Ruling 2 is explicit and D2 records why; U1's stop-condition table names this exact temptation. | U1 |
-| 7 | **A descriptor or evidence change reaches for a graded file** | The natural fix for `dropped_reason` is a per-path map (needs `port_config.py`); the natural fix for the evidence binding is to teach the checker (needs `check_compatibility_matrix.py`). Both are graded. | D3 and D4 pre-empt both with the non-graded alternative named in advance; §2.8 lists the five files and their current digests so a unit can check itself. | U1, U5 |
-| 8 | **The supersession stamp is attempted too early** | `check_document_status` refuses a superseded stamp while the document's fingerprint still matches the package, and requires the named successor to exist and itself be current. A run that reads the refusal as a tooling problem will look for a way around it. | U5's step order (§7.6) is the only order the code permits; the stop condition says fix the ordering, never the guard. | U5 |
+| 6 | **A custody class is chosen to make the tool stop complaining** | The tool refuses on *unclassified*, not on *wrongly classified*. Classifying the agreement test as a byte copy would silence the error and ship the defect. | Ruling 2 is explicit and KTD2 records why; U1's stop-condition table names this exact temptation. | U1 |
+| 7 | **A descriptor or evidence change reaches for a graded file** | The natural fix for `dropped_reason` is a per-path map (needs `port_config.py`); the natural fix for the evidence binding is to teach the checker (needs `check_compatibility_matrix.py`). Both are graded. | KTD3 and KTD4 pre-empt both with the non-graded alternative named in advance; §2.8 lists the five files and their current digests so a unit can check itself. | U1, U5 |
+| 8 | **The supersession stamp is attempted too early** | `check_document_status` refuses a superseded stamp while the document's fingerprint still matches the package, and requires the named successor to exist and itself be current. A run that reads the refusal as a tooling problem will look for a way around it. | U5's step order (unit U5) is the only order the code permits; the stop condition says fix the ordering, never the guard. | U5 |
 | 9 | **A client is recorded failed for a harness reason** | This has happened: Cursor was once recorded failed because an empty scratch home stripped its authentication. | Operator supplies the real binaries and Cursor's authenticated home; a client that cannot be supplied is recorded **blocked** with the requirement named, never failed and never skipped. | U5 |
 | 10 | **PyYAML is dropped from continuous integration on a misreading of #828** | #828 deferred only `sdlc_manager.py`'s import. Two other files still import `yaml` at module scope. Dropping the install line passes locally and breaks in continuous integration. | R28 makes the confirmation an explicit U4 deliverable. | U4 |
 | 11 | **A failure is made to pass instead of understood** | The three pin constants are *meant* to change. A second failure that gets a constant bumped alongside them hides a real drift. | U4's first stop condition: any failure that is not one of the three named constants stops the unit and is triaged before anything is changed. | U4 |
@@ -1491,7 +1627,7 @@ construction — but the operator may prefer the partial progress.
 `docs/runbooks/portable-plugin-port.md` v1.1.0 is written for an initial port. Its
 Phase 0 says "write `ports/<package>.json`" and Phase 1 offers three parallel lanes;
 neither maps to a resynchronization, and no prior standalone-resync plan exists in
-`docs/plans/` to copy. **Taken:** U0 records the deviation in a table (§7.1) and the
+`docs/plans/` to copy. **Taken:** U0 records the deviation in a table (unit U0) and the
 runbook is left alone, because amending it is explicitly out of scope for #51. **The
 question:** this is now the **second** resync (UniFi's fleet-core resync was the
 first), so the deviation table is being written for the second time. Should a
@@ -1514,7 +1650,7 @@ The coordinator brief asks that no two units share a writable file. Issue bodies
 #52, #54, and #56 each list `docs/engineering-journal/DECISIONS.md` under *Files
 expected to change*, and issue bodies win. **Taken:** three strictly sequenced,
 append-only writers under distinct dated anchors, which never collide because U4 —
-the only unit concurrent with U3 — does not write the file (D7). **The question:**
+the only unit concurrent with U3 — does not write the file (KTD7). **The question:**
 confirm this is acceptable, or say whether the three entries should instead be
 collected into a single journal commit at the end (which would break the
 same-commit journal capture rule, hence not the default).
@@ -1551,10 +1687,10 @@ custody and acceptance are decided per path and per command, never by a count.
    say "record it in `removed_from_source`". That is the key name in the *generated*
    `PROVENANCE.json`. The key U1 actually edits in `ports/mission-control.json` is
    `custody.dropped_from_source`; the sync tool renders it as `removed_from_source`
-   downstream. Same instruction, two names, one edit (§7.2).
+   downstream. Same instruction, two names, one edit (unit U1).
 4. **"No two units share a writable file."** Superseded by the issue bodies for
    `DECISIONS.md` and `ports/mission-control.json`; both are handled as sequenced,
-   disjoint-region multi-writer files (§6.2, D7). Raised as Q6.
+   disjoint-region multi-writer files (§6.2, KTD7). Raised as Q6.
 5. **The root README's "three sites".** Issue #54 says three sites; measured, the
    claims sit at lines 30–31, 71–75, and 163 — three regions carrying five distinct
    claims. Consistent, noted for precision.
