@@ -41,7 +41,7 @@ tracked snapshot of `docs/bridge/bridge-v1.md` on `infiquetra/auralis` `main` at
 `plugins/voice/com.infiquetra.claude/plugin.json`, `.claude-plugin/marketplace.json`,
 `plugins/voice/scripts/mcp_server.py`) and locked by `tests/test_claude_plugin_packaging.py`.
 3. Documented `PreToolUse` tool approval forwarding and validation in `plugins/voice/README.md`
-and captured acceptance evidence across all 25 U6 approval test cases in
+and captured acceptance evidence across all 24 U6 approval test cases in
 [`docs/evidence/voice/auralis-c3-acceptance.md`](../evidence/voice/auralis-c3-acceptance.md).
 
 **Rationale.** Unit U6 introduces spoken tool approval routing into the Claude Code adapter —

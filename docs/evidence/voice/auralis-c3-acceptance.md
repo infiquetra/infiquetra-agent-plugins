@@ -30,10 +30,10 @@ The byte-identical snapshot is committed in this repository at
 | Command | Result |
 |---|---|
 | `python3 scripts/check_repo.py` | `Repository validation passed.` |
-| `python3 -m unittest discover -s tests -v` | All tests pass |
-| `python3 -m unittest discover -s plugins/voice/tests -v` | All 23 test modules pass (482 tests) |
-| `python3 -m pytest plugins/*/tests -q` | `788 passed, 321 subtests passed` |
-| `claude plugin validate plugins/voice --strict` | `✔ Validation passed` |
+| `python3 -m unittest discover -s tests -v` | All tests pass (Ran 773 tests) |
+| `python3 -m unittest discover -s plugins/voice/tests -v` | All 23 test modules pass (480 tests) |
+| `python3 -m pytest plugins/*/tests -q` | `792 passed, 333 subtests passed` |
+| `claude plugin validate plugins/voice` | `✔ Validation passed` |
 | `claude plugin validate . --strict` | `✔ Validation passed` |
 | `git diff --check` | Clean (no trailing whitespace or whitespace errors) |
 
@@ -52,7 +52,7 @@ The byte-identical snapshot is committed in this repository at
 | **R107** | Voice policy and armed Brief Next Turn override transmitted as instructions; consumed on transmission | Injected into Auralis-originated turns; one-shot `brief_next_turn` is atomically consumed on transmission | `plugins/voice/tests/test_user_prompt_submit_hook.py`, `plugins/voice/tests/test_voice_policy.py` |
 | **R121** | Plain spoken text only; Markdown/code rejected with named reasons; never silently cleaned | Gate rejects with `fenced_code_block` or `markdown_formatting`; resubmission of plain text accepted (AE26) | `plugins/voice/tests/test_rendering_gate.py`, `plugins/voice/tests/test_mcp_server.py` |
 | **R122** | Rejected rendering with no replacement falls back under R22 | Turn record carries named rejections; Stop hook records `fallback` outcome across production processes | `plugins/voice/tests/test_mcp_server.py`, `plugins/voice/tests/test_stop_hook.py`, `plugins/voice/tests/test_r122_adapter_boundary.py`; joint AE36 |
-| **U6** | PreToolUse spoken tool approval forwarding and validation | `PreToolUse` hook queries `GET /v1/current` for binding coverage, forwards approval request to `POST /v1/approval`, validates allow decision and canonical snapshot (`classification.result == "voice_approvable"`), and fails closed silently on any mismatch or error under a 60s/55s/50s deadline budget | `plugins/voice/tests/test_pre_tool_use_hook.py` (31 tests), `plugins/voice/tests/test_bridge_client.py` |
+| **U6** | PreToolUse spoken tool approval forwarding and validation | `PreToolUse` hook queries `GET /v1/current` for binding coverage, forwards approval request to `POST /v1/approval`, validates allow decision and canonical snapshot (`classification.result == "voice_approvable"`), and fails closed silently on any mismatch or error under a 60s/55s/50s deadline budget | `plugins/voice/tests/test_pre_tool_use_hook.py` (24 approval tests, 31 total tests), `plugins/voice/tests/test_bridge_client.py` |
 
 ---
 

@@ -1,10 +1,9 @@
 # Auralis Bridge Contract v1
 
-- **Status:** Committed Normative Specification
-- **Owner:** Auralis Core (infiquetra/auralis, C10)
-- **Consumer:** Adapter (infiquetra/infiquetra-agent-plugins, capability slice C3)
-- **Source Revision:** `infiquetra/auralis` commit `0d1faf6ac146ee69cc5c63eea4229f6a0c09cf82` (SHA-256: `9b78f4a417700c27b3650858597bd5b968fa69302c0dff589301476b8d30c059`)
-- **Schema Version:** 1
+**Status:** Committed Normative Specification  
+**Owner:** Auralis Core (infiquetra/auralis, C10)  
+**Consumer:** Adapter (infiquetra/infiquetra-agent-plugins, capability slice C3)  
+**Schema Version:** 1  
 
 ---
 

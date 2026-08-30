@@ -29,7 +29,6 @@ A hook must never break a turn, so every failure path exits 0 with no standard o
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
