@@ -4,7 +4,7 @@
 **Child issue.** [infiquetra/infiquetra-agent-plugins#51](https://github.com/infiquetra/infiquetra-agent-plugins/issues/51) ·
 **Parent issue.** [infiquetra/infiquetra-agent-plugins#50](https://github.com/infiquetra/infiquetra-agent-plugins/issues/50) ·
 **Runbook.** [portable-plugin-port.md v1.1.0](../runbooks/portable-plugin-port.md) ·
-**Branch.** `orch-agent-plugins-50` · **Base SHA.** `4d2cbe0196dae9ae254fd4b519c8c2241388432e`
+**Branch.** `orch-agent-plugins-50` · **Base SHA.** `ab939ffcb20272fb12d8c6616ec81b067847e1d4`
 
 This note closes the runbook's entry criteria for the 2.15.2 resynchronization
 and records the pin proof, so every later unit builds on a proven pin rather
@@ -14,9 +14,21 @@ fact (runbook v1.1.0 Phase 2 capture rule).
 
 The headline result: the upstream suite is **green at the exact pin**
 `3b2b7083fdda8e39e213b5f4acf9f8301d60dd52`, proven by running it in a
-**disposable scratch clone** created for this unit — not from the local
+**disposable scratch clone** created for this run — not from the local
 read-only upstream checkout, and not by quoting continuous-integration
 reporting, which is corroborating evidence and not the same act.
+
+## Provenance of this record
+
+This note supersedes the first U0 attempt, commit
+`ab939ffcb20272fb12d8c6616ec81b067847e1d4`. That attempt ran partly on a
+DeepSeek-direct API-key fallback route and is **not accepted as evidence**.
+The record in this revision was produced entirely on
+**opencode-go/deepseek-v4-pro at max effort**: every command was re-executed
+fresh on that route — a new scratch clone, a new suite run, new gate runs —
+and the transcripts below are those fresh captures, not figures copied
+forward from the superseded attempt. The superseded attempt's note content is
+replaced in this commit.
 
 ---
 
@@ -27,14 +39,13 @@ proven green at that exact commit from a disposable scratch clone. The
 commands are the ones the pinned upstream README documents (Development /
 Setup): `uv sync --locked --extra dev`, then `uv run pytest`.
 
-The scratch clone was created under the system temporary directory
-(`/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953`)
-and removed after capture (§9). The clone and checkout were quiet (no output);
-the readback proves the checked-out revision:
+The scratch clone was created fresh with `mktemp` under the system temporary
+directory (`/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz`)
+and removed after capture (§9). The clone and checkout were quiet (no
+output); the readback proves the checked-out revision:
 
 ```
-$ SCRATCH=/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953
-$ mkdir -p "$SCRATCH"
+$ SCRATCH=$(mktemp -d /var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-XXXXXX)
 $ git clone --quiet https://github.com/infiquetra/infiquetra-claude-plugins "$SCRATCH/upstream"
 $ git -C "$SCRATCH/upstream" checkout --quiet 3b2b7083
 $ git -C "$SCRATCH/upstream" rev-parse HEAD
@@ -48,10 +59,10 @@ $ uv sync --locked --extra dev
 Using CPython 3.12.11
 Creating virtual environment at: .venv
 Resolved 84 packages in 6ms
-   Building infiquetra-claude-plugins @ file:///private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/upstream
-      Built infiquetra-claude-plugins @ file:///private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/upstream
-Prepared 1 package in 431ms
-Installed 81 packages in 263ms
+   Building infiquetra-claude-plugins @ file:///private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/upstream
+      Built infiquetra-claude-plugins @ file:///private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/upstream
+Prepared 1 package in 437ms
+Installed 81 packages in 196ms
  + annotated-doc==0.0.4
  + annotated-types==0.7.0
  + anyio==4.13.0
@@ -74,7 +85,7 @@ Installed 81 packages in 263ms
  + httpx==0.28.1
  + httpx-sse==0.4.3
  + idna==3.13
- + infiquetra-claude-plugins==1.0.0 (from file:///private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/upstream)
+ + infiquetra-claude-plugins==1.0.0 (from file:///private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/upstream)
  + iniconfig==2.3.0
  + jinja2==3.1.6
  + jmespath==1.1.0
@@ -136,9 +147,9 @@ Installed 81 packages in 263ms
 $ uv sync exit=0
 $ uv run pytest
 ============================= test session starts ==============================
-platform darwin -- Python 3.12.11, pytest-9.0.3, pluggy-1.6.0 -- /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/upstream/.venv/bin/python
+platform darwin -- Python 3.12.11, pytest-9.0.3, pluggy-1.6.0 -- /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/upstream/.venv/bin/python
 cachedir: .pytest_cache
-rootdir: /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/upstream
+rootdir: /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/upstream
 configfile: pyproject.toml
 testpaths: tests, plugins/*/tests
 plugins: cov-7.1.0, anyio-4.13.0
@@ -7083,7 +7094,7 @@ plugins/mission-control/tests/test_user_defaults.py::test_init_defaults_preserve
 =============================== warnings summary ===============================
 tests/test_saga_engine_dispatch.py::test_team_execution_two_process_claim_race_both_proceed_and_one_state_persists
 tests/test_saga_engine_dispatch.py::test_team_execution_two_process_claim_race_both_proceed_and_one_state_persists
-  /Users/jefcox/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=54955) is multi-threaded, use of fork() may lead to deadlocks in the child.
+  /Users/jefcox/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=54688) is multi-threaded, use of fork() may lead to deadlocks in the child.
     self.pid = os.fork()
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
@@ -7247,44 +7258,44 @@ plugins/unifi/skills/unifi-network/scripts/unifi_network_client.py              
 plugins/unifi/skills/unifi-protect/scripts/unifi_protect_client.py                      357    127    64%   38-48, 235-239, 260-261, 311, 354-356, 399, 431, 461-463, 481-483, 493-495, 657-808
 -------------------------------------------------------------------------------------------------------------------
 TOTAL                                                                                 39648   6103    85%
-====== 6927 passed, 7 skipped, 1 xfailed, 2 warnings in 694.43s (0:11:34) ======
-/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:103: PytestWarning: (rm_rf) unknown function <built-in function scandir> when removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569/test_real_removal_failure_neve0/repo/.orchestrate/land-r1:
-<class 'PermissionError'>: [Errno 1] Operation not permitted: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569/test_real_removal_failure_neve0/repo/.orchestrate/land-r1'
+====== 6927 passed, 7 skipped, 1 xfailed, 2 warnings in 736.15s (0:12:16) ======
+/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:103: PytestWarning: (rm_rf) unknown function <built-in function scandir> when removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75/test_real_removal_failure_neve0/repo/.orchestrate/land-r1:
+<class 'PermissionError'>: [Errno 1] Operation not permitted: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75/test_real_removal_failure_neve0/repo/.orchestrate/land-r1'
   warnings.warn(
-/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569/test_real_removal_failure_neve0/repo/.orchestrate/land-r1
-<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569/test_real_removal_failure_neve0/repo/.orchestrate/land-r1'
+/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75/test_real_removal_failure_neve0/repo/.orchestrate/land-r1
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75/test_real_removal_failure_neve0/repo/.orchestrate/land-r1'
   warnings.warn(
-/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569/test_real_removal_failure_neve0/repo/.orchestrate
-<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569/test_real_removal_failure_neve0/repo/.orchestrate'
+/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75/test_real_removal_failure_neve0/repo/.orchestrate
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75/test_real_removal_failure_neve0/repo/.orchestrate'
   warnings.warn(
-/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569/test_real_removal_failure_neve0/repo
-<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569/test_real_removal_failure_neve0/repo'
+/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75/test_real_removal_failure_neve0/repo
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75/test_real_removal_failure_neve0/repo'
   warnings.warn(
-/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569/test_real_removal_failure_neve0
-<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569/test_real_removal_failure_neve0'
+/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75/test_real_removal_failure_neve0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75/test_real_removal_failure_neve0'
   warnings.warn(
-/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:103: PytestWarning: (rm_rf) unknown function <built-in function scandir> when removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569/test_real_removal_failure_neve1/repo/.orchestrate/land-r1:
-<class 'PermissionError'>: [Errno 1] Operation not permitted: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569/test_real_removal_failure_neve1/repo/.orchestrate/land-r1'
+/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:103: PytestWarning: (rm_rf) unknown function <built-in function scandir> when removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75/test_real_removal_failure_neve1/repo/.orchestrate/land-r1:
+<class 'PermissionError'>: [Errno 1] Operation not permitted: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75/test_real_removal_failure_neve1/repo/.orchestrate/land-r1'
   warnings.warn(
-/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569/test_real_removal_failure_neve1/repo/.orchestrate/land-r1
-<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569/test_real_removal_failure_neve1/repo/.orchestrate/land-r1'
+/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75/test_real_removal_failure_neve1/repo/.orchestrate/land-r1
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75/test_real_removal_failure_neve1/repo/.orchestrate/land-r1'
   warnings.warn(
-/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569/test_real_removal_failure_neve1/repo/.orchestrate
-<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569/test_real_removal_failure_neve1/repo/.orchestrate'
+/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75/test_real_removal_failure_neve1/repo/.orchestrate
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75/test_real_removal_failure_neve1/repo/.orchestrate'
   warnings.warn(
-/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569/test_real_removal_failure_neve1/repo
-<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569/test_real_removal_failure_neve1/repo'
+/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75/test_real_removal_failure_neve1/repo
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75/test_real_removal_failure_neve1/repo'
   warnings.warn(
-/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569/test_real_removal_failure_neve1
-<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569/test_real_removal_failure_neve1'
+/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75/test_real_removal_failure_neve1
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75/test_real_removal_failure_neve1'
   warnings.warn(
-/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569
-<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-6df37f83-fe16-4e27-98ec-133abf056569'
+/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/upstream/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-b586e034-4611-4269-b76b-c90f68807b75'
   warnings.warn(
 $ uv run pytest exit=0
 `````
 
-The suite passed: **6927 passed, 7 skipped, 1 xfailed in 694.43s (0:11:34)**,
+The suite passed: **6927 passed, 7 skipped, 1 xfailed in 736.15s (0:12:16)**,
 exit 0. The `PytestWarning` lines near the end are temporary-directory
 cleanup notices from the test's own scratch tree under the macOS sandbox
 (`Errno 66` on pytest's `garbage-*` fixtures); pytest reports them as warnings
@@ -7560,8 +7571,7 @@ the deviation from the runbook is documented rather than silent.
 ## 8. The gates — four mandated, plus the floor-interpreter package run
 
 Run on this repository's `orch-agent-plugins-50` tree (base
-`4d2cbe0196dae9ae254fd4b519c8c2241388432e`, plus only this note), transcripts
-verbatim (R36):
+`ab939ffcb20272fb12d8c6616ec81b067847e1d4`), transcripts verbatim (R36):
 
 ```
 $ python3 scripts/check_repo.py
@@ -7578,7 +7588,7 @@ $ python3 -m unittest discover -s tests
 -## Drift Injected Section
 ..............................................................................................................................................................................................................................................
 ----------------------------------------------------------------------
-Ran 773 tests in 47.364s
+Ran 773 tests in 49.301s
 
 OK
 $ unittest exit=0
@@ -7587,115 +7597,114 @@ $ python3 -m pytest plugins/mission-control/tests -q
 ........................................................................ [ 54%]
 ........................................................................ [ 81%]
 ..................................................                       [100%]
-266 passed in 1.39s
-/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:103: PytestWarning: (rm_rf) unknown function <built-in function scandir> when removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b/test_real_removal_failure_neve0/repo/.orchestrate/land-r1:
-<class 'PermissionError'>: [Errno 1] Operation not permitted: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b/test_real_removal_failure_neve0/repo/.orchestrate/land-r1'
+266 passed in 1.45s
+/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:103: PytestWarning: (rm_rf) unknown function <built-in function scandir> when removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944/test_real_removal_failure_neve0/repo/.orchestrate/land-r1:
+<class 'PermissionError'>: [Errno 1] Operation not permitted: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944/test_real_removal_failure_neve0/repo/.orchestrate/land-r1'
   warnings.warn(
-/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b/test_real_removal_failure_neve0/repo/.orchestrate/land-r1
-<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b/test_real_removal_failure_neve0/repo/.orchestrate/land-r1'
+/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944/test_real_removal_failure_neve0/repo/.orchestrate/land-r1
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944/test_real_removal_failure_neve0/repo/.orchestrate/land-r1'
   warnings.warn(
-/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b/test_real_removal_failure_neve0/repo/.orchestrate
-<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b/test_real_removal_failure_neve0/repo/.orchestrate'
+/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944/test_real_removal_failure_neve0/repo/.orchestrate
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944/test_real_removal_failure_neve0/repo/.orchestrate'
   warnings.warn(
-/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b/test_real_removal_failure_neve0/repo
-<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b/test_real_removal_failure_neve0/repo'
+/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944/test_real_removal_failure_neve0/repo
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944/test_real_removal_failure_neve0/repo'
   warnings.warn(
-/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b/test_real_removal_failure_neve0
-<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b/test_real_removal_failure_neve0'
+/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944/test_real_removal_failure_neve0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944/test_real_removal_failure_neve0'
   warnings.warn(
-/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:103: PytestWarning: (rm_rf) unknown function <built-in function scandir> when removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b/test_real_removal_failure_neve1/repo/.orchestrate/land-r1:
-<class 'PermissionError'>: [Errno 1] Operation not permitted: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b/test_real_removal_failure_neve1/repo/.orchestrate/land-r1'
+/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:103: PytestWarning: (rm_rf) unknown function <built-in function scandir> when removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944/test_real_removal_failure_neve1/repo/.orchestrate/land-r1:
+<class 'PermissionError'>: [Errno 1] Operation not permitted: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944/test_real_removal_failure_neve1/repo/.orchestrate/land-r1'
   warnings.warn(
-/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b/test_real_removal_failure_neve1/repo/.orchestrate/land-r1
-<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b/test_real_removal_failure_neve1/repo/.orchestrate/land-r1'
+/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944/test_real_removal_failure_neve1/repo/.orchestrate/land-r1
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944/test_real_removal_failure_neve1/repo/.orchestrate/land-r1'
   warnings.warn(
-/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b/test_real_removal_failure_neve1/repo/.orchestrate
-<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b/test_real_removal_failure_neve1/repo/.orchestrate'
+/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944/test_real_removal_failure_neve1/repo/.orchestrate
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944/test_real_removal_failure_neve1/repo/.orchestrate'
   warnings.warn(
-/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b/test_real_removal_failure_neve1/repo
-<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b/test_real_removal_failure_neve1/repo'
+/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944/test_real_removal_failure_neve1/repo
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944/test_real_removal_failure_neve1/repo'
   warnings.warn(
-/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b/test_real_removal_failure_neve1
-<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b/test_real_removal_failure_neve1'
+/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944/test_real_removal_failure_neve1
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944/test_real_removal_failure_neve1'
   warnings.warn(
-/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b
-<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-8e171d9e-593e-4d3f-8bfd-0e600d5bf63b'
+/opt/homebrew/lib/python3.14/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-92e8257d-ed6e-4bfa-bdcb-fff9ee78c944'
   warnings.warn(
 $ pytest exit=0
-$ /opt/homebrew/bin/python3.12 -m venv <scratch>/floor-venv && <scratch>/floor-venv/bin/python -m pip install --quiet pytest pyyaml requests urllib3
-$ "$FLOOR_VENV_PY" -m pytest plugins/mission-control/tests -q
+$ <scratch>/floor-venv/bin/python -m pytest plugins/mission-control/tests -q
 ........................................................................ [ 27%]
 ........................................................................ [ 54%]
 ........................................................................ [ 81%]
 ..................................................                       [100%]
 =============================== warnings summary ===============================
-../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:102
-  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:102: PytestWarning: (rm_rf) unknown function <built-in function scandir> when removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697/test_real_removal_failure_neve0/repo/.orchestrate/land-r1:
-  <class 'PermissionError'>: [Errno 1] Operation not permitted: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697/test_real_removal_failure_neve0/repo/.orchestrate/land-r1'
+../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:102
+  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:102: PytestWarning: (rm_rf) unknown function <built-in function scandir> when removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2/test_real_removal_failure_neve0/repo/.orchestrate/land-r1:
+  <class 'PermissionError'>: [Errno 1] Operation not permitted: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2/test_real_removal_failure_neve0/repo/.orchestrate/land-r1'
     warnings.warn(
 
-../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
-  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697/test_real_removal_failure_neve0/repo/.orchestrate/land-r1
-  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697/test_real_removal_failure_neve0/repo/.orchestrate/land-r1'
+../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2/test_real_removal_failure_neve0/repo/.orchestrate/land-r1
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2/test_real_removal_failure_neve0/repo/.orchestrate/land-r1'
     warnings.warn(
 
-../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
-  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697/test_real_removal_failure_neve0/repo/.orchestrate
-  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697/test_real_removal_failure_neve0/repo/.orchestrate'
+../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2/test_real_removal_failure_neve0/repo/.orchestrate
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2/test_real_removal_failure_neve0/repo/.orchestrate'
     warnings.warn(
 
-../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
-  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697/test_real_removal_failure_neve0/repo
-  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697/test_real_removal_failure_neve0/repo'
+../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2/test_real_removal_failure_neve0/repo
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2/test_real_removal_failure_neve0/repo'
     warnings.warn(
 
-../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
-  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697/test_real_removal_failure_neve0
-  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697/test_real_removal_failure_neve0'
+../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2/test_real_removal_failure_neve0
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2/test_real_removal_failure_neve0'
     warnings.warn(
 
-../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:102
-  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:102: PytestWarning: (rm_rf) unknown function <built-in function scandir> when removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697/test_real_removal_failure_neve1/repo/.orchestrate/land-r1:
-  <class 'PermissionError'>: [Errno 1] Operation not permitted: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697/test_real_removal_failure_neve1/repo/.orchestrate/land-r1'
+../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:102
+  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:102: PytestWarning: (rm_rf) unknown function <built-in function scandir> when removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2/test_real_removal_failure_neve1/repo/.orchestrate/land-r1:
+  <class 'PermissionError'>: [Errno 1] Operation not permitted: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2/test_real_removal_failure_neve1/repo/.orchestrate/land-r1'
     warnings.warn(
 
-../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
-  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697/test_real_removal_failure_neve1/repo/.orchestrate/land-r1
-  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697/test_real_removal_failure_neve1/repo/.orchestrate/land-r1'
+../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2/test_real_removal_failure_neve1/repo/.orchestrate/land-r1
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2/test_real_removal_failure_neve1/repo/.orchestrate/land-r1'
     warnings.warn(
 
-../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
-  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697/test_real_removal_failure_neve1/repo/.orchestrate
-  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697/test_real_removal_failure_neve1/repo/.orchestrate'
+../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2/test_real_removal_failure_neve1/repo/.orchestrate
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2/test_real_removal_failure_neve1/repo/.orchestrate'
     warnings.warn(
 
-../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
-  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697/test_real_removal_failure_neve1/repo
-  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697/test_real_removal_failure_neve1/repo'
+../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2/test_real_removal_failure_neve1/repo
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2/test_real_removal_failure_neve1/repo'
     warnings.warn(
 
-../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
-  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697/test_real_removal_failure_neve1
-  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697/test_real_removal_failure_neve1'
+../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2/test_real_removal_failure_neve1
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2/test_real_removal_failure_neve1'
     warnings.warn(
 
-../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
-  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-scratch-7953/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697
-  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4a567a4b-0bb5-4cc3-9422-f6345540b697'
+../../../../../private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/opencode/u0-r2-scratch-6p2gdz/floor-venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/ky/n5fq5mgd5rl4321kxfy3jtvw0000gn/T/pytest-of-jefcox/garbage-4c917ea8-5597-44b3-8657-0a2c0316dde2'
     warnings.warn(
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-266 passed, 11 warnings in 1.55s
+266 passed, 11 warnings in 1.59s
 $ floor pytest exit=0
 $ git diff --check
 $ diff-check exit=0
 ```
 
 Results: `check_repo.py` printed `Repository validation passed.` (exit 0);
-`unittest discover` reported `Ran 773 tests … OK` (exit 0); the package suite
-on the default interpreter reported `266 passed in 1.39s` (exit 0); the same
-suite on the floor interpreter reported `266 passed, 11 warnings in 1.55s`
-(exit 0); `git diff --check` produced no output (exit 0).
+`unittest discover` reported `Ran 773 tests in 49.301s … OK` (exit 0); the
+package suite on the default interpreter reported `266 passed in 1.45s` (exit
+0); the same suite on the floor interpreter reported `266 passed, 11 warnings
+in 1.59s` (exit 0); `git diff --check` produced no output (exit 0).
 
 Floor-run mechanics: `/opt/homebrew/bin/python3.12` does not carry `pytest`,
 so per plan §2.6 a **throwaway virtual environment** was created outside the
@@ -7716,7 +7725,7 @@ installs). No dependency file was added to the repository.
   from the scratch clone alone.
 - `git status --porcelain` before and after the unit's verification work was
   identical (both empty) — no unrelated dirty file was disturbed (R38).
-- The only file this unit adds is this note. `ports/mission-control.json`,
+- The only file this unit changes is this note. `ports/mission-control.json`,
   `plugins/mission-control/`, the runbook, and all five graded files
   (`scripts/port_config.py`, `scripts/check_repo.py`,
   `scripts/check_compatibility_matrix.py`, `scripts/assess_clients.py`,
