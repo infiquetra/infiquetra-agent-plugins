@@ -347,6 +347,15 @@ class BridgeClient:
             http_conn.sock.settimeout(remaining())
             response = http_conn.getresponse()
             status = response.status
+            rem = remaining()
+            if http_conn.sock is not None:
+                http_conn.sock.settimeout(rem)
+            elif response.fp is not None:
+                raw_sock = getattr(response.fp, "raw", None)
+                if raw_sock is not None:
+                    sock_obj = getattr(raw_sock, "_sock", raw_sock)
+                    if sock_obj is not None and hasattr(sock_obj, "settimeout"):
+                        sock_obj.settimeout(rem)
             raw_resp_body = response.read()
             http_conn.close()
         except (socket.timeout, TimeoutError) as err:

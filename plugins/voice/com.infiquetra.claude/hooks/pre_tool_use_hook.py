@@ -15,7 +15,9 @@ This hook handles tool use approval and observation:
      * snapshot.tool_name == original tool_name
      * snapshot.tool_use_id == original tool_use_id
      * snapshot.tool_input canonically equals original tool_input
+     * snapshot.cwd == original cwd
      * snapshot.classification.result == "voice_approvable"
+     * snapshot.classification.permission_mode == original permission_mode
 5. Emits allow ONLY on exact match of both identifier and complete snapshot.
 6. On every other outcome (defer decision, identifier mismatch, snapshot mismatch,
    malformed response, transport error, timeout, no bridge binding, session mismatch),
@@ -72,6 +74,8 @@ def _validate_snapshot_and_identifier(
     expected_tool_use_id: str,
     expected_tool_name: str,
     expected_tool_input: dict[str, Any],
+    expected_permission_mode: str,
+    expected_cwd: str,
 ) -> bool:
     """Validate that the Core response matches the request identifier and complete snapshot."""
     if response.decision != "allow":
@@ -100,11 +104,17 @@ def _validate_snapshot_and_identifier(
     if not _canonical_json_equal(snapshot_input, expected_tool_input):
         return False
 
-    # 5. Snapshot classification result must be "voice_approvable"
+    # 5. Snapshot cwd match
+    if snapshot.get("cwd") != expected_cwd:
+        return False
+
+    # 6. Snapshot classification result must be "voice_approvable" and match permission_mode
     classification = snapshot.get("classification")
     if not isinstance(classification, dict):
         return False
     if classification.get("result") != "voice_approvable":
+        return False
+    if classification.get("permission_mode") != expected_permission_mode:
         return False
 
     return True
@@ -134,11 +144,11 @@ def main() -> int:
 
         permission_mode = payload.get("permission_mode")
         if not isinstance(permission_mode, str) or not permission_mode:
-            permission_mode = "default"
+            return 0
 
         cwd = payload.get("cwd")
         if not isinstance(cwd, str) or not cwd:
-            cwd = os.getcwd()
+            return 0
 
         # Step A: Best-effort tool observation for Auralis-originated turn (KTD7)
         try:
@@ -201,6 +211,8 @@ def main() -> int:
             expected_tool_use_id=tool_use_id,
             expected_tool_name=tool_name,
             expected_tool_input=tool_input,
+            expected_permission_mode=permission_mode,
+            expected_cwd=cwd,
         ):
             return 0
 

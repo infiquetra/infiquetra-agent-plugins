@@ -30,10 +30,11 @@ The byte-identical snapshot is committed in this repository at
 | Command | Result |
 |---|---|
 | `python3 scripts/check_repo.py` | `Repository validation passed.` |
-| `python3 -m unittest discover -s tests -v` | All tests pass (`Ran 773 tests ... OK`) |
-| `python3 -m unittest discover -s plugins/voice/tests -v` | All 23 test modules pass (476 tests) |
-| `python3 -m pytest plugins/*/tests -q` | `762 passed, 282 subtests passed in 26.91s` |
-| `claude plugin validate plugins/voice` | `✔ Validation passed` |
+| `python3 -m unittest discover -s tests -v` | All tests pass |
+| `python3 -m unittest discover -s plugins/voice/tests -v` | All 23 test modules pass (482 tests) |
+| `python3 -m pytest plugins/*/tests -q` | `788 passed, 321 subtests passed` |
+| `claude plugin validate plugins/voice --strict` | `✔ Validation passed` |
+| `claude plugin validate . --strict` | `✔ Validation passed` |
 | `git diff --check` | Clean (no trailing whitespace or whitespace errors) |
 
 ---
@@ -51,7 +52,7 @@ The byte-identical snapshot is committed in this repository at
 | **R107** | Voice policy and armed Brief Next Turn override transmitted as instructions; consumed on transmission | Injected into Auralis-originated turns; one-shot `brief_next_turn` is atomically consumed on transmission | `plugins/voice/tests/test_user_prompt_submit_hook.py`, `plugins/voice/tests/test_voice_policy.py` |
 | **R121** | Plain spoken text only; Markdown/code rejected with named reasons; never silently cleaned | Gate rejects with `fenced_code_block` or `markdown_formatting`; resubmission of plain text accepted (AE26) | `plugins/voice/tests/test_rendering_gate.py`, `plugins/voice/tests/test_mcp_server.py` |
 | **R122** | Rejected rendering with no replacement falls back under R22 | Turn record carries named rejections; Stop hook records `fallback` outcome across production processes | `plugins/voice/tests/test_mcp_server.py`, `plugins/voice/tests/test_stop_hook.py`, `plugins/voice/tests/test_r122_adapter_boundary.py`; joint AE36 |
-| **U6** | PreToolUse spoken tool approval forwarding and validation | `PreToolUse` hook queries `GET /v1/current` for binding coverage, forwards approval request to `POST /v1/approval`, validates allow decision and canonical snapshot (`classification.result == "voice_approvable"`), and fails closed silently on any mismatch or error under a 60s/55s/50s deadline budget | `plugins/voice/tests/test_pre_tool_use_hook.py` (22 tests), `plugins/voice/tests/test_bridge_client.py` |
+| **U6** | PreToolUse spoken tool approval forwarding and validation | `PreToolUse` hook queries `GET /v1/current` for binding coverage, forwards approval request to `POST /v1/approval`, validates allow decision and canonical snapshot (`classification.result == "voice_approvable"`), and fails closed silently on any mismatch or error under a 60s/55s/50s deadline budget | `plugins/voice/tests/test_pre_tool_use_hook.py` (31 tests), `plugins/voice/tests/test_bridge_client.py` |
 
 ---
 
@@ -79,7 +80,10 @@ The `PreToolUse` hook forwarding and validation behavior is proved by the dedica
   - `PreToolUseApprovalHookTests::test_defer_on_snapshot_identifier_mismatch` (Snapshot `tool_use_id` mismatches).
   - `PreToolUseApprovalHookTests::test_defer_on_snapshot_tool_name_mismatch` (Snapshot `tool_name` mismatches requested tool).
   - `PreToolUseApprovalHookTests::test_defer_on_snapshot_tool_input_mismatch` (Snapshot `tool_input` content or canonical serialization differs).
+  - `PreToolUseApprovalHookTests::test_defer_on_snapshot_cwd_mismatch` (Snapshot `cwd` mismatches original request cwd).
+  - `PreToolUseApprovalHookTests::test_defer_on_snapshot_permission_mode_mismatch` (Snapshot `classification.permission_mode` mismatches request).
   - `PreToolUseApprovalHookTests::test_defer_on_snapshot_classification_not_voice_approvable` (Snapshot `classification.result` is not `voice_approvable`).
+  - `PreToolUseApprovalHookTests::test_defer_on_missing_or_empty_required_payload_fields` (Missing `permission_mode`, `cwd`, `session_id`, `tool_name`, `tool_use_id`, or `tool_input`).
   - `PreToolUseApprovalHookTests::test_defer_on_core_decision_defer` (Core explicitly answers `decision: "defer"`).
   - `PreToolUseApprovalHookTests::test_defer_on_malformed_and_partial_responses` (Invalid schema, missing snapshot on allow, wrong types).
   - `PreToolUseApprovalHookTests::test_defer_on_transport_failure` (Connection refused, 500 error, HTTP error).
@@ -87,6 +91,8 @@ The `PreToolUse` hook forwarding and validation behavior is proved by the dedica
   - `PreToolUseApprovalHookTests::test_defer_on_no_bridge_binding` (`GET /v1/current` returns no active binding).
   - `PreToolUseApprovalHookTests::test_defer_on_session_mismatch_with_binding` (Current Claude session is not bound).
   - `PreToolUseApprovalHookTests::test_defer_on_identity_resolution_failure` (Herdr identity cannot be resolved).
+- **Live loopback wire integration:**
+  - `PreToolUseApprovalHookTests::test_e2e_live_wire_approval_through_bridge_stub` executes against a live loopback `BridgeStub` HTTP server, verifying `allow` and `defer` end-to-end wire behaviors.
 - **Timeout deadline discipline (KTD15):**
   - `PreToolUseApprovalHookTests::test_hooks_json_pre_tool_use_timeout_exceeds_50_seconds` confirms `hooks.json` declares a `60s` timeout for `PreToolUse`, nesting cleanly around `bridge_client.py`'s `55s` HTTP timeout and Core's `50s` hold deadline.
 - **Client wire operations:**

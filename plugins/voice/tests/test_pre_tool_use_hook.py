@@ -1,4 +1,4 @@
-"""Tests for the Claude PreToolUse hook (U4; KTD7, KTD11; X1).
+"""Tests for the Claude PreToolUse hook (U6; KTD7, KTD11, KTD15; X1; C8 Prerequisite 1).
 
 Exercises:
 - Auralis-originated turn tool observation recording (observe-only, no stdout output ever);
@@ -6,7 +6,9 @@ Exercises:
 - Non-originated turn: no observation recorded;
 - Session ID mismatch / missing turn record: no observation recorded;
 - Turn record lock busy / exceptions: silent exit 0;
-- Malformed inputs: silent exit 0.
+- Spoken approval forwarding to POST /v1/approval and canonical snapshot verification;
+- Fail-closed deferral on any missing required field, identifier mismatch, snapshot mismatch, or transport failure;
+- Live loopback HTTP wire test through BridgeStub.
 """
 
 from __future__ import annotations
@@ -22,12 +24,14 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "com.infiquetra.claude" / "hooks"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import adapter_identity  # noqa: E402
 import bridge_client  # noqa: E402
 import pre_tool_use_hook  # noqa: E402
 import turn_record  # noqa: E402
 import voice_policy  # noqa: E402
+from bridge_stub import BridgeStub  # noqa: E402
 
 AGENT_SESSION_ID = "session-test-pretool-1"
 
@@ -43,7 +47,12 @@ class PreToolUseHookTests(unittest.TestCase):
         self.state_dir.mkdir(parents=True, exist_ok=True)
 
         self.env_patcher = mock.patch.dict(
-            os.environ, {"VOICE_STATE_DIR": str(self.state_dir)}
+            os.environ,
+            {
+                "VOICE_STATE_DIR": str(self.state_dir),
+                "HERDR_PANE_ID": "",
+                "HERDR_BIN_PATH": "",
+            },
         )
         self.env_patcher.start()
         self.addCleanup(self.env_patcher.stop)
@@ -74,6 +83,8 @@ class PreToolUseHookTests(unittest.TestCase):
             "tool_name": "Bash",
             "tool_input": {"command": "git status"},
             "tool_use_id": "toolu_01ABC",
+            "permission_mode": "default",
+            "cwd": "/workspace",
         }
         code, stdout_text = self.run_hook(json.dumps(payload))
         self.assertEqual(code, 0)
@@ -106,6 +117,8 @@ class PreToolUseHookTests(unittest.TestCase):
             "tool_name": "Bash",
             "tool_input": {"command": "ls"},
             "tool_use_id": "toolu_bash",
+            "permission_mode": "default",
+            "cwd": "/workspace",
         }
         code, stdout_text = self.run_hook(json.dumps(payload_bash))
         self.assertEqual(code, 0)
@@ -121,6 +134,8 @@ class PreToolUseHookTests(unittest.TestCase):
             "tool_name": "Read",
             "tool_input": {"file": "main.py"},
             "tool_use_id": "toolu_read",
+            "permission_mode": "default",
+            "cwd": "/workspace",
         }
         code, stdout_text = self.run_hook(json.dumps(payload_read))
         self.assertEqual(code, 0)
@@ -143,6 +158,8 @@ class PreToolUseHookTests(unittest.TestCase):
             "tool_name": "Bash",
             "tool_input": {"command": "ls"},
             "tool_use_id": "toolu_01",
+            "permission_mode": "default",
+            "cwd": "/workspace",
         }
         code, stdout_text = self.run_hook(json.dumps(payload))
         self.assertEqual(code, 0)
@@ -164,6 +181,8 @@ class PreToolUseHookTests(unittest.TestCase):
             "tool_name": "Bash",
             "tool_input": {"command": "ls"},
             "tool_use_id": "toolu_01",
+            "permission_mode": "default",
+            "cwd": "/workspace",
         }
         code, stdout_text = self.run_hook(json.dumps(payload))
         self.assertEqual(code, 0)
@@ -179,6 +198,8 @@ class PreToolUseHookTests(unittest.TestCase):
             "tool_name": "Bash",
             "tool_input": {"command": "ls"},
             "tool_use_id": "toolu_01",
+            "permission_mode": "default",
+            "cwd": "/workspace",
         }
         code, stdout_text = self.run_hook(json.dumps(payload))
         self.assertEqual(code, 0)
@@ -201,6 +222,8 @@ class PreToolUseHookTests(unittest.TestCase):
                 "tool_name": "Bash",
                 "tool_input": {"command": "ls"},
                 "tool_use_id": "toolu_01",
+                "permission_mode": "default",
+                "cwd": "/workspace",
             }
             code, stdout_text = self.run_hook(json.dumps(payload))
             self.assertEqual(code, 0)
@@ -413,7 +436,12 @@ class PreToolUseApprovalHookTests(unittest.TestCase):
         self.state_dir.mkdir(parents=True, exist_ok=True)
 
         self.env_patcher = mock.patch.dict(
-            os.environ, {"VOICE_STATE_DIR": str(self.state_dir)}
+            os.environ,
+            {
+                "VOICE_STATE_DIR": str(self.state_dir),
+                "HERDR_PANE_ID": "",
+                "HERDR_BIN_PATH": "",
+            },
         )
         self.env_patcher.start()
         self.addCleanup(self.env_patcher.stop)
@@ -432,6 +460,27 @@ class PreToolUseApprovalHookTests(unittest.TestCase):
             turn=None,
             schema=1,
         )
+
+        self.valid_payload = {
+            "session_id": AGENT_SESSION_ID,
+            "tool_name": "Read",
+            "tool_input": {"file_path": "main.py"},
+            "tool_use_id": "toolu_01",
+            "permission_mode": "default",
+            "cwd": "/workspace",
+        }
+        self.valid_snapshot = {
+            "tool_use_id": "toolu_01",
+            "tool_name": "Read",
+            "tool_input": {"file_path": "main.py"},
+            "cwd": "/workspace",
+            "read_back": "Read the file main.py",
+            "classification": {
+                "result": "voice_approvable",
+                "allow_list_entry": "Read",
+                "permission_mode": "default",
+            },
+        }
 
     def run_hook(self, stdin_text: str) -> tuple[int, str]:
         """Run pre_tool_use_hook.main() with injected stdin and captured stdout."""
@@ -455,7 +504,7 @@ class PreToolUseApprovalHookTests(unittest.TestCase):
             "tool_name": tool_name,
             "tool_input": tool_input,
             "tool_use_id": tool_use_id,
-            "permission_mode": "manual",
+            "permission_mode": "default",
             "cwd": "/Users/test/repo",
         }
 
@@ -463,7 +512,7 @@ class PreToolUseApprovalHookTests(unittest.TestCase):
             "classification": {
                 "result": "voice_approvable",
                 "allow_list_entry": "Read",
-                "permission_mode": "manual",
+                "permission_mode": "default",
             },
             "cwd": "/Users/test/repo",
             "read_back": "Read the file src/main.py from line 10",
@@ -508,32 +557,18 @@ class PreToolUseApprovalHookTests(unittest.TestCase):
                 tool_use_id=tool_use_id,
                 tool_name=tool_name,
                 tool_input=tool_input,
-                permission_mode="manual",
+                permission_mode="default",
                 cwd="/Users/test/repo",
             )
 
     def test_defer_on_identifier_mismatch(self) -> None:
         """Defer (exit 0 with no stdout) when returned tool_use_id mismatches."""
-        payload = {
-            "session_id": AGENT_SESSION_ID,
-            "tool_name": "Read",
-            "tool_input": {"file_path": "main.py"},
-            "tool_use_id": "toolu_expected_id",
-            "permission_mode": "manual",
-            "cwd": "/workspace",
-        }
+        payload = dict(self.valid_payload)
         approval_resp = bridge_client.ApprovalResponse(
             tool_use_id="toolu_DIFFERENT_id",
             decision="allow",
             reason="approved",
-            snapshot={
-                "classification": {"result": "voice_approvable"},
-                "tool_name": "Read",
-                "tool_use_id": "toolu_expected_id",
-                "tool_input": {"file_path": "main.py"},
-                "cwd": "/workspace",
-                "read_back": "Read the file main.py",
-            },
+            snapshot=self.valid_snapshot,
             schema=1,
         )
 
@@ -548,24 +583,13 @@ class PreToolUseApprovalHookTests(unittest.TestCase):
 
     def test_defer_on_snapshot_identifier_mismatch(self) -> None:
         """Defer when snapshot.tool_use_id mismatches request."""
-        payload = {
-            "session_id": AGENT_SESSION_ID,
-            "tool_name": "Read",
-            "tool_input": {"file_path": "main.py"},
-            "tool_use_id": "toolu_expected_id",
-        }
+        payload = dict(self.valid_payload)
+        bad_snapshot = dict(self.valid_snapshot, tool_use_id="toolu_DIFFERENT_in_snapshot")
         approval_resp = bridge_client.ApprovalResponse(
-            tool_use_id="toolu_expected_id",
+            tool_use_id=self.valid_payload["tool_use_id"],
             decision="allow",
             reason="approved",
-            snapshot={
-                "classification": {"result": "voice_approvable"},
-                "tool_name": "Read",
-                "tool_use_id": "toolu_DIFFERENT_in_snapshot",
-                "tool_input": {"file_path": "main.py"},
-                "cwd": "/workspace",
-                "read_back": "Read the file main.py",
-            },
+            snapshot=bad_snapshot,
             schema=1,
         )
 
@@ -580,24 +604,13 @@ class PreToolUseApprovalHookTests(unittest.TestCase):
 
     def test_defer_on_snapshot_tool_name_mismatch(self) -> None:
         """Defer when snapshot.tool_name mismatches original tool_name."""
-        payload = {
-            "session_id": AGENT_SESSION_ID,
-            "tool_name": "Read",
-            "tool_input": {"file_path": "main.py"},
-            "tool_use_id": "toolu_01",
-        }
+        payload = dict(self.valid_payload)
+        bad_snapshot = dict(self.valid_snapshot, tool_name="Grep")
         approval_resp = bridge_client.ApprovalResponse(
-            tool_use_id="toolu_01",
+            tool_use_id=self.valid_payload["tool_use_id"],
             decision="allow",
             reason="approved",
-            snapshot={
-                "classification": {"result": "voice_approvable"},
-                "tool_name": "Grep",  # mismatched
-                "tool_use_id": "toolu_01",
-                "tool_input": {"file_path": "main.py"},
-                "cwd": "/workspace",
-                "read_back": "Search for pattern",
-            },
+            snapshot=bad_snapshot,
             schema=1,
         )
 
@@ -612,24 +625,13 @@ class PreToolUseApprovalHookTests(unittest.TestCase):
 
     def test_defer_on_snapshot_tool_input_mismatch(self) -> None:
         """Defer when snapshot.tool_input canonically differs from original tool_input."""
-        payload = {
-            "session_id": AGENT_SESSION_ID,
-            "tool_name": "Read",
-            "tool_input": {"file_path": "main.py", "lines": [1, 2, 3]},
-            "tool_use_id": "toolu_01",
-        }
+        payload = dict(self.valid_payload, tool_input={"file_path": "main.py", "lines": [1, 2, 3]})
+        bad_snapshot = dict(self.valid_snapshot, tool_input={"file_path": "other_file.py", "lines": [1, 2, 3]})
         approval_resp = bridge_client.ApprovalResponse(
-            tool_use_id="toolu_01",
+            tool_use_id=self.valid_payload["tool_use_id"],
             decision="allow",
             reason="approved",
-            snapshot={
-                "classification": {"result": "voice_approvable"},
-                "tool_name": "Read",
-                "tool_use_id": "toolu_01",
-                "tool_input": {"file_path": "other_file.py", "lines": [1, 2, 3]},  # modified input
-                "cwd": "/workspace",
-                "read_back": "Read the file other_file.py",
-            },
+            snapshot=bad_snapshot,
             schema=1,
         )
 
@@ -642,28 +644,69 @@ class PreToolUseApprovalHookTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(stdout_text, "", "Snapshot tool_input mismatch must DEFER with no output")
 
+    def test_defer_on_snapshot_cwd_mismatch(self) -> None:
+        """Defer when snapshot.cwd mismatches original request cwd."""
+        payload = dict(self.valid_payload, cwd="/workspace/dir_a")
+        bad_snapshot = dict(self.valid_snapshot, cwd="/workspace/dir_b")
+        approval_resp = bridge_client.ApprovalResponse(
+            tool_use_id=self.valid_payload["tool_use_id"],
+            decision="allow",
+            reason="approved",
+            snapshot=bad_snapshot,
+            schema=1,
+        )
+
+        with (
+            mock.patch.object(adapter_identity, "resolve_adapter_identity", return_value=self.identity),
+            mock.patch.object(bridge_client.BridgeClient, "get_current", return_value=self.snapshot_bound),
+            mock.patch.object(bridge_client.BridgeClient, "request_approval", return_value=approval_resp),
+        ):
+            code, stdout_text = self.run_hook(json.dumps(payload))
+            self.assertEqual(code, 0)
+            self.assertEqual(stdout_text, "", "Snapshot cwd mismatch must DEFER with no output")
+
+    def test_defer_on_snapshot_permission_mode_mismatch(self) -> None:
+        """Defer when snapshot.classification.permission_mode mismatches original permission_mode."""
+        payload = dict(self.valid_payload, permission_mode="default")
+        bad_snapshot = dict(
+            self.valid_snapshot,
+            classification={
+                "result": "voice_approvable",
+                "allow_list_entry": "Read",
+                "permission_mode": "bypassPermissions",
+            },
+        )
+        approval_resp = bridge_client.ApprovalResponse(
+            tool_use_id=self.valid_payload["tool_use_id"],
+            decision="allow",
+            reason="approved",
+            snapshot=bad_snapshot,
+            schema=1,
+        )
+
+        with (
+            mock.patch.object(adapter_identity, "resolve_adapter_identity", return_value=self.identity),
+            mock.patch.object(bridge_client.BridgeClient, "get_current", return_value=self.snapshot_bound),
+            mock.patch.object(bridge_client.BridgeClient, "request_approval", return_value=approval_resp),
+        ):
+            code, stdout_text = self.run_hook(json.dumps(payload))
+            self.assertEqual(code, 0)
+            self.assertEqual(stdout_text, "", "Snapshot permission_mode mismatch must DEFER with no output")
+
     def test_defer_on_snapshot_classification_not_voice_approvable(self) -> None:
         """Defer when classification.result is not voice_approvable."""
         for result in ["always_visual", "unknown", "not_allow_listed", "", None]:
             with self.subTest(result=result):
-                payload = {
-                    "session_id": AGENT_SESSION_ID,
-                    "tool_name": "Read",
-                    "tool_input": {"file_path": "main.py"},
-                    "tool_use_id": "toolu_01",
-                }
+                payload = dict(self.valid_payload)
+                bad_snapshot = dict(
+                    self.valid_snapshot,
+                    classification={"result": result, "permission_mode": "default"} if result is not None else {},
+                )
                 approval_resp = bridge_client.ApprovalResponse(
-                    tool_use_id="toolu_01",
+                    tool_use_id=self.valid_payload["tool_use_id"],
                     decision="allow",
                     reason="approved",
-                    snapshot={
-                        "classification": {"result": result} if result is not None else {},
-                        "tool_name": "Read",
-                        "tool_use_id": "toolu_01",
-                        "tool_input": {"file_path": "main.py"},
-                        "cwd": "/workspace",
-                        "read_back": "Read the file main.py",
-                    },
+                    snapshot=bad_snapshot,
                     schema=1,
                 )
 
@@ -676,19 +719,42 @@ class PreToolUseApprovalHookTests(unittest.TestCase):
                     self.assertEqual(code, 0)
                     self.assertEqual(stdout_text, "", "Non voice_approvable result must DEFER")
 
+    def test_defer_on_missing_or_empty_required_payload_fields(self) -> None:
+        """Defer (exit 0 with no stdout) when any required payload field is absent or invalid."""
+        cases = [
+            ("missing session_id", {k: v for k, v in self.valid_payload.items() if k != "session_id"}),
+            ("empty session_id", dict(self.valid_payload, session_id="")),
+            ("missing tool_name", {k: v for k, v in self.valid_payload.items() if k != "tool_name"}),
+            ("empty tool_name", dict(self.valid_payload, tool_name="")),
+            ("missing tool_use_id", {k: v for k, v in self.valid_payload.items() if k != "tool_use_id"}),
+            ("empty tool_use_id", dict(self.valid_payload, tool_use_id="")),
+            ("missing tool_input", {k: v for k, v in self.valid_payload.items() if k != "tool_input"}),
+            ("non-dict tool_input", dict(self.valid_payload, tool_input="not a dict")),
+            ("missing permission_mode", {k: v for k, v in self.valid_payload.items() if k != "permission_mode"}),
+            ("empty permission_mode", dict(self.valid_payload, permission_mode="")),
+            ("missing cwd", {k: v for k, v in self.valid_payload.items() if k != "cwd"}),
+            ("empty cwd", dict(self.valid_payload, cwd="")),
+        ]
+        for name, payload in cases:
+            with self.subTest(case=name):
+                with (
+                    mock.patch.object(adapter_identity, "resolve_adapter_identity", return_value=self.identity),
+                    mock.patch.object(bridge_client.BridgeClient, "get_current", return_value=self.snapshot_bound),
+                    mock.patch.object(bridge_client.BridgeClient, "request_approval") as mock_approve,
+                ):
+                    code, stdout_text = self.run_hook(json.dumps(payload))
+                    self.assertEqual(code, 0)
+                    self.assertEqual(stdout_text, "", f"{name} must DEFER with no output")
+                    mock_approve.assert_not_called()
+
     def test_defer_on_core_decision_defer(self) -> None:
         """Defer when Core returns decision='defer' for any reason."""
         reasons = ["notAllowListed", "alwaysVisual", "permissionModeNotPrompting", "deadline", "sinkClosed"]
         for reason in reasons:
             with self.subTest(reason=reason):
-                payload = {
-                    "session_id": AGENT_SESSION_ID,
-                    "tool_name": "Bash",
-                    "tool_input": {"command": "ls"},
-                    "tool_use_id": "toolu_01",
-                }
+                payload = dict(self.valid_payload, tool_name="Bash", tool_input={"command": "ls"})
                 approval_resp = bridge_client.ApprovalResponse(
-                    tool_use_id="toolu_01",
+                    tool_use_id=self.valid_payload["tool_use_id"],
                     decision="defer",
                     reason=reason,
                     snapshot=None,
@@ -706,12 +772,7 @@ class PreToolUseApprovalHookTests(unittest.TestCase):
 
     def test_defer_on_malformed_and_partial_responses(self) -> None:
         """Defer on malformed, partial, or non-conforming responses."""
-        payload = {
-            "session_id": AGENT_SESSION_ID,
-            "tool_name": "Read",
-            "tool_input": {"file_path": "main.py"},
-            "tool_use_id": "toolu_01",
-        }
+        payload = dict(self.valid_payload)
         malformed_snapshots = [
             None,
             "string snapshot",
@@ -722,7 +783,7 @@ class PreToolUseApprovalHookTests(unittest.TestCase):
         for snapshot in malformed_snapshots:
             with self.subTest(snapshot=snapshot):
                 approval_resp = bridge_client.ApprovalResponse(
-                    tool_use_id="toolu_01",
+                    tool_use_id=self.valid_payload["tool_use_id"],
                     decision="allow",
                     reason="approved",
                     snapshot=snapshot,  # type: ignore[arg-type]
@@ -740,12 +801,7 @@ class PreToolUseApprovalHookTests(unittest.TestCase):
 
     def test_defer_on_transport_failure(self) -> None:
         """Defer on any bridge transport failure or exception."""
-        payload = {
-            "session_id": AGENT_SESSION_ID,
-            "tool_name": "Read",
-            "tool_input": {"file_path": "main.py"},
-            "tool_use_id": "toolu_01",
-        }
+        payload = dict(self.valid_payload)
         exceptions = [
             bridge_client.BridgeTransportError("connection refused", error_code="transport_error"),
             bridge_client.BridgeUnauthorized("unauthorized"),
@@ -768,12 +824,7 @@ class PreToolUseApprovalHookTests(unittest.TestCase):
 
     def test_defer_on_timeout(self) -> None:
         """Defer when bridge request times out."""
-        payload = {
-            "session_id": AGENT_SESSION_ID,
-            "tool_name": "Read",
-            "tool_input": {"file_path": "main.py"},
-            "tool_use_id": "toolu_01",
-        }
+        payload = dict(self.valid_payload)
         timeout_exceptions = [
             bridge_client.BridgeTransportError("operation timed out on deadline", error_code="transport_error"),
             TimeoutError("socket timed out"),
@@ -791,12 +842,7 @@ class PreToolUseApprovalHookTests(unittest.TestCase):
 
     def test_defer_on_no_bridge_binding(self) -> None:
         """Defer when session is not covered by any active bridge binding."""
-        payload = {
-            "session_id": AGENT_SESSION_ID,
-            "tool_name": "Read",
-            "tool_input": {"file_path": "main.py"},
-            "tool_use_id": "toolu_01",
-        }
+        payload = dict(self.valid_payload)
         snapshot_unbound = bridge_client.CurrentSnapshot(binding=None, turn=None, schema=1)
 
         with (
@@ -811,12 +857,7 @@ class PreToolUseApprovalHookTests(unittest.TestCase):
 
     def test_defer_on_session_mismatch_with_binding(self) -> None:
         """Defer when session_id does not match the active bridge binding."""
-        payload = {
-            "session_id": AGENT_SESSION_ID,
-            "tool_name": "Read",
-            "tool_input": {"file_path": "main.py"},
-            "tool_use_id": "toolu_01",
-        }
+        payload = dict(self.valid_payload)
         different_identity = adapter_identity.AdapterIdentity(
             agent_session_id="different-session-id",
             pane_id="pane-2",
@@ -843,12 +884,7 @@ class PreToolUseApprovalHookTests(unittest.TestCase):
 
     def test_defer_on_identity_resolution_failure(self) -> None:
         """Defer when adapter identity cannot be resolved."""
-        payload = {
-            "session_id": AGENT_SESSION_ID,
-            "tool_name": "Read",
-            "tool_input": {"file_path": "main.py"},
-            "tool_use_id": "toolu_01",
-        }
+        payload = dict(self.valid_payload)
         with (
             mock.patch.object(adapter_identity, "resolve_adapter_identity", side_effect=Exception("no identity")),
             mock.patch.object(bridge_client.BridgeClient, "request_approval") as mock_approve,
@@ -878,6 +914,77 @@ class PreToolUseApprovalHookTests(unittest.TestCase):
             f"PreToolUse timeout in hooks.json ({timeout}s) must exceed Core's 50s hold (KTD15)",
         )
         self.assertEqual(timeout, 60)
+
+    def test_e2e_live_wire_approval_through_bridge_stub(self) -> None:
+        """Live wire test: Hook executes against a real loopback BridgeStub server over HTTP."""
+        with BridgeStub() as stub:
+            bridge_file = stub.write_discovery_file(self.state_dir)
+            stub.set_binding(self.binding_id, self.identity.to_dict())
+
+            payload = {
+                "session_id": AGENT_SESSION_ID,
+                "tool_name": "Read",
+                "tool_input": {"file_path": "lib/main.dart"},
+                "tool_use_id": "toolu_live_wire_01",
+                "permission_mode": "default",
+                "cwd": "/workspace/infiquetra/auralis",
+            }
+
+            # 1. Allow path through live wire
+            stub.set_approval_response(
+                decision="allow",
+                reason="approved",
+                snapshot={
+                    "tool_use_id": "toolu_live_wire_01",
+                    "tool_name": "Read",
+                    "tool_input": {"file_path": "lib/main.dart"},
+                    "cwd": "/workspace/infiquetra/auralis",
+                    "read_back": "Read file lib/main.dart",
+                    "classification": {
+                        "result": "voice_approvable",
+                        "allow_list_entry": "Read",
+                        "permission_mode": "default",
+                    },
+                },
+            )
+
+            with (
+                mock.patch.object(adapter_identity, "resolve_adapter_identity", return_value=self.identity),
+                mock.patch.object(bridge_client, "DEFAULT_BRIDGE_FILE", bridge_file),
+            ):
+                code, stdout_text = self.run_hook(json.dumps(payload))
+                self.assertEqual(code, 0)
+                output = json.loads(stdout_text)
+                self.assertEqual(
+                    output,
+                    {
+                        "hookSpecificOutput": {
+                            "hookEventName": "PreToolUse",
+                            "permissionDecision": "allow",
+                        }
+                    },
+                )
+
+            # Check that stub recorded the POST /v1/approval request with exact 9 keys
+            approval_reqs = [r for r in stub.requests if r.path == "/v1/approval"]
+            self.assertEqual(len(approval_reqs), 1)
+            req = approval_reqs[0]
+            self.assertEqual(req.method, "POST")
+            self.assertIsNotNone(req.body)
+            self.assertEqual(req.body["schema"], 1)
+            self.assertEqual(req.body["tool_use_id"], "toolu_live_wire_01")
+            self.assertEqual(req.body["permission_mode"], "default")
+            self.assertEqual(req.body["cwd"], "/workspace/infiquetra/auralis")
+
+            # 2. Defer path through live wire
+            stub.set_approval_response(decision="defer", reason="permissionModeNotPrompting")
+            with (
+                mock.patch.object(adapter_identity, "resolve_adapter_identity", return_value=self.identity),
+                mock.patch.object(bridge_client, "DEFAULT_BRIDGE_FILE", bridge_file),
+            ):
+                code, stdout_text = self.run_hook(json.dumps(payload))
+                self.assertEqual(code, 0)
+                self.assertEqual(stdout_text, "")
 
 
 if __name__ == "__main__":

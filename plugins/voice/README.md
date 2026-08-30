@@ -223,7 +223,7 @@ governed by the six-route Auralis Bridge Contract v1 (`GET /v1/health`,
    Handles tool observation and spoken approval forwarding (KTD7; C8 Prerequisite 1):
    - First, records best-effort tool observations into the turn record if the active turn originated via Auralis.
    - Second, verifies active bridge binding coverage via `GET /v1/current`. If covered, forwards the approval request to `POST /v1/approval` and holds the connection open awaiting Core's decision (under a 60s hook / 55s client timeout budget exceeding Core's 50s hold deadline).
-   - Third, validates Core's response: exact request identifier match, `decision: "allow"`, and complete canonical action snapshot match with `classification.result == "voice_approvable"`. Emits `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}` only on exact match.
+   - Third, validates Core's response: exact request identifier match, `decision: "allow"`, and complete canonical action snapshot match (`tool_use_id`, `tool_name`, canonical `tool_input`, `cwd`, and `classification.result == "voice_approvable"` with matching `permission_mode`). Emits `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}` only on exact match.
    - On every other path (Core deferral, snapshot mismatch, transport failure, timeout, or unbound session), defers silently with no stdout and exits 0 (fail-closed discipline).
 5. **Completion reconciliation ([`com.infiquetra.claude/hooks/stop_hook.py`](com.infiquetra.claude/hooks/stop_hook.py))**:
    When the turn completes, the Stop hook reconciles the turn record: if wire-bound and an
