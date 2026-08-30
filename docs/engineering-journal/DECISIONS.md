@@ -195,6 +195,68 @@ they hold under the portable layout.
 [`docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md`](../plans/2026-08-30-issue-50-mission-control-resync-plan.md),
 issue #52, `tests/test_sdlc_manager_optional_deps.py` (upstream, at the pin).
 
+### Mission Control 2.15.2 resync U2: `sync_template_docs.py` becomes a deterministic transform rather than an upstream filing
+
+**Author.** Claude for Jeff Cox (Amendment 1 to the issue #50 run plan, taken by the
+run coordinator during U2, branch `orch-agent-plugins-50`)
+
+**Decision.** `plugins/mission-control/scripts/sync_template_docs.py` is reclassified
+in [`ports/mission-control.json`](../../ports/mission-control.json) from
+`upstream-byte-copy` to `deterministic-transform`, under a new versioned rule that
+resolves the package root through the portable layout's own marker,
+`com.infiquetra.claude/plugin.json`, instead of upstream's
+`.claude-plugin/plugin.json`. The rule is authored by the U2 worker;
+[the run plan](../plans/2026-08-30-issue-50-mission-control-resync-plan.md) records
+the decision (KTD14, R40, R41, §14) and does not write the rule. U2 consequently
+gains three files outside the package root, each with its writer order stated:
+`scripts/sync_vendor_source.py` (sole writer), `ports/mission-control.json` (second
+of three sequenced writers, after U1 and before U3), and
+`tests/test_sync_vendor_source.py` (first of two, before U4).
+
+**Rationale.** Upstream 2.15.2 rewrote this carried file so that
+`_find_package_root()` (line 17 at pin `3b2b7083`) walks up for
+`.claude-plugin/plugin.json` (line 20), raises `RuntimeError` when it finds none
+(line 22), and is called at module scope (line 27). The portable package has no
+`.claude-plugin/` directory — `relocate-claude-manifest` moves the Claude manifest to
+`com.infiquetra.claude/plugin.json` — so the module cannot be imported here at all.
+Reproduced on the U2 tree: four failures in `python3 -m unittest discover -s tests`
+and two collection errors in the package suite trace to this single cause.
+
+The run contract names two legitimate resolutions when a carried file cannot work
+unchanged in the portable layout: an upstream filing, or a recorded custody decision.
+An upstream filing blocks the whole resynchronization until upstream fixes and this
+repository repins. The custody path has direct precedent here:
+`normalize-skill-frontmatter` is the identical shape — upstream keeps a form the
+portable layout cannot take verbatim, and a versioned rule transforms it
+deterministically, reproducible from the source bytes alone — and the
+`resolve-bundled-fleet-module-split` / `-guarded` pair is the same pattern for a
+different import problem. This is the third instance of a shape this repository
+already runs twice. `scripts/sync_vendor_source.py` is not in the cycle-16 mutation
+proof's graded set, so adding a rule there retires no proof.
+
+Worth recording for the next port: this repository filed upstream
+`infiquetra/infiquetra-claude-plugins` #822 asking upstream to remove the fixed
+`parents[3]` depth assumption from this exact file. Upstream fixed it by anchoring to
+`.claude-plugin/plugin.json` — precisely the directory the port relocates away. A fix
+that is correct upstream can still be unusable downstream. The port boundary is where
+that shows up, and an upstream filing is not automatically the right answer to a
+downstream break.
+
+**Rejected alternatives.** *Hand-editing the byte copy* — the custody violation the
+whole arrangement exists to prevent, and it fails its own digest check. *Dropping the
+file from source the way `scripts/fleet_commons_shim.py` is dropped* — the shim was
+dropped because the Fleet Core bundle replaces it, whereas nothing replaces this file,
+and it is a declared entrypoint in both `assessment.entrypoints` and
+`assessment.package_scripts`, so dropping it would silently shrink the package's
+capability surface. *Filing upstream and stopping* — blocks the run for a defect that
+is not upstream's to carry, since upstream's resolution is correct for upstream's own
+layout.
+
+**Revisit when** upstream adopts a layout-neutral package-root resolution that does
+not hard-code a single marker directory. The transform can then retire and the file
+can return to being a byte copy.
+
+
 ## 2026-08-27
 
 ### Auralis C3 adapter packaging: voice 0.3.0, mcpServers path into client extension, and acceptance evidence note

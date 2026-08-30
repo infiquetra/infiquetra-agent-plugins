@@ -393,6 +393,8 @@ owned by exactly one unit.
 | R37 | all | No live GitHub mutation from any build, test, or assessment step | run-level stop condition; assessment runs read-only verbs only |
 | R38 | all | Unrelated dirty files, branches, worktrees, and sessions are preserved untouched | `git status --porcelain` before and after each unit, compared |
 | R39 | U3, U4 | U4's child-scoped commit precedes U3's on `orch-agent-plugins-50`, and U3 is rebased onto it before gating, so U3's `unittest discover` reports `OK` with no exception (KTD10) | `git log --oneline` shows U4's commit as U3's parent; U3's gate transcript shows `OK` |
+| R40 | U2 | `scripts/sync_template_docs.py` is classified `deterministic-transform` in `ports/mission-control.json` under the new named rule, and the portable copy imports cleanly in the portable layout (KTD14, added by Amendment 1) | the module imports without `RuntimeError`; the four repository-suite failures and two package-suite collection errors that trace to it clear |
+| R41 | U2 | The new rule is deterministic and reproducible from the upstream bytes alone — re-running the synchronization produces byte-identical output (KTD14) | the `--check` round-trip in U2 prints a match line and exits 0 |
 
 ---
 
@@ -650,6 +652,77 @@ observed. A document named for the day it was planned would misdate an observati
 **Rejected.** Name them for the plan date, or for the pin. Both make the filename
 lie about when the forty stage results were produced.
 
+### KTD14 — `scripts/sync_template_docs.py` becomes a deterministic transform that resolves the package root through the portable layout's own marker
+
+**Added by Amendment 1 (§14). This decision postdates the accepted Document
+Review and was not covered by it.**
+
+**The blocker, reproduced on this tree.** Upstream 2.15.2 rewrote the carried byte
+copy `scripts/sync_template_docs.py`. At pin `3b2b7083` it defines
+`_find_package_root()` at line 17, which walks up the directory tree looking for
+`.claude-plugin/plugin.json` (line 20) and raises `RuntimeError` when it finds none
+(line 22). That function is called **at module scope**, line 27:
+`PACKAGE_ROOT = _find_package_root()`. The portable package has no
+`.claude-plugin/` directory at all — the `relocate-claude-manifest` rule moves the
+Claude manifest to `com.infiquetra.claude/plugin.json`. So the module cannot be
+imported here:
+
+```
+RuntimeError: package root containing .claude-plugin/plugin.json not found from
+  …/plugins/mission-control/scripts/sync_template_docs.py
+```
+
+Four failures in `python3 -m unittest discover -s tests` trace to this one cause —
+both `tests/test_client_entrypoints.py` checks for this entrypoint, the
+`tests/test_mission_control_readme.py` fenced-command check, and the loader error on
+`tests/test_mission_control_rule_audit.py` — plus two collection errors in the
+package suite, `tests/test_issue_contract_parity.py` and `tests/test_template_sync.py`.
+
+**The irony, recorded because it is instructive.** This repository filed upstream
+`infiquetra/infiquetra-claude-plugins` **#822** asking upstream to remove the fixed
+`parents[3]` depth assumption from this exact file. Upstream did fix it — by
+anchoring to `.claude-plugin/plugin.json`, which is precisely the directory the port
+relocates away. Upstream is not wrong for its own layout. A fix that is correct
+upstream can still be unusable downstream, and the port boundary is where that shows
+up.
+
+**Chosen.** Reclassify `scripts/sync_template_docs.py` from `upstream-byte-copy` to
+`deterministic-transform`, under a **new versioned rule** that resolves the package
+root through the portable layout's own marker, `com.infiquetra.claude/plugin.json`,
+instead of `.claude-plugin/plugin.json`. The rule is written by a worker in U2; this
+plan does not author it.
+
+**Why this path and not an upstream filing.** The run contract names **both**
+"upstream filing" and "a recorded custody decision" as legitimate resolutions when a
+carried file cannot work unchanged in the portable layout (§2.7). Between them:
+
+- An upstream filing **blocks the entire resynchronization** until upstream fixes it
+  and this repository repins. Nothing else in this run can land in the meantime.
+- The custody path has **direct precedent in this repository**.
+  `normalize-skill-frontmatter` is the identical shape: upstream keeps a form the
+  portable layout cannot take verbatim, and a versioned rule transforms it
+  deterministically, reproducible from the source bytes alone. The
+  `resolve-bundled-fleet-module-split` and `resolve-bundled-fleet-module-guarded`
+  pair is the same pattern applied to a different import problem. This is the third
+  instance of a shape the repository already runs twice.
+- `scripts/sync_vendor_source.py` is **not** in the cycle-16 mutation proof's graded
+  set (§2.8 lists the five, and it is not among them), so adding a rule there does
+  not retire that proof.
+
+**Rejected.** (a) **Hand-edit the byte copy** — the custody violation this whole
+arrangement exists to prevent, and the one U2's stop conditions name explicitly. A
+hand-edited copy also fails its own digest check. (b) **Drop the file from source,
+the way `scripts/fleet_commons_shim.py` is dropped** — it is a declared entrypoint
+in both `assessment.entrypoints` and `assessment.package_scripts`, so dropping it
+would silently shrink the package's capability surface. The shim was dropped because
+the bundle *replaces* it; nothing replaces this. (c) **File upstream and stop** —
+blocks the run for a defect that is not upstream's to carry, since upstream's
+resolution is correct for upstream's layout.
+
+**Revisit when** upstream adopts a layout-neutral package-root resolution — one that
+does not hard-code a single marker directory. At that point the transform can retire
+and the file can return to being a byte copy.
+
 ---
 
 ## 5. Dependency graph, concurrency, and the freeze
@@ -756,7 +829,7 @@ a disjoint region.
 | `README.md` *(repository root)* | **U3** | pin, version, file count, test counts, Packages-table row |
 | `tests/test_mission_control_readme.py` | **U3** | `MUTATING_VERBS`, `READ_ONLY_VERBS` |
 | `tests/test_mission_control_rule_audit.py` | **U3** | create-option no-write guard, manifest-version derivation test, root-README pin test |
-| `tests/test_sync_vendor_source.py` | **U4** | `MISSION_CONTROL_PIN`, the `source_version` assertion, `MISSION_CONTROL_SKILLS` confirmation |
+| `scripts/sync_vendor_source.py` | **U2** | adds the new package-root transform rule (KTD14, Amendment 1). Moved here from §6.3; see the note under that table |
 | `tests/test_check_compatibility_matrix.py` | **U5** | new mission-control matrix and readback binding classes |
 | `docs/evidence/2026-08-25-mission-control-compatibility-matrix.md` | **U5** | supersession directives only |
 | `docs/evidence/2026-08-25-mission-control-post-activation-readback.md` | **U5** | supersession directives only |
@@ -768,10 +841,11 @@ a disjoint region.
 
 | Path | Writers, in order | Disjoint regions |
 |---|---|---|
-| `ports/mission-control.json` | **U1**, then **U3** | U1 writes `custody.byte_copies`, `custody.dropped_from_source`, `provenance.notes`, `provenance.dropped_reason`. U3 writes **only** `assessment.mutating_operations`. The two units share no JSON key. |
-| `docs/engineering-journal/DECISIONS.md` | the plan commit, then **U1**, then **U3**, then **U5** | Append-only. The plan commit lands the run-level KTD entry before any unit starts; each unit then adds its own dated entry and edits no line another writer wrote. See KTD7. |
+| `ports/mission-control.json` | **U1**, then **U2**, then **U3** | U1 writes `custody.byte_copies`, `custody.dropped_from_source`, `provenance.notes`, `provenance.dropped_reason`. **U2 (added by Amendment 1) moves exactly one path** — `scripts/sync_template_docs.py` — out of `custody.byte_copies` and into `custody.entrypoint_transforms` with its rule name (KTD14); it writes nothing else in this file. U3 writes **only** `assessment.mutating_operations`. No two of the three share a JSON key. |
+| `tests/test_sync_vendor_source.py` | **U2**, then **U4** | **U2 (added by Amendment 1)** adds coverage for the new package-root transform rule only. **U4** updates `MISSION_CONTROL_PIN`, the `source_version` assertion, and the `MISSION_CONTROL_SKILLS` confirmation. The two edits touch different tests; U2 must not touch the three pin constants and U4 must not touch the rule coverage. |
+| `docs/engineering-journal/DECISIONS.md` | the plan commit (`1e4da2b`), then **U1** (`12c889c`), then the **Amendment 1** commit, then **U3**, then **U5** | Append-only, and strictly sequential in practice as well as in principle: no two of these writers were ever in flight at once. Each adds its own dated entry under a distinct anchor and edits no line another writer wrote. Amendment 1 appends after U1 because that is when the blocker surfaced. See KTD7. |
 
-**The rule for both.** A later writer that finds it must change an earlier
+**The rule for every multi-writer file above.** A later writer that finds it must change an earlier
 writer's region stops and reports. That is not a merge conflict to resolve; it is
 evidence that the earlier unit's decision was wrong, and the operator decides.
 
@@ -784,11 +858,22 @@ evidence that the earlier unit's decision was wrong, and the operator decides.
 | `scripts/check_compatibility_matrix.py` | graded |
 | `scripts/assess_clients.py` | graded |
 | `plugins/unifi/scripts/site_profile.py` | graded |
-| `scripts/sync_vendor_source.py` | not graded, but a resync that has to change its own synchronizer is a stop condition, not a unit |
 | `plugins/fleet-core/**`, `plugins/mission-control/scripts/_bundled/**`, `plugins/mission-control/fleet-bundle.json` | fleet-core is unchanged upstream; regenerating churns the UniFi bundles and invalidates UniFi's committed matrix |
 | anything under `../infiquetra-claude-plugins` | upstream is never edited by this work |
 | `docs/evidence/2026-08-25-cycle16-mutation-proof-portable-copies.txt` | a standing proof; superseding it is a separate, funded run |
 | `.github/workflows/ci.yml` | no new gate without a separate operator decision (#55, #56) |
+
+**One row moved out of this table by Amendment 1.** `scripts/sync_vendor_source.py`
+was listed here on the reasoning that "a resync that has to change its own
+synchronizer is a stop condition, not a unit." That reasoning held for a *content*
+repair. It does not hold for a **custody reclassification**: adding a versioned
+transform rule is the synchronizer doing its declared job, it is the mechanism the
+run contract names as the alternative to an upstream filing, and the file is not in
+the cycle-16 graded set. The path now sits in §6.1 under U2 (KTD14, §14). The
+original prohibition still stands for every other kind of edit to that file:
+changing how an existing rule matches, relaxing an "expected exactly one"
+assertion, or repairing copied content through the synchronizer remains a stop
+condition.
 
 ---
 
@@ -1055,14 +1140,47 @@ left unsettled — stop and say so.
      are equal.
 5. Positive proof that fleet-core was not touched (R20).
 
+6. **Reclassify `scripts/sync_template_docs.py` and add its transform rule
+   (KTD14, R40, R41 — added by Amendment 1, which postdates the accepted document
+   review).** Upstream 2.15.2 made this carried byte copy unimportable in the
+   portable layout: `_find_package_root()` at line 17 walks up for
+   `.claude-plugin/plugin.json` and raises at line 22, and it is called at module
+   scope on line 27, but the portable package has no `.claude-plugin/` — the Claude
+   manifest is relocated to `com.infiquetra.claude/plugin.json`. Move the path from
+   `custody.byte_copies` to `custody.entrypoint_transforms` and author a **new
+   versioned rule** that resolves the package root through the portable marker
+   instead. The rule keeps the family's discipline: one named version, an
+   "expected exactly one" match, deterministic output reproducible from the upstream
+   bytes alone. Model it on `normalize-skill-frontmatter`, which is the identical
+   shape. **This plan does not author the rule; the worker does.**
+
+   Ordering note: this reclassification is a descriptor edit, so it lands **before**
+   the synchronization run in the same unit — a sync run against the old
+   classification would re-copy the unimportable bytes.
+
 **Files owned.** Everything the sync tool writes under `plugins/mission-control/`
 — `PROVENANCE.json`, `CHANGELOG.md`, `config/sdlc-schema.json`,
 `scripts/sdlc_manager.py`, `scripts/sync_template_docs.py`, the four changed
 `SKILL.md` files, the two `skills/board/references/*.md` files, the five files under
 `com.infiquetra.claude/`, and the eleven modified plus seven new files under
-`tests/`. **U2 writes nothing outside the package root**, and inside it, nothing
-target-owned: `README.md`, `plugin.json`, `fleet-bundle.json`, and
-`scripts/_bundled/` are authored here and the tool never writes them.
+`tests/`. Inside the package root U2 writes nothing target-owned: `README.md`,
+`plugin.json`, `fleet-bundle.json`, and `scripts/_bundled/` are authored here and
+the tool never writes them.
+
+**Three files outside the package root, added by Amendment 1 (KTD14, §14).** The
+original wording said "U2 writes nothing outside the package root." That is no
+longer true, and the exceptions are named rather than implied:
+
+- `scripts/sync_vendor_source.py` — **sole writer.** Adds the new package-root
+  transform rule. This path moved out of §6.3's do-not-write table; the prohibition
+  on every *other* kind of edit to that file still stands (§6.3 note).
+- `ports/mission-control.json` — **second of three sequenced writers** (U1, then U2,
+  then U3). U2 moves exactly one path, `scripts/sync_template_docs.py`, from
+  `custody.byte_copies` into `custody.entrypoint_transforms` with its rule name, and
+  writes nothing else in the file.
+- `tests/test_sync_vendor_source.py` — **first of two sequenced writers** (U2, then
+  U4). U2 adds coverage for the new rule only, and **must not touch** the three pin
+  constants U4 owns.
 
 **Test scenarios.** `Test expectation: none authored by this unit.` The seven new
 upstream test files arrive as byte copies and are never edited here; editing a
@@ -1074,6 +1192,15 @@ Scenarios exercised by existing tests:
 pass on the floor interpreter after the sync.
 `tests/test_sync_vendor_source.py` — expected **red** on exactly the three named
 pin constants, repaired by U4; any other failure in that file is a stop.
+
+**Added by Amendment 1 (KTD14).** `tests/test_sync_vendor_source.py` — coverage for
+the new package-root transform rule: the rule matches exactly once against the
+upstream bytes at the pin, its output resolves the package root through
+`com.infiquetra.claude/plugin.json`, and re-running the transform on the same input
+produces byte-identical output. Prove the rule can fail: feed it bytes it should not
+match and confirm it refuses rather than falling through. The rule's real-world
+proof is that `plugins/mission-control/scripts/sync_template_docs.py` imports
+without `RuntimeError` and the two package-suite collection errors clear.
 
 **Verification.**
 
@@ -1130,7 +1257,9 @@ pin failures deferred to U4.
 | A byte copy's post-sync digest does not equal its source digest | Stop. |
 | A carried test cannot pass without a content change | Stop. Upstream filing or recorded custody decision — **never** an edit to a byte copy. Editing a byte copy to make the suite pass is the exact violation this whole arrangement exists to prevent. |
 | The file count is not 71 | Stop. Either a custody class is wrong or the exclusion did not take. |
-| A suite failure other than the three known `test_sync_vendor_source` pin constants | Stop and triage before committing. |
+| A suite failure other than the three known `test_sync_vendor_source` pin constants, and other than the six failures KTD14 attributes to the `sync_template_docs.py` package-root blocker | Stop and triage before committing. |
+| The new package-root rule needs a second match shape, or an "expected exactly one" assertion loosened to make it fit | Stop. A transform rule that accepts two shapes stops proving what it exists to prove — the same stop condition that governs the existing four rules. |
+| The reclassification appears to need a change to `scripts/port_config.py` | Stop and escalate. It is graded. Moving a path between two custody arrays that already exist needs no schema change (KTD3's reasoning applies unchanged). |
 
 **Predeclared review dimensions.** Derived-artifact integrity (does every byte copy
 equal its source?); transform-rule soundness (did any rule get widened?); custody
@@ -1815,6 +1944,11 @@ custody and acceptance are decided per path and per command, never by a count.
 · **Bound revision.** `1e4da2be8dd2d1256f1e61765629ecf6a0571de9` · **Verdict.**
 BLOCK · **Cycle.** 1 · **Findings.** P0: 0 · P1: 1 · P2: 0 · P3: 1.
 
+**Outcome.** Both findings were repaired and the review returned **PROCEED** at
+revision `82dcb1c`. That is the last revision of this plan the document review
+examined. **Section 14 below was added afterwards and is outside that review's
+scope** — a reader must not treat the PROCEED verdict as covering it.
+
 Both findings are repaired in this revision. The operator's standing rule is that
 every finding is repaired, not only P0 and P1.
 
@@ -1868,3 +2002,71 @@ the pinned upstream before being committed under this plan's name:
 | The descriptor's "twenty-one upstream test files" claim corrected to twenty-eight | `git -C ../infiquetra-claude-plugins ls-tree -r --name-only 3b2b7083 plugins/mission-control/tests/` counts 30 `.py` files; two are dropped by custody, leaving 28 byte copies |
 | R12 widened from three surviving line-number claims to four, and the U1 `grep` extended to match | follows from the `_open_mapping_pr` row above |
 | U0's Phase 3 skip row split so the mutation-proof re-run is explicitly skipped | consistent with §2.8 and KTD11; the five graded files are untouched by this run |
+
+
+---
+
+## 14. Amendment 1 — the `sync_template_docs.py` package-root blocker (post-review)
+
+**Status: this section postdates the accepted Document Review.** The review
+examined revision `82dcb1c` and returned PROCEED. Everything in this section, and
+the changes it points at elsewhere in the plan, were written after that verdict and
+were **not covered by it**. A later reviewer should treat Amendment 1 as unreviewed
+material.
+
+**What it is.** A coordinator decision taken under the run contract's *recorded
+custody decision* clause. Section 2.7 names two legitimate resolutions when a
+carried file cannot work unchanged in the portable layout — an upstream filing, or a
+recorded custody decision. The coordinator chose the second and directed that it be
+recorded in the plan before any worker implements it. This planner recorded the
+decision; it did not make it, and it has not written the transform rule.
+
+**When it surfaced.** During U2, after U0 and U1 had landed (`12c889c`). The
+accepted plan did not anticipate it: the plan's own §1.3 asserted that all four
+transform premises held at the new pin and that the seventeen changed byte copies
+would regenerate cleanly. That assertion was true of the four *existing* rules. It
+was silent about a byte copy that upstream had made unimportable, because nothing in
+the pre-run analysis imported the carried files.
+
+**What changed in this plan.**
+
+| Change | Where |
+|---|---|
+| The custody decision, with its rejected alternatives and revisit condition | **KTD14** |
+| Two new verifiable requirements for the reclassification and its determinism | **R40**, **R41** |
+| A sixth U2 deliverable, its test scenarios, and three new U2 stop conditions | **U2** |
+| `ports/mission-control.json` gains a third sequenced writer: U1, then **U2**, then U3 | **§6.2** |
+| `tests/test_sync_vendor_source.py` becomes a two-writer file: **U2**, then U4 | **§6.2** (moved out of §6.1) |
+| `scripts/sync_vendor_source.py` becomes a U2-owned file | **§6.1** (moved out of §6.3, with the reason recorded there) |
+
+**What did not change.** The pin. The four operator rulings. The dependency graph
+`U0 → U1 → U2 → {U3, U4} → freeze → U5`. The two-worker cap and the U4-then-U3
+landing order (KTD10). The freeze point after U3. The five graded files, all still
+untouched — `scripts/sync_vendor_source.py` is not among them, which is why this
+path is open at all. No child issue was edited. No unit was added or removed.
+
+### 14.1 One observation this amendment does not resolve
+
+While reproducing the blocker, one further repository-suite failure appeared that is
+**not** caused by it and is **not** part of the coordinator's decision:
+
+```
+FAIL: test_check_compatibility_matrix.LiveDocumentTest
+      .test_the_no_argument_run_validates_every_committed_matrix
+```
+
+`scripts/check_compatibility_matrix.py` with no arguments validates **every**
+committed matrix document, and the committed mission-control matrix records the old
+fingerprint — 64 files, tree `651ac28a…` — which the resynchronized package no
+longer matches. So the retirement this plan predicted (§1.2, risk 3) does surface in
+the suite after all, one gate earlier than the plan expected.
+
+This corrects a claim made earlier in this plan's reasoning: the plan assumed the
+mission-control matrix was bound by nothing and that the gates would stay green
+between U2 and U5. The binding is indirect — through UniFi's `LiveDocumentTest`
+calling the no-argument entrypoint — but it is real.
+
+**It is recorded here, not repaired here.** The failure is U5's subject matter
+(supersession and re-binding), it does not change any custody decision, and
+resolving it is a separate coordinator call. Open question **Q5** should be read with
+this in mind: the evidence was already more bound than that question assumed.
