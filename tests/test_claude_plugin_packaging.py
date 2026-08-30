@@ -320,8 +320,8 @@ class MarketplaceEntryTests(unittest.TestCase):
         )
         self.assertEqual(
             list(sites.values())[0],
-            "0.3.0",
-            f"version must be 0.3.0, got {sites}",
+            "0.4.0",
+            f"version must be 0.4.0, got {sites}",
         )
 
 

@@ -65,7 +65,7 @@ class MCPProtocolTests(unittest.TestCase):
         self.assertEqual(result["protocolVersion"], "2024-11-05")
         self.assertIn("tools", result["capabilities"])
         self.assertEqual(result["serverInfo"]["name"], "auralis-voice")
-        self.assertEqual(result["serverInfo"]["version"], "0.3.0")
+        self.assertEqual(result["serverInfo"]["version"], "0.4.0")
 
     def test_initialize_falls_back_to_newest_version_when_unsupported(self) -> None:
         raw_req = json.dumps({
