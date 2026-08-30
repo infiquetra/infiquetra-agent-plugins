@@ -257,6 +257,72 @@ not hard-code a single marker directory. The transform can then retire and the f
 can return to being a byte copy.
 
 
+### Mission Control 2.15.2 resync: an inherited gate is met at a unit's completion, and three units complete in two commits
+
+**Author.** Claude for Jeff Cox (Amendment 2 to the issue #50 run plan, repairing
+doc-review cycle 3, branch `orch-agent-plugins-50`)
+
+**Decision.** Two things, recorded together because the second only makes sense given
+the first.
+
+First, **ownership follows the issue, not convenience**: the `sync_template_docs.py`
+custody work is split across the units that already own each file — the descriptor
+reclassification to U1 (#52), the transform rule to U2 (#53), the rule's coverage to
+U4 (#55). Amendment 1 had given all three to U2, which contradicted #53's own
+out-of-scope section ("No edit to `ports/mission-control.json`"; "No downstream test
+edits"). U1 has already landed and been accepted, so its share is a second commit
+against the same unit rather than a rewrite of the first.
+
+Second, **an inherited acceptance criterion is met at the unit's completion, not at
+every intermediate commit**, and U1, U3, and U4 each complete in two commits so that
+every unit's completion lands on a genuinely green tree. The landing sequence becomes
+`U1a → U1b → U2 → U4a → U3a → freeze → U5 → U3b → U4b`.
+
+**Rationale.** After the resynchronization, `python3 -m unittest discover -s tests` is
+red on exactly two things: three pin constants in `tests/test_sync_vendor_source.py`,
+owned by U4, and
+`test_check_compatibility_matrix.LiveDocumentTest.test_the_no_argument_run_validates_every_committed_matrix`,
+owned by U5. Three sibling issues — #54, #55, #56 — each require that command to report
+`OK`, and each is blocked by the other's uncleared red. U4 needs U5's evidence re-bind;
+U5 needs U4's pin fix *and* a final package, which does not exist until U3's
+package-root edits land; U3 needs both.
+
+The cycle is verified in code, not inferred. `check_package_binding` compares the
+recorded `file_count` **and** `tree_sha256` against the live package, so any byte change
+inside `plugins/mission-control/` invalidates a `matrix-status: current` document. And
+`check_document_status` accepts a superseded stamp only when the named successor already
+exists and is itself current, so a stale matrix cannot be retired before a fresh one is
+published. No ordering of six single-commit units satisfies all three gates.
+
+Splitting three units into two commits each costs nothing and narrows nothing. None of
+the three issues says its gate must hold at every commit on the way to completion; each
+says the command reports `OK`, and at each unit's final commit it does — with no
+expected-red list, no moved checkpoint, and no weakened assertion. The deferred halves
+are real deliverables, not bookkeeping: U3b carries the root README's counts, which can
+only be finally correct once every unit has landed, and U4b carries the roster and
+continuous-integration confirmations. Both are outside the package root, so neither
+disturbs the freeze or invalidates the single ten-client assessment.
+
+**Rejected alternatives.** *Naming `LiveDocumentTest` as an expected red in U3's and
+U4's gates*, the way U2 names its pin constants — that is the narrowing an earlier
+review finding already rejected, and #53 is the only child issue whose criteria permit
+an expected-red list. *Moving the freeze before U3* — forbidden by #50's own text.
+*Moving U3's package-root edits into U2* — contradicts #53's out-of-scope. *Running the
+ten-client assessment twice, supersede-and-re-run* — legitimate under this repository's
+evidence loop, and the agent-launcher port did exactly that when a repair moved its
+tree, but a second operator-attended ten-client run is a real cost paid to avoid a
+commit split that costs nothing; it stays the fallback if the split proves unworkable.
+*Planting a dummy `.claude-plugin/` directory* so upstream's walk finds a marker — it
+reintroduces the directory the port exists to relocate, makes a byte copy's behaviour
+depend on a sibling file rather than its own bytes, inflates the fingerprint every piece
+of evidence binds, and still fails for anyone who installs the documented layout without
+it.
+
+**Revisit when** a resynchronization has no target-owned edits inside the package root.
+Then the freeze can follow the sync directly, the assessment has a final tree
+immediately, and every unit can complete in one commit.
+
+
 ## 2026-08-27
 
 ### Auralis C3 adapter packaging: voice 0.3.0, mcpServers path into client extension, and acceptance evidence note
