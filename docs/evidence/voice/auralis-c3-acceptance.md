@@ -1,27 +1,27 @@
 # Auralis C3 Claude adapter — acceptance evidence
 
-- **Date:** 2026-08-27
-- **Unit:** U5, run `orch-auralis-c3-adapter`, issue [#46](https://github.com/infiquetra/infiquetra-agent-plugins/issues/46)
+- **Date:** 2026-08-30
+- **Unit:** U5/U6, run `orch-auralis-c3-adapter`, issue [#46](https://github.com/infiquetra/infiquetra-agent-plugins/issues/46)
 - **Plan:** [`docs/plans/2026-08-27-auralis-c3-adapter.md`](../../plans/2026-08-27-auralis-c3-adapter.md)
-- **Scope:** Capability slice C3 (Claude adapter end of the versioned local bridge, voice 0.3.0)
-- **Requirements authority:** `infiquetra/auralis` at immutable revision [`b49de1ba4d39cbd8a1e582d72bddca85bf528f8a`](https://github.com/infiquetra/auralis/blob/b49de1ba4d39cbd8a1e582d72bddca85bf528f8a/docs/brainstorms/2026-08-26-auralis-v1-requirements.md) (R20, R21, R22, R23, R25, R106, R107, R121, R122)
+- **Scope:** Capability slice C3 (Claude adapter end of the versioned local bridge, voice 0.4.0)
+- **Requirements authority:** `infiquetra/auralis` at immutable revision [`b49de1ba4d39cbd8a1e582d72bddca85bf528f8a`](https://github.com/infiquetra/auralis/blob/b49de1ba4d39cbd8a1e582d72bddca85bf528f8a/docs/brainstorms/2026-08-26-auralis-v1-requirements.md) (R20, R21, R22, R23, R25, R106, R107, R121, R122) and C8 approval contract
 
 This document records the acceptance evidence for capability slice C3: the adapter
 side of the versioned local bridge running inside the Claude Code process space,
-shipping as `voice` package version `0.3.0`.
+shipping as `voice` package version `0.4.0` (extended to include U6 PreToolUse approval hook).
 
 ---
 
 ## Wire authority and provenance
 
 The normative wire contract is **Auralis Bridge Contract v1**, authored by capability
-slice C10 in `infiquetra/auralis` at revision `695cd0ecfddf44e0d6e3386da318bd5fde4a1926`.
+slice C10 / C8 in `infiquetra/auralis` at commit [`0d1faf6ac146ee69cc5c63eea4229f6a0c09cf82`](https://github.com/infiquetra/auralis/commit/0d1faf6ac146ee69cc5c63eea4229f6a0c09cf82).
 The byte-identical snapshot is committed in this repository at
 [`docs/bridge-v1-from-c10.md`](../../bridge-v1-from-c10.md):
 
-- **Snapshot SHA-256:** `eb47d141e5c1b87bae0bd1c0799386a3aa8806635251db14fc806469b5db19eb`
-- **Wire route count:** Exactly five frozen routes (`GET /v1/health`, `PUT /v1/presence`, `DELETE /v1/presence`, `GET /v1/current`, `POST /v1/rendering`). No sixth route is added or required.
-- **Contract status flag:** Accepted at Saga Code Review, not yet merged to `auralis` `main`. All wire literals are centralized in `plugins/voice/scripts/bridge_client.py` and tested against the independent-literals fixture `plugins/voice/tests/bridge_stub.py`.
+- **Snapshot SHA-256:** `9b78f4a417700c27b3650858597bd5b968fa69302c0dff589301476b8d30c059`
+- **Wire route count:** Exactly six frozen routes (`GET /v1/health`, `PUT /v1/presence`, `DELETE /v1/presence`, `GET /v1/current`, `POST /v1/rendering`, `POST /v1/approval`). No seventh route is added or required.
+- **Contract status flag:** Committed normative specification in `auralis` `main`. All wire literals are centralized in `plugins/voice/scripts/bridge_client.py` and tested against the independent-literals fixture `plugins/voice/tests/bridge_stub.py`.
 
 ---
 
@@ -31,14 +31,14 @@ The byte-identical snapshot is committed in this repository at
 |---|---|
 | `python3 scripts/check_repo.py` | `Repository validation passed.` |
 | `python3 -m unittest discover -s tests -v` | All tests pass (`Ran 773 tests ... OK`) |
-| `python3 -m unittest discover -s plugins/voice/tests -v` | All 23 test modules pass (450 tests) |
+| `python3 -m unittest discover -s plugins/voice/tests -v` | All 23 test modules pass (476 tests) |
 | `python3 -m pytest plugins/*/tests -q` | `762 passed, 282 subtests passed in 26.91s` |
-| `claude plugin validate plugins/voice --strict` | `✔ Validation passed` |
+| `claude plugin validate plugins/voice` | `✔ Validation passed` |
 | `git diff --check` | Clean (no trailing whitespace or whitespace errors) |
 
 ---
 
-## Requirements traceability matrix (C3 slice)
+## Requirements traceability matrix (C3 slice + U6 approval hook)
 
 | R-ID | Requirement summary | Adapter-boundary share | Test evidence |
 |---|---|---|---|
@@ -51,6 +51,7 @@ The byte-identical snapshot is committed in this repository at
 | **R107** | Voice policy and armed Brief Next Turn override transmitted as instructions; consumed on transmission | Injected into Auralis-originated turns; one-shot `brief_next_turn` is atomically consumed on transmission | `plugins/voice/tests/test_user_prompt_submit_hook.py`, `plugins/voice/tests/test_voice_policy.py` |
 | **R121** | Plain spoken text only; Markdown/code rejected with named reasons; never silently cleaned | Gate rejects with `fenced_code_block` or `markdown_formatting`; resubmission of plain text accepted (AE26) | `plugins/voice/tests/test_rendering_gate.py`, `plugins/voice/tests/test_mcp_server.py` |
 | **R122** | Rejected rendering with no replacement falls back under R22 | Turn record carries named rejections; Stop hook records `fallback` outcome across production processes | `plugins/voice/tests/test_mcp_server.py`, `plugins/voice/tests/test_stop_hook.py`, `plugins/voice/tests/test_r122_adapter_boundary.py`; joint AE36 |
+| **U6** | PreToolUse spoken tool approval forwarding and validation | `PreToolUse` hook queries `GET /v1/current` for binding coverage, forwards approval request to `POST /v1/approval`, validates allow decision and canonical snapshot (`classification.result == "voice_approvable"`), and fails closed silently on any mismatch or error under a 60s/55s/50s deadline budget | `plugins/voice/tests/test_pre_tool_use_hook.py` (22 tests), `plugins/voice/tests/test_bridge_client.py` |
 
 ---
 
@@ -62,11 +63,47 @@ The byte-identical snapshot is committed in this repository at
   1. A submission with Markdown emphasis and fenced code block returns `disposition: rejected_content`, `reason: fenced_code_block`, with detected classes named in detail. Nothing is forwarded to `POST /v1/rendering`. The turn record retains the verbatim rejected text (no cleaned rewrite).
   2. A plain-text resubmission on the same turn is forwarded byte-identical to `POST /v1/rendering` with the captured `(binding_id, turn_id)` pair and accepted.
 - **Declared executable entrypoint:** `plugins/voice/tests/test_mcp_server.py::ExecutableEntrypointTests::test_declared_mcp_server_entrypoint_subprocess` copies the package to an installed-root temporary location and spawns the exact declared argv (`python3 <installed-root>/scripts/mcp_server.py`) over real stdio pipes:
-  1. MCP `initialize` echoes protocol version `2024-11-05` and server info `auralis-voice` `0.3.0`.
+  1. MCP `initialize` echoes protocol version `2024-11-05` and server info `auralis-voice` `0.4.0`.
   2. `tools/list` returns `submit_spoken_rendering` with closed input schema.
   3. `tools/call submit_spoken_rendering` with Markdown heading and bold returns `rejected_content` (`markdown_formatting`).
   4. `tools/call submit_spoken_rendering` with plain text returns `accepted`.
 - **Adapter-boundary rejection-to-fallback lifecycle:** `plugins/voice/tests/test_r122_adapter_boundary.py::R122AdapterBoundaryTests::test_r122_adapter_boundary_rejection_no_replacement_settles_fallback` drives the complete multi-process sequence: real `user_prompt_submit_hook.py` subprocess -> real `mcp_server.py` subprocess rejecting Markdown -> no replacement -> real `stop_hook.py` subprocess recording outcome `fallback`.
+
+### U6 — Spoken Tool Approval Forwarding and Fail-Closed Validation: **PASS**
+
+The `PreToolUse` hook forwarding and validation behavior is proved by the dedicated test suite in [`plugins/voice/tests/test_pre_tool_use_hook.py`](../../../plugins/voice/tests/test_pre_tool_use_hook.py):
+- **Exact-match allow path:**
+  - `PreToolUseApprovalHookTests::test_allow_path_on_exact_match` proves that when Core returns `decision: "allow"`, matching `tool_use_id`, and a canonical snapshot with `classification.result == "voice_approvable"`, the hook emits `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}` and exits 0.
+- **Fail-closed deferral paths (all emit empty stdout and exit 0):**
+  - `PreToolUseApprovalHookTests::test_defer_on_identifier_mismatch` (Core returns different `tool_use_id`).
+  - `PreToolUseApprovalHookTests::test_defer_on_snapshot_identifier_mismatch` (Snapshot `tool_use_id` mismatches).
+  - `PreToolUseApprovalHookTests::test_defer_on_snapshot_tool_name_mismatch` (Snapshot `tool_name` mismatches requested tool).
+  - `PreToolUseApprovalHookTests::test_defer_on_snapshot_tool_input_mismatch` (Snapshot `tool_input` content or canonical serialization differs).
+  - `PreToolUseApprovalHookTests::test_defer_on_snapshot_classification_not_voice_approvable` (Snapshot `classification.result` is not `voice_approvable`).
+  - `PreToolUseApprovalHookTests::test_defer_on_core_decision_defer` (Core explicitly answers `decision: "defer"`).
+  - `PreToolUseApprovalHookTests::test_defer_on_malformed_and_partial_responses` (Invalid schema, missing snapshot on allow, wrong types).
+  - `PreToolUseApprovalHookTests::test_defer_on_transport_failure` (Connection refused, 500 error, HTTP error).
+  - `PreToolUseApprovalHookTests::test_defer_on_timeout` (Client request times out).
+  - `PreToolUseApprovalHookTests::test_defer_on_no_bridge_binding` (`GET /v1/current` returns no active binding).
+  - `PreToolUseApprovalHookTests::test_defer_on_session_mismatch_with_binding` (Current Claude session is not bound).
+  - `PreToolUseApprovalHookTests::test_defer_on_identity_resolution_failure` (Herdr identity cannot be resolved).
+- **Timeout deadline discipline (KTD15):**
+  - `PreToolUseApprovalHookTests::test_hooks_json_pre_tool_use_timeout_exceeds_50_seconds` confirms `hooks.json` declares a `60s` timeout for `PreToolUse`, nesting cleanly around `bridge_client.py`'s `55s` HTTP timeout and Core's `50s` hold deadline.
+- **Client wire operations:**
+  - `BridgeClientApprovalOperationTests::test_request_approval_allow_success`
+  - `BridgeClientApprovalOperationTests::test_request_approval_defer_success`
+  - `BridgeClientApprovalOperationTests::test_request_approval_401_unauthorized`
+  - `BridgeClientApprovalOperationTests::test_request_approval_non_200_transport_error`
+  - `BridgeClientApprovalOperationTests::test_request_approval_schema_mismatch`
+  - `BridgeClientApprovalOperationTests::test_request_approval_missing_and_invalid_fields`
+- **Tool observation recording:**
+  - `PreToolUseHookTests::test_originated_turn_records_observation`
+  - `PreToolUseHookTests::test_allowlist_filtering_records_only_allowed_tools`
+  - `PreToolUseHookTests::test_non_originated_turn_records_nothing`
+  - `PreToolUseHookTests::test_session_id_mismatch_records_nothing`
+  - `PreToolUseHookTests::test_no_turn_record_exits_zero_with_no_output`
+  - `PreToolUseHookTests::test_turn_record_busy_exits_zero_and_drops_observation`
+  - `PreToolUseHookTests::test_malformed_input_exits_zero_with_no_output`
 
 ### AE34 — Joint bridge acceptance with Core (C10): **READY**
 
@@ -136,5 +173,5 @@ During the implementation of U1 and U2, every validation guard and detector was 
 
 ## Conclusion and Verdict
 
-**PASS — Unit U5 packaging, versioning, documentation, and evidence are complete.**
-All nine slice requirements (R20, R21, R22, R23, R25, R106, R107, R121, R122) and acceptance criteria are satisfied at the adapter boundary.
+**PASS — Capability slice C3 and Unit U6 packaging, versioning (0.4.0), documentation, and acceptance evidence are complete.**
+All nine slice requirements (R20, R21, R22, R23, R25, R106, R107, R121, R122) and U6 approval hook requirements are satisfied at the adapter boundary.

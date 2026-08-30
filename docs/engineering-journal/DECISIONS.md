@@ -1,5 +1,43 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-08-30
+
+### Auralis bridge v1 contract snapshot refresh and voice 0.4.0 approval-hook release
+
+**Author.** Claude for Jeff Cox (Auralis C3 adapter completion & U6 approval hook, branch
+`orch/auralis-c3-adapter-build-c3-u6-approval-hook`)
+
+**Decision.**
+1. Refreshed [`docs/bridge-v1-from-c10.md`](../bridge-v1-from-c10.md) to a byte-identical
+tracked snapshot of `docs/bridge/bridge-v1.md` on `infiquetra/auralis` `main` at commit
+`0d1faf6ac146ee69cc5c63eea4229f6a0c09cf82` (SHA-256
+`9b78f4a417700c27b3650858597bd5b968fa69302c0dff589301476b8d30c059`), incorporating the
+6th route (`POST /v1/approval`), closed 9-key request validation, allow/defer response schemas,
+60s/55s/50s nested timeout discipline (KTD15), and `applyConfirmedForBinding()`.
+2. Bumped the voice plugin version from `0.3.0` to `0.4.0` across all four declaration sites
+(`plugins/voice/.claude-plugin/plugin.json`, `plugins/voice/plugin.json`,
+`plugins/voice/com.infiquetra.claude/plugin.json`, `.claude-plugin/marketplace.json`) and locked
+by `tests/test_claude_plugin_packaging.py`.
+3. Documented `PreToolUse` tool approval forwarding and validation in `plugins/voice/README.md`
+and captured acceptance evidence across all 22 U6 approval test cases in
+[`docs/evidence/voice/auralis-c3-acceptance.md`](../evidence/voice/auralis-c3-acceptance.md).
+
+**Rationale.** Unit U6 introduces spoken tool approval routing into the Claude Code adapter —
+a functional capability addition beyond the initial 0.3.0 bridge baseline. Tracking the
+normative Auralis contract hash and synchronizing all four version sites guarantees release
+integrity and prevents package cache staleness in Claude Code plugins.
+
+**Rejected alternatives.** Leaving the contract snapshot at 5 routes (diverges from
+production Core); bumping version selectively (violates 4-site agreement invariant);
+omitting fail-closed deferral on transport errors (risks unapproved execution).
+
+**Revisit when.** Auralis bridge contract v2 introduces protocol schema changes or changes
+approval route shape.
+
+**Refs.** [`docs/bridge-v1-from-c10.md`](../bridge-v1-from-c10.md),
+[`docs/evidence/voice/auralis-c3-acceptance.md`](../evidence/voice/auralis-c3-acceptance.md),
+`plugins/voice/tests/test_pre_tool_use_hook.py`, `tests/test_claude_plugin_packaging.py`.
+
 ## 2026-08-27
 
 ### Auralis C3 adapter packaging: voice 0.3.0, mcpServers path into client extension, and acceptance evidence note
