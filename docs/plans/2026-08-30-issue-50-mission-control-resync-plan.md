@@ -692,6 +692,19 @@ root through the portable layout's own marker, `com.infiquetra.claude/plugin.jso
 instead of `.claude-plugin/plugin.json`. The rule is written by a worker in U2; this
 plan does not author it.
 
+**Match unit (so "exactly one" is not a judgment call).** The rule matches the
+single `_find_package_root` definition (pin lines 17–25) together with the single
+module-scope `PACKAGE_ROOT = _find_package_root()` call (line 27). The two
+`.claude-plugin` sites inside that function — the Path check
+`parent / ".claude-plugin" / "plugin.json"` at line 20 and the error text at
+line 23 — are internals of that one function, not two rule matches. A literal
+search for the concatenated string `.claude-plugin/plugin.json` hits only the
+error text (one occurrence at the pin) and leaves the Path check looking for
+`.claude-plugin`, so the import still fails. Already-portable input (the marker
+already `com.infiquetra.claude`) is a no-op, the same idempotence
+`normalize-skill-frontmatter` gives a file with no `when_to_use`. Refuse if the
+function is missing, duplicated, or the module-scope call is absent.
+
 **Why this path and not an upstream filing.** The run contract names **both**
 "upstream filing" and "a recorded custody decision" as legitimate resolutions when a
 carried file cannot work unchanged in the portable layout (§2.7). Between them:
@@ -841,7 +854,7 @@ a disjoint region.
 
 | Path | Writers, in order | Disjoint regions |
 |---|---|---|
-| `ports/mission-control.json` | **U1**, then **U2**, then **U3** | U1 writes `custody.byte_copies`, `custody.dropped_from_source`, `provenance.notes`, `provenance.dropped_reason`. **U2 (added by Amendment 1) moves exactly one path** — `scripts/sync_template_docs.py` — out of `custody.byte_copies` and into `custody.entrypoint_transforms` with its rule name (KTD14); it writes nothing else in this file. U3 writes **only** `assessment.mutating_operations`. No two of the three share a JSON key. |
+| `ports/mission-control.json` | **U1**, then **U2**, then **U3** | U1 writes `custody.byte_copies`, `custody.dropped_from_source`, `provenance.notes`, `provenance.dropped_reason`. **U2 (added by Amendment 1) moves exactly one path** — `scripts/sync_template_docs.py` — out of `custody.byte_copies` and into `custody.entrypoint_transforms` with its rule name (KTD14); it writes nothing else in this file. U3 writes **only** `assessment.mutating_operations`. U1 and U2 share the `custody.byte_copies` key but write disjoint members (U1 appends the seven new tests; U2 removes only `scripts/sync_template_docs.py`). U3's key is disjoint from both. |
 | `tests/test_sync_vendor_source.py` | **U2**, then **U4** | **U2 (added by Amendment 1)** adds coverage for the new package-root transform rule only. **U4** updates `MISSION_CONTROL_PIN`, the `source_version` assertion, and the `MISSION_CONTROL_SKILLS` confirmation. The two edits touch different tests; U2 must not touch the three pin constants and U4 must not touch the rule coverage. |
 | `docs/engineering-journal/DECISIONS.md` | the plan commit (`1e4da2b`), then **U1** (`12c889c`), then the **Amendment 1** commit, then **U3**, then **U5** | Append-only, and strictly sequential in practice as well as in principle: no two of these writers were ever in flight at once. Each adds its own dated entry under a distinct anchor and edits no line another writer wrote. Amendment 1 appends after U1 because that is when the blocker surfaced. See KTD7. |
 
@@ -1152,7 +1165,9 @@ left unsettled — stop and say so.
    instead. The rule keeps the family's discipline: one named version, an
    "expected exactly one" match, deterministic output reproducible from the upstream
    bytes alone. Model it on `normalize-skill-frontmatter`, which is the identical
-   shape. **This plan does not author the rule; the worker does.**
+   shape. The match unit is the one `_find_package_root` definition plus the one
+   module-scope call (KTD14); the two `.claude-plugin` sites inside the function
+   are not two matches. **This plan does not author the rule; the worker does.**
 
    Ordering note: this reclassification is a descriptor edit, so it lands **before**
    the synchronization run in the same unit — a sync run against the old
@@ -1182,10 +1197,11 @@ longer true, and the exceptions are named rather than implied:
   U4). U2 adds coverage for the new rule only, and **must not touch** the three pin
   constants U4 owns.
 
-**Test scenarios.** `Test expectation: none authored by this unit.` The seven new
-upstream test files arrive as byte copies and are never edited here; editing a
-byte copy to make it pass is the custody violation this arrangement exists to
-prevent.
+**Test scenarios.** The seven new upstream test files arrive as byte copies and
+are never edited here; editing a byte copy to make it pass is the custody
+violation this arrangement exists to prevent. This unit authors no package-test
+content. Rule-coverage tests in `tests/test_sync_vendor_source.py` are the
+Amendment 1 exception below, and they must not touch the three pin constants.
 
 Scenarios exercised by existing tests:
 `plugins/mission-control/tests/` — all 21 existing files plus the 7 new ones must
@@ -1229,7 +1245,7 @@ git diff --name-only <base>..HEAD -- plugins/fleet-core \
 # Gates, including the floor interpreter
 python3 scripts/check_repo.py
 python3 -m unittest discover -s tests
-# expect: FAIL only on the three MISSION_CONTROL_PIN / source_version assertions; do not edit that file
+# expect: the three MISSION_CONTROL_PIN / source_version assertions red; do not edit those constants
 python3 -m pytest plugins/mission-control/tests -q
 "$FLOOR_PY" -m pytest plugins/mission-control/tests -q
 git diff --check
@@ -1240,7 +1256,8 @@ exactly the three `test_sync_vendor_source.py` pin constants, which are hardcode
 **on purpose** — that file's own comment says moving the pin "is a deliberate act
 that has to change a test, not a silent drift." Repairing them is **U4's**
 deliverable, not U2's. U2 records the expected failures by name in its commit body
-and does not touch that file. Any *other* failure is a stop condition.
+and does not touch the three pin constants. Any *other* failure is a stop
+condition.
 
 **Commit shape.**
 `feat(mission-control): resynchronize the portable package from upstream 3b2b7083`
