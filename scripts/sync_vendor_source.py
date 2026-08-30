@@ -35,10 +35,13 @@ Three classifications, and every path in the derived tree is exactly one of them
   `resolve-bundled-fleet-module-split` matches a module-scope import block
   whose load call sits elsewhere in the file; and
   `resolve-bundled-fleet-module-guarded` matches a function-scope, if-guarded
-  block that returns the loaded module. `normalize-skill-frontmatter` folds a
+  block that returns the loaded module.   `normalize-skill-frontmatter` folds a
   `when_to_use` frontmatter key under the permitted `metadata` key,
   deterministically and idempotently, so a skill the open Agent Skills
   specification does not permit upstream still passes the repository gate here.
+  `resolve-package-root-marker` re-anchors a module-scope package-root finder
+  from `.claude-plugin/plugin.json` — a directory `relocate-claude-manifest`
+  moves — onto the portable layout's own marker, `com.infiquetra.claude/plugin.json`.
 * **target-owned portable source** — authored here rather than derived from the
   pinned commit. It is never overwritten and never removed by synchronization,
   which is what stops this script from silently destroying the portable
@@ -95,6 +98,9 @@ GUARDED_BUNDLED_TRANSFORM_VERSION = "1"
 
 FRONTMATTER_TRANSFORM_NAME = "normalize-skill-frontmatter"
 FRONTMATTER_TRANSFORM_VERSION = "1"
+
+PACKAGE_ROOT_MARKER_TRANSFORM_NAME = "resolve-package-root-marker"
+PACKAGE_ROOT_MARKER_TRANSFORM_VERSION = "1"
 
 GENERATED_BY = "scripts/sync_vendor_source.py"
 
@@ -674,6 +680,136 @@ def normalize_skill_frontmatter(payload: bytes, target_path: str) -> bytes:
     return "\n".join(rewritten_lines).encode("utf-8")
 
 
+#: The upstream package-root marker a portable copy must not keep, and the
+#: portable marker it anchors on instead: the client extension manifest the
+#: `relocate-claude-manifest` rule produces. The portable package has no
+#: `.claude-plugin/` directory at all.
+UPSTREAM_PACKAGE_ROOT_MARKER = ".claude-plugin"
+PORTABLE_PACKAGE_ROOT_MARKER = "com.infiquetra.claude"
+
+#: The module-scope `_find_package_root` definition. The walk line and the
+#: error text each carry the marker, captured by name so the rule can verify
+#: both sites exist and agree before it rewrites either; a naive substring
+#: replacement would hit only the error text and leave the walk still looking
+#: for `.claude-plugin`. The two marker sites are pinned by the surrounding
+#: shape -- the is_file parentheses and the "not found from" message -- so a
+#: reformatted definition fails the match rather than being half-rewritten.
+PACKAGE_ROOT_FINDER_BLOCK = re.compile(
+    r"^def _find_package_root\(start: Path \| None = None\) -> Path:\n"
+    r"    current = start or Path\(__file__\)\n"
+    r"    for parent in current\.resolve\(\)\.parents:\n"
+    r'        if \(parent / "(?P<marker_a>[^"]+)" / "plugin\.json"\)\.is_file\(\):\n'
+    r"            return parent\n"
+    r"    raise RuntimeError\(\n"
+    r'        f"package root containing (?P<marker_b>[^"]+)/plugin\.json not found from '
+    r"\{current\.resolve\(\)\}\"\n"
+    r"    \)",
+    re.MULTILINE,
+)
+
+#: The module-scope call that pays the resolution cost at import time. The
+#: match unit is the definition plus this one call: a definition whose call
+#: moved, or a call whose definition changed shape, is a shape the rule does
+#: not describe.
+PACKAGE_ROOT_CALL = re.compile(r"^PACKAGE_ROOT = _find_package_root\(\)$", re.MULTILINE)
+
+PACKAGE_ROOT_MARKER_TRANSFORM_RULE = (
+    "Re-anchor the module-scope package-root finder on the portable layout's own marker. "
+    "Version 1 matches exactly one `_find_package_root(start: Path | None = None) -> Path:` "
+    'definition whose walk tests `(parent / ".claude-plugin" / "plugin.json").is_file()` and '
+    "whose error text names the same marker, plus exactly one module-scope "
+    "`PACKAGE_ROOT = _find_package_root()` call, with the definition before the call. Both "
+    "marker sites are rewritten deliberately: the walk becomes "
+    '`(parent / "com.infiquetra.claude" / "plugin.json").is_file()` and the error text names '
+    "`com.infiquetra.claude/plugin.json`, the client extension manifest the relocate-claude-manifest "
+    "rule produces, because the portable package has no `.claude-plugin/` directory at all. The "
+    "call is preserved verbatim. Input already carrying the portable marker comes back "
+    "byte-identical, which is what a second application returns. The definition or the call "
+    "absent or repeated fails the synchronization, marker sites that disagree or anchor on a "
+    "third directory are refused rather than passed through, and the call appearing before the "
+    "definition fails too, because a portable copy that cannot resolve its own package root "
+    "fails at import."
+)
+
+
+def package_root_marker_transform(payload: bytes, target_path: str) -> bytes:
+    """Transform `resolve-package-root-marker`, version 1.
+
+    The rule: find the one module-scope `_find_package_root` definition that
+    walks the parent chain testing for `.claude-plugin/plugin.json` and names
+    the same marker in its error text, and re-emit it anchored on
+    `com.infiquetra.claude/plugin.json` instead. A definition already anchored
+    on the portable marker is returned unchanged, which makes the transform
+    idempotent: applied to its own output it is a no-op.
+
+    Mission-control's `scripts/sync_template_docs.py` carries this shape at
+    the 2.15.2 pin: upstream replaced the fixed `parents[3]` depth with a
+    marker walk, and the marker it chose -- `.claude-plugin/plugin.json` -- is
+    precisely the directory `relocate-claude-manifest` moves. The rule is the
+    custody decision KTD14 records: the portable copy anchors on the marker
+    the portable layout actually carries, deterministically and reproducibly
+    from the source bytes alone, never a hand-edited byte copy.
+    """
+    body = _decode_utf8(payload, target_path)
+
+    matches = list(PACKAGE_ROOT_FINDER_BLOCK.finditer(body))
+    if len(matches) != 1:
+        raise SyncError(
+            f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} expected exactly one "
+            f"_find_package_root definition, found {len(matches)}; a shape this rule cannot "
+            "match exactly once is a synchronization stop, never a first match"
+        )
+    calls = list(PACKAGE_ROOT_CALL.finditer(body))
+    if len(calls) != 1:
+        raise SyncError(
+            f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} expected exactly one "
+            f"module-scope PACKAGE_ROOT = _find_package_root() call, found {len(calls)}; a "
+            "shape this rule cannot match exactly once is a synchronization stop, never a "
+            "first match"
+        )
+    finder, call = matches[0], calls[0]
+    if not finder.end() <= call.start():
+        raise SyncError(
+            f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} matched its module-scope "
+            "call before the _find_package_root definition; the shape puts the definition "
+            "first, so this file carries a shape the rule does not describe"
+        )
+    marker_a = finder.group("marker_a")
+    marker_b = finder.group("marker_b")
+    if marker_a != marker_b:
+        raise SyncError(
+            f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} found a "
+            f"_find_package_root definition whose two marker sites disagree "
+            f"({marker_a!r} vs {marker_b!r}); the shape this rule rewrites names the same "
+            "marker in both sites"
+        )
+    if marker_a == PORTABLE_PACKAGE_ROOT_MARKER:
+        # Already portable: a second application lands here too, which is the
+        # idempotence guarantee stated by the rule.
+        return payload
+    if marker_a != UPSTREAM_PACKAGE_ROOT_MARKER:
+        raise SyncError(
+            f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} found a "
+            f"_find_package_root definition anchored on {marker_a!r}, which this version "
+            f"does not describe; the upstream marker it rewrites is "
+            f"{UPSTREAM_PACKAGE_ROOT_MARKER} and the portable marker it accepts is "
+            f"{PORTABLE_PACKAGE_ROOT_MARKER}"
+        )
+    portable_block = (
+        "def _find_package_root(start: Path | None = None) -> Path:\n"
+        "    current = start or Path(__file__)\n"
+        "    for parent in current.resolve().parents:\n"
+        '        if (parent / "com.infiquetra.claude" / "plugin.json").is_file():\n'
+        "            return parent\n"
+        "    raise RuntimeError(\n"
+        '        f"package root containing com.infiquetra.claude/plugin.json not found from '
+        '{current.resolve()}"\n'
+        "    )"
+    )
+    rewritten = body[: finder.start()] + portable_block + body[finder.end() :]
+    return rewritten.encode("utf-8")
+
+
 RELOCATE_MANIFEST_RULE = TransformRule(
     MANIFEST_TRANSFORM_NAME,
     MANIFEST_TRANSFORM_VERSION,
@@ -715,6 +851,13 @@ FRONTMATTER_RULE = TransformRule(
     normalize_skill_frontmatter,
 )
 
+PACKAGE_ROOT_MARKER_RULE = TransformRule(
+    PACKAGE_ROOT_MARKER_TRANSFORM_NAME,
+    PACKAGE_ROOT_MARKER_TRANSFORM_VERSION,
+    PACKAGE_ROOT_MARKER_TRANSFORM_RULE,
+    package_root_marker_transform,
+)
+
 
 def _build_rule_registry(*rules: TransformRule) -> dict[str, TransformRule]:
     """Every rule this tool implements, by name.
@@ -738,6 +881,7 @@ TRANSFORM_RULES = _build_rule_registry(
     SPLIT_BUNDLED_MODULE_RULE,
     GUARDED_BUNDLED_MODULE_RULE,
     FRONTMATTER_RULE,
+    PACKAGE_ROOT_MARKER_RULE,
 )
 
 
