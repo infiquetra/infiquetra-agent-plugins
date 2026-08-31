@@ -42,6 +42,13 @@ Three classifications, and every path in the derived tree is exactly one of them
   `resolve-package-root-marker` re-anchors a module-scope package-root finder
   from `.claude-plugin/plugin.json` — a directory `relocate-claude-manifest`
   moves — onto the portable layout's own marker, `com.infiquetra.claude/plugin.json`.
+
+One exception to the package-agnostic contract is recorded rather than hidden:
+`resolve-package-root-marker` carries `PACKAGE_ROOT_MARKER_SITE_COUNTS`, a
+per-path site-count table keyed on mission-control's package-relative paths. A
+second package that selects this rule must extend that table (or re-custody its
+paths), and `plan_sync` refuses to dispatch the rule when the descriptor's
+`client_extension_dir` does not name the marker directory the rule re-anchors on.
 * **target-owned portable source** — authored here rather than derived from the
   pinned commit. It is never overwritten and never removed by synchronization,
   which is what stops this script from silently destroying the portable
@@ -738,12 +745,13 @@ MARKER_ISFILE_ASSERTION = re.compile(
 )
 
 #: The `pytest.raises` site that pins the failure message of the finder. The
-#: marker appears dot-escaped inside a raw regex string; the alternation names
-#: the two markers the rule knows, so a third one fails the match and falls
-#: into the count refusal rather than being captured as a silent surprise.
+#: marker appears dot-escaped inside a raw regex string; the capture is opened
+#: to any non-slash text so an unknown marker reaches the anchor-validation
+#: loop and is refused by name, matching the `.is_file()` site, instead of
+#: falling out of the match and surfacing as a misleading site count.
 MARKER_RAISES_MATCH = re.compile(
     r'^        RuntimeError, match=r"package root containing '
-    r'(?P<marker>\\\.claude-plugin|com\\\.infiquetra\\\.claude)/plugin\\\.json not found"$',
+    r'(?P<marker>[^/]+)/plugin\\\.json not found"$',
     re.MULTILINE,
 )
 
@@ -812,6 +820,12 @@ def package_root_marker_transform(payload: bytes, target_path: str) -> bytes:
             "table, and a path outside that table is a synchronization stop, never a guessed "
             "rewrite"
         )
+    expected_classes = {"finder", "call", "is_file", "raises"}
+    if set(counts) != expected_classes:
+        raise SyncError(
+            f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} declares an incomplete "
+            f"site-count row ({sorted(counts)}); every row states all four site classes"
+        )
 
     finders = list(PACKAGE_ROOT_FINDER_BLOCK.finditer(body))
     calls = list(PACKAGE_ROOT_CALL.finditer(body))
@@ -823,7 +837,7 @@ def package_root_marker_transform(payload: bytes, target_path: str) -> bytes:
         "is_file": len(is_file_sites),
         "raises": len(raises_sites),
     }
-    for site_class in ("finder", "call", "is_file", "raises"):
+    for site_class in expected_classes:
         if found[site_class] != counts[site_class]:
             raise SyncError(
                 f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} declares exactly "
@@ -833,8 +847,7 @@ def package_root_marker_transform(payload: bytes, target_path: str) -> bytes:
             )
 
     anchors: list[str] = []
-    if finders:
-        finder = finders[0]
+    for finder in finders:
         marker_a = finder.group("marker_a")
         marker_b = finder.group("marker_b")
         if marker_a != marker_b:
@@ -844,13 +857,14 @@ def package_root_marker_transform(payload: bytes, target_path: str) -> bytes:
                 f"({marker_a!r} vs {marker_b!r}); the shape this rule rewrites names the same "
                 "marker in both sites"
             )
-        if calls and not finder.end() <= calls[0].start():
+        anchors.append(marker_a)
+    for finder, call in zip(finders, calls):
+        if not finder.end() <= call.start():
             raise SyncError(
                 f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} matched its "
-                "module-scope call before the _find_package_root definition; the shape puts "
+                "module-scope call before a _find_package_root definition; the shape puts "
                 "the definition first, so this file carries a shape the rule does not describe"
             )
-        anchors.append(marker_a)
     for site in is_file_sites:
         anchors.append(site.group("marker"))
     for site in raises_sites:
@@ -867,6 +881,13 @@ def package_root_marker_transform(payload: bytes, target_path: str) -> bytes:
                 f"portable marker it accepts is {PORTABLE_PACKAGE_ROOT_MARKER}"
             )
     if all(anchor == PORTABLE_PACKAGE_ROOT_MARKER for anchor in anchors):
+        if UPSTREAM_PACKAGE_ROOT_MARKER in body:
+            raise SyncError(
+                f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} found a file "
+                "whose declared sites read portable but which still carries the upstream "
+                f"marker {UPSTREAM_PACKAGE_ROOT_MARKER!r} outside the declared site shapes; "
+                "a half-transformed file is a synchronization stop, never a no-op"
+            )
         # Already portable: a second application lands here too, which is the
         # idempotence guarantee stated by the rule.
         return payload
@@ -880,8 +901,8 @@ def package_root_marker_transform(payload: bytes, target_path: str) -> bytes:
     # Every site carries the upstream marker: rewrite each deliberately, from
     # the end of the body backwards so earlier offsets stay valid.
     replacements: list[tuple[int, int, str]] = []
-    if finders:
-        replacements.append((finders[0].start(), finders[0].end(), PORTABLE_FINDER_EMISSION))
+    for finder in finders:
+        replacements.append((finder.start(), finder.end(), PORTABLE_FINDER_EMISSION))
     for site in is_file_sites:
         replacements.append(
             (
@@ -902,6 +923,14 @@ def package_root_marker_transform(payload: bytes, target_path: str) -> bytes:
     rewritten = body
     for start, end, replacement in sorted(replacements, reverse=True):
         rewritten = rewritten[:start] + replacement + rewritten[end:]
+    if UPSTREAM_PACKAGE_ROOT_MARKER in rewritten:
+        raise SyncError(
+            f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} rewrote the declared "
+            f"sites but the upstream marker {UPSTREAM_PACKAGE_ROOT_MARKER!r} still appears "
+            f"{rewritten.count(UPSTREAM_PACKAGE_ROOT_MARKER)} time(s); a marker occurrence "
+            "outside the declared site shapes is a synchronization stop, never a "
+            "half-transformed output"
+        )
     return rewritten.encode("utf-8")
 
 
@@ -1108,6 +1137,18 @@ def plan_sync(config: PortConfig, source: Path, commit: str) -> list[PlannedFile
     for relative in config.custody.entrypoint_transforms:
         payload = read_source_file(config, source, commit, relative)
         rule = resolve_transform_rule(config, relative)
+        if rule is PACKAGE_ROOT_MARKER_RULE and (
+            config.source.client_extension_dir != PORTABLE_PACKAGE_ROOT_MARKER
+        ):
+            raise SyncError(
+                f"{config.source.package_path}/{relative}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} "
+                f"re-anchors the package root on the {PORTABLE_PACKAGE_ROOT_MARKER!r} client "
+                f"extension directory, but this port descriptor names "
+                f"{config.source.client_extension_dir!r}; the rule reads no descriptor, so a "
+                "mismatch would ship a package whose scripts and manifest live in different "
+                "directories. Name the descriptor's client_extension_dir "
+                f"{PORTABLE_PACKAGE_ROOT_MARKER!r} or re-custody the path"
+            )
         planned.append(
             PlannedFile(
                 relative,
