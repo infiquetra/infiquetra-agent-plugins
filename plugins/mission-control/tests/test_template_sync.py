@@ -168,3 +168,21 @@ def test_shared_contract_docs_include_context_and_risk_rules() -> None:
 
     assert "optional Context library links" not in markdown
     assert "six required fields" not in markdown
+
+
+def test_find_package_root_resolves_plugin_root() -> None:
+    root = sync_template_docs._find_package_root()
+    assert (root / "com.infiquetra.claude" / "plugin.json").is_file()
+    assert (root / "config" / "generated" / "issue_contract_data.py").is_file()
+    assert (root / "skills" / "issues" / "references" / "templates-reference.md").is_file()
+    assert root == sync_template_docs.PACKAGE_ROOT
+
+
+def test_find_package_root_fails_loudly_when_missing(tmp_path: Path) -> None:
+    dummy_file = tmp_path / "deep" / "nested" / "file.py"
+    dummy_file.parent.mkdir(parents=True)
+    dummy_file.touch()
+    with pytest.raises(
+        RuntimeError, match=r"package root containing com\.infiquetra\.claude/plugin\.json not found"
+    ):
+        sync_template_docs._find_package_root(dummy_file)

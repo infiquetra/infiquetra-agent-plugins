@@ -100,7 +100,7 @@ FRONTMATTER_TRANSFORM_NAME = "normalize-skill-frontmatter"
 FRONTMATTER_TRANSFORM_VERSION = "1"
 
 PACKAGE_ROOT_MARKER_TRANSFORM_NAME = "resolve-package-root-marker"
-PACKAGE_ROOT_MARKER_TRANSFORM_VERSION = "1"
+PACKAGE_ROOT_MARKER_TRANSFORM_VERSION = "2"
 
 GENERATED_BY = "scripts/sync_vendor_source.py"
 
@@ -713,100 +713,195 @@ PACKAGE_ROOT_FINDER_BLOCK = re.compile(
 #: not describe.
 PACKAGE_ROOT_CALL = re.compile(r"^PACKAGE_ROOT = _find_package_root\(\)$", re.MULTILINE)
 
+#: The portable emission of the `_find_package_root` definition: the upstream
+#: block with both marker references re-anchored. Re-emitted whole so the
+#: rewrite is deterministic from the matched shape alone.
+PORTABLE_FINDER_EMISSION = (
+    "def _find_package_root(start: Path | None = None) -> Path:\n"
+    "    current = start or Path(__file__)\n"
+    "    for parent in current.resolve().parents:\n"
+    '        if (parent / "com.infiquetra.claude" / "plugin.json").is_file():\n'
+    "            return parent\n"
+    "    raise RuntimeError(\n"
+    '        f"package root containing com.infiquetra.claude/plugin.json not found from '
+    '{current.resolve()}"\n'
+    "    )"
+)
+
+#: The assertion site a carried test uses to prove the marker resolves: the
+#: `.is_file()` check against the package-root marker. Captured by name so the
+#: rewrite is deliberate and an unknown marker is refused rather than passed
+#: through.
+MARKER_ISFILE_ASSERTION = re.compile(
+    r'^    assert \(root / "(?P<marker>[^"]+)" / "plugin\.json"\)\.is_file\(\)$',
+    re.MULTILINE,
+)
+
+#: The `pytest.raises` site that pins the failure message of the finder. The
+#: marker appears dot-escaped inside a raw regex string; the alternation names
+#: the two markers the rule knows, so a third one fails the match and falls
+#: into the count refusal rather than being captured as a silent surprise.
+MARKER_RAISES_MATCH = re.compile(
+    r'^        RuntimeError, match=r"package root containing '
+    r'(?P<marker>\\\.claude-plugin|com\\\.infiquetra\\\.claude)/plugin\\\.json not found"$',
+    re.MULTILINE,
+)
+
+#: The per-file site counts version 2 declares. The rule stops being
+#: single-shape by recorded decision (KTD16); this table replaces that
+#: guarantee: every file the rule is selected for declares exactly how many
+#: sites of each class it carries, and any count mismatch fails loudly. The
+#: walk line and the error text inside a finder definition remain internals of
+#: that one definition, not extra site classes.
+PACKAGE_ROOT_MARKER_SITE_COUNTS: dict[str, dict[str, int]] = {
+    "scripts/sync_template_docs.py": {"finder": 1, "call": 1, "is_file": 0, "raises": 0},
+    "tests/test_issue_contract_parity.py": {"finder": 1, "call": 1, "is_file": 1, "raises": 1},
+    "tests/test_template_sync.py": {"finder": 0, "call": 0, "is_file": 1, "raises": 1},
+}
+
 PACKAGE_ROOT_MARKER_TRANSFORM_RULE = (
-    "Re-anchor the module-scope package-root finder on the portable layout's own marker. "
-    "Version 1 matches exactly one `_find_package_root(start: Path | None = None) -> Path:` "
-    'definition whose walk tests `(parent / ".claude-plugin" / "plugin.json").is_file()` and '
-    "whose error text names the same marker, plus exactly one module-scope "
-    "`PACKAGE_ROOT = _find_package_root()` call, with the definition before the call. Both "
-    "marker sites are rewritten deliberately: the walk becomes "
-    '`(parent / "com.infiquetra.claude" / "plugin.json").is_file()` and the error text names '
-    "`com.infiquetra.claude/plugin.json`, the client extension manifest the relocate-claude-manifest "
-    "rule produces, because the portable package has no `.claude-plugin/` directory at all. The "
-    "call is preserved verbatim. Input already carrying the portable marker comes back "
-    "byte-identical, which is what a second application returns. The definition or the call "
-    "absent or repeated fails the synchronization, marker sites that disagree or anchor on a "
-    "third directory are refused rather than passed through, and the call appearing before the "
-    "definition fails too, because a portable copy that cannot resolve its own package root "
-    "fails at import."
+    "Re-anchor the package-root marker on the portable layout's own marker. Version 2 extends "
+    "version 1 to the two carried tests that assert on the marker, and declares per-file site "
+    "counts rather than one universal shape: scripts/sync_template_docs.py carries one "
+    "`_find_package_root` definition and one module-scope `PACKAGE_ROOT = "
+    "_find_package_root()` call; tests/test_issue_contract_parity.py carries one definition, "
+    'one call, one `assert (root / ".claude-plugin" / "plugin.json").is_file()` site, and one '
+    "pytest.raises error-text match; tests/test_template_sync.py carries only the assertion "
+    "and the error-text match, because its subject is the already-transformed module. Every "
+    "site is rewritten deliberately from .claude-plugin/plugin.json onto "
+    "com.infiquetra.claude/plugin.json, the client extension manifest the "
+    "relocate-claude-manifest rule produces, because the portable package has no "
+    "`.claude-plugin/` directory at all; the module-scope call is preserved verbatim. Any "
+    "site count mismatch -- more or fewer sites than declared -- fails the synchronization "
+    "naming the file, the site class, and the counts, never a partial application; a path "
+    "outside the declared table fails too. A file whose sites already all carry the portable "
+    "marker comes back byte-identical, which is what a second application returns; a file "
+    "mixing upstream and portable markers is refused as half-transformed."
 )
 
 
 def package_root_marker_transform(payload: bytes, target_path: str) -> bytes:
-    """Transform `resolve-package-root-marker`, version 1.
+    """Transform `resolve-package-root-marker`, version 2.
 
-    The rule: find the one module-scope `_find_package_root` definition that
-    walks the parent chain testing for `.claude-plugin/plugin.json` and names
-    the same marker in its error text, and re-emit it anchored on
-    `com.infiquetra.claude/plugin.json` instead. A definition already anchored
-    on the portable marker is returned unchanged, which makes the transform
-    idempotent: applied to its own output it is a no-op.
+    The rule: re-anchor every package-root marker site a file carries from
+    `.claude-plugin/plugin.json` onto `com.infiquetra.claude/plugin.json`.
+    Version 2 covers, per file, the `_find_package_root` definition, its
+    module-scope call, and the assertion sites — the `.is_file()` marker
+    assertion and the `pytest.raises` error-text match — in exactly the
+    counts `PACKAGE_ROOT_MARKER_SITE_COUNTS` declares. A file whose sites all
+    already carry the portable marker is returned unchanged, which makes the
+    transform idempotent: applied to its own output it is a no-op.
 
-    Mission-control's `scripts/sync_template_docs.py` carries this shape at
-    the 2.15.2 pin: upstream replaced the fixed `parents[3]` depth with a
-    marker walk, and the marker it chose -- `.claude-plugin/plugin.json` -- is
-    precisely the directory `relocate-claude-manifest` moves. The rule is the
-    custody decision KTD14 records: the portable copy anchors on the marker
-    the portable layout actually carries, deterministically and reproducibly
-    from the source bytes alone, never a hand-edited byte copy.
+    Mission-control's `scripts/sync_template_docs.py` and the two carried
+    tests `test_issue_contract_parity.py` and `test_template_sync.py` carry
+    these shapes at the 2.15.2 pin: upstream replaced fixed `parents[3]`
+    depth with a marker walk, and the marker it chose — `.claude-plugin/` —
+    is precisely the directory `relocate-claude-manifest` moves. The rule is
+    the custody decision KTD14 and KTD16 record: the portable copies anchor
+    on — and assert on — the marker the portable layout actually carries,
+    deterministically and reproducibly from the source bytes alone, never a
+    hand-edited byte copy.
     """
     body = _decode_utf8(payload, target_path)
 
-    matches = list(PACKAGE_ROOT_FINDER_BLOCK.finditer(body))
-    if len(matches) != 1:
+    counts = PACKAGE_ROOT_MARKER_SITE_COUNTS.get(target_path)
+    if counts is None:
         raise SyncError(
-            f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} expected exactly one "
-            f"_find_package_root definition, found {len(matches)}; a shape this rule cannot "
-            "match exactly once is a synchronization stop, never a first match"
+            f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} declares no per-file "
+            "site counts for this path; the files this rule describes are named in the rule's "
+            "table, and a path outside that table is a synchronization stop, never a guessed "
+            "rewrite"
         )
+
+    finders = list(PACKAGE_ROOT_FINDER_BLOCK.finditer(body))
     calls = list(PACKAGE_ROOT_CALL.finditer(body))
-    if len(calls) != 1:
-        raise SyncError(
-            f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} expected exactly one "
-            f"module-scope PACKAGE_ROOT = _find_package_root() call, found {len(calls)}; a "
-            "shape this rule cannot match exactly once is a synchronization stop, never a "
-            "first match"
-        )
-    finder, call = matches[0], calls[0]
-    if not finder.end() <= call.start():
-        raise SyncError(
-            f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} matched its module-scope "
-            "call before the _find_package_root definition; the shape puts the definition "
-            "first, so this file carries a shape the rule does not describe"
-        )
-    marker_a = finder.group("marker_a")
-    marker_b = finder.group("marker_b")
-    if marker_a != marker_b:
-        raise SyncError(
-            f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} found a "
-            f"_find_package_root definition whose two marker sites disagree "
-            f"({marker_a!r} vs {marker_b!r}); the shape this rule rewrites names the same "
-            "marker in both sites"
-        )
-    if marker_a == PORTABLE_PACKAGE_ROOT_MARKER:
+    is_file_sites = list(MARKER_ISFILE_ASSERTION.finditer(body))
+    raises_sites = list(MARKER_RAISES_MATCH.finditer(body))
+    found = {
+        "finder": len(finders),
+        "call": len(calls),
+        "is_file": len(is_file_sites),
+        "raises": len(raises_sites),
+    }
+    for site_class in ("finder", "call", "is_file", "raises"):
+        if found[site_class] != counts[site_class]:
+            raise SyncError(
+                f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} declares exactly "
+                f"{counts[site_class]} {site_class} site(s) in this file, found "
+                f"{found[site_class]}; a count mismatch is a synchronization stop, never a "
+                "partial application"
+            )
+
+    anchors: list[str] = []
+    if finders:
+        finder = finders[0]
+        marker_a = finder.group("marker_a")
+        marker_b = finder.group("marker_b")
+        if marker_a != marker_b:
+            raise SyncError(
+                f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} found a "
+                f"_find_package_root definition whose two marker sites disagree "
+                f"({marker_a!r} vs {marker_b!r}); the shape this rule rewrites names the same "
+                "marker in both sites"
+            )
+        if calls and not finder.end() <= calls[0].start():
+            raise SyncError(
+                f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} matched its "
+                "module-scope call before the _find_package_root definition; the shape puts "
+                "the definition first, so this file carries a shape the rule does not describe"
+            )
+        anchors.append(marker_a)
+    for site in is_file_sites:
+        anchors.append(site.group("marker"))
+    for site in raises_sites:
+        # The raises site pins a raw regex string, so its marker capture is
+        # dot-escaped; unescape before classification.
+        anchors.append(site.group("marker").replace("\\", ""))
+
+    for anchor in anchors:
+        if anchor not in (UPSTREAM_PACKAGE_ROOT_MARKER, PORTABLE_PACKAGE_ROOT_MARKER):
+            raise SyncError(
+                f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} found a marker "
+                f"site anchored on {anchor!r}, which this version does not describe; the "
+                f"upstream marker it rewrites is {UPSTREAM_PACKAGE_ROOT_MARKER} and the "
+                f"portable marker it accepts is {PORTABLE_PACKAGE_ROOT_MARKER}"
+            )
+    if all(anchor == PORTABLE_PACKAGE_ROOT_MARKER for anchor in anchors):
         # Already portable: a second application lands here too, which is the
         # idempotence guarantee stated by the rule.
         return payload
-    if marker_a != UPSTREAM_PACKAGE_ROOT_MARKER:
+    if not all(anchor == UPSTREAM_PACKAGE_ROOT_MARKER for anchor in anchors):
         raise SyncError(
-            f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} found a "
-            f"_find_package_root definition anchored on {marker_a!r}, which this version "
-            f"does not describe; the upstream marker it rewrites is "
-            f"{UPSTREAM_PACKAGE_ROOT_MARKER} and the portable marker it accepts is "
-            f"{PORTABLE_PACKAGE_ROOT_MARKER}"
+            f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} found a file whose "
+            "marker sites mix the upstream and portable markers; a half-transformed file is a "
+            "shape this version does not describe"
         )
-    portable_block = (
-        "def _find_package_root(start: Path | None = None) -> Path:\n"
-        "    current = start or Path(__file__)\n"
-        "    for parent in current.resolve().parents:\n"
-        '        if (parent / "com.infiquetra.claude" / "plugin.json").is_file():\n'
-        "            return parent\n"
-        "    raise RuntimeError(\n"
-        '        f"package root containing com.infiquetra.claude/plugin.json not found from '
-        '{current.resolve()}"\n'
-        "    )"
-    )
-    rewritten = body[: finder.start()] + portable_block + body[finder.end() :]
+
+    # Every site carries the upstream marker: rewrite each deliberately, from
+    # the end of the body backwards so earlier offsets stay valid.
+    replacements: list[tuple[int, int, str]] = []
+    if finders:
+        replacements.append((finders[0].start(), finders[0].end(), PORTABLE_FINDER_EMISSION))
+    for site in is_file_sites:
+        replacements.append(
+            (
+                site.start(),
+                site.end(),
+                '    assert (root / "com.infiquetra.claude" / "plugin.json").is_file()',
+            )
+        )
+    for site in raises_sites:
+        replacements.append(
+            (
+                site.start(),
+                site.end(),
+                '        RuntimeError, match=r"package root containing '
+                'com\\.infiquetra\\.claude/plugin\\.json not found"',
+            )
+        )
+    rewritten = body
+    for start, end, replacement in sorted(replacements, reverse=True):
+        rewritten = rewritten[:start] + replacement + rewritten[end:]
     return rewritten.encode("utf-8")
 
 

@@ -32,9 +32,20 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[3]
-SCHEMA_PATH = ROOT / "plugins" / "mission-control" / "config" / "sdlc-schema.json"
-VENDOR_DIR = ROOT / "plugins" / "mission-control" / "config" / "generated"
+
+def _find_package_root(start: Path | None = None) -> Path:
+    current = start or Path(__file__)
+    for parent in current.resolve().parents:
+        if (parent / "com.infiquetra.claude" / "plugin.json").is_file():
+            return parent
+    raise RuntimeError(
+        f"package root containing com.infiquetra.claude/plugin.json not found from {current.resolve()}"
+    )
+
+
+PACKAGE_ROOT = _find_package_root()
+SCHEMA_PATH = PACKAGE_ROOT / "config" / "sdlc-schema.json"
+VENDOR_DIR = PACKAGE_ROOT / "config" / "generated"
 DATA_PATH = VENDOR_DIR / "issue_contract_data.py"
 SHIM_PATH = VENDOR_DIR / "issue_contract_shim.py"
 PARITY_PATH = VENDOR_DIR / "check_issue_contract_parity.py"
@@ -387,3 +398,20 @@ def test_main_default_path_prints_explicit_skipped_line(monkeypatch, capsys) -> 
         in captured.out
     )
     assert "SKIPPED live parity leg: " in captured.out
+
+
+def test_find_package_root_resolves_plugin_root() -> None:
+    root = _find_package_root()
+    assert (root / "com.infiquetra.claude" / "plugin.json").is_file()
+    assert (root / "config" / "sdlc-schema.json").is_file()
+    assert root == PACKAGE_ROOT
+
+
+def test_find_package_root_fails_loudly_when_missing(tmp_path: Path) -> None:
+    dummy_file = tmp_path / "deep" / "nested" / "file.py"
+    dummy_file.parent.mkdir(parents=True)
+    dummy_file.touch()
+    with pytest.raises(
+        RuntimeError, match=r"package root containing com\.infiquetra\.claude/plugin\.json not found"
+    ):
+        _find_package_root(dummy_file)

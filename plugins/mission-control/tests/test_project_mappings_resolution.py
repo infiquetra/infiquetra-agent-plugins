@@ -179,6 +179,20 @@ def test_sdlc_schema_vendored_used_when_remote_unavailable(tmp_path, fake_schema
     assert result["schema_version"] == "vendored"
 
 
+def test_sdlc_schema_vendored_used_when_remote_result_is_garbage(
+    tmp_path, fake_schema_path
+) -> None:
+    """W10 repair: a gh result that exists but won't decode/parse (a stubbed
+    runner returning a URL, a truncated body) must degrade to the vendored copy,
+    not escape as UnicodeDecodeError/JSONDecodeError."""
+    fake_schema_path.write_text(json.dumps({"schema_version": "vendored", "workflows": {}}))
+
+    with patch.object(sdlc_manager, "_gh", return_value="https://not-base64.example"):
+        result = sdlc_manager._resolve_sdlc_schema(tmp_path / "missing-sdlc")
+
+    assert result["schema_version"] == "vendored"
+
+
 def test_sdlc_schema_local_used_only_when_remote_and_vendored_unavailable(
     tmp_path, fake_schema_path
 ) -> None:

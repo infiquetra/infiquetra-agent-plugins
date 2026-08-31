@@ -4,7 +4,7 @@ description: Primary SDLC issue creation and prepared handoff command with sourc
 ---
 
 Create or prepare an SDLC issue in any Infiquetra repository. This is the primary user-facing
-issue command; `/issue` remains a compatibility alias.
+issue command.
 
 ## Usage
 
@@ -47,7 +47,7 @@ issue command; `/issue` remains a compatibility alias.
 Prepare from a source artifact:
 
 ```bash
-python3 ~/.claude/plugins/cache/infiquetra-plugins/mission-control/2.1.0/scripts/sdlc_manager.py \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/sdlc_manager.py" \
   issue prepare --repo infiquetra-claude-plugins --type capability \
   --team campps --project campps --risk medium \
   --from docs/plans/example.md --maturity plan-ready
@@ -56,7 +56,7 @@ python3 ~/.claude/plugins/cache/infiquetra-plugins/mission-control/2.1.0/scripts
 Create after review and confirmation:
 
 ```bash
-python3 ~/.claude/plugins/cache/infiquetra-plugins/mission-control/2.1.0/scripts/sdlc_manager.py \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/sdlc_manager.py" \
   issue create-prepared docs/sdlc-issue-drafts/<draft>.md
 ```
 

@@ -150,6 +150,11 @@ You are deeply familiar with the Infiquetra SDLC process as documented in the
   a hint pointing at `operational-reference.md`'s field-creation runbook. If the option doesn't
   exist on the field, raises with the available option list + a hint pointing at
   `flow field-options`. Verify before bulk operations.
+  **`Status`/`Stage` writes (W6)** are the constrained lifecycle-field mutation: they go to EVERY
+  board carrying the issue, all-or-none (preflight failure writes nothing; a failed write is
+  compensated; a failed compensation halts with a named divergence, exits non-zero, never retries).
+  `--project` is validated as a carrying board, not honored as a single-board restriction;
+  `--reason` is optional and recorded verbatim per board.
   Use `flow unlink-sub-issue` to remove an accidental or retired parent layer without closing
   either issue; verify the Objective field and remaining child graph after migration.
 - `fields {create-option,discover}` — project field management (used in Initiative/Objective
@@ -230,7 +235,8 @@ hints such as "from the brainstorm" or "handoff the plan". Prepared drafts inclu
 `handoff_maturity` and source metadata so the receiving team can execute without
 `saga`. `issue create-prepared` re-runs readiness, renders every side effect before
 mutation, repairs missing labels/templates after confirmation, opens a mapping PR for unmapped
-repos, and starts new cards in safe statuses: Asgard `Shaping`, CAMPPS `Idea`. If team,
+repos, and starts new cards with a `Status` defaulting to the declared `Stage`'s entry option
+(readiness accepts any Status configured for that Stage, or `Blocked`). If team,
 project, or source artifact is ambiguous, ask the operator; do not guess or bypass this path with
 direct `gh issue create`. Suggest `/plan <issue>` or `/work <issue>` only as optional
 `saga` follow-up commands; do not suggest `/loop` for team recipients.

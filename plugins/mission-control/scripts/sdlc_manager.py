@@ -30,7 +30,11 @@ Usage:
     sdlc_manager.py labels deploy --repo athena-service
     sdlc_manager.py labels auto-label --repo athena-service --number 42
     sdlc_manager.py fields create-option --project asgard --field initiative --option "new-initiative"
+    sdlc_manager.py fields set-options --project asgard --field Status --options-file options.json
     sdlc_manager.py fields discover --project asgard
+    # fields create-option ONLY inspects a field and prints its options — it
+    # performs no mutation; writes go through fields set-options (complete
+    # option list, existing ids preserved)
 
     sdlc_manager.py metrics cycle-time --project asgard [--days 30] [--type capability]
     sdlc_manager.py metrics throughput --project asgard [--weeks 4]
@@ -47,7 +51,6 @@ Usage:
     sdlc_manager.py rollout deploy-labels --repo athena-service
     sdlc_manager.py rollout deploy-templates --repo athena-service
     sdlc_manager.py rollout deploy-all --repo athena-service
-    sdlc_manager.py rollout update --repo athena-service --field labels --status complete
 
     sdlc_manager.py flow set-field --project asgard --repo R --number N --field Initiative --option <name>
     sdlc_manager.py flow field-options --project asgard --field Objective
@@ -79,8 +82,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import quote
-
-import yaml
 
 # ===========================
 # CONFIGURATION
@@ -227,7 +228,7 @@ def load_config() -> dict[str, Any]:
     # `legacy_rollout_config` reads `beads-config.json` for back-compat.
     # That file was removed from infiquetra-sdlc on 2026-04-26 (Beads removal);
     # this key now degrades gracefully to {} on missing-file. Several functions
-    # below (board_wip, rollout_status, rollout_update, config_show) read this
+    # below (board_wip, rollout_status, config_show) read this
     # config; they treat empty as "no rollout state tracked" and behave
     # sensibly. When a replacement file ships (e.g., rollout-status.json),
     # rename the key + path here.
@@ -353,7 +354,11 @@ def _resolve_sdlc_schema(sdlc_path: Path) -> dict[str, Any]:
 
             content = base64.b64decode(result.strip()).decode()
             return cast(dict[str, Any], json.loads(content))
-    except (GhApiError, RuntimeError):
+    except Exception:
+        # Broad by design (matching load_config's remote fallback): any gh
+        # failure OR undecodable/unparseable payload must degrade to the
+        # vendored copy, never crash the caller (W10 repair: a stubbed or
+        # malformed gh result previously escaped as UnicodeDecodeError).
         pass
 
     if _VENDORED_SDLC_SCHEMA_PATH.exists():
@@ -366,6 +371,29 @@ def _resolve_sdlc_schema(sdlc_path: Path) -> dict[str, Any]:
             return cast(dict[str, Any], json.load(f))
 
     return {}
+
+
+def _stage_flow_rules() -> dict[str, Any]:
+    """The schema's `workflows.stage_flow` block, via one _resolve_sdlc_schema() call (R49, sdlc#91).
+
+    Resolving through `_resolve_sdlc_schema()` keeps GitHub main as the live
+    source and the vendored copy as the offline fallback, so the vocabulary lives
+    in one versioned place instead of a second hardcoded Python copy (the W10
+    repair retired `_TEAM_SAFE_STATUSES`, whose team-keyed literal "Shaping"/
+    "Idea" no longer exist in the board Status vocabulary).
+    """
+    schema = _resolve_sdlc_schema(get_sdlc_path())
+    stage_flow = schema.get("workflows", {}).get("stage_flow", {})
+    return stage_flow if isinstance(stage_flow, dict) else {}
+
+
+def _stage_entry_options() -> dict[str, str]:
+    """Stage -> entry Status (the FIRST configured option of the Stage's list)."""
+    return {
+        stage: options[0]
+        for stage, options in _stage_flow_rules().get("stage_statuses", {}).items()
+        if options
+    }
 
 
 def get_project_config(config: dict, project_name: str) -> dict:
@@ -885,6 +913,45 @@ mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
 }
 """
 
+# Single-select option sets are OVERWRITTEN whole (there is no add-one-option
+# mutation): `UpdateProjectV2FieldInput.singleSelectOptions` — "Empty input is
+# ignored, provided values overwrite existing options, and existing options
+# should be fetched for partial updates." An option keeps its identity (and
+# every item value pointing at it) only if its existing id is resubmitted;
+# omitting the id mints a new option and clears every item value that pointed
+# at the old one. `update_field_single_select_options` is the only call site
+# this mutation should ever have — it refuses any submission that is not the
+# complete desired list with the existing id on every retained or renamed
+# option, BEFORE the mutation is sent.
+QUERY_UPDATE_FIELD_OPTIONS = """
+mutation($fieldId: ID!, $options: [ProjectV2SingleSelectFieldOptionInput!]!) {
+  updateProjectV2Field(input: {
+    fieldId: $fieldId
+    singleSelectOptions: $options
+  }) {
+    projectV2Field {
+      ... on ProjectV2SingleSelectField {
+        id
+        name
+        options { id name color description }
+      }
+    }
+  }
+}
+"""
+
+QUERY_GET_SINGLE_SELECT_FIELD = """
+query($fieldId: ID!) {
+  node(id: $fieldId) {
+    ... on ProjectV2SingleSelectField {
+      id
+      name
+      options { id name color description }
+    }
+  }
+}
+"""
+
 QUERY_GET_PROJECT_ITEMS = """
 query($org: String!, $number: Int!, $cursor: String) {
   organization(login: $org) {
@@ -947,7 +1014,7 @@ query($org: String!, $number: Int!, $cursor: String) {
           }
           ... on ProjectV2SingleSelectField {
             id name
-            options { id name }
+            options { id name color description }
           }
           ... on ProjectV2IterationField {
             id name
@@ -982,6 +1049,31 @@ query($org: String!, $repo: String!, $number: Int!) {
       projectItems(first: 100) {
         nodes {
           project { title number }
+          fieldValues(first: 100) {
+            nodes {
+              ... on ProjectV2ItemFieldSingleSelectValue {
+                name
+                field { ... on ProjectV2SingleSelectField { name } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+QUERY_GET_LIFECYCLE_FIELD_BOARDS = """
+# pagination-lint: allow (a single issue sits on a handful of projects, never
+# >100, and each carries far fewer than 100 field values)
+query($org: String!, $repo: String!, $number: Int!) {
+  repository(owner: $org, name: $repo) {
+    issue(number: $number) {
+      projectItems(first: 100) {
+        nodes {
+          id
+          project { id title number }
           fieldValues(first: 100) {
             nodes {
               ... on ProjectV2ItemFieldSingleSelectValue {
@@ -1274,83 +1366,33 @@ def board_add(
 def board_move(
     repo: str, number: int, status: str, fmt: str, project_name: str | None = None
 ) -> bool:
-    """Move item to a different board column."""
-    config = load_config()
-    projects = (
-        [get_project_config(config, project_name)]
-        if project_name
-        else get_projects_for_repo(config, repo)
-    )
-    if not projects:
-        _error(f"Repo '{repo}' not mapped to any project")
-        sys.exit(1)
+    """Move item's Status across every board carrying the issue.
 
-    results = []
-    failed = False
-    for proj in projects:
-        project_id, items = get_project_items(proj["number"])
+    W6 (KTD13): the Status write routes through the constrained cross-board
+    mutation, which does its own board discovery from the issue's
+    projectItems — the per-project resolution loop and its
+    except-and-continue (a board-by-board best-effort write) are gone, since
+    a multi-board issue must end at one Status everywhere or nowhere
+    (R40/R67). ``project_name`` is validated against the carrying boards,
+    never obeyed as a single-board restriction.
 
-        # Find item
-        target_item = None
-        for item in items:
-            content = item.get("content", {})
-            if (
-                content.get("number") == number
-                and content.get("repository", {}).get("name") == repo
-            ):
-                target_item = item
-                break
-
-        if not target_item:
-            results.append(f"Item {repo}#{number} not found in '{proj['name']}'")
-            failed = True
-            continue
-
-        # Find Status field ID and option ID via field discovery
-        _, proj_fields = get_project_fields(proj["number"])
-
-        status_field = None
-        status_option_id = None
-        for field in proj_fields:
-            if field.get("name") == "Status":
-                status_field = field
-                for opt in field.get("options", []):
-                    if opt["name"] == status:
-                        status_option_id = opt["id"]
-                        break
-                break
-
-        if not status_field:
-            results.append(f"No Status field found in '{proj['name']}'")
-            failed = True
-            continue
-        if not status_option_id:
-            available = [o["name"] for o in status_field.get("options", [])]
-            hint = _legacy_status_hint(status, available)
-            message = f"Status '{status}' not found. Available: {', '.join(available)}"
-            if hint:
-                message = f"{message}. {hint}"
-            results.append(message)
-            failed = True
-            continue
-
-        try:
-            _graphql(
-                QUERY_SET_FIELD_VALUE,
-                {
-                    "projectId": project_id,
-                    "itemId": target_item["id"],
-                    "fieldId": status_field["id"],
-                    "optionId": status_option_id,
-                },
-            )
-            results.append(f"Moved {repo}#{number} to '{status}' in '{proj['name']}'")
-        except Exception as e:
-            results.append(f"Failed to move: {e}")
-            failed = True
-
-    _out("\n".join(results), fmt)
-    return not failed
+    `#609` fail-loud contract holds: an ordinary failure returns ``False``
+    and the CLI arm raises SystemExit(1). A LifecycleMutationHaltError — the
+    boards are divergent and a restore failed — propagates instead of
+    degrading to an ordinary failed move (KTD13 carve-out).
+    """
+    try:
+        evidence = _set_lifecycle_field_cross_board(
+            repo, number, "Status", status, requested_project=project_name
+        )
+    except LifecycleMutationHaltError:
+        raise
+    except Exception as e:
+        _out(f"Failed to move: {e}", fmt)
+        return False
+    evidence["action"] = "board-move"
+    _out(evidence, fmt)
+    return True
 
 
 def board_archive(project_name: str, dry_run: bool, fmt: str) -> None:
@@ -1543,7 +1585,9 @@ def _sync_label_fields_for_item(repo: str, number: int, proj: dict, item_id: str
 
         if not option_id:
             results.append(
-                f"No option ID for {label_prefix}:{value} — consider running 'fields create-option'"
+                f"No option ID for {label_prefix}:{value} — add it to the field's option set via "
+                "'fields set-options --options-file <complete-list.json>' (a one-option write is "
+                "refused: option sets are overwritten whole)"
             )
             continue
 
@@ -1762,8 +1806,236 @@ def labels_auto_label(repo: str, number: int, fmt: str) -> None:
         _error(f"Failed to apply labels: {e}")
 
 
+class OptionSetIdentityError(ValueError):
+    """A single-select option-set submission would violate identity preservation.
+
+    Raised BEFORE any mutating call. `UpdateProjectV2FieldInput.singleSelectOptions`
+    overwrites the whole option set, so a submission that drops a live option (or
+    drops a retained option's `id`) clears every item value pointing at it. This
+    error is the helper's refusal, not a warning."""
+
+
+# ProjectV2SingleSelectFieldOptionColor is a closed eight-value enum; anything
+# else is an API error waiting to happen on a field that may carry hundreds of
+# item values.
+VALID_OPTION_COLORS = ("GRAY", "BLUE", "GREEN", "YELLOW", "ORANGE", "RED", "PINK", "PURPLE")
+
+
+def fetch_single_select_field(field_id: str) -> dict:
+    """Fetch one single-select field and its full option list by field id.
+
+    Returns the node dict with `id`, `name`, and `options` (each carrying
+    `id`, `name`, `color`, `description`). Raises if the node is not a
+    single-select field."""
+    data = _graphql(QUERY_GET_SINGLE_SELECT_FIELD, {"fieldId": field_id})
+    node = data.get("node") or {}
+    if not node or "options" not in node:
+        raise ValueError(
+            f"field {field_id!r} is not a SINGLE_SELECT field (or does not exist); "
+            "option-set mutation is only defined for single-select fields"
+        )
+    return cast(dict, node)
+
+
+def _validate_option_set_request(
+    desired_options: list[dict],
+    current_options: list[dict],
+) -> list[dict]:
+    """Pre-flight validation for an identity-preserving option-set write.
+
+    Raises `OptionSetIdentityError` on any violation and returns the
+    normalized, submission-ready option list. Never touches the network —
+    the mutation is composed only after every assertion here passes.
+
+    Contract (V1/V2/V3 of issue infiquetra/infiquetra-sdlc#94):
+      * the submitted list must be the COMPLETE desired set — the API
+        overwrites the whole option set, and empty input is ignored;
+      * every option currently on the field must appear in the submission
+        (retire-by-omission is the value-clearing hazard, so the helper
+        refuses to drop a live option outright);
+      * every retained or renamed option carries its existing `id`; only a
+        genuinely new name omits `id`;
+      * every submitted colour is inside the eight-value enum;
+      * `description` (a REQUIRED `String!` with no default on the live
+        input type) is present on EVERY submitted entry: caller's explicit
+        value wins, a retained or renamed option whose caller omitted it
+        copies the live option's description verbatim, and a genuinely new
+        option defaults to `""` — so S8 can never wipe the live descriptions.
+    """
+    if not desired_options:
+        raise OptionSetIdentityError(
+            "empty option list refused: the API ignores empty input, so this "
+            "submission would silently change nothing — an option-set write "
+            "must be the complete desired set"
+        )
+    if not isinstance(current_options, list):
+        raise OptionSetIdentityError("current_options must be a list")
+    if not current_options:
+        # A lifecycle field on a live board always carries options; an empty
+        # current list means the fetch failed or was truncated, and this
+        # submission cannot be verified as the complete desired set.
+        raise OptionSetIdentityError(
+            "live option list is empty: the complete-set guarantee cannot be "
+            "verified against a field read as having no options — fetch the "
+            "field's live options (fetch_single_select_field) and retry; a "
+            "one-option submission against the real field would overwrite the "
+            "whole set"
+        )
+
+    current_by_id = {o["id"]: o for o in current_options if o.get("id")}
+    current_names_ci = {str(o["name"]).casefold() for o in current_options}
+
+    seen_ids: set[str] = set()
+    seen_names_ci: set[str] = set()
+    submitted: list[dict] = []
+    for opt in desired_options:
+        if not isinstance(opt, dict):
+            raise OptionSetIdentityError(f"option entry is not an object: {opt!r}")
+        name = opt.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise OptionSetIdentityError(f"option entry has an empty or missing name: {opt!r}")
+        opt_id = opt.get("id")
+        if opt_id is not None and (not isinstance(opt_id, str) or not opt_id):
+            raise OptionSetIdentityError(f"option {name!r} carries an invalid id: {opt_id!r}")
+        color = opt.get("color")
+        if color not in VALID_OPTION_COLORS:
+            raise OptionSetIdentityError(
+                f"option {name!r} colour {color!r} is outside the allowed enum "
+                f"{list(VALID_OPTION_COLORS)}"
+            )
+        description = opt.get("description")
+        if description is not None and not isinstance(description, str):
+            raise OptionSetIdentityError(f"option {name!r} description must be a string or omitted")
+        if opt_id is not None and opt_id in seen_ids:
+            raise OptionSetIdentityError(f"option id {opt_id!r} submitted more than once")
+        name_ci = name.casefold()
+        if name_ci in seen_names_ci:
+            raise OptionSetIdentityError(f"option name {name!r} submitted more than once")
+        seen_ids.add(opt_id or "")
+        seen_names_ci.add(name_ci)
+
+        if opt_id is None:
+            # Only a genuinely new option may omit its id: a name that collides
+            # (even by case alone) with a live option means the caller intends a
+            # rename but would instead mint a duplicate and clear every item
+            # value pointing at the live option.
+            if name_ci in current_names_ci:
+                raise OptionSetIdentityError(
+                    f"option {name!r} submitted without an id but an option with "
+                    "this name already exists on the field — a retained or renamed "
+                    "option MUST carry its existing id or its item values are "
+                    "cleared, and a same-name new option would duplicate it"
+                )
+        else:
+            if opt_id not in current_by_id:
+                raise OptionSetIdentityError(
+                    f"option {name!r} carries id {opt_id!r} which does not exist on "
+                    "the live field; only ids fetched from the current field "
+                    "definition may be submitted"
+                )
+        entry = {"name": name, "color": color}
+        # `ProjectV2SingleSelectFieldOptionInput.description` is a REQUIRED
+        # String! with no default: omitting the key makes GitHub reject the
+        # variables at coercion, and passing `""` blindly would wipe the live
+        # option's description on submit (same attribute-preservation rule as
+        # the option id itself, V2). So `description` is ALWAYS present:
+        # caller's explicit value wins; a retained or renamed option whose
+        # caller omitted it copies the LIVE option's description verbatim; a
+        # genuinely new option defaults to "".
+        if isinstance(description, str):
+            entry_description: str = description
+        elif opt_id is not None:
+            live_desc = (current_by_id.get(opt_id) or {}).get("description")
+            entry_description = live_desc if isinstance(live_desc, str) else ""
+        else:
+            entry_description = ""
+        entry["description"] = entry_description
+        if opt_id is not None:
+            entry["id"] = opt_id
+        submitted.append(entry)
+
+    dropped = [o["name"] for o in current_options if o.get("id") and o["id"] not in seen_ids]
+    if dropped:
+        raise OptionSetIdentityError(
+            f"submission omits live option(s) {dropped}; the API overwrites the "
+            "whole option set, so omitting an option DELETES it and clears every "
+            "item value pointing at it — the complete desired set is required"
+        )
+    return submitted
+
+
+def update_field_single_select_options(
+    field_id: str,
+    desired_options: list[dict],
+    *,
+    current_options: list[dict] | None = None,
+) -> dict:
+    """Replace a single-select field's options, preserving item values.
+
+    The ONLY sanctioned call site for `QUERY_UPDATE_FIELD_OPTIONS`. Fetches
+    the live option list (unless `current_options` is supplied — offline
+    tests use this seam), validates the submission against it, and only
+    then submits the whole desired set. Every retained or renamed option
+    carries its existing `id`, so item values follow the option instead of
+    being cleared; only genuinely new options omit the id. Refuses — before
+    any mutation leaves this process — a submission that is not the
+    complete desired set, drops a live option, lacks an existing id on a
+    retained option, or uses a colour outside the eight-value enum.
+
+    Returns the read-back field containing the post-write option list; any
+    lost option id, changed option name, or lost attribute on an id-carrying
+    option is raised as `OptionSetIdentityError` so a silent identity loss
+    cannot pass as success.
+    """
+    if current_options is None:
+        current_options = fetch_single_select_field(field_id).get("options", [])
+    submitted = _validate_option_set_request(desired_options, current_options)
+
+    data = _graphql(
+        QUERY_UPDATE_FIELD_OPTIONS,
+        {"fieldId": field_id, "options": submitted},
+    )
+    field = (data.get("updateProjectV2Field") or {}).get("projectV2Field") or {}
+    returned = field.get("options") or []
+
+    returned_by_id = {o.get("id"): o for o in returned}
+    for entry in submitted:
+        if entry.get("id"):
+            if entry["id"] not in returned_by_id:
+                raise OptionSetIdentityError(
+                    f"post-write readback lost option id {entry['id']!r} "
+                    f"(name {entry['name']!r}); refusing to report success"
+                )
+            got = returned_by_id[entry["id"]]
+            if got.get("name") != entry["name"] or got.get("description") != entry["description"]:
+                raise OptionSetIdentityError(
+                    f"post-write readback altered option id {entry['id']!r} "
+                    f"(name {entry['name']!r}): name/description "
+                    f"{got.get('name')!r}/{got.get('description')!r} differs from "
+                    f"submitted {entry['name']!r}/{entry['description']!r}; "
+                    "refusing to report success"
+                )
+    if len(returned) != len(submitted):
+        raise OptionSetIdentityError(
+            f"post-write readback carries {len(returned)} options but "
+            f"{len(submitted)} were submitted; refusing to report success"
+        )
+    return field
+
+
 def fields_create_option(project_name: str, field_name: str, option_name: str, fmt: str) -> None:
-    """Create a new single-select option on a project field."""
+    """Inspect a single-select field ahead of adding an option.
+
+    This command performs NO mutation — it never has. It discovers the
+    field, prints its id and the options already on it, and stops, because
+    the option-set mutation is destructive by design:
+    `UpdateProjectV2FieldInput.singleSelectOptions` overwrites the whole
+    option set, so a naive one-option write would delete every other option
+    and clear every item value on the field. Use
+    `fields set-options --options-file` (backed by
+    `update_field_single_select_options`) which submits the complete
+    desired list with existing option ids intact, or add the option in the
+    GitHub Projects UI."""
     config = load_config()
     proj = get_project_config(config, project_name)
 
@@ -1780,12 +2052,70 @@ def fields_create_option(project_name: str, field_name: str, option_name: str, f
         _error(f"Field '{field_name}' not found in project '{project_name}'")
         sys.exit(1)
 
-    print(f"Creating option '{option_name}' for field '{field_name}' in '{project_name}'...")
+    print(f"Inspecting option '{option_name}' for field '{field_name}' in '{project_name}'...")
     print(f"Field ID: {target_field['id']}")
     print(f"Existing options: {[o['name'] for o in target_field.get('options', [])]}")
-    print("\nNote: Option creation via GraphQL may require specific permissions.")
-    print("If this fails, add the option manually in the GitHub Projects UI:")
-    print(f"  https://github.com/orgs/{ORG}/projects/{proj['number']}/settings/fields")
+    print("\nNo mutation was performed. A field's option set is overwritten whole by")
+    print("UpdateProjectV2FieldInput.singleSelectOptions — adding one option through that")
+    print("input would delete every existing option and clear each item's value for the")
+    print("field. To add an option safely, submit the COMPLETE desired list (with every")
+    print("existing option id preserved) via:")
+    print(f"  sdlc_manager.py fields set-options --project {project_name} --field {field_name} \\")
+    print("      --options-file <complete-desired-options.json>")
+    print(
+        f"or in the Projects UI: https://github.com/orgs/{ORG}/projects/{proj['number']}/settings/fields"
+    )
+
+
+def fields_set_options(
+    project_name: str, field_name: str, options_file: str, dry_run: bool
+) -> None:
+    """Replace a field's option set via the identity-preserving helper.
+
+    `options_file` is a JSON array of `{name, color, description?, id?}`
+    objects and must be the COMPLETE desired option set — every option
+    currently on the field included, retained or renamed options carrying
+    their existing id. Validation runs before anything is written; with
+    `--dry-run` the command stops after validation and writes nothing."""
+    config = load_config()
+    proj = get_project_config(config, project_name)
+
+    _, fields = get_project_fields(proj["number"])
+
+    target_field = None
+    for f in fields:
+        if f.get("name", "").lower() == field_name.lower():
+            target_field = f
+            break
+
+    if not target_field:
+        _error(f"Field '{field_name}' not found in project '{project_name}'")
+        sys.exit(1)
+    if target_field.get("options") is None or "options" not in target_field:
+        _error(
+            f"Field '{field_name}' is not a single-select field; option sets are only defined for SINGLE_SELECT"
+        )
+        sys.exit(1)
+
+    desired = json.loads(Path(options_file).read_text(encoding="utf-8"))
+
+    print(f"Option-set write on field '{field_name}' in '{project_name}'...")
+    print(f"Field ID: {target_field['id']}")
+    print(f"Existing options: {[o['name'] for o in target_field.get('options', [])]}")
+    print(f"Desired options:  {[o.get('name') for o in desired]}")
+
+    if dry_run:
+        _validate_option_set_request(desired, target_field.get("options", []))
+        print("\nDry run: option set validated — complete list, existing ids preserved.")
+        print("No mutation was sent. Re-run without --dry-run to apply.")
+        return
+
+    field = update_field_single_select_options(
+        target_field["id"], desired, current_options=target_field.get("options", [])
+    )
+    print("\nOption set updated. Post-write readback:")
+    for o in field.get("options", []):
+        print(f"  {o.get('id')}  {o.get('name')}  ({o.get('color')})")
 
 
 def fields_discover(project_name: str, fmt: str) -> None:
@@ -2305,42 +2635,6 @@ def rollout_deploy_all(repo: str, fmt: str) -> None:
     rollout_gap_analysis(repo, fmt)
 
 
-def rollout_update(repo: str, field: str, status: str, fmt: str) -> None:
-    """Update beads-config.json for a repo."""
-    sdlc_path = get_sdlc_path()
-    status_file = sdlc_path / "config" / "beads-config.json"
-
-    config = load_config()
-    beads = config.get("legacy_rollout_config", {})
-    repos = beads.get("repositories", {})
-
-    if repo not in repos:
-        _error(f"Repo '{repo}' not found in beads-config.json")
-        sys.exit(1)
-
-    repos[repo][field] = status
-    beads["last_updated"] = datetime.now().strftime("%Y-%m-%d")
-
-    # Recalculate summary
-    summary = {"total_repos": len(repos), "completed": 0, "in_progress": 0, "pending": 0}
-    for repo_data in repos.values():
-        fields = ["labels", "templates", "claude_md", "project"]
-        statuses_vals = [repo_data.get(f, "pending") for f in fields]
-        if all(v == "complete" for v in statuses_vals):
-            summary["completed"] += 1
-        elif any(v == "complete" for v in statuses_vals):
-            summary["in_progress"] += 1
-        else:
-            summary["pending"] += 1
-    beads["summary"] = summary
-
-    with open(status_file, "w") as f:
-        json.dump(beads, f, indent=2)
-        f.write("\n")
-
-    print(f"Updated {repo}.{field} = {status} in beads-config.json")
-
-
 # NOTE: The `beads` subcommand group + `_bd` shell helper + `beads_*`
 # functions were removed in this PR. Beads/Dolt was decommissioned from
 # the Mount Olympus coordination layer on 2026-04-26 (see
@@ -2361,6 +2655,31 @@ def rollout_update(repo: str, field: str, status: str, fmt: str) -> None:
 #   - link-sub-issue     wrap the native sub-issue API
 #   - verify-label       self-heal missing labels (404 → create; exists → no-op)
 #   - validate-card      run the card_validator schema check on an issue body
+#
+# #812 correction seam: saga submits Stage/Status through ``flow set-field --correction``.
+# The operator CLI without ``--correction`` still sets Initiative / Objective / other
+# live fields. No new operation; field name is part of operation, authorization, and
+# retry identity. Stage is allowed by name only — no Stage field exists on the live
+# boards and no ``set-field-stage`` op-kind is created.
+CORRECTION_FIELDS = frozenset({"Status", "Stage"})
+
+
+def _canonical_lifecycle_field(field_name: str) -> "str | None":
+    """Case-insensitive lookup of ``field_name`` against CORRECTION_FIELDS.
+
+    Returns the canonical field name ("Status" / "Stage") when the caller's
+    spelling names a lifecycle field — any case variant does — and None when
+    it names any other field. The KTD10 routing rule keys on THIS lookup, not
+    on exact membership: GitHub field names that ``_resolve_project_fields``
+    match case-insensitively (e.g. ``--field status``) must not slip past the
+    constrained cross-board writer onto a single board (Code Review cycle 1,
+    F-1).
+    """
+    folded = field_name.casefold()
+    for canonical in CORRECTION_FIELDS:
+        if canonical.casefold() == folded:
+            return canonical
+    return None
 
 
 def _resolve_project_field(project_name: str, field_name: str) -> dict:
@@ -2413,6 +2732,37 @@ def flow_field_options(project_name: str, field_name: str, fmt: str) -> None:
             print(f"  {o['name']:30s}  (id: {o['id']})")
 
 
+def assert_correction_field(field_name: str) -> str:
+    """Reject a correction set-field that names any field other than Status or Stage."""
+    if field_name not in CORRECTION_FIELDS:
+        raise RuntimeError(
+            f"correction set-field rejects field {field_name!r}; "
+            f"allowed: {sorted(CORRECTION_FIELDS)}"
+        )
+    return field_name
+
+
+def correction_identity(
+    *,
+    field_name: str,
+    repo: str,
+    number: int,
+    option_name: str,
+) -> dict[str, str]:
+    """Field-named operation / authorization / retry identity for a correction write."""
+    field_name = assert_correction_field(field_name)
+    return {
+        "operation": f"set-field:{field_name}",
+        "authorization": f"correction-field:{field_name}",
+        # Byte-identical to saga's ledger key —
+        # ``reversibility_certificate.idempotency_key("set-field-status", repo, number,
+        # option_name, field=field_name)``. The two recipes must move together: a retry
+        # identity that does not match the ledger key cannot correlate a mission-control
+        # write with the saga tick that submitted it, which is the only reason to emit it.
+        "retry": f"set-field-status:{repo}#{number}:{field_name}:{option_name}",
+    }
+
+
 def flow_set_field(
     project_name: str,
     repo: str,
@@ -2420,9 +2770,43 @@ def flow_set_field(
     field_name: str,
     option_name: str,
     fmt: str,
+    *,
+    correction: bool = False,
+    reason: str | None = None,
 ) -> None:
     """Set a single-select field value on a card. Idempotent: re-running
-    with the same option produces the same final state."""
+    with the same option produces the same final state.
+
+    ``correction=True`` is the saga submission seam (#812): only Status (and
+    Stage by name) are accepted; the field name is carried in the result identity.
+
+    W6 routing (KTD10): any write naming Status or Stage — with or without
+    ``--correction`` — IS the constrained cross-board mutation. The field name
+    selects the writer, not the flag, because in-process callers (issue-create
+    post-step, prepared-issue loop, bulk delegate) never pass ``correction``.
+    ``project_name`` is validated as a carrying board, never obeyed as a
+    single-board restriction: a single-board Status write is no longer
+    possible (R40). Every other field keeps the single-board path unchanged.
+    """
+    lifecycle_field = _canonical_lifecycle_field(field_name)
+    if lifecycle_field is not None:
+        # Case variants route too: the canonical name goes into the mutation,
+        # so the emitted identity matches saga's ledger key regardless of the
+        # caller's spelling (F-1, Code Review cycle 1).
+        evidence = _set_lifecycle_field_cross_board(
+            repo,
+            number,
+            lifecycle_field,
+            option_name,
+            reason=reason,
+            requested_project=project_name,
+        )
+        evidence["action"] = "set-field"
+        evidence["correction"] = bool(correction)
+        _out(evidence, fmt)
+        return
+    if correction:
+        field_name = assert_correction_field(field_name)
     field = _resolve_project_field(project_name, field_name)
     project_id = field["_project_id"]
     option = _resolve_field_option(project_name, field_name, field, option_name)
@@ -2436,6 +2820,26 @@ def flow_set_field(
         )
 
     _set_project_field_value(project_id, field, option, target_item)
+    if correction:
+        _out(
+            {
+                "action": "set-field",
+                "field": field_name,
+                "option": option_name,
+                "repo": repo,
+                "number": number,
+                "project": project_name,
+                "correction": True,
+                "identity": correction_identity(
+                    field_name=field_name,
+                    repo=repo,
+                    number=number,
+                    option_name=option_name,
+                ),
+            },
+            fmt,
+        )
+        return
     _out(f"Set {field_name}='{option_name}' on {repo}#{number} ({project_name})", fmt)
 
 
@@ -2491,6 +2895,341 @@ def _set_project_field_value(
     )
 
 
+# ===========================
+# CONSTRAINED LIFECYCLE-FIELD MUTATION (W6, infiquetra/infiquetra-sdlc#87)
+# ===========================
+# One mutation writes `Stage` and `Status` — and nothing else (R31) — to EVERY
+# board carrying the issue (R40), all-or-none (R67). Board discovery comes from
+# the issue's own projectItems (KTD2): the repo→board map deliberately has
+# empty `repositories` arrays and cannot answer "which boards carry this".
+# Atomicity is apply-then-compensate (KTD3 — Projects v2 has no multi-project
+# transaction). An issue whose prior value was unset cannot be restored with
+# the set-only primitive below (no clear mutation exists), so that restore is
+# a FAILED restore routing into the halt (KTD8). The halt derives from
+# `Exception`, not `RuntimeError`: the prepared-issue loop's
+# `except RuntimeError` warn-and-continue must NOT absorb a compensation
+# failure (R67 — never leave the divergence unreported; W6 must not edit that
+# loop — it is W10's custody). No transition-legality check exists anywhere in
+# this path and none may be added (R65/R82).
+
+
+class LifecycleMutationHaltError(Exception):
+    """A compensating write failed; halves the boards in disagreement.
+
+    Deliberately NOT a RuntimeError: `main()` gets its own arm for this (a
+    non-zero exit with the named divergence, no traceback) and the
+    prepared-issue field loop's `except RuntimeError` must not absorb it.
+    Carries `board_state` — per-board {board, value} — for machine-readable
+    consumption by unattended callers."""
+
+    def __init__(self, message: str, *, board_state: list[dict[str, Any]] | None = None) -> None:
+        super().__init__(message)
+        self.board_state = board_state or []
+
+
+# KTD11: the mutation always records a reason; when the caller supplied none
+# the recorded value is this explicit sentinel — never a fabricated
+# justification. Saga's deployed writer (`board_progression.py`) passes no
+# --reason and must keep working unchanged.
+REASON_NOT_SUPPLIED = "reason-not-supplied"
+
+
+def _lifecycle_field_boards(repo: str, number: int, field_name: str) -> list[dict[str, Any]]:
+    """Return one record per board carrying {repo}#{number}.
+
+    Boards are resolved from the issue's own projectItems (KTD2), never from
+    the repo→board map. Each record carries the mapping key, project title and
+    number, the project-item node id (needed by the write primitive), whether
+    the board even has the named field, and the field's current value — read in
+    the SAME query that discovers the boards, because that value is what KTD3's
+    compensation restores; reading it separately would open a window between
+    read and write. `prior_value` is None both when the board has the field but
+    no value set (`field_present` True) and when it lacks the field entirely
+    (False) — preflight halts on the latter via _resolve_project_field.
+    """
+    data = _graphql(
+        QUERY_GET_LIFECYCLE_FIELD_BOARDS,
+        {"org": ORG, "repo": repo, "number": number},
+    )
+    issue = data.get("repository", {}).get("issue")
+    if not isinstance(issue, dict):
+        raise RuntimeError(
+            f"Could not read back {ORG}/{repo}#{number} project state "
+            f"(lifecycle-field board discovery)"
+        )
+
+    # GitHub's project.title ("Operations") is not a mapping key; join on the
+    # project number to recover the key the config-based resolvers require.
+    number_to_key = {
+        cast(int, proj.get("number")): key
+        for key, proj in load_config().get("project_mappings", {}).get("projects", {}).items()
+        if isinstance(proj.get("number"), int)
+    }
+
+    records: list[dict[str, Any]] = []
+    for item in issue.get("projectItems", {}).get("nodes", []):
+        if not isinstance(item, dict):
+            continue
+        project = item.get("project", {})
+        if not isinstance(project, dict):
+            continue
+        field_present = False
+        prior_value = None
+        for field_value in item.get("fieldValues", {}).get("nodes", []):
+            if not isinstance(field_value, dict):
+                continue
+            if field_value.get("field", {}).get("name", "").casefold() != field_name.casefold():
+                continue
+            field_present = True
+            value = field_value.get("name")
+            if value:
+                prior_value = value
+        records.append(
+            {
+                "key": number_to_key.get(project.get("number")),
+                "title": project.get("title"),
+                "project_number": project.get("number"),
+                "item_id": item.get("id"),
+                "field_present": field_present,
+                "prior_value": prior_value,
+            }
+        )
+    # Deterministic write order (lowest project number first); tests inject
+    # failures by board position, so the order must not depend on dict order.
+    records.sort(key=lambda r: (not isinstance(r["project_number"], int), r["project_number"] or 0))
+    return records
+
+
+def _set_lifecycle_field_cross_board(
+    repo: str,
+    number: int,
+    field_name: str,
+    option_name: str,
+    *,
+    reason: str | None = None,
+    requested_project: str | None = None,
+) -> dict[str, Any]:
+    """The constrained cross-board lifecycle-field mutation (W6).
+
+    Writes `field_name` = `option_name` on EVERY board carrying {repo}#{number}
+    (R40), all-or-none (R67): preflight every board first (KTD4 — a missing
+    field or option halts before the first write), write them in sequence, and
+    on a write failure restore each already-written board's captured prior
+    value. A restore that cannot be performed — the prior value was unset and
+    no clear primitive exists (KTD8), or the restoring write itself fails —
+    raises LifecycleMutationHaltError naming which board holds which value;
+    there is no retry (R67). A call whose carrying boards ALREADY disagree on
+    the named field halts before the first write (F-7): writing from mixed
+    priors would make later compensation report restore-success over a
+    divergence it can never fix, so the mutation refuses instead of
+    reconcile-or-hide.
+
+    Returns the evidence payload (one record per board); raises RuntimeError
+    for ordinary preflight/discovery failures and the halt exception only when
+    boards are actually divergent.
+
+    Emits no-ladder semantics by construction (KTD6): nothing here compares the
+    target value against the prior value, and no permitted-edge list exists.
+    """
+    assert_correction_field(field_name)
+    recorded_reason = reason if reason else REASON_NOT_SUPPLIED
+    identity = correction_identity(
+        field_name=field_name, repo=repo, number=number, option_name=option_name
+    )
+
+    boards = _lifecycle_field_boards(repo, number, field_name)
+    if not boards:
+        raise RuntimeError(
+            f"Issue {repo}#{number} sits on no project board; {field_name}='{option_name}' "
+            f"was written nowhere. This is an explicit no-op, not a success."
+        )
+
+    if requested_project is not None:
+        carrying = {b["key"] for b in boards if b["key"]}
+        if requested_project not in carrying:
+            raise RuntimeError(
+                f"Board '{requested_project}' does not carry {repo}#{number} "
+                f"(carrying boards: {sorted(carrying)}). A lifecycle-field write "
+                f"reaches every carrying board, not only the one named."
+            )
+
+    # F-7 (Code Review cycle 2): a call that STARTS from already-divergent
+    # carrying boards must not write. Its per-board "captured priors" would BE
+    # the divergent values, so a later compensation would "succeed" right back
+    # into divergence and the halt would hide as an ordinary restore success —
+    # exactly what saga's live retry loop (and any operator retry) does after a
+    # first-attempt halt. Refuse BEFORE the first write, naming which board
+    # holds which value; this is a refusal to write, never a
+    # restore-to-consistent outcome. (R42 is untouched: this refuses a WRITE,
+    # never a person's hand edit, and W6 never reconciles.)
+    divergent = [b for b in boards if b["field_present"] and b["prior_value"] is not None]
+    distinct_priors = {b["prior_value"] for b in divergent}
+    if len(distinct_priors) > 1:
+        board_state = [
+            {"board": b["key"], "shows": b["prior_value"] if b["field_present"] else None}
+            for b in boards
+        ]
+        raise LifecycleMutationHaltError(
+            f"REFUSING to write {field_name}='{option_name}' to {repo}#{number}: the "
+            f"carrying boards ALREADY disagree on {field_name} ("
+            + "; ".join(f"{b['key']} shows '{b['prior_value']}'" for b in divergent)
+            + "). A write from mixed priors would record each board's divergent "
+            "value as its restoration point, so no later compensation could "
+            "report truthfully (R67). Raise this divergence to the operator.",
+            board_state=board_state,
+        )
+
+    # KTD4 — preflight EVERY board before the first write, capturing per board
+    # the live field id, target option id, and the prior value's option id (for
+    # restoration). Option ids are resolved live, never cached (DECISIONS.md
+    # option-id-drift revisit condition).
+    preflight: list[dict[str, Any]] = []
+    for board in boards:
+        key = board["key"]
+        if key is None:
+            raise RuntimeError(
+                f"Board '{board['title']}' (number {board['project_number']}) carries "
+                f"{repo}#{number} but is not in project-mappings.json; its "
+                f"{field_name} field cannot be resolved"
+            )
+        try:
+            field = _resolve_project_field(key, field_name)
+            option = _resolve_field_option(key, field_name, field, option_name)
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"preflight failed for {repo}#{number} on board '{key}' ('{board['title']}'): {exc}"
+            ) from exc
+        prior_option_id: str | None = None
+        if board["prior_value"] is not None:
+            prior_option = next(
+                (
+                    o
+                    for o in field.get("options", [])
+                    if o.get("name", "").lower() == board["prior_value"].lower()
+                ),
+                None,
+            )
+            # No matching option id means a later restore cannot work; leave
+            # prior_option_id None and let any needed restore fail INTO the
+            # halt (safe direction, KTD8) rather than fabricating a value.
+            prior_option_id = prior_option["id"] if prior_option else None
+        preflight.append(
+            {
+                **board,
+                "field": field,
+                "target_option_id": option["id"],
+                "prior_option_id": prior_option_id,
+            }
+        )
+
+    # Write phase — apply-then-compensate (KTD3).
+    written: list[dict[str, Any]] = []
+    try:
+        for entry in preflight:
+            _set_project_field_value(
+                entry["field"]["_project_id"],
+                entry["field"],
+                {"id": entry["target_option_id"]},
+                {"id": entry["item_id"]},
+            )
+            written.append(entry)
+    except Exception as write_exc:
+        divergent: list[dict[str, Any]] = []
+        restored: list[str] = []
+        for entry in written:
+            new_value = option_name
+            prior_shown = entry["prior_value"]
+            if entry["prior_option_id"] is None:
+                # KTD8: the board carried no prior value (or the prior option no
+                # longer resolves), and no clear mutation exists — the board
+                # cannot be put back. Report it, never silently leave it.
+                divergent.append(
+                    {
+                        "board": entry["key"],
+                        "held_value": new_value,
+                        "reason": (
+                            "board's prior value was unset"
+                            if prior_shown is None
+                            else f"prior option '{prior_shown}' no longer resolvable"
+                        ),
+                    }
+                )
+                continue
+            try:
+                _set_project_field_value(
+                    entry["field"]["_project_id"],
+                    entry["field"],
+                    {"id": entry["prior_option_id"]},
+                    {"id": entry["item_id"]},
+                )
+                restored.append(entry["key"])
+            except Exception as restore_exc:
+                divergent.append(
+                    {
+                        "board": entry["key"],
+                        "held_value": new_value,
+                        "reason": f"restore failed: {restore_exc}",
+                    }
+                )
+        if divergent:
+            divergent_boards = {d["board"] for d in divergent}
+            board_state = [
+                {
+                    "board": entry["key"],
+                    "shows": (
+                        option_name if entry["key"] in divergent_boards else entry["prior_value"]
+                    ),
+                }
+                for entry in preflight
+            ]
+            raise LifecycleMutationHaltError(
+                f"COMPENSATION FAILED writing {field_name}='{option_name}' to "
+                f"{repo}#{number}. {len(divergent)} already-written board(s) could "
+                f"not be restored: "
+                + "; ".join(
+                    f"{d['board']} still shows '{d['held_value']}' ({d['reason']})"
+                    for d in divergent
+                )
+                + f". Restored OK: {restored or 'none'}. Board state now: "
+                + "; ".join(f"{s['board']} shows '{s['shows']}'" for s in board_state)
+                + ". Halting WITHOUT retry — raise this divergence to the operator.",
+                board_state=board_state,
+            ) from write_exc
+        # The failed write is the first board that raised — the entry after the
+        # last successful one. Naming the last SUCCESSFUL board here pointed
+        # the operator at a board that had already been restored (F-3, Code
+        # Review cycle 1); `written` empty names the FIRST board.
+        failed_board = preflight[len(written)]["key"]
+        raise RuntimeError(
+            f"write of {field_name}='{option_name}' to {repo}#{number} failed "
+            f"on board '{failed_board}': {write_exc}. All "
+            f"{len(written)} already-written board(s) were restored to their "
+            f"prior values."
+        ) from write_exc
+
+    return {
+        "field": field_name,
+        "option": option_name,
+        "repo": repo,
+        "number": number,
+        "reason": recorded_reason,
+        "identity": identity,
+        "boards": [
+            {
+                "project": entry["key"],
+                "project_title": entry["title"],
+                "project_number": entry["project_number"],
+                "item_id": entry["item_id"],
+                "prior_value": entry["prior_value"],
+                "new_value": option_name,
+                "reason": recorded_reason,
+                "outcome": "written",
+            }
+            for entry in preflight
+        ],
+    }
+
+
 def flow_set_field_bulk(
     project_name: str,
     repo: str,
@@ -2509,45 +3248,69 @@ def flow_set_fields_bulk(
     numbers: list[int],
     assignments: list[tuple[str, str]],
     fmt: str,
+    *,
+    correction: bool = False,
+    reason: str | None = None,
 ) -> None:
-    """Set one or more single-select fields across multiple cards in one discovery pass."""
+    """Set one or more single-select fields across multiple cards in one discovery pass.
+
+    ``correction=True`` applies the same #812 restriction the single-card path applies:
+    only Status (and Stage by name) may be written, and the result is marked as a
+    correction carrying the per-assignment identity. Enforcing it HERE rather than only in
+    ``main()`` means an in-process caller cannot reach a wider field set than the CLI can.
+
+    W6 routing (KTD10): every Status/Stage assignment — with or without
+    ``correction`` — routes per issue through ``_set_lifecycle_field_cross_board``,
+    so ``--numbers`` and repeated ``--field`` cannot reach the old single-board
+    path either. Atomicity is PER ISSUE, not per invocation: each number is an
+    independent all-or-none cross-board write, and a failure on the third issue
+    does not roll back the first two (the end-of-run ``failed`` report stays the
+    per-invocation result). A LifecycleMutationHaltError propagates — it is
+    never downgraded to a ``failed`` row.
+    """
     if not numbers:
         raise RuntimeError("numbers cannot be empty")
     if not assignments:
         raise RuntimeError("field assignments cannot be empty")
+    if correction:
+        for field_name, _option in assignments:
+            # Case variants canonicalize like the single-card path does (F-1):
+            # the correction restriction and the routing rule see the same
+            # canonical field name.
+            canonical = _canonical_lifecycle_field(field_name)
+            assert_correction_field(canonical if canonical is not None else field_name)
 
-    field_names = [field_name for field_name, _ in assignments]
-    fields = _resolve_project_fields(project_name, field_names)
-    resolved_assignments = [
-        (
-            field_name,
-            option_name,
-            fields[field_name],
-            _resolve_field_option(project_name, field_name, fields[field_name], option_name),
-        )
-        for field_name, option_name in assignments
-    ]
-    item_by_number = _project_items_by_number(project_name, repo)
+    # KTD10: lifecycle assignments go cross-board per issue; everything else
+    # keeps the existing single-board path with its one shared discovery pass.
+    # Case-insensitive: `--field status` is a lifecycle assignment (F-1).
+    lifecycle_assignments: list[tuple[str, str]] = []
+    other_assignments: list[tuple[str, str]] = []
+    for field_name, option_name in assignments:
+        canonical = _canonical_lifecycle_field(field_name)
+        if canonical is not None:
+            lifecycle_assignments.append((canonical, option_name))
+        else:
+            other_assignments.append((field_name, option_name))
 
     updated: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
+
     for number in numbers:
-        target_item = item_by_number.get(number)
-        if not target_item:
-            failed.append(
-                {
-                    "repo": repo,
-                    "number": number,
-                    "error": (
-                        f"Issue {repo}#{number} is not on project '{project_name}'. "
-                        f"Use `sdlc_manager.py board add --repo {repo} --number {number}` first."
-                    ),
-                }
-            )
-            continue
-        for field_name, option_name, field, option in resolved_assignments:
+        for field_name, option_name in lifecycle_assignments:
             try:
-                _set_project_field_value(field["_project_id"], field, option, target_item)
+                _set_lifecycle_field_cross_board(
+                    repo,
+                    number,
+                    field_name,
+                    option_name,
+                    reason=reason,
+                    requested_project=project_name,
+                )
+                updated.append(
+                    {"repo": repo, "number": number, "field": field_name, "option": option_name}
+                )
+            except LifecycleMutationHaltError:
+                raise
             except RuntimeError as exc:
                 failed.append(
                     {
@@ -2558,17 +3321,59 @@ def flow_set_fields_bulk(
                         "error": str(exc),
                     }
                 )
-                continue
-            updated.append(
-                {
-                    "repo": repo,
-                    "number": number,
-                    "field": field_name,
-                    "option": option_name,
-                }
-            )
 
-    result = {
+    if other_assignments:
+        field_names = [field_name for field_name, _ in other_assignments]
+        fields = _resolve_project_fields(project_name, field_names)
+        resolved_assignments = [
+            (
+                field_name,
+                option_name,
+                fields[field_name],
+                _resolve_field_option(project_name, field_name, fields[field_name], option_name),
+            )
+            for field_name, option_name in other_assignments
+        ]
+        item_by_number = _project_items_by_number(project_name, repo)
+
+        for number in numbers:
+            target_item = item_by_number.get(number)
+            if not target_item:
+                failed.append(
+                    {
+                        "repo": repo,
+                        "number": number,
+                        "error": (
+                            f"Issue {repo}#{number} is not on project '{project_name}'. "
+                            f"Use `sdlc_manager.py board add --repo {repo} --number {number}` first."
+                        ),
+                    }
+                )
+                continue
+            for field_name, option_name, field, option in resolved_assignments:
+                try:
+                    _set_project_field_value(field["_project_id"], field, option, target_item)
+                except RuntimeError as exc:
+                    failed.append(
+                        {
+                            "repo": repo,
+                            "number": number,
+                            "field": field_name,
+                            "option": option_name,
+                            "error": str(exc),
+                        }
+                    )
+                    continue
+                updated.append(
+                    {
+                        "repo": repo,
+                        "number": number,
+                        "field": field_name,
+                        "option": option_name,
+                    }
+                )
+
+    result: dict[str, Any] = {
         "action": "set-field",
         "project": project_name,
         "repo": repo,
@@ -2578,6 +3383,24 @@ def flow_set_fields_bulk(
         "updated": updated,
         "failed": failed,
     }
+    if correction:
+        # A correction reported as an ordinary bulk write is indistinguishable from an
+        # operator Initiative/Objective write in the output stream. Mark it and carry the
+        # same identity block the single-card path emits, once per (card, assignment).
+        result["correction"] = True
+        # Built from ``updated``, not from ``numbers x assignments``: an identity block is a
+        # claim that a write happened under that identity, so a card that landed in ``failed``
+        # must not appear here. Reporting a requested-but-unwritten identity is the same class
+        # of defect as reporting a correction as an ordinary write.
+        result["identity"] = [
+            correction_identity(
+                field_name=row["field"],
+                repo=row["repo"],
+                number=row["number"],
+                option_name=row["option"],
+            )
+            for row in updated
+        ]
     _out(result, fmt)
     if failed:
         raise RuntimeError(
@@ -2609,6 +3432,13 @@ def flow_discover_project(repo: str, fmt: str) -> None:
 
 def _load_live_mimir_coverage(repo: str) -> dict[str, Any]:
     """Read and validate Team Mimir's exact repository admission from GitHub main."""
+    try:
+        import yaml
+    except ImportError as exc:
+        raise RuntimeError(
+            "PyYAML is required for Team Mimir coverage validation; no mutation performed"
+        ) from exc
+
     encoded = _gh(
         [
             "api",
@@ -3420,7 +4250,6 @@ _ISSUE_TYPES = (
 # CAMPPS (strict actionable dispatch profile on the initiative execution board).
 # Mount Olympus is retired historical context and is not an active prepare target.
 _TEAM_CHOICES = ("asgard", "campps")
-_TEAM_SAFE_STATUSES = {"asgard": "Shaping", "campps": "Idea"}
 _DISPATCH_ACTIONABLE_TYPES = frozenset({"capability", "enhancement", "defect"})
 _ISSUE_TYPE_LABELS = {
     "capability": ["capability", "needs-plan"],
@@ -3515,6 +4344,7 @@ _PREPARED_FIELD_RISK = "Technical Risk"
 _PREPARED_FIELD_OBJECTIVE = "Objective"
 _PREPARED_FIELD_ISSUE_TYPE = "Issue Type"
 _PREPARED_FIELD_LIFECYCLE_ORIGIN = "Lifecycle Origin"
+_PREPARED_FIELD_STAGE = "Stage"
 
 
 @dataclass
@@ -3550,6 +4380,10 @@ class PreparedIssue:
     mode: str | None
     body: str
     handoff_maturity: str | None = None
+    # W10 (R77): Stage is author-supplied on every prepared draft — no default
+    # and no handoff-maturity mapping (operator ruling on sdlc#91 OQ1). `None`
+    # stays `None` at authoring time; readiness refuses it before creation.
+    stage: str | None = None
     source_artifact: dict[str, Any] | None = None
     project_fields: dict[str, str] | None = None
     draft_path: str | None = None
@@ -3579,6 +4413,10 @@ def _prepared_project_fields(
     # came from", never an author-required input.
     if issue.handoff_maturity:
         fields[_PREPARED_FIELD_LIFECYCLE_ORIGIN] = issue.handoff_maturity
+    # Stage is recorded only when the author supplied one (W10) — it never gets
+    # a derived value, so an absent author Stage stays absent here too.
+    if issue.stage:
+        fields[_PREPARED_FIELD_STAGE] = issue.stage
     # Objective is carried only when the handoff source names one; we don't
     # invent an Objective the operator didn't supply.
     if source_artifact and source_artifact.ref:
@@ -3937,9 +4775,15 @@ def _render_draft_markdown(issue: PreparedIssue, approval_state: str | None = No
         f"type: {issue.issue_type}",
         f"team: {issue.team}",
         f"project: {issue.project}",
-        f"status: {issue.status}",
+        *([f"status: {issue.status}"] if issue.status else []),
         f"labels: {labels}",
     ]
+    if issue.stage:
+        # W10: emitted ONLY when a value is present, matching the risk / mode /
+        # handoff_maturity form. `_parse_draft_frontmatter` is a naive
+        # split(":", 1) — f"stage: {None}" would be stored as the authored
+        # string "None" and pass readiness as a real Stage (sdlc#91 D2).
+        frontmatter.append(f"stage: {issue.stage}")
     if issue.risk:
         frontmatter.append(f"risk: {issue.risk}")
     if issue.mode:
@@ -4240,6 +5084,7 @@ def _read_prepared_issue(draft_path: Path) -> PreparedIssue:
         labels=_normalize_label_list(metadata.get("labels") or sidecar.get("labels")),
         risk=field("risk") or None,
         mode=field("mode") or None,
+        stage=field("stage") or None,
         body=body.strip(),
         handoff_maturity=field("handoff_maturity") or None,
         source_artifact=sidecar.get("source_artifact")
@@ -4270,6 +5115,14 @@ def _read_prepared_issue(draft_path: Path) -> PreparedIssue:
         raise RuntimeError(f"Unknown issue type in prepared draft: {issue.issue_type}")
     if issue.team not in _TEAM_CHOICES:
         raise RuntimeError(f"Unknown team in prepared draft: {issue.team}")
+    if issue.stage and not issue.status:
+        # W10 cycle-5 (F-3, sdlc#91): the R3b fill-in path repairs a stage-less
+        # blocked draft by adding ONLY `stage:` — stage-less prepare legitimately
+        # emitted no `status:` line, because no default is derivable without a
+        # Stage. Apply the entry-option default on read, BEFORE readiness
+        # evaluates: the declared Stage makes the default resolvable, and the
+        # create path then writes a real Status instead of an empty one.
+        issue.status = _stage_entry_options().get(issue.stage, "")
     return issue
 
 
@@ -4410,13 +5263,30 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
     if envelope_error:
         blocking.append(envelope_error)
 
-    expected_status = _TEAM_SAFE_STATUSES.get(issue.team)
+    # W10 cycle-5 repair (operator ruling of 2026-08-30, sdlc#91): readiness
+    # accepts any Status configured WITHIN the declared Stage plus the
+    # cross-cutting statuses (Blocked); retired, unknown, and out-of-Stage values
+    # are still refused. The entry option (first configured name) is a DEFAULT,
+    # not a closed set — R49's entry_option_rule defines defaulting, and R42
+    # keeps Status consistency descriptive.
+    stage_flow = _stage_flow_rules()
+    stage_statuses = stage_flow.get("stage_statuses", {})
+    cross_cutting = set(stage_flow.get("cross_cutting_statuses", []))
     if issue.status == "Ready":
         blocking.append("Prepared issues must not start in Ready")
-    elif expected_status and issue.status != expected_status:
-        blocking.append(
-            f"Prepared {issue.team} issues must start in {expected_status!r}, not {issue.status!r}"
-        )
+    elif issue.stage:
+        stage_configured = stage_statuses.get(issue.stage)
+        if stage_configured is None:
+            blocking.append(
+                f"Unknown Stage {issue.stage!r}; its accepted Statuses cannot be derived "
+                "for a Stage outside the schema's stage_flow stage_statuses"
+            )
+        elif issue.status not in set(stage_configured) | cross_cutting:
+            blocking.append(
+                f"Prepared issues at Stage {issue.stage!r} must start in one of the "
+                f"Stage's configured Statuses {stage_configured!r} or the cross-cutting "
+                f"statuses {sorted(cross_cutting)!r}, not {issue.status!r}"
+            )
 
     if issue.project not in PROJECT_CHOICES:
         blocking.append(f"Unknown project {issue.project!r}")
@@ -4431,6 +5301,17 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
         blocking.append(f"Unknown handoff maturity {issue.handoff_maturity!r}; expected {allowed}")
     elif not issue.handoff_maturity:
         warnings.append("Missing handoff maturity metadata")
+
+    # W10 (R77, AE32): Stage is author-supplied, with no default and no
+    # handoff-maturity mapping (operator ruling on sdlc#91 OQ1, 2026-08-29) —
+    # the deliberate divergence from the handoff_maturity warning above.
+    # `field()` returns "" (never None) when the key is absent, so treat missing
+    # AND empty as absent and record a BLOCKING gap, not a warning.
+    if not issue.stage:
+        blocking.append(
+            "Missing Stage metadata; Stage is author-supplied on every prepared "
+            "draft and must be set before the issue is created"
+        )
 
     sections = _split_sections(issue.body)
     if issue.issue_type in _DISPATCH_ACTIONABLE_TYPES:
@@ -4492,6 +5373,7 @@ def _sidecar_payload(
         "team": issue.team,
         "project": issue.project,
         "status": issue.status,
+        "stage": issue.stage,
         "labels": issue.labels,
         "risk": issue.risk,
         "mode": issue.mode,
@@ -4519,6 +5401,7 @@ def issue_prepare(
     source_artifact: SourceArtifact | None = None,
     draft_dir: Path | None = None,
     fmt: str = "text",
+    stage: str | None = None,
 ) -> Path:
     if not source.strip():
         raise RuntimeError("issue prepare requires non-empty source text")
@@ -4531,7 +5414,11 @@ def issue_prepare(
             f"Unknown project {project!r}; expected one of {', '.join(PROJECT_CHOICES)}"
         )
 
-    safe_status = status or _TEAM_SAFE_STATUSES[team]
+    # W10 repair (R49): the default Status is the entry option of the DECLARED
+    # Stage — it exists only when the author supplied a Stage (Stage itself has
+    # no default per the OQ1 ruling), so a stage-less prepare leaves Status
+    # empty and readiness blocks on the missing Stage instead.
+    safe_status = status or _stage_entry_options().get(stage or "", "")
     draft_title = title or f"{issue_type}: {repo} {team} work"
     maturity = handoff_maturity or (
         source_artifact.inferred_maturity if source_artifact else "requirements-ready"
@@ -4549,6 +5436,7 @@ def issue_prepare(
         labels=_issue_expected_labels(issue_type),
         risk=risk,
         mode=mode,
+        stage=stage,
         body=_source_to_issue_body(
             source, issue_type, team, repo, risk, mode, maturity, source_artifact
         ),
@@ -4836,6 +5724,7 @@ def _build_mutation_plan(issue: PreparedIssue, config: dict[str, Any]) -> Mutati
         [
             MutationStep("issue", f"Create {issue.issue_type} in {ORG}/{issue.repo}"),
             MutationStep("board-add", f"Add issue to {issue.project}"),
+            MutationStep("set-stage", f"Set Stage to {issue.stage}"),
             MutationStep("set-status", f"Set Status to {issue.status}"),
             MutationStep("mark-draft", "Record created issue on draft and sidecar"),
         ]
@@ -4879,10 +5768,38 @@ def issue_create_prepared(
     # Enforce the U11 human gate (FIX 1): a draft sitting in
     # `needs_operator_approval` is NOT created until an operator approves it (via
     # `issue approve`) or explicitly overrides with --skip-approval. An
-    # `approved` draft proceeds; a None approval_state (legacy drafts predating
-    # the gate; blocked drafts already failed readiness above) proceeds
-    # unchanged — back-compatible, do NOT newly block None.
+    # `approved` draft proceeds. A None approval_state is split into two cases
+    # below: a sidecar still in `blocked` with None is the W10 R3b fill-in
+    # recovery — the author repaired the draft file until readiness passed —
+    # and that repaired-blocked draft must STILL enter the gate (F-1, sdlc#91
+    # CR c1): it is promoted to needs_operator_approval and refused. A sidecar
+    # in `ready_to_create` with None is a true pre-U11 legacy draft and
+    # proceeds unchanged — back-compatible, do NOT newly block None.
     approval_state = _read_sidecar_approval_state(draft_path)
+    # CR c2 F-1: the stamp and the bypass are SEPARATE decisions.
+    # --skip-approval means "bypass the gate for THIS invocation" — it must not
+    # also mean "never record that a gate is owed". A still-blocked None
+    # sidecar is therefore stamped into the gate EVEN WHEN skip_approval is
+    # True: the gate check below then honors --skip-approval for this call
+    # only, so the durable record survives a run that stops early (e.g. an
+    # unmapped repo writes mapping_pending with the stamp intact) and a LATER
+    # create without the flag still refuses. Without the stamp, fill-in +
+    # --skip-approval + mapping_pending + a later mapped create created the
+    # issue on a None fall-through.
+    if approval_state is None:
+        sidecar_state = _read_sidecar_payload(draft_path).get("state")
+        if sidecar_state == _PREPARE_STATE_BLOCKED:
+            # The draft started blocked (typically: `issue prepare` without a
+            # Stage — CLI prepare has no --stage flag by settled R3b) and was
+            # repaired by editing the draft file. The human gate applies:
+            # promote the sidecar and refuse unless --skip-approval covers
+            # this invocation.
+            _update_sidecar_state(
+                draft_path,
+                {"state": _PREPARE_STATE_READY, "approval_state": _APPROVAL_NEEDS_OPERATOR},
+            )
+            approval_state = _APPROVAL_NEEDS_OPERATOR
+
     if approval_state == _APPROVAL_NEEDS_OPERATOR and not skip_approval:
         message = (
             f"Prepared draft awaits operator approval; run "
@@ -4917,6 +5834,18 @@ def issue_create_prepared(
         url = str(resume_state["created_issue_url"])
         number = int(resume_state["created_issue_number"])
         remaining_steps = list(resume_state["remaining_steps"])
+        # W10 legacy-sidecar migration: a post_create_pending sidecar whose
+        # remaining lifecycle steps carry no "stage" token predates the two-field
+        # Intake exit and still owes the Stage write. Stage goes before Status
+        # (KTD1a); `flow_set_field` is idempotent for Stage/Status, so the
+        # rewrite on a resumed Status-failure sidecar stays safe (sdlc#91 R5).
+        if "stage" not in remaining_steps and remaining_steps:
+            insert_at = (
+                remaining_steps.index("status")
+                if "status" in remaining_steps
+                else len(remaining_steps)
+            )
+            remaining_steps.insert(insert_at, "stage")
         mapping_pr_url = (
             str(resume_state["mapping_pr_url"]) if resume_state.get("mapping_pr_url") else None
         )
@@ -4955,7 +5884,7 @@ def issue_create_prepared(
         created_at = datetime.now(UTC).isoformat()
         mutation_summary = [asdict(step) for step in plan.steps]
         pending_mapping = bool(mapping_pr_url and override_mapping)
-        remaining_steps = ["board-add", "status"]
+        remaining_steps = ["board-add", "stage", "status"]
         _append_created_issue_to_draft(draft_path, url, number)
         _update_sidecar_state(
             draft_path,
@@ -4985,6 +5914,14 @@ def issue_create_prepared(
                     strict=True,
                 )
                 remaining_steps = [step for step in remaining_steps if step != "board-add"]
+            _update_sidecar_state(draft_path, {"remaining_steps": remaining_steps})
+
+        if "stage" in remaining_steps:
+            # Readiness already refused any draft with a missing or empty Stage,
+            # so the authored value is present by the time this write runs.
+            assert issue.stage is not None
+            flow_set_field(issue.project, issue.repo, number, "Stage", issue.stage, fmt="text")
+            remaining_steps = [step for step in remaining_steps if step != "stage"]
             _update_sidecar_state(draft_path, {"remaining_steps": remaining_steps})
 
         if "status" in remaining_steps:
@@ -5664,6 +6601,25 @@ def issue_create(
             print("Skipping post-create metadata.")
             return
 
+        # Step 8a (W10, sdlc#91 R9): report the Intake-exit bypass as soon as a
+        # real issue number exists — BEFORE the card-contract gate can return,
+        # so a body-gate decline still leaves the bypass report on stdout
+        # (F-3, sdlc#91 CR c1). The interactive path created the issue OUTSIDE
+        # the prepared-issue exit, so the initialization of both lifecycle
+        # fields did not run. Status may already carry an operator-chosen
+        # value (the prompt above), so the report never claims Status is
+        # unset. Reporting is the requirement — the path proceeds unchanged
+        # (R10), and under the operator ruling there is no default Stage to
+        # apply here: this path has no prepared draft carrying an
+        # author-supplied one. Abort, decline-browser, no-number, and
+        # --skip-metadata stay silent: no issue was created on those paths.
+        print(
+            f"\nNOTE: {repo}#{issue_number} was created outside the Intake exit. "
+            "The prepared-issue initialization of both lifecycle fields (Stage, Status) "
+            "did not run. Use `issue create-prepared` to create issues through the "
+            "Intake exit."
+        )
+
         # Step 8b: gate on the card contract before carding it. The prepared
         # path has always blocked here; this path never checked.
         if not _gate_created_issue_body(repo, issue_number, issue_type, fmt):
@@ -5679,6 +6635,9 @@ def issue_create(
             field_values,
             fmt,
         )
+
+        # (The bypass NOTE fired at Step 8a, before the card-contract gate
+        # could return — see above.)
 
         # Step 10: paired-card prompt — suppressed in recursive call to
         # prevent unbounded nesting.
@@ -5751,7 +6710,12 @@ def main() -> None:
     board_move_p.add_argument(
         "--project",
         choices=PROJECT_CHOICES,
-        help="Target a specific project instead of repo-based default routing",
+        help=(
+            "Name a board to VALIDATE against (it must already carry the "
+            "issue) — Status is still written on EVERY board carrying the "
+            "issue, all-or-none; this flag never restricts the write to one "
+            "board"
+        ),
     )
     board_move_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     board_move_p.add_argument("--number", required=True, type=int)
@@ -5946,12 +6910,47 @@ def main() -> None:
     fields_p = subparsers.add_parser("fields", help="Project field management")
     fields_sp = fields_p.add_subparsers(dest="action", required=True)
 
-    fields_create_p = fields_sp.add_parser("create-option", help="Create new single-select option")
+    fields_create_p = fields_sp.add_parser(
+        "create-option",
+        help=(
+            "Inspect a single-select field and its existing options ahead of adding "
+            "one — performs NO mutation (a one-option write is not safe; the option "
+            "set is overwritten whole)"
+        ),
+    )
     fields_create_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
     fields_create_p.add_argument(
         "--field", required=True, help="Field name (e.g. initiative, objective)"
     )
-    fields_create_p.add_argument("--option", required=True, help="New option name")
+    fields_create_p.add_argument(
+        "--option",
+        required=True,
+        help="Name of the option to inspect the field against (NO mutation is "
+        "performed; adding an option safely goes through 'fields set-options')",
+    )
+
+    fields_setopts_p = fields_sp.add_parser(
+        "set-options",
+        help=(
+            "Replace a single-select field's option set via the identity-preserving "
+            "helper (complete desired list required; existing ids preserved)"
+        ),
+    )
+    fields_setopts_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
+    fields_setopts_p.add_argument(
+        "--field", required=True, help="Field name (e.g. Status, Objective)"
+    )
+    fields_setopts_p.add_argument(
+        "--options-file",
+        required=True,
+        help="JSON file holding the COMPLETE desired option list "
+        "[{name, color, description?, id?}] — retained/renamed options carry their existing id",
+    )
+    fields_setopts_p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate the option list against the live field and stop without writing",
+    )
 
     fields_discover_p = fields_sp.add_parser("discover", help="Discover all fields and options")
     fields_discover_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
@@ -6032,15 +7031,6 @@ def main() -> None:
     rollout_all_p = rollout_sp.add_parser("deploy-all", help="Full SDLC deployment to repo")
     rollout_all_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
 
-    rollout_update_p = rollout_sp.add_parser("update", help="Update beads-config.json")
-    rollout_update_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
-    rollout_update_p.add_argument(
-        "--field", required=True, choices=["labels", "templates", "claude_md", "project"]
-    )
-    rollout_update_p.add_argument(
-        "--status", required=True, choices=["pending", "in-progress", "complete"]
-    )
-
     # ===========================
     # FLOW (Phase C — operator-facing GraphQL/REST surface)
     # ===========================
@@ -6067,6 +7057,24 @@ def main() -> None:
         required=True,
         action="append",
         help="Option name, case-insensitive (repeat with --field)",
+    )
+    flow_setfield_p.add_argument(
+        "--correction",
+        action="store_true",
+        help=(
+            "Restrict this write to Status/Stage correction fields (saga submission "
+            "seam). Operator writes of Initiative/Objective omit this flag."
+        ),
+    )
+    flow_setfield_p.add_argument(
+        "--reason",
+        default=None,
+        help=(
+            "Why this lifecycle move is happening, recorded verbatim in the "
+            "write evidence for every board. Optional: when omitted the "
+            "evidence records 'reason-not-supplied' rather than a fabricated "
+            "justification."
+        ),
     )
 
     flow_options_p = flow_sp.add_parser(
@@ -6246,6 +7254,8 @@ def main() -> None:
         elif args.resource == "fields":
             if args.action == "create-option":
                 fields_create_option(args.project, args.field, args.option, fmt)
+            elif args.action == "set-options":
+                fields_set_options(args.project, args.field, args.options_file, args.dry_run)
             elif args.action == "discover":
                 fields_discover(args.project, fmt)
 
@@ -6280,8 +7290,6 @@ def main() -> None:
                 rollout_deploy_templates(args.repo, fmt)
             elif args.action == "deploy-all":
                 rollout_deploy_all(args.repo, fmt)
-            elif args.action == "update":
-                rollout_update(args.repo, args.field, args.status, fmt)
 
         elif args.resource == "flow":
             if args.action == "set-field":
@@ -6296,10 +7304,19 @@ def main() -> None:
                         args.numbers if args.numbers is not None else [args.number],
                         list(zip(args.field, args.option, strict=True)),
                         fmt,
+                        correction=bool(getattr(args, "correction", False)),
+                        reason=getattr(args, "reason", None),
                     )
                 else:
                     flow_set_field(
-                        args.project, args.repo, args.number, args.field[0], args.option[0], fmt
+                        args.project,
+                        args.repo,
+                        args.number,
+                        args.field[0],
+                        args.option[0],
+                        fmt,
+                        correction=bool(getattr(args, "correction", False)),
+                        reason=getattr(args, "reason", None),
                     )
             elif args.action == "field-options":
                 flow_field_options(args.project, args.field, fmt)
@@ -6330,6 +7347,12 @@ def main() -> None:
 
     except KeyboardInterrupt:
         print("\nAborted.", file=sys.stderr)
+        sys.exit(1)
+    except LifecycleMutationHaltError as e:
+        # W6: a compensation halts with its own arm — non-zero exit, named
+        # divergence, no traceback, and never swallowed by the RuntimeError
+        # arm into an ordinary-looking command failure.
+        _error(str(e))
         sys.exit(1)
     except RuntimeError as e:
         _error(str(e))

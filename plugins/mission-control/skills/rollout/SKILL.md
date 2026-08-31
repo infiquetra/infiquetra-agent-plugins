@@ -2,7 +2,7 @@
 name: rollout
 description: |
   Track and drive SDLC rollout across Infiquetra organization repositories. Provides rollout
-  status dashboards, gap analysis per repo, label and template deployment, and progress tracking.
+  status dashboards, gap analysis per repo, and label and template deployment.
   Uses GitHub repos, issue templates, labels, project mapping, and rollout-status tracking.
 metadata:
   when_to_use: |
@@ -29,16 +29,12 @@ metadata:
     Full deployment (labels + templates):
     - "set up SDLC on this repo", "deploy all SDLC config to infiquetra-core"
     - "push the SDLC config", "deploy labels and templates", "full SDLC setup"
-
-    Tracking progress:
-    - "mark infiquetra-core labels as complete", "update rollout status"
-    - "record that templates were deployed to infiquetra-auth"
 ---
 
 # SDLC Rollout
 
 Track and drive SDLC rollout across Infiquetra organization repositories. Check rollout status,
-run gap analysis, deploy labels and templates, and update tracking records.
+run gap analysis, and deploy labels and templates.
 
 ## Script Location
 
@@ -85,9 +81,7 @@ Status values: `pending`, `complete`, `n/a` (for Tier 3 repos where project boar
 
 ## Coordination
 
-Rollout work is tracked through GitHub issues, project fields, and
-`rollout-status.json`. When a rollout task completes, update the corresponding
-`rollout-status.json` entry so later gap reports do not re-open finished work.
+Rollout work is tracked through GitHub issues, project fields, and `rollout-status.json`.
 
 ## Core Operations
 
@@ -147,21 +141,6 @@ python3 sdlc_manager.py rollout deploy-all --repo infiquetra-core
 Runs `deploy-labels` and `deploy-templates` in sequence, then produces a gap report
 showing what still needs attention (claude_md, project board mapping).
 
-### Update Tracking
-
-```bash
-# Mark a field as complete in rollout-status.json
-python3 sdlc_manager.py rollout update --repo infiquetra-core --field labels --status complete
-python3 sdlc_manager.py rollout update --repo infiquetra-core --field templates --status complete
-python3 sdlc_manager.py rollout update --repo infiquetra-core --field claude_md --status complete
-python3 sdlc_manager.py rollout update --repo infiquetra-core --field project --status complete
-
-# Mark as n/a (for Tier 3 project field)
-python3 sdlc_manager.py rollout update --repo infiquetra-claude-plugins --field project --status n/a
-```
-
-Always run `rollout update` after successful deployment to track progress.
-
 ## Natural Language Examples
 
 **"How's the SDLC rollout going?"**
@@ -174,16 +153,13 @@ Always run `rollout update` after successful deployment to track progress.
 -> `rollout gap-analysis --repo infiquetra-auth`
 
 **"Set up SDLC on infiquetra-core"**
--> `rollout deploy-all --repo infiquetra-core`, then update tracking fields
+-> `rollout deploy-all --repo infiquetra-core`
 
 **"Deploy labels to all Infiquetra repos"**
 -> Run `rollout deploy-labels` for each repo
 
 **"Is infiquetra-core compliant?"**
 -> `rollout gap-analysis --repo infiquetra-core`
-
-**"Mark infiquetra-core labels as done"**
--> `rollout update --repo infiquetra-core --field labels --status complete`
 
 ## Deployment Workflow
 
@@ -196,13 +172,9 @@ python3 sdlc_manager.py rollout gap-analysis --repo infiquetra-core
 # 2. Deploy labels and templates
 python3 sdlc_manager.py rollout deploy-all --repo infiquetra-core
 
-# 3. Update tracking
-python3 sdlc_manager.py rollout update --repo infiquetra-core --field labels --status complete
-python3 sdlc_manager.py rollout update --repo infiquetra-core --field templates --status complete
-
-# 4. Remaining steps (manual or via other commands):
-#    - Add SDLC guidance section to CLAUDE.md -> update field claude_md
-#    - Confirm repo is linked to project board -> update field project
+# 3. Remaining steps (manual or via other commands):
+#    - Add SDLC guidance section to CLAUDE.md
+#    - Confirm repo is linked to project board
 ```
 
 ### Bulk Rollout
@@ -214,8 +186,6 @@ python3 sdlc_manager.py rollout status
 # For each pending repo, run gap analysis then deploy
 python3 sdlc_manager.py rollout gap-analysis --repo infiquetra-auth
 python3 sdlc_manager.py rollout deploy-all --repo infiquetra-auth
-python3 sdlc_manager.py rollout update --repo infiquetra-auth --field labels --status complete
-python3 sdlc_manager.py rollout update --repo infiquetra-auth --field templates --status complete
 # ... repeat for each repo
 ```
 
@@ -225,12 +195,9 @@ python3 sdlc_manager.py rollout update --repo infiquetra-auth --field templates 
 # Run gap analysis to confirm all fields are present
 python3 sdlc_manager.py rollout gap-analysis --repo infiquetra-core
 
-# Check if rollout-status.json reflects current state
+# Check if rollout status reflects current state
 python3 sdlc_manager.py rollout status
 ```
-
-If gap analysis finds nothing missing but `rollout-status.json` shows `pending`, run
-`rollout update` to sync the tracking record.
 
 ## Special Cases
 

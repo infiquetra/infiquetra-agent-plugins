@@ -1,5 +1,204 @@
 # Changelog
 
+## [2.15.2] - 2026-08-30
+
+### Fixed - retire the CAMPPS ladder from the board skill and kanban reference (unit W19, issue infiquetra/infiquetra-sdlc#100)
+
+- `skills/board/SKILL.md` and `skills/board/references/kanban-workflow.md` no longer document
+  the retired CAMPPS ladder as current. CAMPPS is documented with the shared `stage_flow`
+  workflow (`Intake -> Shaping -> Planning -> Active -> Verify -> Retro`), whose stages and
+  per-stage Status sets are transcribed from `config/sdlc-schema.json` at schema version
+  `2026-08-29`. No active board carries a pause column; a paused card is expressed through
+  labels and issue state.
+- Command examples now name flags and values that exist: `board move` examples use live
+  `stage_flow` Status values, the Stage-column example uses `flow set-field --field Stage`,
+  and the CAMPPS archive and standup-review prose follow the schema (`Ready to close` is the
+  terminal status).
+- The Mount Olympus legacy timeline facts are preserved as pointers to
+  `LIVE_LEGACY_STATUS_ALIASES` in `sdlc_manager.py` instead of hand-copied value lists.
+- Document Review cycle 1 dropped the kanban-reference claim that CAMPPS uses "the same
+  six stages as Operations and Asgard." That phrase was schema-true and contradicted the
+  still-stale Operations/Asgard `intent_flow` section in the same file. The CAMPPS section
+  now states `stage_flow` and points at the deferred correction, matching the board skill.
+
+## [2.15.1] - 2026-08-30
+
+### Fixed - prepared-issue starting Status derives from Stage (unit W10 repair, issue infiquetra/infiquetra-sdlc#91)
+
+- The prepared-issue starting-status rule no longer keys off the team. The
+  retired `_TEAM_SAFE_STATUSES` table (`asgard → Shaping`, `campps → Idea`) made
+  readiness unsatisfiable: neither name exists in the live Status vocabulary, so
+  every author-supplied Status was refused and the default was unwritable.
+- Starting Status is now **author-supplied, with its default derived from the
+  declared Stage**: the schema's `workflows.stage_flow` entry option (first name
+  of the stage's list, R49 — Intake→Capturing, Shaping→Discovering,
+  Planning→Designing, Active→Implementing, Verify→Awaiting verification,
+  Retro→Gathering evidence). The map resolves through `_resolve_sdlc_schema()`
+  (GitHub main → vendored → local), so the vocabulary lives in one versioned
+  source. Readiness accepts any Status configured WITHIN the declared Stage plus
+  the cross-cutting `Blocked`, and refuses retired, unknown, and out-of-Stage
+  values (operator ruling of 2026-08-30 settling cycle-5 F-2; the entry option
+  is a default, not a closed set). A declared Stage outside `stage_statuses`
+  blocks instead of silently skipping the Status rule.
+- The `issue prepare`/`create-prepared` operator docs no longer teach the retired
+  team-keyed starting statuses (`Asgard Shaping` / `CAMPPS Idea`): the issues
+  skill, README, and sdlc-operator prompt now state the Stage-derived
+  entry-option default and the in-Stage acceptance rule (F-1).
+- The vendored `config/sdlc-schema.json` was refreshed to the authoritative
+  2026-08-29 file from infiquetra-sdlc main — the previous vendored copy was
+  2026-06-17 with no `stage_flow` block at all, which masked the defect online
+  and degraded it silently offline.
+- `_resolve_sdlc_schema()`'s remote branch now degrades on ANY `gh` failure or
+  undecodable payload (matching `load_config`'s remote fallback) instead of
+  escaping as `UnicodeDecodeError`/`JSONDecodeError`.
+- A stage-less prepare no longer emits a `status:` front-matter line (the
+  default is not derivable without a Stage); the draft stays blocked on the
+  missing `Stage`. The R3b fill-in may now add `stage:` alone: an empty Status
+  with a declared Stage is defaulted to the entry option on read, before
+  readiness evaluates.
+
+## [2.15.0] - 2026-08-29
+
+### Added - the Intake exit initializes both lifecycle fields (unit W10, issue infiquetra/infiquetra-sdlc#91)
+
+- `issue create-prepared` creates the issue, adds it to the correct project, and
+  then performs TWO sequential constrained lifecycle writes — `Stage` first, then
+  `Status` — through the same `flow_set_field` call site (W6's cross-board
+  mutation), stopping at the first failure; each step is removed from
+  `remaining_steps` and persisted only after its own write returns, so the
+  existing `post_create_pending` resume state recovers a partial run without
+  creating a duplicate issue.
+- `PreparedIssue` carries an author-supplied `stage` with **no default and no
+  handoff-maturity mapping** (operator ruling on sdlc#91 OQ1). A prepared draft
+  missing or holding an empty `Stage` fails readiness **blocking**, before any
+  GitHub issue is created; `issue prepare` still emits the draft file so the
+  author can fill `stage:` in (R3b — CLI prepare has no `--stage` flag by
+  settled decision). The draft writer emits the `stage:` front-matter line only
+  when a value is present, so the naive front-matter splitter can never store
+  the literal string `None` as an authored Stage.
+- A still-blocked `None`-approval sidecar whose re-read readiness now passes
+  (the R3b fill-in path) is STAMPED into the U11 approval gate even when
+  `--skip-approval` is passed — the stamp and the per-invocation bypass are
+  separate decisions — and the refusal then honors `--skip-approval` for that
+  invocation only. A stopped run (e.g. mapping_pending) therefore leaves a
+  durable gate record, and a later create without the flag refuses instead of
+  falling through as a pre-U11 legacy draft. `ready_to_create` sidecars with
+  `None` proceed unchanged (deliberate pre-U11 back-compat).
+- The mutation plan shown for confirmation names both writes (`set-stage`
+  before `set-status`).
+- A legacy `post_create_pending` sidecar whose remaining lifecycle steps lack a
+  `"stage"` token is migrated: the Stage write is inserted before `"status"`
+  and still runs on resume (`flow_set_field` is idempotent).
+
+### Changed
+
+- The interactive `issue create` path prints a non-blocking NOTE immediately
+  after the pasted issue number — before the card-contract gate — reporting
+  that the issue was created outside the Intake exit and that the prepared-path
+  initialization of both `Stage` and `Status` did not run. It never claims
+  `Status` is unset. Abort, decline-browser, no-number, and `--skip-metadata`
+  stay silent (no issue exists on those paths).
+
+## [2.14.0] - 2026-08-29
+
+### Added - identity-preserving single-select option-set helper (issue infiquetra/infiquetra-sdlc#94)
+
+- `fields set-options --project <p> --field <f> --options-file <json> [--dry-run]`:
+  replaces a single-select field's option set via
+  `update_field_single_select_options`, which refuses — before any mutation is
+  sent — a submission that is not the COMPLETE desired list, drops a live
+  option, or omits an existing option `id` on a retained or renamed option
+  (`singleSelectOptions` overwrites the whole set; omitting an id mints a new
+  option and clears every item value pointing at the old one).
+- `fields create-option` corrected: it has never mutated anything; its doc,
+  help, and runtime output now say so plainly, and the destructive one-option
+  `QUERY_CREATE_FIELD_OPTION` reference example was removed from
+  `skills/board/references/graphql-queries.md`.
+- `QUERY_GET_PROJECT_FIELDS` now returns option `color` and `description`
+  alongside `id` and `name`, so the helper has the full live attribute set
+  when composing a submission. The `--options-file` itself must still be a
+  JSON **array of option objects** (`[{name, color, description?, id?}]`),
+  not the discover command's printed report (whose shape is
+  `{project, fields}`): run `fields discover` to read the current names,
+  ids, colours and descriptions, then write the complete list file by hand.
+
+## [2.13.0] - 2026-08-28
+
+### Added - one constrained lifecycle-field mutation, atomic across every board carrying the issue (#87)
+
+- Added the constrained cross-board lifecycle mutation in `sdlc_manager.py` (`_set_lifecycle_field_cross_board`): it writes `Stage` and `Status` — and only those fields — to EVERY project board carrying the issue, discovered from the issue's own `projectItems` (`QUERY_GET_LIFECYCLE_FIELD_BOARDS`), never from a repo-to-board mapping. Reuses the existing `assert_correction_field` / `correction_identity` correction seam, so the emitted identity strings stay byte-identical to saga's ledger key. Proves acceptance examples AE3/AE9/AE27/AE37 (infiquetra/infiquetra-sdlc#87).
+- Atomicity is apply-then-compensate: every carrying board is preflighted (field + option resolve there) before the first write; a failed write restores each already-written board's captured prior value; a board whose prior value was unset counts as a FAILED restore (no clear primitive exists). A failed compensation halts with a named divergence (`LifecycleMutationHaltError`, carrying `board_state`) — non-zero exit, no silent retry, never swallowed by the prepared-issue loop's `except RuntimeError`.
+- Added `--reason` to `flow set-field` (optional; recorded verbatim per board; omitted writes the explicit `reason-not-supplied` sentinel, never a fabricated justification).
+- Added tests: `test_lifecycle_field_boards.py`, `test_lifecycle_field_mutation.py`, `test_lifecycle_field_routing.py`, `test_lifecycle_field_identity.py`, and the KTD12 AST writer-census gate `test_lifecycle_writer_census.py`.
+
+### Changed - `flow set-field` and `board move` blast radius for Status/Stage (KTD10/KTD13)
+
+- `flow set-field` (and `flow_set_fields_bulk`, hence every `--numbers`/repeated-`--field` path) now routes EVERY `Status`/`Stage` write — with or without `--correction` — through the cross-board mutation, selected by field name, not by flag. A single-board `Status`/`Stage` write is no longer possible: `--project` is validated as a carrying board, never obeyed as a restriction. Affected callers: saga's board writer (`board_progression.py`, unchanged argv, now cross-board), the issue-create post-step, and the prepared-issue field loop.
+- `board move` (KTD13/D2): the per-project best-effort write loop is gone; `board move` routes its `Status` write through the constrained cross-board mutation and no longer continues past a failed board. `#609` holds: an ordinary failure still returns `False` and exits 1 via the CLI arm; a compensation halt raises instead.
+- Non-lifecycle fields (`Initiative`, `Objective`, `Priority`, ...) keep the exact previous single-board behavior.
+
+## [2.12.9] - 2026-08-26
+
+### Removed - dead rollout update subcommand and beads-config write claims (#821)
+
+- Removed the dead `rollout update` subcommand parser, the `rollout_update()` function, the dispatch arm, the module-docstring example, the reader-list comment mention, and documented invocations across `README.md` and `skills/rollout/SKILL.md` per operator ruling C2.
+- Left the `legacy_rollout_config` mechanism and its three surviving readers (`board_wip`, `rollout_status`, `config_show`) intact and gracefully degrading to `{}` on missing files.
+- Added `TestMissionControlRolloutSurfaceGuard` in `tests/test_mission_control.py` verifying that `rollout --help` lists exactly five subcommands with no `update`, `rollout update` is rejected as an argparse invalid choice, no document names `beads-config.json` as a write target, the three readers handle missing configs gracefully, and mutation tests fail on reintroducing the dead command or write claims.
+
+## [2.12.8] - 2026-08-26
+
+### Fixed - add flow row to skills table in README (#820)
+
+- Added the `flow` row to the "Skill | Activates When..." table in `README.md` with activation text consistent with `skills/flow/SKILL.md` (`Project field assignment, sub-issue linking, label verification, card validation`), restoring complete alignment between shipped skills and the README activation map.
+- Added `TestMissionControlSkillsTableBijectionGuard` in `tests/test_mission_control.py` asserting a bidirectional 1-to-1 match (bijection) between directories under `plugins/mission-control/skills/` and README table rows, ensuring failure messages name specific missing or extra skills, verifying activation content, and mutation-proving that removing the `flow` row or altering skills fails the guard.
+
+## [2.12.7] - 2026-08-26
+
+### Fixed - delete self-referential alias clauses in issue command docs (#819)
+
+- Deleted the self-referential compatibility alias clause from `commands/issue.md` and historical changelog entries, restoring clarity that `/issue` is the primary issue command surface with no unrecoverable rename claim or nonexistent compatibility alias.
+- Added focused assertions in test suite verifying that no sentence names a command as its own compatibility alias, that neither repaired sentence carries an alias clause, and that the plugin ships exactly four commands (`board`, `issue`, `metrics`, `triage`).
+
+## [2.12.6] - 2026-08-26
+
+### Fixed - update-surviving installed script paths in docs and commands (#818)
+
+- Replaced six version-pinned installed script paths (pinned to legacy cache directories) in `README.md`, `commands/board.md`, `commands/issue.md`, `commands/metrics.md`, and `commands/triage.md` with the settled convention `"$CLAUDE_PLUGIN_ROOT/scripts/sdlc_manager.py"` (no `skills/` segment).
+- Added drift guards in `tests/test_mission_control.py` verifying no version-pinned paths exist across tracked Mission Control documents, confirming all six sites use the `$CLAUDE_PLUGIN_ROOT` invocation form, mutation-proving that restoring a pinned path fails the guard, and confirming `agents/sdlc-operator.md` remains unaffected.
+
+## [2.12.5] - 2026-08-26
+
+### Fixed - dynamic package-root resolution in sync_template_docs.py (#822)
+
+- Replaced fixed `REPO_ROOT = Path(__file__).resolve().parents[3]` at `sync_template_docs.py:16` with dynamic `_find_package_root()` discovering `.claude-plugin/plugin.json`, adopting the identical package-root resolution pattern established in issue #829.
+- Updated derived paths (`REFERENCE_PATH` and `CONTRACT_DATA_PATH`) to resolve relative to `PACKAGE_ROOT`, enabling relocated and staged copies of `mission-control` to run entrypoints including `--help` and `--check` regardless of directory depth.
+- Maintained fail-loud behavior naming the resolved path when `.claude-plugin/plugin.json` or required data files are missing.
+- Added relocated-copy guard tests and mutation proof in `tests/test_mission_control.py` and `plugins/mission-control/tests/test_template_sync.py` verifying `--help`, `--check`, missing-file fail-loud behavior, and failure of the static `parents[3]` pattern.
+
+## [2.12.4] - 2026-08-26
+
+### Fixed - defer module-scope PyYAML import in sdlc_manager.py (#828)
+
+- Moved `import yaml` from module scope into `_load_live_mimir_coverage()`, allowing `--help` and every YAML-free subcommand to run on an interpreter without PyYAML installed.
+- When PyYAML is absent, invoking Team Mimir coverage validation raises a clear `RuntimeError` naming the missing `PyYAML` dependency rather than failing at module import with an unhandled `ModuleNotFoundError`.
+- Behavior with PyYAML present is unchanged; PyYAML remains a declared dependency.
+- Added `test_sdlc_manager_optional_deps.py` with unimportable-yaml simulations and an AST/mutation proof.
+
+## [2.12.3] - 2026-08-25
+
+### Added - field-named Status/Stage correction identity on `flow set-field` (#812)
+
+- `flow set-field --correction` rejects any project field other than Status (and Stage by
+  name). Operator writes of Initiative / Objective / other live fields omit the flag and
+  are unchanged. No new operation.
+- Correction results carry the field name in operation, authorization, and retry identity
+  so a saga submission and a retried write name the same field. The reported retry identity
+  is byte-identical to saga's ledger key
+  (`reversibility_certificate.idempotency_key`), so the two sides correlate on one string.
+- `--correction` now also covers the bulk (`--numbers` / repeated `--field`) path: the
+  restriction is enforced inside `flow_set_fields_bulk` rather than only in the CLI parser,
+  and a bulk correction is marked in its result with per-card identity.
+
 ## [2.12.2] - 2026-08-24
 
 ### Fixed - GraphQL project fields pagination, query-scoped pagination lint, and explicit live parity skip (#584)
@@ -241,8 +440,7 @@ Paired with the `infiquetra-sdlc` change that removes both labels from the five 
 ## [Unreleased]
 
 ### Added
-- Added `/issue` as the primary issue command surface, with `/issue` retained as a
-  compatibility alias.
+- Added `/issue` as the primary issue command surface.
 - Added prepared-issue handoff maturity metadata and source artifact resolution for local files,
   GitHub issue/PR URLs, branch refs, and natural hints such as "from the brainstorm".
 

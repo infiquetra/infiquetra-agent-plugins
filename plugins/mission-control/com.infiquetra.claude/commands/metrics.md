@@ -37,7 +37,7 @@ throughput, WIP age, and bottleneck hints.
 ## Script Commands
 
 ```bash
-SCRIPT=~/.claude/plugins/cache/infiquetra-plugins/mission-control/2.1.0/scripts/sdlc_manager.py
+SCRIPT="$CLAUDE_PLUGIN_ROOT/scripts/sdlc_manager.py"
 
 python3 $SCRIPT metrics cycle-time --project operations --days 30
 python3 $SCRIPT metrics throughput --project asgard --weeks 4

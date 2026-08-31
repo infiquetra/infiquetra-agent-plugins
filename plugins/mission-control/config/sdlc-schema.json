@@ -1,15 +1,25 @@
 {
-  "schema_version": "2026-06-17",
+  "schema_version": "2026-08-29",
   "migration_notes": [
     "2026-06-13: Added additive saga_lifecycle block derived from the vendored saga-docs-model.yaml snapshot (plugin 0.21.0). At that migration, this was strictly additive and existing consumers (for example, wip_limits.olympus) were unchanged; superseded for Olympus routing by the 2026-06-17 retirement.",
     "2026-06-13.2: Merged hand-authored config/saga-lifecycle-extras.yaml (combinations, reset_edges, gate_classification, phase_board_map, phase_command_map) into the saga_lifecycle block. Strictly additive; snapshot-derived keys and existing consumers unchanged.",
     "2026-06-17: Retired Mount Olympus as an active board projection. phase_board_map now projects only Jeff Intent, Asgard, and CAMPPS; Project #1 is closed externally and preserved as historical context.",
-    "2026-07-10: Pinned Objective-field membership, Objective-grouped views, top-level-by-default Capabilities, and optional Outcome parents for explicit long-lived initiative-board contracts."
+    "2026-07-10: Pinned Objective-field membership, Objective-grouped views, top-level-by-default Capabilities, and optional Outcome parents for explicit long-lived initiative-board contracts.",
+    "2026-07-18: Recorded Olympus-era remote repositories as retired-preserved entities. This is entity metadata only: saga lifecycle and active board vocabulary remain unchanged.",
+    "2026-08-16: Reduced every active board to Status / Objective / Priority and migrated CAMPPS onto the shared intent_flow ladder (Committed -> Ready, Parked -> Idea, In Progress removed). phase_board_map.campps now projects the same six columns as Operations and Asgard, so no lifecycle phase collapses onto a shared column any more. workflows.campps_initiative is retired-preserved, not deleted.",
+    "2026-08-28: Added the hand-authored lifecycle_field_mutation block (issue infiquetra/infiquetra-sdlc#87): the single constrained Mission Control lifecycle-field mutation writes only Stage and Status, resolves carrying boards from the issue's own projectItems, is all-carrying-boards-or-none atomic, halts and raises on a failed compensating write, and carries no transition-legality constraint. Authored contract only: no runtime consumer reads this block; the plugin enforces its own CORRECTION_FIELDS literal.",
+    "2026-08-28: Renamed the human-operator routing identifier teams.jeff to teams.operations, so approvals and decision requests route to the operator role rather than to a named person. boards.operations.owner now resolves to the operations team key, and human_approval_state.active_pattern requests the operator instead of a person. The team entry's kind, status, role, board, and review_model are unchanged, no alias for the old key remains, and historical records are preserved unchanged.",
+    "2026-08-28: Added responsibilities, default_assignment_patterns, independent_review, and authorization_boundary sub-blocks inside human_approval_state. Strictly additive: active_pattern, retired_patterns, and approval_required_for (the single separately-authorized-category list) are unchanged.",
+    "2026-08-28: Recorded decision D-A on issue #98 -- no new deployment-visibility project field is created on any board; the six documented names are preserved as documented-not-created vocabulary under deployment_state.visibility_fields. Added deployment_state.promotion_plan requiring every production promotion to carry a durable seven-part deployment plan (exact version, production target, prerequisites, rollback procedure, production verification, responsible actor, explicit production approval) at docs/deployments/<YYYY-MM-DD>-<target>-<version>.md in the promoting repository, with the plan file refused by tools/docs/check_deployment_plan.py when any element is missing. GitHub Deployments/Environments remain the authoritative deployment record.",
+    "2026-08-28: W18 (issue #99) recorded the Saga Code Review review-artifact publication lane in review_model (interactive mode only; evidence-only commit naming the reviewed revision as a full SHA; no implementation-edit authority) and answered Q6 as implementation_route: skill_contract_change_alone, no new registered operation kind. The Proceed / Revise / Block verdict vocabulary is retired from live documentation in the same change; dated records keep it.",
+    "2026-08-28: Added the hand-authored verify_entry block: the Verify entry condition (merge plus a succeeded non-production deployment; for work with no deployable software, the delivered artifact in its consumption context), the pre-merge-stays-Active rule, and the Active-versus-Verify test placement axis keyed on target and timing (R69/R70/R71). Strictly additive; existing keys unchanged.",
+    "2026-08-29: W13 (issue #94) landed the board-stage vocabulary: a new workflows.stage_flow carries the six Stage columns (Intake, Shaping, Planning, Active, Verify, Retro), the six per-stage Status sets with cross-cutting Blocked (26 distinct options), and terminal semantics; all three active boards re-point to it and fields gain Stage alongside Status. workflows.intent_flow keeps its preserved statuses but is canonical_for [] and superseded_by stage_flow (its removal is W11's); campps_initiative is untouched. boards.operations.routing_required_at moved off the retired Ready, and pause_states.source_note no longer describes Blocked as retired. The wip_limits block is marked non-authoritative in the same change.",
+    "2026-08-29: Added the hand-authored gate_catalogue block (issue infiquetra/infiquetra-sdlc#85): one versioned machine-readable catalogue of 47 gates, each carrying the six R20 attributes (evidence, applicability, owner, classification, override policy, failure route) plus id, source, classification_basis, and x7_ref for verifiability. Membership is X7's 44-row working set (docs/reviews/2026-08-29-x7-findings.md) plus the three deploy-plugin rows. Classification is advisory (the default), blocking (only where the gate's contract names mandatory evidence or a safety boundary), or the explicit string unclassified - an unclassified gate pauses for an operator decision, never silently blocking or advancing. The executable projection lives at tools/docs/gate_catalogue.py; the generated rendering at docs/process/gate-catalogue.md. Strictly additive: saga_lifecycle (including gate_classification, W11's custody) and every other block are unchanged."
   ],
   "status": "active",
   "description": "Canonical Infiquetra SDLC board, team, routing, review, approval, and deployment-state schema. This file intentionally contains no live GitHub Projects field option IDs; tooling must resolve those from GitHub at runtime.",
   "teams": {
-    "jeff": {
+    "operations": {
       "kind": "human_operator",
       "status": "active",
       "role": "Sole human operator, intent source, approval gate, escalation arbitrator, and occasional direct implementer with local AI tools",
@@ -22,6 +32,8 @@
       "role": "Jeff-proximal rapid-action, incubation, and mission-mode team with an issue-backed feed and lightweight proof model",
       "board": "asgard",
       "modes": ["Rapid Action", "Incubator", "Mission"],
+      "modes_surface": "team_operating_concept_only",
+      "modes_note": "These three modes are an Asgard operating concept (docs/process/asgard-operating-model.md), not a project field. The Mode single-select was deleted from the Asgard board on 2026-08-16; nothing records a card's mode on the board any more.",
       "review_model": "team_owned_review",
       "operating_model_doc": "docs/process/asgard-operating-model.md"
     },
@@ -31,31 +43,60 @@
       "role": "Former primary autonomous engineering execution pipeline. Preserved for history only; do not route active work or current board state through Mount Olympus.",
       "board": null,
       "agents": ["Zeus", "Athena", "Apollo", "Artemis", "Hephaestus", "Perseus", "Prometheus", "Ares"],
-      "review_model": "retired"
+      "review_model": "retired",
+      "terminal_disposition": "retired_preserved",
+      "preservation_authority": "olympus/preservation/manifest.yml",
+      "active_routing": false
     },
     "hermes": {
       "kind": "system_role",
       "status": "active",
-      "role": "Single Python orchestrator process that ingests GitHub webhooks, dispatches work, coordinates plan review, and manages Discord threads",
+      "role": "Hermes Agent framework and neutral capability contract used by active teams; distinct from the retired Team Hermes repository and its former plan-phase authority",
       "board": null,
       "review_model": "not_a_reviewer"
+    },
+    "team-hermes": {
+      "kind": "agent_team",
+      "status": "retired_historical",
+      "role": "Former Olympus-era plan-phase crew and deployment authority. Its remote repository is preserved, but it is not an active team or runtime owner.",
+      "board": null,
+      "review_model": "retired",
+      "terminal_disposition": "retired_preserved",
+      "preservation_authority": "olympus/preservation/manifest.yml",
+      "active_routing": false
     },
     "themis": {
       "kind": "system_role",
       "status": "retired_historical",
       "role": "Former PR-review state machine. Preserved for migration history only; not an active routing path.",
       "board": null,
-      "review_model": "retired"
+      "review_model": "retired",
+      "terminal_disposition": "retired_preserved",
+      "preservation_authority": "olympus/preservation/manifest.yml",
+      "active_routing": false
     }
+  },
+  "retired_preserved_entities": {
+    "olympus": {"kind": "remote_repository", "remote": "infiquetra/olympus", "local_clone_disposition": "remove_after_u8_attestation", "active_routing": false},
+    "team-zeus": {"kind": "remote_repository", "remote": "infiquetra/team-zeus", "local_clone_disposition": "remove_after_u8_attestation", "active_routing": false},
+    "team-athena": {"kind": "remote_repository", "remote": "infiquetra/team-athena", "local_clone_disposition": "remove_after_u8_attestation", "active_routing": false},
+    "team-apollo": {"kind": "remote_repository", "remote": "infiquetra/team-apollo", "local_clone_disposition": "remove_after_u8_attestation", "active_routing": false},
+    "team-artemis": {"kind": "remote_repository", "remote": "infiquetra/team-artemis", "local_clone_disposition": "remove_after_u8_attestation", "active_routing": false},
+    "team-hephaestus": {"kind": "remote_repository", "remote": "infiquetra/team-hephaestus", "local_clone_disposition": "remove_after_u8_attestation", "active_routing": false},
+    "team-perseus": {"kind": "remote_repository", "remote": "infiquetra/team-perseus", "local_clone_disposition": "remove_after_u8_attestation", "active_routing": false},
+    "team-prometheus": {"kind": "remote_repository", "remote": "infiquetra/team-prometheus", "local_clone_disposition": "remove_after_u8_attestation", "active_routing": false},
+    "team-ares": {"kind": "remote_repository", "remote": "infiquetra/team-ares", "local_clone_disposition": "remove_after_u8_attestation", "active_routing": false},
+    "team-themis": {"kind": "remote_repository", "remote": "infiquetra/team-themis", "local_clone_disposition": "remove_after_u8_attestation", "active_routing": false},
+    "team-hermes": {"kind": "remote_repository", "remote": "infiquetra/team-hermes", "local_clone_disposition": "remove_after_u8_attestation", "active_routing": false}
   },
   "boards": {
     "operations": {
       "name": "Operations",
       "status": "active",
       "purpose": "Raw operator intent, approvals, questions, personal/operator work, and shaping before team execution",
-      "owner": "jeff",
-      "workflow": "intent_flow",
-      "routing_required_at": "Ready",
+      "owner": "operations",
+      "workflow": "stage_flow",
+      "routing_required_at": "Ready for Active",
       "live_creation": "created_2026-05-29_project_3"
     },
     "asgard": {
@@ -63,7 +104,7 @@
       "status": "active",
       "purpose": "Rapid action, incubation, and mission-mode work close to Jeff",
       "owner": "asgard",
-      "workflow": "intent_flow",
+      "workflow": "stage_flow",
       "live_creation": "created_2026-05-29_project_2"
     },
     "campps": {
@@ -72,7 +113,7 @@
       "status": "active",
       "purpose": "Portfolio-level execution board for the CAMPPS program, tracking Outcome, Capability, and Component slice progress while the initiative is active",
       "owner": "asgard",
-      "workflow": "campps_initiative",
+      "workflow": "stage_flow",
       "archive_trigger": "Operator declares the initiative complete after Objectives are Done and Outcome Scorecards are reviewed.",
       "live_creation": "created_2026-06-16_project_4"
     }
@@ -81,20 +122,47 @@
     "intent_flow": {
       "statuses": ["Idea", "Shaping", "Ready", "Active", "Verify", "Done"],
       "terminal_statuses": ["Done"],
-      "canonical_for": ["operations", "asgard"]
+      "canonical_for": [],
+      "superseded_by": "stage_flow",
+      "no_pause_state": "No active board carries a pause column. CAMPPS's Parked was retired on 2026-08-16 and was not replaced; a paused card is represented by labels and issue state, not by a Status option."
+    },
+    "stage_flow": {
+      "status": "active",
+      "stages": ["Intake", "Shaping", "Planning", "Active", "Verify", "Retro"],
+      "note": "R66 (board-stage migration W13): Stage is the board column field; Status carries the in-stage condition. The per-stage sets below are the authoritative structured fact; the retired names Idea, Ready and Done do not survive as Status values anywhere.",
+      "stage_statuses": {
+        "Intake": ["Capturing", "Needs clarification", "Triage", "Backlog"],
+        "Shaping": ["Discovering", "Defining requirements", "Ready for Planning"],
+        "Planning": ["Designing", "Design review", "Execution planning", "Ready for Active"],
+        "Active": ["Implementing", "Integrating", "Code review", "Repairing", "Ready to merge", "Deploying to non-production"],
+        "Verify": ["Awaiting verification", "Verifying", "Verification failed", "Closeout", "Ready to close"],
+        "Retro": ["Gathering evidence", "Awaiting operator input", "Capturing learnings", "Ready to close"]
+      },
+      "cross_cutting_statuses": ["Blocked"],
+      "statuses": ["Capturing", "Needs clarification", "Triage", "Backlog", "Discovering", "Defining requirements", "Ready for Planning", "Designing", "Design review", "Execution planning", "Ready for Active", "Implementing", "Integrating", "Code review", "Repairing", "Ready to merge", "Deploying to non-production", "Awaiting verification", "Verifying", "Verification failed", "Closeout", "Ready to close", "Gathering evidence", "Awaiting operator input", "Capturing learnings", "Blocked"],
+      "terminal_statuses": ["Ready to close"],
+      "entry_option_rule": "The first name in each stage_statuses list is the entry option: defaulting there invents no recorded progress (R49). Ready for Active (Planning) and Ready to close (Verify/Retro) are terminal exceptions that preserve recorded progress.",
+      "status_scoping": "A GitHub single-select field cannot scope options per stage, so each board's Status field carries the flat 26-option union and the per-stage sets are authoritative only here. No defensive mechanism blocks a manual out-of-stage choice (R42); consistency is descriptive.",
+      "canonical_for": ["operations", "asgard", "campps"]
     },
     "campps_initiative": {
+      "status": "retired_historical",
       "statuses": ["Idea", "Committed", "In Progress", "Done", "Parked"],
       "pause_states": ["Parked"],
       "terminal_statuses": ["Done"],
-      "canonical_for": ["campps"]
+      "canonical_for": [],
+      "terminal_disposition": "retired_preserved",
+      "active_routing": false,
+      "retired_on": "2026-08-16",
+      "superseded_by": "intent_flow",
+      "retirement_note": "Former CAMPPS-only lightweight ladder. Migrated onto intent_flow on 2026-08-16: Committed -> Ready (145 cards), Parked -> Idea (49 cards), In Progress removed (0 cards). The statuses array is preserved so historical cards, plans, and reviews naming these columns remain resolvable; it does not describe any live board."
     }
   },
   "fields": {
-    "common": ["Status", "Owner", "Priority", "Risk", "Initiative", "Objective"],
-    "operations": ["Status", "Target Team", "Jeff Needed", "Context Pack", "Decision Needed", "Objective"],
-    "asgard": ["Status", "Mode", "Jeff Needed", "Target Repository", "Risk", "Transfer Target", "Objective"],
-    "campps": ["Status", "Objective", "Milestone", "Start", "Target", "Initiative", "Test Strategy"]
+    "common": ["Stage", "Status", "Objective", "Priority"],
+    "operations": ["Stage", "Status", "Objective", "Priority"],
+    "asgard": ["Stage", "Status", "Objective", "Priority"],
+    "campps": ["Stage", "Status", "Objective", "Priority"]
   },
   "work_hierarchy": {
     "source_note": "Canonical machine-readable hierarchy for Objective, Outcome, Capability, and Component slice roles. Component is a dispatch role encoded by sub-issue position plus fields, not a separate issue type.",
@@ -126,14 +194,15 @@
       "component": {
         "kind": "repo_bounded_dispatch_slice",
         "issue_type": false,
-        "encoded_by": ["native GitHub sub-issue position under a Capability", "Test Strategy project field"],
+        "encoded_by": ["native GitHub sub-issue position under a Capability", "the slice's declared test strategy in the issue body (formerly the Test Strategy project field, deleted 2026-08-16)"],
         "purpose": "Independently service-testable slice an agent can build inside one repository or bounded context."
       }
     },
     "component_slices": {
       "parent_role": "capability",
       "test_strategy_field": "Test Strategy",
-      "test_strategy_field_status": "planned_schema_intent",
+      "test_strategy_field_status": "retired_board_field",
+      "retired_field_record": "Deleted from CAMPPS (Project #4) on 2026-08-16, destroying 284 field values. It had been verified live earlier the same day (single-select, options endpoint/event/schema/property/combine, 284 of 831 cards carrying a value; source tools/board/snapshot.py capture project-4-20260816T040238), and that capture is the snapshot of record at ~/.infiquetra/board-snapshots/. The five strategies below remain the verification doctrine for Component slices; only the board field that recorded the choice is gone. A slice now declares its strategy in the issue body.",
       "test_strategies": ["endpoint", "event", "schema", "property", "combine"],
       "validation_policy": {
         "endpoint": {
@@ -162,6 +231,7 @@
     }
   },
   "pause_states": {
+    "source_note": "Vocabulary of pause reasons, NOT a list of board columns. As of 2026-08-16 no active board carries a pause column at all: CAMPPS's Parked was the last one and was migrated into Idea. Needs Review and Needs Question are retired Mount Olympus column names kept as vocabulary. Blocked is NOT a pause state here: since the 2026-08-29 Stage migration it is a live cross-cutting Status, available in any Stage rather than belonging to one (R66). A paused card on an active board is expressed by labels and issue state.",
     "Plan-Approved": "Plan accepted but operator intentionally paused dispatch.",
     "Needs Review": "Operator or team review needed before work can continue.",
     "Needs Question": "Author or operator input needed; currently treated as a human-input state.",
@@ -169,6 +239,7 @@
     "Cancelled": "Work intentionally stopped before completion."
   },
   "wip_limits": {
+    "source_note": "NOT a live limit source. Marked non-authoritative 2026-08-29 (W13 board-stage migration): these keys are the retired six-column Status vocabulary (Idea, Shaping, Ready, Active, Verify, Done), which the Stage migration renamed out of existence. The per-board sub-objects are preserved byte-identical as a historical record; re-deriving limits for the Stage vocabulary is deliberately deferred and must not happen as a side effect. Do not direct agents here as a limit source.",
     "operations": {
       "Idea": null,
       "Shaping": 10,
@@ -187,28 +258,28 @@
     },
     "campps": {
       "Idea": null,
-      "Committed": null,
-      "In Progress": null,
-      "Done": null,
-      "Parked": null
+      "Shaping": null,
+      "Ready": null,
+      "Active": null,
+      "Verify": null,
+      "Done": null
     }
   },
   "dispatch_gates": {
     "operations": {
-      "Ready": ["Target Team must be set before promotion out of Operations"]
+      "Ready": ["Issue body satisfies the card contract (docs/process/card-schema.md), enforced by mission-control at creation"]
     },
     "asgard": {
-      "Active": ["Mode must be set", "Jeff Needed must be set when work crosses an approval boundary"]
+      "Active": ["UNKNOWN: both prior gates were backed by project fields deleted on 2026-08-16 (Mode must be set; Jeff Needed must be set when work crosses an approval boundary). No replacement gate has been decided. Operator call required; do not infer one."]
     },
     "campps": {
-      "Committed": ["Outcome or Capability is admitted to the initiative portfolio", "Objective field is set"],
-      "In Progress": ["Component slices identify their Test Strategy when applicable"]
+      "Ready": ["Outcome or Capability is admitted to the initiative portfolio", "Objective field is set"],
+      "Active": ["UNKNOWN: the prior In Progress gate required Component slices to identify their Test Strategy, and the Test Strategy field was deleted on 2026-08-16. No replacement gate has been decided. Operator call required; do not infer one."]
     }
   },
   "team_routing": {
-    "target_team_values": ["Asgard", "CAMPPS", "Jeff", "External/Deferred"],
-    "operations_ready_rule": "A Ready Operations card must name one target team before moving to another board or workflow.",
-    "asgard_issue_feed_rule": "Asgard-bound work enters through Operations Target Team=Asgard, a direct issue added to Asgard, or a context/issue pack. Before Active, set Mode, target repository or surface, risk, approval state, proof path, and transfer target when a cross-team handoff is expected.",
+    "operations_ready_rule": "A Ready Operations card must satisfy the card contract before moving to another board or workflow. Routing to a surface is an explicit operator action, not a field value.",
+    "asgard_issue_feed_rule": "Asgard-bound work enters by an operator routing an Operations card to Asgard, a direct issue added to Asgard, or a context/issue pack. The former pre-Active field checklist (Mode, target repository or surface, risk, approval state, proof path, transfer target) is void: every field backing it was deleted from the board on 2026-08-16. Mode, target surface, risk, and transfer intent now live in the issue body per the card contract (docs/process/card-schema.md), not in project fields.",
     "cross_team_transfer_rule": "Asgard and CAMPPS are sibling active target surfaces. Cross-team movement happens only when an operator explicitly routes, transfers, clones, or links work to another board; readiness checks may warn about target fit but must not infer movement. Mount Olympus is retired historical context and is not an active target.",
     "default_pressure_valve": "Prefer project views over new boards unless scale, automation, or reporting needs justify a separate board."
   },
@@ -216,12 +287,17 @@
     "current": "team_owned_review",
     "team_owned_review": "The team that owns the work owns PR review, evidence, and merge readiness. Hermes may coordinate events, but does not route active PR review to Themis.",
     "plan_review": "Hermes can coordinate plan review before dispatch.",
+    "publication_lane": "The Saga Code Review publication lane, granted in interactive / standalone mode only: the reviewer may write, commit, and push its own review document and submit the GitHub pull-request review. The lane grants no implementation-edit authority over reviewed source and is bounded to the review artifact's own path (docs/code-reviews/ plus the evidence ledger under docs/evidence/). A review-artifact commit is evidence only and records the exact implementation revision reviewed as a full 40-character commit SHA in the artifact frontmatter (reviewed_revision). Programmatic / report-only mode keeps its zero-durable-writes contract, which the Work staleness gate depends on.",
+    "repair_custody": "The reviewer does not implement the fixes it requests. Findings route to the author or the Work process, which own repair changes and implementation commits.",
+    "implementation_route": "skill_contract_change_alone",
+    "implementation_route_note": "Q6 answer, decided 2026-08-28: granting the lane requires no new registered operation kind in the safety allowlist and no widening of an existing one. The plugin's OpKind registry mirrors mission-control verbs, intentionally excludes repo-level mutations, and is default-deny, so the lane is bounded by the skill contract and the reviewer's toolset. Recorded with rationale in docs/engineering-journal/DECISIONS.md.",
     "retired": {
-      "Themis": "Historical PR-review state machine. Do not route active PR review to Themis from current SDLC docs."
+      "Themis": "Historical PR-review state machine. Do not route active PR review to Themis from current SDLC docs.",
+      "Proceed__Revise__Block verdict vocabulary": "The earlier three-way review verdict vocabulary is retired (source requirement R76, issue #99). Live documents express review results with the real Saga counterpart's vocabulary: the four typed review_result.v1 outcomes for PR review, and the one-line readiness verdict plus P0-P3 finding priorities for plan review. Historical use survives only in dated records (brainstorms, ideation notes, reviews)."
     }
   },
   "human_approval_state": {
-    "active_pattern": "Per-agent direct message or per-card thread request to Jeff, depending on the work context.",
+    "active_pattern": "Per-agent direct message or per-card thread request to the operator, depending on the work context.",
     "retired_patterns": ["olympus-input-orchestrator", "olympus:agent:input-request", "#agent-handoffs as canonical HITL channel"],
     "approval_required_for": [
       "production changes",
@@ -231,21 +307,895 @@
       "billing or cost-impacting actions",
       "external commitments",
       "major team or process authority changes"
-    ]
+    ],
+    "responsibilities": {
+      "author": {
+        "definition": "The actor who writes the plan, design, or change under review.",
+        "material_scope": "plans, designs, and change sets"
+      },
+      "implementer": {
+        "definition": "The actor that carries out an authorized change to completion.",
+        "material_scope": "code, configuration, and documentation changes"
+      },
+      "integration_owner": {
+        "definition": "The actor accountable for integrating an approved change into the shared branch.",
+        "material_scope": "merge decisions and shared-branch state"
+      },
+      "deployment_owner": {
+        "definition": "The actor accountable for releasing an approved change to a target environment.",
+        "material_scope": "deployment decisions and environment state"
+      },
+      "verifier": {
+        "definition": "An independent actor that confirms acceptance evidence for a change.",
+        "material_scope": "acceptance evidence and test results"
+      },
+      "independent_reviewer": {
+        "definition": "An independent actor that reviews material code or design it did not author.",
+        "material_scope": "material code and design reviews"
+      }
+    },
+    "default_assignment_patterns": {
+      "human_led": {
+        "assignments": {
+          "author": "operator",
+          "implementer": "operator",
+          "integration_owner": "operator",
+          "deployment_owner": "operator",
+          "verifier": "independent_actor",
+          "independent_reviewer": "independent_actor"
+        },
+        "overridable": true,
+        "override_requires_reason": true
+      },
+      "agent_led": {
+        "assignments": {
+          "author": "implementing_actor",
+          "implementer": "implementing_actor",
+          "integration_owner": "implementing_actor",
+          "deployment_owner": "implementing_actor",
+          "verifier": "independent_actor",
+          "independent_reviewer": "independent_actor"
+        },
+        "overridable": true,
+        "override_requires_reason": true
+      }
+    },
+    "independent_review": {
+      "no_self_approval": true,
+      "integration_owner_is_not_independent": true,
+      "independent_reviewer_differs_from_author": true,
+      "solo_operator_satisfied_by": "an independent agent acting as a distinct actor"
+    },
+    "authorization_boundary": {
+      "bounded_work_authorization_covers": ["merge", "non_production_deployment"],
+      "covers_after": ["review_passed", "checks_passed"],
+      "scope_binding": "one work item",
+      "creates_standing_authority": false,
+      "separately_authorized_source": "approval_required_for"
+    }
   },
   "deployment_state": {
     "source_of_truth": "GitHub Deployments/Environments plus tag-promotion records",
     "not_workflow_statuses": ["nonprod", "staging", "production", "Deployment Ready", "Deployed"],
-    "fields": {
-      "Deploy Target": "Environment or promotion target requested by the work item",
-      "Deploy State": "Current deployment or promotion state derived from deployment records",
-      "Snapshot Version": "Immutable version or tag promoted across environments",
-      "Promotion Pending": "Whether a promotion approval or gate is waiting",
-      "Release Risk": "Operational risk classification for the release or promotion",
-      "Last Deployment": "Most recent deployment evidence link or timestamp"
+    "visibility_fields": {
+      "decision": "no new deployment-visibility project field is created on any board",
+      "decision_date": "2026-08-28",
+      "deciding_role": "operator",
+      "issue_ref": "infiquetra/infiquetra-sdlc#98",
+      "rationale": "None of the six documented names exists on any board, verified read-only on 2026-08-28, and creating one would add a competing source of truth against GitHub Deployments for no named decision use.",
+      "exists_on_any_board": false,
+      "documented_not_created": {
+        "Deploy Target": "Environment or promotion target requested by the work item",
+        "Deploy State": "Current deployment or promotion state derived from deployment records",
+        "Snapshot Version": "Immutable version or tag promoted across environments",
+        "Promotion Pending": "Whether a promotion approval or gate is waiting",
+        "Release Risk": "Operational risk classification for the release or promotion",
+        "Last Deployment": "Most recent deployment evidence link or timestamp"
+      }
+    },
+    "promotion_plan": {
+      "policy_document": "docs/operations/production-promotion.md",
+      "template": "templates/deployment-plan.md",
+      "location_convention": "docs/deployments/<YYYY-MM-DD>-<target>-<version>.md in the promoting repository, linked from the issue",
+      "refusal_rule": "A production promotion is refused when its issue does not link a deployment plan at the location convention carrying a non-placeholder body under every required element; the plan file itself is refused by tools/docs/check_deployment_plan.py when a required element is missing, duplicated, or left as template placeholder.",
+      "required_elements": {
+        "exact_version": {
+          "heading": "Exact version",
+          "description": "The immutable version or tag being promoted to production"
+        },
+        "production_target": {
+          "heading": "Production target",
+          "description": "The production environment or host the promotion lands on"
+        },
+        "prerequisites": {
+          "heading": "Prerequisites",
+          "description": "Conditions that must hold before the promotion may start"
+        },
+        "rollback_procedure": {
+          "heading": "Rollback procedure",
+          "description": "The concrete steps that undo the promotion"
+        },
+        "production_verification": {
+          "heading": "Production verification",
+          "description": "The checks that prove the promotion worked in production, not just in CI"
+        },
+        "responsible_actor": {
+          "heading": "Responsible actor",
+          "description": "The one actor accountable for executing and verifying the promotion"
+        },
+        "production_approval": {
+          "heading": "Production approval",
+          "description": "The explicit operator authorization for this promotion, recorded before it starts"
+        }
+      }
     },
     "mutation_owner": "deploy",
     "display_owner": "mission-control may display or link deployment state in a later pass"
+  },
+  "lifecycle_field_mutation": {
+    "status": "in_production",
+    "mutation_owner": "mission-control",
+    "source": "docs/brainstorms/2026-08-27-reconciled-sdlc-implementation-requirements.md (R31, R40, R65, R67, R82)",
+    "writable_fields": ["Stage", "Status"],
+    "writable_fields_note": "The single constrained Mission Control lifecycle-field mutation may write only these two fields; any other field name is rejected before a board is touched. Authored contract, not read at runtime: the plugin enforces its own CORRECTION_FIELDS literal.",
+    "board_discovery": "issue_project_items",
+    "board_discovery_note": "Carrying boards are resolved from the issue's own projectItems, never from a repo-to-board mapping.",
+    "atomicity": "all_carrying_boards_or_none",
+    "atomicity_note": "Either every board carrying the issue ends at the new value, or every board ends at the value it held before the call.",
+    "compensation_failure": {
+      "behavior": "halt_and_raise_to_operator",
+      "silent_retry": false,
+      "unreported_divergence": false
+    },
+    "transition_legality": "none",
+    "transition_legality_note": "No Stage or Status ladder exists and none may be added: no transition is rejected because an intermediate value was never occupied, backward movement is permitted whenever it truthfully represents current activity with the reason recorded, and no reconcile pass back-fills an unoccupied value."
+  },
+  "gate_catalogue": {
+    "catalogue_version": "2026-08-29",
+    "derived_from": "docs/reviews/2026-08-29-x7-findings.md",
+    "source_note": "Hand-authored per the W4 plan (issue infiquetra/infiquetra-sdlc#85). Membership is X7's 44-row working set plus the three deploy-plugin rows, transcribed row-by-row from the census. Classification enum: advisory (the default), blocking (only where the gate's own contract names mandatory evidence or a safety boundary), and the explicit string unclassified (the gate pauses for an operator decision - it never silently blocks and never silently advances). Every blocking row's classification_basis opens with the P14 trigger that justifies it (\"Mandatory evidence:\" or \"Safety boundary:\"); an unclassified row's classification_basis records why no verdict could be reached.",
+    "requirements_owned": "R20-R26",
+    "classification_enum": [
+      "advisory",
+      "blocking",
+      "unclassified"
+    ],
+    "floor_gates": {
+      "source": "R26 (docs/brainstorms/2026-08-27-reconciled-sdlc-implementation-requirements.md, line 268): the five-gate floor.",
+      "planning_to_active": {
+        "gates": [
+          "asgard-active-gate",
+          "campps-active-gate"
+        ],
+        "note": "Both are unclassified (self-declared UNKNOWN in dispatch_gates). The Operations board has no Active gate entry at all - an explicit absence recorded on docs/process/gate-catalogue.md, not an invented row. See the plan's UNKNOWN-1."
+      },
+      "document_review": {
+        "gates": [
+          "doc-review"
+        ]
+      },
+      "code_review_acceptance": {
+        "gates": [
+          "team-owned-pr-review"
+        ],
+        "note": "R26's 'code-review acceptance' names the gate that decides PR acceptance - team-owned-pr-review (blocking, overridable: none). Saga's internal /code-review is catalogued separately as saga-code-review (advisory to the lifecycle phase). Plan KTD5."
+      },
+      "verify_evidence": {
+        "gates": [
+          "qa-verify-evidence"
+        ]
+      },
+      "approval_boundary_safety": {
+        "gates": [
+          "production-deployment-safety",
+          "deploy-autonomy-posture",
+          "deploy-owner-check",
+          "deploy-unhealthy-version-refusal",
+          "deploy-saga-handoff-ack",
+          "no-force-push",
+          "outward-github-mutation-confirmation",
+          "automation-eligibility-gate",
+          "tier-escalation-confirmation"
+        ],
+        "note": "P22 categories mapped: production changes (production-deployment-safety, deploy-autonomy-posture, deploy F1-F3), destructive actions and external commitments and changes to process authority (no-force-push, outward-github-mutation-confirmation, automation-eligibility-gate, tier-escalation-confirmation). Two of P22's six categories - credentials and identity, material spending - have an approval boundary in human_approval_state.approval_required_for but no pass/fail gate to catalogue; recorded as a known gap (the W4 plan's UNKNOWN-2). Minting gates for them would edit human_approval_state and invent contracts."
+      }
+    },
+    "gates": {
+      "docs-gate-unit-tests": {
+        "id": "docs-gate-unit-tests",
+        "x7_ref": "A1",
+        "evidence": "The checker/generator scripts behave per their own test fixtures",
+        "applicability": "Every run of docs-gate.yml (PRs or main pushes touching docs/**, config/**, tools/docs/**, README.md, AGENTS.md, or the workflow itself)",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "CI job fails red",
+        "source": ".github/workflows/docs-gate.yml line 47 (pytest tools/docs/tests/)",
+        "classification_basis": "Mandatory evidence: the workflow's own header contracts the staged docs gate to \"FAILS (does not warn)\", so a passing unit-test step is mandatory evidence the job requires."
+      },
+      "docs-gate-internal-links": {
+        "id": "docs-gate-internal-links",
+        "x7_ref": "A2",
+        "evidence": "Every relative markdown link inside a navigable docs/** file resolves against its containing file's directory",
+        "applicability": "Navigable docs only (tools/ is never walked)",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "CI job fails red",
+        "source": "tools/docs/check_internal_links.py via .github/workflows/docs-gate.yml",
+        "classification_basis": "Mandatory evidence: the workflow's own header contracts the staged docs gate to \"FAILS (does not warn)\" on broken internal links."
+      },
+      "docs-gate-frontmatter-badge": {
+        "id": "docs-gate-frontmatter-badge",
+        "x7_ref": "A3",
+        "evidence": "Every navigable doc carries valid YAML frontmatter and its visible status badge matches the frontmatter's stability field",
+        "applicability": "Navigable docs only",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "CI job fails red",
+        "source": "tools/docs/check_frontmatter.py via .github/workflows/docs-gate.yml",
+        "classification_basis": "Mandatory evidence: the workflow's own header contracts the staged docs gate to \"FAILS (does not warn)\" on missing/invalid frontmatter."
+      },
+      "docs-gate-schema-parity": {
+        "id": "docs-gate-schema-parity",
+        "x7_ref": "A4",
+        "evidence": "config/sdlc-schema.json's generator-owned blocks (saga_lifecycle, issue_fields) match what regenerating from their vendored source would produce",
+        "applicability": "Any schema/config change",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "CI job fails red; the check is schema-to-snapshot only and structurally cannot see snapshot-to-live-plugin drift (X7 A7)",
+        "source": "tools/docs/check_parity.py via .github/workflows/docs-gate.yml",
+        "classification_basis": "Mandatory evidence: the workflow's own header contracts the staged docs gate to \"FAILS (does not warn)\" on schema-to-snapshot drift."
+      },
+      "docs-gate-render-currency": {
+        "id": "docs-gate-render-currency",
+        "x7_ref": "A5",
+        "evidence": "The generated region in docs/process/gates.md (and sibling reconciliation docs) matches what the generator would currently produce",
+        "applicability": "Docs carrying a generated region",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "CI job fails red",
+        "source": "tools/docs/gen_lifecycle_docs.py --check via .github/workflows/docs-gate.yml",
+        "classification_basis": "Mandatory evidence: the workflow's own header contracts the staged docs gate to \"FAILS (does not warn)\" on schema-to-snapshot drift, which for generated regions is a stale render."
+      },
+      "docs-gate-llms-txt": {
+        "id": "docs-gate-llms-txt",
+        "x7_ref": "A6",
+        "evidence": "docs/llms.txt (the agent-facing doc manifest) matches current frontmatter",
+        "applicability": "Any frontmatter change",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "CI job fails red",
+        "source": "tools/docs/gen_llms_txt.py --check via .github/workflows/docs-gate.yml",
+        "classification_basis": "Mandatory evidence: the workflow's own header contracts the staged docs gate to \"FAILS (does not warn)\" on a stale llms.txt manifest."
+      },
+      "docs-gate-plugin-reachability": {
+        "id": "docs-gate-plugin-reachability",
+        "x7_ref": "A7",
+        "evidence": "The live installed Saga plugin's state_axes.lifecycle_phase.values equals the vendored snapshot's, and the live plugin.json version equals the pin in config/saga-plugin-pin.yaml",
+        "applicability": "Only meaningful when the plugin is actually installed at check time",
+        "owner": "not stated",
+        "classification": "advisory",
+        "override_policy": "--require-plugin makes absence a failure; when the plugin is present, default mode already fails on enum or version drift. The workflow never passes the flag.",
+        "failure_route": "Silent skip-clean (exit 0) on every actual GitHub run (plugin absent); locally with the plugin installed, default mode already exits 1 on pin drift",
+        "source": "tools/docs/check_plugin_reachability.py via .github/workflows/docs-gate.yml",
+        "classification_basis": "Advisory-in-practice: the script's own docstring contracts SKIP-CLEAN (exit 0) when the plugin is absent, and GitHub-hosted runners never have it installed, so no mandatory-evidence or safety-boundary trigger holds on the runs that matter."
+      },
+      "doc-review": {
+        "id": "doc-review",
+        "x7_ref": "B1",
+        "evidence": "Unresolved P0/P1 findings against a plan or requirements doc (P0 = unsafe/incorrect/destructive/materially wrong execution; P1 = a missing or wrong core assumption, mapping, requirement, default, or gate)",
+        "applicability": "Every /plan output, before /work starts",
+        "owner": "Not a named role - the reviewing agent holds the verdict",
+        "classification": "blocking",
+        "override_policy": "Recorded rationale, attached to the issue's durable record",
+        "failure_route": "Blocks /work pending override",
+        "source": "config/sdlc-schema.json saga_lifecycle.gate_classification.doc-review; docs/process/gates.md",
+        "classification_basis": "Mandatory evidence: the gate's contract names unresolved P0/P1 findings as evidence that blocks /work (gate_classification.doc-review blocking: true; saga-docs-model.yaml: \"P0/P1 findings block /work without recorded override\")."
+      },
+      "saga-code-review": {
+        "id": "saga-code-review",
+        "x7_ref": "B2",
+        "evidence": "The serialized review_result.v1 envelope's outcome field (accepted / repairs_requested / cycle_cap_best_available / review_incomplete) - a typed outcome, not a finding count",
+        "applicability": "Work-to-PR boundary, every PR",
+        "owner": "Not stated; explicitly not the transport/orchestration layer",
+        "classification": "advisory",
+        "override_policy": "Recorded rationale (flows through the consumer contract's --doc-review-override flag)",
+        "failure_route": "Does not itself move the saga phase; feeds PR-ready status instead (repairs_requested routes back to Work)",
+        "source": "config/sdlc-schema.json saga_lifecycle.gate_classification.code-review; docs/process/gates.md",
+        "classification_basis": "Advisory to the lifecycle-phase transition by contract: gate_classification.code-review carries blocking: false, advances_phase: false; the repository's own docs say it is an internal quality lens, not the authoritative pre-merge gate, and X7 records no P14 safety-boundary or mandatory-evidence language for it here."
+      },
+      "qa-verify-evidence": {
+        "id": "qa-verify-evidence",
+        "x7_ref": "B3",
+        "evidence": "Per-risk-class severity findings against a tier's blocking threshold (Quick: critical+high; Standard: +medium; Exhaustive: all)",
+        "applicability": "Post-merge, after successful non-production deployment",
+        "owner": "not stated",
+        "classification": "advisory",
+        "override_policy": "ship-with-deferred is the recorded-rationale path for non-blocking findings",
+        "failure_route": "Verdict ship / ship-with-deferred / no-ship; no-ship keeps lifecycle_phase=work for repair",
+        "source": "config/sdlc-schema.json saga_lifecycle.gate_classification.qa; docs/process/gates.md",
+        "classification_basis": "Explicitly advisory: the schema notes it as \"advisory to the team-owned gate\" - a no-ship verdict keeps lifecycle_phase=work for repair rather than hard-stopping anything."
+      },
+      "plan-review": {
+        "id": "plan-review",
+        "x7_ref": "B4",
+        "evidence": "Problem-frame clarity; explicit scope boundaries; requirement traceability to an origin artifact; concrete file paths/verification expectations; named human-approval boundaries; deployment state separate from workflow status; no routing through retired review systems",
+        "applicability": "Before dispatch",
+        "owner": "The owning team remains accountable for the review outcome; Hermes only coordinates the event",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "Proceed / Revise / Block; Revise and Block require evidence plus a requested fix or decision",
+        "source": "config/sdlc-schema.json saga_lifecycle.gate_classification.plan_review and review_model.plan_review; docs/reviewers/plan-review.md",
+        "classification_basis": "Mandatory evidence: review_model.plan_review is a blocking gate (\"blocks dispatch\") whose Revise/Block verdicts require findings with evidence."
+      },
+      "team-owned-pr-review": {
+        "id": "team-owned-pr-review",
+        "x7_ref": "B5",
+        "evidence": "Implementation matches the accepted plan (or divergence is explained); relevant tests/verification ran; docs/schema updated when behavior or process changed; deployment/approval boundaries understood; blocking findings carry concrete evidence and a requested change",
+        "applicability": "Every PR, before merge",
+        "owner": "The team or initiative surface that owns the work - explicitly not Hermes, not the retired Themis",
+        "classification": "blocking",
+        "override_policy": "none",
+        "failure_route": "Proceed / Revise / Block; Revise and Block require findings with evidence",
+        "source": "config/sdlc-schema.json saga_lifecycle.gate_classification.team_owned_review; review_model.current = team_owned_review; docs/reviewers/pr-review.md; AGENTS.md Reviews rule",
+        "classification_basis": "Safety boundary: the only gate in the census whose contract states no rationale-based override exists at all (blocking: true, overridable: false - \"not unilaterally overridable; the owner decides\"); it is the repository's authoritative pre-merge gate, so merge is its safety boundary."
+      },
+      "card-contract-at-creation": {
+        "id": "card-contract-at-creation",
+        "x7_ref": "B6",
+        "evidence": "The issue body against validate_card_body's card-contract schema",
+        "applicability": "Issue creation, and enforcement at creation time (refusal of labels and board membership); same gate corroborated from docs/process/card-schema.md and mission-control's flow skill",
+        "owner": "the orchestrator (enforced by mission-control at creation)",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "Refused labels and board membership at creation; the CLI exits non-zero if the card body fails validation",
+        "source": "docs/process/card-schema.md (Label & Author Gates); config/sdlc-schema.json saga_lifecycle.dispatch_gates.operations.Ready",
+        "classification_basis": "Mandatory evidence: a failing card body is refused, not warned - explicit enforcement language in card-schema.md (\"refused labels and board membership at creation time\")."
+      },
+      "campps-ready-admission": {
+        "id": "campps-ready-admission",
+        "x7_ref": "B7",
+        "evidence": "Outcome or Capability is admitted to the initiative portfolio; Objective field is set",
+        "applicability": "The CAMPPS Ready status transition",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "Card does not enter Ready",
+        "source": "config/sdlc-schema.json saga_lifecycle.dispatch_gates.campps.Ready",
+        "classification_basis": "Mandatory evidence: two named, testable conditions gate admission to the state."
+      },
+      "asgard-active-gate": {
+        "id": "asgard-active-gate",
+        "x7_ref": "B8",
+        "evidence": "UNKNOWN in the source itself: both prior gates were backed by project fields deleted on 2026-08-16 (Mode must be set; Jeff Needed must be set when work crosses an approval boundary)",
+        "applicability": "The Asgard Active status transition",
+        "owner": "not stated",
+        "classification": "unclassified",
+        "override_policy": "not stated",
+        "failure_route": "Not defined - the schema's own text records no replacement gate",
+        "source": "config/sdlc-schema.json saga_lifecycle.dispatch_gates.asgard.Active",
+        "classification_basis": "UNCLASSIFIED, self-declared in dispatch_gates.asgard.Active: \"No replacement gate has been decided. Operator call required; do not infer one.\" Corroborated by docs/process/asgard-operating-model.md (\"Whether reaching Active is still gated on these being present is undecided\")."
+      },
+      "campps-active-gate": {
+        "id": "campps-active-gate",
+        "x7_ref": "B9",
+        "evidence": "UNKNOWN in the source itself: the prior In Progress gate required Component slices to identify their Test Strategy, and the Test Strategy field was deleted on 2026-08-16",
+        "applicability": "The CAMPPS Active status transition",
+        "owner": "not stated",
+        "classification": "unclassified",
+        "override_policy": "not stated",
+        "failure_route": "Not stated in the source (the gate's replacement is undecided)",
+        "source": "config/sdlc-schema.json saga_lifecycle.dispatch_gates.campps.Active",
+        "classification_basis": "UNCLASSIFIED, self-declared in dispatch_gates.campps.Active: \"No replacement gate has been decided. Operator call required; do not infer one.\" A different deleted-field story than asgard-active-gate (Test Strategy, not Mode / Jeff Needed)."
+      },
+      "authorized-author-allowlist": {
+        "id": "authorized-author-allowlist",
+        "x7_ref": "B12",
+        "evidence": "Whether the author of an orchestrated card is on the authorized_humans allowlist",
+        "applicability": "Card intake by the Hermes orchestrator's eligibility check (intake frozen 2026-07-18)",
+        "owner": "not stated",
+        "classification": "unclassified",
+        "override_policy": "not stated",
+        "failure_route": "Not stated in the source",
+        "source": "docs/process/card-schema.md (authorized-author allowlist, config.github.authorized_humans default [namredips])",
+        "classification_basis": "UNCLASSIFIED by W4's transcription judgment, flagged in the plan's Open Questions: X7 records it \"dormant by inference, not explicitly retired\" - a lifecycle status, not a P14 classification verdict, because the source text does not use the word retired for this sub-gate. R24's pause is the honest handling of a row whose lifecycle status is unsettled."
+      },
+      "wip-limits": {
+        "id": "wip-limits",
+        "x7_ref": "B14",
+        "evidence": "Card count per board-Status column against a configured numeric limit",
+        "applicability": "Every active-board Status column with a finite limit",
+        "owner": "not stated",
+        "classification": "advisory",
+        "override_policy": "Visible in-card exception for critical defects (\"Critical defects can temporarily override WIP\")",
+        "failure_route": "Convention: \"stop pulling new work into the constrained state; finish or unblock the oldest active item\" - no code path mechanically rejects a card move for a WIP breach",
+        "source": "docs/process/wip-limits.md; config/sdlc-schema.json wip_limits",
+        "classification_basis": "Advisory by contract: the parallel Mission Control kanban workflow defines an explicit override path for critical defects, and X7 found no code path that mechanically rejects a card move for a WIP breach, so no mandatory-evidence or safety-boundary trigger names it blocking."
+      },
+      "component-slice-test-strategy-proof": {
+        "id": "component-slice-test-strategy-proof",
+        "x7_ref": "B15",
+        "evidence": "The specific proof the chosen verification type requires (e.g. event requires emission, idempotency, state transition, and alarm or retry proof)",
+        "applicability": "Component-slice work and Capability closeout",
+        "owner": "not stated",
+        "classification": "unclassified",
+        "override_policy": "not stated",
+        "failure_route": "\"Not complete without\" the named proof",
+        "source": "docs/process/gates.md:68-80 (Component Slice Test Strategy proof policy)",
+        "classification_basis": "UNCLASSIFIED by W4's transcription judgment, flagged in the plan's Open Questions: X7 records it \"mixed by design\" - one of five test-strategy values is advisory (endpoint) and four are enforced (event, schema, property, combine), and the value is itself an authoring decision in the issue body, so no single advisory-or-blocking verdict exists to transcribe. Carried as one row rather than five (X7's membership is fixed); the pause is the honest handling."
+      },
+      "no-force-push": {
+        "id": "no-force-push",
+        "x7_ref": "B16a",
+        "evidence": "Whether an action is a force-push to main or a protected branch, or a shared-branch deletion",
+        "applicability": "Any git action against main, a protected branch, or a shared branch",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "Action must not be taken",
+        "source": "AGENTS.md Standing Context (never force-push main; never delete a shared branch)",
+        "classification_basis": "Safety boundary: an explicit, named safety boundary in the repository's standing universal invariants."
+      },
+      "no-gate-weakening": {
+        "id": "no-gate-weakening",
+        "x7_ref": "B16b",
+        "evidence": "Whether a change lowers, skips, or weakens an existing gate to make it pass",
+        "applicability": "Any proposed change to a gate, check, or its invocation",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "\"Fix the work, not the check\" - a red gate is a finding, not an obstacle",
+        "source": "AGENTS.md Standing Context (never lower, skip, or weaken a gate to make it pass)",
+        "classification_basis": "Safety boundary: the meta-gate that makes every other blocking classification in the catalogue meaningful in practice, an explicit named safety boundary in the standing invariants."
+      },
+      "no-committing-secrets": {
+        "id": "no-committing-secrets",
+        "x7_ref": "B16c",
+        "evidence": "Presence of tokens, keys, credentials, or .env contents in a commit",
+        "applicability": "Every commit",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "Use the vault/secret store instead",
+        "source": "AGENTS.md Standing Context (never commit secrets)",
+        "classification_basis": "Safety boundary: an explicit, named safety boundary in the repository's standing universal invariants."
+      },
+      "outward-github-mutation-confirmation": {
+        "id": "outward-github-mutation-confirmation",
+        "x7_ref": "B16d",
+        "evidence": "Whether an agent is about to push, open a PR, request a review, or merge without the operator having asked",
+        "applicability": "Any outward GitHub mutation (push, PR-open, review-request, merge)",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "Action withheld until the operator asks",
+        "source": "AGENTS.md Standing Context (commit and push only when the operator asks; outward GitHub mutations stay operator-confirmed; merge to main is held for the operator)",
+        "classification_basis": "Safety boundary: the standing instance of P22's external-commitments / changes-to-process-authority approval-boundary category."
+      },
+      "production-deployment-safety": {
+        "id": "production-deployment-safety",
+        "x7_ref": "B17",
+        "evidence": "Separate explicit authorization for production promotion, carrying a durable deployment plan; GitHub Deployments and Environments remain the authoritative record",
+        "applicability": "Production promotion",
+        "owner": "the deploy skill/surface (deployment-state.md ownership table)",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "Promotion does not proceed without its own authorization",
+        "source": "docs/process/deployment-state.md; config/sdlc-schema.json deployment_state",
+        "classification_basis": "Safety boundary: production changes \"require separate explicit authorization\" (P22/P23), and deployment_state.promotion_plan makes the durable deployment plan mandatory evidence for every production promotion."
+      },
+      "work-hard-test-gate": {
+        "id": "work-hard-test-gate",
+        "x7_ref": "C4",
+        "evidence": "Whether tests exist/were updated for the change, scaled by change-kind risk (behavior, security, infra, api, deployment, data = risky)",
+        "applicability": "Inside /work, before PR-ready",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "Docs/config/trivial change-kinds may skip only with an explicit rationale recorded in the work session and issue comment",
+        "failure_route": "A risky change-kind with no tests and no rationale is a named stop-for-operator condition",
+        "source": "saga plugin skills/work/references/test-and-gates.md",
+        "classification_basis": "Mandatory evidence: for risky change-kinds \"tests are required; PR-ready is blocked without them\" - the contract names mandatory evidence directly."
+      },
+      "deploy-autonomy-posture": {
+        "id": "deploy-autonomy-posture",
+        "x7_ref": "C6",
+        "evidence": "Not an evidence check - an authorization-timing choice fixed at plan time: whether nonprod promotion needs explicit confirmation each time (gate, the default) or may auto-promote (auto, nonprod only)",
+        "applicability": "Set once per plan; governs deploy-time promotion confirmation; there is deliberately no way to widen it to auto at deploy time",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "None by design - the posture is fixed at plan time",
+        "failure_route": "Confirmation required for staging/production always; nonprod depends on the chosen posture; a missing/malformed posture fails safe to gate",
+        "source": "saga plugin skills/plan/SKILL.md deploy-autonomy posture",
+        "classification_basis": "Safety boundary: the plugin-level implementation of P22/P23's production-promotion boundary - \"staging/production always confirm\" unconditionally regardless of posture."
+      },
+      "retro-self-edit-safety": {
+        "id": "retro-self-edit-safety",
+        "x7_ref": "C9",
+        "evidence": "Self-edit safety gate; modifications/deletions require an explicit apply/skip/modify choice",
+        "applicability": "/retro edits to its own records",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "Modification cannot proceed without the explicit choice",
+        "source": "saga plugin /retro command gate one-liner (config/sdlc-schema.json saga_lifecycle.gates_raw.gates_by_command.retro)",
+        "classification_basis": "Safety boundary: self-named \"safety gate\" in its own contract."
+      },
+      "context-library-write-approval": {
+        "id": "context-library-write-approval",
+        "x7_ref": "C10",
+        "evidence": "Every context-library write is propose-diff-and-wait; idempotent via the drift-stable source-key ledger",
+        "applicability": "Every context-library write (scoped to infiquetra-context-library)",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "The write does not land until the proposal is approved",
+        "source": "saga plugin /promote command gate one-liner (saga_lifecycle.gates_raw.gates_by_command.promote)",
+        "classification_basis": "Mandatory evidence: propose-diff-and-wait names approval as the evidence the write requires before it lands."
+      },
+      "investigate-root-cause": {
+        "id": "investigate-root-cause",
+        "x7_ref": "C11",
+        "evidence": "A root-cause chain grounded in observed evidence",
+        "applicability": "/investigate fixes",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "No fix proceeds",
+        "source": "saga plugin /investigate command gate one-liner (gates_by_command.investigate)",
+        "classification_basis": "Mandatory evidence: explicit \"no fix without root-cause chain grounded in observed evidence\"."
+      },
+      "optimize-degenerate-case": {
+        "id": "optimize-degenerate-case",
+        "x7_ref": "C12",
+        "evidence": "Hard degenerate gates before any LLM judge; only a real measured improvement is kept",
+        "applicability": "/optimize runs, before any LLM judge",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "The optimization is not accepted",
+        "source": "saga plugin /optimize command gate one-liner (gates_by_command.optimize)",
+        "classification_basis": "Mandatory evidence: self-described \"hard degenerate gates before any LLM judge; keep only real measured improvement\"."
+      },
+      "founder-review-scope-expansion": {
+        "id": "founder-review-scope-expansion",
+        "x7_ref": "C13",
+        "evidence": "An opt-in ceremony before scope expansion",
+        "applicability": "Scope expansion (opt-in)",
+        "owner": "not stated",
+        "classification": "advisory",
+        "override_policy": "not stated",
+        "failure_route": "Not stated in the contract",
+        "source": "saga plugin /founder-review command gate one-liner (gates_by_command.founder-review)",
+        "classification_basis": "Advisory: \"opt-in\" is itself the P14 signal - no named mandatory evidence forces a block."
+      },
+      "tier-escalation-confirmation": {
+        "id": "tier-escalation-confirmation",
+        "x7_ref": "C14",
+        "evidence": "Operator confirmation of an up-ladder mid-run model/effort escalation",
+        "applicability": "Mid-run tier escalation",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "No re-emit until confirmed; a ceiling only ever clamps down",
+        "source": "saga plugin /tier command gate one-liner (gates_by_command.tier)",
+        "classification_basis": "Safety boundary: \"an up-ladder mid-run escalation requires operator confirmation before re-emit\" - a standing instance of P22's changes-to-process-authority boundary, over model/effort tier rather than GitHub mutation."
+      },
+      "fleet-doctor-audit-integrity": {
+        "id": "fleet-doctor-audit-integrity",
+        "x7_ref": "C15",
+        "evidence": "Integrity of the fleet-doctor audit's own report: any cap, corruption, unsafe path, or mid-scan change forces exit 2",
+        "applicability": "/fleet-doctor scans",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "Exit 2; the report is never truncated to a clean one",
+        "source": "saga plugin /fleet-doctor command gate one-liner (gates_by_command.fleet-doctor)",
+        "classification_basis": "Safety boundary: the contract protects the audit report's own integrity - it \"can never truncate to a clean report\", a named safety property of the audit itself (X7 flags it as self-referential)."
+      },
+      "engine-pin-validation": {
+        "id": "engine-pin-validation",
+        "x7_ref": "C16",
+        "evidence": "Pin targets exist, declare the capability, and are not locally deprecated; route explain is read-only",
+        "applicability": "/engines pin targets and route explain",
+        "owner": "not stated",
+        "classification": "unclassified",
+        "override_policy": "not stated",
+        "failure_route": "Not stated in the contract",
+        "source": "saga plugin /engines command gate one-liner (gates_by_command.engines)",
+        "classification_basis": "UNCLASSIFIED per X7: three \"must\" conditions are named, which leans toward mandatory evidence, but the one-line contract never uses blocking/advisory vocabulary the way C1/C4/C9/C11/C12 do. Genuinely unclassifiable from the existing text."
+      },
+      "handoff-ambiguity-check": {
+        "id": "handoff-ambiguity-check",
+        "x7_ref": "C17",
+        "evidence": "Whether source, maturity, target repo, team, or issue type is ambiguous",
+        "applicability": "/handoff when a routing field is ambiguous",
+        "owner": "not stated",
+        "classification": "unclassified",
+        "override_policy": "not stated",
+        "failure_route": "Ask (the contract's stated failure route is an ask, not a block or a pass-through)",
+        "source": "saga plugin /handoff command gate one-liner (gates_by_command.handoff)",
+        "classification_basis": "UNCLASSIFIED per X7: the evidence tested is clear, but \"ask\" maps to neither advisory nor blocking and no classification word is used."
+      },
+      "intent-envelope-validity": {
+        "id": "intent-envelope-validity",
+        "x7_ref": "D3",
+        "evidence": "Schema validity of the intent-envelope JSON block against fleet_commons.intent_envelope",
+        "applicability": "Issue creation when an intent-envelope block is present (an absent block stays fine)",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "Fails closed at capture: blocks issue creation only if the block is present and malformed",
+        "source": "mission-control plugin skills/issues/SKILL.md intent-envelope validity gate",
+        "classification_basis": "Mandatory evidence: quoted verbatim, \"a present-but-invalid envelope block as a BLOCKING gap (fail closed at capture)\"."
+      },
+      "prepared-issue-readiness-checks": {
+        "id": "prepared-issue-readiness-checks",
+        "x7_ref": "D5",
+        "evidence": "Unspecified in the source: \"re-runs readiness checks\" before create-prepared proceeds",
+        "applicability": "Mission-control prepared-issue creation (create-prepared)",
+        "owner": "not stated",
+        "classification": "unclassified",
+        "override_policy": "not stated",
+        "failure_route": "Not stated in the source",
+        "source": "mission-control plugin skills/issues/SKILL.md create-prepared readiness checks",
+        "classification_basis": "UNCLASSIFIED per X7: a vague forward reference - the named checks are not enumerated in the file, and no pass/fail language is attached to them there."
+      },
+      "scanner-validator-gate": {
+        "id": "scanner-validator-gate",
+        "x7_ref": "E2",
+        "evidence": "security-scanner, iac-cost-scanner, api-compat-scanner, dependency-scanner findings",
+        "applicability": "Team-execution runs: auto-merge, nonprod deploy, and completion",
+        "owner": "per-scanner agent",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "Blocks auto-merge/deploy/completion; a missing required tool fails loud with setup guidance",
+        "source": "team-execution plugin skills/team-execution/references/validator-registry.md scanner row; skills/team-execution/SKILL.md:507",
+        "classification_basis": "Mandatory evidence: \"Scanner hard-fail findings block auto-merge, nonprod deploy, and completion.\""
+      },
+      "tester-validator-gate": {
+        "id": "tester-validator-gate",
+        "x7_ref": "E3",
+        "evidence": "smoke/scenario/api-contract/sdk-regression/event-flow/ui-regression/performance/concurrency tester findings",
+        "applicability": "Team-execution runs: completion",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "Blocks completion; maximum 3 remediation loops, then escalate to the user",
+        "source": "team-execution plugin skills/team-execution/references/validator-registry.md tester row; skills/team-execution/SKILL.md:534-535",
+        "classification_basis": "Mandatory evidence: \"Tester hard-fail findings block completion.\""
+      },
+      "monitor-validator-gate": {
+        "id": "monitor-validator-gate",
+        "x7_ref": "E4",
+        "evidence": "github-actions-monitor, runtime-monitor reachability",
+        "applicability": "Team-execution runs: monitor reachability signals",
+        "owner": "not stated",
+        "classification": "unclassified",
+        "override_policy": "not stated",
+        "failure_route": "Blocked if the signal was required; warn if optional",
+        "source": "team-execution plugin skills/team-execution/SKILL.md:548-549",
+        "classification_basis": "UNCLASSIFIED by W4's transcription judgment, flagged in the plan's Open Questions: X7 records it \"conditional - mark the gate blocked or warn based on whether the signal was required\", a context-dependent classification rather than a fixed one. R24's pause is the honest handling."
+      },
+      "automation-eligibility-gate": {
+        "id": "automation-eligibility-gate",
+        "x7_ref": "E5",
+        "evidence": "Remote is github.com/infiquetra/*; default-branch model; reviewers/scanners/CI/testers all passed; workflow explicitly nonprod/publish-nonprod; excludes production/staging, force-push, branch deletion, credential changes",
+        "applicability": "Team-execution automation eligibility (remote github.com/infiquetra/*, nonprod or publish-nonprod workflow)",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "Stops automation and reports what is missing",
+        "source": "team-execution plugin skills/team-execution/SKILL.md:204-212; references/validator-registry.md automation eligibility",
+        "classification_basis": "Safety boundary: \"Any ambiguous or missing signal blocks automation\" - the plugin's own direct implementation of the source document's P22 approval-boundary list (production/staging, force-push, branch-deletion, credentials)."
+      },
+      "andon-cord-safety-halt": {
+        "id": "andon-cord-safety-halt",
+        "x7_ref": "E6",
+        "evidence": "Fabricated evidence, unsafe mutation, or a wrong-direction build - a worker's or reviewer's judgment call",
+        "applicability": "Any team-execution wave/tick after a halt is raised",
+        "owner": "Raised by a worker or reviewer; resolved by the operator",
+        "classification": "blocking",
+        "override_policy": "none",
+        "failure_route": "An operator-surface record is written; in-flight work drains until the operator resolves it; the next wave/tick is not dispatched",
+        "source": "team-execution plugin skills/team-execution/references/andon-cord.md",
+        "classification_basis": "Safety boundary: a safety halt, not a scored gate - \"the next wave/tick is not dispatched\" until the operator resolves it. It is not bypassable as advisory, so its override policy is none in effect; X7 keeps it distinct from R24's unclassified-pause behavior."
+      },
+      "required-evidence-absence-gate": {
+        "id": "required-evidence-absence-gate",
+        "x7_ref": "E7",
+        "evidence": "Whether a required, non-skipped validator's evidence record was written at all",
+        "applicability": "Team-execution process exit, for every required non-skipped validator",
+        "owner": "not stated",
+        "classification": "blocking",
+        "override_policy": "not stated",
+        "failure_route": "Completion block",
+        "source": "team-execution plugin skills/team-execution/SKILL.md:572-575",
+        "classification_basis": "Mandatory evidence: \"treat its absent evidence at process exit as a completion block, exactly like a hard-fail\" - explicitly distinguished from skipped-by-config, which is not a trip."
+      },
+      "external-second-opinion": {
+        "id": "external-second-opinion",
+        "x7_ref": "E8",
+        "evidence": "An external-engine chaperone-dispatched review verdict",
+        "applicability": "Team-execution validator table, when opted in via .team-execution.json's external_second_opinion key (never auto-selected)",
+        "owner": "chaperone / external engine",
+        "classification": "advisory",
+        "override_policy": "Opt-in only, via .team-execution.json's external_second_opinion key - never auto-selected",
+        "failure_route": "A failed or unavailable dispatch records a downgrade note; the run proceeds regardless",
+        "source": "team-execution plugin skills/team-execution/references/validator-registry.md external-second-opinion row",
+        "classification_basis": "Structurally advisory - the registry's own column value is \"Blocking: never\"; its Gate Status can never resolve to hard-fail or blocked for the purpose of completion. (The plugin text's R13/R15/R24 citations there are team-execution's own internal numbering, not the source document's.)"
+      },
+      "deploy-owner-check": {
+        "id": "deploy-owner-check",
+        "x7_ref": "F1",
+        "evidence": "The target repository resolves to github.com/infiquetra/*",
+        "applicability": "deploy skill runs, before any mutation",
+        "owner": "not stated",
+        "classification": "unclassified",
+        "override_policy": "not stated",
+        "failure_route": "Stop before mutation",
+        "source": "deploy plugin skills/deploy-state/SKILL.md:19,36",
+        "classification_basis": "UNCLASSIFIED - catalogued per the W4 plan's KTD4 decision because a gate missing from the catalogue has no defined behaviour at all, but no P14 classification assessment was performed: X7's Document Review cycle 1 repair pass enumerated these deploy-plugin checks without the classification pass every other row received. A later unit can classify them."
+      },
+      "deploy-unhealthy-version-refusal": {
+        "id": "deploy-unhealthy-version-refusal",
+        "x7_ref": "F2",
+        "evidence": "Whether an unhealthy-v<version> deployment state exists for the target version",
+        "applicability": "deploy forward promotion when an unhealthy-v<version> state exists",
+        "owner": "not stated",
+        "classification": "unclassified",
+        "override_policy": "not stated",
+        "failure_route": "Refuse forward promotion unless the user explicitly chooses an audited override after manual verification",
+        "source": "deploy plugin skills/deploy-state/SKILL.md:40-41",
+        "classification_basis": "UNCLASSIFIED - catalogued per the W4 plan's KTD4 decision because a gate missing from the catalogue has no defined behaviour at all, but no P14 classification assessment was performed: X7's Document Review cycle 1 repair pass enumerated these deploy-plugin checks without the classification pass every other row received. A later unit can classify them."
+      },
+      "deploy-saga-handoff-ack": {
+        "id": "deploy-saga-handoff-ack",
+        "x7_ref": "F3",
+        "evidence": "An explicit accept of saga /work's promotion offer (ack token plus gate-or-auto payload); a double-accept, an accept with no matching offer, or a stale token is refused; the gate-or-auto payload is enforced mechanically by authorize_promotion",
+        "applicability": "Post-merge deployment handoff from saga /work",
+        "owner": "not stated",
+        "classification": "unclassified",
+        "override_policy": "not stated",
+        "failure_route": "An unacknowledged offer surfaces as handed-off-unacknowledged on reconcile - a dropped baton, never a clean state; gate posture blocks pending explicit operator confirmation and is never silently overridden",
+        "source": "deploy plugin skills/deploy-state/SKILL.md:58-94",
+        "classification_basis": "UNCLASSIFIED - catalogued per the W4 plan's KTD4 decision because a gate missing from the catalogue has no defined behaviour at all, but no P14 classification assessment was performed: X7's Document Review cycle 1 repair pass enumerated these deploy-plugin checks without the classification pass every other row received. A later unit can classify them."
+      }
+    }
+  },
+  "verify_entry": {
+    "description": "Single authority for the Active/Verify boundary: the condition under which a work item may enter Verify, and whether a check belongs to Active or Verify. Prose documents link here and must not restate this contract (R10).",
+    "defined_by": [
+      "R69",
+      "R70",
+      "R71"
+    ],
+    "resolver_note": "Resolved by tools/docs/verify_entry.py for reviewers and any automated consumer. The Stage write itself is W6's constrained Mission Control mutation; the causing-evidence inventory is X1's audit.",
+    "evidence_audit": "docs/reviews/2026-08-29-x1-findings.md Inventory A transition T5 (Active -> Verify)",
+    "causing_evidence": "For work with deployable software: a merged change plus a succeeded non-production deployment record. For work with no deployable software: the delivered artifact existing in its real form in the consumption context that must be evaluated. None of these may be fabricated (R71/EE8).",
+    "recording_operation": "Mission Control's constrained lifecycle-field mutation (W6's authored contract, landed 2026-08-28): one atomic all-carrying-boards-or-none Stage/Status write resolving carrying boards from the issue's own projectItems. Today's live mechanism is `flow set-field --correction` reached through the reconcile controller's set-field-status op. Verify is never written pre-merge (X1 audit, Central Mechanism; T5).",
+    "entry_conditions": {
+      "deployable_work": {
+        "require_merge": true,
+        "require_non_production_deployment": "succeeded",
+        "stage_reached": "Verify",
+        "otherwise_stage": "Active",
+        "note": "Verify is entered only after merge plus a succeeded non-production deployment. A failed or missing deployment leaves the item in Active (R69)."
+      }
+    },
+    "pre_merge_stays_active": {
+      "stage_reached": "Active",
+      "conditions": [
+        "PR-ready with green checks",
+        "required repository checks green",
+        "continuous integration green",
+        "code review complete",
+        "merge readiness confirmed"
+      ],
+      "note": "Pre-merge CI, tests, code review, and PR-ready never advance the Stage to Verify (R69/R2)."
+    },
+    "no_deployable_software": {
+      "stage_reached": "Verify",
+      "require_merge": true,
+      "require_merge_note": "Verify begins after merge for this class of work too; the R71 no-deployable route relaxes the deployment requirement, never the merge requirement (R69/R1).",
+      "verified_when": "The delivered artifact exists in the real form and consumption context that must be evaluated: the rendered published page for documentation, the installed version for a plugin (R71/R6).",
+      "deploying_to_non_production": {
+        "status": "applicable_only",
+        "mandatory": false,
+        "defined_by": "R66",
+        "never_set_when": "the work has no deployable software"
+      },
+      "absence_requires_reason": true,
+      "fabrication_forbidden": true,
+      "note": "Where deployment practice does not apply, the absence is recorded with a reason; no environment or deployment record may be fabricated to satisfy the transition (R71, EE8)."
+    },
+    "test_placement": {
+      "description": "Whether a check belongs to Active or Verify, keyed on its target and timing -- never on the label 'end-to-end' (R70/R5). A check whose target is an assembled candidate (an artifact built from the change, not yet deployed) at pre-merge or at-merge timing is Active; a check whose target is a deployed environment or the delivered artifact in its consumption context at post-deployment timing is Verify.",
+      "axis": {
+        "targets": {
+          "assembled_candidate": "An artifact built from the change (repository checkout, built/installed-from-source candidate) that has not been deployed to an environment.",
+          "deployed_environment": "A real (including non-production) environment the change has been deployed to.",
+          "delivered_artifact_in_context": "The delivered artifact in its real consumption context: the rendered published page for documentation, the installed version for a plugin."
+        },
+        "timings": {
+          "pre_merge": "Before the change is merged.",
+          "at_merge": "During the merge itself (merge-gate checks).",
+          "post_deployment": "After the change is merged and deployed, or after the no-deployable-software artifact exists in its consumption context."
+        },
+        "rule": {
+          "active": "target==assembled_candidate and timing in [pre_merge, at_merge]",
+          "verify": "target in [deployed_environment, delivered_artifact_in_context] and timing==post_deployment",
+          "unresolved": "HALT: a target/timing combination the rule does not name raises rather than defaulting (HALT over degrade)."
+        },
+        "label_is_not_a_key": true
+      },
+      "classes": {
+        "unit_tests": {
+          "target": "assembled_candidate",
+          "timing": "pre_merge",
+          "expected_stage": "active",
+          "source": "R70"
+        },
+        "integration_tests": {
+          "target": "assembled_candidate",
+          "timing": "pre_merge",
+          "expected_stage": "active",
+          "source": "R70"
+        },
+        "required_repository_checks": {
+          "target": "assembled_candidate",
+          "timing": "pre_merge",
+          "expected_stage": "active",
+          "source": "R70"
+        },
+        "continuous_integration": {
+          "target": "assembled_candidate",
+          "timing": "pre_merge",
+          "expected_stage": "active",
+          "source": "R70"
+        },
+        "static_dependency_secret_scanning": {
+          "target": "assembled_candidate",
+          "timing": "pre_merge",
+          "expected_stage": "active",
+          "source": "R70"
+        },
+        "end_to_end_assembled_candidate": {
+          "target": "assembled_candidate",
+          "timing": "pre_merge",
+          "expected_stage": "active",
+          "source": "R70"
+        },
+        "end_to_end_deployed_environment": {
+          "target": "deployed_environment",
+          "timing": "post_deployment",
+          "expected_stage": "verify",
+          "source": "R70"
+        },
+        "automated_acceptance": {
+          "target": "delivered_artifact_in_context",
+          "timing": "post_deployment",
+          "expected_stage": "verify",
+          "source": "R70"
+        },
+        "manual_human_in_the_loop_checks": {
+          "target": "delivered_artifact_in_context",
+          "timing": "post_deployment",
+          "expected_stage": "verify",
+          "source": "R70"
+        },
+        "environment_dependent_security_tests": {
+          "target": "deployed_environment",
+          "timing": "post_deployment",
+          "expected_stage": "verify",
+          "source": "R70"
+        }
+      }
+    }
   },
   "saga_lifecycle": {
     "derived_from": "config/saga-docs-model.yaml",
@@ -345,12 +1295,18 @@
         "qa": "Verdict threshold determines ship, ship-with-deferred, or no-ship.",
         "handoff": "Ask when source, maturity, target repo, team, or issue type is ambiguous.",
         "retro": "Self-edit safety gate; modifications/deletions require explicit apply/skip/modify choice.",
+        "promote": "Every context-library write is propose-diff-and-wait; idempotent via the drift-stable source-key ledger.",
         "resume": "Read-only on world; Tier 2 session forensics only when no saga and no resolvable issue exist.",
         "investigate": "No fix without root-cause chain grounded in observed evidence.",
         "optimize": "Hard degenerate gates before any LLM judge; keep only real measured improvement.",
         "strategy": "Interview-driven update with pushback; do not implement or file issues.",
         "founder-review": "Opt-in ceremony before scope expansion.",
-        "loop": "Enforces doc-review P0/P1 hard gate before /work; stub/off-chain routes are advisory."
+        "loop": "Enforces doc-review P0/P1 hard gate before /work; stub/off-chain routes are advisory.",
+        "tier": "An up-ladder mid-run escalation requires operator confirmation before re-emit; a ceiling only ever clamps down.",
+        "outcome": "Coordinator routes and dispatches but never runs leaf work; pages only at gates, unsatisfiable barriers, ambiguity, and parent-close.",
+        "fleet-doctor": "Absence, corruption, and incompleteness are distinct verdicts; any cap, corruption, unsafe path, or mid-scan change forces exit 2 and can never truncate to a clean report.",
+        "pulse": "Tri-state source honesty per panel (ok / no-data / unavailable, ledger adds chain-broken); a broken chain suppresses all aggregates; no thresholds, not a gate.",
+        "engines": "Pin targets must exist, declare the capability, and not be locally deprecated; route explain is read-only."
       },
       "routes": {
         "main_chain": [
@@ -577,7 +1533,7 @@
           "Shaping"
         ],
         "campps": [
-          "Idea"
+          "Shaping"
         ]
       },
       "plan": {
@@ -588,7 +1544,7 @@
           "Ready"
         ],
         "campps": [
-          "Committed"
+          "Ready"
         ]
       },
       "review": {
@@ -599,9 +1555,9 @@
           "Ready"
         ],
         "campps": [
-          "Committed"
+          "Ready"
         ],
-        "note": "The doc-review gate is the Ready->Active gate on Operations / Asgard (plan approved before work goes Active); on CAMPPS the work is Committed (admitted to the portfolio) before execution starts."
+        "note": "The doc-review gate is the Ready->Active gate on all three active boards (plan approved before work goes Active). CAMPPS joined this shared ladder on 2026-08-16; its former Committed column migrated to Ready."
       },
       "work": {
         "operations": [
@@ -611,9 +1567,9 @@
           "Active"
         ],
         "campps": [
-          "In Progress"
+          "Active"
         ],
-        "note": "Work (with code-review at the PR boundary) runs in Active on Operations / Asgard and In Progress on CAMPPS."
+        "note": "Work (with code-review at the PR boundary) runs in Active on all three active boards."
       },
       "qa": {
         "operations": [
@@ -623,9 +1579,9 @@
           "Verify"
         ],
         "campps": [
-          "In Progress"
+          "Verify"
         ],
-        "note": "The qa verdict gates Verify -> Done on Operations / Asgard; CAMPPS has no separate verify column, so qa stays In Progress on the initiative rollup until the work is Done."
+        "note": "The qa verdict gates Verify -> Done on all three active boards. CAMPPS gained a separate Verify column on 2026-08-16; qa no longer shares a column with work on the initiative rollup."
       },
       "retro": {
         "operations": [
