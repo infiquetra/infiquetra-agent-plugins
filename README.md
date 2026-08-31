@@ -27,8 +27,8 @@ coding-agent clients installed on the operator's machine:
    ([`docs/runbooks/portable-plugin-port.md`](docs/runbooks/portable-plugin-port.md) v1.0.0)
    and approved run plan
    ([`docs/plans/2026-08-24-mission-control-port-run-plan.md`](docs/plans/2026-08-24-mission-control-port-run-plan.md)),
-   delivering a 64-file portable package derived from upstream commit `84eaf042`
-   (version 2.12.2) in `infiquetra-claude-plugins`, with 266 ported tests in
+   delivering a 71-file portable package derived from upstream commit `3b2b7083`
+   (version 2.15.2) in `infiquetra-claude-plugins`, with 391 ported tests in
    continuous integration, the validation rule audit, and a full ten-client
    compatibility assessment.
 3. **`agent-launcher` package** — Ported under runbook
@@ -68,33 +68,33 @@ and committed evidence:
   built here. Cursor Agent works directly; the matrix records why its earlier
   failure reading was an artifact of the assessment's isolation rather than a
   result of the client.
-- **Mission Control ships 64 portable files and 266 CI tests.** Pinned to
-  `84eaf042` (v2.12.2), the package provides seven Agent Skills (`board`, `flow`,
+- **Mission Control ships 71 portable files and 391 CI tests.** Pinned to
+  `3b2b7083` (v2.15.2), the package provides seven Agent Skills (`board`, `flow`,
   `issues`, `labels`, `metrics`, `milestones`, `rollout`), the shared CLI
   (`scripts/sdlc_manager.py`), board census, pagination, template sync, and
-  executor profile lint entrypoints. Twenty-one test files (266 tests) live
+  executor profile lint entrypoints. Twenty-eight test files (391 tests) live
   inside the package under [`plugins/mission-control/tests/`](plugins/mission-control/tests/)
   under provenance custody and run in CI on `python>=3.12`. The validation rule
   audit ([`docs/plans/2026-08-24-mission-control-port-u7-phase2-rule-audit.md`](docs/plans/2026-08-24-mission-control-port-u7-phase2-rule-audit.md),
   [`tests/test_mission_control_rule_audit.py`](tests/test_mission_control_rule_audit.py))
   audits validation rules class-first against live authority.
-- **Mission Control ten-client assessment: 1 directly, 8 via adapter, 1 failed.**
-  The [Mission Control compatibility matrix](docs/evidence/2026-08-25-mission-control-compatibility-matrix.md)
+- **Mission Control ten-client assessment: 2 directly, 7 via adapter, 1 failed.**
+  The [Mission Control compatibility matrix](docs/evidence/2026-08-30-mission-control-compatibility-matrix.md)
   records:
-  - 1 works directly (Agy: placed, discovered, loaded, and ran all entrypoints cleanly).
-  - 8 work through an adapter (Claude Code, OpenAI Codex, Qwen, Grok, OpenCode,
+  - 2 work directly (Cursor Agent and Agy: placed, discovered, loaded, and ran
+    all entrypoints cleanly).
+  - 7 work through an adapter (Claude Code, OpenAI Codex, Grok, OpenCode,
     Gemini CLI, Muse, Hermes). The four skill-scoped clients (OpenCode, Gemini
     CLI, Muse, Hermes) fully consume the seven skill units with zero diagnostics,
     while package-root entrypoint scripts sit outside the skill tree.
-  - 1 failed (Cursor Agent: placement, discovery, and load succeeded from session
-    context, but `sync_template_docs.py --help` failed because it assumed a
-    4-level ancestor repository depth `parents[3]` to import its contract data
-    file — a recorded relocatability finding, [`LEARNINGS.md`](docs/engineering-journal/LEARNINGS.md)).
+  - 1 failed (Qwen: every stage exited 127 because the isolated home's preserved
+    Qwen wrapper was missing or not executable — an environment condition; the
+    real client never ran).
   - 0 unsupported.
   - Evidence is bound to the package fingerprint by
     [`scripts/check_compatibility_matrix.py`](scripts/check_compatibility_matrix.py),
     with post-activation readback in
-    [`docs/evidence/2026-08-25-mission-control-post-activation-readback.md`](docs/evidence/2026-08-25-mission-control-post-activation-readback.md)
+    [`docs/evidence/2026-08-30-mission-control-post-activation-readback.md`](docs/evidence/2026-08-30-mission-control-post-activation-readback.md)
     and 0 survivors across 68 anchors in mutation proof
     [`docs/evidence/2026-08-25-cycle16-mutation-proof-portable-copies.txt`](docs/evidence/2026-08-25-cycle16-mutation-proof-portable-copies.txt).
 - **Agent launcher ships the shared launch contract as one entrypoint.** Pinned
@@ -142,7 +142,7 @@ decisions are recorded in the journal's
 The record of the work, in the order a new reader should take it:
 
 - [Agent launcher ten-client compatibility matrix](docs/evidence/2026-08-27-agent-launcher-compatibility-matrix.md),
-  [Mission Control ten-client compatibility matrix](docs/evidence/2026-08-25-mission-control-compatibility-matrix.md)
+  [Mission Control ten-client compatibility matrix](docs/evidence/2026-08-30-mission-control-compatibility-matrix.md)
   and [UniFi ten-client compatibility matrix](docs/evidence/2026-08-22-unifi-compatibility-matrix.md)
   — what each client did with each package, stage by stage, with evidence.
 - [Agent launcher port run plan](docs/plans/2026-08-27-agent-launcher-port-plan.md),
@@ -160,7 +160,7 @@ The record of the work, in the order a new reader should take it:
 |---|---|---|---|
 | [`plugins/unifi/`](plugins/unifi/README.md) | Ported (pilot) | Portable UniFi network and protect management | `818fd684` (v2.0.6) |
 | [`plugins/fleet-core/`](plugins/fleet-core/README.md) | Ported (vertical slice) | Shared rate-limit retry, intent envelope, tier palette, and models registry | `3b5faa6c` (v0.25.2) |
-| [`plugins/mission-control/`](plugins/mission-control/README.md) | Ported | SDLC management on Operations, Asgard, and CAMPPS boards | `84eaf042` (v2.12.2) |
+| [`plugins/mission-control/`](plugins/mission-control/README.md) | Ported | SDLC management on Operations, Asgard, and CAMPPS boards | `3b2b7083` (v2.15.2) |
 | [`plugins/agent-launcher/`](plugins/agent-launcher/README.md) | Ported | Shared single-session launch contract: create, verify, prompt, and owned-close one coding-agent session | `8269f84b` (v1.0.0) |
 
 ### Portable Fleet Core scope
@@ -197,7 +197,7 @@ for the contract itself.
 | [`scripts/`](scripts/) | Validation, synchronization, bundling, and inventory tools |
 | [`docs/`](docs/README.md) | Architecture, public guidance, and durable repository knowledge |
 | [`docs/plans/`](docs/plans/2026-08-24-mission-control-port-run-plan.md) | Approved implementation plans |
-| [`docs/evidence/`](docs/evidence/2026-08-25-mission-control-compatibility-matrix.md) | Assessment records, written under the public evidence rules |
+| [`docs/evidence/`](docs/evidence/2026-08-30-mission-control-compatibility-matrix.md) | Assessment records, written under the public evidence rules |
 | [`docs/engineering-journal/`](docs/engineering-journal/README.md) | Learnings, decisions, queued work, and archive |
 | [`.github/`](.github/PULL_REQUEST_TEMPLATE.md) | Pull request, issue, and validation workflow configuration |
 

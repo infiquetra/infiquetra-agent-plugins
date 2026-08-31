@@ -776,5 +776,106 @@ class ManifestVersionDerivationTests(unittest.TestCase):
         )
 
 
+# ─── 8. Root README Pin (KTD6) ────────────────────────────────────────────────
+
+
+class RootReadmePinTests(unittest.TestCase):
+    """The root README's Mission Control identity claims are recomputed from
+    disk and derived from PROVENANCE.json rather than retyped, so a stale
+    revision, version, or count fails instead of sitting there. The #9 run's
+    only review finding was exactly this class: a hand-authored Packages row
+    with no derivation and no pin test."""
+
+    def test_the_packages_table_row_derives_from_provenance(self) -> None:
+        provenance = json.loads((PACKAGE / "PROVENANCE.json").read_text(encoding="utf-8"))
+        short_pin = provenance["source_commit"][:8]
+        version = provenance["source_version"]
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn(
+            f"`{short_pin}` (v{version})",
+            readme,
+            "the root README's Mission Control Packages row names a revision or version "
+            "that does not match the provenance manifest; derive it, never retype it",
+        )
+
+    def test_the_file_count_is_recomputed_from_disk(self) -> None:
+        # The same exclusion set the compatibility checker's fingerprint uses
+        # (its docstring documents them): tool cache directories and .DS_Store
+        # are checkout noise; everything else counts.
+        noise = {"__pycache__", ".git", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".DS_Store"}
+        file_count = 0
+        for path in PACKAGE.rglob("*"):
+            if not path.is_file():
+                continue
+            parts = set(path.relative_to(PACKAGE).parts)
+            if parts & noise:
+                continue
+            file_count += 1
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn(
+            f"{file_count}-file portable package",
+            readme,
+            "the root README's package file count was retyped and went stale; "
+            "recompute it from disk",
+        )
+        self.assertIn(
+            f"ships {file_count} portable files",
+            readme,
+            "the root README's package file count was retyped and went stale; "
+            "recompute it from disk",
+        )
+
+    def test_the_test_file_count_is_recomputed_from_disk(self) -> None:
+        test_files = sorted((PACKAGE / "tests").glob("*.py"))
+        number_word = {
+            27: "Twenty-seven",
+            28: "Twenty-eight",
+            29: "Twenty-nine",
+        }
+        word = number_word.get(len(test_files), str(len(test_files)))
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn(
+            word,
+            readme,
+            "the root README's test-file count was retyped and went stale; "
+            "recompute it from disk",
+        )
+
+    def test_the_test_count_is_recomputed_by_collection(self) -> None:
+        import subprocess
+
+        collected = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                str(PACKAGE / "tests"),
+                "--collect-only",
+                "-q",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=ROOT,
+        )
+        match = re.search(r"(\d+) tests collected", collected.stdout)
+        self.assertIsNotNone(match, collected.stdout)
+        assert match is not None
+        test_count = int(match.group(1))
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn(
+            f"{test_count} ported tests",
+            readme,
+            "the root README's ported-test count was retyped and went stale; "
+            "recompute it by collection",
+        )
+        self.assertIn(
+            f"{test_count} CI tests",
+            readme,
+            "the root README's CI test count was retyped and went stale; "
+            "recompute it by collection",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
