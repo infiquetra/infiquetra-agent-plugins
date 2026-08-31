@@ -591,6 +591,78 @@ FRONTMATTER_SHAPE_SOURCE = (
     "# Example skill\n"
 )
 
+#: The `resolve-package-root-marker` shapes, as in-test fixtures. The three
+#: declared paths each carry a different subset of the four site classes, so
+#: every fixture below mirrors one of them exactly (R42). The finder block's
+#: two marker sites — the walk and the error text — are one match unit, not
+#: two.
+PACKAGE_ROOT_FINDER_SHAPE = (
+    "def _find_package_root(start: Path | None = None) -> Path:\n"
+    "    current = start or Path(__file__)\n"
+    "    for parent in current.resolve().parents:\n"
+    '        if (parent / ".claude-plugin" / "plugin.json").is_file():\n'
+    "            return parent\n"
+    "    raise RuntimeError(\n"
+    '        f"package root containing .claude-plugin/plugin.json not found from '
+    '{current.resolve()}"\n'
+    "    )\n"
+)
+
+PACKAGE_ROOT_CALL_SHAPE = "PACKAGE_ROOT = _find_package_root()\n"
+
+PACKAGE_ROOT_ISFILE_SHAPE = (
+    '    assert (root / ".claude-plugin" / "plugin.json").is_file()\n'
+)
+
+PACKAGE_ROOT_RAISES_SHAPE = (
+    '        RuntimeError, match=r"package root containing '
+    '\\.claude-plugin/plugin\\.json not found"\n'
+)
+
+PACKAGE_ROOT_SCRIPT_SOURCE = (
+    "from pathlib import Path\n"
+    "\n"
+    "\n"
+    + PACKAGE_ROOT_FINDER_SHAPE
+    + "\n"
+    + PACKAGE_ROOT_CALL_SHAPE
+)
+
+PACKAGE_ROOT_PARITY_SOURCE = (
+    "from pathlib import Path\n"
+    "\n"
+    "\n"
+    + PACKAGE_ROOT_FINDER_SHAPE
+    + "\n"
+    + PACKAGE_ROOT_CALL_SHAPE
+    + "\n"
+    "def test_find_package_root_resolves_plugin_root() -> None:\n"
+    "    root = _find_package_root()\n"
+    + PACKAGE_ROOT_ISFILE_SHAPE
+    + "\n"
+    "def test_find_package_root_fails_loudly_when_missing(tmp_path: Path) -> None:\n"
+    "    with pytest.raises(\n"
+    + PACKAGE_ROOT_RAISES_SHAPE
+    + "    ):\n"
+    "        _find_package_root(Path('.'))\n"
+)
+
+PACKAGE_ROOT_TEMPLATE_SYNC_SOURCE = (
+    "from pathlib import Path\n"
+    "import sync_template_docs\n"
+    "\n"
+    "\n"
+    "def test_find_package_root_resolves_plugin_root() -> None:\n"
+    "    root = sync_template_docs._find_package_root()\n"
+    + PACKAGE_ROOT_ISFILE_SHAPE
+    + "\n"
+    "def test_find_package_root_fails_loudly_when_missing(tmp_path: Path) -> None:\n"
+    "    with pytest.raises(\n"
+    + PACKAGE_ROOT_RAISES_SHAPE
+    + "    ):\n"
+    "        sync_template_docs._find_package_root(Path('.'))\n"
+)
+
 
 class SplitModuleRuleTests(unittest.TestCase):
     """`resolve-bundled-fleet-module-split`: one import block, one load call."""
@@ -772,6 +844,187 @@ class FrontmatterRuleTests(unittest.TestCase):
 
 #: A synthetic upstream shaped like mission-control's Lane A: the two shim
 #: shapes, the frontmatter shape, and the dropped shim itself.
+class PackageRootMarkerRuleTests(unittest.TestCase):
+    """`resolve-package-root-marker` v2: per-file site counts, exactly-one
+    discipline, idempotence, and every refusal branch (R42).
+
+    The three declared paths carry different site subsets, so each fixture
+    mirrors one of them: the script carries the finder and its module-scope
+    call; the parity test adds the `.is_file()` assertion and the
+    `pytest.raises` error-text match; the template-sync test carries only the
+    two assertion sites, because its subject is the already-transformed
+    module.
+    """
+
+    def transform(self, body: str, target: str) -> str:
+        return svs.package_root_marker_transform(body.encode("utf-8"), target).decode(
+            "utf-8"
+        )
+
+    def assert_refused(self, body: str, target: str, needle: str, label: str) -> None:
+        with self.assertRaises(svs.SyncError) as caught:
+            self.transform(body, target)
+        self.assertIn(needle, str(caught.exception), label)
+
+    def test_the_script_shape_is_rewritten_both_marker_sites(self) -> None:
+        rewritten = self.transform(PACKAGE_ROOT_SCRIPT_SOURCE, "scripts/sync_template_docs.py")
+        self.assertNotIn(".claude-plugin", rewritten)
+        self.assertIn('if (parent / "com.infiquetra.claude" / "plugin.json").is_file()', rewritten)
+        self.assertIn("package root containing com.infiquetra.claude/plugin.json not found from", rewritten)
+        self.assertIn("PACKAGE_ROOT = _find_package_root()", rewritten)
+
+    def test_the_parity_shape_rewrites_all_four_site_classes(self) -> None:
+        rewritten = self.transform(PACKAGE_ROOT_PARITY_SOURCE, "tests/test_issue_contract_parity.py")
+        self.assertNotIn(".claude-plugin", rewritten)
+        self.assertIn('assert (root / "com.infiquetra.claude" / "plugin.json").is_file()', rewritten)
+        self.assertIn(r'com\.infiquetra\.claude/plugin\.json not found', rewritten)
+        self.assertIn('(parent / "com.infiquetra.claude" / "plugin.json").is_file()', rewritten)
+
+    def test_the_template_sync_shape_rewrites_only_the_assertion_sites(self) -> None:
+        rewritten = self.transform(PACKAGE_ROOT_TEMPLATE_SYNC_SOURCE, "tests/test_template_sync.py")
+        self.assertNotIn(".claude-plugin", rewritten)
+        self.assertNotIn("def _find_package_root", rewritten)
+        self.assertIn('assert (root / "com.infiquetra.claude" / "plugin.json").is_file()', rewritten)
+        self.assertIn(r'com\.infiquetra\.claude/plugin\.json not found', rewritten)
+
+    def test_a_second_application_is_a_no_op_on_every_shape(self) -> None:
+        for body, target in (
+            (PACKAGE_ROOT_SCRIPT_SOURCE, "scripts/sync_template_docs.py"),
+            (PACKAGE_ROOT_PARITY_SOURCE, "tests/test_issue_contract_parity.py"),
+            (PACKAGE_ROOT_TEMPLATE_SYNC_SOURCE, "tests/test_template_sync.py"),
+        ):
+            with self.subTest(target=target):
+                once = svs.package_root_marker_transform(body.encode("utf-8"), target)
+                again = svs.package_root_marker_transform(once, target)
+                self.assertEqual(once, again, "a second application is not a no-op")
+
+    def test_the_transform_is_reproducible_from_the_source_bytes_alone(self) -> None:
+        for body, target in (
+            (PACKAGE_ROOT_SCRIPT_SOURCE, "scripts/sync_template_docs.py"),
+            (PACKAGE_ROOT_PARITY_SOURCE, "tests/test_issue_contract_parity.py"),
+        ):
+            with self.subTest(target=target):
+                first = svs.package_root_marker_transform(body.encode("utf-8"), target)
+                second = svs.package_root_marker_transform(body.encode("utf-8"), target)
+                self.assertEqual(first, second)
+
+    def test_an_unknown_path_is_refused(self) -> None:
+        self.assert_refused(
+            PACKAGE_ROOT_PARITY_SOURCE, "tests/test_some_other.py",
+            "no per-file site counts", "unknown path",
+        )
+
+    def test_a_site_count_mismatch_is_refused_naming_the_class(self) -> None:
+        doubled = PACKAGE_ROOT_PARITY_SOURCE.replace(
+            PACKAGE_ROOT_ISFILE_SHAPE,
+            PACKAGE_ROOT_ISFILE_SHAPE + "\n" + PACKAGE_ROOT_ISFILE_SHAPE,
+        )
+        self.assert_refused(
+            doubled, "tests/test_issue_contract_parity.py", "is_file site(s)", "count mismatch",
+        )
+
+    def test_a_zero_match_body_is_refused(self) -> None:
+        self.assert_refused(
+            "def unrelated():\n    return 1\n", "scripts/sync_template_docs.py",
+            "found 0", "zero matches",
+        )
+
+    def test_duplicated_finder_definitions_are_refused(self) -> None:
+        doubled = (
+            PACKAGE_ROOT_SCRIPT_SOURCE
+            + "\n"
+            + PACKAGE_ROOT_FINDER_SHAPE
+        )
+        self.assert_refused(
+            doubled, "scripts/sync_template_docs.py", "found 2", "duplicated finder",
+        )
+
+    def test_duplicated_module_scope_calls_are_refused(self) -> None:
+        doubled = PACKAGE_ROOT_SCRIPT_SOURCE + "\n" + PACKAGE_ROOT_CALL_SHAPE
+        self.assert_refused(
+            doubled, "scripts/sync_template_docs.py", "call site(s)", "duplicated call",
+        )
+
+    def test_disagreeing_finder_marker_sites_are_refused(self) -> None:
+        disagreeing = PACKAGE_ROOT_SCRIPT_SOURCE.replace(
+            'f"package root containing .claude-plugin/plugin.json not found from ',
+            'f"package root containing com.infiquetra.claude/plugin.json not found from ',
+        )
+        self.assert_refused(
+            disagreeing, "scripts/sync_template_docs.py", "disagree", "disagreeing markers",
+        )
+
+    def test_a_call_before_the_definition_is_refused(self) -> None:
+        reordered = (
+            "from pathlib import Path\n\n\n" + PACKAGE_ROOT_CALL_SHAPE + "\n" + PACKAGE_ROOT_FINDER_SHAPE
+        )
+        self.assert_refused(
+            reordered, "scripts/sync_template_docs.py",
+            "before a _find_package_root definition", "call before definition",
+        )
+
+    def test_an_unrecognized_marker_is_refused_by_name(self) -> None:
+        third = PACKAGE_ROOT_TEMPLATE_SYNC_SOURCE.replace(".claude-plugin", "third.party.dir")
+        self.assert_refused(
+            third, "tests/test_template_sync.py", "does not describe", "third marker",
+        )
+
+    def test_an_unknown_marker_at_the_raises_site_is_refused_by_name(self) -> None:
+        unknown = PACKAGE_ROOT_TEMPLATE_SYNC_SOURCE.replace(
+            r'\.claude-plugin/plugin\.json not found"',
+            r'\.third.marker/plugin\.json not found"',
+        )
+        self.assert_refused(
+            unknown, "tests/test_template_sync.py", "does not describe", "raises marker",
+        )
+
+    def test_mixed_upstream_and_portable_sites_are_refused(self) -> None:
+        mixed = PACKAGE_ROOT_PARITY_SOURCE.replace(
+            PACKAGE_ROOT_ISFILE_SHAPE,
+            '    assert (root / "com.infiquetra.claude" / "plugin.json").is_file()\n',
+        )
+        self.assert_refused(mixed, "tests/test_issue_contract_parity.py", "mix", "mixed markers")
+
+    def test_a_half_transformed_file_is_refused_not_shipped(self) -> None:
+        """F21: a marker occurrence outside the declared site shapes must never
+        survive the transform, on either the rewrite path or the no-op path."""
+        literal = PACKAGE_ROOT_TEMPLATE_SYNC_SOURCE + (
+            '\nMARKER_NOTE = ".claude-plugin/plugin.json"  # outside every site shape\n'
+        )
+        self.assert_refused(
+            literal, "tests/test_template_sync.py",
+            "outside the declared site shapes", "residual marker",
+        )
+        portable_plus_literal = self.transform(
+            PACKAGE_ROOT_TEMPLATE_SYNC_SOURCE, "tests/test_template_sync.py"
+        ) + '\nMARKER_NOTE = ".claude-plugin/plugin.json"\n'
+        self.assert_refused(
+            portable_plus_literal, "tests/test_template_sync.py",
+            "outside the declared site shapes", "residual on no-op path",
+        )
+
+    def test_an_incomplete_site_count_row_is_refused(self) -> None:
+        original = svs.PACKAGE_ROOT_MARKER_SITE_COUNTS
+        broken = dict(original)
+        broken["tests/test_template_sync.py"] = {"finder": 0, "call": 0}
+        svs.PACKAGE_ROOT_MARKER_SITE_COUNTS = broken
+        try:
+            self.assert_refused(
+                PACKAGE_ROOT_TEMPLATE_SYNC_SOURCE, "tests/test_template_sync.py",
+                "incomplete", "incomplete row",
+            )
+        finally:
+            svs.PACKAGE_ROOT_MARKER_SITE_COUNTS = original
+
+    def test_the_declared_table_rows_all_state_four_site_classes(self) -> None:
+        for path, row in svs.PACKAGE_ROOT_MARKER_SITE_COUNTS.items():
+            with self.subTest(path=path):
+                self.assertEqual(
+                    set(row), {"finder", "call", "is_file", "raises"},
+                    f"{path} declares an incomplete site-count row",
+                )
+
+
 MISSION_SHAPED_SOURCE: dict[str, str] = {
     ".claude-plugin/plugin.json": FIXTURE_MANIFEST,
     "CHANGELOG.md": "# fixture changelog\n",
@@ -1489,6 +1742,61 @@ class MissionControlShippedTests(unittest.TestCase):
                     f"skill roster entry {skill} carries no SKILL.md",
                 )
 
+    def test_the_custody_table_agrees_with_the_recorded_classification(self) -> None:
+        """F45: the mission-control custody table and the shipped provenance
+        manifest must not disagree, mirroring the unifi custody-agreement
+        test — a path the table still lists as a byte copy while the manifest
+        records a transform would be reverted by the next synchronization."""
+        recorded = {entry["path"]: entry for entry in self.manifest["files"]}
+        expected: dict[str, str] = {}
+        for relative in self.config.custody.byte_copies:
+            expected[relative] = check_repo.BYTE_COPY
+        for relative in self.config.custody.client_byte_copies:
+            expected[f"{self.config.source.client_extension_dir}/{relative}"] = (
+                check_repo.BYTE_COPY
+            )
+        for transform in self.config.custody.entrypoint_transforms:
+            expected[transform] = check_repo.TRANSFORM
+        expected[f"{self.config.source.client_extension_dir}/plugin.json"] = check_repo.TRANSFORM
+        for relative in self.config.custody.superseded_by_target_owned:
+            expected[relative] = check_repo.TARGET_OWNED
+        for path, classification in expected.items():
+            with self.subTest(path=path):
+                self.assertEqual(
+                    recorded[path]["classification"],
+                    classification,
+                    f"the custody table and PROVENANCE.json disagree about {path}",
+                )
+        for relative in self.config.custody.dropped_from_source:
+            with self.subTest(dropped=relative):
+                self.assertNotIn(relative, recorded)
+
+    def test_the_package_root_paths_record_the_marker_rule_at_the_registered_version(self) -> None:
+        """F45: each path the marker rule's site-count table covers is recorded
+        in the provenance manifest as a transform under the rule's registered
+        name and version, so a table row with no descriptor custody — or a
+        descriptor path with no table row — fails here instead of at --check."""
+        recorded = {entry["path"]: entry for entry in self.manifest["files"]}
+        declared = {
+            path
+            for path in self.config.custody.entrypoint_transforms
+            if self.config.custody.entrypoint_rules.get(path)
+            == svs.PACKAGE_ROOT_MARKER_TRANSFORM_NAME
+        }
+        self.assertEqual(declared, set(svs.PACKAGE_ROOT_MARKER_SITE_COUNTS))
+        for path in svs.PACKAGE_ROOT_MARKER_SITE_COUNTS:
+            with self.subTest(path=path):
+                self.assertEqual(
+                    recorded[path]["classification"], check_repo.TRANSFORM
+                )
+                self.assertEqual(
+                    recorded[path]["transform"], svs.PACKAGE_ROOT_MARKER_TRANSFORM_NAME
+                )
+                self.assertEqual(
+                    recorded[path]["transform_version"],
+                    svs.PACKAGE_ROOT_MARKER_TRANSFORM_VERSION,
+                )
+
     def test_pyyaml_stays_required_at_module_scope(self) -> None:
         """U4c PyYAML confirmation on the resynchronized package. Upstream
         filing #828 deferred only sdlc_manager.py's import into a function;
@@ -1510,8 +1818,19 @@ class MissionControlShippedTests(unittest.TestCase):
                     f"{relative} no longer imports yaml at module scope; "
                     "re-read upstream filing #828 before touching the CI install line",
                 )
+
+    def test_the_ci_install_line_keeps_pyyaml(self) -> None:
+        """F46: the PyYAML confirmation is anchored on the CI job's install
+        line — a line matching `pip install ... pyyaml` — rather than on a
+        file-global substring, so moving the install text within the workflow
+        cannot silently satisfy the guard."""
         ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-        self.assertIn("pyyaml", ci, "the CI install line dropped pyyaml")
+        self.assertRegex(
+            ci,
+            r"pip install .*\bpyyaml\b",
+            "the CI install line dropped pyyaml; the package still imports it at "
+            "module scope (see the confirmation beside this test)",
+        )
 
 
 # --- parser-to-parser command surface ------------------------------------------
@@ -1694,6 +2013,64 @@ class CommandSurfaceTests(unittest.TestCase):
                 ]
                 self.assertEqual(differences, [])
                 self.assertEqual(len(upstream), actions)
+
+
+class MissionControlVerbSurfaceTest(unittest.TestCase):
+    """F17: the declared verb split is joined to the live argparse surface.
+
+    `assessment.mutating_operations` is the only functioning half of the
+    live-write gate (no mission-control subcommand accepts --confirm), and a
+    verb absent from the audited lists is treated as read-only and permitted
+    to run against real GitHub. This test builds sdlc_manager's real parser
+    and asserts every group/action token is classified in
+    MUTATING_VERBS | READ_ONLY_VERBS, so an upstream verb arriving
+    unclassified fails at resync time rather than defaulting to read-only."""
+
+    def test_every_verb_is_declared_mutating_or_read_only(self) -> None:
+        try:
+            import yaml  # noqa: F401
+        except ModuleNotFoundError as exc:  # pragma: no cover - hermetic baseline has no yaml
+            self.skipTest(f"yaml not installed in this interpreter: {exc}")
+        package_scripts = str(ROOT / "plugins" / "mission-control" / "scripts")
+        if package_scripts not in sys.path:
+            sys.path.insert(0, package_scripts)
+        import sdlc_manager  # noqa: E402
+
+        original = argparse.ArgumentParser.parse_args
+
+        def capture(self, *arguments, **keywords):  # type: ignore[no-untyped-def]
+            raise _CapturedParser(self)
+
+        argparse.ArgumentParser.parse_args = capture  # type: ignore[method-assign]
+        try:
+            try:
+                sdlc_manager.main()
+            except _CapturedParser as captured:
+                parser = captured.parser
+            else:  # pragma: no cover - main() must reach parse_args
+                raise AssertionError("sdlc_manager.main() did not build a parser")
+        finally:
+            argparse.ArgumentParser.parse_args = original  # type: ignore[method-assign]
+
+        tests_dir = str(ROOT / "tests")
+        if tests_dir not in sys.path:
+            sys.path.insert(0, tests_dir)
+        import test_mission_control_readme  # noqa: E402
+
+        declared = test_mission_control_readme.MUTATING_VERBS | test_mission_control_readme.READ_ONLY_VERBS
+        checked = 0
+        for group, group_parser in _subparser_choices(parser).items():
+            for action in _subparser_choices(group_parser):
+                token = action
+                with self.subTest(verb=f"{group} {token}"):
+                    self.assertIn(
+                        token,
+                        declared,
+                        f"the verb {group} {token} is exposed by the CLI parser but "
+                        "declared neither mutating nor read-only; classify it deliberately",
+                    )
+                checked += 1
+        self.assertGreater(checked, 0, "the parser exposed no verbs at all")
 
 
 if __name__ == "__main__":
