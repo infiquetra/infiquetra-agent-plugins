@@ -559,6 +559,14 @@ issue #54, operator ruling 4.
 
 **Author.** Claude for Jeff Cox (U5 of issue #50, child #56, branch `orch-agent-plugins-50`)
 
+**Superseded-run note.** This entry describes the FIRST 2026-08-30 assessment,
+against tree `1f49322e…`. That tree was later retired by the F18/F11/F35
+corrections, and the assessment was re-run against tree `659f91f6…` — see the
+second-run entry immediately below. The entry is kept as the record of the
+first run; its Qwen-failed outcome describes that run only, and its evidence
+filenames were renamed when the repository's naming convention (plain name =
+current) was restored.
+
 **Decision.** The pre-resync mission-control compatibility matrix and
 post-activation readback (both bound to 64 files / tree `651ac28a…`, v2.12.2)
 are superseded by fresh records captured 2026-08-30 against the frozen
@@ -598,8 +606,51 @@ mutation proof's graded set, and the bindings belong in the test file.
 **Revisit when** the next resynchronization moves the fingerprint again, at
 which point these bindings fire red until the evidence is re-run.
 
-**Refs.** [`docs/evidence/2026-08-30-mission-control-compatibility-matrix-post-fingerprint-move.md`](../evidence/2026-08-30-mission-control-compatibility-matrix-post-fingerprint-move.md),
-[`docs/evidence/2026-08-30-mission-control-post-activation-readback-post-fingerprint-move.md`](../evidence/2026-08-30-mission-control-post-activation-readback-post-fingerprint-move.md),
+**Refs.** [`the first run's matrix, superseded by the second run`](../evidence/2026-08-30-mission-control-compatibility-matrix-pre-fingerprint-move.md),
+[`the first run's readback, superseded by the second run`](../evidence/2026-08-30-mission-control-post-activation-readback-pre-fingerprint-move.md),
+`tests/test_check_compatibility_matrix.py`, issue #56, operator ruling 3.
+
+### Mission Control 2.15.2 resync U5 second run: the fingerprint moved under the F18/F11/F35 corrections, and the evidence was re-run rather than re-bound
+
+**Author.** Claude for Jeff Cox (repair round 2 of issue #50, child #56, branch `orch-agent-plugins-50`)
+
+**Decision.** When the F18/F11/F35 provenance and README corrections landed at
+`a1e84e0`, the package moved from tree `1f49322e…` to tree `659f91f6…`, and
+the first 2026-08-30 evidence pair stopped describing the shipped bytes. The
+assessment was re-run (run-002) against the corrected package and published
+as current — 3 clients work directly (Cursor Agent, Qwen, Agy), 7 work
+through an adapter, 0 failed, 0 unsupported, no stage timed out — and both
+replacements were re-bound in `tests/test_check_compatibility_matrix.py`.
+Qwen's status changed from failed to works-directly because the run supplied
+its real binary by exported override (`QWEN_HERDR_REAL_BIN`), exactly as
+Grok's and Agy's were supplied by `--real-binary`: the earlier 127 reading
+came from the wrapper resolving into the empty isolated home, not from the
+package. The evidence filenames were later renamed so the current pair holds
+the plain `2026-08-30` names and the retired pair carries the
+`-pre-fingerprint-move` suffix, restoring the repository's convention that
+the plain filename is always the current document.
+
+**Why the fingerprint was allowed to move.** The three corrections were
+judged more honest than the alternative: holding them back would have shipped
+a provenance manifest whose own prose contradicted its files array (F18), a
+README missing a disclosure its own commands depend on (F11), and an
+unreconciled carried CHANGELOG (F35). The runbook's batch-the-repairs rule
+applies: the three were batched into one round, one assessment re-run, one
+new fingerprint — never a per-fix re-binding.
+
+**Rejected alternatives.** (a) Holding the corrections back — ships the
+self-contradicting provenance and the missing disclosure for the sake of the
+first assessment's currency. (b) Editing the first-run evidence to match the
+moved tree — the explicit anti-pattern; the numbers describe the bytes that
+were actually assessed. (c) Re-binding without re-running — a bound digest
+names the tree, not the stages that assessed it.
+
+**Revisit when** a future round must edit any byte under
+`plugins/mission-control/` after evidence is bound: the same batch-and-rerun
+path applies, and the assessment must precede the stamping.
+
+**Refs.** [`the current matrix`](../evidence/2026-08-30-mission-control-compatibility-matrix.md),
+[`the current readback`](../evidence/2026-08-30-mission-control-post-activation-readback.md),
 `tests/test_check_compatibility_matrix.py`, issue #56, operator ruling 3.
 
 

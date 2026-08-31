@@ -396,7 +396,7 @@ owned by exactly one unit.
 | R30 | U5 | A fresh ten-client, forty-stage assessment ran against the frozen package | the assessment record produced by `scripts/assess_clients.py --execute` |
 | R31 | U5 | The new compatibility matrix validates | `python3 scripts/check_compatibility_matrix.py docs/evidence/<new-matrix>.md` prints `Compatibility matrix validation passed.` |
 | R32 | U5 | The new readback records the release block, all seven per-skill-unit fingerprints, and every client readback | the readback binding test |
-| R33 | U5 | Both superseded documents carry `matrix-status: superseded`, a `superseded-by` naming a successor that exists and is itself current, and a `superseded-reason` | the superseded-document test class in `tests/test_check_compatibility_matrix.py` (the pair); the checker accepts the matrix's directives but is not a readback validator, so the readback half is test-bound only |
+| R33 | U5 | All four superseded mission-control documents — the 2026-08-25 pair and the 2026-08-30 `-pre-fingerprint-move` pair — carry `matrix-status: superseded`, a `superseded-by` naming a successor that exists and is itself current, and a `superseded-reason` | the superseded-document test class in `tests/test_check_compatibility_matrix.py` (the chain); the checker accepts the matrix's directives but is not a readback validator, so the readback half is test-bound only |
 | R34 | U5 | New binding classes in `tests/test_check_compatibility_matrix.py` fail if either replacement's recorded fingerprint stops matching the live package | a deliberate local mutation that makes them red, then reverted, with the transcript captured |
 | R35 | U5 | No graded file changed | `git diff --name-only <base>..HEAD -- scripts/port_config.py scripts/check_repo.py scripts/check_compatibility_matrix.py scripts/assess_clients.py plugins/unifi/scripts/site_profile.py \| wc -l` prints `0` (the five cycle-16 graded files by name; KTD14 legitimately edits `scripts/sync_vendor_source.py`, which is not graded) |
 | R36 | all | The four mandated gates are green at each unit's frozen commit, plus the floor-interpreter package run | §2.6 |
@@ -1719,7 +1719,10 @@ fact can be derived instead of retyped — derive it, so this class of staleness
 recurring.
 
 **This is the last unit permitted to touch bytes inside
-`plugins/mission-control/`. The package fingerprint is final when it lands.**
+`plugins/mission-control/` as planned. The package fingerprint is final when it
+lands — except for the one later exception Amendment 6 (§19) records: the
+F18/F11/F35 corrections at `a1e84e0` moved the tree after the freeze, and U5
+was re-run and re-bound at `863af58`, issue #56's frozen commit.**
 
 **Base and landing order (KTD10, KTD15, R39, R43).** U3's work begins from the post-U2
 commit and runs concurrently with U4. **U3's commits do not.** U3 rebases onto
@@ -2045,7 +2048,7 @@ recorded. U5 is the run's **real checkpoint**; no synthetic checkpoint precedes 
    - a mission-control **readback**-binding class asserting the `release` block, the
      per-skill-unit fingerprints for all seven skills, `upstream_commit` and
      `version` against `PROVENANCE.json`, and every `readbacks` entry;
-   - a class asserting both superseded documents carry a `superseded-by` naming a
+   - a class asserting all four superseded mission-control documents carry a `superseded-by` naming a
      current successor and a `superseded-reason`.
 
    **The two packages' readbacks are not the same shape.** Mission Control's record
@@ -2064,9 +2067,10 @@ recorded. U5 is the run's **real checkpoint**; no synthetic checkpoint precedes 
 8. **Journal.** A `DECISIONS.md` entry for the supersession and the binding pattern,
    and a `QUEUED.md` update moving the consumed resync entry toward closure.
 
-**Files owned.** `docs/evidence/<assessment-date>-mission-control-compatibility-matrix.md`
-(new), `docs/evidence/<assessment-date>-mission-control-post-activation-readback.md`
-(new), the two 2026-08-25 mission-control evidence documents (supersession
+**Files owned.** `docs/evidence/2026-08-30-mission-control-compatibility-matrix.md`
+(current), `docs/evidence/2026-08-30-mission-control-post-activation-readback.md`
+(current), the four superseded mission-control evidence documents — the
+2026-08-25 pair and the 2026-08-30 `-pre-fingerprint-move` pair (supersession
 directives only — **never** their numbers),
 `tests/test_check_compatibility_matrix.py`,
 `docs/engineering-journal/DECISIONS.md` (append),
@@ -2161,7 +2165,7 @@ ordering; graded-file containment; honest failure attribution.
 | 7 | **U2b** bumps `resolve-package-root-marker` to the assertion-covering v2, then runs the synchronization | `--check` round-trips clean; 71 files; `check_repo`, package pytest, floor run, `git diff --check` green. `unittest discover` red on the pin constants and `LiveDocumentTest` — allowed only because #53 has no such criterion |
 | 8 | **U4b** commits the three pin constants and the new rule's focused coverage | `python3 -m unittest tests.test_sync_vendor_source -v` reports `OK`; the pin reds clear. Not U4's completion |
 | 9 | **U3a** commits the package-root edits, the descriptor verb table, the verb constants, and the guard and derivation tests | `tests.test_mission_control_readme -v` and `tests.test_mission_control_rule_audit -v` report `OK`. Not U3's completion |
-| 10 | **Freeze integration** on `orch-agent-plugins-50` | tree clean; fingerprint recorded (§5). Last point at which any byte under `plugins/mission-control/` changes |
+| 10 | **Freeze integration** on `orch-agent-plugins-50` | tree clean; fingerprint recorded (§5). The last point at which any byte under `plugins/mission-control/` changes **as planned** — Amendment 6 (§19) records the one later exception: `a1e84e0`, the F18/F11/F35 corrections, moved the tree after this point, U5 was re-run and re-bound at `863af58`, and `863af58` is issue #56's frozen commit |
 | 11 | **U5** commits the fresh assessment, evidence, supersession, and bindings | all four gates green plus the floor run, **including `unittest discover` `OK`** — U4b cleared the pin constants and this commit clears `LiveDocumentTest`. Both new documents validate. **U5 completes here, satisfying #56** |
 | 12 | **U3b** commits the root `README.md` pin, version, and counts, and its pin test | all four gates green plus the floor run. **U3 completes here, satisfying #54** |
 | 13 | **U4c** commits the skill-roster and PyYAML confirmations and the recorded gate transcript | all four gates green plus the floor run. **U4 completes here, satisfying #55** |
@@ -2172,8 +2176,9 @@ ordering; graded-file containment; honest failure attribution.
 
 ### 8.2 What is landed, and what is not
 
-Nothing lands on `main` until the whole run is reviewed. All twelve child-scoped
-commits (KTD15, KTD16, Q8) live on `orch-agent-plugins-50` until the merge step, which is
+Nothing lands on `main` until the whole run is reviewed. All fourteen child-scoped
+commits as landed — twelve by design, U0 shipped in three — (KTD15, KTD16, Q8) live
+on `orch-agent-plugins-50` until the merge step, which is
 what lets the freeze mean something: the fingerprint U5 assesses is the fingerprint
 that ships.
 
@@ -2457,6 +2462,14 @@ custody and acceptance are decided per path and per command, never by a count.
 5. **The root README's "three sites".** Issue #54 says three sites; measured, the
    claims sit at lines 30–31, 71–75, and 163 — three regions carrying five distinct
    claims. Consistent, noted for precision.
+6. **Issue #52's line-claim count.** Issue #52's verification asks U1 to confirm
+   "the three surviving line-number claims" by `grep -n`, but U1 verifies **four**
+   surviving claims — `_load_intent_envelope` 5134–5140,
+   `INFIQUETRA_SDLC_PATH` 136, `_open_mapping_pr` 5552, and
+   `executor_profile_lint.py` 35/89 — plus the false PyYAML claim it rewrites.
+   The intended correction is to say "four" and extend the grep to
+   `def _open_mapping_pr`; the repository files need no change, only the issue
+   text does when #52 is next touched.
 
 ---
 
@@ -2470,7 +2483,7 @@ custody and acceptance are decided per path and per command, never by a count.
 - [ ] `python3 -m pytest plugins/mission-control/tests -q` passes, on the floor interpreter.
 - [ ] `git diff --check` produces no output.
 - [ ] `check_compatibility_matrix.py <new matrix>` prints `Compatibility matrix validation passed.`
-- [ ] Both superseded documents carry `matrix-status: superseded`, a `superseded-by` naming a current successor, and a `superseded-reason`.
+- [ ] All four superseded mission-control documents — the 2026-08-25 pair and the 2026-08-30 `-pre-fingerprint-move` pair — carry `matrix-status: superseded`, a `superseded-by` naming a current successor, and a `superseded-reason`.
 - [ ] No path under `plugins/mission-control/` differs from its upstream source except the recorded transforms, proven by the `--check` round-trip.
 - [ ] No graded file changed; the cycle-16 mutation proof still stands.
 
@@ -2479,14 +2492,13 @@ custody and acceptance are decided per path and per command, never by a count.
 
 ## 13. Doc-review disposition — cycle 1
 
-**Artifact.** `docs/reviews/2026-08-30-issue-50-mission-control-resync-plan-doc-review.md`
+**Artifact.** `docs/reviews/2026-08-30-issue-50-mission-control-resync-plan-doc-review.md` (cycles 1–2; commits `b4cc17b`, `4d2cbe0`)
 · **Bound revision.** `1e4da2be8dd2d1256f1e61765629ecf6a0571de9` · **Verdict.**
 BLOCK · **Cycle.** 1 · **Findings.** P0: 0 · P1: 1 · P2: 0 · P3: 1.
 
 **Outcome.** Both findings were repaired and the review returned **PROCEED** at
-revision `82dcb1c`. That is the last revision of this plan the document review
-examined. **Section 14 below was added afterwards and is outside that review's
-scope** — a reader must not treat the PROCEED verdict as covering it.
+revision `82dcb1c`. **Section 14 below was added afterwards and is outside that
+review's scope** — a reader must not treat the PROCEED verdict as covering it.
 
 Both findings are repaired in this revision. The operator's standing rule is that
 every finding is repaired, not only P0 and P1.
@@ -2624,7 +2636,7 @@ every committed matrix.
 
 ## 15. Amendment 2 — doc-review cycle 3 repair (post-review)
 
-**Artifact.** `docs/reviews/2026-08-30-issue-50-mission-control-resync-plan-doc-review.md`
+**Artifact.** `docs/reviews/2026-08-30-issue-50-mission-control-resync-plan-doc-review.md` (cycle 3; commit `8cd5fec`)
 · **Bound revision.** `b164026` · **Verdict.** BLOCK · **Cycle.** 3 ·
 **Findings.** P0: 0 · P1: 1 (D4) · P2: 1 (D5) · P3: 2 (D6, D7).
 
@@ -2676,7 +2688,7 @@ Amendment 3 (§16) later corrected the sequence and the counts.
 
 ## 16. Amendment 3 — doc-review cycle 4 repair (post-review)
 
-**Artifact.** `docs/reviews/2026-08-30-issue-50-mission-control-resync-plan-doc-review.md`
+**Artifact.** `docs/reviews/2026-08-30-issue-50-mission-control-resync-plan-doc-review.md` (cycle 4; commit `ef0dfa0`)
 · **Bound revision.** `4083220` · **Verdict.** BLOCK · **Cycle.** 4 ·
 **Findings.** D5, D6, D7 closed. D4 still open (P1). D8 raised (P2).
 
@@ -2782,7 +2794,7 @@ No issue was edited, no unit boundary moved, and no acceptance criterion was nar
 
 ## 18. Amendment 5 — doc-review cycle 6 repair
 
-**Artifact.** `docs/reviews/2026-08-30-issue-50-mission-control-resync-plan-doc-review.md`
+**Artifact.** `docs/reviews/2026-08-30-issue-50-mission-control-resync-plan-doc-review.md` (cycle 6; commit `384e52a`; cycle 7 confirmation `6166b26`)
 · **Bound revision.** `02c8bed` · **Verdict.** PROCEED · **Cycle.** 6 ·
 **Findings.** P0: 0 · P1: 0 · P2: 2 (D9, D10).
 
@@ -2846,3 +2858,20 @@ source-bytes-only reproducibility. Ownership: the descriptor is U1's, the rule i
 U2's, the coverage is U4's. The pin, the rulings, the work graph, the freeze point,
 the single assessment. No issue was edited and `plugins/mission-control/` was not
 touched.
+
+---
+
+## 19. Amendment 6 — the freeze moved once, and the record says so (post-repair)
+
+**Status: added by the integrated code-review repair rounds (cycles 2–3).**
+
+The §5 freeze record claimed `55a6511` was the last point at which any byte
+under `plugins/mission-control/` changes. That held until the repair rounds:
+`a1e84e0` landed the F18/F11/F35 provenance and README corrections, moving the
+tree from `1f49322e…` to `659f91f6…` after the freeze. Rather than renumbering
+the bound evidence — the explicit anti-pattern — the assessment was re-run
+(run-002, 2026-08-30) and the evidence re-bound at `863af58`, which is issue
+#56's frozen commit. The three freeze claims in this plan (§5, U3's section,
+the §8.1 table) are qualified to point at this amendment. The batch-the-repairs
+rule applies: the three corrections landed in one round, one assessment re-run,
+one new fingerprint.

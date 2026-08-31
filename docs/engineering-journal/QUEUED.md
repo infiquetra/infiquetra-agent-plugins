@@ -20,23 +20,36 @@ portable catalog only through a future repin, per the recorded resync policy:
    `_resolve_sdlc_schema` resolves `sdlc-schema.json` as GitHub main →
    vendored → local, swallowing every exception before falling back, so on a
    machine with an authenticated `gh` the ported suite grades itself against
-   whatever `infiquetra-sdlc` main holds at that moment (the review controller
-   measured 180 live `gh` calls across five carried test files). File the
-   inversion upstream: vendored first, the network read opt-in. Until it
-   lands, the honest statement is that the package-suite transcript proves the
-   suite passes against live-schema-plus-fallback, not against the vendored
-   bytes alone; the hermetic half was re-run with `gh` off PATH and passes.
+   whatever `infiquetra-sdlc` main holds at that moment. File the
+   inversion upstream: vendored first, the network read opt-in. What was
+   actually measured, in the three grades: with `gh` absent the carried suite
+   fails 58 tests (`_gh`'s FileNotFoundError handler raises SystemExit past
+   the ladder's `except Exception`, so the binary-absent path is not caught
+   alongside the other gh errors — and the 2.12.2 package under the same
+   condition failed only 1 test, so the 58-failure delta is a regression this
+   resync introduced); with a non-network `gh` stub that exits 1 the suite
+   passes all 391 tests with the stub invoked exactly 180 times, 179 of them
+   the same infiquetra-sdlc schema read. The fallback therefore works when a
+   `gh` binary exists and fails; the gap is the binary-absent path, and the
+   suite's verdicts are only hermetic in the unauthenticated middle.
 2. **Five agent surfaces instruct option creation via a no-op verb.**
    `labels/SKILL.md`, `labels/references/labels-reference.md`,
    `milestones/references/objective-workflow.md`, and the `sdlc-operator`
    agent route "create a missing option" onto `fields create-option`, which
    this run reclassified read-only (it only discovers and prints). Route the
-   instruction onto `fields set-options --options-file` or the Projects UI.
-3. **`--format json` silently ignored by ten subcommands.** The handlers
-   accept the `fmt` parameter and never reference it, printing prose
-   unconditionally, so an agent's `json.loads` raises with no hint the flag
-   was unsupported. File either JSON records per handler or a parser-level
-   refusal of json/markdown for subcommands that cannot honour them.
+   instruction onto `fields set-options --options-file` or the Projects UI,
+   and have the replacement wording carry the constraint `fields create-option`
+   already prints: the option-set mutation overwrites the whole set, so a
+   one-option write deletes every other option and clears each item value.
+3. **`--format json` silently ignored by twelve subcommands.** Ten handlers
+   take the `fmt` parameter and never reference it, and two more — `fields
+   set-options` (dispatched without a fmt argument) and
+   `issue render-intent-envelope` (prints markdown unconditionally) — accept
+   the top-level `--format` without honouring it, so an agent's `json.loads`
+   raises with no hint the flag was unsupported. File the parser-level
+   refusal first — reject json/markdown for subcommands that cannot honour
+   them, closing all twelve at once — and JSON records per handler only where
+   a subcommand genuinely needs machine-readable inspection output.
 4. **`fields create-option` exits 0 after doing nothing.** Only the
    field-not-found arm exits non-zero; the documented no-op path falls off the
    end, so an exit-code gate records success for a mutation never attempted.
@@ -50,14 +63,25 @@ portable catalog only through a future repin, per the recorded resync policy:
    project table gives two of three boards the retired `intent_flow` ladder
    names that the shipped `sdlc-schema.json` `stage_flow` does not carry; the
    corrective note sits eight lines below the table. File the correction.
-7. **Flow skill examples are not runnable as written.** `skills/flow/SKILL.md`
-   has no Script Location section and no `python3` instruction, and every
-   fenced example begins with a bare `sdlc_manager.py` that nothing installs
-   on PATH. The six sibling skills' paths point inside the upstream repository
-   an operator who installed only the portable package does not have. File
-   both.
+7. **Flow skill examples are not runnable as written.** Split across two
+   owners. *Upstream*: `skills/flow/SKILL.md` has no Script Location section
+   and no `python3` instruction, and every fenced example begins with a bare
+   `sdlc_manager.py` that nothing installs on PATH. *Downstream transform*:
+   the six sibling skills each carry a Script Location path pointing inside
+   the upstream repository — all seven skills are already
+   `normalize-skill-frontmatter` transforms, so the path rewrite belongs to a
+   downstream transform (a portable-path rewrite of the fenced script path),
+   never to a filing against upstream, whose layout that path correctly
+   describes.
 
 No client-specific remediation follows from any of these.
+
+Repair-round red-window record, for the auditor: `a1e84e0` (round 2's
+fingerprint-moving commit) declared its six expected-red binding tests in its
+commit message; `f4da07e` and `0ff932e` (round 1) each introduced the
+superseded-link guard ahead of the `docs/README.md` repoint without declaring
+that one-red window in their messages. Both windows were real and both are
+recorded here rather than rewritten.
 
 The #9 migration filed eight defects/enhancements against
 `infiquetra/infiquetra-claude-plugins`, all open as of 2026-08-25: #818–#822
