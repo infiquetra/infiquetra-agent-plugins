@@ -10,6 +10,55 @@ fingerprint-bound evidence (fresh ten-client matrix and readback,
 `docs/evidence/2026-08-30-mission-control-*.md`). The entry stays as the
 worked example of the policy; nothing in it remains open.
 
+## Upstream filings raised by the integrated code review of the 2.15.2 resync
+
+The integrated review (cycle 1, reviewed revision `853411d`) attributed seven
+defects to upstream bytes this repository may not patch. Each reaches the
+portable catalog only through a future repin, per the recorded resync policy:
+
+1. **Schema-resolution ladder puts the network first.** `sdlc_manager.py`
+   `_resolve_sdlc_schema` resolves `sdlc-schema.json` as GitHub main →
+   vendored → local, swallowing every exception before falling back, so on a
+   machine with an authenticated `gh` the ported suite grades itself against
+   whatever `infiquetra-sdlc` main holds at that moment (the review controller
+   measured 180 live `gh` calls across five carried test files). File the
+   inversion upstream: vendored first, the network read opt-in. Until it
+   lands, the honest statement is that the package-suite transcript proves the
+   suite passes against live-schema-plus-fallback, not against the vendored
+   bytes alone; the hermetic half was re-run with `gh` off PATH and passes.
+2. **Five agent surfaces instruct option creation via a no-op verb.**
+   `labels/SKILL.md`, `labels/references/labels-reference.md`,
+   `milestones/references/objective-workflow.md`, and the `sdlc-operator`
+   agent route "create a missing option" onto `fields create-option`, which
+   this run reclassified read-only (it only discovers and prints). Route the
+   instruction onto `fields set-options --options-file` or the Projects UI.
+3. **`--format json` silently ignored by ten subcommands.** The handlers
+   accept the `fmt` parameter and never reference it, printing prose
+   unconditionally, so an agent's `json.loads` raises with no hint the flag
+   was unsupported. File either JSON records per handler or a parser-level
+   refusal of json/markdown for subcommands that cannot honour them.
+4. **`fields create-option` exits 0 after doing nothing.** Only the
+   field-not-found arm exits non-zero; the documented no-op path falls off the
+   end, so an exit-code gate records success for a mutation never attempted.
+   File an exit code or a structured `{"mutated": false, ...}` record.
+5. **`_open_mapping_pr` leaves orphan remote branches.** `gh pr create`
+   failure removes only the local worktree; the pushed branch (name embeds a
+   second-precision timestamp) is never deleted and a retry mints another.
+   File the cleanup: delete the pushed branch on failure and name it in the
+   raised error.
+6. **Board skill ships knowingly wrong Operations/Asgard ladders.** The
+   project table gives two of three boards the retired `intent_flow` ladder
+   names that the shipped `sdlc-schema.json` `stage_flow` does not carry; the
+   corrective note sits eight lines below the table. File the correction.
+7. **Flow skill examples are not runnable as written.** `skills/flow/SKILL.md`
+   has no Script Location section and no `python3` instruction, and every
+   fenced example begins with a bare `sdlc_manager.py` that nothing installs
+   on PATH. The six sibling skills' paths point inside the upstream repository
+   an operator who installed only the portable package does not have. File
+   both.
+
+No client-specific remediation follows from any of these.
+
 The #9 migration filed eight defects/enhancements against
 `infiquetra/infiquetra-claude-plugins`, all open as of 2026-08-25: #818–#822
 (during the run: stale 2.1.0 paths, `/issue` self-alias, README `flow`

@@ -371,7 +371,7 @@ owned by exactly one unit.
 | R5 | U0 | The repository's allowed merge methods are recorded before any run text states a merge form | `gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed` |
 | R6 | U0 | The client-assessment plan prints without running anything, exit 0 | `python3 scripts/assess_clients.py --package mission-control` |
 | R7 | U0 | The note names the runbook version followed (1.1.0) and lists every entry-criteria and phase step a resynchronization skips, each with a reason | inspection of the note |
-| R8 | U1 | The seven hermetic new upstream tests are classified `upstream-byte-copy` in `ports/mission-control.json` | `custody.byte_copies` grows 42 → 49 |
+| R8 | U1 | The seven hermetic new upstream tests are classified `upstream-byte-copy` in `ports/mission-control.json` | `custody.byte_copies` grows 42 → 49 at U1a; then 49 → 48 at U1b and 48 → 46 at U1c as the three package-root paths are reclassified (KTD14, KTD16) |
 | R9 | U1 | `tests/test_card_validator_agreement.py` is recorded in `custody.dropped_from_source` with a stated reason in `provenance.dropped_reason` | `custody.dropped_from_source` grows 2 → 3 |
 | R10 | U1 | `--check` no longer refuses for unclassified paths and instead reports real content drift | `python3 scripts/sync_vendor_source.py --package mission-control --source ../infiquetra-claude-plugins --commit 3b2b7083 --check` |
 | R11 | U1 | `provenance.notes` names pin `3b2b7083` and version `2.15.2`, and no longer claims PyYAML is imported at module scope in `sdlc_manager.py` | inspection of `ports/mission-control.json` |
@@ -396,9 +396,9 @@ owned by exactly one unit.
 | R30 | U5 | A fresh ten-client, forty-stage assessment ran against the frozen package | the assessment record produced by `scripts/assess_clients.py --execute` |
 | R31 | U5 | The new compatibility matrix validates | `python3 scripts/check_compatibility_matrix.py docs/evidence/<new-matrix>.md` prints `Compatibility matrix validation passed.` |
 | R32 | U5 | The new readback records the release block, all seven per-skill-unit fingerprints, and every client readback | the readback binding test |
-| R33 | U5 | Both superseded documents carry `matrix-status: superseded`, a `superseded-by` naming a successor that exists and is itself current, and a `superseded-reason` | `python3 scripts/check_compatibility_matrix.py docs/evidence/2026-08-25-mission-control-compatibility-matrix.md` |
+| R33 | U5 | Both superseded documents carry `matrix-status: superseded`, a `superseded-by` naming a successor that exists and is itself current, and a `superseded-reason` | the superseded-document test class in `tests/test_check_compatibility_matrix.py` (the pair); the checker accepts the matrix's directives but is not a readback validator, so the readback half is test-bound only |
 | R34 | U5 | New binding classes in `tests/test_check_compatibility_matrix.py` fail if either replacement's recorded fingerprint stops matching the live package | a deliberate local mutation that makes them red, then reverted, with the transcript captured |
-| R35 | U5 | No graded file changed | `git diff --name-only <base>..HEAD -- scripts/ plugins/unifi/scripts/site_profile.py \| wc -l` prints `0` |
+| R35 | U5 | No graded file changed | `git diff --name-only <base>..HEAD -- scripts/port_config.py scripts/check_repo.py scripts/check_compatibility_matrix.py scripts/assess_clients.py plugins/unifi/scripts/site_profile.py \| wc -l` prints `0` (the five cycle-16 graded files by name; KTD14 legitimately edits `scripts/sync_vendor_source.py`, which is not graded) |
 | R36 | all | The four mandated gates are green at each unit's frozen commit, plus the floor-interpreter package run | §2.6 |
 | R37 | all | No live GitHub mutation from any build, test, or assessment step | run-level stop condition; assessment runs read-only verbs only |
 | R38 | all | Unrelated dirty files, branches, worktrees, and sessions are preserved untouched | `git status --porcelain` before and after each unit, compared |
@@ -670,7 +670,8 @@ lie about when the forty stage results were produced.
 ### KTD14 — `scripts/sync_template_docs.py` becomes a deterministic transform that resolves the package root through the portable layout's own marker
 
 **Added by Amendment 1 (§14). This decision postdates the accepted Document
-Review and was not covered by it.**
+Review; it was reviewed by doc-review cycle 3 (commit `8cd5fec`) and its four
+findings were repaired in commit `4083220`.**
 
 **The blocker, reproduced on this tree.** Upstream 2.15.2 rewrote the carried byte
 copy `scripts/sync_template_docs.py`. At pin `3b2b7083` it defines
@@ -849,7 +850,11 @@ the four prerequisites above plus one issue clause.
 Minimum: U0 one, U1 two, U2 two, U3 two, U4 three, U5 one — **eleven commits**.
 Amendment 4 (KTD16) adds one U1 commit and extends an existing U2 commit, making the
 total **twelve**: U0 one, U1 three, U2 two, U3 two, U4 three, U5 one. Amendment 5
-corrected this from thirteen — see D9 in §18. In
+corrected this from thirteen — see D9 in §18. **As landed on the branch the total is
+fourteen**: U0 landed in three commits rather than one — `ab939ff` (the first attempt,
+later superseded when its mixed-route provenance was rejected), `0a19edb` (the re-run
+on the approved route), and `f74bb7e` (the transcript elision) — so `f74bb7e` is U0's
+frozen commit, not the middle of the three. In
 a counterfactual where U1 had not already landed it would be ten. There is no
 ordering that reaches six, because steps 2, 3, 4 and 5 each force a split
 independently, and none of the four prerequisites is a plan choice — every one is a
@@ -866,19 +871,21 @@ commits may be red.
 
 | # | Commit | Unit | Content | Suite at that commit |
 |---|---|---|---|---|
-| 1 | `0a19edb`… | U0 | entry criteria and pin proof — **landed** | green |
-| 2 | `12c889c` | U1a | custody for the eight new tests, provenance notes — **landed and accepted** | green |
-| 3 | **U2a** | U2 | register the package-root transform rule in `scripts/sync_vendor_source.py` | red on the registry-name test (P2) — #53 has no discover criterion |
-| 4 | **U4a** | U4 | extend `expected` in `test_rule_names_register_exactly_once` to the six registered rules | green |
-| 5 | **U1b** | U1 | reclassify `scripts/sync_template_docs.py` in the descriptor, naming the now-registered rule | green |
-| 6 | **U1c** | U1 | reclassify `tests/test_issue_contract_parity.py` and `tests/test_template_sync.py` (KTD16) | **green — U1 completes, #52 met** |
-| 7 | **U2b** | U2 | bump the package-root rule to v2, then run the synchronization | red on the pin constants and `LiveDocumentTest` — #53 has no discover criterion; its package pytest and `--check` gates are green |
-| 8 | **U4b** | U4 | the three pin constants, and the rule's focused coverage | red on `LiveDocumentTest` only |
-| 9 | **U3a** | U3 | package-root edits, descriptor verb table, verb constants, guard and derivation tests — **last edit inside the package root** | red on `LiveDocumentTest` only |
+| 1 | `ab939ff` | U0a | entry criteria and pin proof — first attempt, later superseded | superseded, not accepted as evidence |
+| 2 | `0a19edb` | U0b | entry criteria and pin proof — re-run on the approved route | green |
+| 3 | `f74bb7e` | U0c | elide the per-test transcript lines — **U0's frozen commit** | green |
+| 4 | `12c889c` | U1a | custody for the eight new tests, provenance notes — **landed and accepted** | green |
+| 5 | **U2a** | U2 | register the package-root transform rule in `scripts/sync_vendor_source.py` | red on the registry-name test (P2) — #53 has no discover criterion |
+| 6 | **U4a** | U4 | extend `expected` in `test_rule_names_register_exactly_once` to the six registered rules | green |
+| 7 | **U1b** | U1 | reclassify `scripts/sync_template_docs.py` in the descriptor, naming the now-registered rule | green |
+| 8 | **U1c** | U1 | reclassify `tests/test_issue_contract_parity.py` and `tests/test_template_sync.py` (KTD16) | **green — U1 completes, #52 met** |
+| 9 | **U2b** | U2 | bump the package-root rule to v2, then run the synchronization | red on the pin constants and `LiveDocumentTest` — #53 has no discover criterion; its package pytest and `--check` gates are green |
+| 10 | **U4b** | U4 | the three pin constants, and the rule's focused coverage | red on `LiveDocumentTest` only |
+| 11 | **U3a** | U3 | package-root edits, descriptor verb table, verb constants, guard and derivation tests — **last edit inside the package root** | red on `LiveDocumentTest` only |
 | — | *freeze* | — | fingerprint final and recorded | — |
-| 10 | **U5** | U5 | one ten-client assessment, fresh matrix and readback, supersession, bindings | **green — U5 completes, #56 met** |
-| 11 | **U3b** | U3 | root `README.md` pin, version and counts, plus its pin test | **green — U3 completes, #54 met** |
-| 12 | **U4c** | U4 | skill-roster and PyYAML confirmations, and the recorded four-gate transcript | **green — U4 completes, #55 met** |
+| 12 | **U5** | U5 | one ten-client assessment, fresh matrix and readback, supersession, bindings | **green — U5 completes, #56 met** |
+| 13 | **U3b** | U3 | root `README.md` pin, version and counts, plus its pin test | **green — U3 completes, #54 met** |
+| 14 | **U4c** | U4 | skill-roster and PyYAML confirmations, and the recorded four-gate transcript | **green — U4 completes, #55 met** |
 
 Commits 4, 11 and 12 are real deliverables of their own issues, not bookkeeping.
 The registry-name test is #55's file and #55's `MISSION_CONTROL_SKILLS` confirmation
@@ -888,7 +895,8 @@ the freeze holds and U5's single assessment stays valid.
 
 **This is a material deviation from §2.3's "six child-scoped commits, one per
 unit," and the plan does not pretend otherwise** — eleven at Amendment 3, twelve
-after Amendment 4 (KTD16) as corrected by Amendment 5. It is raised as operator question
+after Amendment 4 (KTD16) as corrected by Amendment 5, and **fourteen as landed**,
+because U0 shipped in three commits and only its third is the frozen commit. It is raised as operator question
 **Q8** with the trade-off stated. It changes the SHA record and the review binding;
 it changes no unit boundary, no ownership, and no acceptance criterion.
 
@@ -912,8 +920,9 @@ commits is reachable.
 
 ### KTD16 — The package-root transform is extended to rewrite assertion sites, and two more carried tests become transforms
 
-**Added by Amendment 4 (§17). Operator decision. This amendment postdates doc-review
-cycle 5's PROCEED and has not been reviewed.**
+**Added by Amendment 4 (§17). Operator decision. Reviewed by doc-review cycle 6
+(commit `384e52a`, blocked: false); its findings D9 and D10 were closed by cycle 7
+(commit `6166b26`).**
 
 #### The blocker
 
@@ -1388,7 +1397,8 @@ provenance manifest. **This unit unblocks the entire run.**
 
 1. **Seven new paths classified `upstream-byte-copy`** — appended to
    `custody.byte_copies` in `ports/mission-control.json`, which grows from 42 to 49
-   entries. The paths, package-root-relative:
+   at U1a and then falls 49 → 48 → 46 as U1b and U1c reclassify the three
+   package-root paths (KTD14, KTD16).   entries. The paths, package-root-relative:
 
    ```
    tests/test_lifecycle_field_boards.py
@@ -1489,7 +1499,7 @@ python3 scripts/sync_vendor_source.py --package mission-control \
   --source ../infiquetra-claude-plugins --commit 3b2b7083 --check
 
 # Custody counts moved as intended
-python3 -c "import json;c=json.load(open('ports/mission-control.json'))['custody'];print(len(c['byte_copies']), len(c['dropped_from_source']))"   # expect: 49 3
+python3 -c "import json;c=json.load(open('ports/mission-control.json'))['custody'];print(len(c['byte_copies']), len(c['dropped_from_source']))"   # expect: 46 3 (49 3 at U1a, before U1b and U1c reclassify the three package-root paths)
 
 # The line-number claims, checked against the pinned source
 git -C ../infiquetra-claude-plugins show 3b2b7083:plugins/mission-control/scripts/executor_profile_lint.py \
@@ -2107,7 +2117,7 @@ python3 -m unittest discover -s tests
 python3 -m pytest plugins/mission-control/tests -q
 "$FLOOR_PY" -m pytest plugins/mission-control/tests -q
 git diff --check
-git diff --name-only <base>..HEAD -- scripts/ plugins/unifi/scripts/site_profile.py | wc -l   # expect: 0
+git diff --name-only <base>..HEAD -- scripts/port_config.py scripts/check_repo.py scripts/check_compatibility_matrix.py scripts/assess_clients.py plugins/unifi/scripts/site_profile.py | wc -l   # expect: 0 (the five graded files by name; sync_vendor_source.py is KTD14's and not graded)
 git diff --name-only <base>..HEAD -- plugins/mission-control | wc -l                          # expect: 0
 ```
 
@@ -2372,7 +2382,7 @@ question here. **The question:** should the operator close or comment on those e
 upstream issues once this repin lands on `main`, and should that be tracked as a
 separate item rather than left implicit?
 
-### Q8 — Eleven commits, not six. This one needs a decision, not a preference.
+### Q8 — Fourteen commits, not six. This one needs a decision, not a preference.
 
 **This is the only open question in this list that blocks execution.** The run
 declaration says six child-scoped commits, one per unit. **Six is not reachable**, and
@@ -2380,7 +2390,10 @@ KTD15 proves it rather than asserting it: four committed tests and the child iss
 own clauses each force a split independently. **Amendment 4 (KTD16) raises the total
 from eleven to twelve** — one commit for the descriptor reclassification the two
 remaining tests need; the rule's v2 extension folds into the synchronization commit
-rather than taking one of its own (§18, D9). The decision being asked for is
+rather than taking one of its own (§18, D9). **The branch landed fourteen**: U0's
+three commits (`ab939ff` superseded, `0a19edb` the accepted re-run, `f74bb7e` the
+transcript elision — `f74bb7e` is U0's frozen commit) plus the eleven-table's
+remaining eleven. The decision being asked for is
 unchanged in kind; only the number moved.
 
 - A descriptor may only name a transform rule the synchronizer already registers
@@ -2534,11 +2547,13 @@ the pinned upstream before being committed under this plan's name:
 
 ## 14. Amendment 1 — the `sync_template_docs.py` package-root blocker (post-review)
 
-**Status: this section postdates the accepted Document Review.** The review
+**Status: this section postdates the accepted Document Review; it was reviewed by
+doc-review cycle 3 (commit `8cd5fec`), all four of its findings were repaired in
+commit `4083220`, and cycle 7 (commit `6166b26`) closed the residual findings of the
+later amendments.** The review
 examined revision `82dcb1c` and returned PROCEED. Everything in this section, and
 the changes it points at elsewhere in the plan, were written after that verdict and
-were **not covered by it**. A later reviewer should treat Amendment 1 as unreviewed
-material.
+were **not covered by it**; the cycles above are the ones that covered them.
 
 **What it is.** A coordinator decision taken under the run contract's *recorded
 custody decision* clause. Section 2.7 names two legitimate resolutions when a
@@ -2715,9 +2730,11 @@ No child issue was edited, and `plugins/mission-control/` was not touched.
 
 ## 17. Amendment 4 — the two remaining package-root tests (post-review)
 
-**Status: this amendment postdates doc-review cycle 5's PROCEED and has not been
-reviewed. It requires its own review before it drives any work.** A reader must not
-treat that PROCEED as covering KTD16, the twelve-commit sequence, or R45 and R46.
+**Status: this amendment postdates doc-review cycle 5's PROCEED; it was reviewed by
+doc-review cycle 6 (commit `384e52a`, blocked: false) and its findings D9 and D10
+were closed by cycle 7 (commit `6166b26`).** A reader must not
+treat the cycle-5 PROCEED as covering KTD16, the twelve-commit sequence, or R45 and R46;
+the later cycles do.
 
 **What it is.** An operator decision, recorded here by the planner. The coordinator
 verified the blocker first-hand at pin `3b2b7083`, scanned every `.py` file in the

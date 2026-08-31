@@ -436,6 +436,13 @@ specifically to preserve; and the portable copy would lose its contract-parity a
 template-sync coverage. *File upstream and stop* — it does not complete the
 resynchronization in this run and leaves the parent and all six children open pending
 an upstream release on another schedule; upstream is not wrong for its own layout.
+*Per-path rule parameters in `ports/*.json`* — carrying the per-file site counts in the
+descriptor instead of the shared script would require a schema-4 bump of the closed
+`{path, rule}` entrypoint-transform shape, and `scripts/port_config.py` is one of the
+five cycle-16 graded files, so the bump was not taken in this run; the counts table in
+the script is the cheaper shape, joined to the descriptor by a committed test in
+`tests/test_port_config.py`. Revisit when a second rule needs per-path parameters, at
+which point schema 4 earns its cost.
 
 **Revisit when** upstream adopts a layout-neutral package-root resolution. Both of
 these transforms and the earlier one should then retire, and all three files return to
@@ -1131,7 +1138,7 @@ phases without inventing new moving parts or diverging from the runbook
 workflow: Phase 0 setup and descriptor configuration, Phase 1 synchronization
 and transforms, Phase 2 bundling and rule audit, and Phase 3 frozen evidence
 collection and multi-client assessment. The ten-client compatibility
-assessment ([`docs/evidence/2026-08-25-mission-control-compatibility-matrix.md`](../evidence/2026-08-25-mission-control-compatibility-matrix.md))
+assessment ([the 2026-08-25 matrix, superseded by the 2.15.2 re-assessment](../evidence/2026-08-25-mission-control-compatibility-matrix.md))
 recorded 1 works-directly (Agy), 8 works-through-an-adapter (including 4
 skill-scoped clients that fully consume the 7 skills), 1 failed (Cursor Agent
 relocatability finding on `sync_template_docs.py`), and 0 unsupported.

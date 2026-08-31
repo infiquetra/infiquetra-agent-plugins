@@ -1,5 +1,41 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-08-30
+
+### The carried package suite has three grades, not one: authenticated, unauthenticated, and no-gh
+
+**Author.** Claude for Jeff Cox (integrated code-review repair round, review
+finding F01, issue #50, branch `orch-agent-plugins-50`)
+
+**Evidence.** The integrated review controller measured `python3 -m pytest
+plugins/mission-control/tests -q` with a recording `gh` shim first on PATH:
+180 live invocations — 179 of the infiquetra-sdlc schema-content read and one
+campps issue read — across five carried test files. Re-run in this round with
+`gh` off PATH on the floor interpreter: `58 failed, 333 passed` — the failures
+are `FileNotFoundError` on the `gh` binary in tests whose mocks reach
+`sdlc_manager._gh` and expect its typed error contract. With `gh` present but
+unauthenticated (the CI runner's state), the same paths degrade to the typed
+auth errors and the suite passes with no request reaching GitHub.
+
+**Mechanism.** `_resolve_sdlc_schema` puts the network first in its
+"GitHub main → vendored → local" ladder and swallows every exception before
+falling back, and the carried tests do not stub it; so an authenticated `gh`
+grades the suite against whatever `infiquetra-sdlc` main holds at that
+moment, and the U2 four-gate transcript was captured on the authenticated
+side. The carried suite is not hermetic in either direction: it cannot be
+run without a `gh` binary, and it makes live authenticated calls when it
+finds one.
+
+**Generalizable rule.** *A transcript of a carried suite states a claim only
+about the machine it ran on.* Record which side of a resolver ladder the run
+was on before citing it, and file the ladder inversion upstream — vendored
+first, network opt-in — rather than patching the carried bytes; the filing is
+tracked in `QUEUED.md`.
+
+**Refs.** `plugins/mission-control/scripts/sdlc_manager.py`
+(`_resolve_sdlc_schema`, `_gh`), the five carried test files named in the
+review finding F01, `docs/engineering-journal/QUEUED.md` (filing 1).
+
 ## 2026-08-25
 
 ### `claude plugin update` compares versions, not commits
@@ -1494,7 +1530,7 @@ shape, it is decoration, not evidence.
 `check_document_status`), `tests/test_check_compatibility_matrix.py`
 (`PackageBindingTest`, `DocumentStatusTest`, `FingerprintTest`),
 [`docs/evidence/2026-08-22-unifi-compatibility-matrix.md`](../evidence/2026-08-22-unifi-compatibility-matrix.md),
-[`docs/evidence/2026-08-22-unifi-compatibility-matrix-pre-repair.md`](../evidence/2026-08-22-unifi-compatibility-matrix-pre-repair.md),
+[the superseded pre-repair matrix](../evidence/2026-08-22-unifi-compatibility-matrix-pre-repair.md),
 [`docs/evidence/2026-08-22-unifi-post-activation-readback.md`](../evidence/2026-08-22-unifi-post-activation-readback.md).
 
 ## 2026-08-21
