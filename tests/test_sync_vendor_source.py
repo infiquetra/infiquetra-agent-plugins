@@ -911,7 +911,7 @@ class PackageRootMarkerRuleTests(unittest.TestCase):
     def test_an_unknown_path_is_refused(self) -> None:
         self.assert_refused(
             PACKAGE_ROOT_PARITY_SOURCE, "tests/test_some_other.py",
-            "no per-file site counts", "unknown path",
+            "no unique site-count row", "unknown path",
         )
 
     def test_a_site_count_mismatch_is_refused_naming_the_class(self) -> None:
@@ -1005,8 +1005,11 @@ class PackageRootMarkerRuleTests(unittest.TestCase):
 
     def test_an_incomplete_site_count_row_is_refused(self) -> None:
         original = svs.PACKAGE_ROOT_MARKER_SITE_COUNTS
-        broken = dict(original)
-        broken["tests/test_template_sync.py"] = {"finder": 0, "call": 0}
+        broken = {
+            package: dict(slice_rows)
+            for package, slice_rows in original.items()
+        }
+        broken["mission-control"]["tests/test_template_sync.py"] = {"finder": 0, "call": 0}
         svs.PACKAGE_ROOT_MARKER_SITE_COUNTS = broken
         try:
             self.assert_refused(
@@ -1017,29 +1020,57 @@ class PackageRootMarkerRuleTests(unittest.TestCase):
             svs.PACKAGE_ROOT_MARKER_SITE_COUNTS = original
 
     def test_the_declared_table_rows_all_state_four_site_classes(self) -> None:
-        for path, row in svs.PACKAGE_ROOT_MARKER_SITE_COUNTS.items():
-            with self.subTest(path=path):
-                self.assertEqual(
-                    set(row), {"finder", "call", "is_file", "raises"},
-                    f"{path} declares an incomplete site-count row",
-                )
+        for package, slice_rows in svs.PACKAGE_ROOT_MARKER_SITE_COUNTS.items():
+            for path, row in slice_rows.items():
+                with self.subTest(package=package, path=path):
+                    self.assertEqual(
+                        set(row), {"finder", "call", "is_file", "raises"},
+                        f"{path} declares an incomplete site-count row",
+                    )
 
-    def test_the_rule_string_names_every_table_path(self) -> None:
-        """F41: the recorded rule prose must not contradict the table that
-        produced the bytes. Rendering the prose from the table would change
-        the recorded transform_rule bytes (and therefore the regenerated
-        provenance), so the join is asserted here instead: every table path
-        appears in the rule string, so a row added without a prose clause
-        fails at the gate."""
+    def test_the_rule_string_names_every_table_path_and_count(self) -> None:
+        """F41/F75: the recorded rule prose must not contradict the table that
+        produced the bytes, on paths AND on counts. Rendering the prose from
+        the table would change the recorded transform_rule bytes (and
+        therefore the regenerated provenance), so the join is asserted here:
+        every table path appears in the rule string, and each path's clause
+        names exactly the site classes its row declares."""
         rule = svs.PACKAGE_ROOT_MARKER_TRANSFORM_RULE
-        for path in svs.PACKAGE_ROOT_MARKER_SITE_COUNTS:
-            with self.subTest(path=path):
-                self.assertIn(
-                    path,
-                    rule,
-                    f"the rule string does not describe {path}, whose site counts the "
-                    "table declares",
-                )
+        clauses = rule.split("; ")
+        for package, slice_rows in svs.PACKAGE_ROOT_MARKER_SITE_COUNTS.items():
+            for path, row in slice_rows.items():
+                with self.subTest(package=package, path=path):
+                    clause = next(
+                        (c for c in clauses if path in c),
+                        None,
+                    )
+                    self.assertIsNotNone(
+                        clause,
+                        f"the rule string does not describe {path}, whose site counts the "
+                        "table declares",
+                    )
+                    assert clause is not None
+                    self.assertEqual(
+                        "definition" in clause,
+                        row["finder"] > 0,
+                        f"{path}: the prose names the finder definition iff the row counts one",
+                    )
+                    self.assertEqual(
+                        "call" in clause,
+                        row["call"] > 0,
+                        f"{path}: the prose names the module-scope call iff the row counts one",
+                    )
+                    has_assertion = "assertion" in clause or "`assert (root" in clause
+                    self.assertEqual(
+                        has_assertion,
+                        row["is_file"] > 0,
+                        f"{path}: the prose names the is_file assertion iff the row counts one",
+                    )
+                    self.assertEqual(
+                        ("raises" in clause) or ("error-text match" in clause),
+                        row["raises"] > 0,
+                        f"{path}: the prose names the raises match iff the row counts one",
+                    )
 
 
 MISSION_SHAPED_SOURCE: dict[str, str] = {
@@ -1800,8 +1831,10 @@ class MissionControlShippedTests(unittest.TestCase):
             if self.config.custody.entrypoint_rules.get(path)
             == svs.PACKAGE_ROOT_MARKER_TRANSFORM_NAME
         }
-        self.assertEqual(declared, set(svs.PACKAGE_ROOT_MARKER_SITE_COUNTS))
-        for path in svs.PACKAGE_ROOT_MARKER_SITE_COUNTS:
+        self.assertEqual(
+            declared, set(svs.PACKAGE_ROOT_MARKER_SITE_COUNTS["mission-control"])
+        )
+        for path in svs.PACKAGE_ROOT_MARKER_SITE_COUNTS["mission-control"]:
             with self.subTest(path=path):
                 self.assertEqual(
                     recorded[path]["classification"], check_repo.TRANSFORM
@@ -1838,14 +1871,15 @@ class MissionControlShippedTests(unittest.TestCase):
 
     def test_the_ci_install_line_keeps_pyyaml(self) -> None:
         """F46: the PyYAML confirmation is anchored on the CI job's install
-        line — a line matching `pip install ... pyyaml` — rather than on a
-        file-global substring, so moving the install text within the workflow
-        cannot silently satisfy the guard."""
+        line — a line that itself starts with `run:` and carries the
+        pip-install text — rather than on a file-global substring, so a
+        comment or a different workflow line cannot silently satisfy the
+        guard."""
         ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         self.assertRegex(
             ci,
-            r"pip install .*\bpyyaml\b",
-            "the CI install line dropped pyyaml; the package still imports it at "
+            r"(?m)^\s*run:.*pip install .*\bpyyaml\b",
+            "no CI step's run line installs pyyaml; the package still imports it at "
             "module scope (see the confirmation beside this test)",
         )
 
@@ -2044,10 +2078,6 @@ class MissionControlVerbSurfaceTest(unittest.TestCase):
     unclassified fails at resync time rather than defaulting to read-only."""
 
     def test_every_verb_is_declared_mutating_or_read_only(self) -> None:
-        try:
-            import yaml  # noqa: F401
-        except ModuleNotFoundError as exc:  # pragma: no cover - hermetic baseline has no yaml
-            self.skipTest(f"yaml not installed in this interpreter: {exc}")
         package_scripts = str(ROOT / "plugins" / "mission-control" / "scripts")
         if package_scripts not in sys.path:
             sys.path.insert(0, package_scripts)

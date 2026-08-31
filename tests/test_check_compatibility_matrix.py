@@ -26,9 +26,11 @@ import io
 import json
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
+from collections import Counter
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -1289,24 +1291,42 @@ class ReadbackEvidenceTest(unittest.TestCase):
 
 
 MISSION_CONTROL_LIVE_DOCUMENT = (
-    EVIDENCE / "2026-08-30-mission-control-compatibility-matrix-post-fingerprint-move.md"
+    EVIDENCE / "2026-08-30-mission-control-compatibility-matrix.md"
 )
 MISSION_CONTROL_READBACK_DOCUMENT = (
-    EVIDENCE / "2026-08-30-mission-control-post-activation-readback-post-fingerprint-move.md"
+    EVIDENCE / "2026-08-30-mission-control-post-activation-readback.md"
 )
 MISSION_CONTROL_SUPERSEDED_MATRIX = EVIDENCE / "2026-08-25-mission-control-compatibility-matrix.md"
 MISSION_CONTROL_SUPERSEDED_READBACK = (
     EVIDENCE / "2026-08-25-mission-control-post-activation-readback.md"
 )
 MISSION_CONTROL_INTERMEDIATE_MATRIX = (
-    EVIDENCE / "2026-08-30-mission-control-compatibility-matrix.md"
+    EVIDENCE / "2026-08-30-mission-control-compatibility-matrix-pre-fingerprint-move.md"
 )
 MISSION_CONTROL_INTERMEDIATE_READBACK = (
-    EVIDENCE / "2026-08-30-mission-control-post-activation-readback.md"
+    EVIDENCE / "2026-08-30-mission-control-post-activation-readback-pre-fingerprint-move.md"
 )
 MISSION_CONTROL_PACKAGE_ROOT = ROOT / "plugins" / "mission-control"
 MISSION_CONTROL_CONFIG = port_config.load("mission-control", ROOT)
 MISSION_CONTROL_SKILLS = ("board", "flow", "issues", "labels", "metrics", "milestones", "rollout")
+
+
+def _results_table(text: str) -> list[dict[str, str]]:
+    """Parse the markdown table under the `## Results` heading of a matrix
+    document into a list of row dicts keyed by the header cells."""
+    lines = text.splitlines()
+    heading = next(i for i, line in enumerate(lines) if line.strip() == "## Results")
+    header_index = next(
+        i for i in range(heading + 1, len(lines)) if lines[i].startswith("|")
+    )
+    header = [cell.strip() for cell in lines[header_index].strip("|").split("|")]
+    rows: list[dict[str, str]] = []
+    for line in lines[header_index + 2 :]:
+        if not line.startswith("|"):
+            break
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        rows.append(dict(zip(header, cells)))
+    return rows
 
 
 class MissionControlMatrixBindingTest(unittest.TestCase):
@@ -1376,6 +1396,32 @@ class MissionControlMatrixBindingTest(unittest.TestCase):
                         "works-directly",
                         "the client's status contradicts its blocked stages",
                     )
+
+    def test_the_results_table_matches_the_record(self) -> None:
+        """F56: the rendered Results table and the one-sentence summary are
+        parsed and held to the machine-readable record, so hand-edited prose
+        cannot diverge from the JSON without failing."""
+        rows = _results_table(self.text)
+        self.assertEqual(len(rows), 10, "the Results table does not carry ten rows")
+        clients = {client["name"]: client for client in self.record["clients"]}
+        for row in rows:
+            with self.subTest(client=row["Client"]):
+                client = clients[row["Client"]]
+                self.assertEqual(row["Version"], client["version"])
+                self.assertEqual(row["Status"], client["status"])
+                for stage in ("Placement", "Discovery", "Load", "Invocation"):
+                    self.assertEqual(
+                        row[stage],
+                        client["stages"][stage.lower()]["result"],
+                        f"{row['Client']} {stage} cell contradicts the record",
+                    )
+        statuses = Counter(client["status"] for client in self.record["clients"])
+        summary = (
+            f"{statuses['works-directly']} clients work directly, "
+            f"{statuses['works-through-an-adapter']} work through an adapter, "
+            f"{statuses['failed']} failed, and {statuses['unsupported']} are unsupported."
+        )
+        self.assertIn(summary, self.text, "the one-sentence summary contradicts the record")
 
     def test_the_record_violates_no_safety_or_public_evidence_rule(self) -> None:
         self.assertEqual(ccm.check_safety_rules(self.record, MISSION_CONTROL_CONFIG), [])
@@ -1631,26 +1677,46 @@ class EvidenceDiscoveryTest(unittest.TestCase):
 
     def test_no_prose_outside_evidence_links_a_superseded_document(self) -> None:
         """A superseded document may only be cited with its retirement stated:
-        the link's own anchor text must mark the citation as historical. A
-        bare present-tense link to retired evidence is the index defect."""
+        the link's own anchor text must mark the citation as historical, and a
+        superseded document's own banner may name its successor. A bare
+        present-tense link to retired evidence is the index defect. The walk
+        enumerates tracked markdown from `git ls-files`, so gitignored
+        directories can never contribute a false positive."""
         superseded = self._superseded_names()
         self.assertTrue(superseded, "expected at least one superseded document to guard")
         link = re.compile(r"\[([^\]]*)\]\(([^)#]+)(?:#[^)]*)?\)")
-        for path in ROOT.rglob("*.md"):
+        tracked = subprocess.run(
+            ["git", "ls-files", "--", "*.md"],
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
+            check=True,
+        ).stdout.splitlines()
+        for relative in tracked:
+            path = ROOT / relative
+            text = path.read_text(encoding="utf-8", errors="replace")
             if EVIDENCE in path.parents:
-                continue
-            text = path.read_text(encoding="utf-8")
+                directives = ccm.read_directives(text)
+                if directives.get(ccm.STATUS_DIRECTIVE) == ccm.STATUS_SUPERSEDED:
+                    # A retired document is historical context by definition;
+                    # its chain lists cite other retired documents as history.
+                    continue
+                own_successor = directives.get(ccm.SUPERSEDED_BY_DIRECTIVE)
+            else:
+                own_successor = None
             for anchor, target in link.findall(text):
                 if target.startswith(("http://", "https://", "mailto:")):
                     continue
                 name = target.split("/")[-1]
+                if name == own_successor:
+                    continue
                 if name in superseded and not re.search(
                     r"supersed|historical|retired", anchor, re.I
                 ):
                     self.fail(
-                        f"{path.relative_to(ROOT)} links the superseded evidence document "
-                        f"{name} without marking the citation as historical; repoint the "
-                        "link at the successor or state the retirement in the anchor text"
+                        f"{relative} links the superseded evidence document {name} "
+                        "without marking the citation as historical; repoint the link "
+                        "at the successor or state the retirement in the anchor text"
                     )
 
 

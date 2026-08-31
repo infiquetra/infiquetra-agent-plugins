@@ -921,5 +921,33 @@ class RootReadmePinTests(unittest.TestCase):
         )
 
 
+    def test_the_assessment_summary_sentence_derives_from_the_current_matrix(self) -> None:
+        """F68: the root README's client-status counts are derived from the
+        current matrix's record rather than retyped — the same class of pin as
+        the file count, so a hand-edited count fails instead of sitting."""
+        matrix = ROOT / "docs" / "evidence" / "2026-08-30-mission-control-compatibility-matrix.md"
+        text = matrix.read_text(encoding="utf-8")
+        block = re.search(r"```json\n(.*?)\n```", text, re.DOTALL)
+        self.assertIsNotNone(block, "the current matrix carries no JSON record")
+        assert block is not None
+        record = json.loads(block.group(1))
+        statuses: dict[str, int] = {}
+        for client in record["clients"]:
+            status = client["status"]
+            statuses[status] = statuses.get(status, 0) + 1
+        summary = (
+            f"{statuses.get('works-directly', 0)} directly, "
+            f"{statuses.get('works-through-an-adapter', 0)} via adapter, "
+            f"{statuses.get('failed', 0)} failed"
+        )
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn(
+            summary,
+            readme,
+            "the root README's assessment summary was retyped and went stale; "
+            "derive it from the current matrix",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

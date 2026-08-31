@@ -9,8 +9,8 @@ can check without any network access.
 Which package, which upstream path, and which custody each path carries are all
 read from that package's port descriptor under `ports/` -- see
 `scripts/port_config.py`. Nothing about a particular package is compiled into
-this file, so porting a second plugin is a new descriptor rather than an edit
-here.
+this file except the one exception recorded below, so porting a second plugin
+is a new descriptor rather than an edit here.
 
 Three classifications, and every path in the derived tree is exactly one of them
 (the manifest records which):
@@ -45,10 +45,11 @@ Three classifications, and every path in the derived tree is exactly one of them
 
 One exception to the package-agnostic contract is recorded rather than hidden:
 `resolve-package-root-marker` carries `PACKAGE_ROOT_MARKER_SITE_COUNTS`, a
-per-path site-count table keyed on mission-control's package-relative paths. A
-second package that selects this rule must extend that table (or re-custody its
-paths), and `plan_sync` refuses to dispatch the rule when the descriptor's
-`client_extension_dir` does not name the marker directory the rule re-anchors on.
+per-file site-count table keyed by package name and then package-relative
+path. A second package that selects this rule extends the table with its own
+slice rather than editing mission-control's, and `plan_sync` refuses to
+dispatch the rule when the descriptor's `client_extension_dir` does not name
+the marker directory the rule re-anchors on.
 * **target-owned portable source** — authored here rather than derived from the
   pinned commit. It is never overwritten and never removed by synchronization,
   which is what stops this script from silently destroying the portable
@@ -294,9 +295,14 @@ class TransformRule:
     `apply` rewrites one source payload and names the file in its errors; it is
     part of the rule's identity so `TRANSFORM_RULES` can dispatch a descriptor's
     per-path selection without a second table mapping names onto functions.
+
+    `precondition` is an optional descriptor-level check the planner runs before
+    dispatching a path to this rule: it lets a rule whose output depends on a
+    descriptor value refuse the synchronization at plan time, without widening
+    the `apply` signature every rule shares.
     """
 
-    __slots__ = ("name", "version", "rule", "apply")
+    __slots__ = ("name", "version", "rule", "apply", "precondition")
 
     def __init__(
         self,
@@ -304,11 +310,13 @@ class TransformRule:
         version: str,
         rule: str,
         apply: Callable[[bytes, str], bytes],
+        precondition: Callable[[PortConfig], None] | None = None,
     ) -> None:
         self.name = name
         self.version = version
         self.rule = rule
         self.apply = apply
+        self.precondition = precondition
 
 
 def _decode_utf8(payload: bytes, path: str) -> str:
@@ -722,17 +730,34 @@ PACKAGE_ROOT_CALL = re.compile(r"^PACKAGE_ROOT = _find_package_root\(\)$", re.MU
 
 #: The portable emission of the `_find_package_root` definition: the upstream
 #: block with both marker references re-anchored. Re-emitted whole so the
-#: rewrite is deterministic from the matched shape alone.
+#: rewrite is deterministic from the matched shape alone, and built from the
+#: same `PORTABLE_PACKAGE_ROOT_MARKER` constant the guard compares, so a
+#: rename of the portable marker cannot silently decouple the output from the
+#: precondition.
 PORTABLE_FINDER_EMISSION = (
     "def _find_package_root(start: Path | None = None) -> Path:\n"
     "    current = start or Path(__file__)\n"
     "    for parent in current.resolve().parents:\n"
-    '        if (parent / "com.infiquetra.claude" / "plugin.json").is_file():\n'
+    f'        if (parent / "{PORTABLE_PACKAGE_ROOT_MARKER}" / "plugin.json").is_file():\n'
     "            return parent\n"
     "    raise RuntimeError(\n"
-    '        f"package root containing com.infiquetra.claude/plugin.json not found from '
+    f'        f"package root containing {PORTABLE_PACKAGE_ROOT_MARKER}/plugin.json not found from '
     '{current.resolve()}"\n'
     "    )"
+)
+
+#: The portable emission of the `.is_file()` assertion site, built from the
+#: same marker constant for the same reason.
+PORTABLE_ISFILE_EMISSION = (
+    f'    assert (root / "{PORTABLE_PACKAGE_ROOT_MARKER}" / "plugin.json").is_file()'
+)
+
+#: The portable emission of the `pytest.raises` match site, built from the
+#: same marker constant for the same reason. The marker is dot-escaped because
+#: the site pins a raw regex string.
+PORTABLE_RAISES_EMISSION = (
+    '        RuntimeError, match=r"package root containing '
+    f'{PORTABLE_PACKAGE_ROOT_MARKER.replace(".", "\\.")}/plugin\\.json not found"'
 )
 
 #: The assertion site a carried test uses to prove the marker resolves: the
@@ -755,16 +780,39 @@ MARKER_RAISES_MATCH = re.compile(
     re.MULTILINE,
 )
 
-#: The per-file site counts version 2 declares. The rule stops being
-#: single-shape by recorded decision (KTD16); this table replaces that
-#: guarantee: every file the rule is selected for declares exactly how many
-#: sites of each class it carries, and any count mismatch fails loudly. The
-#: walk line and the error text inside a finder definition remain internals of
-#: that one definition, not extra site classes.
-PACKAGE_ROOT_MARKER_SITE_COUNTS: dict[str, dict[str, int]] = {
-    "scripts/sync_template_docs.py": {"finder": 1, "call": 1, "is_file": 0, "raises": 0},
-    "tests/test_issue_contract_parity.py": {"finder": 1, "call": 1, "is_file": 1, "raises": 1},
-    "tests/test_template_sync.py": {"finder": 0, "call": 0, "is_file": 1, "raises": 1},
+#: The site classes the per-file rows declare, in a fixed order so the count
+#: refusal names them deterministically (a set's iteration order is not).
+SITE_CLASSES = ("finder", "call", "is_file", "raises")
+
+#: The per-file site counts version 2 declares, keyed by package name and then
+#: package-relative path. The rule stops being single-shape by recorded
+#: decision (KTD16); this table replaces that guarantee: every file the rule
+#: is selected for declares exactly how many sites of each class it carries,
+#: and any count mismatch fails loudly. A second package that selects the rule
+#: extends the table with its own slice rather than editing mission-control's.
+#: The walk line and the error text inside a finder definition remain
+#: internals of that one definition, not extra site classes.
+PACKAGE_ROOT_MARKER_SITE_COUNTS: dict[str, dict[str, dict[str, int]]] = {
+    "mission-control": {
+        "scripts/sync_template_docs.py": {
+            "finder": 1,
+            "call": 1,
+            "is_file": 0,
+            "raises": 0,
+        },
+        "tests/test_issue_contract_parity.py": {
+            "finder": 1,
+            "call": 1,
+            "is_file": 1,
+            "raises": 1,
+        },
+        "tests/test_template_sync.py": {
+            "finder": 0,
+            "call": 0,
+            "is_file": 1,
+            "raises": 1,
+        },
+    }
 }
 
 PACKAGE_ROOT_MARKER_TRANSFORM_RULE = (
@@ -812,19 +860,38 @@ def package_root_marker_transform(payload: bytes, target_path: str) -> bytes:
     """
     body = _decode_utf8(payload, target_path)
 
-    counts = PACKAGE_ROOT_MARKER_SITE_COUNTS.get(target_path)
-    if counts is None:
+    # The table is keyed by package and path; `apply` receives only the path,
+    # so the row is found by searching every package slice and requiring
+    # exactly one match. A same-named path in a second package's slice would
+    # make the lookup ambiguous — that is a table error, refused here.
+    row_matches = [
+        counts
+        for slice_rows in PACKAGE_ROOT_MARKER_SITE_COUNTS.values()
+        for path, counts in slice_rows.items()
+        if path == target_path
+    ]
+    if len(row_matches) != 1:
         raise SyncError(
-            f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} declares no per-file "
-            "site counts for this path; the files this rule describes are named in the rule's "
-            "table, and a path outside that table is a synchronization stop, never a guessed "
+            f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} declares no unique "
+            f"site-count row for this path (found {len(row_matches)} rows across the "
+            "per-package slices); the files this rule describes are named in the rule's "
+            "table, and a path outside it is a synchronization stop, never a guessed "
             "rewrite"
         )
-    expected_classes = {"finder", "call", "is_file", "raises"}
+    counts = row_matches[0]
+    expected_classes = set(SITE_CLASSES)
     if set(counts) != expected_classes:
         raise SyncError(
             f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} declares an incomplete "
             f"site-count row ({sorted(counts)}); every row states all four site classes"
+        )
+    if counts["call"] != counts["finder"]:
+        raise SyncError(
+            f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} declares "
+            f"{counts['call']} module-scope call(s) for {counts['finder']} finder "
+            "definition(s); the shape puts exactly one call beside each definition, so a "
+            "row whose call count does not equal its finder count leaves the "
+            "definition-before-call check unable to pair them"
         )
 
     finders = list(PACKAGE_ROOT_FINDER_BLOCK.finditer(body))
@@ -837,7 +904,7 @@ def package_root_marker_transform(payload: bytes, target_path: str) -> bytes:
         "is_file": len(is_file_sites),
         "raises": len(raises_sites),
     }
-    for site_class in expected_classes:
+    for site_class in SITE_CLASSES:
         if found[site_class] != counts[site_class]:
             raise SyncError(
                 f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} declares exactly "
@@ -905,20 +972,11 @@ def package_root_marker_transform(payload: bytes, target_path: str) -> bytes:
         replacements.append((finder.start(), finder.end(), PORTABLE_FINDER_EMISSION))
     for site in is_file_sites:
         replacements.append(
-            (
-                site.start(),
-                site.end(),
-                '    assert (root / "com.infiquetra.claude" / "plugin.json").is_file()',
-            )
+            (site.start(), site.end(), PORTABLE_ISFILE_EMISSION)
         )
     for site in raises_sites:
         replacements.append(
-            (
-                site.start(),
-                site.end(),
-                '        RuntimeError, match=r"package root containing '
-                'com\\.infiquetra\\.claude/plugin\\.json not found"',
-            )
+            (site.start(), site.end(), PORTABLE_RAISES_EMISSION)
         )
     rewritten = body
     for start, end, replacement in sorted(replacements, reverse=True):
@@ -975,11 +1033,33 @@ FRONTMATTER_RULE = TransformRule(
     normalize_skill_frontmatter,
 )
 
+def _package_root_marker_precondition(config: PortConfig) -> None:
+    """The descriptor-level refusal `plan_sync` runs before dispatching a path
+    to `resolve-package-root-marker`: the rule re-anchors every marker site on
+    `PORTABLE_PACKAGE_ROOT_MARKER`, which must be the client extension
+    directory the same descriptor's manifest is relocated into. A mismatch
+    would ship a package whose scripts and manifest live in different
+    directories, and the rule reads no descriptor of its own to notice."""
+    if config.source.client_extension_dir != PORTABLE_PACKAGE_ROOT_MARKER:
+        raise SyncError(
+            f"{config.source.package_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} "
+            f"re-anchors the package root on the {PORTABLE_PACKAGE_ROOT_MARKER!r} client "
+            f"extension directory, but this port descriptor names "
+            f"{config.source.client_extension_dir!r}; the rule reads no descriptor, so a "
+            "mismatch would ship a package whose scripts and manifest live in different "
+            "directories. The remedy is the one the rule's documentation records: extend "
+            "PACKAGE_ROOT_MARKER_SITE_COUNTS with this package's own slice and parameterize "
+            "the rule's marker on the descriptor — renaming the descriptor's "
+            "client_extension_dir to match this rule's marker is not one"
+        )
+
+
 PACKAGE_ROOT_MARKER_RULE = TransformRule(
     PACKAGE_ROOT_MARKER_TRANSFORM_NAME,
     PACKAGE_ROOT_MARKER_TRANSFORM_VERSION,
     PACKAGE_ROOT_MARKER_TRANSFORM_RULE,
     package_root_marker_transform,
+    _package_root_marker_precondition,
 )
 
 
@@ -1137,18 +1217,8 @@ def plan_sync(config: PortConfig, source: Path, commit: str) -> list[PlannedFile
     for relative in config.custody.entrypoint_transforms:
         payload = read_source_file(config, source, commit, relative)
         rule = resolve_transform_rule(config, relative)
-        if rule is PACKAGE_ROOT_MARKER_RULE and (
-            config.source.client_extension_dir != PORTABLE_PACKAGE_ROOT_MARKER
-        ):
-            raise SyncError(
-                f"{config.source.package_path}/{relative}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} "
-                f"re-anchors the package root on the {PORTABLE_PACKAGE_ROOT_MARKER!r} client "
-                f"extension directory, but this port descriptor names "
-                f"{config.source.client_extension_dir!r}; the rule reads no descriptor, so a "
-                "mismatch would ship a package whose scripts and manifest live in different "
-                "directories. Name the descriptor's client_extension_dir "
-                f"{PORTABLE_PACKAGE_ROOT_MARKER!r} or re-custody the path"
-            )
+        if rule.precondition is not None:
+            rule.precondition(config)
         planned.append(
             PlannedFile(
                 relative,
