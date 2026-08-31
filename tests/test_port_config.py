@@ -574,6 +574,43 @@ class CommittedDescriptorTest(unittest.TestCase):
                     )
                     self.assertIn(rule, svs.TRANSFORM_RULES)
 
+    def test_the_provenance_note_recomputes_the_carried_test_counts(self) -> None:
+        """F18: the provenance prose states 26 byte-copied tests and 2
+        rule-rewritten transforms. Both counts are recomputed from the
+        descriptor's own custody arrays, so a custody change that leaves the
+        prose stale fails here rather than shipping a self-contradicting
+        generated manifest."""
+        config = port_config.load("mission-control", ROOT)
+        byte_copy_tests = [
+            path for path in config.custody.byte_copies if path.startswith("tests/")
+        ]
+        transform_tests = [
+            path
+            for path in config.custody.entrypoint_transforms
+            if path.startswith("tests/")
+            and config.custody.entrypoint_rules.get(path)
+            == svs.PACKAGE_ROOT_MARKER_TRANSFORM_NAME
+        ]
+        notes = "\n".join(config.notes)
+        self.assertIn(
+            f"{len(byte_copy_tests)} as byte copies",
+            notes,
+            "the provenance note undercounts or overcounts the byte-copied tests; "
+            "recompute it from the custody arrays",
+        )
+        self.assertIn(
+            f"{len(transform_tests)} as resolve-package-root-marker transforms",
+            notes,
+            "the provenance note does not state the transform count the custody "
+            "arrays declare",
+        )
+        for path in transform_tests:
+            self.assertIn(
+                path,
+                notes,
+                f"the provenance note does not name the transform path {path}",
+            )
+
     def test_the_marker_rules_site_table_joins_every_descriptor_selection(self) -> None:
         """F20: `PACKAGE_ROOT_MARKER_SITE_COUNTS` is a second, per-file custody
         table compiled into the shared script, so the descriptor paths that

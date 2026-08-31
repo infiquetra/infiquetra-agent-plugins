@@ -71,7 +71,10 @@ subcommands still write local state: `issue prepare` writes a draft and JSON
 sidecar under `docs/sdlc-issue-drafts/` of the current repository, and
 `config init-defaults` seeds `~/.claude/sdlc-defaults.json`. `fields
 create-option` performs no mutation of any kind — it discovers a field,
-prints its id and the options already on it, and stops.
+prints its id and the options already on it, and stops. `rollout status`,
+`board wip`, and `config show` read the retired upstream `beads-config.json`;
+when it is absent they degrade to `{}` and report zero rolled-out
+repositories rather than erroring.
 
 One mutation route is an internal code path rather than a CLI verb: when
 `issue create-prepared` meets a repository that is not mapped to the requested
