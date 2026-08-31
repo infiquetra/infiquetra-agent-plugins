@@ -1,5 +1,5 @@
 <!-- matrix-status: superseded -->
-<!-- superseded-by: 2026-08-30-mission-control-compatibility-matrix-post-fingerprint-move.md -->
+<!-- superseded-by: 2026-08-30-mission-control-compatibility-matrix.md -->
 <!-- superseded-reason: The forty stage results describe the package at tree digest 651ac28a..., 64 files, pinned at upstream 84eaf042 (v2.12.2). The 2.15.2 resynchronization moved the package to 71 files at tree 1f49322e..., and the F18/F11/F35 corrections then moved it again to 659f91f6..., so this record no longer identifies the tree it claims to describe. The successor chain ends at the current 2026-08-30 re-assessment of the corrected package. -->
 
 > **Superseded - historical evidence. Do not read this as the current

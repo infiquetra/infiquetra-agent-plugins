@@ -61,7 +61,7 @@ ships holds 23 files — the two extra are the generated
 
 Every one of the forty stage results below was re-run against the shipped
 package. The earlier record is preserved unedited, and marked superseded, at
-[`2026-08-22-unifi-compatibility-matrix-pre-repair.md`](2026-08-22-unifi-compatibility-matrix-pre-repair.md).
+[the superseded pre-repair record](2026-08-22-unifi-compatibility-matrix-pre-repair.md).
 
 Refreshing the numbers was the smaller half of the repair. The larger half is
 that this document is now *bound* to the package it assessed: the file count and

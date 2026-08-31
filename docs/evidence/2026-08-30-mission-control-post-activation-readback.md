@@ -1,16 +1,4 @@
-<!-- matrix-status: superseded -->
-<!-- superseded-by: 2026-08-30-mission-control-post-activation-readback-post-fingerprint-move.md -->
-<!-- superseded-reason: This readback binds the package at tree 1f49322e..., 71 files. When the F18/F11/F35 provenance and README corrections landed, the package moved to tree 659f91f6..., so the recorded readbacks describe installed copies that no longer exist. The successor was captured against the corrected package on 2026-08-30 and is current. -->
-
-> **Superseded - historical evidence. Do not read this as the current
-> post-activation readback.**
->
-> This readback was captured on 30 August 2026 against the package at tree
-> `1f49322e…`. It is kept because the readback happened and its record should
-> not vanish, not because it still describes the shipped bytes.
->
-> **What superseded it:**
-> [`2026-08-30-mission-control-post-activation-readback-post-fingerprint-move.md`](2026-08-30-mission-control-post-activation-readback-post-fingerprint-move.md).
+<!-- matrix-status: current -->
 
 # Post-activation readback — portable mission-control package 2.15.2
 
@@ -19,8 +7,13 @@ portable derived copy of an upstream Claude Code plugin synchronized from
 `infiquetra/infiquetra-claude-plugins` at pinned commit
 `3b2b7083fdda8e39e213b5f4acf9f8301d60dd52` (version 2.15.2). Following runbook
 Phase 3, this document captures the post-activation readback and verification
-bound to the frozen candidate commit (`55a651174b8b474c281661658bde3bfd7637855b`),
-on 30 August 2026.
+bound to the corrected frozen candidate
+(`a1e84e067444be11d4bffd261c46f7958557ba24`), on 30 August 2026.
+
+This is the second 2026-08-30 readback. The first bound the package at tree
+`1f49322e…`; the F18/F11/F35 provenance and README corrections moved the tree
+to `659f91f6…`, so the readback was re-captured against the shipped bytes
+rather than renumbered. The first record is superseded and kept as history.
 
 ## Context and Purpose
 
@@ -40,6 +33,10 @@ client ran in an isolated scratch home with empty configuration), and **on the
 floor** (every command executed on CPython 3.12.13 in a throwaway virtual
 environment holding pytest, pyyaml, requests, and urllib3).
 
+The readback itself makes no GitHub API call. That is a different surface from
+the separately recorded finding that the package's own test suite makes live
+`gh` calls through its schema-resolution ladder, and the two are kept distinct.
+
 ## The Custody Chain
 
 Upstream stays the single writable source; this package is a derived artifact.
@@ -58,7 +55,7 @@ client-installed copy.
     "name": "mission-control",
     "version": "2.15.2",
     "file_count": 71,
-    "tree_sha256": "1f49322e8412ac6b2ae0b1fbebf4a022ac2e53489be71aae674506a7613531f9",
+    "tree_sha256": "659f91f6eae524612ad8daf3046d083281e0e76a950de3600b4b2948c68a18bd",
     "upstream_commit": "3b2b7083fdda8e39e213b5f4acf9f8301d60dd52",
     "units": {
       "board": {
@@ -92,9 +89,9 @@ client-installed copy.
     }
   },
   "method": {
-    "credentials": "No client authenticated; every GH_ and GITHUB_ variable removed from the environment before every command.",
-    "network": "No GitHub API call, no marketplace refresh, no network request. The upstream release was verified against a local read-only checkout pinned at the recorded commit.",
-    "isolation": "Each readback ran against the client-owned installed copies under their empty scratch homes, with no real configuration read or written."
+    "credentials": "No client authenticated; every GH_ and GITHUB_ variable removed from the environment before every command. The readback itself makes no GitHub API call; this is a different surface from the separately recorded package-test-suite finding.",
+    "network": "No GitHub API call, no marketplace refresh, no network request. The upstream release was verified against the local read-only checkout pinned at the recorded commit.",
+    "isolation": "Each readback ran against the client-owned installed copies under their empty scratch homes, with no real configuration read or written. Qwen does not appear in the readback: its installed copies are recorded in the matrix, and the readback covers the three clients whose installs leave client-owned copies on disk."
   },
   "readbacks": [
     {
@@ -104,7 +101,7 @@ client-installed copy.
       "reported_version": null,
       "reported_digest": null,
       "recomputed_file_count": 71,
-      "recomputed_tree_sha256": "1f49322e8412ac6b2ae0b1fbebf4a022ac2e53489be71aae674506a7613531f9",
+      "recomputed_tree_sha256": "659f91f6eae524612ad8daf3046d083281e0e76a950de3600b4b2948c68a18bd",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },
@@ -115,7 +112,7 @@ client-installed copy.
       "reported_version": "2.15.2",
       "reported_digest": null,
       "recomputed_file_count": 71,
-      "recomputed_tree_sha256": "1f49322e8412ac6b2ae0b1fbebf4a022ac2e53489be71aae674506a7613531f9",
+      "recomputed_tree_sha256": "659f91f6eae524612ad8daf3046d083281e0e76a950de3600b4b2948c68a18bd",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },
@@ -143,7 +140,7 @@ client-installed copy.
   "cycle_16_verification": {
     "disposition": "verified_by_digest_recheck",
     "proof_document": "docs/evidence/2026-08-25-cycle16-mutation-proof-portable-copies.txt",
-    "frozen_candidate_commit": "55a651174b8b474c281661658bde3bfd7637855b",
+    "frozen_candidate_commit": "a1e84e067444be11d4bffd261c46f7958557ba24",
     "graded_file_digests": {
       "plugins/unifi/scripts/site_profile.py": "31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09",
       "scripts/assess_clients.py": "2f8fafe988f791e53403d619ed61e4749930838435d001993e8cf581ca1ad9d8",

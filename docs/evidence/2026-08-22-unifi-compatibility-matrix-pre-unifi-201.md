@@ -19,7 +19,7 @@ survey, not a release gate.
 Two earlier publications of this matrix are preserved as history, each retired
 for a different reason:
 
-1. [`2026-08-22-unifi-compatibility-matrix-pre-repair.md`](2026-08-22-unifi-compatibility-matrix-pre-repair.md)
+1. [the superseded pre-repair record](2026-08-22-unifi-compatibility-matrix-pre-repair.md)
    assessed the package as originally assembled: 21 files, with both skill
    entrypoints aborting at import because the synchronization step had dropped
    `fleet_commons_shim.py` and no generated bundle had yet replaced it.

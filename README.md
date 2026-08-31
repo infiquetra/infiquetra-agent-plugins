@@ -79,7 +79,7 @@ and committed evidence:
   [`tests/test_mission_control_rule_audit.py`](tests/test_mission_control_rule_audit.py))
   audits validation rules class-first against live authority.
 - **Mission Control ten-client assessment: 3 directly, 7 via adapter, 0 failed.**
-  The [Mission Control compatibility matrix](docs/evidence/2026-08-30-mission-control-compatibility-matrix-post-fingerprint-move.md)
+  The [Mission Control compatibility matrix](docs/evidence/2026-08-30-mission-control-compatibility-matrix.md)
   records:
   - 3 work directly (Cursor Agent, Qwen, and Agy: placed, discovered, loaded,
     and ran all entrypoints cleanly; Qwen ran through its real binary supplied
@@ -92,7 +92,7 @@ and committed evidence:
   - Evidence is bound to the package fingerprint by
     [`scripts/check_compatibility_matrix.py`](scripts/check_compatibility_matrix.py),
     with post-activation readback in
-    [`docs/evidence/2026-08-30-mission-control-post-activation-readback-post-fingerprint-move.md`](docs/evidence/2026-08-30-mission-control-post-activation-readback-post-fingerprint-move.md)
+    [`docs/evidence/2026-08-30-mission-control-post-activation-readback.md`](docs/evidence/2026-08-30-mission-control-post-activation-readback.md)
     and 0 survivors across 68 anchors in mutation proof
     [`docs/evidence/2026-08-25-cycle16-mutation-proof-portable-copies.txt`](docs/evidence/2026-08-25-cycle16-mutation-proof-portable-copies.txt).
 - **Agent launcher ships the shared launch contract as one entrypoint.** Pinned
@@ -140,7 +140,7 @@ decisions are recorded in the journal's
 The record of the work, in the order a new reader should take it:
 
 - [Agent launcher ten-client compatibility matrix](docs/evidence/2026-08-27-agent-launcher-compatibility-matrix.md),
-  [Mission Control ten-client compatibility matrix](docs/evidence/2026-08-30-mission-control-compatibility-matrix-post-fingerprint-move.md)
+  [Mission Control ten-client compatibility matrix](docs/evidence/2026-08-30-mission-control-compatibility-matrix.md)
   and [UniFi ten-client compatibility matrix](docs/evidence/2026-08-22-unifi-compatibility-matrix.md)
   — what each client did with each package, stage by stage, with evidence.
 - [Agent launcher port run plan](docs/plans/2026-08-27-agent-launcher-port-plan.md),
@@ -195,7 +195,7 @@ for the contract itself.
 | [`scripts/`](scripts/) | Validation, synchronization, bundling, and inventory tools |
 | [`docs/`](docs/README.md) | Architecture, public guidance, and durable repository knowledge |
 | [`docs/plans/`](docs/plans/2026-08-24-mission-control-port-run-plan.md) | Approved implementation plans |
-| [`docs/evidence/`](docs/evidence/2026-08-30-mission-control-compatibility-matrix-post-fingerprint-move.md) | Assessment records, written under the public evidence rules |
+| [`docs/evidence/`](docs/evidence/2026-08-30-mission-control-compatibility-matrix.md) | Assessment records, written under the public evidence rules |
 | [`docs/engineering-journal/`](docs/engineering-journal/README.md) | Learnings, decisions, queued work, and archive |
 | [`.github/`](.github/PULL_REQUEST_TEMPLATE.md) | Pull request, issue, and validation workflow configuration |
 

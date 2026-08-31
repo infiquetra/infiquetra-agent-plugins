@@ -152,7 +152,7 @@ A release pipeline should:
    (UniFi pilot completed 2026-08-23, [`evidence/2026-08-22-unifi-compatibility-matrix.md`](evidence/2026-08-22-unifi-compatibility-matrix.md);
    mission-control port completed 2026-08-25, re-assessed after the 2.15.2
    resynchronization in
-   [`evidence/2026-08-30-mission-control-compatibility-matrix-post-fingerprint-move.md`](evidence/2026-08-30-mission-control-compatibility-matrix-post-fingerprint-move.md)).
+   [`evidence/2026-08-30-mission-control-compatibility-matrix.md`](evidence/2026-08-30-mission-control-compatibility-matrix.md)).
 3. Port an MCP-bearing capability to prove portable tool packaging.
 4. Extract Saga's portable skills while retaining its native control adapters.
 5. Redesign `team-execution` and `fleet-core` only after the Herdr boundary is
