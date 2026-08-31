@@ -1,22 +1,35 @@
-<!-- matrix-status: current -->
+<!-- matrix-status: superseded -->
+<!-- superseded-by: 2026-08-30-mission-control-compatibility-matrix.md -->
+<!-- superseded-reason: This matrix binds the package at tree 659f91f6..., 71 files. When the portable README was corrected to state that an absent beads-config.json triggers a live gh api read before degrading to {}, the package moved to tree 5fc16652..., so this record no longer identifies the tree it claims to describe. The successor re-assessed the corrected package on 2026-08-31 and is current. -->
 
 # Ten-client compatibility matrix — portable mission-control package (2.15.2)
+
+> **Superseded - historical evidence. Do not read this as the current
+> compatibility record.**
+>
+> This is the ten-client assessment exactly as it was published against the
+> package at tree `659f91f6…`. It is kept because the assessment happened
+> and its record should not vanish, not because it still describes the
+> shipped bytes.
+>
+> **What superseded it:**
+> [`2026-08-30-mission-control-compatibility-matrix.md`](2026-08-30-mission-control-compatibility-matrix.md),
+> the re-assessment against the corrected package at tree `5fc16652…`.
 
 This repository holds the portable source catalog for Infiquetra Agent Skills
 and Agent Plugins. `plugins/mission-control/` is a derived artifact of the
 upstream Claude Code plugin in `infiquetra/infiquetra-claude-plugins`, pinned at
 commit `3b2b7083fdda8e39e213b5f4acf9f8301d60dd52` (version 2.15.2). This document
 records what happened when the corrected package — 71 files, tree
-`5fc1665252a0dc293b0a1e4e8328fb6ab6631dd669133e0eb54dd5ffd1611b13` — was put in
-front of every coding-agent client installed on the operator's machine, on 31
+`659f91f6eae524612ad8daf3046d083281e0e76a950de3600b4b2948c68a18bd` — was put in
+front of every coding-agent client installed on the operator's machine, on 30
 August 2026.
 
-The filename prefix names the evidence family (the 2026-08-30 mission-control
-family); the body names the run date. This is the family's third generation:
-the first assessed tree `1f49322e…`, the second a different tree, and this one
-tree `5fc16652…`, which moved when the portable README was corrected to state
-that an absent `beads-config.json` triggers a live `gh api` read before
-degrading. Both earlier generations are superseded and kept as history.
+This is the second 2026-08-30 assessment. The first one described the package
+at tree `1f49322e…`; when the F18/F11/F35 provenance and README corrections
+landed, that tree no longer existed, so the assessment was re-run against the
+shipped bytes rather than renumbered. The first record is superseded and kept
+as history.
 
 It is a survey of what ten clients did with one package on one machine on one
 day, not a release gate and not a claim about those clients in general. The
@@ -86,11 +99,13 @@ In one sentence: **3 clients work directly, 7 work through an adapter, 0 failed,
 | Agy | 1.1.22 | works-directly | executed | executed | executed | executed |
 | Hermes | 0.20.6 | works-through-an-adapter | executed | executed | executed | blocked |
 
-Qwen's works-directly is the launcher environment, not the package improving:
-the run supplied its real binary by exported `QWEN_HERDR_REAL_BIN` exactly as
-Grok's and Agy's were supplied by `--real-binary`; the harness does not declare
-Qwen's override itself, and without it the wrapper resolves into the empty
-isolated home and exits 127.
+The Qwen change from the superseded record is explained honestly: the earlier
+assessment recorded Qwen failed because its stages exited 127 — the Herdr
+wrapper resolved `QWEN_HERDR_REAL_BIN` and otherwise fell back to a
+`qwen.pre-herdr` path that, under the isolated home, pointed into the empty
+scratch home. This run supplied the real binary by exported override exactly
+as Grok's and Agy's were supplied, and all four stages exited 0. The package
+did not change between the two readings; the launcher environment did.
 
 Claude Code's four stages all executed, but its load stage is session-scoped
 (the client refuses `plugin details` for session-only plugins by name), so it
@@ -120,12 +135,12 @@ client-specific remediation has been decided.
 {
   "$schema": "../../schemas/compatibility-matrix.schema.json",
   "schema_version": "2",
-  "assessed_on": "2026-08-31",
+  "assessed_on": "2026-08-30",
   "package": {
     "name": "mission-control",
     "version": "2.15.2",
     "file_count": 71,
-    "tree_sha256": "5fc1665252a0dc293b0a1e4e8328fb6ab6631dd669133e0eb54dd5ffd1611b13"
+    "tree_sha256": "659f91f6eae524612ad8daf3046d083281e0e76a950de3600b4b2948c68a18bd"
   },
   "method": {
     "stages": [
@@ -135,7 +150,7 @@ client-specific remediation has been decided.
       "invocation"
     ],
     "isolation": "Each client was handed its own fresh copy of the shipped tree, at 71 files, fingerprinted before and after that client ran. Every copy was unchanged afterwards, so no client added a vendor artifact to the package. Nine clients ran against their own empty scratch home; Cursor Agent ran against the real authenticated home with read-only rules, because an isolated home strips its authentication. Qwen's real binary was supplied by exported override (QWEN_HERDR_REAL_BIN) exactly as Grok's and Agy's were supplied by --real-binary; the harness does not declare Qwen's override itself, and without it the wrapper resolves into the empty isolated home and exits 127.",
-    "credentials": "Nine clients ran unauthenticated in their own scratch homes; Cursor Agent ran against the operator's real authenticated home by design, because an isolated home strips its authentication and produces a false failure \u2014 its authentication state was recorded only as present, no credential created, changed, or read into this evidence, and no account identity is published here. The harness supplied no GitHub credential to any client and stripped every GH_ and GITHUB_ variable before each invocation. The assessment itself makes no GitHub API call: every invocation stage runs each declared entrypoint's credential-free --help action, so no request leaves the machine. This is distinct from the separately recorded finding that the package's own test suite makes live gh calls through its schema-resolution ladder; the two surfaces are different and are not blurred here.",
+    "credentials": "Nine clients ran unauthenticated in their own scratch homes; Cursor Agent ran against the operator's real authenticated home by design, because an isolated home strips its authentication and produces a false failure — its authentication state was recorded only as present, no credential created, changed, or read into this evidence, and no account identity is published here. The harness supplied no GitHub credential to any client and stripped every GH_ and GITHUB_ variable before each invocation. The assessment itself makes no GitHub API call: every invocation stage runs each declared entrypoint's credential-free --help action, so no request leaves the machine. This is distinct from the separately recorded finding that the package's own test suite, run outside this assessment, makes live gh calls through its schema-resolution ladder; the two surfaces are different and are not blurred here.",
     "network": "No GitHub API call was made at any assessment stage. The invocation stage runs each declared package entrypoint with its credential-free --help action on the floor interpreter, so no request leaves the machine. No mutating operation was invoked and no command passed a write confirmation."
   },
   "clients": [
@@ -379,7 +394,7 @@ client-specific remediation has been decided.
         }
       },
       "status": "works-directly",
-      "reason": "All four stages exit 0: the extension installs, extensions list reports mission-control 2.15.2, and all five entrypoints run --help at exit 0 from the client-resolved extension path. The run supplied Qwen's real binary by exported override (see the method prose); without it the wrapper resolves into the empty isolated home and exits 127 \u2014 Qwen's works-directly is the launcher environment, not the package improving."
+      "reason": "All four stages exit 0: the extension installs, extensions list reports mission-control 2.15.2, and all five entrypoints run --help at exit 0 from the client-resolved extension path. The run supplied Qwen's real binary by exported override (see the method prose); the earlier failed reading came from the wrapper resolving into the empty isolated home, not from the package."
     },
     {
       "name": "Grok",

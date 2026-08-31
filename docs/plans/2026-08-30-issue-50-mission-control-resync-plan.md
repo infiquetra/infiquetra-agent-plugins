@@ -2868,10 +2868,13 @@ touched.
 The §5 freeze record claimed `55a6511` was the last point at which any byte
 under `plugins/mission-control/` changes. That held until the repair rounds:
 `a1e84e0` landed the F18/F11/F35 provenance and README corrections, moving the
-tree from `1f49322e…` to `659f91f6…` after the freeze. Rather than renumbering
-the bound evidence — the explicit anti-pattern — the assessment was re-run
-(run-002, 2026-08-30) and the evidence re-bound at `863af58`, which is issue
-#56's frozen commit. The three freeze claims in this plan (§5, U3's section,
-the §8.1 table) are qualified to point at this amendment. The batch-the-repairs
-rule applies: the three corrections landed in one round, one assessment re-run,
-one new fingerprint.
+tree from `1f49322e…` to a second tree after the freeze, and `143a71b` then
+corrected the portable README's beads-config disclosure, moving it again to
+`5fc16652…`. Rather than renumbering the bound evidence — the explicit
+anti-pattern — each move was followed by a fresh assessment (run-002 on
+2026-08-30, run-003 on 2026-08-31) and re-binding; the third generation
+(2026-08-31, tree `5fc16652…`) is issue #56's current frozen record. The
+three freeze claims in this plan (§5, U3's section, the §8.1 table) are
+qualified to point at this amendment. The batch-the-repairs rule applies:
+each round's corrections landed together, one assessment re-run, one new
+fingerprint.

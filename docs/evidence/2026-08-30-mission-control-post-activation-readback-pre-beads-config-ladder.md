@@ -1,20 +1,31 @@
-<!-- matrix-status: current -->
+<!-- matrix-status: superseded -->
+<!-- superseded-by: 2026-08-30-mission-control-post-activation-readback.md -->
+<!-- superseded-reason: This readback binds the package at tree 659f91f6..., 71 files. When the portable README was corrected to state that an absent beads-config.json triggers a live gh api read before degrading to {}, the package moved to tree 5fc16652..., so the recorded readbacks describe installed copies that no longer exist. The successor was captured against the corrected package on 2026-08-31 and is current. -->
 
 # Post-activation readback — portable mission-control package 2.15.2
+
+> **Superseded - historical evidence. Do not read this as the current
+> post-activation readback.**
+>
+> This readback was captured against the package at tree `659f91f6…`. It is
+> kept because the readback happened and its record should not vanish, not
+> because it still describes the shipped bytes.
+>
+> **What superseded it:**
+> [`2026-08-30-mission-control-post-activation-readback.md`](2026-08-30-mission-control-post-activation-readback.md).
 
 The `mission-control` package in this repository, `plugins/mission-control/`, is a
 portable derived copy of an upstream Claude Code plugin synchronized from
 `infiquetra/infiquetra-claude-plugins` at pinned commit
 `3b2b7083fdda8e39e213b5f4acf9f8301d60dd52` (version 2.15.2). Following runbook
 Phase 3, this document captures the post-activation readback and verification
-bound to the frozen candidate
-(`143a71b8aec09c7605f57b860bcfa9179ca103e8`), on 31 August 2026.
+bound to the corrected frozen candidate
+(`a1e84e067444be11d4bffd261c46f7958557ba24`), on 30 August 2026.
 
-The filename prefix names the evidence family (the 2026-08-30 mission-control
-family); the body names the run date. This is the family's third generation,
-captured against tree `5fc16652…` after the portable README was corrected to
-state the beads-config ladder; the two earlier generations are superseded and
-kept as history.
+This is the second 2026-08-30 readback. The first bound the package at tree
+`1f49322e…`; the F18/F11/F35 provenance and README corrections moved the tree
+to `659f91f6…`, so the readback was re-captured against the shipped bytes
+rather than renumbered. The first record is superseded and kept as history.
 
 ## Context and Purpose
 
@@ -27,13 +38,12 @@ alone:
   3.12 floor;
 - Verification of the cycle-16 mutation proof by digest re-check.
 
-Held identical throughout: **credential-free** (no client authenticated to
-GitHub, every `GH_` and `GITHUB_` variable stripped), **read-only and offline**
-(no GitHub API call or network request; entrypoints ran `--help` only),
-**isolated** (each client ran in an isolated scratch home with empty
-configuration), and **on the floor** (every command executed on CPython 3.12.13
-in a throwaway virtual environment holding pytest, pyyaml, requests, and
-urllib3).
+Held identical throughout: **credential-free** (no client authenticated, every
+`GH_` and `GITHUB_` variable stripped), **read-only and offline** (no GitHub API
+call or network request; entrypoints ran `--help` only), **isolated** (each
+client ran in an isolated scratch home with empty configuration), and **on the
+floor** (every command executed on CPython 3.12.13 in a throwaway virtual
+environment holding pytest, pyyaml, requests, and urllib3).
 
 The readback itself makes no GitHub API call. That is a different surface from
 the separately recorded finding that the package's own test suite makes live
@@ -52,12 +62,12 @@ client-installed copy.
 ```json
 {
   "schema_version": "1",
-  "captured_on": "2026-08-31",
+  "captured_on": "2026-08-30",
   "release": {
     "name": "mission-control",
     "version": "2.15.2",
     "file_count": 71,
-    "tree_sha256": "5fc1665252a0dc293b0a1e4e8328fb6ab6631dd669133e0eb54dd5ffd1611b13",
+    "tree_sha256": "659f91f6eae524612ad8daf3046d083281e0e76a950de3600b4b2948c68a18bd",
     "upstream_commit": "3b2b7083fdda8e39e213b5f4acf9f8301d60dd52",
     "units": {
       "board": {
@@ -91,7 +101,7 @@ client-installed copy.
     }
   },
   "method": {
-    "credentials": "No client authenticated to GitHub; every GH_ and GITHUB_ variable removed from the environment before every command. The readback itself makes no GitHub API call; this is a different surface from the separately recorded package-test-suite finding.",
+    "credentials": "No client authenticated; every GH_ and GITHUB_ variable removed from the environment before every command. The readback itself makes no GitHub API call; this is a different surface from the separately recorded package-test-suite finding.",
     "network": "No GitHub API call, no marketplace refresh, no network request. The upstream release was verified against the local read-only checkout pinned at the recorded commit.",
     "isolation": "Each readback ran against the client-owned installed copies under their empty scratch homes, with no real configuration read or written. Qwen does not appear in the readback: its installed copies are recorded in the matrix, and the readback covers the three clients whose installs leave client-owned copies on disk."
   },
@@ -103,7 +113,7 @@ client-installed copy.
       "reported_version": null,
       "reported_digest": null,
       "recomputed_file_count": 71,
-      "recomputed_tree_sha256": "5fc1665252a0dc293b0a1e4e8328fb6ab6631dd669133e0eb54dd5ffd1611b13",
+      "recomputed_tree_sha256": "659f91f6eae524612ad8daf3046d083281e0e76a950de3600b4b2948c68a18bd",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },
@@ -114,7 +124,7 @@ client-installed copy.
       "reported_version": "2.15.2",
       "reported_digest": null,
       "recomputed_file_count": 71,
-      "recomputed_tree_sha256": "5fc1665252a0dc293b0a1e4e8328fb6ab6631dd669133e0eb54dd5ffd1611b13",
+      "recomputed_tree_sha256": "659f91f6eae524612ad8daf3046d083281e0e76a950de3600b4b2948c68a18bd",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },
@@ -142,7 +152,7 @@ client-installed copy.
   "cycle_16_verification": {
     "disposition": "verified_by_digest_recheck",
     "proof_document": "docs/evidence/2026-08-25-cycle16-mutation-proof-portable-copies.txt",
-    "frozen_candidate_commit": "143a71b8aec09c7605f57b860bcfa9179ca103e8",
+    "frozen_candidate_commit": "a1e84e067444be11d4bffd261c46f7958557ba24",
     "graded_file_digests": {
       "plugins/unifi/scripts/site_profile.py": "31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09",
       "scripts/assess_clients.py": "2f8fafe988f791e53403d619ed61e4749930838435d001993e8cf581ca1ad9d8",

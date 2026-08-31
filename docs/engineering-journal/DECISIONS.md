@@ -561,7 +561,7 @@ issue #54, operator ruling 4.
 
 **Superseded-run note.** This entry describes the FIRST 2026-08-30 assessment,
 against tree `1f49322e…`. That tree was later retired by the F18/F11/F35
-corrections, and the assessment was re-run against tree `659f91f6…` — see the
+corrections, and the assessment was re-run against the second tree — see the
 second-run entry immediately below. The entry is kept as the record of the
 first run; its Qwen-failed outcome describes that run only, and its evidence
 filenames were renamed when the repository's naming convention (plain name =
@@ -615,8 +615,11 @@ which point these bindings fire red until the evidence is re-run.
 **Author.** Claude for Jeff Cox (repair round 2 of issue #50, child #56, branch `orch-agent-plugins-50`)
 
 **Decision.** When the F18/F11/F35 provenance and README corrections landed at
-`a1e84e0`, the package moved from tree `1f49322e…` to tree `659f91f6…`, and
-the first 2026-08-30 evidence pair stopped describing the shipped bytes. The
+`a1e84e0`, the package moved from tree `1f49322e…` to a second tree, and
+the first 2026-08-30 evidence pair stopped describing the shipped bytes. That
+tree was itself retired one round later by the F71 beads-config disclosure
+correction (`143a71b`), which moved the package to `5fc16652…` — see the
+third-run entry immediately below for the current record. The
 assessment was re-run (run-002) against the corrected package and published
 as current — 3 clients work directly (Cursor Agent, Qwen, Agy), 7 work
 through an adapter, 0 failed, 0 unsupported, no stage timed out — and both
@@ -648,6 +651,43 @@ names the tree, not the stages that assessed it.
 **Revisit when** a future round must edit any byte under
 `plugins/mission-control/` after evidence is bound: the same batch-and-rerun
 path applies, and the assessment must precede the stamping.
+
+**Refs.** [`the second-run matrix, superseded by the third run`](../evidence/2026-08-30-mission-control-compatibility-matrix-pre-beads-config-ladder.md),
+[`the second-run readback, superseded by the third run`](../evidence/2026-08-30-mission-control-post-activation-readback-pre-beads-config-ladder.md),
+`tests/test_check_compatibility_matrix.py`, issue #56, operator ruling 3.
+
+### Mission Control 2.15.2 resync U5 third run: the beads-config disclosure correction moved the fingerprint again, and the evidence was re-run again
+
+**Author.** Claude for Jeff Cox (repair round 3 of issue #50, child #56, branch `orch-agent-plugins-50`)
+
+**Decision.** Repair-round finding F71 showed the portable README claimed an
+absent `beads-config.json` was handled locally when the loader in fact first
+attempts a live `gh api` read of it from `infiquetra-sdlc` (and degrades to
+`{}` only when that read fails or returns nothing). The README is
+target-owned — this repository's own text — so the correction was authored
+here at `143a71b`, moving the package from the second tree to tree
+`5fc16652…` and retiring the second evidence pair. Per the now twice-applied
+batch-and-rerun path, the assessment was re-run (run-003, 2026-08-31,
+assessed_on stated in the body while the filename prefix keeps the
+2026-08-30 family name, and the body says so plainly) and the evidence
+re-bound: 3 clients work directly (Cursor Agent, Qwen, Agy), 7 work through
+an adapter, 0 failed, 0 unsupported, no stage timed out. The Qwen disclosure
+is carried forward verbatim: its real binary was supplied by exported
+`QWEN_HERDR_REAL_BIN` exactly as Grok's and Agy's were by `--real-binary`,
+the harness does not declare Qwen's override itself, and without it the
+wrapper resolves into the empty isolated home and exits 127 — Qwen's
+works-directly is not the package improving. The plain filenames hold the
+current pair; every superseded generation carries a descriptive
+`-pre-<reason>` suffix, and the three-generation chain resolves to the
+current pair with no banner naming an already-superseded document.
+
+**Rejected alternatives.** (a) Deferring the README correction to avoid a
+third assessment — ships our own text describing behaviour the code does not
+have, the same defect class as the F18 provenance prose. (b) Editing the
+second-run evidence to match the moved tree — the explicit anti-pattern.
+
+**Revisit when** the next resynchronization or repair round moves the
+fingerprint: the same batch-and-rerun path applies a third time.
 
 **Refs.** [`the current matrix`](../evidence/2026-08-30-mission-control-compatibility-matrix.md),
 [`the current readback`](../evidence/2026-08-30-mission-control-post-activation-readback.md),
