@@ -46,9 +46,12 @@
   agent-launcher package across four stages with fingerprint-bound
   verification, with post-activation readback in
   [evidence/2026-08-27-agent-launcher-post-activation-readback.md](evidence/2026-08-27-agent-launcher-post-activation-readback.md).
-- [Mission Control ten-client compatibility matrix](evidence/2026-08-25-mission-control-compatibility-matrix.md)
-  records what every installed coding-agent client did with the portable
-  mission-control package across four stages with fingerprint-bound verification.
+- [Mission Control ten-client compatibility matrix](evidence/2026-08-30-mission-control-compatibility-matrix.md)
+  records what every installed coding-agent client did with the resynchronized
+  portable mission-control package across four stages with fingerprint-bound
+  verification, with post-activation readback in
+  [evidence/2026-08-30-mission-control-post-activation-readback.md](evidence/2026-08-30-mission-control-post-activation-readback.md).
+  The 2026-08-25 predecessor is superseded and kept as history.
 - [UniFi ten-client compatibility matrix](evidence/2026-08-22-unifi-compatibility-matrix.md)
   records what every installed coding-agent client did with the portable UniFi
   package, across four stages each, with the command and evidence behind every
