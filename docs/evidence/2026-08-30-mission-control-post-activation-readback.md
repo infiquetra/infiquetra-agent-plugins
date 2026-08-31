@@ -80,7 +80,7 @@ client-installed copy.
   "method": {
     "credentials": "No client authenticated; every GH_ and GITHUB_ variable removed from the environment before every command.",
     "network": "No GitHub API call, no marketplace refresh, no network request. The upstream release was verified against a local read-only checkout pinned at the recorded commit.",
-    "isolation": "Each client ran under an empty scratch home with empty configuration. Cursor ran against the real authenticated home with read-only rules. No real configuration was read or written."
+    "isolation": "Each readback ran against the client-owned installed copies under their empty scratch homes, with no real configuration read or written."
   },
   "readbacks": [
     {

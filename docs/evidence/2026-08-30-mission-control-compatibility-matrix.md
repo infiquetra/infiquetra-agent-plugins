@@ -39,6 +39,44 @@ Held identical across all ten:
 - **Real binaries.** Grok and Agy ran through their real binaries supplied by
   `--real-binary` (the harness never infers them; `which` returns a wrapper).
 
+## The status rubric
+
+Every client receives one overall status, assigned from the four-stage record:
+
+| Status | Meaning |
+|---|---|
+| `works-directly` | Placement, discovery, load, and invocation all ran through the client and succeeded. |
+| `works-through-an-adapter` | The package's portable skill units or session-scoped placement work; one or more stages are blocked or refused on a client-specific requirement (a marketplace manifest, a skills-only install), not on a package defect. |
+| `unsupported` | The client has no path to consume the package at all in its current form. |
+| `failed` | A stage ran and failed. A failure attributed to the assessment environment (not the package) is recorded with the requirement named, and the reason states it. |
+
+## Results
+
+In one sentence: **2 clients work directly, 7 work through an adapter, 1 failed
+(environment), and 0 are unsupported.**
+
+| Client | Version | Status | Placement | Discovery | Load | Invocation |
+|---|---|---|---|---|---|---|
+| Claude Code | 2.1.251 | works-through-an-adapter | executed | executed | executed | executed |
+| OpenAI Codex | 0.151.0 | works-through-an-adapter | executed | executed | blocked | blocked |
+| Cursor Agent | 2026.08.25-3e8eec8 | works-directly | executed | executed | executed | executed |
+| Qwen | 0.22.3 | failed | executed | executed | executed | executed |
+| Grok | 1.0.13 | works-through-an-adapter | executed | executed | executed | blocked |
+| OpenCode | 1.18.25 | works-through-an-adapter | executed | executed | executed | blocked |
+| Gemini CLI | 0.57.0 | works-through-an-adapter | executed | executed | executed | blocked |
+| Muse | 1.0.1 | works-through-an-adapter | executed | executed | executed | blocked |
+| Agy | 1.1.22 | works-directly | executed | executed | executed | executed |
+| Hermes | 0.20.6 | works-through-an-adapter | executed | executed | executed | blocked |
+
+Two rows deserve the reader's attention against the rubric. Claude Code's four
+stages all executed with exit 0, but its load stage is session-scoped — the
+client refuses `plugin details` for session-only plugins by name — so it is
+recorded works-through-an-adapter, not works-directly. Qwen's four stages are
+recorded executed because its commands ran, but every one exited 127: the
+isolated home's preserved Qwen wrapper was missing or not executable, so the
+real client never ran, and the overall status is failed with that environment
+reason stated in the record.
+
 ## Client outcomes in one line each
 
 | Client | Version | Outcome |
