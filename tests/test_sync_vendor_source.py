@@ -1024,6 +1024,23 @@ class PackageRootMarkerRuleTests(unittest.TestCase):
                     f"{path} declares an incomplete site-count row",
                 )
 
+    def test_the_rule_string_names_every_table_path(self) -> None:
+        """F41: the recorded rule prose must not contradict the table that
+        produced the bytes. Rendering the prose from the table would change
+        the recorded transform_rule bytes (and therefore the regenerated
+        provenance), so the join is asserted here instead: every table path
+        appears in the rule string, so a row added without a prose clause
+        fails at the gate."""
+        rule = svs.PACKAGE_ROOT_MARKER_TRANSFORM_RULE
+        for path in svs.PACKAGE_ROOT_MARKER_SITE_COUNTS:
+            with self.subTest(path=path):
+                self.assertIn(
+                    path,
+                    rule,
+                    f"the rule string does not describe {path}, whose site counts the "
+                    "table declares",
+                )
+
 
 MISSION_SHAPED_SOURCE: dict[str, str] = {
     ".claude-plugin/plugin.json": FIXTURE_MANIFEST,
