@@ -43,13 +43,6 @@ Three classifications, and every path in the derived tree is exactly one of them
   from `.claude-plugin/plugin.json` — a directory `relocate-claude-manifest`
   moves — onto the portable layout's own marker, `com.infiquetra.claude/plugin.json`.
 
-One exception to the package-agnostic contract is recorded rather than hidden:
-`resolve-package-root-marker` carries `PACKAGE_ROOT_MARKER_SITE_COUNTS`, a
-per-file site-count table keyed by package name and then package-relative
-path. A second package that selects this rule extends the table with its own
-slice rather than editing mission-control's, and `plan_sync` refuses to
-dispatch the rule when the descriptor's `client_extension_dir` does not name
-the marker directory the rule re-anchors on.
 * **target-owned portable source** — authored here rather than derived from the
   pinned commit. It is never overwritten and never removed by synchronization,
   which is what stops this script from silently destroying the portable
@@ -58,6 +51,14 @@ the marker directory the rule re-anchors on.
   the same name, and those are named in the descriptor's
   `superseded_by_target_owned` list so the custody table still accounts for
   every upstream path without copying it.
+
+One exception to the package-agnostic contract is recorded rather than hidden:
+`resolve-package-root-marker` carries `PACKAGE_ROOT_MARKER_SITE_COUNTS`, a
+per-file site-count table keyed by package name and then package-relative
+path. A second package that selects this rule extends the table with its own
+slice rather than editing mission-control's, and `plan_sync` refuses to
+dispatch the rule when the descriptor's `client_extension_dir` does not name
+the marker directory the rule re-anchors on.
 
 Two commands::
 
@@ -755,9 +756,18 @@ PORTABLE_ISFILE_EMISSION = (
 #: The portable emission of the `pytest.raises` match site, built from the
 #: same marker constant for the same reason. The marker is dot-escaped because
 #: the site pins a raw regex string.
+#: The portable marker with each dot backslash-escaped, as the raises site's
+#: raw regex string requires. Computed outside the f-string so the module
+#: parses on interpreters below 3.12 (which forbid backslashes inside f-string
+#: expressions).
+ESCAPED_PORTABLE_MARKER = PORTABLE_PACKAGE_ROOT_MARKER.replace(".", "\\.")
+
+#: The portable emission of the `pytest.raises` match site, built from the
+#: same marker constant for the same reason. The marker is dot-escaped because
+#: the site pins a raw regex string.
 PORTABLE_RAISES_EMISSION = (
     '        RuntimeError, match=r"package root containing '
-    f'{PORTABLE_PACKAGE_ROOT_MARKER.replace(".", "\\.")}/plugin\\.json not found"'
+    f'{ESCAPED_PORTABLE_MARKER}/plugin\\.json not found"'
 )
 
 #: The assertion site a carried test uses to prove the marker resolves: the
@@ -925,12 +935,19 @@ def package_root_marker_transform(payload: bytes, target_path: str) -> bytes:
                 "marker in both sites"
             )
         anchors.append(marker_a)
-    for finder, call in zip(finders, calls):
+    for index, (finder, call) in enumerate(zip(finders, calls)):
         if not finder.end() <= call.start():
             raise SyncError(
                 f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} matched its "
                 "module-scope call before a _find_package_root definition; the shape puts "
                 "the definition first, so this file carries a shape the rule does not describe"
+            )
+        if index + 1 < len(finders) and finders[index + 1].start() < call.start():
+            raise SyncError(
+                f"{target_path}: rule {PACKAGE_ROOT_MARKER_TRANSFORM_NAME} found a second "
+                "_find_package_root definition starting before the first definition's "
+                "module-scope call; the shape puts exactly one call beside each definition, "
+                "so this file carries a shape the rule does not describe"
             )
     for site in is_file_sites:
         anchors.append(site.group("marker"))

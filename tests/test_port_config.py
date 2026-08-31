@@ -671,6 +671,19 @@ class CommittedDescriptorTest(unittest.TestCase):
                         f"{path} declares {row['call']} calls for {row['finder']} finders; "
                         "the definition-before-call check cannot pair them",
                     )
+        # F98: path keys must be unique across every package's slice — the
+        # transform resolves its row by path alone.
+        all_paths = [
+            path
+            for slice_rows in svs.PACKAGE_ROOT_MARKER_SITE_COUNTS.values()
+            for path in slice_rows
+        ]
+        self.assertEqual(
+            len(all_paths),
+            len(set(all_paths)),
+            "a site-count path key appears in more than one package's slice; the "
+            "transform's by-path lookup would be ambiguous",
+        )
 
     def test_the_marker_precondition_refuses_a_mismatched_client_extension_dir(self) -> None:
         """F60: the descriptor-level refusal the planner runs before dispatching

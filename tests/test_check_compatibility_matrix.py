@@ -1352,6 +1352,13 @@ class MissionControlMatrixBindingTest(unittest.TestCase):
         self.assertTrue(MISSION_CONTROL_LIVE_DOCUMENT.is_file())
         self.assertEqual(ccm.check_matrix(MISSION_CONTROL_LIVE_DOCUMENT), [])
 
+    def test_the_headline_fingerprint_appears_in_the_prose(self) -> None:
+        """F91: the document's prose headline must carry the record's own
+        file_count and full tree_sha256, so a hand-edited headline cannot
+        diverge from the machine-readable record."""
+        self.assertIn(str(self.record["package"]["file_count"]), self.text)
+        self.assertIn(self.record["package"]["tree_sha256"], self.text)
+
     def test_it_declares_itself_current(self) -> None:
         directives = ccm.read_directives(self.text)
         self.assertEqual(directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_CURRENT)
@@ -1735,6 +1742,10 @@ class EvidenceDiscoveryTest(unittest.TestCase):
         ).stdout.splitlines()
         for relative in tracked:
             path = ROOT / relative
+            if not path.exists():
+                # F92: a tracked file deleted in the working tree must be
+                # skipped, not read into a FileNotFoundError.
+                continue
             text = path.read_text(encoding="utf-8", errors="replace")
             if EVIDENCE in path.parents:
                 directives = ccm.read_directives(text)

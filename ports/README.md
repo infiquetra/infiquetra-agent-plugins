@@ -117,7 +117,9 @@ always relocates under it); the selectable rules are the
 `normalize-skill-frontmatter`, and `resolve-package-root-marker` — whose
 per-file site-count table is keyed by package name, so a second package that
 selects it extends the table with its own slice rather than editing
-mission-control's. A name the tool does not implement is
+mission-control's, and every path key must be unique across all packages'
+slices (the transform resolves its row by path alone, so a duplicate key is
+refused as an ambiguous table, never guessed). A name the tool does not implement is
 refused at synchronization, never matched by a fallback. Version 2 is not
 accepted: both descriptors migrated in the same commit that bumped the
 version. Selection lives in the descriptor rather than a script-internal

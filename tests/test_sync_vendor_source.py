@@ -1036,41 +1036,114 @@ class PackageRootMarkerRuleTests(unittest.TestCase):
         every table path appears in the rule string, and each path's clause
         names exactly the site classes its row declares."""
         rule = svs.PACKAGE_ROOT_MARKER_TRANSFORM_RULE
-        clauses = rule.split("; ")
         for package, slice_rows in svs.PACKAGE_ROOT_MARKER_SITE_COUNTS.items():
             for path, row in slice_rows.items():
                 with self.subTest(package=package, path=path):
-                    clause = next(
-                        (c for c in clauses if path in c),
-                        None,
-                    )
-                    self.assertIsNotNone(
-                        clause,
+                    self.assertIn(
+                        path,
+                        rule,
                         f"the rule string does not describe {path}, whose site counts the "
                         "table declares",
                     )
-                    assert clause is not None
-                    self.assertEqual(
-                        "definition" in clause,
-                        row["finder"] > 0,
-                        f"{path}: the prose names the finder definition iff the row counts one",
+                    # Slice the clause from this path's name to the next path's
+                    # name — or, for the last path, to the end of its own
+                    # sentence — so the shared preamble and the trailing rule
+                    # prose cannot satisfy a count.
+                    positions = sorted(
+                        rule.index(p)
+                        for slice_paths in svs.PACKAGE_ROOT_MARKER_SITE_COUNTS.values()
+                        for p in slice_paths
+                        if p in rule
                     )
-                    self.assertEqual(
-                        "call" in clause,
-                        row["call"] > 0,
-                        f"{path}: the prose names the module-scope call iff the row counts one",
-                    )
-                    has_assertion = "assertion" in clause or "`assert (root" in clause
-                    self.assertEqual(
-                        has_assertion,
-                        row["is_file"] > 0,
-                        f"{path}: the prose names the is_file assertion iff the row counts one",
-                    )
-                    self.assertEqual(
-                        ("raises" in clause) or ("error-text match" in clause),
-                        row["raises"] > 0,
-                        f"{path}: the prose names the raises match iff the row counts one",
-                    )
+                    own = rule.index(path)
+                    following = [pos for pos in positions if pos > own]
+                    if following:
+                        clause = rule[own : min(following)]
+                    else:
+                        sentence_end = rule[own:].index(". ") + 1
+                        clause = rule[own : own + sentence_end]
+                    for site_class in svs.SITE_CLASSES:
+                        keyword = {
+                            "finder": "definition",
+                            "call": "call",
+                            "is_file": "assert",
+                            "raises": "match",
+                        }[site_class]
+                        self.assertEqual(
+                            clause.count(keyword),
+                            row[site_class],
+                            f"{path}: the prose states the {site_class} count as "
+                            f"{clause.count(keyword)} occurrences, the table declares "
+                            f"{row[site_class]}",
+                        )
+
+
+class PlanSyncPreconditionTests(SyncFixture):
+    """F60: the descriptor-level refusal dispatches through plan_sync, not
+    just the unit: a descriptor that selects the marker rule with a
+    client_extension_dir that does not name the marker directory refuses at
+    plan time, naming both values."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        base = Path(self._temporary.name) / "upstream-precondition"
+        files = dict(MISSION_SHAPED_SOURCE)
+        files["scripts/sync_template_docs.py"] = PACKAGE_ROOT_SCRIPT_SOURCE
+        self.source = base
+        self.commit = make_source_checkout(base, files)
+
+    def _marker_config(self, client_extension_dir: str) -> port_config.PortConfig:
+        return port_config.parse(
+            {
+                "schema_version": port_config.SCHEMA_VERSION,
+                "package": CONFIG.name,
+                "package_root": CONFIG.package_root,
+                "package_manifest": CONFIG.package_manifest,
+                "source": {
+                    "repository": CONFIG.source.repository,
+                    "package_path": CONFIG.source.package_path,
+                    "manifest_path": ".claude-plugin/plugin.json",
+                    "client_extension_dir": client_extension_dir,
+                },
+                "custody": {
+                    "byte_copies": ["CHANGELOG.md"],
+                    "entrypoint_transforms": [
+                        {"path": "scripts/split_client.py", "rule": svs.SPLIT_BUNDLED_TRANSFORM_NAME},
+                        {"path": "scripts/guarded_client.py", "rule": svs.GUARDED_BUNDLED_TRANSFORM_NAME},
+                        {"path": "skills/example/SKILL.md", "rule": svs.FRONTMATTER_TRANSFORM_NAME},
+                        {"path": "scripts/sync_template_docs.py", "rule": svs.PACKAGE_ROOT_MARKER_TRANSFORM_NAME},
+                    ],
+                    "dropped_from_source": ["scripts/fleet_commons_shim.py"],
+                },
+                "assessment": {
+                    "credential_prefixes": list(CONFIG.assessment.credential_prefixes),
+                    "package_scripts": list(CONFIG.assessment.package_scripts),
+                    "mutating_operations": sorted(CONFIG.assessment.mutating_operations),
+                    "entrypoints": list(CONFIG.assessment.entrypoints),
+                    "skill_units": list(CONFIG.assessment.skill_units),
+                    "declared_none": list(CONFIG.assessment.declared_none),
+                },
+                "provenance": {
+                    "notes": [],
+                    "dropped_reason": "Replaced by the build-time Fleet Core bundle.",
+                },
+            },
+            root=CONFIG.root,
+            path=CONFIG.path,
+        )
+
+    def test_plan_sync_refuses_a_mismatched_client_extension_dir(self) -> None:
+        config = self._marker_config("com.example.client")
+        with self.assertRaises(svs.SyncError) as caught:
+            svs.plan_sync(config, self.source, self.commit)
+        message = str(caught.exception)
+        self.assertIn("com.example.client", message)
+        self.assertIn(svs.PORTABLE_PACKAGE_ROOT_MARKER, message)
+
+    def test_plan_sync_accepts_the_matching_extension_dir(self) -> None:
+        config = self._marker_config("com.infiquetra.claude")
+        planned = svs.plan_sync(config, self.source, self.commit)
+        self.assertTrue(planned)
 
 
 MISSION_SHAPED_SOURCE: dict[str, str] = {
