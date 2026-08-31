@@ -381,6 +381,67 @@ target-owned edit inside the package root. Both join constraints and the freeze
 constraint fall away together, and six commits becomes reachable.
 
 
+### Mission Control 2.15.2 resync: the package-root transform is extended to rewrite what two carried tests assert
+
+**Author.** Jeff Cox, recorded by Claude (Amendment 4 to the issue #50 run plan,
+branch `orch-agent-plugins-50`). Operator decision; this entry records it and does
+not implement it.
+
+**Decision.** Extend the `resolve-package-root-marker` transform to a new version
+whose shape covers, per file, the `_find_package_root` definition, its module-scope
+call, **and the assertion sites** — the `.is_file()` marker assertions and the
+`pytest.raises` error-text match — and reclassify
+`plugins/mission-control/tests/test_issue_contract_parity.py` and
+`plugins/mission-control/tests/test_template_sync.py` from `custody.byte_copies` to
+`custody.entrypoint_transforms`.
+
+**Rationale.** Both files carry upstream's `.claude-plugin/plugin.json` package-root
+resolution and cannot work in the portable layout, where the Claude manifest is
+relocated to `com.infiquetra.claude/`. Verified at pin `3b2b7083`: the contract-parity
+test defines `_find_package_root` at line 36, raises at line 41, calls it at module
+scope at line 46 so it fails at collection, and additionally asserts the marker on
+itself at line 405 and pins the failure message at lines 410–417. The template-sync
+test has no such function of its own — it exercises the module the earlier decision
+already transforms — and two of its eight tests fail at lines 175 and 185–188
+**because** that earlier transform changed the marker and the error text. The second
+file is a consequence of the first decision, not an independent defect.
+
+A scan of every `.py` file in the pinned package found the pattern in exactly six
+files. Four positions were already settled: `fleet_commons_shim.py` dropped,
+`sync_template_docs.py` transformed, `test_card_validator_agreement.py` dropped by
+operator ruling, `test_prompt_alignment.py` dropped. These two were the only
+unresolved ones, and there is no seventh. The scan is recorded in the plan so a future
+resynchronization can re-run it rather than re-derive it.
+
+**The cost, not softened.** This rule rewrites what a test *asserts*, not merely where
+it looks. The earlier package-root decision deliberately stopped short of that line;
+this one crosses it. A carried test whose assertions are rewritten downstream no
+longer tests exactly what upstream tests, which is a real weakening of the
+derived-artifact principle. The operator judged it acceptable because the alternative
+was narrowing an inherited acceptance criterion — the whole reason the run accepted a
+larger commit count — and because the rewritten assertion still asserts the same
+property, that the package root is discoverable by this layout's marker, against the
+marker this layout actually uses.
+
+**The discipline that replaces single-shape.** The rule stops being single-shape,
+which this repository's transform discipline resists. Four obligations replace that
+guarantee: exact declared site counts per file; a loud refusal naming file, site class,
+and counts on any mismatch, never a partial application; idempotence on already-portable
+input; and reproducibility from the upstream bytes alone.
+
+**Rejected alternatives.** *Drop both from source*, as two other tests are dropped —
+the package would hold 69 files, breaking issue #53's explicit acceptance checkbox that
+it holds 71, which is an inherited criterion the run's commit-count ruling was taken
+specifically to preserve; and the portable copy would lose its contract-parity and
+template-sync coverage. *File upstream and stop* — it does not complete the
+resynchronization in this run and leaves the parent and all six children open pending
+an upstream release on another schedule; upstream is not wrong for its own layout.
+
+**Revisit when** upstream adopts a layout-neutral package-root resolution. Both of
+these transforms and the earlier one should then retire, and all three files return to
+being byte copies.
+
+
 ## 2026-08-27
 
 ### Auralis C3 adapter packaging: voice 0.3.0, mcpServers path into client extension, and acceptance evidence note

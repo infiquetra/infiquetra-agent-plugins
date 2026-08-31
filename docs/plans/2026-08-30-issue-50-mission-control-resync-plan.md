@@ -218,7 +218,9 @@ this work, in any unit, for any reason.
 - **Commits.** The run declaration says six child-scoped commits, one per unit.
   **That is not reachable**, and KTD15 proves it from four committed tests and the
   child issues' own clauses: the minimum that satisfies every inherited acceptance
-  criterion is **eleven**. This is a material deviation, raised as operator question
+  criterion was **eleven**, and Amendment 4 (KTD16) raises it to **thirteen** — two
+  more, one for the rule extension and one for the descriptor reclassification it
+  enables. The increase is stated, not absorbed. This is a material deviation, raised as operator question
   **Q8**; the plan does not present eleven as a compatible reading of six. Unit
   boundaries, ownership, and acceptance criteria are unchanged — three units simply
   land in more than one commit. Each
@@ -405,6 +407,8 @@ owned by exactly one unit.
 | R42 | U4 | `tests/test_sync_vendor_source.py` covers the new rule: it matches exactly once against the upstream bytes at the pin, refuses when the function is missing or duplicated, and is a no-op on already-portable input (KTD14, KTD15) | `python3 -m unittest tests.test_sync_vendor_source -v` |
 | R43 | U1, U3, U4, U5 | Every unit's inherited `unittest discover` criterion reports `OK` **at that unit's completion**, with no expected-red list and no moved checkpoint; U1, U2 and U3 complete in two commits and U4 in three to make that reachable (KTD15) | each unit's final commit carries a full four-gate transcript showing `OK` |
 | R44 | U2, U4, U1 | The new transform rule is registered (U2a), its pinned registry-name set repaired (U4a), and only then named by the descriptor (U1b) — the order two committed tests force (KTD15 P1, P2) | `git log --oneline` shows that order; `python3 -m unittest tests.test_port_config tests.test_sync_vendor_source -v` reports `OK` at U1b |
+| R45 | U1, U2, U4 | `tests/test_issue_contract_parity.py` and `tests/test_template_sync.py` are classified `deterministic-transform` under the extended package-root rule, both collect and pass in the portable layout, and the package still holds **71** files (KTD16) | `git ls-files plugins/mission-control \| wc -l` prints `71`; `python3 -m pytest plugins/mission-control/tests -q` passes on the floor interpreter |
+| R46 | U2 | The extended rule declares its expected site counts per file, refuses loudly on any count mismatch, is idempotent on already-portable input, and is reproducible from the upstream bytes alone (KTD16) | a deliberate count mismatch produces a refusal naming file, site class, and counts; re-running the transform is a no-op |
 
 ---
 
@@ -841,7 +845,9 @@ the four prerequisites above plus one issue clause.
 6. U1's first commit is already landed and accepted at `12c889c`, so the
    reclassification is necessarily a second U1 commit.
 
-Minimum: U0 one, U1 two, U2 two, U3 two, U4 three, U5 one — **eleven commits**. In
+Minimum: U0 one, U1 two, U2 two, U3 two, U4 three, U5 one — **eleven commits**.
+Amendment 4 (KTD16) adds one U2 commit and one U1 commit, making the total
+**thirteen**: U0 one, U1 three, U2 three, U3 two, U4 three, U5 one. In
 a counterfactual where U1 had not already landed it would be ten. There is no
 ordering that reaches six, because steps 2, 3, 4 and 5 each force a split
 independently, and none of the four prerequisites is a plan choice — every one is a
@@ -862,23 +868,26 @@ commits may be red.
 | 2 | `12c889c` | U1a | custody for the eight new tests, provenance notes — **landed and accepted** | green |
 | 3 | **U2a** | U2 | register the package-root transform rule in `scripts/sync_vendor_source.py` | red on the registry-name test (P2) — #53 has no discover criterion |
 | 4 | **U4a** | U4 | extend `expected` in `test_rule_names_register_exactly_once` to the six registered rules | green |
-| 5 | **U1b** | U1 | reclassify `scripts/sync_template_docs.py` in the descriptor, naming the now-registered rule | **green — U1 completes, #52 met** |
-| 6 | **U2b** | U2 | run the synchronization | red on the pin constants and `LiveDocumentTest` — #53 has no discover criterion; its package pytest and `--check` gates are green |
-| 7 | **U4b** | U4 | the three pin constants, and the rule's focused coverage | red on `LiveDocumentTest` only |
-| 8 | **U3a** | U3 | package-root edits, descriptor verb table, verb constants, guard and derivation tests — **last edit inside the package root** | red on `LiveDocumentTest` only |
+| 5 | **U1b** | U1 | reclassify `scripts/sync_template_docs.py` in the descriptor, naming the now-registered rule | green |
+| 6 | **U2c** | U2 | extend the rule to the assertion-covering version (KTD16) | green — the registered rule-*name* set is unchanged, so the registry pin holds |
+| 7 | **U1c** | U1 | reclassify `tests/test_issue_contract_parity.py` and `tests/test_template_sync.py` (KTD16) | **green — U1 completes, #52 met** |
+| 8 | **U2b** | U2 | run the synchronization | red on the pin constants and `LiveDocumentTest` — #53 has no discover criterion; its package pytest and `--check` gates are green |
+| 9 | **U4b** | U4 | the three pin constants, and the rule's focused coverage | red on `LiveDocumentTest` only |
+| 10 | **U3a** | U3 | package-root edits, descriptor verb table, verb constants, guard and derivation tests — **last edit inside the package root** | red on `LiveDocumentTest` only |
 | — | *freeze* | — | fingerprint final and recorded | — |
-| 9 | **U5** | U5 | one ten-client assessment, fresh matrix and readback, supersession, bindings | **green — U5 completes, #56 met** |
-| 10 | **U3b** | U3 | root `README.md` pin, version and counts, plus its pin test | **green — U3 completes, #54 met** |
-| 11 | **U4c** | U4 | skill-roster and PyYAML confirmations, and the recorded four-gate transcript | **green — U4 completes, #55 met** |
+| 11 | **U5** | U5 | one ten-client assessment, fresh matrix and readback, supersession, bindings | **green — U5 completes, #56 met** |
+| 12 | **U3b** | U3 | root `README.md` pin, version and counts, plus its pin test | **green — U3 completes, #54 met** |
+| 13 | **U4c** | U4 | skill-roster and PyYAML confirmations, and the recorded four-gate transcript | **green — U4 completes, #55 met** |
 
-Commits 4, 10 and 11 are real deliverables of their own issues, not bookkeeping.
+Commits 4, 12 and 13 are real deliverables of their own issues, not bookkeeping.
 The registry-name test is #55's file and #55's `MISSION_CONTROL_SKILLS` confirmation
 sits beside it; the root README's counts can only be finally correct once every unit
-has landed. Commits 9, 10 and 11 touch nothing under `plugins/mission-control/`, so
+has landed. Commits 11, 12 and 13 touch nothing under `plugins/mission-control/`, so
 the freeze holds and U5's single assessment stays valid.
 
 **This is a material deviation from §2.3's "six child-scoped commits, one per
-unit," and the plan does not pretend otherwise.** It is raised as operator question
+unit," and the plan does not pretend otherwise** — eleven at Amendment 3, thirteen
+after Amendment 4 (KTD16). It is raised as operator question
 **Q8** with the trade-off stated. It changes the SHA record and the review binding;
 it changes no unit boundary, no ownership, and no acceptance criterion.
 
@@ -899,6 +908,122 @@ rejects eleven commits and will not accept ten either.
 target-owned edit inside the package root. Then P1, P2 and P4 all fall away and six
 commits is reachable.
 
+
+### KTD16 — The package-root transform is extended to rewrite assertion sites, and two more carried tests become transforms
+
+**Added by Amendment 4 (§17). Operator decision. This amendment postdates doc-review
+cycle 5's PROCEED and has not been reviewed.**
+
+#### The blocker
+
+Two byte-copied tests carry upstream's package-root resolution and cannot work in the
+portable layout. Both verified at pin `3b2b7083`:
+
+**`tests/test_issue_contract_parity.py` — four sites, and it does not even collect.**
+`_find_package_root()` is defined at line 36, walks for `.claude-plugin/plugin.json`
+at line 39, raises `RuntimeError` at line 41 with that path in the message at line 42,
+and is called **at module scope** at line 46 (`PACKAGE_ROOT = _find_package_root()`).
+It then asserts the marker on itself at line 405
+(`assert (root / ".claude-plugin" / "plugin.json").is_file()`) and pins the failure
+message at lines 410–417 (`test_find_package_root_fails_loudly_when_missing`, matching
+`r"package root containing \.claude-plugin/plugin\.json not found"`). Reproduced: a
+`RuntimeError` at collection time.
+
+**`tests/test_template_sync.py` — two sites, and it is broken *by KTD14*.** This file
+has no `_find_package_root` of its own; it exercises
+`sync_template_docs._find_package_root`, the module KTD14 already transforms. It
+collects, and two of its eight tests fail: line 175 asserts the `.claude-plugin`
+marker is a file, and lines 185–188 assert `pytest.raises(RuntimeError, match=...)` on
+the old message text. **Those two failures are currently latent**: on the stopped U2
+tree `pytest plugins/mission-control/tests -q` aborts with `Interrupted: 1 error
+during collection` at `test_issue_contract_parity.py:41`, so it never reaches them. A
+worker who fixes only the parity file will see the template-sync failures appear, and
+should expect that rather than read it as a regression. Both fail **because** KTD14's `resolve-package-root-marker` rule
+deliberately changed the marker and the error string. This is a direct consequence of
+KTD14, not an independent defect, and the plan should say so rather than let a worker
+hunt for a second cause.
+
+#### The scan, recorded so nobody repeats it
+
+Every `.py` file in the pinned package was scanned for the `.claude-plugin` pattern.
+**Six carry it. Four positions were already settled; these two were the only
+unresolved ones.**
+
+| File | Occurrences | Position |
+|---|---:|---|
+| `scripts/fleet_commons_shim.py` | 3 | dropped — the Fleet Core bundle replaces it |
+| `scripts/sync_template_docs.py` | 2 | transformed by **KTD14** (`resolve-package-root-marker`) |
+| `tests/test_card_validator_agreement.py` | 3 | dropped by **operator ruling 2** |
+| `tests/test_prompt_alignment.py` | 10 | dropped — premises fail across the port boundary |
+| `tests/test_issue_contract_parity.py` | 4 | **unresolved → transformed by this decision** |
+| `tests/test_template_sync.py` | 2 | **unresolved → transformed by this decision** |
+
+There is no seventh file. A future resynchronization can re-run this scan rather than
+re-derive the inventory.
+
+#### Chosen — option (a)
+
+**Extend `resolve-package-root-marker` to a new version whose shape covers, per file:
+the `_find_package_root` definition, its module-scope call, and the assertion sites —
+both the `.is_file()` marker assertions and the `pytest.raises` error-text match — and
+reclassify both tests from `custody.byte_copies` to `custody.entrypoint_transforms`.**
+
+The two files need different subsets, and the rule must know that rather than guess:
+`test_issue_contract_parity.py` needs all four site classes; `test_template_sync.py`
+needs only the two assertion sites, because its subject is the already-transformed
+module.
+
+#### The cost, stated plainly
+
+**This rule rewrites what a test *asserts*, not merely where it looks. KTD14
+deliberately did not cross that line; this amendment does.** A carried test whose
+assertions are rewritten downstream is no longer testing exactly what upstream tests.
+That is a real weakening of the "derived artifact, never a second writable source"
+principle, and it is not softened here.
+
+**Why the operator judged it acceptable:** the alternative was narrowing an inherited
+acceptance criterion, and the eleven-commit ruling (Q8) was taken precisely to avoid
+that. Rewriting an assertion about a *layout marker* is narrower in blast radius than
+dropping two tests or leaving the resynchronization unfinished, and the rewritten
+assertion still asserts the same property — that the package root is discoverable by
+this layout's marker — against the marker this layout actually uses.
+
+**Revisit when** upstream adopts a layout-neutral package-root resolution. At that
+point both of these transforms, and KTD14's, should retire and all three files return
+to being byte copies.
+
+#### The discipline that replaces single-shape
+
+The rule stops being single-shape, which KTD1 and KTD2 discipline resists. Four
+obligations replace that guarantee, and a worker may not relax any of them:
+
+1. **Exact per-file site counts.** The rule declares how many of each site class it
+   expects in each file and matches exactly that many — four classes for
+   `test_issue_contract_parity.py`, the two assertion classes for
+   `test_template_sync.py`.
+2. **Refuse loudly on any count mismatch.** More or fewer sites than declared is a
+   refusal naming the file, the site class, and the counts found — never a partial
+   application, never a silent skip.
+3. **Idempotent.** Running it on already-portable input is a no-op, the same property
+   `normalize-skill-frontmatter` has for a file with no `when_to_use`.
+4. **Reproducible from source bytes alone.** No repository state, no environment, no
+   sibling file. The same upstream bytes produce the same output on any machine.
+
+#### Rejected alternatives
+
+**(b) Drop both from source**, the way `test_prompt_alignment.py` and
+`test_card_validator_agreement.py` are dropped. Rejected on two independent grounds.
+The package would hold **69 files**, breaking #53's explicit acceptance checkbox —
+"The package holds 71 files, proven by `git ls-files plugins/mission-control | wc -l`
+printing `71`" — an inherited criterion the eleven-commit ruling was taken
+specifically to preserve at full strength. And the portable copy would lose its
+contract-parity and template-sync coverage, shrinking what the package proves about
+itself.
+
+**(c) Upstream filing and stop.** Rejected because it does not complete the
+resynchronization in this run: #50 and #51–#56 would stay open pending an upstream
+release on another schedule. Upstream is not wrong for its own layout, so the filing
+would be asking upstream to stop using `.claude-plugin/` in a Claude plugin.
 
 ---
 
@@ -960,6 +1085,18 @@ U5 (#56)  fresh ten-client assessment, readback, supersession, bindings
   a rule breaks a test that pins the registry by name and belongs to U4. So the rule
   lands first, its registry test is repaired second, and the descriptor names it
   third. Amendment 2 had these backwards and U1's completion was red.
+- **U2c ⇒ U1c ⇒ U2b — the same prerequisite chain, one round later (KTD16).** The
+  extended rule must be registered before the descriptor selects it for the two test
+  files, and the descriptor must select it before the synchronization runs, or the sync
+  re-copies bytes that cannot collect. A third join applies here that KTD15 did not
+  need to name: `tests/test_port_config.py::CommittedDescriptorTest.test_the_custody_table_accounts_for_every_shipped_managed_path`
+  asserts the descriptor's custody agrees with the **shipped** `PROVENANCE.json`, so a
+  reclassification is only green once the synchronization has regenerated that manifest
+  with the new classification. U1c is therefore gated on a tree where the extended rule
+  has already been re-run — the same working-tree condition under which U1b passed.
+  **Operator-visible caveat:** if each commit must be green on a *clean checkout*
+  rather than on the run's working tree, U1c and U2b have to be adjacent and the run
+  should record that explicitly.
 - **U5 ⇒ U3b and U4c — the second landing-order edge (KTD15).** After U2, the only
   remaining reds are the pin constants (U4's) and `LiveDocumentTest` (U5's). U5 is the
   only unit that can clear the second one, and it cannot run before the package is
@@ -978,10 +1115,14 @@ the U3/U4 pair. Every other point in the graph is single-file.
 inherited gate is:
 
 ```
-U1a ✓ → U2a → U4a → U1b → U2b → U4b → U3a → FREEZE → U5 → U3b → U4c
-                     ↑                        ↑             ↑     ↑     ↑
-              U1 done (green)   last package-root edit   U5 done U3 done U4 done
+U1a ✓ → U2a ✓ → U4a ✓ → U1b ✓ → U2c → U1c → U2b → U4b → U3a → FREEZE → U5 → U3b → U4c
+                                              ↑                  ↑             ↑     ↑     ↑
+                                    U1 done (green)  last package-root edit  U5   U3    U4
 ```
+
+Amendment 4 (KTD16) inserts **U2c** (extend the package-root rule to cover assertion
+sites) and **U1c** (reclassify the two remaining tests in the descriptor), moving U1's
+completion from U1b to U1c. Thirteen commits, not eleven (Q8).
 
 The rule is registered (U2a) and its registry test repaired (U4a) **before** the
 descriptor names it (U1b) — that ordering is forced by two committed tests, not
@@ -1032,7 +1173,7 @@ a disjoint region.
 | `README.md` *(repository root)* | **U3** | pin, version, file count, test counts, Packages-table row |
 | `tests/test_mission_control_readme.py` | **U3** | `MUTATING_VERBS`, `READ_ONLY_VERBS` |
 | `tests/test_mission_control_rule_audit.py` | **U3** | create-option no-write guard, manifest-version derivation test, root-README pin test |
-| `scripts/sync_vendor_source.py` | **U2** | adds the new package-root transform rule (KTD14). Moved here from §6.3; see the note under that table |
+| `scripts/sync_vendor_source.py` | **U2** | registers the package-root transform rule (KTD14, commit U2a) and later extends it to the assertion-covering version (KTD16, commit U2c). Moved here from §6.3; see the note under that table |
 | `tests/test_sync_vendor_source.py` | **U4** | `MISSION_CONTROL_PIN`, the `source_version` assertion, the `MISSION_CONTROL_SKILLS` confirmation, and — added by Amendment 2 — coverage for the new package-root transform rule (KTD14, KTD15) |
 | `tests/test_check_compatibility_matrix.py` | **U5** | new mission-control matrix and readback binding classes |
 | `docs/evidence/2026-08-25-mission-control-compatibility-matrix.md` | **U5** | supersession directives only |
@@ -1045,7 +1186,7 @@ a disjoint region.
 
 | Path | Writers, in order | Disjoint regions |
 |---|---|---|
-| `ports/mission-control.json` | **U1**, then **U3** | U1 writes `custody.byte_copies`, `custody.dropped_from_source`, `provenance.notes`, `provenance.dropped_reason` — and, in its second commit, moves `scripts/sync_template_docs.py` from `custody.byte_copies` into `custody.entrypoint_transforms` (KTD14). U3 writes **only** `assessment.mutating_operations`. The two writers share no JSON key. Amendment 1 briefly made U2 a third writer here; Amendment 2 returned that edit to U1, which owns the file under #52, so the descriptor is back to the two writers #50's shaping records. |
+| `ports/mission-control.json` | **U1**, then **U3** | U1 writes `custody.byte_copies`, `custody.dropped_from_source`, `provenance.notes`, `provenance.dropped_reason` — in its second commit moves `scripts/sync_template_docs.py` into `custody.entrypoint_transforms` (KTD14), and in its **third** commit moves `tests/test_issue_contract_parity.py` and `tests/test_template_sync.py` the same way (KTD16, Amendment 4). U3 writes **only** `assessment.mutating_operations`. The two writers share no JSON key. Amendment 1 briefly made U2 a third writer here; Amendment 2 returned that edit to U1, which owns the file under #52, so the descriptor is back to the two writers #50's shaping records. |
 | `docs/engineering-journal/DECISIONS.md` | the plan commit (`1e4da2b`), then **U1** (`12c889c`), then the **Amendment 1** commit, then **U3**, then **U5** | Append-only, and strictly sequential in practice as well as in principle: no two of these writers were ever in flight at once. Each adds its own dated entry under a distinct anchor and edits no line another writer wrote. Amendment 1 appends after U1 because that is when the blocker surfaced. See KTD7. |
 
 **The rule for both multi-writer files above.** A later writer that finds it must change an earlier
@@ -1956,23 +2097,25 @@ ordering; graded-file containment; honest failure attribution.
 | 2 | **U1a** commits the descriptor custody and notes refresh — *landed at `12c889c`* | four gates green |
 | 3 | **U2a** registers the package-root transform rule in `scripts/sync_vendor_source.py` | `check_repo`, package pytest, floor run, `git diff --check` green. `unittest discover` red on `test_rule_names_register_exactly_once` only (KTD15 P2) — #53 carries no `unittest discover` criterion |
 | 4 | **U4a** extends `expected` in that registry test to the six registered rules | all four gates green plus the floor run. Not U4's completion |
-| 5 | **U1b** reclassifies `scripts/sync_template_docs.py` in the descriptor, naming the now-registered rule | all four gates green plus the floor run, `unittest discover` `OK` outright. **U1 completes here, satisfying #52** |
-| 6 | **U2b** runs the synchronization | `--check` round-trips clean; 71 files; `check_repo`, package pytest, floor run, `git diff --check` green. `unittest discover` red on the pin constants and `LiveDocumentTest` — allowed only because #53 has no such criterion |
-| 7 | **U4b** commits the three pin constants and the new rule's focused coverage | `python3 -m unittest tests.test_sync_vendor_source -v` reports `OK`; the pin reds clear. Not U4's completion |
-| 8 | **U3a** commits the package-root edits, the descriptor verb table, the verb constants, and the guard and derivation tests | `tests.test_mission_control_readme -v` and `tests.test_mission_control_rule_audit -v` report `OK`. Not U3's completion |
-| 9 | **Freeze integration** on `orch-agent-plugins-50` | tree clean; fingerprint recorded (§5). Last point at which any byte under `plugins/mission-control/` changes |
-| 10 | **U5** commits the fresh assessment, evidence, supersession, and bindings | all four gates green plus the floor run, **including `unittest discover` `OK`** — U4b cleared the pin constants and this commit clears `LiveDocumentTest`. Both new documents validate. **U5 completes here, satisfying #56** |
-| 11 | **U3b** commits the root `README.md` pin, version, and counts, and its pin test | all four gates green plus the floor run. **U3 completes here, satisfying #54** |
-| 12 | **U4c** commits the skill-roster and PyYAML confirmations and the recorded gate transcript | all four gates green plus the floor run. **U4 completes here, satisfying #55** |
-| 13 | **Review** — two independent reviewers in parallel, maximum three rounds, each bound to the frozen revision (§2.4) | all confirmed findings batched into one repair per round |
-| 14 | **Open one pull request** from `orch-agent-plugins-50` into `main` | the pull-request body states the merge form the policy actually allows |
-| 15 | **Squash-merge** (KTD8) | acceptance criteria on #50 all checked |
-| 16 | **Close #51–#56**, each recording its base, frozen, and merged commit; then close **#50** | per-child SHA record complete (§2.3). A unit that landed in more than one commit records every frozen SHA (Q8) |
+| 5 | **U1b** reclassifies `scripts/sync_template_docs.py` in the descriptor, naming the now-registered rule | all four gates green plus the floor run. *Was U1's completion before Amendment 4; U1 now completes at step 7* |
+| 6 | **U2c** extends `resolve-package-root-marker` to the assertion-covering shape and bumps its version (KTD16) | all four gates green plus the floor run; the registered rule-name set is unchanged, so the registry pin still holds. Not U2's completion |
+| 7 | **U1c** reclassifies `tests/test_issue_contract_parity.py` and `tests/test_template_sync.py` from byte copies to transforms (KTD16) | all four gates green plus the floor run, on a tree where the extended rule has been re-run so the shipped `PROVENANCE.json` agrees. **U1 completes here, satisfying #52** |
+| 8 | **U2b** runs the synchronization | `--check` round-trips clean; 71 files; `check_repo`, package pytest, floor run, `git diff --check` green. `unittest discover` red on the pin constants and `LiveDocumentTest` — allowed only because #53 has no such criterion |
+| 9 | **U4b** commits the three pin constants and the new rule's focused coverage | `python3 -m unittest tests.test_sync_vendor_source -v` reports `OK`; the pin reds clear. Not U4's completion |
+| 10 | **U3a** commits the package-root edits, the descriptor verb table, the verb constants, and the guard and derivation tests | `tests.test_mission_control_readme -v` and `tests.test_mission_control_rule_audit -v` report `OK`. Not U3's completion |
+| 11 | **Freeze integration** on `orch-agent-plugins-50` | tree clean; fingerprint recorded (§5). Last point at which any byte under `plugins/mission-control/` changes |
+| 12 | **U5** commits the fresh assessment, evidence, supersession, and bindings | all four gates green plus the floor run, **including `unittest discover` `OK`** — U4b cleared the pin constants and this commit clears `LiveDocumentTest`. Both new documents validate. **U5 completes here, satisfying #56** |
+| 13 | **U3b** commits the root `README.md` pin, version, and counts, and its pin test | all four gates green plus the floor run. **U3 completes here, satisfying #54** |
+| 14 | **U4c** commits the skill-roster and PyYAML confirmations and the recorded gate transcript | all four gates green plus the floor run. **U4 completes here, satisfying #55** |
+| 15 | **Review** — two independent reviewers in parallel, maximum three rounds, each bound to the frozen revision (§2.4) | all confirmed findings batched into one repair per round |
+| 16 | **Open one pull request** from `orch-agent-plugins-50` into `main` | the pull-request body states the merge form the policy actually allows |
+| 17 | **Squash-merge** (KTD8) | acceptance criteria on #50 all checked |
+| 18 | **Close #51–#56**, each recording its base, frozen, and merged commit; then close **#50** | per-child SHA record complete (§2.3). A unit that landed in more than one commit records every frozen SHA (Q8) |
 
 ### 8.2 What is landed, and what is not
 
-Nothing lands on `main` until the whole run is reviewed. All eleven child-scoped
-commits (KTD15, Q8) live on `orch-agent-plugins-50` until the merge step, which is
+Nothing lands on `main` until the whole run is reviewed. All thirteen child-scoped
+commits (KTD15, KTD16, Q8) live on `orch-agent-plugins-50` until the merge step, which is
 what lets the freeze mean something: the fingerprint U5 assesses is the fingerprint
 that ships.
 
@@ -2186,7 +2329,10 @@ separate item rather than left implicit?
 **This is the only open question in this list that blocks execution.** The run
 declaration says six child-scoped commits, one per unit. **Six is not reachable**, and
 KTD15 proves it rather than asserting it: four committed tests and the child issues'
-own clauses each force a split independently.
+own clauses each force a split independently. **Amendment 4 (KTD16) raises the total
+from eleven to thirteen** — one commit to extend the package-root transform rule and
+one for the descriptor reclassification it enables. The decision being asked for is
+unchanged in kind; only the number moved.
 
 - A descriptor may only name a transform rule the synchronizer already registers
   (`test_every_entrypoint_transform_entry_names_a_rule_the_sync_tool_implements`), so
@@ -2203,16 +2349,16 @@ own clauses each force a split independently.
 
 **The trade-off, stated plainly.**
 
-| | Eleven commits (this plan) | Six commits |
+| | Thirteen commits (this plan) | Six commits |
 |---|---|---|
 | Inherited acceptance criteria | every one met at full strength | #52, #54, #55 unmet — each would need an expected-red list or a moved gate |
 | What changes | the SHA record and the review binding; each split unit records more than one frozen commit | nothing — but the plan would be describing a run that cannot execute |
 | Unit boundaries, ownership, issue bodies | unchanged | unchanged |
 | Cost | more commits to review and record | a narrowed criterion, which cycle-2 finding D1 already rejected once |
 
-**The recommendation is eleven.** The alternative is not "six commits"; it is six
+**The recommendation is thirteen.** The alternative is not "six commits"; it is six
 commits plus three narrowed acceptance criteria. If the operator will not accept
-eleven, the honest fallback is not fewer commits either — it is KTD15's rejected
+thirteen, the honest fallback is not fewer commits either — it is KTD15's rejected
 option (f), running the ten-client assessment twice under the repository's
 supersede-and-re-run evidence loop, which costs a second operator-attended session to
 save one commit.
@@ -2514,3 +2660,53 @@ The pin. The four operator rulings. The work graph. The two-worker concurrency c
 The freeze after U3's package-root edits. The five graded files. The single ten-client
 assessment. Unit boundaries, file ownership, and every inherited acceptance criterion.
 No child issue was edited, and `plugins/mission-control/` was not touched.
+
+
+---
+
+## 17. Amendment 4 — the two remaining package-root tests (post-review)
+
+**Status: this amendment postdates doc-review cycle 5's PROCEED and has not been
+reviewed. It requires its own review before it drives any work.** A reader must not
+treat that PROCEED as covering KTD16, the thirteen-commit sequence, or R45 and R46.
+
+**What it is.** An operator decision, recorded here by the planner. The coordinator
+verified the blocker first-hand at pin `3b2b7083`, scanned every `.py` file in the
+pinned package for the pattern, chose option (a) over (b) and (c), and directed that
+it be recorded before any worker implements it. **No rule was written here**, and
+`plugins/mission-control/` was not touched — the 34 uncommitted paths there are the
+preserved U2 synchronization.
+
+**Where it lands.**
+
+| Change | Where |
+|---|---|
+| The decision, the scan, the cost, the replacement discipline, and the rejected alternatives | **KTD16** |
+| Two new verifiable requirements | **R45**, **R46** |
+| Descriptor gains a third U1 commit; the rule extension is U2's; coverage is U4's | §6.1, §6.2, §5, §8.1 |
+| Commit total moves eleven → thirteen | §2.3, §8.1, §8.2, **Q8** |
+
+### 17.1 The 71-file count is unchanged, so #53 line 129 still holds
+
+**Confirmed.** Option (a) reclassifies two files; it does not remove them. Both stay
+in the package, so `git ls-files plugins/mission-control | wc -l` still prints `71`
+and #53's acceptance checkbox — "The package holds 71 files" — holds at full strength.
+Verified against the working tree: `PROVENANCE.json` records **70** file entries plus
+the manifest itself. What moves is custody class only: byte copies **48 → 46**,
+entrypoint transforms **10 → 12**, dropped paths unchanged at **3**.
+
+Option (b) is the one that would have broken it, at 69 files. That is the first of the
+two grounds on which it was rejected.
+
+### 17.2 Ownership, unchanged in principle
+
+Each part goes to the unit that already owns the file, exactly as Amendment 2
+established:
+
+| Part | Unit | Commit |
+|---|---|---|
+| Extend the rule, bump its version | **U2** (#53) | U2c |
+| Reclassify both tests in the descriptor | **U1** (#52) | U1c — a **third** commit against a unit whose first two have landed |
+| Cover the new assertion-rewriting sites | **U4** (#55) | folded into U4b, which already carries the rule's coverage |
+
+No issue was edited, no unit boundary moved, and no acceptance criterion was narrowed.
