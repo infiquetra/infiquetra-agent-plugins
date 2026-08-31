@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "mission-control",
-  "version": "2.12.2",
-  "description": "Portable mission-control package: SDLC management for Infiquetra's Operations, Asgard, and CAMPPS boards — one shared CLI plus seven Agent Skills covering prepared issue drafts, live schema sync, board schemas, labels, project fields, flow helpers, metrics, milestones, rollout tracking, and card validation, derived from infiquetra-claude-plugins at the 2.12.2 revision. Claude Code files live under the com.infiquetra.claude client extension directory; the portable manifest, the package README, and the runnability enforcement are authored here.",
+  "version": "2.15.2",
+  "description": "Portable mission-control package: SDLC management for Infiquetra's Operations, Asgard, and CAMPPS boards — one shared CLI plus seven Agent Skills covering prepared issue drafts, live schema sync, board schemas, labels, project fields, flow helpers, metrics, milestones, rollout tracking, and card validation, derived from infiquetra-claude-plugins at the 2.15.2 revision. Claude Code files live under the com.infiquetra.claude client extension directory; the portable manifest, the package README, and the runnability enforcement are authored here.",
   "keywords": [
     "sdlc",
     "github-projects",

@@ -146,7 +146,6 @@
       "close",
       "comment",
       "create",
-      "create-option",
       "create-prepared",
       "deploy",
       "deploy-all",
@@ -159,6 +158,7 @@
       "move",
       "reopen",
       "set-field",
+      "set-options",
       "sync-fields",
       "unlink-sub-issue",
       "verify-label"

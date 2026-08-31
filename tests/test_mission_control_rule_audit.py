@@ -29,6 +29,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "plugins" / "mission-control"
@@ -684,6 +685,95 @@ class TemplateSyncAuditTests(unittest.TestCase):
         finally:
             ref_path.write_text(original, encoding="utf-8")
         self.assertTrue(sync_template_docs.check_reference())
+
+
+# ─── 6. Create-Option No-Write Guard (operator ruling 4) ─────────────────────
+
+
+class CreateOptionNoWriteGuardTests(unittest.TestCase):
+    """`fields create-option` performs NO mutation — the guard proves the write
+    path is never reached, in the style upstream's test_option_identity.py uses
+    for its own error paths: the destructive mutation constant
+    `QUERY_UPDATE_FIELD_OPTIONS` is asserted never sent."""
+
+    FIELD_ID = "PVTF_status"
+
+    @staticmethod
+    def _mutation_calls(mock_graphql):
+        return [
+            c
+            for c in mock_graphql.call_args_list
+            if c.args[0] == sdlc_manager.QUERY_UPDATE_FIELD_OPTIONS
+        ]
+
+    def test_create_option_reaches_no_write_path(self) -> None:
+        project = {"number": 2, "id": "PVT_asgard"}
+        field = {
+            "id": self.FIELD_ID,
+            "name": "Status",
+            "options": [{"id": "OPT_idea", "name": "Idea"}],
+        }
+        with (
+            patch.object(
+                sdlc_manager,
+                "load_config",
+                return_value={"project_mappings": {"projects": {"asgard": project}}},
+            ),
+            patch.object(sdlc_manager, "get_project_config", return_value=project),
+            patch.object(sdlc_manager, "get_project_fields", return_value=("PVT_asgard", [field])),
+            patch.object(sdlc_manager, "_graphql") as mock_graphql,
+        ):
+            sdlc_manager.fields_create_option("asgard", "Status", "Idea", "json")
+        self.assertEqual(
+            self._mutation_calls(mock_graphql),
+            [],
+            "fields create-option reached the destructive mutation path "
+            "(QUERY_UPDATE_FIELD_OPTIONS was sent)",
+        )
+        self.assertEqual(
+            mock_graphql.call_count,
+            0,
+            "fields create-option issued a GraphQL call on the discover-and-print path",
+        )
+
+    def test_create_option_still_prints_when_the_field_is_absent(self) -> None:
+        """The no-write property must hold on the error path too: an absent field
+        fails the command without any GraphQL call, mutation or otherwise."""
+        project = {"number": 2, "id": "PVT_asgard"}
+        with (
+            patch.object(
+                sdlc_manager,
+                "load_config",
+                return_value={"project_mappings": {"projects": {"asgard": project}}},
+            ),
+            patch.object(sdlc_manager, "get_project_config", return_value=project),
+            patch.object(sdlc_manager, "get_project_fields", return_value=("PVT_asgard", [])),
+            patch.object(sdlc_manager, "_graphql") as mock_graphql,
+        ):
+            with self.assertRaises(SystemExit):
+                sdlc_manager.fields_create_option("asgard", "Status", "Idea", "json")
+        self.assertEqual(self._mutation_calls(mock_graphql), [])
+        self.assertEqual(mock_graphql.call_count, 0)
+
+
+# ─── 7. Manifest-Version Derivation (KTD5) ───────────────────────────────────
+
+
+class ManifestVersionDerivationTests(unittest.TestCase):
+    """`plugins/mission-control/plugin.json`'s version is derived from
+    `PROVENANCE.json`'s `source_version`, on the pattern shipped for
+    agent-launcher in tests/test_agent_launcher_packaging.py — a hand-edited
+    manifest that diverges from the provenance record fails here."""
+
+    def test_manifest_version_equals_provenance_source_version(self) -> None:
+        manifest = json.loads((PACKAGE / "plugin.json").read_text(encoding="utf-8"))
+        provenance = json.loads((PACKAGE / "PROVENANCE.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            manifest["version"],
+            provenance["source_version"],
+            "the portable manifest version diverged from the provenance source_version; "
+            "derive it deliberately, never retype it",
+        )
 
 
 if __name__ == "__main__":

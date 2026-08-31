@@ -57,7 +57,6 @@ MUTATING_VERBS = frozenset(
         "close",
         "comment",
         "create",
-        "create-option",
         "create-prepared",
         "deploy",
         "deploy-all",
@@ -70,6 +69,7 @@ MUTATING_VERBS = frozenset(
         "move",
         "reopen",
         "set-field",
+        "set-options",
         "sync-fields",
         "unlink-sub-issue",
         "verify-label",
@@ -94,6 +94,7 @@ READ_ONLY_VERBS = frozenset(
         "audit",
         # fields
         "discover",
+        "create-option",
         # metrics
         "cycle-time",
         "throughput",
@@ -105,7 +106,6 @@ READ_ONLY_VERBS = frozenset(
         # rollout
         "status",
         "gap-analysis",
-        "update",
         # flow
         "field-options",
         "discover-project",

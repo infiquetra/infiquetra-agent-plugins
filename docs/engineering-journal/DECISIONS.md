@@ -498,6 +498,57 @@ binding, at which point the withdrawn caveat becomes a real constraint and shoul
 re-stated with the citation that then exists.
 
 
+### Mission Control 2.15.2 resync U3a: the create-option reclassification is proven, not asserted, and the manifest version is derived, not retyped
+
+**Author.** Claude for Jeff Cox (U3a of issue #50, child #54, branch `orch-agent-plugins-50`)
+
+**Decision.** (1) Under operator ruling 4, `fields create-option` moves from
+the mutating to the read-only set and `fields set-options` is added to the
+mutating set, across the three locked surfaces in one commit —
+`assessment.mutating_operations`, the portable README's per-skill verb table
+(plus the prose sentence about the removed `rollout update`, dropped upstream
+by filing #821), and `MUTATING_VERBS`/`READ_ONLY_VERBS` in
+`tests/test_mission_control_readme.py`. Verified against the pinned source:
+`fields_create_option` (sdlc_manager.py:2026) only discovers a field and
+prints its options — its docstring states "This command performs NO mutation —
+it never has" — while `fields_set_options` (2070) calls
+`update_field_single_select_options` (2113), a real mutation unless `--dry-run`.
+(2) Because reclassifying a verb from mutating to read-only narrows a safety
+declaration, a focused guard now proves the mutation path is never reached:
+`CreateOptionNoWriteGuardTests` drives `fields_create_option` through both the
+happy and the absent-field error paths with `_graphql` patched and asserts the
+destructive `QUERY_UPDATE_FIELD_OPTIONS` constant is never sent and no
+GraphQL call occurs at all, in the style `test_option_identity.py` uses for
+its error paths. The guard's negative proof was captured (deliberate
+weakening went red, then reverted). (3) The manifest-version claim is closed
+by derivation: `ManifestVersionDerivationTests` binds
+`plugins/mission-control/plugin.json`'s `version` to `PROVENANCE.json`'s
+`source_version` on the agent-launcher packaging-test pattern, so a
+hand-edited manifest diverging from the provenance record fails.
+
+**Rationale.** The #9 run's only review finding was a hand-transcribed
+identity row with no derivation and no pin test; retyping the version
+reproduces that defect one release later. A narrowed safety claim needs
+positive proof rather than a changed constant — a test that merely asserts
+the function returns without error proves nothing about writes.
+
+**Rejected alternatives.** (a) Reclassify without a guard — a one-line
+narrowing of a safety boundary with no evidence. (b) Leave `create-option`
+mutating "to be safe" — over-declares, pollutes the audited table, and makes
+the README's disclosure false in the other direction. (c) Retype the version
+claim with reviewer discipline as the control — the exact failure the #9
+review caught.
+
+**Revisit when** upstream changes either handler's implementation, or a
+future run retires the portable-README decision so the verb table no longer
+lives in three locked places.
+
+**Refs.** [`ports/mission-control.json`](../../ports/mission-control.json),
+[`plugins/mission-control/README.md`](../../plugins/mission-control/README.md),
+`tests/test_mission_control_readme.py`, `tests/test_mission_control_rule_audit.py`,
+issue #54, operator ruling 4.
+
+
 ## 2026-08-27
 
 ### Auralis C3 adapter packaging: voice 0.3.0, mcpServers path into client extension, and acceptance evidence note
