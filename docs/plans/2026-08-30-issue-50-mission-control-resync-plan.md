@@ -998,9 +998,22 @@ The rule stops being single-shape, which KTD1 and KTD2 discipline resists. Four
 obligations replace that guarantee, and a worker may not relax any of them:
 
 1. **Exact per-file site counts.** The rule declares how many of each site class it
-   expects in each file and matches exactly that many — four classes for
-   `test_issue_contract_parity.py`, the two assertion classes for
-   `test_template_sync.py`.
+   expects in each file and matches exactly that many. Version 1 of this rule
+   requires exactly one finder definition and exactly one module-scope call in
+   every file it is applied to; `test_template_sync.py` has neither, so a v2
+   that keeps that absolute requirement will refuse the file this decision
+   exists to carry. The declared counts are:
+
+   | File | finder definition | module-scope call | `.is_file()` assertion | `pytest.raises` match |
+   |---|---:|---:|---:|---:|
+   | `scripts/sync_template_docs.py` | 1 | 1 | 0 | 0 |
+   | `tests/test_issue_contract_parity.py` | 1 | 1 | 1 | 1 |
+   | `tests/test_template_sync.py` | 0 | 0 | 1 | 1 |
+
+   The walk line and the error text inside a finder definition remain internals
+   of that one definition (KTD14 match unit), not extra site classes. The
+   assertion rewrite uses the same portable marker KTD14 already names:
+   `com.infiquetra.claude` / `com.infiquetra.claude/plugin.json`.
 2. **Refuse loudly on any count mismatch.** More or fewer sites than declared is a
    refusal naming the file, the site class, and the counts found — never a partial
    application, never a silent skip.

@@ -2,103 +2,96 @@
 date: 2026-08-30
 kind: doc-review
 target: docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md
-reviewed_revision: 084c148ef36c38f6cdafc86055e311801e4cfbcc
+reviewed_revision: 02c8bed371aabd38360d2c3033499c04bc330ab8
 branch: orch-agent-plugins-50
 classification: issue-derived implementation plan
 blocked: false
-cycles: 5
+cycles: 6
 ---
 
 # Doc Review — Mission Control 2.15.2 resync plan
 
-Amendment 3 at `084c148` closes D4. The document can drive implementation once the operator answers Q8; this review does not answer it.
+Amendment 4 at `02c8bed` can drive the two-test reclassification once the per-file site-count table is followed. Cycle 5's PROCEED still covers everything prior. Q8 remains the operator's.
 
 ## Applied fixes
 
-Cycles 1–3 applied plan edits as recorded earlier. Cycles 4 and 5 applied none.
+Cycles 1–3 applied plan edits as recorded earlier. Cycles 4–5 applied none.
 
-`plugins/mission-control/` was not modified. The 34 uncommitted paths there remain the stopped U2 sync. HEAD `084c148` touches only the plan and `docs/engineering-journal/DECISIONS.md` (zero package paths).
+Cycle 6 filled KTD16's "exact per-file site counts" with a three-row table. Version 1 of `resolve-package-root-marker` requires exactly one finder and one module-scope call in every file it touches (`scripts/sync_vendor_source.py` 755–768). `tests/test_template_sync.py` has neither. A v2 that keeps that absolute requirement refuses the file this decision exists to carry. The table is the counts the cited pin lines already imply:
+
+| File | finder | call | `.is_file()` | `pytest.raises` |
+|---|---:|---:|---:|---:|
+| `scripts/sync_template_docs.py` | 1 | 1 | 0 | 0 |
+| `tests/test_issue_contract_parity.py` | 1 | 1 | 1 | 1 |
+| `tests/test_template_sync.py` | 0 | 0 | 1 | 1 |
+
+`plugins/mission-control/` was not modified. The 34 uncommitted paths there remain the preserved U2 sync.
 
 ## Readiness summary
 
-Cycle 2's PROCEED on the pre-amendment plan stands. Cycle 3's other conclusions stand. D5, D6, and D7 stay closed. `/work` is not blocked by a document defect; Q8 is an operator gate the plan already refuses to absorb.
+`/work` is not blocked by a document defect. Two P2s remain: thirteen is not the proven minimum under option (a), and the U1c "third join" cites a UniFi-only test.
 
 | review-result field | value |
 | --- | --- |
 | target path | `docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md` |
-| reviewed repository revision | `084c148ef36c38f6cdafc86055e311801e4cfbcc` (`git rev-parse HEAD` matched; subject `docs(mission-control): correct the transform-rule prerequisite order and escalate the commit count`). Working tree carries 34 uncommitted paths under `plugins/mission-control/` only — preserved, not a dirty-tree blocker. |
+| reviewed repository revision | `02c8bed371aabd38360d2c3033499c04bc330ab8` (`git rev-parse HEAD` matched; subject `docs(mission-control): record the operator decision to transform the two remaining package-root tests`). Working tree carries 34 uncommitted paths under `plugins/mission-control/` only — preserved, not a dirty-tree blocker. Cycle-6 plan edit is in this working tree and lands with this artifact. |
 | origin contract | [infiquetra/infiquetra-agent-plugins#50](https://github.com/infiquetra/infiquetra-agent-plugins/issues/50) and children [#51](https://github.com/infiquetra/infiquetra-agent-plugins/issues/51)–[#56](https://github.com/infiquetra/infiquetra-agent-plugins/issues/56) |
-| classification | issue-derived implementation plan; issue-phase rubrics applied to Amendment 3 / D4 and Q8 only |
+| classification | issue-derived implementation plan; issue-phase rubrics applied to Amendment 4 / KTD16 only |
 | rubric phase | issue (three cores; three extras applied by judgment) |
 | blocked | no |
-| finding counts | P0: 0; P1: 0 open (D4 closed); P2: 0 open (D8 escalated to Q8); P3: 0 open. D1–D7 closed. |
-| applied fixes | cycle 5: none |
+| finding counts | P0: 0; P1: 0 open; P2: 2 open (D9, D10); P3: 0. D1–D8 closed. |
+| applied fixes | cycle 6: per-file site-count table in KTD16 |
 | override rationale | none |
 | review artifact | `docs/reviews/2026-08-30-issue-50-mission-control-resync-plan-doc-review.md` |
 | linked issue / plan | #50; saga tick `.claude/saga/sagas/issue-50/20260830-204750.md`; destination merge; inline |
 
-## Cycle 5 — D4 residue and Q8 proof
+## Cycle 6 — Amendment 4 / KTD16 only
 
-HEAD `084c148ef36c38f6cdafc86055e311801e4cfbcc` was confirmed before this pass. Cycle-2 and cycle-3 conclusions were not re-opened. D5–D7 were not re-judged.
+HEAD `02c8bed371aabd38360d2c3033499c04bc330ab8` was confirmed before this pass. Cycle-5 PROCEED was not re-opened.
 
-### D4 — closed
+### The seven questions
 
-The inverted order is corrected in code, not only in prose.
+1. **71 files.** True. Committed descriptor has 48 `byte_copies`, 10 `entrypoint_transforms`, 3 `dropped_from_source`. Moving two tests is 46 / 12 / 3. Working-tree `PROVENANCE.json` has 70 `files` entries and does not list itself; `plugin.json` is one of the 70. The original 64 + 7 new tests = 71; option (a) does not remove a path. Option (b) is 69 and would break #53's line-129 checkbox. `git ls-files` is 64 on this branch because the U2 sync is uncommitted; that does not change the custody arithmetic.
 
-`tests/test_port_config.py::CommittedDescriptorTest.test_every_entrypoint_transform_entry_names_a_rule_the_sync_tool_implements` (lines 561–575) still requires every named rule to sit in `svs.TRANSFORM_RULES`. `tests/test_sync_vendor_source.py::MissionShapedSyncTests.test_rule_names_register_exactly_once` (lines 919–931) still pins `set(svs.TRANSFORM_RULES)` to a literal five-name set. That is the only test in `tests/` that pins the registry cardinality. The file is U4's under #55; #53 forbids U2 from editing it. P2 is real and correctly assigned.
+2. **Rule spec.** After the cycle-6 table: sufficient. The pin lines are as claimed (parity 36 / 39 / 41 / 46 / 405 / 410–415; template-sync 175 and 186). The six-file `.claude-plugin` scan is exact: shim (3), `sync_template_docs` (2), agreement (3), prompt-alignment (10), parity (4), template-sync (2). No seventh `.py`. The walk and error text stay internals of the finder (KTD14). Refusal, idempotence, and source-bytes-only are stated. Without the table, v1's absolute 1+1 requirement would refuse `test_template_sync.py`.
 
-The sequence U2a → U4a → U1b → U2b satisfies both tests: U2a registers (discover red on the registry-name test only; #53 has no discover AC), U4a extends `expected` to six (discover green; not U4's completion), U1b names the now-registered rule (discover green; #52 met), U2b syncs (discover red on pin constants and `LiveDocumentTest`; #53 still has no discover AC). `check_repo.py` does not join descriptor custody to provenance, and `MissionControlShippedTests` does not iterate every `entrypoint_transforms` path, so U1b does not fail a second classification-agreement test. R44 binds that order to `git log` plus `unittest tests.test_port_config tests.test_sync_vendor_source` at U1b.
+3. **Cost.** Honest. KTD16 says the rule rewrites what a test asserts, that KTD14 did not cross that line, that this is a real weakening, and that it is not softened. Revisit when upstream is layout-neutral is the same real condition as KTD14.
 
-The later completions still work: U4b clears pins after U2b, U3a is the last package-root edit and is not measured, freeze follows U3a, U5 clears `LiveDocumentTest` and meets #56, U3b meets #54, U4c meets #55. §2.6, R39, and the §5 ASCII no longer measure #54 at the U4→U3 rebase.
+4. **Thirteen commits.** Surfaced in §2.3, §5, §8.1, §8.2, and Q8. Not the proven minimum under option (a). The rule *name* is already registered at U2a (`PACKAGE_ROOT_MARKER_TRANSFORM_NAME` is in the U4a expected set). `test_every_entrypoint_transform_entry_names_a_rule_the_sync_tool_implements` joins names, not versions, so U1c does not require U2c first. U2c must precede U2b (v2 has to exist when the two tests are synced) and can fold into U2b. That is twelve: one new U1 commit plus an extended U2b. D9.
 
-Two leftovers remain and do not reopen D4: the U4 unit still opens with "lands in **two commits**" and then lists three; the §5 U4⇒U3 edge still says "U3's gate runs" on the post-U4b tree. The U3 section, §2.6, R39, and §8.1 are the measurement points, and they are correct.
+5. **Ownership.** Holds. U1c writes only the descriptor (third sequenced U1 commit; U3 still owns `assessment.mutating_operations` only). U2c writes only `scripts/sync_vendor_source.py`. Coverage folds into U4b, which already owns that file. No issue body was edited. No unit boundary moved.
 
-### Q8 proof — sound (not resolved)
+6. **Inherited ACs.** #53's 71-file line is intact. #50 still allows recorded transforms. #53 out-of-scope still keeps the descriptor and downstream tests off U2. #55 still meets discover `OK` at U4c. No checkbox is narrowed. Rewriting assertions is a custody-principle cost, not an AC change.
 
-Six one-commit-per-unit landings cannot meet #52, #54, and #55 at full strength. Each of P1–P4 is a committed test or a live issue clause, and each forces a split:
+7. **Disclosure.** Honest. KTD16 and §17 state the amendment postdates cycle 5's PROCEED and must not be treated as covered by it.
 
-- P1 + #52 descriptor-only + sync-after-reclassify → U2 two commits
-- P2 + U4-owned registry pin + P3 pins-after-sync → U4a ≠ U4b
-- #55 discover-OK only after U5, and U5 needs pins first → U4c
-- P4 + #54 + U3 last package-root writer → U3 two commits
-- U1a already landed → U1 two
+### D9 — open (P2)
 
-That is eleven (ten only in the counterfactual where U1a had not landed). Collapsing U4b into U4c would leave U5 red on the pin constants. Collapsing U4a into U4b would name the rule before the registry test is repaired, or repair it after U1b. The trade-off table is honest: the alternative to eleven is six plus narrowed #52/#54/#55, which cycle-2 D1 already rejected. The plan does not present eleven as a compatible reading of six. Q8 stays the operator's.
+Thirteen is honestly counted and honestly not a compatible reading of six. It is not forced by option (a). U2c as a standalone commit is a preference.
 
-### Formal issue-rubric results (Amendment 3 / D4 and Q8 only)
+### D10 — open (P2)
 
-| rubric | cycle 4 | cycle 5 | evidence |
-| --- | --- | --- | --- |
-| Acceptance criteria clarity | BLOCK | PASS | #52 is met at U1b; #54/#55/#56 stay at their completion commits |
-| Devil's advocate | REVISE | PASS | four splits are forced; Q8 is the remaining product decision and is escalated |
-| Specification fidelity | REVISE | PASS | no inherited AC narrowed; Q8 does not rewrite issue bodies |
-| Context completeness | PASS | PASS | both join tests, owners, and R44 are named |
-| Issue sizing | PASS | PASS | no new unit |
-| Prerequisite mapping | BLOCK | PASS | U2a → U4a → U1b → U2b is now the explicit critical path |
+§5's "third join" cites `CommittedDescriptorTest.test_the_custody_table_accounts_for_every_shipped_managed_path`. That method uses `self.config`, and `CommittedDescriptorTest.setUp` loads **unifi** only (`tests/test_port_config.py` 470–471). A mission-control reclassification does not fail it. U1c is green on a clean checkout without re-running the transform on the working tree; the operator-visible caveat is aimed at the wrong test.
 
-## Cycle 4 (unchanged except D4/D8 dispositions above)
+### Formal issue-rubric results (Amendment 4 only)
 
-Bound `4083220`. D5–D7 closed. D4 was U1b / registry-join. D8 was nine vs six.
-
-## Cycle 3 and cycle 2 (unchanged)
-
-Custody path, precedent, graded set, and match unit stand. D1 and D2 closed at `82dcb1c`.
+| rubric | cycle 6 | evidence |
+| --- | --- | --- |
+| Acceptance criteria clarity | PASS | R45/R46 plus the site-count table are reviewer-identical |
+| Devil's advocate | REVISE | option (a) is the smallest slice that keeps 71; D9 is extra commit cost |
+| Specification fidelity | PASS | #53 line 129 unweakened; no issue edited |
+| Context completeness | PASS | after the table, files, pin lines, and v1 constraint are named |
+| Issue sizing | PASS | two files, one rule version bump |
+| Prerequisite mapping | REVISE | U2c before U2b is real; U2c before U1c is not forced by the cited test |
 
 ## Remaining findings by priority
 
 | id | priority | status | disposition |
 | --- | --- | --- | --- |
-| D1 | P1 | closed | landing order serialized at `82dcb1c` |
-| D2 | P3 | closed | R36 uniform at `82dcb1c` |
-| D3 | P1 | closed | match unit filled at cycle 3 |
-| D4 | P1 | closed | U2a → U4a → U1b → U2b; #52 green at U1b; later completions unchanged |
-| D5 | P2 | closed | #53 out-of-scope holds |
-| D6 | P3 | closed | two writers restored; files-expected gap disclosed |
-| D7 | P3 | closed | dummy `.claude-plugin/` is KTD14 (d) |
-| D8 | P2 | closed | escalated to operator question Q8; not absorbed |
-
-No document findings remain open. Q8 is an operator decision, not a review finding.
+| D1–D8 | — | closed | as in cycle 5 |
+| D9 | P2 | open | thirteen surfaced; twelve is reachable under option (a) by folding U2c into U2b |
+| D10 | P2 | open | U1c third-join cites a UniFi-only custody-agreement test |
 
 ## Residual risk from limited evidence
 
-U1b green was read from the two join tests, `check_repo.py`'s provenance checks, and `MissionControlShippedTests`'s hardcoded path list, not executed against an edited descriptor. The U4 "two commits" header and the §5 "U3's gate runs" sentence were not edited. R36 still says the four gates are green at every unit's frozen commit; U2's two frozen commits are the documented exception under §2.6 and R43, not under R36.
+The six-file scan was `git grep -F '.claude-plugin'` at `3b2b7083` against `plugins/mission-control/**/*.py`. Collection failure on the parity file was not re-executed; the module-scope call at line 46 matches the already-reproduced `sync_template_docs` shape. 71 vs this branch's `git ls-files` of 64 is the uncommitted U2 sync, not a custody error.
