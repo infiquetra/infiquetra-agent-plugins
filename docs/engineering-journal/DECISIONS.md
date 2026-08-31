@@ -598,8 +598,8 @@ mutation proof's graded set, and the bindings belong in the test file.
 **Revisit when** the next resynchronization moves the fingerprint again, at
 which point these bindings fire red until the evidence is re-run.
 
-**Refs.** [`docs/evidence/2026-08-30-mission-control-compatibility-matrix.md`](../evidence/2026-08-30-mission-control-compatibility-matrix.md),
-[`docs/evidence/2026-08-30-mission-control-post-activation-readback.md`](../evidence/2026-08-30-mission-control-post-activation-readback.md),
+**Refs.** [`docs/evidence/2026-08-30-mission-control-compatibility-matrix-post-fingerprint-move.md`](../evidence/2026-08-30-mission-control-compatibility-matrix-post-fingerprint-move.md),
+[`docs/evidence/2026-08-30-mission-control-post-activation-readback-post-fingerprint-move.md`](../evidence/2026-08-30-mission-control-post-activation-readback-post-fingerprint-move.md),
 `tests/test_check_compatibility_matrix.py`, issue #56, operator ruling 3.
 
 

@@ -1288,10 +1288,22 @@ class ReadbackEvidenceTest(unittest.TestCase):
         self.assertEqual(ccm.check_public_evidence_rules(self.record), [])
 
 
-MISSION_CONTROL_LIVE_DOCUMENT = EVIDENCE / "2026-08-30-mission-control-compatibility-matrix.md"
-MISSION_CONTROL_READBACK_DOCUMENT = EVIDENCE / "2026-08-30-mission-control-post-activation-readback.md"
+MISSION_CONTROL_LIVE_DOCUMENT = (
+    EVIDENCE / "2026-08-30-mission-control-compatibility-matrix-post-fingerprint-move.md"
+)
+MISSION_CONTROL_READBACK_DOCUMENT = (
+    EVIDENCE / "2026-08-30-mission-control-post-activation-readback-post-fingerprint-move.md"
+)
 MISSION_CONTROL_SUPERSEDED_MATRIX = EVIDENCE / "2026-08-25-mission-control-compatibility-matrix.md"
-MISSION_CONTROL_SUPERSEDED_READBACK = EVIDENCE / "2026-08-25-mission-control-post-activation-readback.md"
+MISSION_CONTROL_SUPERSEDED_READBACK = (
+    EVIDENCE / "2026-08-25-mission-control-post-activation-readback.md"
+)
+MISSION_CONTROL_INTERMEDIATE_MATRIX = (
+    EVIDENCE / "2026-08-30-mission-control-compatibility-matrix.md"
+)
+MISSION_CONTROL_INTERMEDIATE_READBACK = (
+    EVIDENCE / "2026-08-30-mission-control-post-activation-readback.md"
+)
 MISSION_CONTROL_PACKAGE_ROOT = ROOT / "plugins" / "mission-control"
 MISSION_CONTROL_CONFIG = port_config.load("mission-control", ROOT)
 MISSION_CONTROL_SKILLS = ("board", "flow", "issues", "labels", "metrics", "milestones", "rollout")
@@ -1468,7 +1480,7 @@ class MissionControlReadbackBindingTest(unittest.TestCase):
         self.assertTrue(block["all_digests_match_cycle_16_footer"])
         self.assertTrue(block["mutation_proof_binding_test_passed"])
         self.assertEqual(
-            block["frozen_candidate_commit"], "55a651174b8b474c281661658bde3bfd7637855b"
+            block["frozen_candidate_commit"], "a1e84e067444be11d4bffd261c46f7958557ba24"
         )
 
     def test_the_readback_leaks_nothing(self) -> None:
@@ -1528,6 +1540,44 @@ class MissionControlSupersededDocumentTest(unittest.TestCase):
         self.assertEqual(
             readback["release"]["tree_sha256"],
             "651ac28a79b4e2e8823c5aa5960659bcd22903e2059afdb9544e13a071de1682",
+        )
+
+    def test_the_intermediate_pair_validates_as_superseded(self) -> None:
+        self.assertEqual(ccm.check_matrix(MISSION_CONTROL_INTERMEDIATE_MATRIX), [])
+
+    def test_the_intermediate_pair_names_the_final_current_successors(self) -> None:
+        for document, successor_document in (
+            (MISSION_CONTROL_INTERMEDIATE_MATRIX, MISSION_CONTROL_LIVE_DOCUMENT),
+            (MISSION_CONTROL_INTERMEDIATE_READBACK, MISSION_CONTROL_READBACK_DOCUMENT),
+        ):
+            with self.subTest(document=document.name):
+                directives = ccm.read_directives(document.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_SUPERSEDED
+                )
+                successor = directives.get(ccm.SUPERSEDED_BY_DIRECTIVE)
+                self.assertEqual(successor, successor_document.name)
+                assert successor is not None
+                self.assertTrue(
+                    directives.get(ccm.SUPERSEDED_REASON_DIRECTIVE, "").strip()
+                )
+                self.assertTrue((EVIDENCE / successor).is_file())
+
+    def test_the_intermediate_records_preserve_the_old_fingerprint(self) -> None:
+        record = ccm.extract_record(
+            MISSION_CONTROL_INTERMEDIATE_MATRIX.read_text(encoding="utf-8")
+        )
+        self.assertEqual(record["package"]["file_count"], 71)
+        self.assertEqual(
+            record["package"]["tree_sha256"],
+            "1f49322e8412ac6b2ae0b1fbebf4a022ac2e53489be71aae674506a7613531f9",
+        )
+        readback = ccm.extract_record(
+            MISSION_CONTROL_INTERMEDIATE_READBACK.read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            readback["release"]["tree_sha256"],
+            "1f49322e8412ac6b2ae0b1fbebf4a022ac2e53489be71aae674506a7613531f9",
         )
 
 
