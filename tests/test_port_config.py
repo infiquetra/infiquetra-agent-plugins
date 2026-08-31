@@ -18,6 +18,7 @@ Standard library only, matching the validator and the repository baseline.
 from __future__ import annotations
 
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -573,6 +574,145 @@ class CommittedDescriptorTest(unittest.TestCase):
                         rule, f"{config.name}: {relative} carries no rule name"
                     )
                     self.assertIn(rule, svs.TRANSFORM_RULES)
+
+    def test_the_provenance_note_recomputes_the_carried_test_counts(self) -> None:
+        """F18/F64: the provenance prose states the byte-copied and transform
+        test counts. Both counts are recomputed from the descriptor's own
+        custody arrays, and the prose number is parsed out and compared as an
+        integer — never matched as a substring, which a count like 6 would
+        satisfy inside "26 as byte copies"."""
+        config = port_config.load("mission-control", ROOT)
+        byte_copy_tests = [
+            path for path in config.custody.byte_copies if path.startswith("tests/")
+        ]
+        transform_tests = [
+            path
+            for path in config.custody.entrypoint_transforms
+            if path.startswith("tests/")
+            and config.custody.entrypoint_rules.get(path)
+            == svs.PACKAGE_ROOT_MARKER_TRANSFORM_NAME
+        ]
+        notes = "\n".join(config.notes)
+        byte_count = re.search(r"(\d+) as byte copies", notes)
+        self.assertIsNotNone(byte_count, "the provenance note states no byte-copy count")
+        assert byte_count is not None
+        self.assertEqual(
+            int(byte_count.group(1)),
+            len(byte_copy_tests),
+            "the provenance note's byte-copy count disagrees with the custody arrays; "
+            "recompute it, never retype it",
+        )
+        transform_count = re.search(
+            r"(\d+) as resolve-package-root-marker transforms", notes
+        )
+        self.assertIsNotNone(
+            transform_count, "the provenance note states no transform count"
+        )
+        assert transform_count is not None
+        self.assertEqual(
+            int(transform_count.group(1)),
+            len(transform_tests),
+            "the provenance note's transform count disagrees with the custody arrays; "
+            "recompute it, never retype it",
+        )
+        for path in transform_tests:
+            self.assertIn(
+                path,
+                notes,
+                f"the provenance note does not name the transform path {path}",
+            )
+
+    def test_the_marker_rules_site_table_joins_every_descriptor_selection(self) -> None:
+        """F20/F59/F65: `PACKAGE_ROOT_MARKER_SITE_COUNTS` is per-package custody
+        data compiled into the shared script, so each package's descriptor
+        paths and its table slice are joined in both directions, every row
+        states all four site classes, and every row's call count equals its
+        finder count so the definition-before-call check can pair them."""
+        for config in port_config.load_all(ROOT):
+            declared = {
+                path
+                for path in config.custody.entrypoint_transforms
+                if config.custody.entrypoint_rules.get(path)
+                == svs.PACKAGE_ROOT_MARKER_TRANSFORM_NAME
+            }
+            slice_rows = svs.PACKAGE_ROOT_MARKER_SITE_COUNTS.get(config.name, {})
+            if declared or slice_rows:
+                with self.subTest(package=config.name):
+                    self.assertEqual(
+                        declared,
+                        set(slice_rows),
+                        "a descriptor path selects resolve-package-root-marker without "
+                        "a matching site-count row in its package slice, or the slice "
+                        "names a path no descriptor selects",
+                    )
+        for package, slice_rows in svs.PACKAGE_ROOT_MARKER_SITE_COUNTS.items():
+            config = next(
+                candidate
+                for candidate in port_config.load_all(ROOT)
+                if candidate.name == package
+            )
+            declared = {
+                path
+                for path in config.custody.entrypoint_transforms
+                if config.custody.entrypoint_rules.get(path)
+                == svs.PACKAGE_ROOT_MARKER_TRANSFORM_NAME
+            }
+            self.assertEqual(declared, set(slice_rows), package)
+            for path, row in slice_rows.items():
+                with self.subTest(package=package, path=path):
+                    self.assertEqual(
+                        set(row),
+                        set(svs.SITE_CLASSES),
+                        f"{path} declares an incomplete site-count row",
+                    )
+                    self.assertEqual(
+                        row["call"],
+                        row["finder"],
+                        f"{path} declares {row['call']} calls for {row['finder']} finders; "
+                        "the definition-before-call check cannot pair them",
+                    )
+        # F98: path keys must be unique across every package's slice — the
+        # transform resolves its row by path alone.
+        all_paths = [
+            path
+            for slice_rows in svs.PACKAGE_ROOT_MARKER_SITE_COUNTS.values()
+            for path in slice_rows
+        ]
+        self.assertEqual(
+            len(all_paths),
+            len(set(all_paths)),
+            "a site-count path key appears in more than one package's slice; the "
+            "transform's by-path lookup would be ambiguous",
+        )
+
+    def test_the_marker_precondition_refuses_a_mismatched_client_extension_dir(self) -> None:
+        """F60: the descriptor-level refusal the planner runs before dispatching
+        the marker rule. The real descriptor passes; a synthetic one whose
+        client_extension_dir does not name the marker directory refuses,
+        naming both values."""
+        svs._package_root_marker_precondition(port_config.load("mission-control", ROOT))
+        document = minimal()
+        document["source"]["client_extension_dir"] = "com.example.client"
+        synthetic = parse(document)
+        with self.assertRaises(svs.SyncError) as caught:
+            svs._package_root_marker_precondition(synthetic)
+        message = str(caught.exception)
+        self.assertIn("com.example.client", message)
+        self.assertIn(svs.PORTABLE_PACKAGE_ROOT_MARKER, message)
+
+    def test_the_descriptor_spec_names_every_selectable_transform_rule(self) -> None:
+        """F66: the ports/README.md enumeration of selectable rules is derived
+        from TRANSFORM_RULES, so a rule added to the registry without the spec
+        moving fails at the gate."""
+        spec = (ROOT / "ports" / "README.md").read_text(encoding="utf-8")
+        for name in sorted(svs.TRANSFORM_RULES):
+            if name == svs.MANIFEST_TRANSFORM_NAME:
+                continue  # never selected by a descriptor entry, the spec says so
+            self.assertIn(
+                f"`{name}`",
+                spec,
+                f"ports/README.md does not enumerate the selectable rule {name}",
+            )
 
     def test_the_provenance_notes_name_the_real_bundle_directory(self) -> None:
         """The note is prose in a data file, so its one live reference is checked.

@@ -214,10 +214,16 @@ Natural-language routing rules:
 - Do not suggest `/loop` to a team recipient. Use `/plan <issue>` or `/work <issue>` only when the
   recipient has `saga`.
 
-Safe starting statuses:
+Safe starting statuses (the declared Stage drives them):
 
-- Asgard starts in `Shaping`.
-- CAMPPS starts in `Idea`.
+- A prepared issue's `Status` defaults to the declared `Stage`'s entry option —
+  the first configured option of that Stage's `stage_statuses` list in
+  `config/sdlc-schema.json` (`Intake`→`Capturing`, `Shaping`→`Discovering`,
+  `Planning`→`Designing`, `Active`→`Implementing`, `Verify`→
+  `Awaiting verification`, `Retro`→`Gathering evidence`).
+- Readiness accepts any `Status` configured for the declared `Stage`, plus the
+  cross-cutting `Blocked`; retired (`Idea`, `Shaping`, `Done`), unknown, and
+  out-of-Stage values are refused.
 - Never auto-move a prepared issue to `Ready`.
 
 ### Create Issue with Template

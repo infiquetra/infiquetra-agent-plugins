@@ -2,6 +2,99 @@
 
 ## Consume the eight open upstream mission-control filings via a deliberate repin + resync
 
+**Consumed by the 2.15.2 resynchronization (issue #50, landed 2026-08-30).**
+All eight filings landed upstream (#818–#822, #828–#830) and reached this
+repository through the recorded resync policy: repin at `3b2b7083`,
+`sync_vendor_source.py --check` round-trip, re-run suites, and re-run of the
+fingerprint-bound evidence (fresh ten-client matrix and readback,
+`docs/evidence/2026-08-30-mission-control-*.md`). The entry stays as the
+worked example of the policy; nothing in it remains open.
+
+## Upstream filings raised by the integrated code review of the 2.15.2 resync
+
+The integrated review (cycle 1, reviewed revision `853411d`) attributed seven
+defects to upstream bytes this repository may not patch. Six of the seven are
+upstream-owned outright and reach the portable catalog only through a future
+repin, per the recorded resync policy; item 7 is split, and its downstream
+half is gated only on accepting a fingerprint move (the six sibling skills'
+path rewrite is a downstream transform over already-transformed bytes):
+
+1. **Schema-resolution ladder puts the network first.** `sdlc_manager.py`
+   `_resolve_sdlc_schema` resolves `sdlc-schema.json` as GitHub main →
+   vendored → local, swallowing every exception before falling back, so on a
+   machine with an authenticated `gh` the ported suite grades itself against
+   whatever `infiquetra-sdlc` main holds at that moment. File the
+   inversion upstream: vendored first, the network read opt-in. What was
+   actually measured, in the three grades: with `gh` absent the carried suite
+   fails 58 tests (`_gh`'s FileNotFoundError handler raises SystemExit past
+   the ladder's `except Exception`, so the binary-absent path is not caught
+   alongside the other gh errors — and the 2.12.2 package under the same
+   condition failed only 1 test, so the 58-failure delta is a regression this
+   resync introduced); with a non-network `gh` stub that exits 1 the suite
+   passes all 391 tests with the stub invoked exactly 180 times, 179 of them
+   the same infiquetra-sdlc schema read. The fallback therefore works when a
+   `gh` binary exists and fails; the gap is the binary-absent path, and the
+   suite's verdicts are only hermetic in the unauthenticated middle.
+2. **Five agent surfaces instruct option creation via a no-op verb.**
+   `labels/SKILL.md`, `labels/references/labels-reference.md`,
+   `milestones/references/objective-workflow.md`, and the `sdlc-operator`
+   agent route "create a missing option" onto `fields create-option`, which
+   this run reclassified read-only (it only discovers and prints). Route the
+   instruction onto `fields set-options --options-file` or the Projects UI,
+   and have the replacement wording carry the constraint `fields create-option`
+   already prints: the option-set mutation overwrites the whole set, so a
+   one-option write deletes every other option and clears each item value.
+3. **`--format json` silently ignored by twelve subcommands.** Ten handlers
+   take the `fmt` parameter and never reference it, and two more — `fields
+   set-options` (dispatched without a fmt argument) and
+   `issue intent-envelope` (renderer `issue_render_intent_envelope`, which
+   prints markdown unconditionally) — accept
+   the top-level `--format` without honouring it, so an agent's `json.loads`
+   raises with no hint the flag was unsupported. File the parser-level
+   refusal first — reject json/markdown for subcommands that cannot honour
+   them, closing all twelve at once — and JSON records per handler only where
+   a subcommand genuinely needs machine-readable inspection output.
+4. **`fields create-option` exits 0 after doing nothing.** Only the
+   field-not-found arm exits non-zero; the documented no-op path falls off the
+   end, so an exit-code gate records success for a mutation never attempted.
+   File an exit code or a structured `{"mutated": false, ...}` record.
+5. **`_open_mapping_pr` leaves orphan remote branches.** `gh pr create`
+   failure removes only the local worktree; the pushed branch (name embeds a
+   second-precision timestamp) is never deleted and a retry mints another.
+   File the cleanup: delete the pushed branch on failure and name it in the
+   raised error.
+6. **Board skill ships knowingly wrong Operations/Asgard ladders.** The
+   project table gives two of three boards the retired `intent_flow` ladder
+   names that the shipped `sdlc-schema.json` `stage_flow` does not carry; the
+   corrective note sits eight lines below the table. File the correction.
+7. **Flow skill examples are not runnable as written.** Split across two
+   owners. *Upstream*: `skills/flow/SKILL.md` has no Script Location section
+   and no `python3` instruction, and every fenced example begins with a bare
+   `sdlc_manager.py` that nothing installs on PATH. *Downstream transform*:
+   the six sibling skills each carry a Script Location path pointing inside
+   the upstream repository — all seven skills are already
+   `normalize-skill-frontmatter` transforms, so the path rewrite belongs to a
+   downstream transform (a portable-path rewrite of the fenced script path),
+   never to a filing against upstream, whose layout that path correctly
+   describes.
+8. **Degraded label catalog makes gap-analysis report false compliance (F72).**
+   `rollout gap-analysis` prints "All labels present" against a repository
+   carrying zero SDLC labels whenever the label catalog degrades to `{}`
+   (`labels.json` is a remote-only input from a private repository, and the
+   loader's failure paths leave the key empty). File upstream a refusal: gap-
+   analysis and the labels audit must refuse an empty catalog, matching the
+   guard `_validate_label_taxonomy` already carries. This file is a
+   deterministic-transform output, so the runbook forbids repairing it here.
+
+No client-specific remediation follows from any of these.
+
+Repair-round red-window record, for the auditor: `a1e84e0` (round 2's
+fingerprint-moving commit) declared its six expected-red binding tests in its
+commit message; `f4da07e` and `0ff932e` (round 1) each introduced the
+superseded-link guard ahead of the `docs/README.md` repoint without declaring
+that one-red window in their messages. Both windows were real and both are
+recorded here rather than rewritten.
+
 The #9 migration filed eight defects/enhancements against
 `infiquetra/infiquetra-claude-plugins`, all open as of 2026-08-25: #818–#822
 (during the run: stale 2.1.0 paths, `/issue` self-alias, README `flow`
@@ -143,14 +236,16 @@ marketplace or catalog, which is a different surface and was never assessed for 
 For Qwen specifically, the two are distinct commands. `qwen extensions install <path>` takes
 a package and is what the matrix exercises. `qwen extensions sources add <source>` is the
 catalog command, and its own help declares it "Adds a marketplace source (Claude format)".
-This repository has no `.claude-plugin/marketplace.json` and no marketplace manifest anywhere
-at root level, so it cannot be registered that way today. The related
+The repository does ship a Claude marketplace manifest (`.claude-plugin/marketplace.json`,
+carrying the voice package), but catalog registration of this repository has never been
+assessed for any client — the matrix records only package-scoped commands, and whether the
+shipped manifest registers cleanly per client remains open. The related
 `marketplace-url:plugin-name` form of `extensions install` presupposes a registered source
-and is closed for the same reason.
+and is likewise unassessed.
 
-The gap is at the manifest, not at the client. Nothing published claims otherwise: the
-matrix records only package-scoped commands for every client, and its scope section now says
-in as many words that catalog registration was not assessed.
+What remains open is the assessment, not a missing manifest. Nothing published claims
+otherwise: the matrix's scope section says in as many words that catalog registration was
+not assessed.
 
 **Guardrail.** No manifest may be written and no distribution scope may be widened without a
 separate operator decision. This entry records a gap; it does not authorize closing it.

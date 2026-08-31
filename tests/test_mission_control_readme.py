@@ -57,7 +57,6 @@ MUTATING_VERBS = frozenset(
         "close",
         "comment",
         "create",
-        "create-option",
         "create-prepared",
         "deploy",
         "deploy-all",
@@ -70,6 +69,7 @@ MUTATING_VERBS = frozenset(
         "move",
         "reopen",
         "set-field",
+        "set-options",
         "sync-fields",
         "unlink-sub-issue",
         "verify-label",
@@ -94,6 +94,7 @@ READ_ONLY_VERBS = frozenset(
         "audit",
         # fields
         "discover",
+        "create-option",
         # metrics
         "cycle-time",
         "throughput",
@@ -105,7 +106,6 @@ READ_ONLY_VERBS = frozenset(
         # rollout
         "status",
         "gap-analysis",
-        "update",
         # flow
         "field-options",
         "discover-project",
@@ -207,6 +207,19 @@ class PortableReadmeTests(unittest.TestCase):
     def setUp(self) -> None:
         self.assertTrue(README.is_file(), f"missing {README.relative_to(ROOT)}")
         self.text = README.read_text(encoding="utf-8")
+
+    def test_the_readme_states_the_upstream_version(self) -> None:
+        """F37: the README's upstream-version claim is derived from the
+        provenance manifest, mirroring the Packages-row derivation test — a
+        hand-edited version line that diverges from the resynchronized pin
+        fails here instead of sitting."""
+        provenance = json.loads(PROVENANCE.read_text(encoding="utf-8"))
+        self.assertIn(
+            f"(upstream plugin version {provenance['source_version']})",
+            self.text,
+            "the portable README's upstream-version line diverged from the "
+            "provenance source_version; derive it, never retype it",
+        )
 
     def test_lede_identifies_the_portable_package_not_a_claude_code_plugin(self) -> None:
         """The upstream lede introduced the Claude Code plugin, not this package."""

@@ -1,0 +1,3391 @@
+{
+  "attempted_lenses": [
+    "architecture-maintainability",
+    "correctness",
+    "security",
+    "testing",
+    "api-contract",
+    "agent-usability",
+    "documentation-clarity"
+  ],
+  "best_available_revision": "863af5888e548b6c95f40d3fd571c9365d136dea",
+  "collection_operation": {
+    "operation": "collect",
+    "schema": "review_result.v1"
+  },
+  "cycle_history": [
+    {
+      "attempted_lenses": [
+        "architecture-maintainability",
+        "correctness",
+        "security",
+        "testing",
+        "api-contract",
+        "agent-usability",
+        "documentation-clarity"
+      ],
+      "cycle": 1,
+      "delta_checks": [],
+      "failing_lenses": [
+        "architecture-maintainability",
+        "correctness",
+        "security",
+        "testing",
+        "api-contract",
+        "agent-usability",
+        "documentation-clarity"
+      ],
+      "lens_results": [
+        {
+          "accepted": false,
+          "applicable_dimensions": {
+            "architectural-fit-ownership-single-sources": 6.0,
+            "conventions-portability-configuration": 6.0,
+            "dependency-direction": 6.0,
+            "readability-naming-error-contracts": 8.0,
+            "separation-of-concerns": 7.0,
+            "significant-decision-documentation": 8.0,
+            "simplicity-abstraction-duplication-changeability": 6.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 6.714285714285714,
+          "failing_dimensions": [
+            "architectural-fit-ownership-single-sources",
+            "dependency-direction",
+            "simplicity-abstraction-duplication-changeability",
+            "conventions-portability-configuration"
+          ],
+          "lens_id": "architecture-maintainability",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "853411da75cc6499e4d8395e85d36a2b9fe81fbc",
+          "score_accepted": false,
+          "scoring_findings": [
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "dependency-direction",
+              "finding_id": "F19",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "architectural-fit-ownership-single-sources",
+              "finding_id": "F20",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "architectural-fit-ownership-single-sources",
+              "finding_id": "F22",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "simplicity-abstraction-duplication-changeability",
+              "finding_id": "F41",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "readability-naming-error-contracts",
+              "finding_id": "F42",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 75,
+              "critical": false,
+              "dimension_id": "significant-decision-documentation",
+              "finding_id": "F47",
+              "priority": "P3",
+              "resolved": false
+            }
+          ]
+        },
+        {
+          "accepted": false,
+          "applicable_dimensions": {
+            "boundary-types-serialization-numeric-time": 8.0,
+            "caller-enum-consumer-completeness": 7.0,
+            "intent-behavior-completeness": 7.0,
+            "side-effects-errors-resource-lifecycle": 9.0,
+            "state-data-invariants-transactions-concurrency": 8.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 7.8,
+          "failing_dimensions": [],
+          "lens_id": "correctness",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "853411da75cc6499e4d8395e85d36a2b9fe81fbc",
+          "score_accepted": false,
+          "scoring_findings": [
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "intent-behavior-completeness",
+              "finding_id": "F21",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "boundary-types-serialization-numeric-time",
+              "finding_id": "F36",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "intent-behavior-completeness",
+              "finding_id": "F43",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "caller-enum-consumer-completeness",
+              "finding_id": "F45",
+              "priority": "P3",
+              "resolved": false
+            }
+          ]
+        },
+        {
+          "accepted": false,
+          "applicable_dimensions": {
+            "authentication-authorization-tenant-isolation": 7.0,
+            "confidentiality-logs-errors-egress": 6.0,
+            "dependency-supply-chain": 7.0,
+            "input-trust-boundaries-injection": 9.0,
+            "secrets-cryptography-session-handling": 8.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 7.4,
+          "failing_dimensions": [
+            "confidentiality-logs-errors-egress"
+          ],
+          "lens_id": "security",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "853411da75cc6499e4d8395e85d36a2b9fe81fbc",
+          "score_accepted": false,
+          "scoring_findings": [
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "confidentiality-logs-errors-egress",
+              "finding_id": "F01",
+              "priority": "P1",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "dependency-supply-chain",
+              "finding_id": "F25",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "authentication-authorization-tenant-isolation",
+              "finding_id": "F28",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "dependency-supply-chain",
+              "finding_id": "F30",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "confidentiality-logs-errors-egress",
+              "finding_id": "F38",
+              "priority": "P3",
+              "resolved": false
+            }
+          ]
+        },
+        {
+          "accepted": false,
+          "applicable_dimensions": {
+            "behavior-sensitive-assertions": 5.0,
+            "determinism-isolation-diagnostics-maintainability": 4.0,
+            "negative-edge-state-concurrency-time": 5.0,
+            "realistic-seams-mocks-integration-evidence": 5.0,
+            "requirements-regression-coverage": 5.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 4.8,
+          "failing_dimensions": [
+            "requirements-regression-coverage",
+            "negative-edge-state-concurrency-time",
+            "behavior-sensitive-assertions",
+            "realistic-seams-mocks-integration-evidence",
+            "determinism-isolation-diagnostics-maintainability"
+          ],
+          "lens_id": "testing",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "853411da75cc6499e4d8395e85d36a2b9fe81fbc",
+          "score_accepted": false,
+          "scoring_findings": [
+            {
+              "confidence": 100,
+              "critical": true,
+              "dimension_id": "determinism-isolation-diagnostics-maintainability",
+              "finding_id": "F03",
+              "priority": "P1",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "requirements-regression-coverage",
+              "finding_id": "F04",
+              "priority": "P1",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "behavior-sensitive-assertions",
+              "finding_id": "F23",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "realistic-seams-mocks-integration-evidence",
+              "finding_id": "F24",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "determinism-isolation-diagnostics-maintainability",
+              "finding_id": "F26",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "determinism-isolation-diagnostics-maintainability",
+              "finding_id": "F27",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "behavior-sensitive-assertions",
+              "finding_id": "F29",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "behavior-sensitive-assertions",
+              "finding_id": "F46",
+              "priority": "P3",
+              "resolved": false
+            }
+          ]
+        },
+        {
+          "accepted": false,
+          "applicable_dimensions": {
+            "interface-contract-compatibility": 7.0,
+            "pagination-rate-limits": 9.0,
+            "retry-idempotency-semantics": 7.0,
+            "sdk-generated-client-impact": 9.0,
+            "serialization-errors": 8.0,
+            "specification-documentation-parity": 7.0,
+            "versioning-deprecation": 8.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 7.857142857142857,
+          "failing_dimensions": [],
+          "lens_id": "api-contract",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "853411da75cc6499e4d8395e85d36a2b9fe81fbc",
+          "score_accepted": false,
+          "scoring_findings": [
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "retry-idempotency-semantics",
+              "finding_id": "F14",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "interface-contract-compatibility",
+              "finding_id": "F17",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "versioning-deprecation",
+              "finding_id": "F37",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "specification-documentation-parity",
+              "finding_id": "F39",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "serialization-errors",
+              "finding_id": "F40",
+              "priority": "P3",
+              "resolved": false
+            }
+          ]
+        },
+        {
+          "accepted": false,
+          "applicable_dimensions": {
+            "capability-parity-reachability": 7.0,
+            "context-constraints-acceptance-examples": 7.0,
+            "discoverability-invocation-schemas": 6.0,
+            "machine-readable-output-actionable-errors": 6.0,
+            "safe-bounded-idempotent-resumable-context-cost": 7.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 6.6,
+          "failing_dimensions": [
+            "discoverability-invocation-schemas",
+            "machine-readable-output-actionable-errors"
+          ],
+          "lens_id": "agent-usability",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "853411da75cc6499e4d8395e85d36a2b9fe81fbc",
+          "score_accepted": false,
+          "scoring_findings": [
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "capability-parity-reachability",
+              "finding_id": "F02",
+              "priority": "P1",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "machine-readable-output-actionable-errors",
+              "finding_id": "F11",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "machine-readable-output-actionable-errors",
+              "finding_id": "F12",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "safe-bounded-idempotent-resumable-context-cost",
+              "finding_id": "F13",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "context-constraints-acceptance-examples",
+              "finding_id": "F15",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "discoverability-invocation-schemas",
+              "finding_id": "F16",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "discoverability-invocation-schemas",
+              "finding_id": "F44",
+              "priority": "P3",
+              "resolved": false
+            }
+          ]
+        },
+        {
+          "accepted": false,
+          "applicable_dimensions": {
+            "completeness-audience-prerequisites": 6.0,
+            "runbook-safety-rollback-links-generated-drift": 6.0,
+            "runnable-examples-actionability": 6.0,
+            "shipped-behavior-parity": 6.0,
+            "structure-navigation": 5.0,
+            "terminology-cross-document-consistency": 7.0
+          },
+          "cycle": 1,
+          "delta_check": null,
+          "derived_overall": 6.0,
+          "failing_dimensions": [
+            "shipped-behavior-parity",
+            "completeness-audience-prerequisites",
+            "structure-navigation",
+            "runnable-examples-actionability",
+            "runbook-safety-rollback-links-generated-drift"
+          ],
+          "lens_id": "documentation-clarity",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "853411da75cc6499e4d8395e85d36a2b9fe81fbc",
+          "score_accepted": false,
+          "scoring_findings": [
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "runbook-safety-rollback-links-generated-drift",
+              "finding_id": "F05",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "completeness-audience-prerequisites",
+              "finding_id": "F06",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "runnable-examples-actionability",
+              "finding_id": "F07",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "runnable-examples-actionability",
+              "finding_id": "F08",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "shipped-behavior-parity",
+              "finding_id": "F09",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "structure-navigation",
+              "finding_id": "F10",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "runbook-safety-rollback-links-generated-drift",
+              "finding_id": "F18",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "terminology-cross-document-consistency",
+              "finding_id": "F31",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "terminology-cross-document-consistency",
+              "finding_id": "F32",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "runnable-examples-actionability",
+              "finding_id": "F33",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "structure-navigation",
+              "finding_id": "F34",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "runbook-safety-rollback-links-generated-drift",
+              "finding_id": "F35",
+              "priority": "P3",
+              "resolved": false
+            }
+          ]
+        }
+      ],
+      "revision": "853411da75cc6499e4d8395e85d36a2b9fe81fbc",
+      "unresolved_fix_ids": [
+        "fix-a51913327e5c",
+        "fix-07ae101ba7f9",
+        "fix-c77fb632f03a",
+        "fix-6dc8e0a1f009",
+        "fix-7dc84f790a3a",
+        "fix-986cabe796ba",
+        "fix-394d21c0f7b3",
+        "fix-c4afaa54ec28",
+        "fix-faedaeedae69",
+        "fix-cabf8331a97c",
+        "fix-5dc99edd4dd9",
+        "fix-eb09fd0f4150",
+        "fix-4d99d5abe366",
+        "fix-df856eeccddf",
+        "fix-faa9aac1b201",
+        "fix-8ddc29606f0a"
+      ]
+    },
+    {
+      "attempted_lenses": [
+        "architecture-maintainability",
+        "correctness",
+        "security",
+        "testing",
+        "api-contract",
+        "agent-usability",
+        "documentation-clarity"
+      ],
+      "cycle": 2,
+      "delta_checks": [],
+      "failing_lenses": [
+        "architecture-maintainability",
+        "correctness",
+        "security",
+        "testing",
+        "api-contract",
+        "agent-usability",
+        "documentation-clarity"
+      ],
+      "lens_results": [
+        {
+          "accepted": false,
+          "applicable_dimensions": {
+            "architectural-fit-ownership-single-sources": 7.0,
+            "conventions-portability-configuration": 7.0,
+            "dependency-direction": 6.0,
+            "readability-naming-error-contracts": 6.0,
+            "separation-of-concerns": 7.0,
+            "significant-decision-documentation": 6.0,
+            "simplicity-abstraction-duplication-changeability": 6.0
+          },
+          "cycle": 2,
+          "delta_check": null,
+          "derived_overall": 6.428571428571429,
+          "failing_dimensions": [
+            "dependency-direction",
+            "simplicity-abstraction-duplication-changeability",
+            "readability-naming-error-contracts",
+            "significant-decision-documentation"
+          ],
+          "lens_id": "architecture-maintainability",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea",
+          "score_accepted": false,
+          "scoring_findings": [
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "dependency-direction",
+              "finding_id": "F58",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "architectural-fit-ownership-single-sources",
+              "finding_id": "F59",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "readability-naming-error-contracts",
+              "finding_id": "F60",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "significant-decision-documentation",
+              "finding_id": "F61",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "simplicity-abstraction-duplication-changeability",
+              "finding_id": "F75",
+              "priority": "P3",
+              "resolved": false
+            }
+          ]
+        },
+        {
+          "accepted": false,
+          "applicable_dimensions": {
+            "boundary-types-serialization-numeric-time": 8.0,
+            "caller-enum-consumer-completeness": 8.0,
+            "intent-behavior-completeness": 8.0,
+            "side-effects-errors-resource-lifecycle": 9.0,
+            "state-data-invariants-transactions-concurrency": 8.0
+          },
+          "cycle": 2,
+          "delta_check": null,
+          "derived_overall": 8.2,
+          "failing_dimensions": [],
+          "lens_id": "correctness",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea",
+          "score_accepted": false,
+          "scoring_findings": [
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "state-data-invariants-transactions-concurrency",
+              "finding_id": "F36",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "intent-behavior-completeness",
+              "finding_id": "F63",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "state-data-invariants-transactions-concurrency",
+              "finding_id": "F64",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "boundary-types-serialization-numeric-time",
+              "finding_id": "F65",
+              "priority": "P3",
+              "resolved": false
+            }
+          ]
+        },
+        {
+          "accepted": false,
+          "applicable_dimensions": {
+            "authentication-authorization-tenant-isolation": 7.0,
+            "confidentiality-logs-errors-egress": 8.0,
+            "dependency-supply-chain": 7.0,
+            "input-trust-boundaries-injection": 9.0,
+            "secrets-cryptography-session-handling": 6.0
+          },
+          "cycle": 2,
+          "delta_check": null,
+          "derived_overall": 7.4,
+          "failing_dimensions": [
+            "secrets-cryptography-session-handling"
+          ],
+          "lens_id": "security",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea",
+          "score_accepted": false,
+          "scoring_findings": [
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "confidentiality-logs-errors-egress",
+              "finding_id": "F01",
+              "priority": "P1",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "dependency-supply-chain",
+              "finding_id": "F25",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "dependency-supply-chain",
+              "finding_id": "F30",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "confidentiality-logs-errors-egress",
+              "finding_id": "F38",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "secrets-cryptography-session-handling",
+              "finding_id": "F51",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "authentication-authorization-tenant-isolation",
+              "finding_id": "F53",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "authentication-authorization-tenant-isolation",
+              "finding_id": "F54",
+              "priority": "P2",
+              "resolved": false
+            }
+          ]
+        },
+        {
+          "accepted": false,
+          "applicable_dimensions": {
+            "behavior-sensitive-assertions": 7.0,
+            "determinism-isolation-diagnostics-maintainability": 6.0,
+            "negative-edge-state-concurrency-time": 8.0,
+            "realistic-seams-mocks-integration-evidence": 8.0,
+            "requirements-regression-coverage": 8.0
+          },
+          "cycle": 2,
+          "delta_check": null,
+          "derived_overall": 7.4,
+          "failing_dimensions": [
+            "determinism-isolation-diagnostics-maintainability"
+          ],
+          "lens_id": "testing",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea",
+          "score_accepted": false,
+          "scoring_findings": [
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "determinism-isolation-diagnostics-maintainability",
+              "finding_id": "F26",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "determinism-isolation-diagnostics-maintainability",
+              "finding_id": "F27",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "behavior-sensitive-assertions",
+              "finding_id": "F46",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "determinism-isolation-diagnostics-maintainability",
+              "finding_id": "F55",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "behavior-sensitive-assertions",
+              "finding_id": "F56",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "requirements-regression-coverage",
+              "finding_id": "F57",
+              "priority": "P2",
+              "resolved": false
+            }
+          ]
+        },
+        {
+          "accepted": false,
+          "applicable_dimensions": {
+            "interface-contract-compatibility": 7.0,
+            "pagination-rate-limits": 9.0,
+            "retry-idempotency-semantics": 9.0,
+            "sdk-generated-client-impact": 9.0,
+            "serialization-errors": 8.0,
+            "specification-documentation-parity": 7.0,
+            "versioning-deprecation": 8.0
+          },
+          "cycle": 2,
+          "delta_check": null,
+          "derived_overall": 8.142857142857142,
+          "failing_dimensions": [],
+          "lens_id": "api-contract",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea",
+          "score_accepted": false,
+          "scoring_findings": [
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "retry-idempotency-semantics",
+              "finding_id": "F14",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "serialization-errors",
+              "finding_id": "F62",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "specification-documentation-parity",
+              "finding_id": "F66",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "interface-contract-compatibility",
+              "finding_id": "F67",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "specification-documentation-parity",
+              "finding_id": "F68",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "specification-documentation-parity",
+              "finding_id": "F69",
+              "priority": "P3",
+              "resolved": false
+            }
+          ]
+        },
+        {
+          "accepted": false,
+          "applicable_dimensions": {
+            "capability-parity-reachability": 6.0,
+            "context-constraints-acceptance-examples": 6.0,
+            "discoverability-invocation-schemas": 7.0,
+            "machine-readable-output-actionable-errors": 6.0,
+            "safe-bounded-idempotent-resumable-context-cost": 7.0
+          },
+          "cycle": 2,
+          "delta_check": null,
+          "derived_overall": 6.4,
+          "failing_dimensions": [
+            "capability-parity-reachability",
+            "context-constraints-acceptance-examples",
+            "machine-readable-output-actionable-errors"
+          ],
+          "lens_id": "agent-usability",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea",
+          "score_accepted": false,
+          "scoring_findings": [
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "capability-parity-reachability",
+              "finding_id": "F02",
+              "priority": "P1",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "machine-readable-output-actionable-errors",
+              "finding_id": "F12",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "safe-bounded-idempotent-resumable-context-cost",
+              "finding_id": "F13",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "context-constraints-acceptance-examples",
+              "finding_id": "F15",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "discoverability-invocation-schemas",
+              "finding_id": "F16",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "discoverability-invocation-schemas",
+              "finding_id": "F44",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "capability-parity-reachability",
+              "finding_id": "F70",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "context-constraints-acceptance-examples",
+              "finding_id": "F71",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "machine-readable-output-actionable-errors",
+              "finding_id": "F72",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "machine-readable-output-actionable-errors",
+              "finding_id": "F73",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "safe-bounded-idempotent-resumable-context-cost",
+              "finding_id": "F74",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "machine-readable-output-actionable-errors",
+              "finding_id": "F76",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 75,
+              "critical": false,
+              "dimension_id": "discoverability-invocation-schemas",
+              "finding_id": "F77",
+              "priority": "P3",
+              "resolved": false
+            }
+          ]
+        },
+        {
+          "accepted": false,
+          "applicable_dimensions": {
+            "completeness-audience-prerequisites": 7.0,
+            "runbook-safety-rollback-links-generated-drift": 7.0,
+            "runnable-examples-actionability": 8.0,
+            "shipped-behavior-parity": 7.0,
+            "structure-navigation": 6.0,
+            "terminology-cross-document-consistency": 7.0
+          },
+          "cycle": 2,
+          "delta_check": null,
+          "derived_overall": 7.0,
+          "failing_dimensions": [
+            "structure-navigation"
+          ],
+          "lens_id": "documentation-clarity",
+          "non_applicable_dimensions": {},
+          "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea",
+          "score_accepted": false,
+          "scoring_findings": [
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "terminology-cross-document-consistency",
+              "finding_id": "F09",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "completeness-audience-prerequisites",
+              "finding_id": "F32",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "completeness-audience-prerequisites",
+              "finding_id": "F33",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "structure-navigation",
+              "finding_id": "F34",
+              "priority": "P3",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "runbook-safety-rollback-links-generated-drift",
+              "finding_id": "F48",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "shipped-behavior-parity",
+              "finding_id": "F49",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "runbook-safety-rollback-links-generated-drift",
+              "finding_id": "F50",
+              "priority": "P2",
+              "resolved": false
+            },
+            {
+              "confidence": 100,
+              "critical": false,
+              "dimension_id": "shipped-behavior-parity",
+              "finding_id": "F78",
+              "priority": "P3",
+              "resolved": false
+            }
+          ]
+        }
+      ],
+      "revision": "863af5888e548b6c95f40d3fd571c9365d136dea",
+      "unresolved_fix_ids": [
+        "fix-7bba1b703848",
+        "fix-46dca44e4ee6",
+        "fix-1f32ffa324f9",
+        "fix-bd77f3efb731",
+        "fix-6767ccfca18e",
+        "fix-f3eb49a71c40",
+        "fix-bddf2291754e",
+        "fix-e821ff2254aa",
+        "fix-1a26ae3dbb03",
+        "fix-73409235a365",
+        "fix-c781cca536a1",
+        "fix-a883fd3fd2ac",
+        "fix-3a726facf6c1",
+        "fix-74a8520ef735",
+        "fix-d32bf51ebf75",
+        "fix-e86ea646b124",
+        "fix-f94a0ef17b37"
+      ]
+    }
+  ],
+  "evidence_ledger": {
+    "cycle1_artifact": "docs/code-reviews/2026-08-30-issue-50-mcresync-integration-code-review-853411da.md",
+    "cycle2_artifact": "docs/code-reviews/2026-08-31-issue-50-mcresync-repair-cycle-2-code-review-863af588.md",
+    "issue": "infiquetra/infiquetra-agent-plugins#50",
+    "plan": "docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md",
+    "saga": "issue-50"
+  },
+  "external_advisory_reviews": [],
+  "failing_lenses": [
+    "architecture-maintainability",
+    "correctness",
+    "security",
+    "testing",
+    "api-contract",
+    "agent-usability",
+    "documentation-clarity"
+  ],
+  "findings": [
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "confidentiality-logs-errors-egress",
+      "evidence": [
+        "Measured by the controller at this revision: `gh` absent -> 58 failed, 333 passed; a non-network `gh` stub exiting 1 -> 391 passed with the stub called exactly 180 times (179 the same schema read); the base 2.12.2 package with `gh` absent -> 1 failed, 265 passed",
+        "The 57-failure delta between the base package and this one is a regression this resync introduced, via the five carried test files it changed",
+        "plugins/mission-control/scripts/sdlc_manager.py:721-723 - `except FileNotFoundError: _error(...); sys.exit(1)`, against the `except Exception: pass` at :358",
+        "docs/engineering-journal/QUEUED.md filing 1 and docs/engineering-journal/LEARNINGS.md record it; the LEARNINGS entry states the 58 correctly"
+      ],
+      "file": "plugins/mission-control/scripts/sdlc_manager.py",
+      "finding_id": "F01",
+      "lens_id": "security",
+      "line": 343,
+      "owner": "human",
+      "pre_existing": true,
+      "requires_verification": true,
+      "severity": "P1",
+      "status": "active",
+      "suggested_fix": "File the ladder inversion upstream - vendored first, network opt-in - and a refusal when the gh binary is absent rather than a bare sys.exit inside a swallowed try.",
+      "title": "Ported package suite reaches GitHub and needs a gh binary",
+      "touched_paths": [
+        "plugins/mission-control/scripts/sdlc_manager.py"
+      ],
+      "why_it_matters": "`_resolve_sdlc_schema` puts the network first and swallows every exception before falling back, so the carried suite grades itself against live upstream when an authenticated `gh` is present. The binary-absent path is worse: `_gh`'s FileNotFoundError handler calls sys.exit(1), and SystemExit is not an Exception, so the broad fallback never catches it and 58 tests fail. Carried upstream bytes; the runbook forbids a downstream patch. Filed in docs/engineering-journal/QUEUED.md for a future repin. Re-confirmed present at this revision."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "capability-parity-reachability",
+      "evidence": [
+        "plugins/mission-control/skills/labels/SKILL.md:116-125, :157, :189; labels/references/labels-reference.md:213; milestones/references/objective-workflow.md:34; com.infiquetra.claude/agents/sdlc-operator.md:319 and :330",
+        "docs/engineering-journal/QUEUED.md filing 2 records it - but its remedy is unsafe as written; see F74"
+      ],
+      "file": "plugins/mission-control/skills/labels/SKILL.md",
+      "finding_id": "F02",
+      "lens_id": "agent-usability",
+      "line": 116,
+      "owner": "human",
+      "pre_existing": true,
+      "requires_verification": true,
+      "severity": "P1",
+      "status": "active",
+      "suggested_fix": "Route 'create an option' onto `fields set-options --options-file` with the complete-list constraint stated, or the Projects UI.",
+      "title": "Five agent surfaces instruct creation via a no-op verb",
+      "touched_paths": [
+        "plugins/mission-control/skills/labels/SKILL.md"
+      ],
+      "why_it_matters": "The package ships no verb that adds one option to a single-select field, and five agent-facing surfaces still instruct an agent to create one with `fields create-option`, which prints and exits 0. Carried upstream bytes; the runbook forbids a downstream patch. Filed in docs/engineering-journal/QUEUED.md for a future repin. Re-confirmed present at this revision."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "significant-decision-documentation",
+      "evidence": [
+        "docs/engineering-journal/DECISIONS.md:565 and :588 name the retired tree; :577-580 records Qwen failed",
+        "Controller-confirmed: grep across the journal returns the retired digest twice and the live digest not at all",
+        "The current matrix records Qwen works-directly and the new tree",
+        "The repair diff shows the only change to that entry is the two Refs links"
+      ],
+      "file": "docs/engineering-journal/DECISIONS.md",
+      "finding_id": "F61",
+      "lens_id": "architecture-maintainability",
+      "line": 565,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": false,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Add a dated entry for the second U5 run - why the fingerprint was allowed to move, the rejected alternative of holding the corrections back, and a revisit condition - and amend or mark the existing entry as describing the superseded first run.",
+      "title": "U5 decision record still states the retired fingerprint",
+      "touched_paths": [
+        "docs/engineering-journal/DECISIONS.md"
+      ],
+      "why_it_matters": "The round's most consequential decision - moving the frozen fingerprint after the review freeze and re-running the assessment - is recorded nowhere in the journal, and the existing U5 entry now asserts facts the round retired. Its body twice binds the fresh evidence to the old tree and records Qwen as failed; the documents its Refs now point at record the new tree and Qwen as works-directly. Only the two Refs links were swapped. The entry's own revisit condition fired inside this run without the entry being revised."
+    },
+    {
+      "autofix_class": "safe_auto",
+      "confidence": 100,
+      "dimension_id": "runbook-safety-rollback-links-generated-drift",
+      "evidence": [
+        "docs/engineering-journal/QUEUED.md:28 - the quoted sentence",
+        "Measured by the controller: package suite with gh absent -> `58 failed, 333 passed`, exit 1; root suite with gh absent -> `Ran 834 tests ... FAILED (failures=1)`, exit 1",
+        "docs/engineering-journal/LEARNINGS.md states it correctly: 'Re-run in this round with gh off PATH on the floor interpreter: 58 failed, 333 passed'",
+        "Commit 8d0b541's message likewise says 'fails 58 tests'"
+      ],
+      "file": "docs/engineering-journal/QUEUED.md",
+      "finding_id": "F48",
+      "lens_id": "documentation-clarity",
+      "line": 28,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": true,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Replace the clause with what was measured: with gh absent the carried suite fails 58 tests because _gh's FileNotFoundError handler raises SystemExit past the swallowing except Exception; the suite passes only when a gh binary exists, authenticated or not.",
+      "title": "Journal filing claims a hermetic run that fails",
+      "touched_paths": [
+        "docs/engineering-journal/QUEUED.md"
+      ],
+      "why_it_matters": "Filing 1 ends 'the hermetic half was re-run with `gh` off PATH and passes'. It does not. With `gh` absent the package suite is 58 failed / 333 passed and the root suite is 1 failed - measured at this revision. The sentence sits in the same paragraph that calls itself 'the honest statement', and QUEUED.md is where someone acting on the upstream filing looks. The round's own LEARNINGS entry and commit 8d0b541's message both state the 58 correctly, so this one sentence contradicts two other records of the same measurement."
+    },
+    {
+      "autofix_class": "safe_auto",
+      "confidence": 100,
+      "dimension_id": "safe-bounded-idempotent-resumable-context-cost",
+      "evidence": [
+        "docs/engineering-journal/QUEUED.md:29-34 contains no occurrence of 'complete', 'overwrite', 'destructive' or 'id'",
+        "plugins/mission-control/skills/board/references/graphql-queries.md:308-310 states the constraint",
+        "The shipped create-option output already carries the warning at sdlc_manager.py:2056-2062",
+        "fields_set_options' docstring requires the COMPLETE desired set with existing ids preserved"
+      ],
+      "file": "docs/engineering-journal/QUEUED.md",
+      "finding_id": "F74",
+      "lens_id": "agent-usability",
+      "line": 34,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": false,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Extend the filing to carry the constraint the replacement instruction must state, pointing the upstream fixer at the wording create-option already prints.",
+      "title": "Filing's remedy routes agents onto a destructive verb",
+      "touched_paths": [
+        "docs/engineering-journal/QUEUED.md"
+      ],
+      "why_it_matters": "Filing 2 tells upstream to route option creation onto `fields set-options --options-file` and says nothing about what that verb does. The GraphQL input overwrites the whole option set, so a file holding only the new option deletes every existing option and clears that field on every card. An upstream maintainer who edits the skill exactly as the filing asks produces a skill that walks an agent into project-wide field data loss. The package states the constraint in three other places; the omission is the filing's alone."
+    },
+    {
+      "autofix_class": "safe_auto",
+      "confidence": 100,
+      "dimension_id": "machine-readable-output-actionable-errors",
+      "evidence": [
+        "AST walk finds ten fmt-taking handlers that never reference it",
+        "fields_set_options is dispatched at :7257 and its signature takes no fmt; issue_render_intent_envelope at :7225 likewise, and prints markdown",
+        "--format is defined once on the top-level parser, so all twelve accept it"
+      ],
+      "file": "docs/engineering-journal/QUEUED.md",
+      "finding_id": "F73",
+      "lens_id": "agent-usability",
+      "line": 35,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": true,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Change the count to twelve, name the two the fmt-parameter pattern misses, and put the parser-level refusal first since it closes all twelve.",
+      "title": "Filing undercounts the subcommands that ignore --format",
+      "touched_paths": [
+        "docs/engineering-journal/QUEUED.md"
+      ],
+      "why_it_matters": "Twelve subcommands ignore --format json, not ten. The filing's count matches only the handlers that take a fmt parameter and never use it; it misses `fields set-options` and `issue intent-envelope`, dispatched with no fmt at all. An upstream fixer implementing the filing's first option by finding the ten leaves the package's only destructive field verb emitting unparseable prose to an agent that asked for JSON."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "capability-parity-reachability",
+      "evidence": [
+        "Six hits for the upstream-repository path across the skills tree",
+        "Controller-verified: all seven skills/*/SKILL.md are in custody.entrypoint_transforms under normalize-skill-frontmatter; zero are in custody.byte_copies",
+        "docs/engineering-journal/QUEUED.md:14 states the ground as 'upstream bytes this repository may not patch'",
+        "plugins/mission-control/README.md gives the shipped location as scripts/sdlc_manager.py"
+      ],
+      "file": "docs/engineering-journal/QUEUED.md",
+      "finding_id": "F70",
+      "lens_id": "agent-usability",
+      "line": 56,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": true,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Split filing 7: keep the missing flow Script Location section upstream, and move the six sibling paths to a downstream transform rewriting the fenced path to the package-relative script.",
+      "title": "Filing routes a portable-path defect to the wrong owner",
+      "touched_paths": [
+        "docs/engineering-journal/QUEUED.md"
+      ],
+      "why_it_matters": "Six skills document their script at a path inside the upstream repository, which does not exist in a portable-only install. Filing 7 defers this upstream - but that path is correct upstream and wrong only here, so an upstream maintainer would either break their own operators or reject it. The filing's stated ground is also wrong for these files: all seven SKILL.md files are entrypoint transforms, not byte copies, so this repository already rewrites them and a downstream transform is the in-policy remedy."
+    },
+    {
+      "autofix_class": "safe_auto",
+      "confidence": 100,
+      "dimension_id": "runbook-safety-rollback-links-generated-drift",
+      "evidence": [
+        "docs/evidence/2026-08-25-mission-control-compatibility-matrix.md:14 names the intermediate document as 'the fresh assessment' while :2 names the -post-fingerprint-move successor",
+        "The same split at docs/evidence/2026-08-25-mission-control-post-activation-readback.md:13",
+        "tests/test_check_compatibility_matrix.py:1639-1641 begins its walk with `if EVIDENCE in path.parents: continue`",
+        "Commit 863af58's message asserts the 2026-08-25 pair 'now names the final current successors', true only of the comment half"
+      ],
+      "file": "docs/evidence/2026-08-25-mission-control-compatibility-matrix.md",
+      "finding_id": "F50",
+      "lens_id": "documentation-clarity",
+      "line": 14,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": true,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Repoint both banners, and narrow the test's exemption to the file being scanned rather than the whole evidence directory.",
+      "title": "Retired matrix banner links an already-superseded successor",
+      "touched_paths": [
+        "docs/evidence/2026-08-25-mission-control-compatibility-matrix.md"
+      ],
+      "why_it_matters": "The round updated the machine-readable superseded-by directive in both 2026-08-25 documents to name the current successor but left the human-readable banner three lines below pointing at the intermediate 2026-08-30 document, which is itself now superseded. The same file gives two different answers to 'what replaced this', and the visible one is wrong. The guard test added this round to catch exactly this exempts docs/evidence/, so it cannot see it."
+    },
+    {
+      "autofix_class": "safe_auto",
+      "confidence": 100,
+      "dimension_id": "secrets-cryptography-session-handling",
+      "evidence": [
+        "Same document, :35-37 'Cursor Agent ... was assessed against the real authenticated home' and :40 'No client was authenticated ... at any stage'",
+        "The machine-readable method.credentials repeats the universal; method.isolation in the same JSON object contradicts it",
+        "The predecessor carried the reconciling sentence this one drops - 'its authentication state recorded only as present, no credential created, changed, or read into this evidence, and no account identity published here'",
+        "scripts/assess_clients.py sets home=REAL_HOME for the Cursor plan, so that client keeps the operator's live credential store"
+      ],
+      "file": "docs/evidence/2026-08-30-mission-control-compatibility-matrix-post-fingerprint-move.md",
+      "finding_id": "F51",
+      "lens_id": "security",
+      "line": 40,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": false,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Narrow both copies to 'No client was authenticated to GitHub and no GitHub credential was supplied; Cursor Agent ran under its own pre-existing authentication in the operator's real home', and restore the predecessor's qualifier.",
+      "title": "Matrix claims no client authenticated; one was",
+      "touched_paths": [
+        "docs/evidence/2026-08-30-mission-control-compatibility-matrix-post-fingerprint-move.md"
+      ],
+      "why_it_matters": "The published record a third party reads to decide the assessment touched no live credential states universally that no client was authenticated - five lines after stating that Cursor Agent ran against the real authenticated home. The machine-readable method block repeats the universal verbatim, so an automated consumer inherits it, and the qualifier that reconciled the same exception in the 2026-08-25 predecessor was dropped rather than carried forward. The validator exits 0 on the self-contradiction because it never compares the two fields."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "shipped-behavior-parity",
+      "evidence": [
+        "docs/plans/...-resync-plan.md:2164 - 'Last point at which any byte under plugins/mission-control/ changes'; the same claim unqualified at :1096 and :1722",
+        "Controller-verified: `git diff --name-only 55a6511..863af58 -- plugins/mission-control` returns PROVENANCE.json and README.md, both from a1e84e0, which lands after the freeze point",
+        "`grep -rn 'post-fingerprint-move|659f91f6' docs/plans/` returns nothing - the plan never names the move, the second assessment, or the two current documents"
+      ],
+      "file": "docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md",
+      "finding_id": "F49",
+      "lens_id": "documentation-clarity",
+      "line": 2164,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": false,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Add an Amendment 6 recording that a1e84e0 moved the tree after the freeze for the F18/F11/F35 corrections, that U5 was re-run and re-bound at 863af58, and that 863af58 is issue #56's frozen commit; qualify the three freeze claims to point at it.",
+      "title": "Plan's freeze record contradicts the landed branch",
+      "touched_paths": [
+        "docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md"
+      ],
+      "why_it_matters": "The plan states in four places that the freeze is the last point any byte under the package changes, and the repair round then changed two bytes there, moving the fingerprint. The plan carries an amendment section for every prior review cycle and none for this repair round, so a reader taking it as the run's record is told the fingerprint U5 assessed is the one that ships, with no pointer to the second assessment that actually establishes it."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "context-constraints-acceptance-examples",
+      "evidence": [
+        "Controller-measured: with gh absent, `rollout status` and `config show` both exit 1 with 'ERROR: gh CLI not found'",
+        "With a gh stub exiting 1, rollout status exits 0 after three live api reads - labels.json, beads-config.json and the schema",
+        "plugins/mission-control/scripts/sdlc_manager.py:250-270 - the missing-file branch calls _gh before the except Exception",
+        "_wip_limits returns {\"Ready\": 10, \"In Progress\": 5} when neither the schema nor the legacy config supplies limits",
+        "This sentence is new text authored by this round - and it was adopted verbatim from the cycle-1 reviewer's suggested fix, which was itself wrong about board wip"
+      ],
+      "file": "plugins/mission-control/README.md",
+      "finding_id": "F71",
+      "lens_id": "agent-usability",
+      "line": 77,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": false,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "State the real ladder: absence triggers a live gh api read; only when that fails does the key degrade to {}; with gh absent the process exits 1. Describe board wip's hardcoded fallback separately.",
+      "title": "Restored README disclosure contradicts measured behaviour",
+      "touched_paths": [
+        "plugins/mission-control/README.md"
+      ],
+      "why_it_matters": "The sentence this round added tells an agent that when the retired config is absent these subcommands degrade to {} 'rather than erroring'. Measured, absence does not degrade first: load_config falls through to a live gh api read, and with gh off PATH the FileNotFoundError handler exits 1. The claim about `board wip` is wrong too - _wip_limits falls back to hardcoded limits, not zeros, so it presents plausible numbers. An agent trusting this builds no error path for two subcommands the same README calls read-only, and budgets for no network round trips."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "machine-readable-output-actionable-errors",
+      "evidence": [
+        "Controller-verified: plugins/mission-control/config/ holds no labels.json, and the README never mentions it",
+        "With a gh stub exiting 1, `config show` prints 'Labels: 0 defined' beside 'Projects: 3'",
+        "Hermetic call with an empty labels config: rollout_gap_analysis prints '- All labels present'",
+        "plugins/mission-control/scripts/sdlc_manager.py:2524 derives required_labels from the empty catalog"
+      ],
+      "file": "plugins/mission-control/README.md",
+      "finding_id": "F72",
+      "lens_id": "agent-usability",
+      "line": 105,
+      "owner": "review-fixer",
+      "pre_existing": true,
+      "requires_verification": true,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Add labels.json to the resolution-order list and extend the degradation paragraph to say an empty catalog makes audit, deploy and gap-analysis treat 'no required labels' as 'all present'. File the missing refusal upstream.",
+      "title": "Undisclosed labels degradation makes gap-analysis a false all-clear",
+      "touched_paths": [
+        "plugins/mission-control/README.md"
+      ],
+      "why_it_matters": "The label catalog has no vendored copy and no entry in the README's resolution-order list, yet it degrades through the same silent path as the retired config. When it degrades, rollout gap-analysis computes an empty required-label list, so nothing is missing and it prints 'All labels present' against a repository carrying none of them. An agent gating rollout work on gap-analysis records a clean verdict and skips deploy-labels, with no signal to distrust it."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "machine-readable-output-actionable-errors",
+      "evidence": [
+        "AST walk finds ten handlers taking `fmt` and never referencing it, plus `fields set-options` (:7257) and `issue intent-envelope` (:7225) dispatched with no fmt at all",
+        "docs/engineering-journal/QUEUED.md filing 3 says ten; see F73"
+      ],
+      "file": "plugins/mission-control/scripts/sdlc_manager.py",
+      "finding_id": "F12",
+      "lens_id": "agent-usability",
+      "line": 2026,
+      "owner": "human",
+      "pre_existing": true,
+      "requires_verification": true,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Refuse json/markdown at the parser for subcommands that cannot honour them, which closes all twelve at once.",
+      "title": "--format json silently ignored by twelve subcommands",
+      "touched_paths": [
+        "plugins/mission-control/scripts/sdlc_manager.py"
+      ],
+      "why_it_matters": "`--format` is a top-level flag every subcommand accepts; twelve print prose unconditionally, so an agent's json.loads raises with no signal the flag was unsupported. Carried upstream bytes; the runbook forbids a downstream patch. Filed in docs/engineering-journal/QUEUED.md for a future repin. Re-confirmed present at this revision."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "safe-bounded-idempotent-resumable-context-cost",
+      "evidence": [
+        "plugins/mission-control/scripts/sdlc_manager.py:2026-2067 - sys.exit(1) appears only in the field-not-found arm",
+        "docs/engineering-journal/QUEUED.md filing 4"
+      ],
+      "file": "plugins/mission-control/scripts/sdlc_manager.py",
+      "finding_id": "F13",
+      "lens_id": "agent-usability",
+      "line": 2058,
+      "owner": "human",
+      "pre_existing": true,
+      "requires_verification": true,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Exit non-zero, or emit a structured {\"mutated\": false, \"next_command\": ...} record under --format json.",
+      "title": "No-op create-option exits zero, signalling success",
+      "touched_paths": [
+        "plugins/mission-control/scripts/sdlc_manager.py"
+      ],
+      "why_it_matters": "The documented no-op path falls off the end of the function, so an agent gating on exit status records success for a mutation never attempted. Carried upstream bytes; the runbook forbids a downstream patch. Filed in docs/engineering-journal/QUEUED.md for a future repin. Re-confirmed present at this revision."
+    },
+    {
+      "autofix_class": "advisory",
+      "confidence": 100,
+      "dimension_id": "retry-idempotency-semantics",
+      "evidence": [
+        "plugins/mission-control/scripts/sdlc_manager.py:5578 push precedes :5579 pr create; the finally at :5591-5597 removes only the worktree",
+        "docs/engineering-journal/QUEUED.md filing 5"
+      ],
+      "file": "plugins/mission-control/scripts/sdlc_manager.py",
+      "finding_id": "F14",
+      "lens_id": "api-contract",
+      "line": 5578,
+      "owner": "downstream-resolver",
+      "pre_existing": true,
+      "requires_verification": false,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Delete the pushed branch on failure and name it in the raised error.",
+      "title": "Mapping pull-request route leaves orphan remote branches",
+      "touched_paths": [
+        "plugins/mission-control/scripts/sdlc_manager.py"
+      ],
+      "why_it_matters": "A failed `gh pr create` removes only the local worktree; the pushed branch is never deleted and its timestamped name means every retry mints another. Carried upstream bytes; the runbook forbids a downstream patch. Filed in docs/engineering-journal/QUEUED.md for a future repin. Re-confirmed present at this revision."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "context-constraints-acceptance-examples",
+      "evidence": [
+        "plugins/mission-control/skills/board/SKILL.md:40-41 and the caveat at :48",
+        "plugins/mission-control/config/sdlc-schema.json gives all three boards workflow stage_flow",
+        "docs/engineering-journal/QUEUED.md filing 6"
+      ],
+      "file": "plugins/mission-control/skills/board/SKILL.md",
+      "finding_id": "F15",
+      "lens_id": "agent-usability",
+      "line": 40,
+      "owner": "human",
+      "pre_existing": true,
+      "requires_verification": true,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Replace both rows with the stage_flow list, or move the caveat above the table.",
+      "title": "Board skill ships knowingly wrong Operations and Asgard ladders",
+      "touched_paths": [
+        "plugins/mission-control/skills/board/SKILL.md"
+      ],
+      "why_it_matters": "Two of three board rows give a retired status ladder the shipped schema does not carry, with the correcting note eight lines below the table. Carried upstream bytes; the runbook forbids a downstream patch. Filed in docs/engineering-journal/QUEUED.md for a future repin. Re-confirmed present at this revision."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "discoverability-invocation-schemas",
+      "evidence": [
+        "plugins/mission-control/skills/flow/SKILL.md contains no 'python3' and no location section; :71, :78, :83, :88, :94 are bare invocations",
+        "The six siblings give $INFIQUETRA_SDLC_PATH/../infiquetra-claude-plugins/plugins/mission-control/scripts/sdlc_manager.py",
+        "docs/engineering-journal/QUEUED.md filing 7 - but it routes the portable half to the wrong owner; see F70"
+      ],
+      "file": "plugins/mission-control/skills/flow/SKILL.md",
+      "finding_id": "F16",
+      "lens_id": "agent-usability",
+      "line": 71,
+      "owner": "human",
+      "pre_existing": true,
+      "requires_verification": true,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Split the filing: the missing flow section is upstream's; the six sibling paths are a downstream transform.",
+      "title": "Skill invocation paths do not resolve in a portable install",
+      "touched_paths": [
+        "plugins/mission-control/skills/flow/SKILL.md"
+      ],
+      "why_it_matters": "The flow skill has no Script Location section and every fenced example begins with a bare `sdlc_manager.py` nothing puts on PATH; the six sibling skills give a path inside the upstream repository a portable-only operator does not have. Carried upstream bytes; the runbook forbids a downstream patch. Filed in docs/engineering-journal/QUEUED.md for a future repin. Re-confirmed present at this revision."
+    },
+    {
+      "autofix_class": "safe_auto",
+      "confidence": 100,
+      "dimension_id": "specification-documentation-parity",
+      "evidence": [
+        "ports/README.md:114-117 lists four selectable rules",
+        "scripts/sync_vendor_source.py:1002-1009 registers six, five of them selectable",
+        "ports/mission-control.json selects the missing rule for three paths",
+        "`git diff --stat 0eff36e..863af58 -- ports/README.md` is empty - the spec was never touched while the rule was added",
+        "grep for ports/README across tests/ and scripts/ returns nothing"
+      ],
+      "file": "ports/README.md",
+      "finding_id": "F66",
+      "lens_id": "api-contract",
+      "line": 114,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": false,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Add the rule to the enumeration and add a test deriving the enumerated names from TRANSFORM_RULES so the next rule cannot be added without the spec moving.",
+      "title": "Descriptor specification omits the new transform rule",
+      "touched_paths": [
+        "ports/README.md"
+      ],
+      "why_it_matters": "ports/README.md names itself the only specification of the descriptor format, and its schema-3 section enumerates the rules a descriptor may select. That enumeration omits resolve-package-root-marker, which this run added and which the shipped descriptor selects for three paths. An author writing the next descriptor from the spec would conclude the rule three shipped entries already use is not selectable, and nothing fails when they get it wrong."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "authentication-authorization-tenant-isolation",
+      "evidence": [
+        "scripts/assess_clients.py:301-331 - home=REAL_HOME with --trust at :314, :321, :328",
+        "scripts/assess_clients.py:228-237 - the whole restriction is 'Do not use filesystem, shell, network, or UniFi tools.'",
+        "refuse_unsafe_home raises only for ISOLATED_ONLY plans or when writes_client_state is set, which defaults False and none of the three stages sets",
+        "Measured: command_safety_problems on the Cursor argv returns [] while refusing an issue-close argv"
+      ],
+      "file": "scripts/assess_clients.py",
+      "finding_id": "F54",
+      "lens_id": "security",
+      "line": 314,
+      "owner": "human",
+      "pre_existing": true,
+      "requires_verification": true,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Add a real-home read-only declaration to StageSpec that refuse_unsafe_home enforces, and record in the matrix that the Cursor restriction is prompt-level. Both files are graded, so this follows the freeze alongside F36 and F38.",
+      "title": "Real-home client is restrained only by prompt text",
+      "touched_paths": [
+        "scripts/assess_clients.py"
+      ],
+      "why_it_matters": "Three Cursor Agent stages launch a live authenticated coding agent inside the operator's own home with --trust, and the only restraint is a sentence appended to the prompt. That is an instruction to a model, not an enforced control, and both real controls miss it: refuse_unsafe_home enforces a declaration the Cursor stages never set, and refuse_unsafe_argv's mutating-verb half only applies when the command names a package script."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "architectural-fit-ownership-single-sources",
+      "evidence": [
+        "scripts/sync_vendor_source.py:46-52 - 'A second package that selects this rule must extend that table'",
+        "tests/test_port_config.py:622-636 - per-config `assertEqual(declared, set(svs.PACKAGE_ROOT_MARKER_SITE_COUNTS))`; tests/test_sync_vendor_source.py:1793 repeats it",
+        "The test's own docstring concedes it: 'a package that selects the rule anywhere must declare exactly the table'",
+        "Controller-confirmed by reading both assertions; latent because only mission-control selects the rule today"
+      ],
+      "file": "scripts/sync_vendor_source.py",
+      "finding_id": "F59",
+      "lens_id": "architecture-maintainability",
+      "line": 49,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": true,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Key the table by package as well as path and compare each descriptor against its own slice, then correct the docstring.",
+      "title": "The site-count table's documented escape hatch cannot be used",
+      "touched_paths": [
+        "scripts/sync_vendor_source.py"
+      ],
+      "why_it_matters": "The module docstring tells a maintainer that a second package selecting this rule 'must extend that table', and the join gate added this round makes that impossible: it asserts, per package, that the declared path set equals the whole table. Two packages with different path sets can never both be green - extending the table breaks mission-control's assertion, not extending it breaks the new package's. The only satisfiable outcome is that no second package ever uses the rule."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "dependency-direction",
+      "evidence": [
+        "scripts/sync_vendor_source.py:1140-1151 - the identity test inside the entrypoint-transform loop",
+        "scripts/sync_vendor_source.py:299-311 - TransformRule carries no precondition slot and apply receives no PortConfig",
+        "The only identity comparison in the module is the new one"
+      ],
+      "file": "scripts/sync_vendor_source.py",
+      "finding_id": "F58",
+      "lens_id": "architecture-maintainability",
+      "line": 1140,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": true,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Give TransformRule an optional precondition callable, attach the marker check at construction, and have plan_sync call it when present so the loop dispatches on the abstraction.",
+      "title": "Generic planner hard-codes one transform rule's identity",
+      "touched_paths": [
+        "scripts/sync_vendor_source.py"
+      ],
+      "why_it_matters": "The F19 repair moved the Claude-specific coupling out of the rule and into plan_sync, the function every port's synchronization goes through, as an `if rule is PACKAGE_ROOT_MARKER_RULE` identity test. The coupling count went from one site to two: the rule still compiles in the marker and cannot read the descriptor, and the dispatcher now also knows this rule by name. Every future rule needing a descriptor precondition adds another branch to the same loop."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "readability-naming-error-contracts",
+      "evidence": [
+        "grep for plan_sync across tests/ returns nothing",
+        "The two tests that set client_extension_dir to a non-matching value assert on port_config.parse alone and never call plan_sync",
+        "The synthetic descriptor that does reach synchronize selects only the split, guarded and frontmatter rules",
+        "Controller-verified the guard does fire when driven directly - so it works today and is simply unguarded against regression"
+      ],
+      "file": "scripts/sync_vendor_source.py",
+      "finding_id": "F60",
+      "lens_id": "architecture-maintainability",
+      "line": 1143,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": true,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Add a case building the synthetic descriptor with the marker rule selected and a non-matching client_extension_dir, asserting SyncError names both values, plus a companion proving the real descriptor does not raise.",
+      "title": "The plan_sync descriptor refusal has no committed test",
+      "touched_paths": [
+        "scripts/sync_vendor_source.py"
+      ],
+      "why_it_matters": "The refusal is the entire mechanism by which the F19 repair keeps the sync tool honest, and nothing exercises it. No test constructs a descriptor selecting the rule while naming a different client extension directory, and none asserts any substring of the message. The guard can be deleted, inverted, or weakened and check_repo plus all 834 tests stay green. Every other refusal branch of this rule got a test; the one that lives outside the rule got none."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "behavior-sensitive-assertions",
+      "evidence": [
+        "Falsified on a clean export: editing only the rendered OpenAI Codex row to works-directly and only the summary to '9 clients work directly' left `unittest tests.test_check_compatibility_matrix` at 160 tests OK and the checker printing 'validation passed' with exit 0, while the JSON stayed truthful",
+        "Controller-confirmed: grep for table parsing in the checker and the tests returns nothing"
+      ],
+      "file": "tests/test_check_compatibility_matrix.py",
+      "finding_id": "F56",
+      "lens_id": "testing",
+      "line": 1364,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": true,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Parse the Results table in MissionControlMatrixBindingTest and assert each row's status, version and four stage cells equal the JSON record, plus assert the summary counts equal Counter(status).",
+      "title": "Matrix results table and summary are unbound prose",
+      "touched_paths": [
+        "tests/test_check_compatibility_matrix.py"
+      ],
+      "why_it_matters": "The F23 repair binds each client's JSON status to its JSON stages and it works. But the surface a human reads - the rendered Results table and the one-sentence summary the cycle-1 finding asked to have restored - is parsed by nothing in the checker or the tests. A mis-transcription between the record and the table, the likeliest hand-authoring error in a document carrying both, validates clean. The restoration bought a reader-facing surface with no gate behind it."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "determinism-isolation-diagnostics-maintainability",
+      "evidence": [
+        "Reproduced on a clean export: creating .claude/worktrees/sibling/docs/README.md from the cycle-1 revision makes the test fail naming that path",
+        "The operator's main checkout holds 1,883 markdown files under .claude/, seven carrying the exact bare anchor the test rejects",
+        "Controller-confirmed: .claude/ exists in this worktree with 2 markdown files",
+        "tests/test_check_compatibility_matrix.py:1639-1641 - the walk and its single EVIDENCE exemption"
+      ],
+      "file": "tests/test_check_compatibility_matrix.py",
+      "finding_id": "F55",
+      "lens_id": "testing",
+      "line": 1639,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": true,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Enumerate from `git ls-files \"*.md\"`, or skip paths whose parts intersect {.claude, .git, .venv, node_modules, .saga, .serena}; add errors=replace on the read.",
+      "title": "New superseded-link test walks gitignored directories",
+      "touched_paths": [
+        "tests/test_check_compatibility_matrix.py"
+      ],
+      "why_it_matters": "The guard added this round iterates ROOT.rglob('*.md') with no filter for untracked or gitignored paths. `.claude/` is gitignored but is a real subdirectory of the checkout and, in this repository's own agent workflow, holds a full repo copy per worktree. The test therefore fails or passes on content outside version control: green in CI, red on the developer machine the repository tells the developer to run it on. The unguarded read_text adds a second machine-dependent failure on any non-UTF-8 markdown."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "dependency-supply-chain",
+      "evidence": [
+        "tests/test_mission_control_rule_audit.py:51-64 and :75 - spec.loader.exec_module on an out-of-repository file",
+        "ports/mission-control.json:196 states the contrary rule for the dropped upstream twin"
+      ],
+      "file": "tests/test_mission_control_rule_audit.py",
+      "finding_id": "F25",
+      "lens_id": "security",
+      "line": 75,
+      "owner": "human",
+      "pre_existing": true,
+      "requires_verification": true,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Vendor a digest-pinned decision corpus under tests/fixtures/ and assert against that.",
+      "title": "Root suite executes unpinned code from outside the repository",
+      "touched_paths": [
+        "tests/test_mission_control_rule_audit.py"
+      ],
+      "why_it_matters": "The mandated validation command exec_modules a card_validator found by searching HOME_LAB_PATH and two home paths; the verdict depends on that checkout's content. Dispositioned pre-existing/human and unchanged this round."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "determinism-isolation-diagnostics-maintainability",
+      "evidence": [
+        "Controller-confirmed: the class runs 23 tests with 0 skips on this machine; CI provisions no home-lab checkout",
+        "docs/engineering-journal/LEARNINGS.md:689 - 'A test that asserts on the machine it runs on reports the machine, not the code'"
+      ],
+      "file": "tests/test_mission_control_rule_audit.py",
+      "finding_id": "F26",
+      "lens_id": "testing",
+      "line": 138,
+      "owner": "human",
+      "pre_existing": true,
+      "requires_verification": false,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Record the CI-inert set in QUEUED.md, or vendor the corpus.",
+      "title": "Card-validator suite reports the machine, against the run's own rule",
+      "touched_paths": [
+        "tests/test_mission_control_rule_audit.py"
+      ],
+      "why_it_matters": "Twenty-three of the module's tests skip when the external checkout is absent, so they never run in CI and run against unpinned code locally. Dispositioned pre-existing/human; the disposition is right but the residual is filed nowhere. See F57."
+    },
+    {
+      "autofix_class": "advisory",
+      "confidence": 100,
+      "dimension_id": "requirements-regression-coverage",
+      "evidence": [
+        "Measured with home patched to a nonexistent path: `Ran 44 tests ... OK (skipped=25)`; on the operator's machine the same module runs 44 with 0 skips",
+        "README.md:80 carries the unqualified claim, and it predates this change",
+        "grep for card_validator or home-lab in QUEUED.md returns no open item"
+      ],
+      "file": "tests/test_mission_control_rule_audit.py",
+      "finding_id": "F57",
+      "lens_id": "testing",
+      "line": 138,
+      "owner": "human",
+      "pre_existing": true,
+      "requires_verification": false,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "File the CI-inert set in QUEUED.md and qualify README.md:80. No test change is needed to close the disclosure gap.",
+      "title": "Rule-audit module is 57 percent inert in CI",
+      "touched_paths": [
+        "tests/test_mission_control_rule_audit.py"
+      ],
+      "why_it_matters": "Twenty-five of the module's forty-four tests skip when two external checkouts are absent, which is always in CI. The root README states without qualification that the audit runs class-first against live authority - true only on a machine carrying those checkouts. The run's own decision rationale rejects exactly this shape as grounds for dropping a test from the package, and no QUEUED item files the exception."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "determinism-isolation-diagnostics-maintainability",
+      "evidence": [
+        "Measured on a clean export: after a full suite run, `find . -newer marker` returned exactly those two files and nothing else",
+        "Both are inside the fingerprint - the 71-file enumeration includes them; the restore is byte-exact so the digest recovers, but the write is real",
+        "tests/test_mission_control_rule_audit.py:493 `data_path.write_bytes(original + b\"\\n# drift\\n\")`, repeated at :506"
+      ],
+      "file": "tests/test_mission_control_rule_audit.py",
+      "finding_id": "F27",
+      "lens_id": "testing",
+      "line": 493,
+      "owner": "review-fixer",
+      "pre_existing": true,
+      "requires_verification": true,
+      "severity": "P2",
+      "status": "active",
+      "suggested_fix": "Copy the two generated artifacts and their .sha256 sidecars into a TemporaryDirectory and patch the parity module's GENERATED path for the test's duration, matching the repaired template test.",
+      "title": "Two tests still write inside the fingerprinted package tree",
+      "touched_paths": [
+        "tests/test_mission_control_rule_audit.py"
+      ],
+      "why_it_matters": "PARTIAL. The repair redirected one of three in-tree write sites. Two parity-drift tests still append bytes directly to `config/generated/issue_contract_data.py` and `issue_contract_shim.py`, both inside the 71-file fingerprint, restoring only in a finally. During that window the live tree does not hash to the value every evidence document binds, and an interrupted run leaves a tracked file drifted. The repair commit states the fingerprinted tree is never written, which is false of the file as a whole."
+    },
+    {
+      "autofix_class": "gated_auto",
+      "confidence": 100,
+      "dimension_id": "dependency-supply-chain",
+      "evidence": [
+        ".github/workflows/ci.yml:59 - `python -m pip install --upgrade pip requests urllib3 pyyaml pytest`"
+      ],
+      "file": ".github/workflows/ci.yml",
+      "finding_id": "F30",
+      "lens_id": "security",
+      "line": 59,
+      "owner": "release",
+      "pre_existing": true,
+      "requires_verification": true,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "Pin with a hashed requirements file, matching the hermeticity standard the first job documents.",
+      "title": "CI installs plugin test dependencies unpinned",
+      "touched_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "why_it_matters": "The plugin-tests job resolves four packages at run time with no constraint or hash pinning, then executes the ported suite. Dispositioned pre-existing/release; unchanged this round."
+    },
+    {
+      "autofix_class": "gated_auto",
+      "confidence": 100,
+      "dimension_id": "specification-documentation-parity",
+      "evidence": [
+        "README.md:81 - '3 directly, 7 via adapter, 0 failed', with the breakdown at :84-91",
+        "The repair diff shows the counts changing 2 to 3 and 1 to 0 by hand with no test change",
+        "scripts/check_compatibility_matrix.py's summarize already derives them; the no-arg run prints exactly those numbers",
+        "grep across tests/ finds nothing reading README.md for client statuses"
+      ],
+      "file": "README.md",
+      "finding_id": "F68",
+      "lens_id": "api-contract",
+      "line": 81,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": false,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "Extend RootReadmePinTests to run summarize over the current matrix and assert the README sentence matches, on the pattern the file-count derivation already uses.",
+      "title": "Root README client-status counts have no gate",
+      "touched_paths": [
+        "README.md"
+      ],
+      "why_it_matters": "Every other derived number in the root README is recomputed by a test - the file count, the test count, the pin, the version. The per-status client tally is the one still retyped by hand, and it went stale inside this single review cycle: the round hand-edited it after the fingerprint move forced a re-assessment. The checker already computes exactly these counts, and the evidence link is gated, so the next re-assessment leaves a false published tally beside a correctly repointed link."
+    },
+    {
+      "autofix_class": "safe_auto",
+      "confidence": 100,
+      "dimension_id": "shipped-behavior-parity",
+      "evidence": [
+        "Controller-measured per commit: f4da07e and 0ff932e each FAILED (failures=1) on test_no_prose_outside_evidence_links_a_superseded_document; 8d0b541 lands the docs/README repoint and is green",
+        "a1e84e0 is FAILED (failures=6) and its message declares exactly that",
+        "Neither f4da07e's nor 0ff932e's message mentions a red suite"
+      ],
+      "file": "docs/engineering-journal/QUEUED.md",
+      "finding_id": "F78",
+      "lens_id": "documentation-clarity",
+      "line": 11,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": false,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "Note the expected red in the commit that introduces a guard ahead of its fix, or order the repoint before the guard.",
+      "title": "One repair round declared its red window; the other did not",
+      "touched_paths": [
+        "docs/engineering-journal/QUEUED.md"
+      ],
+      "why_it_matters": "The round-2 commit declares its own red state in its message - 'the six evidence-binding tests are RED AS EXPECTED ... the evidence is not edited to match the moved tree' - which is exactly right. Two round-1 commits are also red, for two commits, and say nothing: a guard test lands before the document repoint it guards. Bisection across the branch therefore hits an undeclared red window in a run whose discipline is otherwise to declare them."
+    },
+    {
+      "autofix_class": "safe_auto",
+      "confidence": 100,
+      "dimension_id": "completeness-audience-prerequisites",
+      "evidence": [
+        "docs/plans/...-resync-plan.md:378 vs GitHub issue #52's acceptance criterion",
+        "The plan's section 11.2 lists five brief-versus-issue differences and does not list this one; QUEUED.md's new section files only upstream defects"
+      ],
+      "file": "docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md",
+      "finding_id": "F32",
+      "lens_id": "documentation-clarity",
+      "line": 378,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": false,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "Add a sixth item to section 11.2 recording the #52 discrepancy and the intended correction.",
+      "title": "Issue #52's line-claim count is still uncorrected",
+      "touched_paths": [
+        "docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md"
+      ],
+      "why_it_matters": "R12 requires four surviving line-number claims; issue #52 says three and its grep omits the _open_mapping_pr claim. Deferred because no issue mutation was permitted mid-run - the right call - but the deferral is recorded in neither of the two places a closer would look. See F50's sibling."
+    },
+    {
+      "autofix_class": "safe_auto",
+      "confidence": 100,
+      "dimension_id": "completeness-audience-prerequisites",
+      "evidence": [
+        "docs/plans/...-resync-plan.md:399 (R33) and :2473 (the checklist) both say 'Both superseded documents'",
+        "Controller-verified: four of the six mission-control evidence documents carry matrix-status: superseded",
+        "The substance is covered - MissionControlSupersededDocumentTest asserts the intermediate pair"
+      ],
+      "file": "docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md",
+      "finding_id": "F33",
+      "lens_id": "documentation-clarity",
+      "line": 399,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": false,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "Say 'All four superseded mission-control documents - the 2026-08-25 pair and the 2026-08-30 pre-fingerprint-move pair' in both places, and correct U5's Files-owned list to the shipped filenames.",
+      "title": "Plan and acceptance still say two superseded documents",
+      "touched_paths": [
+        "docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md"
+      ],
+      "why_it_matters": "PARTIAL. Four mission-control evidence documents now carry a superseded stamp, not two. R33's verifier column was repaired but the requirement text and the section 12 checklist still read 'Both superseded documents', so an operator working the list checks the 2026-08-25 pair and never checks the 2026-08-30 pair this round retired."
+    },
+    {
+      "autofix_class": "safe_auto",
+      "confidence": 100,
+      "dimension_id": "terminology-cross-document-consistency",
+      "evidence": [
+        "docs/plans/...-resync-plan.md:2175-2176 - 'All twelve child-scoped commits ... live on orch-agent-plugins-50'",
+        "docs/plans/...-resync-plan.md:853-854 and :2393 both say fourteen as landed",
+        "Controller-verified: the branch carries fourteen unit commits"
+      ],
+      "file": "docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md",
+      "finding_id": "F09",
+      "lens_id": "documentation-clarity",
+      "line": 2175,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": false,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "Replace 'All twelve child-scoped commits' with 'All fourteen child-scoped commits as landed (twelve by design; U0 shipped in three)'.",
+      "title": "Section 8.2 still records twelve landed commits",
+      "touched_paths": [
+        "docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md"
+      ],
+      "why_it_matters": "PARTIAL. The repair corrected KTD15's table to fourteen and rewrote Q8's heading, but section 8.2 - the section whose subject is what is on the branch - still asserts twelve. The plan now answers the same question two ways, and 8.2 is the one a reader consults for branch state."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "structure-navigation",
+      "evidence": [
+        "docs/plans/...-resync-plan.md:2482, :2627, :2679, :2785 all cite the same path with revisions 1e4da2b, b164026, 4083220, 02c8bed",
+        "docs/plans/...-resync-plan.md:2487 - 'That is the last revision of this plan the document review examined', contradicted by cycles 3, 4, 6 and 7"
+      ],
+      "file": "docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md",
+      "finding_id": "F34",
+      "lens_id": "documentation-clarity",
+      "line": 2482,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": false,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "Append each cycle's review commit SHA to the four Artifact lines and delete the closing sentence.",
+      "title": "Four amendments still cite one overwritten review file",
+      "touched_paths": [
+        "docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md"
+      ],
+      "why_it_matters": "NOT FIXED. Four sections each cite the same doc-review path as the artifact for a different cycle with a different bound revision and verdict; only one file exists there and it holds cycle 7. The round added review SHAs to four status paragraphs but left the four citations the finding named, and left the false closing sentence."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "state-data-invariants-transactions-concurrency",
+      "evidence": [
+        "scripts/sync_vendor_source.py:1370-1375 emits config.dropped_reason for every dropped path",
+        "plugins/mission-control/PROVENANCE.json:21, :25, :29 - three paths, one byte-identical reason"
+      ],
+      "file": "plugins/mission-control/PROVENANCE.json",
+      "finding_id": "F36",
+      "lens_id": "correctness",
+      "line": 21,
+      "owner": "downstream-resolver",
+      "pre_existing": true,
+      "requires_verification": true,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "Split the descriptor's existing '<path>: <reason>.' clauses in the emitter, which needs no graded edit.",
+      "title": "Every dropped-path entry repeats all three drop reasons",
+      "touched_paths": [
+        "plugins/mission-control/PROVENANCE.json"
+      ],
+      "why_it_matters": "The manifest builder stamps one concatenated string onto every removed_from_source entry, so no entry says why its own path was dropped. Deferred as needing a graded edit - but that ground is over-stated; see F65's sibling."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "interface-contract-compatibility",
+      "evidence": [
+        "ports/mission-control.json:139-165 lists bare tokens with no group",
+        "scripts/check_compatibility_matrix.py:882-887 tokenizes and intersects; scripts/assess_clients.py:647 names it the single authority",
+        "Another reviewer falsified the gate: adding a `board status` parser left the gate green, while a novel token correctly failed it",
+        "tests/test_mission_control_readme.py:83-117 declares view, list, show, status, audit, discover, prepare, progress and wip read-only"
+      ],
+      "file": "ports/mission-control.json",
+      "finding_id": "F67",
+      "lens_id": "api-contract",
+      "line": 139,
+      "owner": "human",
+      "pre_existing": true,
+      "requires_verification": true,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "Make each entry a group-qualified pair, bump the descriptor schema, and match adjacent token pairs. Until then record the collision hazard in QUEUED.md.",
+      "title": "Mutating-operation contract is a bare action-token list",
+      "touched_paths": [
+        "ports/mission-control.json"
+      ],
+      "why_it_matters": "The single safety authority splits a command on whitespace and intersects bare tokens with the declared mutating set. The descriptor holds bare action tokens with no group qualifier, so neither the contract nor the predicate can distinguish `board move` from `flow move`. The upstream change that silently widens the read-only set is any new mutating verb whose token is already declared read-only - view, list, show, status, audit, discover, prepare, progress, wip. The new verb-surface gate has the same weakness, so such a verb passes end to end."
+    },
+    {
+      "autofix_class": "gated_auto",
+      "confidence": 100,
+      "dimension_id": "confidentiality-logs-errors-egress",
+      "evidence": [
+        "scripts/check_compatibility_matrix.py:940 walks only the parsed record",
+        "Latent, not live: running the rules over each current document's whole text returns zero problems"
+      ],
+      "file": "scripts/check_compatibility_matrix.py",
+      "finding_id": "F38",
+      "lens_id": "security",
+      "line": 940,
+      "owner": "human",
+      "pre_existing": true,
+      "requires_verification": true,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "After the freeze lifts, scan the text outside the fenced record too.",
+      "title": "Evidence redaction check never reads document prose",
+      "touched_paths": [
+        "scripts/check_compatibility_matrix.py"
+      ],
+      "why_it_matters": "The public-evidence control walks only the strings inside the extracted JSON record, so narrative outside the fenced block is never scanned. Deferred because the fix touches a graded file; the disposition is right."
+    },
+    {
+      "autofix_class": "safe_auto",
+      "confidence": 100,
+      "dimension_id": "specification-documentation-parity",
+      "evidence": [
+        "scripts/sync_vendor_source.py:11-13 carries the absolute claim",
+        "scripts/sync_vendor_source.py:46-52 carries the exception paragraph added this round",
+        "The repair diff shows only the second paragraph was added"
+      ],
+      "file": "scripts/sync_vendor_source.py",
+      "finding_id": "F69",
+      "lens_id": "api-contract",
+      "line": 11,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": false,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "Qualify the lede so the two agree - 'Nothing about a particular package is compiled into this file except the one exception recorded below.'",
+      "title": "Sync tool docstring contradicts its own recorded exception",
+      "touched_paths": [
+        "scripts/sync_vendor_source.py"
+      ],
+      "why_it_matters": "The F39 repair added a paragraph disclosing the package-specific table but left standing, thirty-five lines above it, the absolute claim it contradicts. The module now says both 'Nothing about a particular package is compiled into this file' and 'One exception to the package-agnostic contract is recorded rather than hidden'. A reader who stops at the lede - which is where a porting author starts - carries away the false version."
+    },
+    {
+      "autofix_class": "safe_auto",
+      "confidence": 100,
+      "dimension_id": "serialization-errors",
+      "evidence": [
+        "scripts/sync_vendor_source.py:840 iterates expected_classes, a set literal defined at :823",
+        "Measured, same input and revision: PYTHONHASHSEED=0 named 'call'; PYTHONHASHSEED=3 named 'finder'",
+        "Controller-measured independently across five default-seed runs: is_file, call, finder, raises, finder",
+        "The committed tests are not flaky - each mismatches on a single class or asserts only 'found 0' - so nothing catches it"
+      ],
+      "file": "scripts/sync_vendor_source.py",
+      "finding_id": "F62",
+      "lens_id": "api-contract",
+      "line": 840,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": false,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "Keep the set for the membership check and iterate a fixed SITE_CLASSES tuple for the count comparison.",
+      "title": "Site-count refusal names a class chosen by hash seed",
+      "touched_paths": [
+        "scripts/sync_vendor_source.py"
+      ],
+      "why_it_matters": "The repair that removed the bare KeyError also changed the site-class loop from a fixed tuple to a set. Set iteration over strings depends on PYTHONHASHSEED, so when a file mismatches on more than one class the tool names a different class on different runs. The rule's stated contract is that a refusal names the site class, and that its output is reproducible from the source bytes alone; a diagnostic that changes between two runs of the same input breaks both."
+    },
+    {
+      "autofix_class": "safe_auto",
+      "confidence": 100,
+      "dimension_id": "boundary-types-serialization-numeric-time",
+      "evidence": [
+        "Measured with a row declaring finder 2 / call 1 and a body ordered definition, call, definition: the transform returned OK and raised nothing",
+        "Symmetric control with finder 2 / call 2 and a call before both definitions correctly raised SyncError naming the ordering",
+        "scripts/sync_vendor_source.py:823 and :840-847 compare each class against its own count only; no cross-class constraint exists"
+      ],
+      "file": "scripts/sync_vendor_source.py",
+      "finding_id": "F65",
+      "lens_id": "correctness",
+      "line": 861,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": true,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "Require counts['call'] in (0, counts['finder']) in the row-shape check, or check each finder against the nearest following call by index.",
+      "title": "zip truncation drops the definition-before-call check",
+      "touched_paths": [
+        "scripts/sync_vendor_source.py"
+      ],
+      "why_it_matters": "The F43 repair replaced the single-pair ordering check with `zip(finders, calls)`. zip stops at the shorter sequence, and the count check never requires the finder and call counts to be equal. A future row declaring unequal counts leaves the surplus definitions with no ordering check, so a file carrying a definition after the module-scope call - a shape the rule's own error text says it does not describe - is accepted silently instead of refused. The rewrite output stays correct, so this narrows a shape assertion rather than corrupting bytes."
+    },
+    {
+      "autofix_class": "safe_auto",
+      "confidence": 100,
+      "dimension_id": "intent-behavior-completeness",
+      "evidence": [
+        "Controller-reproduced: setting PORTABLE_PACKAGE_ROOT_MARKER to a renamed value still emits the old literal - 'emitted renamed? False', 'emitted the old literal? True'",
+        "The constant is referenced only in classification and the guard, never in emission",
+        "synchronize with check_only re-derives with the same stale literal, so the check goes green"
+      ],
+      "file": "scripts/sync_vendor_source.py",
+      "finding_id": "F63",
+      "lens_id": "correctness",
+      "line": 1141,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": true,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "Build the three portable emissions from the constant with f-strings so a rename cannot decouple the guard from the output.",
+      "title": "Marker guard compares a constant the rewrite ignores",
+      "touched_paths": [
+        "scripts/sync_vendor_source.py"
+      ],
+      "why_it_matters": "The new refusal exists to stop shipping a package whose scripts and manifest live in different directories. It compares the descriptor against PORTABLE_PACKAGE_ROOT_MARKER, but the emissions never read that constant - they hardcode the literal. Rename the directory and the constant and descriptor move together, the guard passes, and the transform keeps anchoring carried scripts on the old name while the manifest relocates to the new one. --check cannot catch it: the stale literal is on both sides of the comparison."
+    },
+    {
+      "autofix_class": "safe_auto",
+      "confidence": 100,
+      "dimension_id": "machine-readable-output-actionable-errors",
+      "evidence": [
+        "scripts/sync_vendor_source.py:1143-1151 - the message ends 'Name the descriptor's client_extension_dir ... or re-custody the path'",
+        "scripts/sync_vendor_source.py:45-49, added by the same round, gives the correct remedy the message omits"
+      ],
+      "file": "scripts/sync_vendor_source.py",
+      "finding_id": "F76",
+      "lens_id": "agent-usability",
+      "line": 1149,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": false,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "Replace the first branch with the docstring's remedy - extend the table and parameterize the rule's marker on the descriptor - and stop offering the rename.",
+      "title": "New sync refusal prescribes a wrong remedy",
+      "touched_paths": [
+        "scripts/sync_vendor_source.py"
+      ],
+      "why_it_matters": "The guard added this round fires when a port selects the marker rule while naming a different client extension directory. Its remedy line offers, first, naming the descriptor's directory the Claude one - which instructs a non-Claude port to declare a Claude-named directory, precisely the vendor-neutrality defect the module's docstring was corrected to disclose. An agent running the synchronization for a second package and following the message produces a misconfigured port."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "discoverability-invocation-schemas",
+      "evidence": [
+        "tests/test_mission_control_readme.py:275-301 reads plugins/mission-control/README.md only",
+        "The suite is green while skills/labels/SKILL.md:120 documents a verb the package classifies as a no-op"
+      ],
+      "file": "tests/test_mission_control_readme.py",
+      "finding_id": "F44",
+      "lens_id": "agent-usability",
+      "line": 275,
+      "owner": "human",
+      "pre_existing": true,
+      "requires_verification": true,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "Extend the extraction over skills/*/SKILL.md and their references.",
+      "title": "No gate checks skill commands against the CLI surface",
+      "touched_paths": [
+        "tests/test_mission_control_readme.py"
+      ],
+      "why_it_matters": "The fenced-command guard binds only the package README. The new verb-surface gate binds the parser to the declared verb tables, but nothing extracts commands from the seven SKILL.md files an agent invokes from. Dispositioned pre-existing/human."
+    },
+    {
+      "autofix_class": "safe_auto",
+      "confidence": 100,
+      "dimension_id": "state-data-invariants-transactions-concurrency",
+      "evidence": [
+        "Measured: the real byte-copy test count is 26 and `'6 as byte copies' in notes` is True; likewise '2 as ... transforms' is a substring of '12 as ... transforms'",
+        "tests/test_port_config.py:596 and :602 are the two assertIn calls; the docstring claims a stale prose count fails here",
+        "tests/test_mission_control_rule_audit.py was changed this round to parse the README claim and compare the parsed value"
+      ],
+      "file": "tests/test_port_config.py",
+      "finding_id": "F64",
+      "lens_id": "correctness",
+      "line": 596,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": true,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "Replace both assertIn calls with a regex parse and an assertEqual on the integer.",
+      "title": "F18 count gate matches a substring, not the number",
+      "touched_paths": [
+        "tests/test_port_config.py"
+      ],
+      "why_it_matters": "The new gate does recompute both carried-test counts from the custody arrays, then asserts with assertIn on a formatted string. A stale prose count whose recomputed replacement is a suffix of it passes - if the byte-copy count fell to 6 while the prose still read 26, the gate would pass on the stale text, reintroducing the defect it was written to close. The same round applied the stricter parse-and-compare pattern one file over and did not apply it here."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 100,
+      "dimension_id": "simplicity-abstraction-duplication-changeability",
+      "evidence": [
+        "tests/test_sync_vendor_source.py:1034-1043 - the whole assertion is a path-membership loop",
+        "Measured: mutating a row's counts left 'all table paths still in prose' True and the prose still claiming the old shape",
+        "The same prose is recorded as the transform_rule value in plugins/mission-control/PROVENANCE.json"
+      ],
+      "file": "tests/test_sync_vendor_source.py",
+      "finding_id": "F75",
+      "lens_id": "architecture-maintainability",
+      "line": 1027,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": true,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "Assert the counted claims too - for each path, that the prose names each nonzero class and omits the zero ones - or render the count clauses from the table and assert the rendered sentence appears verbatim.",
+      "title": "Prose-to-table join checks paths, never the counts",
+      "touched_paths": [
+        "tests/test_sync_vendor_source.py"
+      ],
+      "why_it_matters": "The F41 repair binds the rule prose to the count table by path membership only, but the contradiction the finding named is about counts. The prose states per-file counts in English, that string is copied verbatim into the shipped provenance record as each transform entry's rule text, and a third copy sits in the descriptor notes. Change a row and the prose still names every path, so the gate stays green while the shipped custody record describes a transform that no longer matches the code that produced the bytes."
+    },
+    {
+      "autofix_class": "safe_auto",
+      "confidence": 100,
+      "dimension_id": "behavior-sensitive-assertions",
+      "evidence": [
+        "Falsified against the real workflow: replacing the install line with '# historical: we used to python -m pip install pyyaml here' plus a pyyaml-free install leaves the regex matching",
+        "Control: replacing it with '# NOTE: pyyaml was dropped here' plus a pyyaml-free install does fail the test"
+      ],
+      "file": "tests/test_sync_vendor_source.py",
+      "finding_id": "F46",
+      "lens_id": "testing",
+      "line": 1845,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": true,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "Require a line that both starts with run: after stripping and matches the pip-install pattern, so a comment cannot satisfy it.",
+      "title": "PyYAML guard regex still matches any workflow line",
+      "touched_paths": [
+        "tests/test_sync_vendor_source.py"
+      ],
+      "why_it_matters": "PARTIAL. The repair replaced a file-global substring with `assertRegex(ci, r\"pip install .*\\bpyyaml\\b\")` and its docstring claims the check is now anchored on the install line. assertRegex still searches the whole file, so a comment mentioning a historical pip install satisfies it while the real run: line has dropped the dependency. The narrowing is genuine - the realistic drop case does go red - but the docstring claims more than the code does."
+    },
+    {
+      "autofix_class": "safe_auto",
+      "confidence": 100,
+      "dimension_id": "authentication-authorization-tenant-isolation",
+      "evidence": [
+        "tests/test_sync_vendor_source.py:2046-2050 - the try/except ModuleNotFoundError skipTest",
+        "Measured with yaml blocked: the test reports skipped, while a parser walk under the same block printed 9 top-level groups, 48 group/action pairs and no unclassified actions",
+        "The validate job installs nothing and is the only job that runs tests/"
+      ],
+      "file": "tests/test_sync_vendor_source.py",
+      "finding_id": "F53",
+      "lens_id": "security",
+      "line": 2048,
+      "owner": "review-fixer",
+      "pre_existing": false,
+      "requires_verification": true,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "Delete the guard - the test does not use yaml and the parser does not need it.",
+      "title": "Verb-surface gate self-skips on a dependency it does not use",
+      "touched_paths": [
+        "tests/test_sync_vendor_source.py"
+      ],
+      "why_it_matters": "The new gate binding the declared verb split to the live CLI opens with a guarded yaml import and skips when it fails, so the one control disappears silently rather than failing. The guard is unnecessary: sdlc_manager builds its complete parser with PyYAML unavailable. Whether the gate executes therefore depends on what the runner image ships rather than on anything the repository declares - the same 'a gate that reports the machine' shape the repository files against itself."
+    },
+    {
+      "autofix_class": "manual",
+      "confidence": 75,
+      "dimension_id": "discoverability-invocation-schemas",
+      "evidence": [
+        "The unifi and agent-launcher families all use the suffix for the retired document",
+        "Controller-confirmed: the unsuffixed 2026-08-30 matrix carries matrix-status superseded and the suffixed one carries current",
+        "The current readback carries no status directive at all, while the retired one does",
+        "The convention is inferred from filenames, not written down anywhere"
+      ],
+      "file": "docs/evidence/2026-08-30-mission-control-compatibility-matrix-post-fingerprint-move.md",
+      "finding_id": "F77",
+      "lens_id": "agent-usability",
+      "line": 1,
+      "owner": "human",
+      "pre_existing": false,
+      "requires_verification": true,
+      "severity": "P3",
+      "status": "active",
+      "suggested_fix": "Rename so the current pair is unsuffixed and the retired pair carries a -pre-fingerprint-move suffix, add a status directive to the current readback, and update the two README pointers and the hand-registered test paths.",
+      "title": "Evidence filenames invert the repository's supersession convention",
+      "touched_paths": [
+        "docs/evidence/2026-08-30-mission-control-compatibility-matrix-post-fingerprint-move.md"
+      ],
+      "why_it_matters": "Across the ten prior superseded documents the suffixed filename is the retired one. This round inverted that: the suffixed file is current and the unsuffixed one is superseded. An agent asked for the current compatibility record that lists the directory and applies the pattern the directory demonstrates picks the retired document. Both READMEs point at the right files and the retired ones open with a banner, so the cost is a wrong first open rather than a wrong answer."
+    }
+  ],
+  "fix_requests": [
+    {
+      "autofix_class": "manual",
+      "finding_ids": [
+        "F77"
+      ],
+      "fix_id": "fix-7bba1b703848",
+      "owner": "human",
+      "requires_verification": true,
+      "summary": "Evidence filenames invert the repository's supersession convention",
+      "touched_paths": [
+        "docs/evidence/2026-08-30-mission-control-compatibility-matrix-post-fingerprint-move.md"
+      ]
+    },
+    {
+      "autofix_class": "gated_auto",
+      "finding_ids": [
+        "F68"
+      ],
+      "fix_id": "fix-46dca44e4ee6",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "summary": "Root README client-status counts have no gate",
+      "touched_paths": [
+        "README.md"
+      ]
+    },
+    {
+      "autofix_class": "manual",
+      "finding_ids": [
+        "F61"
+      ],
+      "fix_id": "fix-1f32ffa324f9",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "summary": "U5 decision record still states the retired fingerprint",
+      "touched_paths": [
+        "docs/engineering-journal/DECISIONS.md"
+      ]
+    },
+    {
+      "autofix_class": "manual",
+      "finding_ids": [
+        "F70"
+      ],
+      "fix_id": "fix-bd77f3efb731",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "summary": "Filing routes a portable-path defect to the wrong owner",
+      "touched_paths": [
+        "docs/engineering-journal/QUEUED.md"
+      ]
+    },
+    {
+      "autofix_class": "manual",
+      "finding_ids": [
+        "F34",
+        "F49"
+      ],
+      "fix_id": "fix-6767ccfca18e",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "summary": "Four amendments still cite one overwritten review file; Plan's freeze record contradicts the landed branch",
+      "touched_paths": [
+        "docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md"
+      ]
+    },
+    {
+      "autofix_class": "manual",
+      "finding_ids": [
+        "F71"
+      ],
+      "fix_id": "fix-f3eb49a71c40",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "summary": "Restored README disclosure contradicts measured behaviour",
+      "touched_paths": [
+        "plugins/mission-control/README.md"
+      ]
+    },
+    {
+      "autofix_class": "manual",
+      "finding_ids": [
+        "F58",
+        "F59",
+        "F60"
+      ],
+      "fix_id": "fix-bddf2291754e",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "summary": "Generic planner hard-codes one transform rule's identity; The site-count table's documented escape hatch cannot be used; The plan_sync descriptor refusal has no committed test",
+      "touched_paths": [
+        "scripts/sync_vendor_source.py"
+      ]
+    },
+    {
+      "autofix_class": "manual",
+      "finding_ids": [
+        "F55",
+        "F56"
+      ],
+      "fix_id": "fix-e821ff2254aa",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "summary": "New superseded-link test walks gitignored directories; Matrix results table and summary are unbound prose",
+      "touched_paths": [
+        "tests/test_check_compatibility_matrix.py"
+      ]
+    },
+    {
+      "autofix_class": "manual",
+      "finding_ids": [
+        "F75"
+      ],
+      "fix_id": "fix-1a26ae3dbb03",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "summary": "Prose-to-table join checks paths, never the counts",
+      "touched_paths": [
+        "tests/test_sync_vendor_source.py"
+      ]
+    },
+    {
+      "autofix_class": "safe_auto",
+      "finding_ids": [
+        "F48",
+        "F73",
+        "F74",
+        "F78"
+      ],
+      "fix_id": "fix-73409235a365",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "summary": "Journal filing claims a hermetic run that fails; Filing undercounts the subcommands that ignore --format; Filing's remedy routes agents onto a destructive verb; One repair round declared its red window; the other did not",
+      "touched_paths": [
+        "docs/engineering-journal/QUEUED.md"
+      ]
+    },
+    {
+      "autofix_class": "safe_auto",
+      "finding_ids": [
+        "F50"
+      ],
+      "fix_id": "fix-c781cca536a1",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "summary": "Retired matrix banner links an already-superseded successor",
+      "touched_paths": [
+        "docs/evidence/2026-08-25-mission-control-compatibility-matrix.md"
+      ]
+    },
+    {
+      "autofix_class": "safe_auto",
+      "finding_ids": [
+        "F51"
+      ],
+      "fix_id": "fix-a883fd3fd2ac",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "summary": "Matrix claims no client authenticated; one was",
+      "touched_paths": [
+        "docs/evidence/2026-08-30-mission-control-compatibility-matrix-post-fingerprint-move.md"
+      ]
+    },
+    {
+      "autofix_class": "safe_auto",
+      "finding_ids": [
+        "F09",
+        "F32",
+        "F33"
+      ],
+      "fix_id": "fix-3a726facf6c1",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "summary": "Section 8.2 still records twelve landed commits; Issue #52's line-claim count is still uncorrected; Plan and acceptance still say two superseded documents",
+      "touched_paths": [
+        "docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md"
+      ]
+    },
+    {
+      "autofix_class": "safe_auto",
+      "finding_ids": [
+        "F66"
+      ],
+      "fix_id": "fix-74a8520ef735",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "summary": "Descriptor specification omits the new transform rule",
+      "touched_paths": [
+        "ports/README.md"
+      ]
+    },
+    {
+      "autofix_class": "safe_auto",
+      "finding_ids": [
+        "F62",
+        "F63",
+        "F65",
+        "F69",
+        "F76"
+      ],
+      "fix_id": "fix-d32bf51ebf75",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "summary": "Site-count refusal names a class chosen by hash seed; Marker guard compares a constant the rewrite ignores; zip truncation drops the definition-before-call check; Sync tool docstring contradicts its own recorded exception; New sync refusal prescribes a wrong remedy",
+      "touched_paths": [
+        "scripts/sync_vendor_source.py"
+      ]
+    },
+    {
+      "autofix_class": "safe_auto",
+      "finding_ids": [
+        "F64"
+      ],
+      "fix_id": "fix-e86ea646b124",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "summary": "F18 count gate matches a substring, not the number",
+      "touched_paths": [
+        "tests/test_port_config.py"
+      ]
+    },
+    {
+      "autofix_class": "safe_auto",
+      "finding_ids": [
+        "F46",
+        "F53"
+      ],
+      "fix_id": "fix-f94a0ef17b37",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "summary": "PyYAML guard regex still matches any workflow line; Verb-surface gate self-skips on a dependency it does not use",
+      "touched_paths": [
+        "tests/test_sync_vendor_source.py"
+      ]
+    }
+  ],
+  "lens_results": [
+    {
+      "accepted": false,
+      "applicable_dimensions": {
+        "architectural-fit-ownership-single-sources": 7.0,
+        "conventions-portability-configuration": 7.0,
+        "dependency-direction": 6.0,
+        "readability-naming-error-contracts": 6.0,
+        "separation-of-concerns": 7.0,
+        "significant-decision-documentation": 6.0,
+        "simplicity-abstraction-duplication-changeability": 6.0
+      },
+      "cycle": 2,
+      "delta_check": null,
+      "derived_overall": 6.428571428571429,
+      "failing_dimensions": [
+        "dependency-direction",
+        "simplicity-abstraction-duplication-changeability",
+        "readability-naming-error-contracts",
+        "significant-decision-documentation"
+      ],
+      "lens_id": "architecture-maintainability",
+      "non_applicable_dimensions": {},
+      "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea",
+      "score_accepted": false,
+      "scoring_findings": [
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "dependency-direction",
+          "finding_id": "F58",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "architectural-fit-ownership-single-sources",
+          "finding_id": "F59",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "readability-naming-error-contracts",
+          "finding_id": "F60",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "significant-decision-documentation",
+          "finding_id": "F61",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "simplicity-abstraction-duplication-changeability",
+          "finding_id": "F75",
+          "priority": "P3",
+          "resolved": false
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "applicable_dimensions": {
+        "boundary-types-serialization-numeric-time": 8.0,
+        "caller-enum-consumer-completeness": 8.0,
+        "intent-behavior-completeness": 8.0,
+        "side-effects-errors-resource-lifecycle": 9.0,
+        "state-data-invariants-transactions-concurrency": 8.0
+      },
+      "cycle": 2,
+      "delta_check": null,
+      "derived_overall": 8.2,
+      "failing_dimensions": [],
+      "lens_id": "correctness",
+      "non_applicable_dimensions": {},
+      "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea",
+      "score_accepted": false,
+      "scoring_findings": [
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "state-data-invariants-transactions-concurrency",
+          "finding_id": "F36",
+          "priority": "P3",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "intent-behavior-completeness",
+          "finding_id": "F63",
+          "priority": "P3",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "state-data-invariants-transactions-concurrency",
+          "finding_id": "F64",
+          "priority": "P3",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "boundary-types-serialization-numeric-time",
+          "finding_id": "F65",
+          "priority": "P3",
+          "resolved": false
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "applicable_dimensions": {
+        "authentication-authorization-tenant-isolation": 7.0,
+        "confidentiality-logs-errors-egress": 8.0,
+        "dependency-supply-chain": 7.0,
+        "input-trust-boundaries-injection": 9.0,
+        "secrets-cryptography-session-handling": 6.0
+      },
+      "cycle": 2,
+      "delta_check": null,
+      "derived_overall": 7.4,
+      "failing_dimensions": [
+        "secrets-cryptography-session-handling"
+      ],
+      "lens_id": "security",
+      "non_applicable_dimensions": {},
+      "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea",
+      "score_accepted": false,
+      "scoring_findings": [
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "confidentiality-logs-errors-egress",
+          "finding_id": "F01",
+          "priority": "P1",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "dependency-supply-chain",
+          "finding_id": "F25",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "dependency-supply-chain",
+          "finding_id": "F30",
+          "priority": "P3",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "confidentiality-logs-errors-egress",
+          "finding_id": "F38",
+          "priority": "P3",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "secrets-cryptography-session-handling",
+          "finding_id": "F51",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "authentication-authorization-tenant-isolation",
+          "finding_id": "F53",
+          "priority": "P3",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "authentication-authorization-tenant-isolation",
+          "finding_id": "F54",
+          "priority": "P2",
+          "resolved": false
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "applicable_dimensions": {
+        "behavior-sensitive-assertions": 7.0,
+        "determinism-isolation-diagnostics-maintainability": 6.0,
+        "negative-edge-state-concurrency-time": 8.0,
+        "realistic-seams-mocks-integration-evidence": 8.0,
+        "requirements-regression-coverage": 8.0
+      },
+      "cycle": 2,
+      "delta_check": null,
+      "derived_overall": 7.4,
+      "failing_dimensions": [
+        "determinism-isolation-diagnostics-maintainability"
+      ],
+      "lens_id": "testing",
+      "non_applicable_dimensions": {},
+      "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea",
+      "score_accepted": false,
+      "scoring_findings": [
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "determinism-isolation-diagnostics-maintainability",
+          "finding_id": "F26",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "determinism-isolation-diagnostics-maintainability",
+          "finding_id": "F27",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "behavior-sensitive-assertions",
+          "finding_id": "F46",
+          "priority": "P3",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "determinism-isolation-diagnostics-maintainability",
+          "finding_id": "F55",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "behavior-sensitive-assertions",
+          "finding_id": "F56",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "requirements-regression-coverage",
+          "finding_id": "F57",
+          "priority": "P2",
+          "resolved": false
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "applicable_dimensions": {
+        "interface-contract-compatibility": 7.0,
+        "pagination-rate-limits": 9.0,
+        "retry-idempotency-semantics": 9.0,
+        "sdk-generated-client-impact": 9.0,
+        "serialization-errors": 8.0,
+        "specification-documentation-parity": 7.0,
+        "versioning-deprecation": 8.0
+      },
+      "cycle": 2,
+      "delta_check": null,
+      "derived_overall": 8.142857142857142,
+      "failing_dimensions": [],
+      "lens_id": "api-contract",
+      "non_applicable_dimensions": {},
+      "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea",
+      "score_accepted": false,
+      "scoring_findings": [
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "retry-idempotency-semantics",
+          "finding_id": "F14",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "serialization-errors",
+          "finding_id": "F62",
+          "priority": "P3",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "specification-documentation-parity",
+          "finding_id": "F66",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "interface-contract-compatibility",
+          "finding_id": "F67",
+          "priority": "P3",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "specification-documentation-parity",
+          "finding_id": "F68",
+          "priority": "P3",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "specification-documentation-parity",
+          "finding_id": "F69",
+          "priority": "P3",
+          "resolved": false
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "applicable_dimensions": {
+        "capability-parity-reachability": 6.0,
+        "context-constraints-acceptance-examples": 6.0,
+        "discoverability-invocation-schemas": 7.0,
+        "machine-readable-output-actionable-errors": 6.0,
+        "safe-bounded-idempotent-resumable-context-cost": 7.0
+      },
+      "cycle": 2,
+      "delta_check": null,
+      "derived_overall": 6.4,
+      "failing_dimensions": [
+        "capability-parity-reachability",
+        "context-constraints-acceptance-examples",
+        "machine-readable-output-actionable-errors"
+      ],
+      "lens_id": "agent-usability",
+      "non_applicable_dimensions": {},
+      "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea",
+      "score_accepted": false,
+      "scoring_findings": [
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "capability-parity-reachability",
+          "finding_id": "F02",
+          "priority": "P1",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "machine-readable-output-actionable-errors",
+          "finding_id": "F12",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "safe-bounded-idempotent-resumable-context-cost",
+          "finding_id": "F13",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "context-constraints-acceptance-examples",
+          "finding_id": "F15",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "discoverability-invocation-schemas",
+          "finding_id": "F16",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "discoverability-invocation-schemas",
+          "finding_id": "F44",
+          "priority": "P3",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "capability-parity-reachability",
+          "finding_id": "F70",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "context-constraints-acceptance-examples",
+          "finding_id": "F71",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "machine-readable-output-actionable-errors",
+          "finding_id": "F72",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "machine-readable-output-actionable-errors",
+          "finding_id": "F73",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "safe-bounded-idempotent-resumable-context-cost",
+          "finding_id": "F74",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "machine-readable-output-actionable-errors",
+          "finding_id": "F76",
+          "priority": "P3",
+          "resolved": false
+        },
+        {
+          "confidence": 75,
+          "critical": false,
+          "dimension_id": "discoverability-invocation-schemas",
+          "finding_id": "F77",
+          "priority": "P3",
+          "resolved": false
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "applicable_dimensions": {
+        "completeness-audience-prerequisites": 7.0,
+        "runbook-safety-rollback-links-generated-drift": 7.0,
+        "runnable-examples-actionability": 8.0,
+        "shipped-behavior-parity": 7.0,
+        "structure-navigation": 6.0,
+        "terminology-cross-document-consistency": 7.0
+      },
+      "cycle": 2,
+      "delta_check": null,
+      "derived_overall": 7.0,
+      "failing_dimensions": [
+        "structure-navigation"
+      ],
+      "lens_id": "documentation-clarity",
+      "non_applicable_dimensions": {},
+      "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea",
+      "score_accepted": false,
+      "scoring_findings": [
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "terminology-cross-document-consistency",
+          "finding_id": "F09",
+          "priority": "P3",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "completeness-audience-prerequisites",
+          "finding_id": "F32",
+          "priority": "P3",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "completeness-audience-prerequisites",
+          "finding_id": "F33",
+          "priority": "P3",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "structure-navigation",
+          "finding_id": "F34",
+          "priority": "P3",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "runbook-safety-rollback-links-generated-drift",
+          "finding_id": "F48",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "shipped-behavior-parity",
+          "finding_id": "F49",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "runbook-safety-rollback-links-generated-drift",
+          "finding_id": "F50",
+          "priority": "P2",
+          "resolved": false
+        },
+        {
+          "confidence": 100,
+          "critical": false,
+          "dimension_id": "shipped-behavior-parity",
+          "finding_id": "F78",
+          "priority": "P3",
+          "resolved": false
+        }
+      ]
+    }
+  ],
+  "next_action": "dispatch_repairs",
+  "outcome": "repairs_requested",
+  "residual_summary": {
+    "final_lens_scores": {
+      "agent-usability": {
+        "accepted": false,
+        "delta_check": null,
+        "derived_overall": 6.4,
+        "failing_dimensions": [
+          "capability-parity-reachability",
+          "context-constraints-acceptance-examples",
+          "machine-readable-output-actionable-errors"
+        ],
+        "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea"
+      },
+      "api-contract": {
+        "accepted": false,
+        "delta_check": null,
+        "derived_overall": 8.142857142857142,
+        "failing_dimensions": [],
+        "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea"
+      },
+      "architecture-maintainability": {
+        "accepted": false,
+        "delta_check": null,
+        "derived_overall": 6.428571428571429,
+        "failing_dimensions": [
+          "dependency-direction",
+          "simplicity-abstraction-duplication-changeability",
+          "readability-naming-error-contracts",
+          "significant-decision-documentation"
+        ],
+        "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea"
+      },
+      "correctness": {
+        "accepted": false,
+        "delta_check": null,
+        "derived_overall": 8.2,
+        "failing_dimensions": [],
+        "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea"
+      },
+      "documentation-clarity": {
+        "accepted": false,
+        "delta_check": null,
+        "derived_overall": 7.0,
+        "failing_dimensions": [
+          "structure-navigation"
+        ],
+        "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea"
+      },
+      "security": {
+        "accepted": false,
+        "delta_check": null,
+        "derived_overall": 7.4,
+        "failing_dimensions": [
+          "secrets-cryptography-session-handling"
+        ],
+        "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea"
+      },
+      "testing": {
+        "accepted": false,
+        "delta_check": null,
+        "derived_overall": 7.4,
+        "failing_dimensions": [
+          "determinism-isolation-diagnostics-maintainability"
+        ],
+        "reviewed_revision": "863af5888e548b6c95f40d3fd571c9365d136dea"
+      }
+    },
+    "review_incomplete_reason": null,
+    "score_regressions": [
+      {
+        "current_overall": 6.428571428571429,
+        "current_revision": "863af5888e548b6c95f40d3fd571c9365d136dea",
+        "cycle": 2,
+        "lens_id": "architecture-maintainability",
+        "previous_overall": 6.714285714285714,
+        "previous_revision": "853411da75cc6499e4d8395e85d36a2b9fe81fbc"
+      },
+      {
+        "current_overall": 6.4,
+        "current_revision": "863af5888e548b6c95f40d3fd571c9365d136dea",
+        "cycle": 2,
+        "lens_id": "agent-usability",
+        "previous_overall": 6.6,
+        "previous_revision": "853411da75cc6499e4d8395e85d36a2b9fe81fbc"
+      }
+    ],
+    "unresolved_fix_ids": [
+      "fix-7bba1b703848",
+      "fix-46dca44e4ee6",
+      "fix-1f32ffa324f9",
+      "fix-bd77f3efb731",
+      "fix-6767ccfca18e",
+      "fix-f3eb49a71c40",
+      "fix-bddf2291754e",
+      "fix-e821ff2254aa",
+      "fix-1a26ae3dbb03",
+      "fix-73409235a365",
+      "fix-c781cca536a1",
+      "fix-a883fd3fd2ac",
+      "fix-3a726facf6c1",
+      "fix-74a8520ef735",
+      "fix-d32bf51ebf75",
+      "fix-e86ea646b124",
+      "fix-f94a0ef17b37"
+    ]
+  },
+  "resume_transitions": [
+    "dispatch_repairs"
+  ],
+  "revision_binding": {
+    "best_available_revision": "863af5888e548b6c95f40d3fd571c9365d136dea",
+    "lens_revisions": {
+      "agent-usability": "863af5888e548b6c95f40d3fd571c9365d136dea",
+      "api-contract": "863af5888e548b6c95f40d3fd571c9365d136dea",
+      "architecture-maintainability": "863af5888e548b6c95f40d3fd571c9365d136dea",
+      "correctness": "863af5888e548b6c95f40d3fd571c9365d136dea",
+      "documentation-clarity": "863af5888e548b6c95f40d3fd571c9365d136dea",
+      "security": "863af5888e548b6c95f40d3fd571c9365d136dea",
+      "testing": "863af5888e548b6c95f40d3fd571c9365d136dea"
+    }
+  },
+  "schema": "review_result.v1",
+  "selected_lenses": [
+    "architecture-maintainability",
+    "correctness",
+    "security",
+    "testing",
+    "api-contract",
+    "agent-usability",
+    "documentation-clarity"
+  ],
+  "unresolved_fix_ids": [
+    "fix-7bba1b703848",
+    "fix-46dca44e4ee6",
+    "fix-1f32ffa324f9",
+    "fix-bd77f3efb731",
+    "fix-6767ccfca18e",
+    "fix-f3eb49a71c40",
+    "fix-bddf2291754e",
+    "fix-e821ff2254aa",
+    "fix-1a26ae3dbb03",
+    "fix-73409235a365",
+    "fix-c781cca536a1",
+    "fix-a883fd3fd2ac",
+    "fix-3a726facf6c1",
+    "fix-74a8520ef735",
+    "fix-d32bf51ebf75",
+    "fix-e86ea646b124",
+    "fix-f94a0ef17b37"
+  ]
+}

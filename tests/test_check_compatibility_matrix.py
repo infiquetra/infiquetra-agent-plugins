@@ -24,10 +24,13 @@ from __future__ import annotations
 import atexit
 import io
 import json
+import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
+from collections import Counter
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -1285,6 +1288,488 @@ class ReadbackEvidenceTest(unittest.TestCase):
 
     def test_the_readback_leaks_nothing(self) -> None:
         self.assertEqual(ccm.check_public_evidence_rules(self.record), [])
+
+
+MISSION_CONTROL_LIVE_DOCUMENT = (
+    EVIDENCE / "2026-08-30-mission-control-compatibility-matrix.md"
+)
+MISSION_CONTROL_READBACK_DOCUMENT = (
+    EVIDENCE / "2026-08-30-mission-control-post-activation-readback.md"
+)
+MISSION_CONTROL_SUPERSEDED_MATRIX = EVIDENCE / "2026-08-25-mission-control-compatibility-matrix.md"
+MISSION_CONTROL_SUPERSEDED_READBACK = (
+    EVIDENCE / "2026-08-25-mission-control-post-activation-readback.md"
+)
+MISSION_CONTROL_INTERMEDIATE_MATRIX = (
+    EVIDENCE / "2026-08-30-mission-control-compatibility-matrix-pre-fingerprint-move.md"
+)
+MISSION_CONTROL_INTERMEDIATE_READBACK = (
+    EVIDENCE / "2026-08-30-mission-control-post-activation-readback-pre-fingerprint-move.md"
+)
+MISSION_CONTROL_BEADS_MATRIX = (
+    EVIDENCE / "2026-08-30-mission-control-compatibility-matrix-pre-beads-config-ladder.md"
+)
+MISSION_CONTROL_BEADS_READBACK = (
+    EVIDENCE / "2026-08-30-mission-control-post-activation-readback-pre-beads-config-ladder.md"
+)
+MISSION_CONTROL_PACKAGE_ROOT = ROOT / "plugins" / "mission-control"
+MISSION_CONTROL_CONFIG = port_config.load("mission-control", ROOT)
+MISSION_CONTROL_SKILLS = ("board", "flow", "issues", "labels", "metrics", "milestones", "rollout")
+
+
+def _results_table(text: str) -> list[dict[str, str]]:
+    """Parse the markdown table under the `## Results` heading of a matrix
+    document into a list of row dicts keyed by the header cells."""
+    lines = text.splitlines()
+    heading = next(i for i, line in enumerate(lines) if line.strip() == "## Results")
+    header_index = next(
+        i for i in range(heading + 1, len(lines)) if lines[i].startswith("|")
+    )
+    header = [cell.strip() for cell in lines[header_index].strip("|").split("|")]
+    rows: list[dict[str, str]] = []
+    for line in lines[header_index + 2 :]:
+        if not line.startswith("|"):
+            break
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        rows.append(dict(zip(header, cells)))
+    return rows
+
+
+class MissionControlMatrixBindingTest(unittest.TestCase):
+    """The resynchronized matrix identifies the shipped package, live.
+
+    The pre-resync matrix drifted in silence for exactly the reason these
+    assertions exist: a well-formed record whose fingerprint names a tree that
+    was replaced. Every case recomputes from disk rather than trusting the
+    recorded number.
+    """
+
+    def setUp(self) -> None:
+        self.text = MISSION_CONTROL_LIVE_DOCUMENT.read_text(encoding="utf-8")
+        self.record = ccm.extract_record(self.text)
+
+    def test_the_document_exists_and_validates(self) -> None:
+        self.assertTrue(MISSION_CONTROL_LIVE_DOCUMENT.is_file())
+        self.assertEqual(ccm.check_matrix(MISSION_CONTROL_LIVE_DOCUMENT), [])
+
+    def test_the_headline_fingerprint_appears_in_the_prose(self) -> None:
+        """F91: the document's prose headline must carry the record's own
+        file_count and full tree_sha256, so a hand-edited headline cannot
+        diverge from the machine-readable record."""
+        self.assertIn(str(self.record["package"]["file_count"]), self.text)
+        self.assertIn(self.record["package"]["tree_sha256"], self.text)
+
+    def test_it_declares_itself_current(self) -> None:
+        directives = ccm.read_directives(self.text)
+        self.assertEqual(directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_CURRENT)
+
+    def test_the_recorded_fingerprint_identifies_the_shipped_package(self) -> None:
+        file_count, tree_sha256 = ccm.package_fingerprint(MISSION_CONTROL_PACKAGE_ROOT)
+        name, version = ccm.package_identity(MISSION_CONTROL_PACKAGE_ROOT)
+        package = self.record["package"]
+        self.assertEqual(package["file_count"], file_count)
+        self.assertEqual(package["tree_sha256"], tree_sha256)
+        self.assertEqual(package["name"], name)
+        self.assertEqual(package["version"], version)
+
+    def test_it_covers_exactly_the_ten_canonical_clients(self) -> None:
+        names = {client["name"] for client in self.record["clients"]}
+        self.assertEqual(names, set(ccm.CANONICAL_CLIENTS))
+
+    def test_it_records_forty_stage_results_and_ten_statuses(self) -> None:
+        results = [
+            stage["result"]
+            for client in self.record["clients"]
+            for stage in client["stages"].values()
+        ]
+        self.assertEqual(len(results), 40)
+        self.assertTrue(set(results) <= set(ccm.STAGE_RESULTS))
+        statuses = [client["status"] for client in self.record["clients"]]
+        self.assertEqual(len(statuses), 10)
+        self.assertTrue(set(statuses) <= set(ccm.STATUSES))
+
+    def test_every_client_carries_a_reason_for_its_status(self) -> None:
+        for client in self.record["clients"]:
+            with self.subTest(client=client["name"]):
+                self.assertTrue(client["reason"].strip())
+                self.assertTrue(client["version"].strip())
+
+    def test_no_client_with_a_blocked_stage_claims_to_work_directly(self) -> None:
+        """A status contradicting its own stage results is the exact
+        mis-transcription the binding exists to catch: a client with any
+        blocked stage cannot be recorded works-directly. (The converse is not
+        asserted — a client can execute every stage and still fail overall.)"""
+        for client in self.record["clients"]:
+            with self.subTest(client=client["name"]):
+                if any(
+                    stage["result"] == "blocked" for stage in client["stages"].values()
+                ):
+                    self.assertNotEqual(
+                        client["status"],
+                        "works-directly",
+                        "the client's status contradicts its blocked stages",
+                    )
+
+    def test_the_results_table_matches_the_record(self) -> None:
+        """F56: the rendered Results table and the one-sentence summary are
+        parsed and held to the machine-readable record, so hand-edited prose
+        cannot diverge from the JSON without failing."""
+        rows = _results_table(self.text)
+        self.assertEqual(len(rows), 10, "the Results table does not carry ten rows")
+        clients = {client["name"]: client for client in self.record["clients"]}
+        for row in rows:
+            with self.subTest(client=row["Client"]):
+                client = clients[row["Client"]]
+                self.assertEqual(row["Version"], client["version"])
+                self.assertEqual(row["Status"], client["status"])
+                for stage in ("Placement", "Discovery", "Load", "Invocation"):
+                    self.assertEqual(
+                        row[stage],
+                        client["stages"][stage.lower()]["result"],
+                        f"{row['Client']} {stage} cell contradicts the record",
+                    )
+        statuses = Counter(client["status"] for client in self.record["clients"])
+        summary = (
+            f"{statuses['works-directly']} clients work directly, "
+            f"{statuses['works-through-an-adapter']} work through an adapter, "
+            f"{statuses['failed']} failed, and {statuses['unsupported']} are unsupported."
+        )
+        self.assertIn(summary, self.text, "the one-sentence summary contradicts the record")
+
+    def test_the_record_violates_no_safety_or_public_evidence_rule(self) -> None:
+        self.assertEqual(ccm.check_safety_rules(self.record, MISSION_CONTROL_CONFIG), [])
+        self.assertEqual(ccm.check_public_evidence_rules(self.record), [])
+
+
+class MissionControlReadbackBindingTest(unittest.TestCase):
+    """The resynchronized readback, bound the way the matrix is.
+
+    Mission Control's readback is not discovered by the checker at all — its
+    record uses `release` and `readbacks` keys rather than `package` and
+    `clients` — so this class is the only thing that keeps it from drifting in
+    silence. It asserts the release block, the seven per-skill-unit
+    fingerprints, the provenance pin, and every readback entry, and it omits
+    the profile-state assertions that are a UniFi concept.
+    """
+
+    def setUp(self) -> None:
+        self.text = MISSION_CONTROL_READBACK_DOCUMENT.read_text(encoding="utf-8")
+        self.record = ccm.extract_record(self.text)
+        self.provenance = json.loads(
+            (MISSION_CONTROL_PACKAGE_ROOT / "PROVENANCE.json").read_text(encoding="utf-8")
+        )
+
+    def test_the_document_exists(self) -> None:
+        self.assertTrue(MISSION_CONTROL_READBACK_DOCUMENT.is_file())
+
+    def test_the_release_fingerprint_identifies_the_shipped_package(self) -> None:
+        file_count, tree_sha256 = ccm.package_fingerprint(MISSION_CONTROL_PACKAGE_ROOT)
+        name, version = ccm.package_identity(MISSION_CONTROL_PACKAGE_ROOT)
+        release = self.record["release"]
+        self.assertEqual(release["file_count"], file_count)
+        self.assertEqual(release["tree_sha256"], tree_sha256)
+        self.assertEqual(release["name"], name)
+        self.assertEqual(release["version"], version)
+
+    def test_the_recorded_upstream_commit_matches_the_synchronization_pin(self) -> None:
+        self.assertEqual(
+            self.record["release"]["upstream_commit"], self.provenance["source_commit"]
+        )
+        self.assertEqual(self.record["release"]["version"], self.provenance["source_version"])
+
+    def test_all_seven_skill_unit_fingerprints_are_recorded_and_match(self) -> None:
+        units = self.record["release"]["units"]
+        self.assertEqual(set(units), set(MISSION_CONTROL_SKILLS))
+        for unit in MISSION_CONTROL_SKILLS:
+            with self.subTest(unit=unit):
+                file_count, tree_sha256 = ccm.package_fingerprint(
+                    MISSION_CONTROL_PACKAGE_ROOT / "skills" / unit
+                )
+                self.assertEqual(units[unit]["file_count"], file_count)
+                self.assertEqual(units[unit]["tree_sha256"], tree_sha256)
+
+    def test_every_readback_reports_bytes_equal_to_the_release(self) -> None:
+        """Every readback entry is asserted, branching on the install unit so
+        the skill-directory client's seven per-skill digests are held to the
+        release's unit fingerprints rather than skipped on a null tree digest."""
+        readbacks = self.record["readbacks"]
+        self.assertEqual(
+            len(readbacks),
+            3,
+            "the readback records a different client count than the one it was captured with",
+        )
+        units = self.record["release"]["units"]
+        for readback in readbacks:
+            with self.subTest(client=readback["client"]):
+                self.assertTrue(readback["matches_release"])
+                self.assertTrue(
+                    readback["entrypoints_exit_zero"],
+                    "the readback records a failed or missing entrypoint verification",
+                )
+                if readback["install_unit"] == "package-root":
+                    self.assertEqual(
+                        readback["recomputed_tree_sha256"],
+                        self.record["release"]["tree_sha256"],
+                    )
+                    self.assertEqual(
+                        readback["recomputed_file_count"], self.record["release"]["file_count"]
+                    )
+                else:
+                    self.assertIsNone(
+                        readback["recomputed_tree_sha256"],
+                        "a skill-directory install has no single recomputed tree",
+                    )
+                    reported = readback["reported_digest"]
+                    for unit in MISSION_CONTROL_SKILLS:
+                        with self.subTest(unit=unit):
+                            self.assertEqual(
+                                reported[unit],
+                                units[unit]["tree_sha256"],
+                                f"the reported digest for skill {unit} diverged from the release",
+                            )
+                    self.assertEqual(
+                        readback["recomputed_file_count"],
+                        sum(units[unit]["file_count"] for unit in MISSION_CONTROL_SKILLS),
+                        "the skill-directory file count diverged from the summed units",
+                    )
+
+    def test_the_cycle_16_verification_block_is_present_and_positive(self) -> None:
+        block = self.record["cycle_16_verification"]
+        self.assertEqual(block["disposition"], "verified_by_digest_recheck")
+        self.assertTrue(block["all_digests_match_cycle_16_footer"])
+        self.assertTrue(block["mutation_proof_binding_test_passed"])
+        self.assertEqual(
+            block["frozen_candidate_commit"], "143a71b8aec09c7605f57b860bcfa9179ca103e8"
+        )
+
+    def test_the_readback_leaks_nothing(self) -> None:
+        self.assertEqual(ccm.check_public_evidence_rules(self.record), [])
+
+
+class MissionControlSupersededDocumentTest(unittest.TestCase):
+    """The retired pair, kept as history rather than deleted or renumbered."""
+
+    def test_the_old_matrix_validates_as_superseded(self) -> None:
+        self.assertEqual(ccm.check_matrix(MISSION_CONTROL_SUPERSEDED_MATRIX), [])
+
+    def test_the_old_matrix_declares_supersession_and_names_the_current_successor(self) -> None:
+        directives = ccm.read_directives(
+            MISSION_CONTROL_SUPERSEDED_MATRIX.read_text(encoding="utf-8")
+        )
+        self.assertEqual(directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_SUPERSEDED)
+        successor = directives.get(ccm.SUPERSEDED_BY_DIRECTIVE)
+        self.assertEqual(successor, MISSION_CONTROL_LIVE_DOCUMENT.name)
+        assert successor is not None
+        self.assertTrue(directives.get(ccm.SUPERSEDED_REASON_DIRECTIVE, "").strip())
+        self.assertTrue((EVIDENCE / successor).is_file())
+
+    def test_the_old_readback_declares_supersession_and_names_the_current_successor(self) -> None:
+        directives = ccm.read_directives(
+            MISSION_CONTROL_SUPERSEDED_READBACK.read_text(encoding="utf-8")
+        )
+        self.assertEqual(directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_SUPERSEDED)
+        successor = directives.get(ccm.SUPERSEDED_BY_DIRECTIVE)
+        self.assertEqual(successor, MISSION_CONTROL_READBACK_DOCUMENT.name)
+        assert successor is not None
+        self.assertTrue(directives.get(ccm.SUPERSEDED_REASON_DIRECTIVE, "").strip())
+        self.assertTrue((EVIDENCE / successor).is_file())
+
+    def test_each_successor_is_itself_current(self) -> None:
+        for document in (MISSION_CONTROL_LIVE_DOCUMENT, MISSION_CONTROL_READBACK_DOCUMENT):
+            with self.subTest(document=document.name):
+                directives = ccm.read_directives(document.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    directives.get(ccm.STATUS_DIRECTIVE, ccm.STATUS_CURRENT),
+                    ccm.STATUS_CURRENT,
+                )
+
+    def test_the_old_records_preserve_the_fingerprints_they_were_published_with(self) -> None:
+        record = ccm.extract_record(
+            MISSION_CONTROL_SUPERSEDED_MATRIX.read_text(encoding="utf-8")
+        )
+        self.assertEqual(record["package"]["file_count"], 64)
+        self.assertEqual(
+            record["package"]["tree_sha256"],
+            "651ac28a79b4e2e8823c5aa5960659bcd22903e2059afdb9544e13a071de1682",
+        )
+        readback = ccm.extract_record(
+            MISSION_CONTROL_SUPERSEDED_READBACK.read_text(encoding="utf-8")
+        )
+        self.assertEqual(readback["release"]["file_count"], 64)
+        self.assertEqual(
+            readback["release"]["tree_sha256"],
+            "651ac28a79b4e2e8823c5aa5960659bcd22903e2059afdb9544e13a071de1682",
+        )
+
+    def test_the_intermediate_pair_validates_as_superseded(self) -> None:
+        self.assertEqual(ccm.check_matrix(MISSION_CONTROL_INTERMEDIATE_MATRIX), [])
+
+    def test_the_intermediate_pair_names_the_final_current_successors(self) -> None:
+        for document, successor_document in (
+            (MISSION_CONTROL_INTERMEDIATE_MATRIX, MISSION_CONTROL_LIVE_DOCUMENT),
+            (MISSION_CONTROL_INTERMEDIATE_READBACK, MISSION_CONTROL_READBACK_DOCUMENT),
+        ):
+            with self.subTest(document=document.name):
+                directives = ccm.read_directives(document.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_SUPERSEDED
+                )
+                successor = directives.get(ccm.SUPERSEDED_BY_DIRECTIVE)
+                self.assertEqual(successor, successor_document.name)
+                assert successor is not None
+                self.assertTrue(
+                    directives.get(ccm.SUPERSEDED_REASON_DIRECTIVE, "").strip()
+                )
+                self.assertTrue((EVIDENCE / successor).is_file())
+
+    def test_the_beads_pair_names_the_final_current_successors(self) -> None:
+        for document, successor_document in (
+            (MISSION_CONTROL_BEADS_MATRIX, MISSION_CONTROL_LIVE_DOCUMENT),
+            (MISSION_CONTROL_BEADS_READBACK, MISSION_CONTROL_READBACK_DOCUMENT),
+        ):
+            with self.subTest(document=document.name):
+                directives = ccm.read_directives(document.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_SUPERSEDED
+                )
+                successor = directives.get(ccm.SUPERSEDED_BY_DIRECTIVE)
+                self.assertEqual(successor, successor_document.name)
+                assert successor is not None
+                self.assertTrue(
+                    directives.get(ccm.SUPERSEDED_REASON_DIRECTIVE, "").strip()
+                )
+                self.assertTrue((EVIDENCE / successor).is_file())
+
+    def test_the_beads_records_preserve_the_659f91f6_fingerprint(self) -> None:
+        record = ccm.extract_record(
+            MISSION_CONTROL_BEADS_MATRIX.read_text(encoding="utf-8")
+        )
+        self.assertEqual(record["package"]["file_count"], 71)
+        self.assertEqual(
+            record["package"]["tree_sha256"],
+            "659f91f6eae524612ad8daf3046d083281e0e76a950de3600b4b2948c68a18bd",
+        )
+        readback = ccm.extract_record(
+            MISSION_CONTROL_BEADS_READBACK.read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            readback["release"]["tree_sha256"],
+            "659f91f6eae524612ad8daf3046d083281e0e76a950de3600b4b2948c68a18bd",
+        )
+
+    def test_the_intermediate_records_preserve_the_old_fingerprint(self) -> None:
+        record = ccm.extract_record(
+            MISSION_CONTROL_INTERMEDIATE_MATRIX.read_text(encoding="utf-8")
+        )
+        self.assertEqual(record["package"]["file_count"], 71)
+        self.assertEqual(
+            record["package"]["tree_sha256"],
+            "1f49322e8412ac6b2ae0b1fbebf4a022ac2e53489be71aae674506a7613531f9",
+        )
+        readback = ccm.extract_record(
+            MISSION_CONTROL_INTERMEDIATE_READBACK.read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            readback["release"]["tree_sha256"],
+            "1f49322e8412ac6b2ae0b1fbebf4a022ac2e53489be71aae674506a7613531f9",
+        )
+
+
+class EvidenceDiscoveryTest(unittest.TestCase):
+    """The discovery-based gates the hand-registered classes rely on: the
+    checker's own matrix discovery validates every matrix document, current
+    readbacks bind their release to the live package, and no prose outside the
+    evidence directory links a superseded document as if it were live."""
+
+    @staticmethod
+    def _is_readback(text: str) -> bool:
+        record = ccm.extract_record(text)
+        return isinstance(record, dict) and "release" in record and "readbacks" in record
+
+    @staticmethod
+    def _superseded_names() -> set[str]:
+        return {
+            path.name
+            for path in EVIDENCE.glob("*.md")
+            if ccm.read_directives(path.read_text(encoding="utf-8")).get(
+                ccm.STATUS_DIRECTIVE
+            )
+            == ccm.STATUS_SUPERSEDED
+        }
+
+    def test_every_discovered_matrix_document_validates(self) -> None:
+        discovered = ccm.matrix_documents()
+        self.assertTrue(discovered, "matrix discovery found no documents")
+        for path in discovered:
+            with self.subTest(document=path.name):
+                self.assertEqual(ccm.check_matrix(path), [], path.name)
+
+    def test_every_discovered_current_readback_binds_its_release(self) -> None:
+        bound = 0
+        for path in sorted(EVIDENCE.glob("*.md")):
+            text = path.read_text(encoding="utf-8")
+            if not self._is_readback(text):
+                continue
+            directives = ccm.read_directives(text)
+            if directives.get(ccm.STATUS_DIRECTIVE) == ccm.STATUS_SUPERSEDED:
+                continue
+            record = ccm.extract_record(text)
+            release = record["release"]
+            config = port_config.load(release["name"], ROOT)
+            file_count, tree_sha256 = ccm.package_fingerprint(config.package_directory)
+            with self.subTest(document=path.name):
+                self.assertEqual(release["file_count"], file_count)
+                self.assertEqual(release["tree_sha256"], tree_sha256)
+            bound += 1
+        self.assertGreater(bound, 0, "no current readback documents were discovered")
+
+    def test_no_prose_outside_evidence_links_a_superseded_document(self) -> None:
+        """A superseded document may only be cited with its retirement stated:
+        the link's own anchor text must mark the citation as historical, and a
+        superseded document's own banner may name its successor. A bare
+        present-tense link to retired evidence is the index defect. The walk
+        enumerates tracked markdown from `git ls-files`, so gitignored
+        directories can never contribute a false positive."""
+        superseded = self._superseded_names()
+        self.assertTrue(superseded, "expected at least one superseded document to guard")
+        link = re.compile(r"\[([^\]]*)\]\(([^)#]+)(?:#[^)]*)?\)")
+        tracked = subprocess.run(
+            ["git", "ls-files", "--", "*.md"],
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
+            check=True,
+        ).stdout.splitlines()
+        for relative in tracked:
+            path = ROOT / relative
+            if not path.exists():
+                # F92: a tracked file deleted in the working tree must be
+                # skipped, not read into a FileNotFoundError.
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if EVIDENCE in path.parents:
+                directives = ccm.read_directives(text)
+                if directives.get(ccm.STATUS_DIRECTIVE) == ccm.STATUS_SUPERSEDED:
+                    # A retired document is historical context by definition;
+                    # its chain lists cite other retired documents as history.
+                    continue
+                own_successor = directives.get(ccm.SUPERSEDED_BY_DIRECTIVE)
+            else:
+                own_successor = None
+            for anchor, target in link.findall(text):
+                if target.startswith(("http://", "https://", "mailto:")):
+                    continue
+                name = target.split("/")[-1]
+                if name == own_successor:
+                    continue
+                if name in superseded and not re.search(
+                    r"supersed|historical|retired", anchor, re.I
+                ):
+                    self.fail(
+                        f"{relative} links the superseded evidence document {name} "
+                        "without marking the citation as historical; repoint the link "
+                        "at the successor or state the retirement in the anchor text"
+                    )
 
 
 if __name__ == "__main__":

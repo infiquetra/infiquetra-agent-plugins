@@ -104,6 +104,8 @@ def _prepare_olympus(tmp_path: Path, *, title: str, source: str = OLYMPUS_BODY) 
         risk="medium",
         mode=None,
         draft_dir=tmp_path,
+        # W10: a readiness-passing draft carries an author-supplied Stage.
+        stage="Intake",
     )
     return draft
 

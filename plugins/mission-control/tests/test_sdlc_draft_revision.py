@@ -68,6 +68,7 @@ def test_prepare_revision_twice_yields_single_document(tmp_path: Path) -> None:
         risk="medium",
         mode=None,
         draft_dir=tmp_path,
+        stage="Intake",
     )
     assert draft1.exists()
     assert len(re.findall(r"(?m)^---$", draft1.read_text())) == 2
@@ -88,6 +89,7 @@ def test_prepare_revision_twice_yields_single_document(tmp_path: Path) -> None:
         mode=None,
         source_artifact=artifact2,
         draft_dir=tmp_path,
+        stage="Intake",
     )
     assert draft2.exists()
     assert draft2 != draft1
@@ -109,6 +111,7 @@ def test_prepare_revision_twice_yields_single_document(tmp_path: Path) -> None:
         mode=None,
         source_artifact=artifact3,
         draft_dir=tmp_path,
+        stage="Intake",
     )
     assert draft3.exists()
     assert draft3 != draft2
@@ -146,6 +149,7 @@ def test_revision_replaces_content_instead_of_appending(tmp_path: Path) -> None:
         risk="medium",
         mode=None,
         draft_dir=tmp_path,
+        stage="Intake",
     )
     assert "Initial unique objective alpha." in draft1.read_text()
 
@@ -165,6 +169,7 @@ def test_revision_replaces_content_instead_of_appending(tmp_path: Path) -> None:
         risk="medium",
         mode=None,
         draft_dir=tmp_path,
+        stage="Intake",
     )
     text2 = draft2.read_text()
 
@@ -182,7 +187,7 @@ repo: hermes-claude-code-router
 type: capability
 team: campps
 project: campps
-status: Idea
+status: Capturing
 labels: capability, needs-plan
 risk: medium
 handoff_maturity: requirements-ready
@@ -196,7 +201,7 @@ repo: hermes-claude-code-router
 type: capability
 team: campps
 project: campps
-status: Idea
+status: Capturing
 labels: capability, needs-plan
 risk: medium
 handoff_maturity: requirements-ready
@@ -244,7 +249,7 @@ _none_
                 "issue_type": "capability",
                 "team": "campps",
                 "project": "campps",
-                "status": "Idea",
+                "status": "Capturing",
                 "labels": ["capability", "needs-plan"],
                 "risk": "medium",
                 "handoff_maturity": "requirements-ready",
@@ -289,6 +294,7 @@ def test_created_issue_body_contains_zero_fences_and_no_duplicate_sections(tmp_p
         risk="medium",
         mode=None,
         draft_dir=tmp_path,
+        stage="Intake",
     )
     issue = sdlc_manager._read_prepared_issue(draft)
     created_body = sdlc_manager._issue_body_for_github(issue)
@@ -355,7 +361,7 @@ def test_created_body_strip_cleans_a_contaminated_body() -> None:
         issue_type="capability",
         team="campps",
         project="campps",
-        status="Idea",
+        status="Capturing",
         labels=["capability", "needs-plan"],
         risk="medium",
         mode=None,
@@ -381,7 +387,7 @@ def test_created_body_strip_cleans_a_contaminated_body() -> None:
         issue_type="capability",
         team="campps",
         project="campps",
-        status="Idea",
+        status="Capturing",
         labels=["capability", "needs-plan"],
         risk="medium",
         mode=None,
@@ -404,7 +410,7 @@ def test_readiness_blocks_duplicate_h3_and_h2_h3_section_pairs(tmp_path: Path) -
         issue_type="capability",
         team="campps",
         project="campps",
-        status="Idea",
+        status="Capturing",
         labels=["capability", "needs-plan"],
         risk="medium",
         mode=None,
@@ -423,7 +429,7 @@ def test_readiness_blocks_duplicate_h3_and_h2_h3_section_pairs(tmp_path: Path) -
         issue_type="capability",
         team="campps",
         project="campps",
-        status="Idea",
+        status="Capturing",
         labels=["capability", "needs-plan"],
         risk="medium",
         mode=None,

@@ -8,6 +8,7 @@ exercise the small composable helpers (`_select_issue_type`,
 """
 
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
@@ -434,3 +435,233 @@ def test_gate_proceeds_when_the_issue_cannot_be_fetched() -> None:
     validation failure."""
     with patch.object(sdlc_manager, "_rest_get", side_effect=RuntimeError("502")):
         assert sdlc_manager._gate_created_issue_body("repo", 7, "capability", "text") is True
+
+
+# --- W10 Intake-exit bypass reporting (sdlc#91 R9/R10) -----------------------
+
+
+# A body that passes the capability card contract (same shape the prepared-path
+# suite uses), so the compliant-path control test really exercises readiness.
+INTAKE_EXIT_CARD_BODY = """### Objective
+Test the Intake exit writer boundary.
+
+### Intent
+Authoring agents need a draft-then-approve path; cards must not skip review.
+End-state: every prepared card is drafted, gated, and only then created.
+
+### Acceptance criteria
+- [ ] A prepared draft is refused before GitHub mutation; `pytest -k intake_exit` exits 0
+
+### Out-of-scope / non-goals
+- Do not auto-move issues to Ready
+
+### Files expected to change
+plugins/mission-control/scripts/sdlc_manager.py
+
+### Tests to add or update
+plugins/mission-control/tests/test_issue_create_interactive.py
+
+### Verification
+```bash
+uv run pytest plugins/mission-control/tests/test_issue_create_interactive.py
+```
+
+### Context library links
+_none_
+"""
+
+
+def _issue_create_full_path_patches():
+    """Stub the interactive path through to a pasted-back issue number."""
+    return (
+        patch.object(sdlc_manager, "load_user_defaults", return_value={}),
+        patch.object(
+            sdlc_manager, "load_config", return_value={"project_mappings": {"projects": {}}}
+        ),
+        patch.object(sdlc_manager, "get_projects_for_repo", return_value=[]),
+        patch.object(sdlc_manager, "_prompt_parent_issue", return_value=None),
+        patch.object(sdlc_manager, "_open_gh_issue_create_web"),
+        patch.object(sdlc_manager, "_prompt_issue_number", return_value=42),
+        patch.object(sdlc_manager, "_gate_created_issue_body", return_value=True),
+    )
+
+
+def test_intake_exit_bypass_is_reported(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An issue created through the interactive path is REPORTED as having
+    bypassed the Intake exit: the prepared-path initialization of both `Stage`
+    and `Status` did not run (R9), naming `issue create-prepared`. The report
+    must not claim Status is unset — this path may already have written the
+    operator's chosen Status."""
+    with ExitStack() as stack:
+        for ctx in (*_issue_create_full_path_patches(), patch("builtins.input", return_value="y")):
+            stack.enter_context(ctx)
+        mock_meta = stack.enter_context(patch.object(sdlc_manager, "_apply_post_create_metadata"))
+        stack.enter_context(patch.object(sdlc_manager, "_prompt_paired_card", return_value=None))
+        sdlc_manager.issue_create("campps-mvp", "capability", "text")
+
+    out = capsys.readouterr().out
+    assert "outside the Intake exit" in out
+    assert "Stage, Status" in out
+    assert "issue create-prepared" in out
+    # The normal post-create metadata work still ran — including any Status the
+    # operator chose — so the report never asserts Status is unset.
+    assert mock_meta.call_count == 1
+
+
+def test_intake_exit_bypass_does_not_fail_creation(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The report is additive stdout only: the run raises nothing and the path
+    completes its normal post-create metadata work (R10)."""
+    with ExitStack() as stack:
+        for ctx in (*_issue_create_full_path_patches(), patch("builtins.input", return_value="y")):
+            stack.enter_context(ctx)
+        mock_metadata = stack.enter_context(
+            patch.object(sdlc_manager, "_apply_post_create_metadata")
+        )
+        stack.enter_context(patch.object(sdlc_manager, "_prompt_paired_card", return_value=None))
+        sdlc_manager.issue_create("campps-mvp", "capability", "text")  # must not raise
+
+    mock_metadata.assert_called_once()
+    assert "outside the Intake exit" in capsys.readouterr().out
+
+
+def test_intake_exit_no_bypass_report_when_aborted(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The operator declines at the confirm prompt: nothing was created, so no
+    bypass report may be emitted."""
+    with (
+        patch.object(sdlc_manager, "load_user_defaults", return_value={}),
+        patch.object(
+            sdlc_manager, "load_config", return_value={"project_mappings": {"projects": {}}}
+        ),
+        patch.object(sdlc_manager, "get_projects_for_repo", return_value=[]),
+        patch.object(sdlc_manager, "_prompt_parent_issue", return_value=None),
+        patch("builtins.input", return_value="n"),
+    ):
+        sdlc_manager.issue_create("campps-mvp", "capability", "text")
+
+    out = capsys.readouterr().out
+    assert "Run manually" in out  # the decline branch ran
+    assert "outside the Intake exit" not in out
+
+
+def test_intake_exit_no_bypass_report_on_skip_metadata(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The --skip-metadata branch prints the manual command and creates no
+    issue, so there is no bypass report (same silence as the abort path)."""
+    with (
+        patch.object(sdlc_manager, "load_user_defaults", return_value={}),
+        patch.object(
+            sdlc_manager, "load_config", return_value={"project_mappings": {"projects": {}}}
+        ),
+        patch.object(sdlc_manager, "get_projects_for_repo", return_value=[]),
+        patch.object(sdlc_manager, "_prompt_parent_issue", return_value=None),
+    ):
+        sdlc_manager.issue_create("campps-mvp", "capability", "text", skip_metadata=True)
+
+    out = capsys.readouterr().out
+    assert "Run manually" in out
+    assert "outside the Intake exit" not in out
+
+
+def test_intake_exit_prepared_path_emits_no_bypass_report(
+    tmp_path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The compliant prepared path must NOT be reported as a bypass."""
+    draft = sdlc_manager.issue_prepare(
+        repo="campps-mvp",
+        issue_type="capability",
+        team="campps",
+        project="campps",
+        source=INTAKE_EXIT_CARD_BODY,
+        title="Prepared via the Intake exit",
+        status=None,
+        risk="medium",
+        mode=None,
+        draft_dir=tmp_path,
+        stage="Intake",
+    )
+    sdlc_manager.prepared_approve_batch([draft], fmt="text")
+
+    with (
+        patch.object(sdlc_manager, "load_config", return_value=_interactive_mapped_config()),
+        patch.object(sdlc_manager, "_repo_missing_labels", return_value=[]),
+        patch.object(sdlc_manager, "_repo_missing_templates", return_value=[]),
+        patch.object(
+            sdlc_manager,
+            "_create_github_issue",
+            return_value=("https://github.com/infiquetra/campps-mvp/issues/42", 42),
+        ),
+        patch.object(sdlc_manager, "_prepared_project_item_exists", return_value=False),
+        patch.object(sdlc_manager, "board_add"),
+        patch.object(sdlc_manager, "flow_set_field"),
+    ):
+        result = sdlc_manager.issue_create_prepared(Path(draft), fmt="text", auto_confirm=True)
+
+    assert result["created"] is True
+    assert "outside the Intake exit" not in capsys.readouterr().out
+
+
+def _interactive_mapped_config() -> dict:
+    return {
+        "project_mappings": {
+            "projects": {
+                "campps": {
+                    "number": 4,
+                    "name": "CAMPPS",
+                    "repositories": ["campps-mvp"],
+                }
+            }
+        }
+    }
+
+
+def test_intake_exit_bypass_reported_before_body_gate_decline(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """F-3 / sdlc#91 CR c1: when the operator pastes an issue number back and
+    the card-contract gate then DECLINES, a real GitHub issue exists outside
+    the Intake exit — the bypass NOTE must already be on stdout. R9 requires
+    the report once the number exists; abort and --skip-metadata stay silent
+    because no issue exists there."""
+    with ExitStack() as stack:
+        for ctx in (*_issue_create_full_path_patches(), patch("builtins.input", return_value="y")):
+            stack.enter_context(ctx)
+        stack.enter_context(
+            patch.object(sdlc_manager, "_gate_created_issue_body", return_value=False)
+        )
+        mock_metadata = stack.enter_context(
+            patch.object(sdlc_manager, "_apply_post_create_metadata")
+        )
+        stack.enter_context(patch.object(sdlc_manager, "_prompt_paired_card", return_value=None))
+        sdlc_manager.issue_create("campps-mvp", "capability", "text")
+
+    out = capsys.readouterr().out
+    assert "outside the Intake exit" in out
+    assert "Stage, Status" in out
+    # The gate declined, so the normal metadata work did NOT run — but the
+    # bypass report still fired, before the gate could return.
+    call_count = mock_metadata.call_count
+    assert call_count == 0
+
+
+def test_intake_exit_body_gate_decline_returns_before_metadata(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The decline still returns early (no metadata, no paired-card prompt);
+    only the bypass report precedes it."""
+    with ExitStack() as stack:
+        for ctx in (*_issue_create_full_path_patches(), patch("builtins.input", return_value="y")):
+            stack.enter_context(ctx)
+        stack.enter_context(
+            patch.object(sdlc_manager, "_gate_created_issue_body", return_value=False)
+        )
+        mock_paired = stack.enter_context(patch.object(sdlc_manager, "_prompt_paired_card"))
+        sdlc_manager.issue_create("campps-mvp", "capability", "text")
+
+    mock_paired.assert_not_called()

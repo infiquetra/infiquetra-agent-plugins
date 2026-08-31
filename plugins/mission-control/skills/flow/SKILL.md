@@ -72,6 +72,13 @@ sdlc_manager.py flow set-field \
   --project campps --repo campps-mvp --number 42 \
   --field Initiative --option platform-quality
 
+# Lifecycle fields (Status, Stage) write EVERY board carrying the issue —
+# all-or-none. --project is validated as a carrying board, not honored as a
+# single-board restriction, and --reason (optional) is recorded per board.
+sdlc_manager.py flow set-field \
+  --project operations --repo infiquetra-sdlc --number 42 \
+  --field Status --option Active --reason "failed verify, returning to active"
+
 # Set the same single-select field on multiple cards in one discovery pass
 sdlc_manager.py flow set-field \
   --project operations --repo infiquetra-claude-plugins --numbers 101,102,103 \
@@ -117,7 +124,7 @@ sdlc_manager.py flow validate-card --repo campps-mvp --number 42
 
 | Command | Idempotent? | Failure behavior |
 |---|---|---|
-| `set-field` | yes (same option = same final state) | Raises if an option doesn't exist; error message lists current options. With `--numbers` and repeated `--field/--option` pairs, reports every updated/failed issue-field update and exits non-zero after reporting if any item fails. |
+| `set-field` | yes (same option = same final state) | Raises if an option doesn't exist; error message lists current options. With `--numbers` and repeated `--field/--option` pairs, reports every updated/failed issue-field update and exits non-zero after reporting if any item fails. For `Status`/`Stage` (W6): the write is atomic across every board carrying the issue — preflight failures write nothing; a failed write is compensated; a failed COMPENSATION halts with a named divergence (exit non-zero, no retry). Per-issue atomicity for `--numbers`. |
 | `field-options` | read-only | Raises if project or field doesn't exist |
 | `discover-project` | read-only | Returns "not mapped" or "excluded" without erroring |
 | `assign-mimir` | yes (existing trigger label = no mutation) | Reads live Team Mimir coverage, open-issue state, current principal authority, and the existing trigger label before mutation; verifies label and Objective state after mutation. Unsupported, closed, unauthorized, missing-label, or unreadable cases fail closed. |

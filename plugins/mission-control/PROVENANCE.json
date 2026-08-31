@@ -1,28 +1,33 @@
 {
   "source_repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
-  "source_commit": "84eaf042f0e350005f7eddf8e7d80da25c12119d",
-  "source_version": "2.12.2",
+  "source_commit": "3b2b7083fdda8e39e213b5f4acf9f8301d60dd52",
+  "source_version": "2.15.2",
   "source_package_path": "plugins/mission-control",
   "generated_by": "scripts/sync_vendor_source.py",
   "notes": [
-    "The portable copy is a derived artifact, never a second writable source. The pinned commit 84eaf042f0e350005f7eddf8e7d80da25c12119d is the audited upstream revision (plugin version 2.12.2); the upstream suite was verified green at it from a disposable scratch clone before this descriptor was written, so a synchronization from this pin derives from a passing source.",
+    "The portable copy is a derived artifact, never a second writable source. The pinned commit 3b2b7083fdda8e39e213b5f4acf9f8301d60dd52 is the audited upstream revision (plugin version 2.15.2); the upstream suite was verified green at it from a disposable scratch clone before the resynchronization (docs/plans/2026-08-30-mission-control-resync-u0-entry-criteria.md), so a synchronization from this pin derives from a passing source.",
     "Paths in `files` are relative to this package root, which is what the repository validator resolves. `source_path` is relative to the upstream repository root.",
     "Every path carries exactly one classification. An upstream byte copy is overwritten on each synchronization and its digest must equal its source digest exactly; where the portable tree would need a different byte, the repair is authored upstream first. Target-owned portable source is authored in this repository rather than derived from the pinned commit; it records no digest and is never overwritten and never removed here. README.md is the one target-owned path that supersedes an upstream path of the same name: the upstream README documents the Claude Code plugin, so its bytes are deliberately never read and never written, recorded here as a superseded path rather than left unclassified.",
     "The client extension directory com.infiquetra.claude/ mirrors the upstream package root path for path, so every Claude-custody file's origin is readable from its portable path and every one of them stays a byte copy: the four commands and agents/sdlc-operator.md. The Claude Code manifest is the single exception inside that directory: it is lifted out of .claude-plugin/, whose name is a loading convention with no meaning inside the extension directory, and whose portable counterpart already occupies the package root.",
-    "scripts/fleet_commons_shim.py is dropped rather than copied, because the build-time Fleet Core bundle replaces it and its resolution ladder is Claude-specific discovery the portable package must not retain. Two entrypoints reach fleet_commons_shim and are therefore deterministic transforms rather than byte copies: scripts/executor_profile_lint.py imports it at module scope (line 35 at the pin) and loads tier_palette through it (line 89), and scripts/sdlc_manager.py imports it inside the _load_intent_envelope function (lines 4283-4287 at the pin) and loads intent_envelope through it. The resolve-bundled-fleet-module rule family rewrites those imports to the generated bundle in the _bundled/ directory, records the source digest, the output digest, and the transform version here, and is re-applied on every synchronization, so a later run cannot silently restore the broken import. This is not a downstream edit smuggled past the byte-copy rule: it is a versioned rule over the pinned source, reproducible from the source bytes alone.",
+    "scripts/fleet_commons_shim.py is dropped rather than copied, because the build-time Fleet Core bundle replaces it and its resolution ladder is Claude-specific discovery the portable package must not retain. Two entrypoints reach fleet_commons_shim and are therefore deterministic transforms rather than byte copies: scripts/executor_profile_lint.py imports it at module scope (line 35 at the pin) and loads tier_palette through it (line 89), and scripts/sdlc_manager.py imports it inside the _load_intent_envelope function (lines 5134-5140 at the pin) and loads intent_envelope through it. The resolve-bundled-fleet-module rule family rewrites those imports to the generated bundle in the _bundled/ directory, records the source digest, the output digest, and the transform version here, and is re-applied on every synchronization, so a later run cannot silently restore the broken import. This is not a downstream edit smuggled past the byte-copy rule: it is a versioned rule over the pinned source, reproducible from the source bytes alone.",
     "All seven SKILL.md files carry a when_to_use: frontmatter key that is not among the six fields the open Agent Skills specification permits (SKILL_FRONTMATTER_FIELDS, scripts/check_repo.py). The upstream UniFi skills never carried it, so this package is the first to need the answer: the seven files are transforms, not byte copies. A versioned normalize-skill-frontmatter rule folds the key under the permitted metadata key, deterministically and idempotently, portable copies only; upstream keeps the key because it is functional in Claude Code skill listings. The alternative of normalizing upstream was rejected for exactly that reason. The seven files sit in the entrypoint_transforms class because that is the descriptor's only transform custody; per-path rule selection is the explicit rule field every entry carries since descriptor schema version 3, named above with the rule the synchronization tool applies to each path.",
-    "The twenty-one upstream test files are byte copies under plugins/mission-control/tests/, inside the package and therefore inside the provenance closed-set check. The pilot's one-off precedent carried its tests at the repository root, tracked by fleet-core's informal release_surface key that no check validates; a repeat of that shape would ship tests the provenance machinery cannot see. tests/test_prompt_alignment.py is the single test not carried: it is a whole-upstream-repository drift guard, and every premise it holds outside the package's own byte copies fails under the portable layout. It reads the Claude manifest at the package-local .claude-plugin/ path (relocated to com.infiquetra.claude/ here), the root .claude-plugin/marketplace.json and the plugins/saga handoff skill (neither exists in this catalog), the commands and agent file at their upstream paths (relocated), and the package README (superseded). A byte copy could never run here, and editing its content to make it pass would be a custody violation, so the custody decision is recorded here and in the engineering journal instead of shipped as a test that cannot pass.",
+    "The twenty-eight upstream test files are carried under plugins/mission-control/tests/, inside the package and therefore inside the provenance closed-set check: 26 as byte copies and 2 as resolve-package-root-marker transforms — tests/test_issue_contract_parity.py and tests/test_template_sync.py. The pilot's one-off precedent carried its tests at the repository root, tracked by fleet-core's informal release_surface key that no check validates; a repeat of that shape would ship tests the provenance machinery cannot see. Two upstream tests are not carried. tests/test_prompt_alignment.py is a whole-upstream-repository drift guard, and every premise it holds outside the package's own byte copies fails under the portable layout: it reads the Claude manifest at the package-local .claude-plugin/ path (relocated to com.infiquetra.claude/ here), the root .claude-plugin/marketplace.json and the plugins/saga handoff skill (neither exists in this catalog), the commands and agent file at their upstream paths (relocated), and the package README (superseded). tests/test_card_validator_agreement.py loads an authority module from outside any repository — searching HOME_LAB_PATH, then INFIQUETRA_HOME_LAB_PATH, then ~/workspace/infiquetra/home-lab, then ~/workspace/home-lab, then sibling directories — and skips loudly when absent; its own docstring states this repository's continuous integration never exercises it. A byte copy of either could never run here (and carrying the agreement test would make a test's verdict depend on what else happens to be on the machine's disk), and editing their content to make them pass would be a custody violation, so the custody decisions are recorded here and in the engineering journal instead of shipped as tests that cannot pass.",
+    "The three resolve-package-root-marker paths — scripts/sync_template_docs.py, tests/test_issue_contract_parity.py, and tests/test_template_sync.py — are re-anchored from the upstream .claude-plugin/plugin.json marker onto the portable com.infiquetra.claude/plugin.json marker, because upstream replaced the fixed-depth package-root resolution with a marker walk and the marker it chose is the directory the relocate-claude-manifest rule moves. The carried CHANGELOG.md is a byte copy and still describes the upstream .claude-plugin marker; the portable copies use com.infiquetra.claude/plugin.json, so the CHANGELOG's marker references describe upstream's layout, not this package's.",
     "Publication parity, verified before this descriptor was written: both repositories are public, and the vendored config/project-mappings.json and config/board-schema.json carry real project node IDs that are already public upstream, so byte-copying them introduces no new exposure.",
-    "The assessment block encodes the audited safety facts: the plugin calls GitHub exclusively through the gh CLI, which honors GH_TOKEN, GITHUB_TOKEN, and GH_HOST, so both GH_ and GITHUB_ prefixes are stripped from every assessment subprocess even though sdlc_manager.py itself reads only INFIQUETRA_SDLC_PATH (line 135 at the pin). All five package scripts are declared entrypoints and none is excluded: sdlc_manager.py needs PyYAML at module scope (line 83 at the pin), board_census.py imports sdlc_manager from its own directory, sync_template_docs.py imports PyYAML, check_pagination.py is standard-library-only, and executor_profile_lint.py runs only after its transform. The mutating_operations list is the audited subcommand table plus the _open_mapping_pr path (sdlc_manager.py:4664 at the pin), which runs real git worktree add, commit, push, and gh pr create; it is an internal code path rather than a CLI verb and is listed so the safety predicate treats that route as mutating."
+    "The assessment block encodes the audited safety facts: the plugin calls GitHub exclusively through the gh CLI, which honors GH_TOKEN, GITHUB_TOKEN, and GH_HOST, so both GH_ and GITHUB_ prefixes are stripped from every assessment subprocess even though sdlc_manager.py itself reads only INFIQUETRA_SDLC_PATH (line 136 at the pin). All five package scripts are declared entrypoints and none is excluded: sdlc_manager.py imports PyYAML inside the _load_live_mimir_coverage function (line 3436 at the pin; upstream filing #828 moved the import there from module scope, and the function raises a plain RuntimeError naming PyYAML if the import fails), board_census.py imports sdlc_manager from its own directory, sync_template_docs.py imports PyYAML at module scope (line 14), tests/test_template_sync.py imports PyYAML at module scope (line 7), check_pagination.py is standard-library-only, and executor_profile_lint.py runs only after its transform. PyYAML therefore remains a required dependency and the continuous-integration install line stays; only the module-scope justification for sdlc_manager.py changed. The mutating_operations list is the audited subcommand table plus the _open_mapping_pr path (sdlc_manager.py:5552 at the pin), which runs real git worktree add, commit, push, and gh pr create; it is an internal code path rather than a CLI verb and is listed so the safety predicate treats that route as mutating."
   ],
   "removed_from_source": [
     {
       "source_path": "plugins/mission-control/scripts/fleet_commons_shim.py",
-      "reason": "scripts/fleet_commons_shim.py: replaced by the build-time Fleet Core bundle; its resolution ladder is Claude-specific runtime discovery, which the portable package must not retain. tests/test_prompt_alignment.py: a whole-upstream-repository drift guard whose non-package premises (the root Claude marketplace manifest, the plugins/saga handoff skill, the package-local .claude-plugin manifest path, the unrelocated commands and agent paths, and the superseded README) all fail under the portable layout, so a byte copy could never run here; the custody decision is finalized in the descriptor and the engineering journal rather than shipped as a test that cannot pass."
+      "reason": "scripts/fleet_commons_shim.py: replaced by the build-time Fleet Core bundle; its resolution ladder is Claude-specific runtime discovery, which the portable package must not retain. tests/test_card_validator_agreement.py: excluded by operator ruling 2. It loads an authority module from outside any repository — searching HOME_LAB_PATH, then INFIQUETRA_HOME_LAB_PATH, then ~/workspace/infiquetra/home-lab, then ~/workspace/home-lab, then sibling directories — and skips loudly when absent, and its own docstring states this repository's continuous integration never exercises it, so carrying it would make a test's verdict depend on what else happens to be on the machine's disk; the recorded test_prompt_alignment.py drop already rejected carrying-and-skipping as deadweight that misrepresents its own coverage, and this is the same call. tests/test_prompt_alignment.py: a whole-upstream-repository drift guard whose non-package premises (the root Claude marketplace manifest, the plugins/saga handoff skill, the package-local .claude-plugin manifest path, the unrelocated commands and agent paths, and the superseded README) all fail under the portable layout, so a byte copy could never run here; the custody decision is finalized in the descriptor and the engineering journal rather than shipped as a test that cannot pass."
+    },
+    {
+      "source_path": "plugins/mission-control/tests/test_card_validator_agreement.py",
+      "reason": "scripts/fleet_commons_shim.py: replaced by the build-time Fleet Core bundle; its resolution ladder is Claude-specific runtime discovery, which the portable package must not retain. tests/test_card_validator_agreement.py: excluded by operator ruling 2. It loads an authority module from outside any repository — searching HOME_LAB_PATH, then INFIQUETRA_HOME_LAB_PATH, then ~/workspace/infiquetra/home-lab, then ~/workspace/home-lab, then sibling directories — and skips loudly when absent, and its own docstring states this repository's continuous integration never exercises it, so carrying it would make a test's verdict depend on what else happens to be on the machine's disk; the recorded test_prompt_alignment.py drop already rejected carrying-and-skipping as deadweight that misrepresents its own coverage, and this is the same call. tests/test_prompt_alignment.py: a whole-upstream-repository drift guard whose non-package premises (the root Claude marketplace manifest, the plugins/saga handoff skill, the package-local .claude-plugin manifest path, the unrelocated commands and agent paths, and the superseded README) all fail under the portable layout, so a byte copy could never run here; the custody decision is finalized in the descriptor and the engineering journal rather than shipped as a test that cannot pass."
     },
     {
       "source_path": "plugins/mission-control/tests/test_prompt_alignment.py",
-      "reason": "scripts/fleet_commons_shim.py: replaced by the build-time Fleet Core bundle; its resolution ladder is Claude-specific runtime discovery, which the portable package must not retain. tests/test_prompt_alignment.py: a whole-upstream-repository drift guard whose non-package premises (the root Claude marketplace manifest, the plugins/saga handoff skill, the package-local .claude-plugin manifest path, the unrelocated commands and agent paths, and the superseded README) all fail under the portable layout, so a byte copy could never run here; the custody decision is finalized in the descriptor and the engineering journal rather than shipped as a test that cannot pass."
+      "reason": "scripts/fleet_commons_shim.py: replaced by the build-time Fleet Core bundle; its resolution ladder is Claude-specific runtime discovery, which the portable package must not retain. tests/test_card_validator_agreement.py: excluded by operator ruling 2. It loads an authority module from outside any repository — searching HOME_LAB_PATH, then INFIQUETRA_HOME_LAB_PATH, then ~/workspace/infiquetra/home-lab, then ~/workspace/home-lab, then sibling directories — and skips loudly when absent, and its own docstring states this repository's continuous integration never exercises it, so carrying it would make a test's verdict depend on what else happens to be on the machine's disk; the recorded test_prompt_alignment.py drop already rejected carrying-and-skipping as deadweight that misrepresents its own coverage, and this is the same call. tests/test_prompt_alignment.py: a whole-upstream-repository drift guard whose non-package premises (the root Claude marketplace manifest, the plugins/saga handoff skill, the package-local .claude-plugin manifest path, the unrelocated commands and agent paths, and the superseded README) all fail under the portable layout, so a byte copy could never run here; the custody decision is finalized in the descriptor and the engineering journal rather than shipped as a test that cannot pass."
     }
   ],
   "files": [
@@ -36,44 +41,44 @@
       "path": "CHANGELOG.md",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/mission-control/CHANGELOG.md",
-      "sha256": "c2c988af49bf37e65e831211dfdcf307674ed1058610acec0212e71e60003694"
+      "sha256": "1ef7966e7ae40cfc562eacfb13dcf25a07f58a52fb477e1eb3d9fd15de2d3f90"
     },
     {
       "path": "com.infiquetra.claude/agents/sdlc-operator.md",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/mission-control/agents/sdlc-operator.md",
-      "sha256": "4801323b2a803398ebca16a1dc5b0a1b47a6401eaf31dd2dbeb5152ba340c2ee"
+      "sha256": "9e386dfec323f58561ca0ca16100bfa46be2eb90fb6cced7b8b1a76461f87b1b"
     },
     {
       "path": "com.infiquetra.claude/commands/board.md",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/mission-control/commands/board.md",
-      "sha256": "bb75d52c313925696bec76abc054c2b2a6ce50fa1334e02c514219e0baa51968"
+      "sha256": "fd800d2bf1de1e0e0b368d47d31dddba1b96182cc3a005eb08f79de2f3251eb3"
     },
     {
       "path": "com.infiquetra.claude/commands/issue.md",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/mission-control/commands/issue.md",
-      "sha256": "11cd4e3450f7cc72a62d95a2622955f21d57c89d1f9802a9d28364468a27e761"
+      "sha256": "2488ae90181fe8a460b1e74e21e3f875744e648b8db74fe6b643932a90f8ebfe"
     },
     {
       "path": "com.infiquetra.claude/commands/metrics.md",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/mission-control/commands/metrics.md",
-      "sha256": "8c103b5d29085113b7c01ed4f317a173c448c0972859396db1c6407a389ac562"
+      "sha256": "b65f233d239bd04c5ca6b92980d8c1a079f82a5a284fdeeb38aeaf9e9b82af83"
     },
     {
       "path": "com.infiquetra.claude/commands/triage.md",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/mission-control/commands/triage.md",
-      "sha256": "3c99880e4cd77e5c185a9b1fafa3317137520e9c66defc933f5a77141ffa292a"
+      "sha256": "323dde8904bd8c339080f32b81f3c39896aeea2106203e587f5ea6db7693e2bb"
     },
     {
       "path": "com.infiquetra.claude/plugin.json",
       "classification": "deterministic-transform",
       "source_path": "plugins/mission-control/.claude-plugin/plugin.json",
-      "source_sha256": "4c08adc427358ed7e9a43f8847619d9ecd9d610ca722198ad735b3c3bca0a6fb",
-      "sha256": "4c08adc427358ed7e9a43f8847619d9ecd9d610ca722198ad735b3c3bca0a6fb",
+      "source_sha256": "a789c38919287eb79fea4236183ad636f33c90cdee17e4ba421641dba9b1da9c",
+      "sha256": "a789c38919287eb79fea4236183ad636f33c90cdee17e4ba421641dba9b1da9c",
       "transform": "relocate-claude-manifest",
       "transform_version": "1",
       "transform_rule": "Re-emit the Claude Code manifest under the client extension directory the Agent Plugins 1.0 specification's section 8.2 defines. Version 1 preserves the bytes and derives only the output path, because the source directory name .claude-plugin/ is a Claude Code loading convention with no meaning inside the extension directory, and the portable Agent Plugins manifest already occupies the package root the Claude manifest would otherwise claim."
@@ -124,7 +129,7 @@
       "path": "config/sdlc-schema.json",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/mission-control/config/sdlc-schema.json",
-      "sha256": "8ead28abf7159c308d4946d3a3fdf714a62181b08332d8d3c8e547446dd0a026"
+      "sha256": "125065dd4fb4173b410aedac1205e784e657c5efdeaf3e0176b6b927e3980962"
     },
     {
       "path": "scripts/board_census.py",
@@ -152,24 +157,28 @@
       "path": "scripts/sdlc_manager.py",
       "classification": "deterministic-transform",
       "source_path": "plugins/mission-control/scripts/sdlc_manager.py",
-      "source_sha256": "a2f263280fe3beb5bb4a704bc1b630fa164168ba51e67defeb4eeca2dabfdb6e",
-      "sha256": "caf762d70588f2736dba890f571b48f183a7cf79e3e784f2a6a101c5c6444fd2",
+      "source_sha256": "48c362bbf233ae24530bc713766850946d4a43ca8e7835792a8d276a1f3cf086",
+      "sha256": "6e78eed04862924af6d2ab8fd70a842fe11cdb87b371e57948818eb35d19621f",
       "transform": "resolve-bundled-fleet-module-guarded",
       "transform_version": "1",
       "transform_rule": "Rewrite the function-scope guarded shape of the dropped fleet_commons_shim import. Version 1 matches exactly one contiguous block: a binding of the script's own directory, an `if BINDING not in sys.path:` guard around the insert, `import fleet_commons_shim`, a blank line, and `return fleet_commons_shim.load(NAME)`. It re-emits the binding's value as the _bundled/ directory beside the client -- keeping the binding name, which a deterministic rule cannot know is unused beyond the block -- and the import and return as the direct module, preserving the source's own trailing comment and the lazy, call-time import the upstream function documents. The block absent or repeated fails the synchronization, because a half-rewritten loader would still import the dropped shim."
     },
     {
       "path": "scripts/sync_template_docs.py",
-      "classification": "upstream-byte-copy",
+      "classification": "deterministic-transform",
       "source_path": "plugins/mission-control/scripts/sync_template_docs.py",
-      "sha256": "53df4e8f7cba3fb83dca07fb30188e2b991792d578627f67cfe386d45b2a51af"
+      "source_sha256": "4b61c20aaf6ac8bfd4b17e2ca46663c36fbbf5806e211e33dfbc2093a58a29bc",
+      "sha256": "98e5b5b5c8f2812a01b93c78def7e753bf3b1723ba79adf36db49c3fe3786d92",
+      "transform": "resolve-package-root-marker",
+      "transform_version": "2",
+      "transform_rule": "Re-anchor the package-root marker on the portable layout's own marker. Version 2 extends version 1 to the two carried tests that assert on the marker, and declares per-file site counts rather than one universal shape: scripts/sync_template_docs.py carries one `_find_package_root` definition and one module-scope `PACKAGE_ROOT = _find_package_root()` call; tests/test_issue_contract_parity.py carries one definition, one call, one `assert (root / \".claude-plugin\" / \"plugin.json\").is_file()` site, and one pytest.raises error-text match; tests/test_template_sync.py carries only the assertion and the error-text match, because its subject is the already-transformed module. Every site is rewritten deliberately from .claude-plugin/plugin.json onto com.infiquetra.claude/plugin.json, the client extension manifest the relocate-claude-manifest rule produces, because the portable package has no `.claude-plugin/` directory at all; the module-scope call is preserved verbatim. Any site count mismatch -- more or fewer sites than declared -- fails the synchronization naming the file, the site class, and the counts, never a partial application; a path outside the declared table fails too. A file whose sites already all carry the portable marker comes back byte-identical, which is what a second application returns; a file mixing upstream and portable markers is refused as half-transformed."
     },
     {
       "path": "skills/board/SKILL.md",
       "classification": "deterministic-transform",
       "source_path": "plugins/mission-control/skills/board/SKILL.md",
-      "source_sha256": "7912ae4dc32b33be6bb964d0ab10a372d9f71696b7911221f231ec3acb4721f7",
-      "sha256": "534d2ef0c3b4b9f82aea2f88b94ae7ce035c3c91b1595d519090cd561055a553",
+      "source_sha256": "c1a82e6269ee54345b660156bb8055dbc3191c1f65d94a1bdc142fdacf08f331",
+      "sha256": "2648f63a6a3022a2226612b7609b3bec40d8bba951187b84efdb912bdde4dd0b",
       "transform": "normalize-skill-frontmatter",
       "transform_version": "1",
       "transform_rule": "Fold a top-level when_to_use frontmatter key under the permitted metadata key. Version 1 reads the YAML frontmatter block line by line -- the repository tooling is standard library only and ships no YAML parser -- and moves the key line and every line of its value, block scalar or inline, two columns in, emitting `metadata:` above it where the key stood. The fold is deterministic and idempotent: a frontmatter without a top-level when_to_use comes back byte-identical, which is what a second application returns, and the body below the frontmatter is never touched. A frontmatter that carries a top-level metadata key beside when_to_use is refused rather than merged, because folding under an existing mapping is a shape this version does not describe; an unterminated frontmatter or a second when_to_use key is refused for the same reason. Portable copies only: the upstream file keeps the key because it is functional in Claude Code skill listings."
@@ -178,20 +187,20 @@
       "path": "skills/board/references/graphql-queries.md",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/mission-control/skills/board/references/graphql-queries.md",
-      "sha256": "8558b1bce30e6d966fa98cd50307046e55f635119e06e94bb07aec9de41484bc"
+      "sha256": "7b6157151e07c7824ca4232cad326b8577a4f6afccfb79d78beca0bf12633ab0"
     },
     {
       "path": "skills/board/references/kanban-workflow.md",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/mission-control/skills/board/references/kanban-workflow.md",
-      "sha256": "9e551fd920951628ee71f39f039243891e62d64b6e23890715534e9605a373c9"
+      "sha256": "8d555decc2eaf825233f514204cc83d499b3113d435da04ea5bac5b80ed091a3"
     },
     {
       "path": "skills/flow/SKILL.md",
       "classification": "deterministic-transform",
       "source_path": "plugins/mission-control/skills/flow/SKILL.md",
-      "source_sha256": "da0979c3cbc29aa59362ccacd704b8eba961fa24d5c9723698d458f104a06f69",
-      "sha256": "5c37d137c90b221503eb641c49b5b1d2e4577a202a5e5f7a1f5ab53f57de2c2a",
+      "source_sha256": "4ab5754df07a2b99f1244c659793364740fc443309a94e0679a78654bbe8c7cc",
+      "sha256": "a68ed965a7263bb647883a7c6245f26c1be81199a407edddda4c27c324cc2ba6",
       "transform": "normalize-skill-frontmatter",
       "transform_version": "1",
       "transform_rule": "Fold a top-level when_to_use frontmatter key under the permitted metadata key. Version 1 reads the YAML frontmatter block line by line -- the repository tooling is standard library only and ships no YAML parser -- and moves the key line and every line of its value, block scalar or inline, two columns in, emitting `metadata:` above it where the key stood. The fold is deterministic and idempotent: a frontmatter without a top-level when_to_use comes back byte-identical, which is what a second application returns, and the body below the frontmatter is never touched. A frontmatter that carries a top-level metadata key beside when_to_use is refused rather than merged, because folding under an existing mapping is a shape this version does not describe; an unterminated frontmatter or a second when_to_use key is refused for the same reason. Portable copies only: the upstream file keeps the key because it is functional in Claude Code skill listings."
@@ -200,8 +209,8 @@
       "path": "skills/issues/SKILL.md",
       "classification": "deterministic-transform",
       "source_path": "plugins/mission-control/skills/issues/SKILL.md",
-      "source_sha256": "945b489c9b28809e9a3bbc74aad4389232de13fd4b2b2dbb815b460f52a33b6e",
-      "sha256": "083bd7ea6be8fc51c17297393574127df9f9d5521a2b23d063650d684393bae7",
+      "source_sha256": "198d0d3a8e60b4ae3b03fe182d1a0e241a45f19e6b3d92bfc00988c10b4f9ab0",
+      "sha256": "cc28bf0773178b55e8a25fe8810a634ae15a1a234a65f9ba19a65c8cdc9aff71",
       "transform": "normalize-skill-frontmatter",
       "transform_version": "1",
       "transform_rule": "Fold a top-level when_to_use frontmatter key under the permitted metadata key. Version 1 reads the YAML frontmatter block line by line -- the repository tooling is standard library only and ships no YAML parser -- and moves the key line and every line of its value, block scalar or inline, two columns in, emitting `metadata:` above it where the key stood. The fold is deterministic and idempotent: a frontmatter without a top-level when_to_use comes back byte-identical, which is what a second application returns, and the body below the frontmatter is never touched. A frontmatter that carries a top-level metadata key beside when_to_use is refused rather than merged, because folding under an existing mapping is a shape this version does not describe; an unterminated frontmatter or a second when_to_use key is refused for the same reason. Portable copies only: the upstream file keeps the key because it is functional in Claude Code skill listings."
@@ -270,8 +279,8 @@
       "path": "skills/rollout/SKILL.md",
       "classification": "deterministic-transform",
       "source_path": "plugins/mission-control/skills/rollout/SKILL.md",
-      "source_sha256": "ce5ebc6763479bfbb9401b26f3116e4cb6227bc9a44a7d9ddb786e2f1b10bd2b",
-      "sha256": "66845be685da12dc6055eac84e894d9fe14cb0e6d0edbed51ee0797e1914a9bb",
+      "source_sha256": "57eb6e773f10d18fff30e6efcdd2342b698fb5bef7e1979558e1a3ca55ecf037",
+      "sha256": "62eb322ab9bf5f0418e34f85db459a1033e44f0945bb43b2faab019c2f53f7b8",
       "transform": "normalize-skill-frontmatter",
       "transform_version": "1",
       "transform_rule": "Fold a top-level when_to_use frontmatter key under the permitted metadata key. Version 1 reads the YAML frontmatter block line by line -- the repository tooling is standard library only and ships no YAML parser -- and moves the key line and every line of its value, block scalar or inline, two columns in, emitting `metadata:` above it where the key stood. The fold is deterministic and idempotent: a frontmatter without a top-level when_to_use comes back byte-identical, which is what a second application returns, and the body below the frontmatter is never touched. A frontmatter that carries a top-level metadata key beside when_to_use is refused rather than merged, because folding under an existing mapping is a shape this version does not describe; an unterminated frontmatter or a second when_to_use key is refused for the same reason. Portable copies only: the upstream file keeps the key because it is functional in Claude Code skill listings."
@@ -310,7 +319,7 @@
       "path": "tests/test_board_move_exit.py",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/mission-control/tests/test_board_move_exit.py",
-      "sha256": "2f1e050b8bc71c08cef9a927928e1c966f5ba71120a7f7f95b3f0d987e376a7a"
+      "sha256": "e538b31b9c676a9c0a5e555d5ec1cf5705dd5c7b7283b075398f59ae9a6187c0"
     },
     {
       "path": "tests/test_card_validator.py",
@@ -328,7 +337,7 @@
       "path": "tests/test_flow_subcommands.py",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/mission-control/tests/test_flow_subcommands.py",
-      "sha256": "6261e5b9542e67756703aa11a322dc62d4833ab8c75a9c079d691cc089e82b62"
+      "sha256": "bb04257038a445865eb735088b3988d0bd4154be387fa28f717c97d2daf3e939"
     },
     {
       "path": "tests/test_graphql_issue_resolution.py",
@@ -338,39 +347,79 @@
     },
     {
       "path": "tests/test_issue_contract_parity.py",
-      "classification": "upstream-byte-copy",
+      "classification": "deterministic-transform",
       "source_path": "plugins/mission-control/tests/test_issue_contract_parity.py",
-      "sha256": "ee0f522d36205e288ffa652792f6c18cb7af02948f1051b33a230600b1aca9ea"
+      "source_sha256": "c758c37c146f0ed31496db35b0ebdc9498043ddac35629990004ca78500d786b",
+      "sha256": "041071c4f1328ed49b0781c7d9b42f7895ed79663a00eff903a0ecb4e2d34df4",
+      "transform": "resolve-package-root-marker",
+      "transform_version": "2",
+      "transform_rule": "Re-anchor the package-root marker on the portable layout's own marker. Version 2 extends version 1 to the two carried tests that assert on the marker, and declares per-file site counts rather than one universal shape: scripts/sync_template_docs.py carries one `_find_package_root` definition and one module-scope `PACKAGE_ROOT = _find_package_root()` call; tests/test_issue_contract_parity.py carries one definition, one call, one `assert (root / \".claude-plugin\" / \"plugin.json\").is_file()` site, and one pytest.raises error-text match; tests/test_template_sync.py carries only the assertion and the error-text match, because its subject is the already-transformed module. Every site is rewritten deliberately from .claude-plugin/plugin.json onto com.infiquetra.claude/plugin.json, the client extension manifest the relocate-claude-manifest rule produces, because the portable package has no `.claude-plugin/` directory at all; the module-scope call is preserved verbatim. Any site count mismatch -- more or fewer sites than declared -- fails the synchronization naming the file, the site class, and the counts, never a partial application; a path outside the declared table fails too. A file whose sites already all carry the portable marker comes back byte-identical, which is what a second application returns; a file mixing upstream and portable markers is refused as half-transformed."
     },
     {
       "path": "tests/test_issue_create_interactive.py",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/mission-control/tests/test_issue_create_interactive.py",
-      "sha256": "aff7ea04513d2547a7660ff61b950177741748a9be2e594762f24c08a9e30751"
+      "sha256": "457a90fd7e0d61bee83b102771220204f95d4b34ce88ac324ae9dc280ee53635"
     },
     {
       "path": "tests/test_issue_create_prepared.py",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/mission-control/tests/test_issue_create_prepared.py",
-      "sha256": "d1196558df53bcabffb12d5646d67108b237c8fba7d8028f0e0c0485c5775c6b"
+      "sha256": "2f3aacf575496d4b6a3053a59b65f6fea5ee9eb2971fa701e17e52b10a9425d3"
     },
     {
       "path": "tests/test_issue_prepare.py",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/mission-control/tests/test_issue_prepare.py",
-      "sha256": "79c30bcb04769200a84202197f912002363559302b572fad8a3c0ad09f037c91"
+      "sha256": "399f5eec3d1ab80a0764f9d77d649a73aec60d4643b031c73ee1e8c2430c5d55"
     },
     {
       "path": "tests/test_issue_prepare_compile_approve.py",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/mission-control/tests/test_issue_prepare_compile_approve.py",
-      "sha256": "c7f99cc02175899032941ce190478887d21e02602e7d2a542545aa81c9f03ba1"
+      "sha256": "9cefd7effc8b9a3b51c19e9890d81fafda9e5be7e275fd1daf8f4555fff6e8c5"
     },
     {
       "path": "tests/test_issue_source_artifacts.py",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/mission-control/tests/test_issue_source_artifacts.py",
       "sha256": "63a82be3bcbd82d5448438b74cc6a9f079f044814e64223d4454e616cf79ed63"
+    },
+    {
+      "path": "tests/test_lifecycle_field_boards.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_lifecycle_field_boards.py",
+      "sha256": "8bb6e547db01a658b8b6565d8f716445541cfb498d6d2cc04009b0984ecfc5c8"
+    },
+    {
+      "path": "tests/test_lifecycle_field_identity.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_lifecycle_field_identity.py",
+      "sha256": "3ee4b90f19c3835cbbb77d663739d9a50cc1a51dd624d1ac62a4a76e58627d6b"
+    },
+    {
+      "path": "tests/test_lifecycle_field_mutation.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_lifecycle_field_mutation.py",
+      "sha256": "9288f27c1418d1a531fa46a9c1d8eddd9dd7a4ae859548372a2aaded7daddda3"
+    },
+    {
+      "path": "tests/test_lifecycle_field_routing.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_lifecycle_field_routing.py",
+      "sha256": "6780e38eb047e5f822e20ab4fe64e67d726cca009307c62dc471c167e72a5abe"
+    },
+    {
+      "path": "tests/test_lifecycle_writer_census.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_lifecycle_writer_census.py",
+      "sha256": "af3f5e18ab3516a94a9380694b752c38bf1349864329b04dd8993091279e0c80"
+    },
+    {
+      "path": "tests/test_option_identity.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_option_identity.py",
+      "sha256": "3c2d8d31c54cb15ab9320a6b9d4cdd7be3b0a74b66032585e51c46425bd115bf"
     },
     {
       "path": "tests/test_pagination_helper.py",
@@ -382,19 +431,29 @@
       "path": "tests/test_project_mappings_resolution.py",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/mission-control/tests/test_project_mappings_resolution.py",
-      "sha256": "2f73816b77a24f27eb1cc032af5b73cf6aff7668c6c083a7f79e2684027e2865"
+      "sha256": "7adb094a52221e22ade63b3d946a8b171f4f34247d7d0158f2d4e2a2f114e7fd"
     },
     {
       "path": "tests/test_sdlc_draft_revision.py",
       "classification": "upstream-byte-copy",
       "source_path": "plugins/mission-control/tests/test_sdlc_draft_revision.py",
-      "sha256": "143c088dd775aab14031dcb2cc054cf5adcdb029c2de5871e3c0ce49b697d1b8"
+      "sha256": "d2c25f7e3f5d18c5c112d491822d7fcea37ca05129e4b00dcecdf58298da6fe1"
+    },
+    {
+      "path": "tests/test_sdlc_manager_optional_deps.py",
+      "classification": "upstream-byte-copy",
+      "source_path": "plugins/mission-control/tests/test_sdlc_manager_optional_deps.py",
+      "sha256": "0864c18256a95801f72a6d49d2b22d135b82216f4e902053392e9b5d1f18abd3"
     },
     {
       "path": "tests/test_template_sync.py",
-      "classification": "upstream-byte-copy",
+      "classification": "deterministic-transform",
       "source_path": "plugins/mission-control/tests/test_template_sync.py",
-      "sha256": "ad2929bd0931a4b119cbe3d5db50b44ce53bbd3be7c8a114e9c1c196afed5cea"
+      "source_sha256": "448636f208ce0a84f87ecd24f542060aacf7b9629125562b9c968bc5bcb67465",
+      "sha256": "5132df4b545f0ee3d17dbda964470335228373e6e046bb0c9200acf8997e3e41",
+      "transform": "resolve-package-root-marker",
+      "transform_version": "2",
+      "transform_rule": "Re-anchor the package-root marker on the portable layout's own marker. Version 2 extends version 1 to the two carried tests that assert on the marker, and declares per-file site counts rather than one universal shape: scripts/sync_template_docs.py carries one `_find_package_root` definition and one module-scope `PACKAGE_ROOT = _find_package_root()` call; tests/test_issue_contract_parity.py carries one definition, one call, one `assert (root / \".claude-plugin\" / \"plugin.json\").is_file()` site, and one pytest.raises error-text match; tests/test_template_sync.py carries only the assertion and the error-text match, because its subject is the already-transformed module. Every site is rewritten deliberately from .claude-plugin/plugin.json onto com.infiquetra.claude/plugin.json, the client extension manifest the relocate-claude-manifest rule produces, because the portable package has no `.claude-plugin/` directory at all; the module-scope call is preserved verbatim. Any site count mismatch -- more or fewer sites than declared -- fails the synchronization naming the file, the site class, and the counts, never a partial application; a path outside the declared table fails too. A file whose sites already all carry the portable marker comes back byte-identical, which is what a second application returns; a file mixing upstream and portable markers is refused as half-transformed."
     },
     {
       "path": "tests/test_typed_exceptions.py",

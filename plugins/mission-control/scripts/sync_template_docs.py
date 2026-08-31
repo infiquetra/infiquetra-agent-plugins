@@ -13,16 +13,25 @@ from typing import Any
 
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-REFERENCE_PATH = (
-    REPO_ROOT / "plugins/mission-control/skills/issues/references/templates-reference.md"
-)
+
+def _find_package_root(start: Path | None = None) -> Path:
+    current = start or Path(__file__)
+    for parent in current.resolve().parents:
+        if (parent / "com.infiquetra.claude" / "plugin.json").is_file():
+            return parent
+    raise RuntimeError(
+        f"package root containing com.infiquetra.claude/plugin.json not found from {current.resolve()}"
+    )
+
+
+PACKAGE_ROOT = _find_package_root()
+REFERENCE_PATH = PACKAGE_ROOT / "skills" / "issues" / "references" / "templates-reference.md"
 DEFAULT_SDLC_PATH = Path.home() / "workspace" / "infiquetra" / "infiquetra-sdlc"
 
 ACTIONABLE_TEMPLATES = ("capability", "enhancement", "defect")
 NON_ACTIONABLE_TEMPLATES = ("exploration", "context-update")
 TEMPLATE_ORDER = ACTIONABLE_TEMPLATES + NON_ACTIONABLE_TEMPLATES
-CONTRACT_DATA_PATH = REPO_ROOT / "plugins/mission-control/config/generated/issue_contract_data.py"
+CONTRACT_DATA_PATH = PACKAGE_ROOT / "config" / "generated" / "issue_contract_data.py"
 
 _contract_spec = importlib.util.spec_from_file_location("issue_contract_data", CONTRACT_DATA_PATH)
 if _contract_spec is None or _contract_spec.loader is None:  # pragma: no cover - defensive

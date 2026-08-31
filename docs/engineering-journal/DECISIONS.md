@@ -2,6 +2,67 @@
 
 ## 2026-08-30
 
+### Mission Control 2.15.2 resync run plan: bind the identity surface, route around the graded files, freeze after the last package edit
+
+**Author.** Jeff Cox and Claude (Saga Plan for issue #50)
+
+**Decision.** The Mission Control resynchronization run plan
+([docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md](../plans/2026-08-30-issue-50-mission-control-resync-plan.md))
+fixes thirteen plan-level choices inside the operator-settled contract of issue
+#50. Six are load-bearing enough to record here. (1) **The identity surface is
+bound, never retyped**: `plugins/mission-control/plugin.json`'s version is
+derived by test from `PROVENANCE.json`'s `source_version`, and the root
+`README.md`'s file count, test counts, and Packages-table row are pinned by a
+test that recomputes them from disk (KTD5, KTD6). (2) **The third dropped path
+extends the existing single `provenance.dropped_reason` string** rather than
+promoting it to a per-path mapping, because the mapping is a descriptor schema
+change and `scripts/port_config.py` is graded (KTD3). (3) **The new evidence
+bindings are added as parallel mission-control classes in
+`tests/test_check_compatibility_matrix.py`**, never by teaching the graded
+`scripts/check_compatibility_matrix.py` and never by parameterizing UniFi's live
+classes (KTD4). (4) **The fingerprint freeze follows U3, not U2**, because U3 is
+the last unit that edits bytes inside the package root, and U4 is made
+fingerprint-neutral by construction so the two may run concurrently (KTD9,
+KTD10). (5) **The replacement post-activation readback keeps a
+`cycle_16_verification` block** with the five graded-file digests recomputed at
+the new freeze, turning it into a positive statement that the resync retired no
+mutation proof (KTD11). (6) **The run lands as one squash-merged pull request**;
+`mergeCommitAllowed` is false and every commit on `main` since #35 is a squash,
+so each child records its base and frozen SHAs from the branch alongside the
+shared merged SHA (KTD8).
+
+**Rationale.** The #9 run's only review finding was a hand-transcribed identity
+row with no derivation and no pin test; retyping five version and count claims
+one release later reproduces that defect exactly, so the plan closes the class
+rather than the instance. The five cycle-16 graded files still match the proof's
+footer digests on the current tree, and a resynchronization needs none of them,
+so every place a unit might reach for one has a named non-graded alternative
+decided in advance rather than discovered under pressure. The package
+fingerprint is computed from every byte under the package root, which makes the
+freeze point arithmetic rather than preference. And `check_document_status`
+refuses a superseded stamp while the document's fingerprint still identifies the
+package, so the supersession order — land the resync, run the assessment,
+publish the successor as current, only then stamp the predecessor — is enforced
+by code, not by discipline.
+
+**Rejected alternatives.** *Retyping the version and count claims* with reviewer
+discipline as the control — that is precisely what failed in #9's U9. *A
+per-path `dropped_reason` mapping* and *teaching the compatibility checker about
+mission-control* — both cleaner, both retire the cycle-16 mutation proof for a
+cosmetic gain. *Parameterizing the existing UniFi binding classes* — risks live
+passing bindings on a package this run does not touch. *Freezing after U2 and
+treating U3's edits as documentation-only* — the fingerprint does not care what a
+file means. *Rebase-merging to keep six commits on `main`* — allowed by settings,
+but rebase rewrites the SHAs anyway, so the traceability gain over recording
+branch SHAs is marginal and it would be this repository's first non-squash
+landing. *Carrying `tests/test_card_validator_agreement.py` and letting it skip
+at runtime* — the same call the `test_prompt_alignment.py` drop already rejected.
+
+**Revisit when** a fourth package needs evidence bindings (the moment
+parameterization earns its risk), or when a funded unit re-runs the mutation
+proof and the graded-file constraints that shape KTD3 and KTD4 no longer apply.
+
+
 ### Spoken approval forwarding in PreToolUse supersedes KTD7 and lifts plan stop-condition 4 for Unit U6
 
 **Author.** Claude for Jeff Cox (Auralis C3 adapter U6 approval hook completion, issue #46, branch `orch/auralis-c3-adapter-build-c3-u6-approval-hook`)
@@ -59,6 +120,606 @@ approval route shape.
 **Refs.** [`docs/bridge-v1-from-c10.md`](../bridge-v1-from-c10.md),
 [`docs/evidence/voice/auralis-c3-acceptance.md`](../evidence/voice/auralis-c3-acceptance.md),
 `plugins/voice/tests/test_pre_tool_use_hook.py`, `tests/test_claude_plugin_packaging.py`.
+
+### Mission Control 2.15.2 resync U1: eight new upstream tests classified — seven hermetic byte copies, one exclusion — and the prompt-alignment drop re-verified at the new pin
+
+**Author.** Claude for Jeff Cox (U1 of issue #50, child #52, branch `orch-agent-plugins-50`)
+
+**Decision.** (1) The seven hermetic upstream tests that 2.15.2 adds
+(`test_lifecycle_field_boards.py`, `test_lifecycle_field_identity.py`,
+`test_lifecycle_field_mutation.py`, `test_lifecycle_field_routing.py`,
+`test_lifecycle_writer_census.py`, `test_option_identity.py`,
+`test_sdlc_manager_optional_deps.py`) are classified `upstream-byte-copy` in
+`ports/mission-control.json` (`custody.byte_copies` grows 42 → 49). Each claim
+was re-verified first-hand against the pinned upstream, not inherited from the
+issue text: six patch `_graphql` at the `sdlc_manager` module level so no live
+GitHub call can occur, and their docstrings state it; the seventh
+(`test_lifecycle_writer_census.py`) is a static AST census over
+`sdlc_manager.py` source using only the standard library; and
+`test_sdlc_manager_optional_deps.py` spawns a subprocess of the test's own
+interpreter (`sys.executable -c`) with `sys.modules['yaml']` forced to `None` —
+package-internal and hermetic. A grep over all seven found no external
+checkout, no marketplace or sibling-plugin premise, no network call, and no
+credential. (2) `tests/test_card_validator_agreement.py` is excluded by
+operator ruling 2 and recorded in `custody.dropped_from_source` (2 → 3
+entries), with its reason appended to the single `provenance.dropped_reason`
+string (KTD3 — the mapping alternative is a descriptor schema change that
+touches the graded `scripts/port_config.py`). (3) `provenance.notes` were
+refreshed in the same commit, because `scripts/sync_vendor_source.py` copies
+them verbatim into `PROVENANCE.json`: the notes now name pin
+`3b2b7083fdda8e39e213b5f4acf9f8301d60dd52` and version 2.15.2; the four
+line-number claims were re-verified at the pin by `git show` and grep
+(`_load_intent_envelope` guarded import block 5134–5140,
+`INFIQUETRA_SDLC_PATH` read at 136, `_open_mapping_pr` at 5552,
+`executor_profile_lint.py` still 35 and 89); the PyYAML claim was rewritten —
+upstream filing #828 moved the import into the `_load_live_mimir_coverage`
+function at line 3436, so the module-scope claim at line 83 is false at the
+new pin, and the notes now state that PyYAML remains required because
+`scripts/sync_template_docs.py:14` and `tests/test_template_sync.py:7` still
+import it at module scope, so the continuous-integration install line stays
+and only the justification changed; and the test count moved from
+twenty-one to twenty-eight byte-copied test files (30 at the pin minus the two
+dropped). (4) The `test_prompt_alignment.py` drop was re-verified at
+`3b2b7083` and holds: the pinned file still reads the root
+`.claude-plugin/marketplace.json` (line 41) and the sibling
+`plugins/saga/skills/handoff/SKILL.md` (line 231), neither of which this
+catalog hosts. The drop stands, and the re-verification is recorded here
+rather than implied.
+
+**Rationale.** The agreement test loads an authority module from outside any
+repository — searching `HOME_LAB_PATH`, then `INFIQUETRA_HOME_LAB_PATH`, then
+`~/workspace/infiquetra/home-lab`, then `~/workspace/home-lab`, then sibling
+directories — and skips loudly when absent; its own docstring states this
+repository's continuous integration never exercises it. Carrying it would make
+a test's verdict depend on what else happens to be on the machine's disk,
+which is the defect class `QUEUED.md` already names about the link checker: a
+gate that reports the environment rather than the repository. The tool's
+unclassified-paths refusal changed shape after this edit: it now reports real
+content drift (byte-copy divergences and missing synchronized files for the
+seven new tests), which is U2's input rather than a refusal.
+
+**Rejected alternatives.** (a) Carry the agreement test and let it skip at
+runtime — deadweight that misrepresents its own coverage; the recorded
+`test_prompt_alignment.py` drop already rejected exactly this. (b) Carry it
+with a repository-local stub of the home-lab authority module — makes the
+portable copy assert agreement with a fake, which is worse than not asserting
+it. (c) Classify it as a byte copy to make the tool stop complaining — the
+tool refuses on *unclassified*, not on *wrongly classified*, so this would
+silence the error and ship the defect.
+
+**Revisit when** the home-lab authority module becomes available as a pinned,
+in-repository dependency, or upstream moves either dropped test's premises so
+they hold under the portable layout.
+
+**Refs.** [`ports/mission-control.json`](../../ports/mission-control.json),
+[`docs/plans/2026-08-30-issue-50-mission-control-resync-plan.md`](../plans/2026-08-30-issue-50-mission-control-resync-plan.md),
+issue #52, `tests/test_sdlc_manager_optional_deps.py` (upstream, at the pin).
+
+### Mission Control 2.15.2 resync U2: `sync_template_docs.py` becomes a deterministic transform rather than an upstream filing
+
+**Author.** Claude for Jeff Cox (Amendment 1 to the issue #50 run plan, taken by the
+run coordinator during U2, branch `orch-agent-plugins-50`)
+
+**Decision.** `plugins/mission-control/scripts/sync_template_docs.py` is reclassified
+in [`ports/mission-control.json`](../../ports/mission-control.json) from
+`upstream-byte-copy` to `deterministic-transform`, under a new versioned rule that
+resolves the package root through the portable layout's own marker,
+`com.infiquetra.claude/plugin.json`, instead of upstream's
+`.claude-plugin/plugin.json`. The rule is authored by the U2 worker;
+[the run plan](../plans/2026-08-30-issue-50-mission-control-resync-plan.md) records
+the decision (KTD14, R40, R41, §14) and does not write the rule. U2 consequently
+gains three files outside the package root, each with its writer order stated:
+`scripts/sync_vendor_source.py` (sole writer), `ports/mission-control.json` (second
+of three sequenced writers, after U1 and before U3), and
+`tests/test_sync_vendor_source.py` (first of two, before U4).
+
+**Rationale.** Upstream 2.15.2 rewrote this carried file so that
+`_find_package_root()` (line 17 at pin `3b2b7083`) walks up for
+`.claude-plugin/plugin.json` (line 20), raises `RuntimeError` when it finds none
+(line 22), and is called at module scope (line 27). The portable package has no
+`.claude-plugin/` directory — `relocate-claude-manifest` moves the Claude manifest to
+`com.infiquetra.claude/plugin.json` — so the module cannot be imported here at all.
+Reproduced on the U2 tree: four failures in `python3 -m unittest discover -s tests`
+and two collection errors in the package suite trace to this single cause.
+
+The run contract names two legitimate resolutions when a carried file cannot work
+unchanged in the portable layout: an upstream filing, or a recorded custody decision.
+An upstream filing blocks the whole resynchronization until upstream fixes and this
+repository repins. The custody path has direct precedent here:
+`normalize-skill-frontmatter` is the identical shape — upstream keeps a form the
+portable layout cannot take verbatim, and a versioned rule transforms it
+deterministically, reproducible from the source bytes alone — and the
+`resolve-bundled-fleet-module-split` / `-guarded` pair is the same pattern for a
+different import problem. This is the third instance of a shape this repository
+already runs twice. `scripts/sync_vendor_source.py` is not in the cycle-16 mutation
+proof's graded set, so adding a rule there retires no proof.
+
+Worth recording for the next port: this repository filed upstream
+`infiquetra/infiquetra-claude-plugins` #822 asking upstream to remove the fixed
+`parents[3]` depth assumption from this exact file. Upstream fixed it by anchoring to
+`.claude-plugin/plugin.json` — precisely the directory the port relocates away. A fix
+that is correct upstream can still be unusable downstream. The port boundary is where
+that shows up, and an upstream filing is not automatically the right answer to a
+downstream break.
+
+**Rejected alternatives.** *Hand-editing the byte copy* — the custody violation the
+whole arrangement exists to prevent, and it fails its own digest check. *Dropping the
+file from source the way `scripts/fleet_commons_shim.py` is dropped* — the shim was
+dropped because the Fleet Core bundle replaces it, whereas nothing replaces this file,
+and it is a declared entrypoint in both `assessment.entrypoints` and
+`assessment.package_scripts`, so dropping it would silently shrink the package's
+capability surface. *Filing upstream and stopping* — blocks the run for a defect that
+is not upstream's to carry, since upstream's resolution is correct for upstream's own
+layout.
+
+**Revisit when** upstream adopts a layout-neutral package-root resolution that does
+not hard-code a single marker directory. The transform can then retire and the file
+can return to being a byte copy.
+
+
+### Mission Control 2.15.2 resync: an inherited gate is met at a unit's completion, and three units complete in two commits
+
+**Author.** Claude for Jeff Cox (Amendment 2 to the issue #50 run plan, repairing
+doc-review cycle 3, branch `orch-agent-plugins-50`)
+
+**Decision.** Two things, recorded together because the second only makes sense given
+the first.
+
+First, **ownership follows the issue, not convenience**: the `sync_template_docs.py`
+custody work is split across the units that already own each file — the descriptor
+reclassification to U1 (#52), the transform rule to U2 (#53), the rule's coverage to
+U4 (#55). Amendment 1 had given all three to U2, which contradicted #53's own
+out-of-scope section ("No edit to `ports/mission-control.json`"; "No downstream test
+edits"). U1 has already landed and been accepted, so its share is a second commit
+against the same unit rather than a rewrite of the first.
+
+Second, **an inherited acceptance criterion is met at the unit's completion, not at
+every intermediate commit**, and U1, U3, and U4 each complete in two commits so that
+every unit's completion lands on a genuinely green tree. The landing sequence becomes
+`U1a → U1b → U2 → U4a → U3a → freeze → U5 → U3b → U4b`.
+
+**Rationale.** After the resynchronization, `python3 -m unittest discover -s tests` is
+red on exactly two things: three pin constants in `tests/test_sync_vendor_source.py`,
+owned by U4, and
+`test_check_compatibility_matrix.LiveDocumentTest.test_the_no_argument_run_validates_every_committed_matrix`,
+owned by U5. Three sibling issues — #54, #55, #56 — each require that command to report
+`OK`, and each is blocked by the other's uncleared red. U4 needs U5's evidence re-bind;
+U5 needs U4's pin fix *and* a final package, which does not exist until U3's
+package-root edits land; U3 needs both.
+
+The cycle is verified in code, not inferred. `check_package_binding` compares the
+recorded `file_count` **and** `tree_sha256` against the live package, so any byte change
+inside `plugins/mission-control/` invalidates a `matrix-status: current` document. And
+`check_document_status` accepts a superseded stamp only when the named successor already
+exists and is itself current, so a stale matrix cannot be retired before a fresh one is
+published. No ordering of six single-commit units satisfies all three gates.
+
+Splitting three units into two commits each costs nothing and narrows nothing. None of
+the three issues says its gate must hold at every commit on the way to completion; each
+says the command reports `OK`, and at each unit's final commit it does — with no
+expected-red list, no moved checkpoint, and no weakened assertion. The deferred halves
+are real deliverables, not bookkeeping: U3b carries the root README's counts, which can
+only be finally correct once every unit has landed, and U4b carries the roster and
+continuous-integration confirmations. Both are outside the package root, so neither
+disturbs the freeze or invalidates the single ten-client assessment.
+
+**Rejected alternatives.** *Naming `LiveDocumentTest` as an expected red in U3's and
+U4's gates*, the way U2 names its pin constants — that is the narrowing an earlier
+review finding already rejected, and #53 is the only child issue whose criteria permit
+an expected-red list. *Moving the freeze before U3* — forbidden by #50's own text.
+*Moving U3's package-root edits into U2* — contradicts #53's out-of-scope. *Running the
+ten-client assessment twice, supersede-and-re-run* — legitimate under this repository's
+evidence loop, and the agent-launcher port did exactly that when a repair moved its
+tree, but a second operator-attended ten-client run is a real cost paid to avoid a
+commit split that costs nothing; it stays the fallback if the split proves unworkable.
+*Planting a dummy `.claude-plugin/` directory* so upstream's walk finds a marker — it
+reintroduces the directory the port exists to relocate, makes a byte copy's behaviour
+depend on a sibling file rather than its own bytes, inflates the fingerprint every piece
+of evidence binds, and still fails for anyone who installs the documented layout without
+it.
+
+**Revisit when** a resynchronization has no target-owned edits inside the package root.
+Then the freeze can follow the sync directly, the assessment has a final tree
+immediately, and every unit can complete in one commit.
+
+
+### Mission Control 2.15.2 resync: register a transform rule before anything names it, and six commits is provably unreachable
+
+**Author.** Claude for Jeff Cox (Amendment 3 to the issue #50 run plan, repairing
+doc-review cycle 4, branch `orch-agent-plugins-50`)
+
+**Decision.** The new package-root transform rule is sequenced **registration first,
+registry test second, descriptor third, synchronization fourth** — U2a, U4a, U1b,
+U2b. And the run's landing shape is recorded as **eleven child-scoped commits, not
+the six the run declaration assumes**, escalated to the operator as an explicit
+question rather than absorbed as a compatible reading.
+
+**Rationale.** Two committed tests fix the order, and neither is a plan choice.
+`tests/test_port_config.py::CommittedDescriptorTest.test_every_entrypoint_transform_entry_names_a_rule_the_sync_tool_implements`
+asserts that every rule a port descriptor names is present in
+`sync_vendor_source.TRANSFORM_RULES`, so a descriptor edit that names an
+unregistered rule fails the repository suite — which is exactly what the previous
+amendment scheduled, claiming a reclassification "changes no behaviour on its own."
+It does. `scripts/sync_vendor_source.py`'s `resolve_transform_rule` refuses the same
+unregistered name, so `--check` would refuse too.
+
+Correcting that surfaced a second constraint in the same area that neither the
+amendment nor the review had reached:
+`tests/test_sync_vendor_source.py::MissionShapedSyncTests.test_rule_names_register_exactly_once`
+asserts `set(TRANSFORM_RULES)` equals a literal five-element set of name constants,
+so registering a sixth rule fails it. That file belongs to U4 under #55, and #53
+forbids U2 from editing downstream tests, so the registration and its registry
+repair are two different units' commits by construction.
+
+On the commit count: a six-commit shape was searched for before the deviation was
+recorded, and it does not exist. Four prerequisites each force a split
+independently — a descriptor may only name a registered rule; registering a rule
+breaks a test another unit owns; the pin constants can only move after the
+synchronization rewrites the provenance manifest; and the evidence can only be
+re-bound after the last package-root edit, which is the unit whose own gate the
+evidence unblocks. Add that #52, #54, #55 and #56 each require `unittest discover`
+to report `OK`, and the minimum is eleven commits. The alternative to eleven is not
+six commits; it is six commits plus three narrowed acceptance criteria, and
+narrowing a gate is what an earlier review finding already rejected once.
+
+The general rule worth carrying: **a registry and the data that selects from it are
+joined by a test, so the writer of the registry entry must land before the writer of
+the selection — even when the natural unit order runs the other way.** Ownership
+decides *who* does a thing; a join test decides *when*.
+
+**Rejected alternatives.** *Letting U2 register the rule and repair the registry test
+in one commit* — contradicts #53's "No downstream test edits. U4 owns those."
+*Letting U1 register the rule beside its descriptor edit* — contradicts #52's "This
+unit changes the descriptor only." *Naming the red tests as expected in each unit's
+gate* — the narrowing already rejected. *Running the ten-client assessment twice
+under the supersede-and-re-run evidence loop* — legitimate, and the agent-launcher
+port did exactly that, but it spends a second operator-attended session to save one
+commit; kept as the fallback only if eleven commits is refused.
+
+**Revisit when** a resynchronization introduces no new transform rule and makes no
+target-owned edit inside the package root. Both join constraints and the freeze
+constraint fall away together, and six commits becomes reachable.
+
+
+### Mission Control 2.15.2 resync: the package-root transform is extended to rewrite what two carried tests assert
+
+**Author.** Jeff Cox, recorded by Claude (Amendment 4 to the issue #50 run plan,
+branch `orch-agent-plugins-50`). Operator decision; this entry records it and does
+not implement it.
+
+**Decision.** Extend the `resolve-package-root-marker` transform to a new version
+whose shape covers, per file, the `_find_package_root` definition, its module-scope
+call, **and the assertion sites** — the `.is_file()` marker assertions and the
+`pytest.raises` error-text match — and reclassify
+`plugins/mission-control/tests/test_issue_contract_parity.py` and
+`plugins/mission-control/tests/test_template_sync.py` from `custody.byte_copies` to
+`custody.entrypoint_transforms`.
+
+**Rationale.** Both files carry upstream's `.claude-plugin/plugin.json` package-root
+resolution and cannot work in the portable layout, where the Claude manifest is
+relocated to `com.infiquetra.claude/`. Verified at pin `3b2b7083`: the contract-parity
+test defines `_find_package_root` at line 36, raises at line 41, calls it at module
+scope at line 46 so it fails at collection, and additionally asserts the marker on
+itself at line 405 and pins the failure message at lines 410–417. The template-sync
+test has no such function of its own — it exercises the module the earlier decision
+already transforms — and two of its eight tests fail at lines 175 and 185–188
+**because** that earlier transform changed the marker and the error text. The second
+file is a consequence of the first decision, not an independent defect.
+
+A scan of every `.py` file in the pinned package found the pattern in exactly six
+files. Four positions were already settled: `fleet_commons_shim.py` dropped,
+`sync_template_docs.py` transformed, `test_card_validator_agreement.py` dropped by
+operator ruling, `test_prompt_alignment.py` dropped. These two were the only
+unresolved ones, and there is no seventh. The scan is recorded in the plan so a future
+resynchronization can re-run it rather than re-derive it.
+
+**The cost, not softened.** This rule rewrites what a test *asserts*, not merely where
+it looks. The earlier package-root decision deliberately stopped short of that line;
+this one crosses it. A carried test whose assertions are rewritten downstream no
+longer tests exactly what upstream tests, which is a real weakening of the
+derived-artifact principle. The operator judged it acceptable because the alternative
+was narrowing an inherited acceptance criterion — the whole reason the run accepted a
+larger commit count — and because the rewritten assertion still asserts the same
+property, that the package root is discoverable by this layout's marker, against the
+marker this layout actually uses.
+
+**The discipline that replaces single-shape.** The rule stops being single-shape,
+which this repository's transform discipline resists. Four obligations replace that
+guarantee: exact declared site counts per file; a loud refusal naming file, site class,
+and counts on any mismatch, never a partial application; idempotence on already-portable
+input; and reproducibility from the upstream bytes alone.
+
+**Rejected alternatives.** *Drop both from source*, as two other tests are dropped —
+the package would hold 69 files, breaking issue #53's explicit acceptance checkbox that
+it holds 71, which is an inherited criterion the run's commit-count ruling was taken
+specifically to preserve; and the portable copy would lose its contract-parity and
+template-sync coverage. *File upstream and stop* — it does not complete the
+resynchronization in this run and leaves the parent and all six children open pending
+an upstream release on another schedule; upstream is not wrong for its own layout.
+*Per-path rule parameters in `ports/*.json`* — carrying the per-file site counts in the
+descriptor instead of the shared script would require a schema-4 bump of the closed
+`{path, rule}` entrypoint-transform shape, and `scripts/port_config.py` is one of the
+five cycle-16 graded files, so the bump was not taken in this run; the counts table in
+the script is the cheaper shape, joined to the descriptor by a committed test in
+`tests/test_port_config.py`. Revisit when a second rule needs per-path parameters, at
+which point schema 4 earns its cost.
+
+**Revisit when** upstream adopts a layout-neutral package-root resolution. Both of
+these transforms and the earlier one should then retire, and all three files return to
+being byte copies.
+
+
+### A join test constrains exactly what it joins — and the Mission Control resync lands twelve commits, not thirteen
+
+**Author.** Claude for Jeff Cox (Amendment 5 to the issue #50 run plan, repairing
+doc-review cycle 6, branch `orch-agent-plugins-50`)
+
+**Decision.** The package-root rule's v2 extension folds into the synchronization
+commit instead of taking one of its own, so the run lands **twelve** child-scoped
+commits rather than the thirteen the previous amendment recorded. And the plan's
+claim that a custody-versus-provenance test constrained the descriptor
+reclassification is **withdrawn**, because that test does not cover the package in
+question.
+
+**Rationale.** Both corrections come from the same mistake made in opposite
+directions: reading "there is a join test here" as "therefore this ordering is
+forced," without checking what the join actually joins or which fixture it loads.
+
+The rule name `resolve-package-root-marker` has been registered since the run's first
+synchronizer commit (`scripts/sync_vendor_source.py:102`, registry at line 855, pinned
+in the expected set at `tests/test_sync_vendor_source.py:930`). The descriptor join,
+`CommittedDescriptorTest.test_every_entrypoint_transform_entry_names_a_rule_the_sync_tool_implements`,
+asserts `assertIn(rule, svs.TRANSFORM_RULES)` — it joins **names**, and no version
+appears in it. So a descriptor may select that rule for two more paths while the rule
+is still on v1. What v2 must precede is the synchronization run, because v1's
+exactly-one-definition-plus-one-call shape would refuse a file that has neither. The
+extension and the sync are one unit acting on one file, so they are one commit.
+
+The second correction is the mirror image. The plan cited
+`CommittedDescriptorTest.test_the_custody_table_accounts_for_every_shipped_managed_path`
+as forcing the descriptor commit to gate on an already-transformed working tree. That
+method reads `self.config`, and the class's `setUp` is
+`port_config.load("unifi", ROOT)` — the docstring calls the UniFi descriptor "the
+regression fixture for all of this." A mission-control reclassification cannot fail
+it. A search for the test that *would* constrain it found none: nothing joins
+mission-control's descriptor custody to its shipped provenance manifest, and
+`check_repo.py` validates a manifest entry's own classification rather than comparing
+it to the descriptor.
+
+**Generalizable rule.** *A join test constrains exactly what it joins, over exactly
+the fixtures it loads.* Before deriving a landing-order edge from a test, read two
+things: which fields it compares, and what its `setUp` actually loads. In this run the
+same unchecked inference invented a prerequisite once in the right direction and once
+in the wrong one — costing an extra commit in the first case and putting a false
+constraint into an accepted plan in the second.
+
+**Rejected alternatives.** *Keeping the standalone extension commit* — defensible only
+if some test forced it, and none does; an extra commit on a run already deviating from
+its declared commit count needs a reason better than tidiness. *Re-pointing the
+withdrawn caveat at a different test* — there is no other test to point it at, and
+leaving a plausible-sounding constraint in place would have a worker gate on a
+condition that does not exist.
+
+**Revisit when** a second package's descriptor gains a custody-versus-provenance
+binding, at which point the withdrawn caveat becomes a real constraint and should be
+re-stated with the citation that then exists.
+
+
+### Mission Control 2.15.2 resync U3a: the create-option reclassification is proven, not asserted, and the manifest version is derived, not retyped
+
+**Author.** Claude for Jeff Cox (U3a of issue #50, child #54, branch `orch-agent-plugins-50`)
+
+**Decision.** (1) Under operator ruling 4, `fields create-option` moves from
+the mutating to the read-only set and `fields set-options` is added to the
+mutating set, across the three locked surfaces in one commit —
+`assessment.mutating_operations`, the portable README's per-skill verb table
+(plus the prose sentence about the removed `rollout update`, dropped upstream
+by filing #821), and `MUTATING_VERBS`/`READ_ONLY_VERBS` in
+`tests/test_mission_control_readme.py`. Verified against the pinned source:
+`fields_create_option` (sdlc_manager.py:2026) only discovers a field and
+prints its options — its docstring states "This command performs NO mutation —
+it never has" — while `fields_set_options` (2070) calls
+`update_field_single_select_options` (2113), a real mutation unless `--dry-run`.
+(2) Because reclassifying a verb from mutating to read-only narrows a safety
+declaration, a focused guard now proves the mutation path is never reached:
+`CreateOptionNoWriteGuardTests` drives `fields_create_option` through both the
+happy and the absent-field error paths with `_graphql` patched and asserts the
+destructive `QUERY_UPDATE_FIELD_OPTIONS` constant is never sent and no
+GraphQL call occurs at all, in the style `test_option_identity.py` uses for
+its error paths. The guard's negative proof was captured (deliberate
+weakening went red, then reverted). (3) The manifest-version claim is closed
+by derivation: `ManifestVersionDerivationTests` binds
+`plugins/mission-control/plugin.json`'s `version` to `PROVENANCE.json`'s
+`source_version` on the agent-launcher packaging-test pattern, so a
+hand-edited manifest diverging from the provenance record fails.
+
+**Rationale.** The #9 run's only review finding was a hand-transcribed
+identity row with no derivation and no pin test; retyping the version
+reproduces that defect one release later. A narrowed safety claim needs
+positive proof rather than a changed constant — a test that merely asserts
+the function returns without error proves nothing about writes.
+
+**Rejected alternatives.** (a) Reclassify without a guard — a one-line
+narrowing of a safety boundary with no evidence. (b) Leave `create-option`
+mutating "to be safe" — over-declares, pollutes the audited table, and makes
+the README's disclosure false in the other direction. (c) Retype the version
+claim with reviewer discipline as the control — the exact failure the #9
+review caught.
+
+**Revisit when** upstream changes either handler's implementation, or a
+future run retires the portable-README decision so the verb table no longer
+lives in three locked places.
+
+**Refs.** [`ports/mission-control.json`](../../ports/mission-control.json),
+[`plugins/mission-control/README.md`](../../plugins/mission-control/README.md),
+`tests/test_mission_control_readme.py`, `tests/test_mission_control_rule_audit.py`,
+issue #54, operator ruling 4.
+
+### Mission Control 2.15.2 resync U5: fresh evidence replaces the retired matrix and readback, and both replacements are bound
+
+**Author.** Claude for Jeff Cox (U5 of issue #50, child #56, branch `orch-agent-plugins-50`)
+
+**Superseded-run note.** This entry describes the FIRST 2026-08-30 assessment,
+against tree `1f49322e…`. That tree was later retired by the F18/F11/F35
+corrections, and the assessment was re-run against tree `659f91f6…` — see the
+second-run entry immediately below. The entry is kept as the record of the
+first run; its Qwen-failed outcome describes that run only, and its evidence
+filenames were renamed when the repository's naming convention (plain name =
+current) was restored.
+
+**Decision.** The pre-resync mission-control compatibility matrix and
+post-activation readback (both bound to 64 files / tree `651ac28a…`, v2.12.2)
+are superseded by fresh records captured 2026-08-30 against the frozen
+resynchronized package (71 files, tree `1f49322e…`, v2.15.2), each carrying a
+`superseded-by` naming its successor and a `superseded-reason`; their recorded
+numbers are untouched. Both replacements are bound in
+`tests/test_check_compatibility_matrix.py` as parallel mission-control classes
+(KTD4 — never parameterizing UniFi's live bindings): the matrix class
+recomputes the live package fingerprint, name, and version and asserts them
+against the record; the readback class asserts the `release` block, all seven
+per-skill-unit fingerprints, `upstream_commit`/`version` against
+`PROVENANCE.json`, and every readback entry — with no `profile_states`
+assertions, because that block is a UniFi concept. The readback keeps a
+`cycle_16_verification` block (KTD11): all five graded-file digests recomputed
+at the new freeze still match the cycle-16 footer, so the block is a positive
+statement that the resync retired no mutation proof. Qwen's assessment is
+recorded `failed` with the honest reason: the isolated home's preserved Qwen
+wrapper exited 127 on every stage, an environment condition, not a package
+result. Both bindings were proven able to fail: a deliberate local
+fingerprint mutation made them red (3 failures), then was reverted.
+
+**Rationale.** The package fingerprint moved, which retired the old evidence;
+the recorded decision forbids renumbering evidence that was not re-measured,
+so the forty stage results had to be re-run rather than edited. The
+supersession order (successor published current, only then the predecessor
+stamped) is enforced by `check_document_status`, and the fresh run
+reproduced the before/after fingerprint equality (71 files, `1f49322e…`)
+that proves no client mutated its copy.
+
+**Rejected alternatives.** (a) Renumber the old documents — exactly the
+failure the bindings exist to catch: forty observed results would become
+claims about bytes nobody ran. (b) Parameterize the UniFi binding classes —
+puts UniFi's live bindings at risk for no gain. (c) Bind inside
+`scripts/check_compatibility_matrix.py` — that file is in the cycle-16
+mutation proof's graded set, and the bindings belong in the test file.
+
+**Revisit when** the next resynchronization moves the fingerprint again, at
+which point these bindings fire red until the evidence is re-run.
+
+**Refs.** [`the first run's matrix, superseded by the second run`](../evidence/2026-08-30-mission-control-compatibility-matrix-pre-fingerprint-move.md),
+[`the first run's readback, superseded by the second run`](../evidence/2026-08-30-mission-control-post-activation-readback-pre-fingerprint-move.md),
+`tests/test_check_compatibility_matrix.py`, issue #56, operator ruling 3.
+
+### Mission Control 2.15.2 resync U5 second run: the fingerprint moved under the F18/F11/F35 corrections, and the evidence was re-run rather than re-bound
+
+**Author.** Claude for Jeff Cox (repair round 2 of issue #50, child #56, branch `orch-agent-plugins-50`)
+
+**Decision.** When the F18/F11/F35 provenance and README corrections landed at
+`a1e84e0`, the package moved from tree `1f49322e…` to tree `659f91f6…`, and
+the first 2026-08-30 evidence pair stopped describing the shipped bytes. That
+tree was itself retired one round later by the F71 beads-config disclosure
+correction (`143a71b`), which moved the package to `5fc16652…` — see the
+third-run entry immediately below for the current record. The
+assessment was re-run (run-002) against the corrected package and published
+as current — 3 clients work directly (Cursor Agent, Qwen, Agy), 7 work
+through an adapter, 0 failed, 0 unsupported, no stage timed out — and both
+replacements were re-bound in `tests/test_check_compatibility_matrix.py`.
+Qwen's status changed from failed to works-directly because the run supplied
+its real binary by exported override (`QWEN_HERDR_REAL_BIN`), exactly as
+Grok's and Agy's were supplied by `--real-binary`: the earlier 127 reading
+came from the wrapper resolving into the empty isolated home, not from the
+package. The evidence filenames were later renamed so the current pair holds
+the plain `2026-08-30` names and the retired pair carries the
+`-pre-fingerprint-move` suffix, restoring the repository's convention that
+the plain filename is always the current document.
+
+**Why the fingerprint was allowed to move.** The three corrections were
+judged more honest than the alternative: holding them back would have shipped
+a provenance manifest whose own prose contradicted its files array (F18), a
+README missing a disclosure its own commands depend on (F11), and an
+unreconciled carried CHANGELOG (F35). The runbook's batch-the-repairs rule
+applies: the three were batched into one round, one assessment re-run, one
+new fingerprint — never a per-fix re-binding.
+
+**Rejected alternatives.** (a) Holding the corrections back — ships the
+self-contradicting provenance and the missing disclosure for the sake of the
+first assessment's currency. (b) Editing the first-run evidence to match the
+moved tree — the explicit anti-pattern; the numbers describe the bytes that
+were actually assessed. (c) Re-binding without re-running — a bound digest
+names the tree, not the stages that assessed it.
+
+**Revisit when** a future round must edit any byte under
+`plugins/mission-control/` after evidence is bound: the same batch-and-rerun
+path applies, and the assessment must precede the stamping.
+
+**Refs.** [`the second-run matrix, superseded by the third run`](../evidence/2026-08-30-mission-control-compatibility-matrix-pre-beads-config-ladder.md),
+[`the second-run readback, superseded by the third run`](../evidence/2026-08-30-mission-control-post-activation-readback-pre-beads-config-ladder.md),
+`tests/test_check_compatibility_matrix.py`, issue #56, operator ruling 3.
+
+### The transform planner dispatches descriptor-level refusals through a precondition slot, not a hard-coded rule identity
+
+**Author.** Claude for Jeff Cox (repair round 3 of issue #50, branch `orch-agent-plugins-50`)
+
+**Decision.** `TransformRule` carries an optional `precondition` callable, and
+`plan_sync` runs it before dispatching any path to the rule, so a rule whose
+output depends on a descriptor value can refuse the synchronization at plan
+time without widening the `apply` signature every rule shares.
+`resolve-package-root-marker` attaches the marker-directory check through the
+slot; the planner's loop no longer names any rule's identity.
+
+**Rationale.** The previous shape tested `rule is PACKAGE_ROOT_MARKER_RULE`
+inside the generic loop, compiling one rule's identity into the planner; the
+slot keeps the loop dispatching on the abstraction and keeps the check beside
+the rule it guards, in the same module.
+
+**Rejected alternatives.** A per-rule subclass of `TransformRule` — more
+machinery for one optional behaviour; a second dispatch table keyed by rule
+name — reintroduces the hard-coded identity in another shape.
+
+**Revisit when** a second rule needs a descriptor-level precondition, at which
+point the slot is the established pattern.
+
+**Refs.** `scripts/sync_vendor_source.py` (`TransformRule`,
+`_package_root_marker_precondition`, `plan_sync`),
+`tests/test_port_config.py` (`test_the_marker_precondition_refuses_a_mismatched_client_extension_dir`).
+
+### Mission Control 2.15.2 resync U5 third run: the beads-config disclosure correction moved the fingerprint again, and the evidence was re-run again
+
+**Author.** Claude for Jeff Cox (repair round 3 of issue #50, child #56, branch `orch-agent-plugins-50`)
+
+**Decision.** Repair-round finding F71 showed the portable README claimed an
+absent `beads-config.json` was handled locally when the loader in fact first
+attempts a live `gh api` read of it from `infiquetra-sdlc` (and degrades to
+`{}` only when that read fails or returns nothing). The README is
+target-owned — this repository's own text — so the correction was authored
+here at `143a71b`, moving the package from tree `659f91f6…` to tree
+`5fc16652…` and retiring the second evidence pair. Per the now twice-applied
+batch-and-rerun path, the assessment was re-run (run-003, 2026-08-31,
+assessed_on stated in the body while the filename prefix keeps the
+2026-08-30 family name, and the body says so plainly) and the evidence
+re-bound: 3 clients work directly (Cursor Agent, Qwen, Agy), 7 work through
+an adapter, 0 failed, 0 unsupported, no stage timed out. The Qwen disclosure
+is carried forward verbatim: its real binary was supplied by exported
+`QWEN_HERDR_REAL_BIN` exactly as Grok's and Agy's were by `--real-binary`,
+the harness does not declare Qwen's override itself, and without it the
+wrapper resolves into the empty isolated home and exits 127 — Qwen's
+works-directly is not the package improving. The plain filenames hold the
+current pair; every superseded generation carries a descriptive
+`-pre-<reason>` suffix, and the three-generation chain resolves to the
+current pair with no banner naming an already-superseded document.
+
+**Rejected alternatives.** (a) Deferring the README correction to avoid a
+third assessment — ships our own text describing behaviour the code does not
+have, the same defect class as the F18 provenance prose. (b) Editing the
+second-run evidence to match the moved tree — the explicit anti-pattern.
+
+**Revisit when** the next resynchronization or repair round moves the
+fingerprint: the same batch-and-rerun path applies a third time.
+
+**Refs.** [`the current matrix`](../evidence/2026-08-30-mission-control-compatibility-matrix.md),
+[`the current readback`](../evidence/2026-08-30-mission-control-post-activation-readback.md),
+`tests/test_check_compatibility_matrix.py`, issue #56, operator ruling 3.
+
 
 ## 2026-08-27
 
@@ -595,7 +1256,7 @@ phases without inventing new moving parts or diverging from the runbook
 workflow: Phase 0 setup and descriptor configuration, Phase 1 synchronization
 and transforms, Phase 2 bundling and rule audit, and Phase 3 frozen evidence
 collection and multi-client assessment. The ten-client compatibility
-assessment ([`docs/evidence/2026-08-25-mission-control-compatibility-matrix.md`](../evidence/2026-08-25-mission-control-compatibility-matrix.md))
+assessment ([the 2026-08-25 matrix, superseded by the 2.15.2 re-assessment](../evidence/2026-08-25-mission-control-compatibility-matrix.md))
 recorded 1 works-directly (Agy), 8 works-through-an-adapter (including 4
 skill-scoped clients that fully consume the 7 skills), 1 failed (Cursor Agent
 relocatability finding on `sync_template_docs.py`), and 0 unsupported.

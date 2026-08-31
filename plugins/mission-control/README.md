@@ -9,7 +9,7 @@ Claude-only files live under the client extension directory
 package.
 
 This tree is a derived artifact of `infiquetra-claude-plugins` at the commit
-recorded in `PROVENANCE.json` (upstream plugin version 2.12.2). Custody has
+recorded in `PROVENANCE.json` (upstream plugin version 2.15.2). Custody has
 not moved. The upstream repository remains the runtime source of truth; a
 needed byte change in copied content is an upstream filing, never a downstream
 patch.
@@ -59,19 +59,24 @@ audited split of the CLI surface, as recorded in the port descriptor
 | `board` | `view`, `wip`, `standup`, `discover-fields` | `add`, `move`, `archive` |
 | `issue` | `prepare`, `intent-envelope` | `create`, `create-prepared`, `approve`, `close`, `reopen`, `comment`, `label-add`, `label-remove` |
 | `labels` | `audit` | `deploy`, `auto-label`, `sync-fields` |
-| `fields` | `discover` | `create-option` |
+| `fields` | `discover`, `create-option` | `set-options` |
 | `metrics` | `cycle-time`, `throughput`, `wip-age`, `column-time` | — |
 | `milestones` | `list`, `progress` | `create`, `link` |
-| `rollout` | `status`, `gap-analysis`, `update` | `deploy-labels`, `deploy-templates`, `deploy-all` |
+| `rollout` | `status`, `gap-analysis` | `deploy-labels`, `deploy-templates`, `deploy-all` |
 | `flow` | `field-options`, `discover-project`, `validate-card` | `set-field`, `assign-mimir`, `link-sub-issue`, `unlink-sub-issue`, `verify-label` |
 | `config` | `show`, `show-defaults`, `init-defaults` | — |
 
 "Read-only" means the subcommand performs no GitHub write. A few read-only
 subcommands still write local state: `issue prepare` writes a draft and JSON
-sidecar under `docs/sdlc-issue-drafts/` of the current repository, `config
-init-defaults` seeds `~/.claude/sdlc-defaults.json`, and `rollout update`
-maintains the legacy local rollout configuration (the upstream
-`beads-config.json` was retired; reads degrade gracefully to `{}`).
+sidecar under `docs/sdlc-issue-drafts/` of the current repository, and
+`config init-defaults` seeds `~/.claude/sdlc-defaults.json`. `fields
+create-option` performs no mutation of any kind — it discovers a field,
+prints its id and the options already on it, and stops. `rollout status`,
+`board wip`, and `config show` read the retired upstream `beads-config.json`;
+when the file is absent locally the loader first attempts a live `gh api`
+read of it from `infiquetra-sdlc`, and only if that read fails or returns
+nothing does the value degrade to `{}`, at which point these commands report
+zero rolled-out repositories rather than erroring.
 
 One mutation route is an internal code path rather than a CLI verb: when
 `issue create-prepared` meets a repository that is not mapped to the requested

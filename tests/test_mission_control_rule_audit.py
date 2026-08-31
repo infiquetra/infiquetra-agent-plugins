@@ -29,6 +29,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "plugins" / "mission-control"
@@ -671,19 +672,281 @@ class TemplateSyncAuditTests(unittest.TestCase):
         self.assertTrue(sync_template_docs.check_reference())
 
     def test_template_sync_fails_on_drift(self) -> None:
-        """Proving failure capability: drifted reference file fails check_reference."""
+        """Proving failure capability: drifted reference file fails check_reference.
+
+        The injection happens in a temporary copy and the module constant is
+        redirected for the test's duration, so the drift marker never touches
+        the tracked file inside the fingerprinted package tree."""
         tmpl_dir = sync_template_docs.template_directory()
         if not tmpl_dir.exists():
             self.skipTest(f"infiquetra-sdlc templates not found at {tmpl_dir}; skipping drift check")
 
-        ref_path = sync_template_docs.REFERENCE_PATH
-        original = ref_path.read_text(encoding="utf-8")
+        real_path = sync_template_docs.REFERENCE_PATH
+        original = real_path.read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_copy = Path(tmp) / "templates-reference.md"
+            tmp_copy.write_text(original, encoding="utf-8")
+            with patch.object(sync_template_docs, "REFERENCE_PATH", tmp_copy):
+                tmp_copy.write_text(original + "\n## Drift Injected Section\n", encoding="utf-8")
+                self.assertFalse(
+                    sync_template_docs.check_reference(),
+                    "check_reference() did not catch injected drift",
+                )
+                tmp_copy.write_text(original, encoding="utf-8")
+                self.assertTrue(sync_template_docs.check_reference())
+        self.assertNotIn(
+            "Drift Injected Section",
+            real_path.read_text(encoding="utf-8"),
+            "the drift marker leaked into the tracked reference file",
+        )
+
+
+# ─── 6. Create-Option No-Write Guard (operator ruling 4) ─────────────────────
+
+
+class CreateOptionNoWriteGuardTests(unittest.TestCase):
+    """`fields create-option` performs NO mutation — the guard proves the write
+    path is never reached, in the style upstream's test_option_identity.py uses
+    for its own error paths: the destructive mutation constant
+    `QUERY_UPDATE_FIELD_OPTIONS` is asserted never sent."""
+
+    FIELD_ID = "PVTF_status"
+
+    @staticmethod
+    def _mutation_calls(mock_graphql):
+        return [
+            c
+            for c in mock_graphql.call_args_list
+            if c.args[0] == sdlc_manager.QUERY_UPDATE_FIELD_OPTIONS
+        ]
+
+    def test_create_option_reaches_no_write_path(self) -> None:
+        project = {"number": 2, "id": "PVT_asgard"}
+        field = {
+            "id": self.FIELD_ID,
+            "name": "Status",
+            "options": [{"id": "OPT_idea", "name": "Idea"}],
+        }
+        with (
+            patch.object(
+                sdlc_manager,
+                "load_config",
+                return_value={"project_mappings": {"projects": {"asgard": project}}},
+            ),
+            patch.object(sdlc_manager, "get_project_config", return_value=project),
+            patch.object(sdlc_manager, "get_project_fields", return_value=("PVT_asgard", [field])),
+            patch.object(sdlc_manager, "_graphql") as mock_graphql,
+            patch.object(sdlc_manager, "_gh") as mock_gh,
+        ):
+            sdlc_manager.fields_create_option("asgard", "Status", "Idea", "json")
+        self.assertEqual(
+            self._mutation_calls(mock_graphql),
+            [],
+            "fields create-option reached the destructive mutation path "
+            "(QUERY_UPDATE_FIELD_OPTIONS was sent)",
+        )
+        self.assertEqual(
+            mock_graphql.call_count,
+            0,
+            "fields create-option issued a GraphQL call on the discover-and-print path",
+        )
+        self.assertEqual(
+            mock_gh.call_count,
+            0,
+            "fields create-option reached the subprocess door (a live gh call would be a write)",
+        )
+
+    def test_create_option_still_prints_when_the_field_is_absent(self) -> None:
+        """The no-write property must hold on the error path too: an absent field
+        fails the command without any GraphQL call, mutation or otherwise."""
+        project = {"number": 2, "id": "PVT_asgard"}
+        with (
+            patch.object(
+                sdlc_manager,
+                "load_config",
+                return_value={"project_mappings": {"projects": {"asgard": project}}},
+            ),
+            patch.object(sdlc_manager, "get_project_config", return_value=project),
+            patch.object(sdlc_manager, "get_project_fields", return_value=("PVT_asgard", [])),
+            patch.object(sdlc_manager, "_graphql") as mock_graphql,
+            patch.object(sdlc_manager, "_gh") as mock_gh,
+        ):
+            with self.assertRaises(SystemExit):
+                sdlc_manager.fields_create_option("asgard", "Status", "Idea", "json")
+        self.assertEqual(self._mutation_calls(mock_graphql), [])
+        self.assertEqual(mock_graphql.call_count, 0)
+        self.assertEqual(mock_gh.call_count, 0)
+
+
+# ─── 7. Manifest-Version Derivation (KTD5) ───────────────────────────────────
+
+
+class ManifestVersionDerivationTests(unittest.TestCase):
+    """`plugins/mission-control/plugin.json`'s version is derived from
+    `PROVENANCE.json`'s `source_version`, on the pattern shipped for
+    agent-launcher in tests/test_agent_launcher_packaging.py — a hand-edited
+    manifest that diverges from the provenance record fails here."""
+
+    def test_manifest_version_equals_provenance_source_version(self) -> None:
+        manifest = json.loads((PACKAGE / "plugin.json").read_text(encoding="utf-8"))
+        provenance = json.loads((PACKAGE / "PROVENANCE.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            manifest["version"],
+            provenance["source_version"],
+            "the portable manifest version diverged from the provenance source_version; "
+            "derive it deliberately, never retype it",
+        )
+
+
+# ─── 8. Root README Pin (KTD6) ────────────────────────────────────────────────
+
+
+class RootReadmePinTests(unittest.TestCase):
+    """The root README's Mission Control identity claims are recomputed from
+    disk and derived from PROVENANCE.json rather than retyped, so a stale
+    revision, version, or count fails instead of sitting there. The #9 run's
+    only review finding was exactly this class: a hand-authored Packages row
+    with no derivation and no pin test."""
+
+    def test_the_packages_table_row_derives_from_provenance(self) -> None:
+        provenance = json.loads((PACKAGE / "PROVENANCE.json").read_text(encoding="utf-8"))
+        short_pin = provenance["source_commit"][:8]
+        version = provenance["source_version"]
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn(
+            f"`{short_pin}` (v{version})",
+            readme,
+            "the root README's Mission Control Packages row names a revision or version "
+            "that does not match the provenance manifest; derive it, never retype it",
+        )
+
+    def test_the_file_count_is_recomputed_from_disk(self) -> None:
+        # The same exclusion set the compatibility checker's fingerprint uses
+        # (its docstring documents them): tool cache directories and .DS_Store
+        # are checkout noise; everything else counts.
+        noise = {"__pycache__", ".git", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".DS_Store"}
+        file_count = 0
+        for path in PACKAGE.rglob("*"):
+            if not path.is_file():
+                continue
+            parts = set(path.relative_to(PACKAGE).parts)
+            if parts & noise:
+                continue
+            file_count += 1
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn(
+            f"{file_count}-file portable package",
+            readme,
+            "the root README's package file count was retyped and went stale; "
+            "recompute it from disk",
+        )
+        self.assertIn(
+            f"ships {file_count} portable files",
+            readme,
+            "the root README's package file count was retyped and went stale; "
+            "recompute it from disk",
+        )
+
+    def test_the_test_file_count_is_recomputed_from_disk(self) -> None:
+        """The README claim is parsed and compared, not searched for a
+        rendering of the count: an out-of-table count fails explicitly instead
+        of falling back to a substring that unrelated text could satisfy."""
+        test_files = sorted((PACKAGE / "tests").glob("*.py"))
+        number_word = {
+            27: "Twenty-seven",
+            28: "Twenty-eight",
+            29: "Twenty-nine",
+        }
+        self.assertIn(
+            len(test_files),
+            number_word,
+            "the package test-file count moved outside the word table; extend number_word "
+            "deliberately rather than letting the guard fall back to a substring search",
+        )
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        claim = re.search(r"(\S+) test files \((\d+) tests\)", readme)
+        self.assertIsNotNone(claim, "the root README's test-file sentence is missing")
+        assert claim is not None
+        self.assertEqual(
+            claim.group(1),
+            number_word[len(test_files)],
+            "the root README's test-file count was retyped and went stale; "
+            "recompute it from disk",
+        )
+
+    def test_the_test_count_is_recomputed_by_collection(self) -> None:
+        import subprocess
+
         try:
-            ref_path.write_text(original + "\n## Drift Injected Section\n", encoding="utf-8")
-            self.assertFalse(sync_template_docs.check_reference(), "check_reference() did not catch injected drift")
-        finally:
-            ref_path.write_text(original, encoding="utf-8")
-        self.assertTrue(sync_template_docs.check_reference())
+            import pytest  # noqa: F401
+        except ModuleNotFoundError as exc:  # pragma: no cover - hermetic baseline has no pytest
+            self.skipTest(f"pytest not installed in this interpreter: {exc}")
+        collected = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                str(PACKAGE / "tests"),
+                "--collect-only",
+                "-q",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
+        )
+        self.assertEqual(
+            collected.returncode,
+            0,
+            f"pytest --collect-only failed:\nstdout:\n{collected.stdout}\nstderr:\n{collected.stderr}",
+        )
+        match = re.search(r"(\d+) tests collected", collected.stdout)
+        self.assertIsNotNone(match, collected.stdout)
+        assert match is not None
+        test_count = int(match.group(1))
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        claim = re.search(r"(\S+) test files \((\d+) tests\)", readme)
+        self.assertIsNotNone(claim, "the root README's test-file sentence is missing")
+        assert claim is not None
+        self.assertEqual(
+            int(claim.group(2)),
+            test_count,
+            "the root README's ported-test count was retyped and went stale; "
+            "recompute it by collection",
+        )
+        self.assertIn(
+            f"{test_count} CI tests",
+            readme,
+            "the root README's CI test count was retyped and went stale; "
+            "recompute it by collection",
+        )
+
+
+    def test_the_assessment_summary_sentence_derives_from_the_current_matrix(self) -> None:
+        """F68: the root README's client-status counts are derived from the
+        current matrix's record rather than retyped — the same class of pin as
+        the file count, so a hand-edited count fails instead of sitting."""
+        matrix = ROOT / "docs" / "evidence" / "2026-08-30-mission-control-compatibility-matrix.md"
+        text = matrix.read_text(encoding="utf-8")
+        block = re.search(r"```json\n(.*?)\n```", text, re.DOTALL)
+        self.assertIsNotNone(block, "the current matrix carries no JSON record")
+        assert block is not None
+        record = json.loads(block.group(1))
+        statuses: dict[str, int] = {}
+        for client in record["clients"]:
+            status = client["status"]
+            statuses[status] = statuses.get(status, 0) + 1
+        summary = (
+            f"{statuses.get('works-directly', 0)} directly, "
+            f"{statuses.get('works-through-an-adapter', 0)} via adapter, "
+            f"{statuses.get('failed', 0)} failed"
+        )
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn(
+            summary,
+            readme,
+            "the root README's assessment summary was retyped and went stale; "
+            "derive it from the current matrix",
+        )
 
 
 if __name__ == "__main__":

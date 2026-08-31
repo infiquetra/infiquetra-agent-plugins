@@ -1,5 +1,97 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-08-31
+
+### A green local suite is never evidence for a hermetic gate
+
+**Author.** Claude for Jeff Cox (final repair pass of issue #50, branch `orch-agent-plugins-50`)
+
+**Evidence.** The CI `validate` job declares itself the repository's hermetic
+baseline that "runs the standard library only". It is not one:
+`tests/test_mission_control_rule_audit.py` imports `sync_template_docs` at
+module scope, which imports `yaml` at
+`plugins/mission-control/scripts/sync_template_docs.py:14`. Measured on a
+stdlib-only CPython 3.12.13: this branch reports `Ran 797 tests, FAILED
+(errors=1)` with `ModuleNotFoundError: No module named 'yaml'`, losing 43
+tests to the aborted module; origin/main reports `Ran 738 tests, FAILED
+(errors=1)` with the identical error. So it is pre-existing on main, not a
+regression from this run, and it does not break CI today because the GitHub
+runner supplies PyYAML — it is a latent contract violation: the job's own
+comment promises a stdlib-only baseline it does not have. Cycle 1's F03
+repair guarded `import pytest` with `try/except ModuleNotFoundError` plus
+`skipTest` in the same file, leaving the transitive yaml path unguarded —
+the fix pattern already exists twenty lines away. This pass deliberately
+does not fix it: it changes what the baseline covers and belongs in its own
+change.
+
+**Generalizable rule.** *A suite that passes locally proves nothing about a
+hermetic gate.* A baseline claim must be measured on the interpreter the
+baseline promises, and a module-scope transitive import behind a
+dependency-free job comment is a contract violation even when every
+runner happens to carry the dependency.
+
+**Refs.** `.github/workflows/ci.yml` (the `validate` job's comment),
+`tests/test_mission_control_rule_audit.py` (module-scope imports and the F03
+pytest guard), `plugins/mission-control/scripts/sync_template_docs.py:14`.
+
+## 2026-08-31
+
+### A refusal message must not depend on a hash seed
+
+**Author.** Claude for Jeff Cox (repair round 3 of issue #50, branch `orch-agent-plugins-50`)
+
+**Evidence.** The marker rule's count-mismatch refusal iterated
+`for site_class in expected_classes`, where `expected_classes` was a set —
+so the class the message named first was chosen by the interpreter's hash
+seed, and two runs of the same refusal could print different messages. The
+repair iterates a fixed `SITE_CLASSES` tuple for the comparison while the
+set remains only for the membership check.
+
+**Generalizable rule.** *Anything a human or an auditor reads must be
+deterministic in the order it prints.* Sets are for membership; iteration
+order that reaches an error message, a manifest, or a transcript must come
+from a sequence.
+
+**Refs.** `scripts/sync_vendor_source.py` (`SITE_CLASSES`,
+`package_root_marker_transform`), `tests/test_sync_vendor_source.py`
+(`PackageRootMarkerRuleTests`).
+
+## 2026-08-30
+
+### The carried package suite has three grades, not one: authenticated, unauthenticated, and no-gh
+
+**Author.** Claude for Jeff Cox (integrated code-review repair round, review
+finding F01, issue #50, branch `orch-agent-plugins-50`)
+
+**Evidence.** The integrated review controller measured `python3 -m pytest
+plugins/mission-control/tests -q` with a recording `gh` shim first on PATH:
+180 live invocations — 179 of the infiquetra-sdlc schema-content read and one
+campps issue read — across five carried test files. Re-run in this round with
+`gh` off PATH on the floor interpreter: `58 failed, 333 passed` — the failures
+are `FileNotFoundError` on the `gh` binary in tests whose mocks reach
+`sdlc_manager._gh` and expect its typed error contract. With `gh` present but
+unauthenticated (the CI runner's state), the same paths degrade to the typed
+auth errors and the suite passes with no request reaching GitHub.
+
+**Mechanism.** `_resolve_sdlc_schema` puts the network first in its
+"GitHub main → vendored → local" ladder and swallows every exception before
+falling back, and the carried tests do not stub it; so an authenticated `gh`
+grades the suite against whatever `infiquetra-sdlc` main holds at that
+moment, and the U2 four-gate transcript was captured on the authenticated
+side. The carried suite is not hermetic in either direction: it cannot be
+run without a `gh` binary, and it makes live authenticated calls when it
+finds one.
+
+**Generalizable rule.** *A transcript of a carried suite states a claim only
+about the machine it ran on.* Record which side of a resolver ladder the run
+was on before citing it, and file the ladder inversion upstream — vendored
+first, network opt-in — rather than patching the carried bytes; the filing is
+tracked in `QUEUED.md`.
+
+**Refs.** `plugins/mission-control/scripts/sdlc_manager.py`
+(`_resolve_sdlc_schema`, `_gh`), the five carried test files named in the
+review finding F01, `docs/engineering-journal/QUEUED.md` (filing 1).
+
 ## 2026-08-25
 
 ### `claude plugin update` compares versions, not commits
@@ -1494,7 +1586,7 @@ shape, it is decoration, not evidence.
 `check_document_status`), `tests/test_check_compatibility_matrix.py`
 (`PackageBindingTest`, `DocumentStatusTest`, `FingerprintTest`),
 [`docs/evidence/2026-08-22-unifi-compatibility-matrix.md`](../evidence/2026-08-22-unifi-compatibility-matrix.md),
-[`docs/evidence/2026-08-22-unifi-compatibility-matrix-pre-repair.md`](../evidence/2026-08-22-unifi-compatibility-matrix-pre-repair.md),
+[the superseded pre-repair matrix](../evidence/2026-08-22-unifi-compatibility-matrix-pre-repair.md),
 [`docs/evidence/2026-08-22-unifi-post-activation-readback.md`](../evidence/2026-08-22-unifi-post-activation-readback.md).
 
 ## 2026-08-21

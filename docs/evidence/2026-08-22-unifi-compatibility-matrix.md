@@ -17,34 +17,34 @@ survey, not a release gate.
 Eight earlier publications of this matrix are preserved as history, each retired
 for a different reason:
 
-1. [`2026-08-22-unifi-compatibility-matrix-pre-repair.md`](2026-08-22-unifi-compatibility-matrix-pre-repair.md)
+1. [the superseded pre-repair record](2026-08-22-unifi-compatibility-matrix-pre-repair.md)
    assessed the package as originally assembled: 21 files, with both skill
    entrypoints aborting at import because the synchronization step had dropped
    `fleet_commons_shim.py` and no generated bundle had yet replaced it.
-2. [`2026-08-22-unifi-compatibility-matrix-pre-resync.md`](2026-08-22-unifi-compatibility-matrix-pre-resync.md)
+2. [the superseded pre-resync record](2026-08-22-unifi-compatibility-matrix-pre-resync.md)
    assessed the repaired 23-file package, at tree digest `6e6b57c1…`, whose
    entrypoints run.
-3. [`2026-08-22-unifi-compatibility-matrix-pre-unifi-201.md`](2026-08-22-unifi-compatibility-matrix-pre-unifi-201.md)
+3. [the superseded pre-unifi-201 record](2026-08-22-unifi-compatibility-matrix-pre-unifi-201.md)
    assessed portable package `2.0.0` at tree digest `da46ca77…`, after the
    portable Fleet Core slice was re-synchronized to release 0.25.1 but before the
    UniFi clients themselves were repaired.
-4. [`2026-08-22-unifi-compatibility-matrix-pre-unifi-202.md`](2026-08-22-unifi-compatibility-matrix-pre-unifi-202.md)
+4. [the superseded pre-unifi-202 record](2026-08-22-unifi-compatibility-matrix-pre-unifi-202.md)
    assessed portable package `2.0.1` at tree digest `cafe8836…`, after the caller
    half of the `Retry-After` defect was repaired but before the two defects a
    fourth review cycle found.
-5. [`2026-08-22-unifi-compatibility-matrix-pre-unifi-203.md`](2026-08-22-unifi-compatibility-matrix-pre-unifi-203.md)
+5. [the superseded pre-unifi-203 record](2026-08-22-unifi-compatibility-matrix-pre-unifi-203.md)
    assessed portable package `2.0.2` at tree digest `4c256bb2…`. It is also where
    the Cursor Agent correction was first published, and that correction is carried
    forward here unchanged.
-6. [`2026-08-22-unifi-compatibility-matrix-pre-unifi-204.md`](2026-08-22-unifi-compatibility-matrix-pre-unifi-204.md)
+6. [the superseded pre-unifi-204 record](2026-08-22-unifi-compatibility-matrix-pre-unifi-204.md)
    assessed portable package `2.0.3` at tree digest `34915c40…`, after the
    credential-value rule was repaired for a placeholder bypass but while that
    repair's own two defects were still shipping.
-7. [`2026-08-22-unifi-compatibility-matrix-pre-unifi-205.md`](2026-08-22-unifi-compatibility-matrix-pre-unifi-205.md)
+7. [the superseded pre-unifi-205 record](2026-08-22-unifi-compatibility-matrix-pre-unifi-205.md)
    assessed portable package `2.0.4` at tree digest `81c0503c…`, after the value
    heuristic was replaced by the field-aware key policy but while the rule still
    read an assignment across a line break.
-8. [`2026-08-22-unifi-compatibility-matrix-pre-unifi-206.md`](2026-08-22-unifi-compatibility-matrix-pre-unifi-206.md)
+8. [the superseded pre-unifi-206 record](2026-08-22-unifi-compatibility-matrix-pre-unifi-206.md)
    assessed portable package `2.0.5` at tree digest `a8fd46a7…`, after the
    assignment was scoped to the newline but while nine other line-break
    boundaries still disagreed between the loaders and the gate.

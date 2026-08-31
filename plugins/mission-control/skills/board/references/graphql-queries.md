@@ -265,33 +265,50 @@ Status field changes — `previousProjectV2ItemFieldValue.name` is the old colum
 
 ---
 
-## Mutation: Create Field Option
+## Mutation: Replace a Field's Option Set (identity-preserving)
 
-**Purpose**: Add a new option to a single-select field (e.g., adding a new Initiative or
-Objective to the board).
+**Purpose**: Replace the option set of a single-select field while preserving every
+item value — e.g., renaming lifecycle columns or provisioning new ones.
 
-**Constant**: `QUERY_CREATE_FIELD_OPTION`
+**Constant**: `QUERY_UPDATE_FIELD_OPTIONS`
+
+**Destructive-by-design warning — read before composing any call.**
+`UpdateProjectV2FieldInput.singleSelectOptions` **overwrites the whole option set**;
+there is no add-one-option mutation, and empty input is ignored. An option keeps its
+identity (and every item value pointing at it) only if its **existing `id` is
+resubmitted** — omitting the id on a retained or renamed option mints a new option and
+**clears every item value that pointed at the old one**. Never submit a partial list:
+omitting a live option from the submission deletes it.
 
 ```graphql
-mutation($fieldId: ID!, $name: String!, $color: ProjectV2SingleSelectFieldOptionColor!, $description: String!) {
+mutation($fieldId: ID!, $options: [ProjectV2SingleSelectFieldOptionInput!]!) {
   updateProjectV2Field(input: {
     fieldId: $fieldId
-    singleSelectOptions: [{ name: $name, color: $color, description: $description }]
+    singleSelectOptions: $options
   }) {
     projectV2Field {
       ... on ProjectV2SingleSelectField {
         id name
-        options { id name }
+        options { id name color description }
       }
     }
   }
 }
 ```
 
-**Variables**: `fieldId` (from `QUERY_GET_PROJECT_FIELDS`), `name`, `color`
-(`ProjectV2SingleSelectFieldOptionColor` enum), `description`
+**Variables**: `fieldId` (from `QUERY_GET_PROJECT_FIELDS`); `options` — the **complete**
+desired list, where every retained or renamed option carries its existing `id` and only
+genuinely new options omit it. Colours must come from
+`ProjectV2SingleSelectFieldOptionColor` (`GRAY BLUE GREEN YELLOW ORANGE RED PINK PURPLE`).
 
-**Usage**: Called by `fields create-option`. Use `GRAY` as a safe default color.
+**Usage**: Called **only** through `update_field_single_select_options` in
+`sdlc_manager.py` (CLI: `fields set-options --project <p> --field <f> --options-file
+<complete-list.json> [--dry-run]`). That helper refuses — before the mutation is sent —
+any submission that is not the complete desired set, drops a live option, or omits an
+existing id on a retained option. There is intentionally **no** one-option write:
+the pattern of submitting a single new option through this input replaces the entire
+set with it and clears the field on every card. `fields create-option` performs no
+mutation at all — it prints the field's id and current options.
 
 ---
 
