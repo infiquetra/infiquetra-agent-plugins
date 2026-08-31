@@ -442,6 +442,62 @@ these transforms and the earlier one should then retire, and all three files ret
 being byte copies.
 
 
+### A join test constrains exactly what it joins — and the Mission Control resync lands twelve commits, not thirteen
+
+**Author.** Claude for Jeff Cox (Amendment 5 to the issue #50 run plan, repairing
+doc-review cycle 6, branch `orch-agent-plugins-50`)
+
+**Decision.** The package-root rule's v2 extension folds into the synchronization
+commit instead of taking one of its own, so the run lands **twelve** child-scoped
+commits rather than the thirteen the previous amendment recorded. And the plan's
+claim that a custody-versus-provenance test constrained the descriptor
+reclassification is **withdrawn**, because that test does not cover the package in
+question.
+
+**Rationale.** Both corrections come from the same mistake made in opposite
+directions: reading "there is a join test here" as "therefore this ordering is
+forced," without checking what the join actually joins or which fixture it loads.
+
+The rule name `resolve-package-root-marker` has been registered since the run's first
+synchronizer commit (`scripts/sync_vendor_source.py:102`, registry at line 855, pinned
+in the expected set at `tests/test_sync_vendor_source.py:930`). The descriptor join,
+`CommittedDescriptorTest.test_every_entrypoint_transform_entry_names_a_rule_the_sync_tool_implements`,
+asserts `assertIn(rule, svs.TRANSFORM_RULES)` — it joins **names**, and no version
+appears in it. So a descriptor may select that rule for two more paths while the rule
+is still on v1. What v2 must precede is the synchronization run, because v1's
+exactly-one-definition-plus-one-call shape would refuse a file that has neither. The
+extension and the sync are one unit acting on one file, so they are one commit.
+
+The second correction is the mirror image. The plan cited
+`CommittedDescriptorTest.test_the_custody_table_accounts_for_every_shipped_managed_path`
+as forcing the descriptor commit to gate on an already-transformed working tree. That
+method reads `self.config`, and the class's `setUp` is
+`port_config.load("unifi", ROOT)` — the docstring calls the UniFi descriptor "the
+regression fixture for all of this." A mission-control reclassification cannot fail
+it. A search for the test that *would* constrain it found none: nothing joins
+mission-control's descriptor custody to its shipped provenance manifest, and
+`check_repo.py` validates a manifest entry's own classification rather than comparing
+it to the descriptor.
+
+**Generalizable rule.** *A join test constrains exactly what it joins, over exactly
+the fixtures it loads.* Before deriving a landing-order edge from a test, read two
+things: which fields it compares, and what its `setUp` actually loads. In this run the
+same unchecked inference invented a prerequisite once in the right direction and once
+in the wrong one — costing an extra commit in the first case and putting a false
+constraint into an accepted plan in the second.
+
+**Rejected alternatives.** *Keeping the standalone extension commit* — defensible only
+if some test forced it, and none does; an extra commit on a run already deviating from
+its declared commit count needs a reason better than tidiness. *Re-pointing the
+withdrawn caveat at a different test* — there is no other test to point it at, and
+leaving a plausible-sounding constraint in place would have a worker gate on a
+condition that does not exist.
+
+**Revisit when** a second package's descriptor gains a custody-versus-provenance
+binding, at which point the withdrawn caveat becomes a real constraint and should be
+re-stated with the citation that then exists.
+
+
 ## 2026-08-27
 
 ### Auralis C3 adapter packaging: voice 0.3.0, mcpServers path into client extension, and acceptance evidence note
