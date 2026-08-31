@@ -40,7 +40,6 @@
       "tests/test_check_pagination.py",
       "tests/test_flow_subcommands.py",
       "tests/test_graphql_issue_resolution.py",
-      "tests/test_issue_contract_parity.py",
       "tests/test_issue_create_interactive.py",
       "tests/test_issue_create_prepared.py",
       "tests/test_issue_prepare.py",
@@ -56,7 +55,6 @@
       "tests/test_project_mappings_resolution.py",
       "tests/test_sdlc_draft_revision.py",
       "tests/test_sdlc_manager_optional_deps.py",
-      "tests/test_template_sync.py",
       "tests/test_typed_exceptions.py",
       "tests/test_user_defaults.py"
     ],
@@ -71,6 +69,14 @@
       },
       {
         "path": "scripts/sync_template_docs.py",
+        "rule": "resolve-package-root-marker"
+      },
+      {
+        "path": "tests/test_issue_contract_parity.py",
+        "rule": "resolve-package-root-marker"
+      },
+      {
+        "path": "tests/test_template_sync.py",
         "rule": "resolve-package-root-marker"
       },
       {
