@@ -1287,5 +1287,206 @@ class ReadbackEvidenceTest(unittest.TestCase):
         self.assertEqual(ccm.check_public_evidence_rules(self.record), [])
 
 
+MISSION_CONTROL_LIVE_DOCUMENT = EVIDENCE / "2026-08-30-mission-control-compatibility-matrix.md"
+MISSION_CONTROL_READBACK_DOCUMENT = EVIDENCE / "2026-08-30-mission-control-post-activation-readback.md"
+MISSION_CONTROL_SUPERSEDED_MATRIX = EVIDENCE / "2026-08-25-mission-control-compatibility-matrix.md"
+MISSION_CONTROL_SUPERSEDED_READBACK = EVIDENCE / "2026-08-25-mission-control-post-activation-readback.md"
+MISSION_CONTROL_PACKAGE_ROOT = ROOT / "plugins" / "mission-control"
+MISSION_CONTROL_CONFIG = port_config.load("mission-control", ROOT)
+MISSION_CONTROL_SKILLS = ("board", "flow", "issues", "labels", "metrics", "milestones", "rollout")
+
+
+class MissionControlMatrixBindingTest(unittest.TestCase):
+    """The resynchronized matrix identifies the shipped package, live.
+
+    The pre-resync matrix drifted in silence for exactly the reason these
+    assertions exist: a well-formed record whose fingerprint names a tree that
+    was replaced. Every case recomputes from disk rather than trusting the
+    recorded number.
+    """
+
+    def setUp(self) -> None:
+        self.text = MISSION_CONTROL_LIVE_DOCUMENT.read_text(encoding="utf-8")
+        self.record = ccm.extract_record(self.text)
+
+    def test_the_document_exists_and_validates(self) -> None:
+        self.assertTrue(MISSION_CONTROL_LIVE_DOCUMENT.is_file())
+        self.assertEqual(ccm.check_matrix(MISSION_CONTROL_LIVE_DOCUMENT), [])
+
+    def test_it_declares_itself_current(self) -> None:
+        directives = ccm.read_directives(self.text)
+        self.assertEqual(directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_CURRENT)
+
+    def test_the_recorded_fingerprint_identifies_the_shipped_package(self) -> None:
+        file_count, tree_sha256 = ccm.package_fingerprint(MISSION_CONTROL_PACKAGE_ROOT)
+        name, version = ccm.package_identity(MISSION_CONTROL_PACKAGE_ROOT)
+        package = self.record["package"]
+        self.assertEqual(package["file_count"], file_count)
+        self.assertEqual(package["tree_sha256"], tree_sha256)
+        self.assertEqual(package["name"], name)
+        self.assertEqual(package["version"], version)
+
+    def test_it_covers_exactly_the_ten_canonical_clients(self) -> None:
+        names = {client["name"] for client in self.record["clients"]}
+        self.assertEqual(names, set(ccm.CANONICAL_CLIENTS))
+
+    def test_it_records_forty_stage_results_and_ten_statuses(self) -> None:
+        results = [
+            stage["result"]
+            for client in self.record["clients"]
+            for stage in client["stages"].values()
+        ]
+        self.assertEqual(len(results), 40)
+        self.assertTrue(set(results) <= set(ccm.STAGE_RESULTS))
+        statuses = [client["status"] for client in self.record["clients"]]
+        self.assertEqual(len(statuses), 10)
+        self.assertTrue(set(statuses) <= set(ccm.STATUSES))
+
+    def test_every_client_carries_a_reason_for_its_status(self) -> None:
+        for client in self.record["clients"]:
+            with self.subTest(client=client["name"]):
+                self.assertTrue(client["reason"].strip())
+                self.assertTrue(client["version"].strip())
+
+    def test_the_record_violates_no_safety_or_public_evidence_rule(self) -> None:
+        self.assertEqual(ccm.check_safety_rules(self.record, MISSION_CONTROL_CONFIG), [])
+        self.assertEqual(ccm.check_public_evidence_rules(self.record), [])
+
+
+class MissionControlReadbackBindingTest(unittest.TestCase):
+    """The resynchronized readback, bound the way the matrix is.
+
+    Mission Control's readback is not discovered by the checker at all — its
+    record uses `release` and `readbacks` keys rather than `package` and
+    `clients` — so this class is the only thing that keeps it from drifting in
+    silence. It asserts the release block, the seven per-skill-unit
+    fingerprints, the provenance pin, and every readback entry, and it omits
+    the profile-state assertions that are a UniFi concept.
+    """
+
+    def setUp(self) -> None:
+        self.text = MISSION_CONTROL_READBACK_DOCUMENT.read_text(encoding="utf-8")
+        self.record = ccm.extract_record(self.text)
+        self.provenance = json.loads(
+            (MISSION_CONTROL_PACKAGE_ROOT / "PROVENANCE.json").read_text(encoding="utf-8")
+        )
+
+    def test_the_document_exists(self) -> None:
+        self.assertTrue(MISSION_CONTROL_READBACK_DOCUMENT.is_file())
+
+    def test_the_release_fingerprint_identifies_the_shipped_package(self) -> None:
+        file_count, tree_sha256 = ccm.package_fingerprint(MISSION_CONTROL_PACKAGE_ROOT)
+        name, version = ccm.package_identity(MISSION_CONTROL_PACKAGE_ROOT)
+        release = self.record["release"]
+        self.assertEqual(release["file_count"], file_count)
+        self.assertEqual(release["tree_sha256"], tree_sha256)
+        self.assertEqual(release["name"], name)
+        self.assertEqual(release["version"], version)
+
+    def test_the_recorded_upstream_commit_matches_the_synchronization_pin(self) -> None:
+        self.assertEqual(
+            self.record["release"]["upstream_commit"], self.provenance["source_commit"]
+        )
+        self.assertEqual(self.record["release"]["version"], self.provenance["source_version"])
+
+    def test_all_seven_skill_unit_fingerprints_are_recorded_and_match(self) -> None:
+        units = self.record["release"]["units"]
+        self.assertEqual(set(units), set(MISSION_CONTROL_SKILLS))
+        for unit in MISSION_CONTROL_SKILLS:
+            with self.subTest(unit=unit):
+                file_count, tree_sha256 = ccm.package_fingerprint(
+                    MISSION_CONTROL_PACKAGE_ROOT / "skills" / unit
+                )
+                self.assertEqual(units[unit]["file_count"], file_count)
+                self.assertEqual(units[unit]["tree_sha256"], tree_sha256)
+
+    def test_every_readback_reports_bytes_equal_to_the_release(self) -> None:
+        readbacks = self.record["readbacks"]
+        self.assertTrue(readbacks)
+        for readback in readbacks:
+            with self.subTest(client=readback["client"]):
+                self.assertTrue(readback["matches_release"])
+                self.assertTrue(
+                    readback.get("entrypoints_exit_zero") is not False,
+                    "the readback records a failed entrypoint verification",
+                )
+                if readback.get("recomputed_tree_sha256") is not None:
+                    self.assertEqual(
+                        readback["recomputed_tree_sha256"],
+                        self.record["release"]["tree_sha256"],
+                    )
+                    self.assertEqual(
+                        readback["recomputed_file_count"], self.record["release"]["file_count"]
+                    )
+
+    def test_the_cycle_16_verification_block_is_present_and_positive(self) -> None:
+        block = self.record["cycle_16_verification"]
+        self.assertEqual(block["disposition"], "verified_by_digest_recheck")
+        self.assertTrue(block["all_digests_match_cycle_16_footer"])
+        self.assertTrue(block["mutation_proof_binding_test_passed"])
+        self.assertEqual(
+            block["frozen_candidate_commit"], "55a651174b8b474c281661658bde3bfd7637855b"
+        )
+
+    def test_the_readback_leaks_nothing(self) -> None:
+        self.assertEqual(ccm.check_public_evidence_rules(self.record), [])
+
+
+class MissionControlSupersededDocumentTest(unittest.TestCase):
+    """The retired pair, kept as history rather than deleted or renumbered."""
+
+    def test_the_old_matrix_validates_as_superseded(self) -> None:
+        self.assertEqual(ccm.check_matrix(MISSION_CONTROL_SUPERSEDED_MATRIX), [])
+
+    def test_the_old_matrix_declares_supersession_and_names_the_current_successor(self) -> None:
+        directives = ccm.read_directives(
+            MISSION_CONTROL_SUPERSEDED_MATRIX.read_text(encoding="utf-8")
+        )
+        self.assertEqual(directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_SUPERSEDED)
+        successor = directives.get(ccm.SUPERSEDED_BY_DIRECTIVE)
+        self.assertEqual(successor, MISSION_CONTROL_LIVE_DOCUMENT.name)
+        assert successor is not None
+        self.assertTrue(directives.get(ccm.SUPERSEDED_REASON_DIRECTIVE, "").strip())
+        self.assertTrue((EVIDENCE / successor).is_file())
+
+    def test_the_old_readback_declares_supersession_and_names_the_current_successor(self) -> None:
+        directives = ccm.read_directives(
+            MISSION_CONTROL_SUPERSEDED_READBACK.read_text(encoding="utf-8")
+        )
+        self.assertEqual(directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_SUPERSEDED)
+        successor = directives.get(ccm.SUPERSEDED_BY_DIRECTIVE)
+        self.assertEqual(successor, MISSION_CONTROL_READBACK_DOCUMENT.name)
+        assert successor is not None
+        self.assertTrue(directives.get(ccm.SUPERSEDED_REASON_DIRECTIVE, "").strip())
+        self.assertTrue((EVIDENCE / successor).is_file())
+
+    def test_each_successor_is_itself_current(self) -> None:
+        for document in (MISSION_CONTROL_LIVE_DOCUMENT, MISSION_CONTROL_READBACK_DOCUMENT):
+            with self.subTest(document=document.name):
+                directives = ccm.read_directives(document.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    directives.get(ccm.STATUS_DIRECTIVE, ccm.STATUS_CURRENT),
+                    ccm.STATUS_CURRENT,
+                )
+
+    def test_the_old_records_preserve_the_fingerprints_they_were_published_with(self) -> None:
+        record = ccm.extract_record(
+            MISSION_CONTROL_SUPERSEDED_MATRIX.read_text(encoding="utf-8")
+        )
+        self.assertEqual(record["package"]["file_count"], 64)
+        self.assertEqual(
+            record["package"]["tree_sha256"],
+            "651ac28a79b4e2e8823c5aa5960659bcd22903e2059afdb9544e13a071de1682",
+        )
+        readback = ccm.extract_record(
+            MISSION_CONTROL_SUPERSEDED_READBACK.read_text(encoding="utf-8")
+        )
+        self.assertEqual(readback["release"]["file_count"], 64)
+        self.assertEqual(
+            readback["release"]["tree_sha256"],
+            "651ac28a79b4e2e8823c5aa5960659bcd22903e2059afdb9544e13a071de1682",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

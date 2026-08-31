@@ -2,6 +2,14 @@
 
 ## Consume the eight open upstream mission-control filings via a deliberate repin + resync
 
+**Consumed by the 2.15.2 resynchronization (issue #50, landed 2026-08-30).**
+All eight filings landed upstream (#818–#822, #828–#830) and reached this
+repository through the recorded resync policy: repin at `3b2b7083`,
+`sync_vendor_source.py --check` round-trip, re-run suites, and re-run of the
+fingerprint-bound evidence (fresh ten-client matrix and readback,
+`docs/evidence/2026-08-30-mission-control-*.md`). The entry stays as the
+worked example of the policy; nothing in it remains open.
+
 The #9 migration filed eight defects/enhancements against
 `infiquetra/infiquetra-claude-plugins`, all open as of 2026-08-25: #818–#822
 (during the run: stale 2.1.0 paths, `/issue` self-alias, README `flow`

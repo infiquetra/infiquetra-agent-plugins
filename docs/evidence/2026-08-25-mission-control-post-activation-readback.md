@@ -1,3 +1,17 @@
+<!-- matrix-status: superseded -->
+<!-- superseded-by: 2026-08-30-mission-control-post-activation-readback.md -->
+<!-- superseded-reason: This readback binds the package at tree digest 651ac28a..., 64 files, pinned at upstream 84eaf042 (v2.12.2). The 2.15.2 resynchronization moved the package to 71 files at tree 1f49322e..., so the recorded readbacks describe installed copies that no longer exist. The successor was captured against the resynchronized package on 2026-08-30 and is current. -->
+
+> **Superseded - historical evidence. Do not read this as the current
+> post-activation readback.**
+>
+> This readback was captured on 25 August 2026 against the pre-resynchronization
+> package. It is kept because the readback happened and its record should not
+> vanish, not because it still describes the shipped bytes.
+>
+> **What superseded it:**
+> [`2026-08-30-mission-control-post-activation-readback.md`](2026-08-30-mission-control-post-activation-readback.md).
+
 # Post-activation readback — portable mission-control package 2.12.2
 
 The `mission-control` package in this repository, `plugins/mission-control/`, is a

@@ -548,6 +548,53 @@ lives in three locked places.
 `tests/test_mission_control_readme.py`, `tests/test_mission_control_rule_audit.py`,
 issue #54, operator ruling 4.
 
+### Mission Control 2.15.2 resync U5: fresh evidence replaces the retired matrix and readback, and both replacements are bound
+
+**Author.** Claude for Jeff Cox (U5 of issue #50, child #56, branch `orch-agent-plugins-50`)
+
+**Decision.** The pre-resync mission-control compatibility matrix and
+post-activation readback (both bound to 64 files / tree `651ac28a…`, v2.12.2)
+are superseded by fresh records captured 2026-08-30 against the frozen
+resynchronized package (71 files, tree `1f49322e…`, v2.15.2), each carrying a
+`superseded-by` naming its successor and a `superseded-reason`; their recorded
+numbers are untouched. Both replacements are bound in
+`tests/test_check_compatibility_matrix.py` as parallel mission-control classes
+(KTD4 — never parameterizing UniFi's live bindings): the matrix class
+recomputes the live package fingerprint, name, and version and asserts them
+against the record; the readback class asserts the `release` block, all seven
+per-skill-unit fingerprints, `upstream_commit`/`version` against
+`PROVENANCE.json`, and every readback entry — with no `profile_states`
+assertions, because that block is a UniFi concept. The readback keeps a
+`cycle_16_verification` block (KTD11): all five graded-file digests recomputed
+at the new freeze still match the cycle-16 footer, so the block is a positive
+statement that the resync retired no mutation proof. Qwen's assessment is
+recorded `failed` with the honest reason: the isolated home's preserved Qwen
+wrapper exited 127 on every stage, an environment condition, not a package
+result. Both bindings were proven able to fail: a deliberate local
+fingerprint mutation made them red (3 failures), then was reverted.
+
+**Rationale.** The package fingerprint moved, which retired the old evidence;
+the recorded decision forbids renumbering evidence that was not re-measured,
+so the forty stage results had to be re-run rather than edited. The
+supersession order (successor published current, only then the predecessor
+stamped) is enforced by `check_document_status`, and the fresh run
+reproduced the before/after fingerprint equality (71 files, `1f49322e…`)
+that proves no client mutated its copy.
+
+**Rejected alternatives.** (a) Renumber the old documents — exactly the
+failure the bindings exist to catch: forty observed results would become
+claims about bytes nobody ran. (b) Parameterize the UniFi binding classes —
+puts UniFi's live bindings at risk for no gain. (c) Bind inside
+`scripts/check_compatibility_matrix.py` — that file is in the cycle-16
+mutation proof's graded set, and the bindings belong in the test file.
+
+**Revisit when** the next resynchronization moves the fingerprint again, at
+which point these bindings fire red until the evidence is re-run.
+
+**Refs.** [`docs/evidence/2026-08-30-mission-control-compatibility-matrix.md`](../evidence/2026-08-30-mission-control-compatibility-matrix.md),
+[`docs/evidence/2026-08-30-mission-control-post-activation-readback.md`](../evidence/2026-08-30-mission-control-post-activation-readback.md),
+`tests/test_check_compatibility_matrix.py`, issue #56, operator ruling 3.
+
 
 ## 2026-08-27
 

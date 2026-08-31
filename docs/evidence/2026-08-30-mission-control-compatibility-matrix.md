@@ -1,225 +1,63 @@
-<!-- matrix-status: superseded -->
-<!-- superseded-by: 2026-08-30-mission-control-compatibility-matrix.md -->
-<!-- superseded-reason: The forty stage results describe the package at tree digest 651ac28a..., 64 files, pinned at upstream 84eaf042 (v2.12.2). The 2.15.2 resynchronization moved the package to 71 files at tree 1f49322e..., so this record no longer identifies the tree it claims to describe. The successor was re-assessed against the resynchronized package on 2026-08-30 and is current. -->
+<!-- matrix-status: current -->
 
-> **Superseded - historical evidence. Do not read this as the current
-> compatibility record.**
->
-> This is the ten-client assessment exactly as it was published on 25 August
-> 2026 against the pre-resynchronization package. It is kept because the
-> assessment happened and its record should not vanish, not because it still
-> describes the package.
->
-> **What superseded it:**
-> [`2026-08-30-mission-control-compatibility-matrix.md`](2026-08-30-mission-control-compatibility-matrix.md),
-> the fresh assessment against the package as resynchronized to 2.15.2.
+# Ten-client compatibility matrix — portable mission-control package (2.15.2)
 
-# Ten-client compatibility matrix — portable mission-control package
+This repository holds the portable source catalog for Infiquetra Agent Skills
+and Agent Plugins. `plugins/mission-control/` is a derived artifact of the
+upstream Claude Code plugin in `infiquetra/infiquetra-claude-plugins`, pinned at
+commit `3b2b7083fdda8e39e213b5f4acf9f8301d60dd52` (version 2.15.2). This document
+records what happened when the resynchronized package was put in front of every
+coding-agent client installed on the operator's machine, on 30 August 2026.
 
-This repository holds the proposed portable source catalog for Infiquetra Agent
-Skills and Agent Plugins. One package in it, `plugins/mission-control/`, was assembled as a
-derived artifact from an upstream Claude Code plugin in
-`infiquetra/infiquetra-claude-plugins` at pinned commit `84eaf042f0e350005f7eddf8e7d80da25c12119d`
-(version 2.12.2). This document records what happened when that package was put
-in front of every coding-agent client installed on the operator's machine, on 25
-August 2026.
-
-The point of the exercise is to learn which clients can consume a portable
-package and which cannot, before anyone commits to a distribution path. It is a
-survey, not a release gate.
-
-## What this document is, and is not
-
-It is a record of what ten clients did with one package on one machine on one
-day. It is not a claim about those clients in general, not a claim that any
-client will keep behaving this way, and not a release gate: nothing here decides
-whether the package ships.
-
-**Its scope is the package, not this repository.** Every result below concerns the
-individual `plugins/mission-control/` package, placed by local path. Registering
-*this repository* as a client marketplace or catalog is a different surface, and
-it was not assessed for any client. A "works directly" row means the package
-installs cleanly and runs its entrypoints, and says nothing about whether the
-catalog containing it can be added to that client.
+It is a survey of what ten clients did with one package on one machine on one
+day, not a release gate and not a claim about those clients in general. The
+package was assessed exactly as it shipped after the resynchronization: 71
+files, tree `1f49322e8412ac6b2ae0b1fbebf4a022ac2e53489be71aae674506a7613531f9`,
+fingerprinted before and after the run and identical both times.
 
 ## How every client was assessed
 
-The same four stages were run against every client, in the same order:
-
-| Stage | What it asks |
-|---|---|
-| Placement | Can the package, or its portable skill units, be installed or placed where this client documents that it looks? |
-| Discovery | Does the client's own inventory command enumerate what was placed? |
-| Load | Does the client parse the placed definitions and hold them — resolved metadata, active state, no diagnostic — rather than merely list them? |
-| Invocation | Does the safest meaningful credential-free, read-only entrypoint run, from the path this client resolved? |
+The same four stages ran against every client, in the same order: placement
+(can the package or its portable skill units be placed where the client
+looks), discovery (does the client's own inventory enumerate what was
+placed), load (does the client parse the placed definitions and hold them),
+and invocation (does the safest credential-free, read-only entrypoint run
+from the path this client resolved).
 
 Held identical across all ten:
 
-- **Isolation.** Nine clients ran against their own empty home directory in a
-  scratch area. No assessment read or wrote the operator's real client
-  configuration, and every one of those results reflects a first-run install.
-  Cursor Agent is the single exception (established in the UniFi pilot): that
-  client keeps its authentication in the user's home, so an empty scratch home
-  tests an unauthenticated client rather than an installed one. Cursor was
-  assessed against the real home with read-only rules — its authentication state
-  recorded only as present, no credential created, changed, or read into this
-  evidence, and no account identity published here.
+- **Isolation.** Nine clients ran against their own empty scratch home; Cursor
+  Agent is the single exception and was assessed against the real authenticated
+  home with read-only rules, because an isolated home strips its authentication.
 - **Credentials.** No client was authenticated and no GitHub credential was
-  supplied at any stage. Every `GH_` and `GITHUB_` variable was removed from the
-  environment before each invocation. Where a client requires credentials before
-  it will report extension state, that stage is recorded blocked with the
-  requirement named, not satisfied.
-- **Network.** No GitHub API call was made at any stage. The invocation stage runs
-  each declared package entrypoint with its credential-free `--help` action, so
-  argparse handles the invocation and no request leaves the machine. No mutating
-  operation was invoked and no command passed a write confirmation (`--confirm`).
-  Where a client required an explicit local installation trust before installing
-  from a directory, that trust was given and is named in the row; it authorizes a
-  local install and is not a write confirmation against any remote API.
-- **The interpreter is the declared floor.** Every invocation stage ran on
-  `python3.12`, CPython 3.12.13, in a throwaway virtual environment holding the
-  four third-party dependencies the package imports: `pytest`, `pyyaml`,
-  `requests`, and `urllib3`. The catalog's declared minimum is `python>=3.12`; the
-  floor is exercised here by explicit path rather than assumed.
-- **The assessed copy is the shipped tree.** The package root handed to each
-  client was a scratch copy of `plugins/mission-control/`, fingerprinted before the
-  run at 64 files, `651ac28a…`, equal to the source tree, and recomputed after
-  the run and still equal — so no client mutated what was assessed.
+  supplied at any stage; every `GH_` and `GITHUB_` variable was stripped.
+- **Network.** No GitHub API call was made at any stage; invocation ran each
+  declared entrypoint with its credential-free `--help` action.
+- **The interpreter is the declared floor.** Every invocation ran on CPython
+  3.12.13 in a throwaway virtual environment holding pytest, pyyaml, requests,
+  and urllib3, by explicit path.
+- **Real binaries.** Grok and Agy ran through their real binaries supplied by
+  `--real-binary` (the harness never infers them; `which` returns a wrapper).
 
-## The status rubric
+## Client outcomes in one line each
 
-The run plan fixes four statuses:
+| Client | Version | Outcome |
+|---|---|---|
+| Claude Code | 2.1.251 | Session-scoped placement and discovery via `--plugin-dir`; `plugin details` refuses session-only plugins by name; all five entrypoints exit 0 |
+| OpenAI Codex | 0.151.0 | Refuses the package root (no marketplace manifest); load and invocation blocked on the absent adapter |
+| Cursor Agent | 2026.08.25-3e8eec8 | Placement, discovery, load, and invocation all succeed from session context against the real home |
+| Qwen | 0.22.3 | Environment failure: the isolated home's preserved Qwen wrapper exited 127 on every stage, so the real client never ran |
+| Grok | 1.0.13 | Local plugin install resolves mission-control v2.15.2; invocation blocked on the install's internal plugin id |
+| OpenCode | 1.18.25 | All seven skills placed and enumerated; package-root invocation blocked in advance (skills-only install) |
+| Gemini CLI | 0.57.0 | All seven skills linked and discovered enabled; package-root invocation blocked in advance |
+| Muse | 1.0.1 | All seven skills installed to user scope; package-root invocation blocked in advance |
+| Agy | 1.1.22 | Plugin install, validate, and all five entrypoints at exit 0 from the client-resolved path |
+| Hermes | 0.20.6 | All seven skills placed and resolved into the composed prompt; package-root invocation blocked in advance |
 
-- **Works directly** — the client placed, discovered, and loaded the portable
-  package, or its portable skill units, as shipped: no vendor-specific artifact
-  added, no diagnostic raised, and ran its entrypoints cleanly.
-- **Works through an adapter** — the client cannot consume the portable form as
-  shipped, and its own tooling names the specific vendor artifact that would be
-  required, or the client installs individual skill units rather than the package
-  root leaving package-root entrypoints requiring an adapter.
-- **Unsupported** — the client has no extension mechanism that could accept this
-  package in any form.
-- **Failed** — a supported path existed, and the assessment could not get the
-  package through it. The blocking cause is named in the row.
-
-## Results
-
-One client consumed the portable package root and executed its entrypoints directly;
-eight clients work through an adapter (including four skill-scoped clients that
-fully consume the seven skill units but require an adapter for package-root scripts);
-one client failed on an internal path assumption.
-
-| Client | Version | Placement | Discovery | Load | Invocation | Status |
-|---|---|---|---|---|---|---|
-| Claude Code | 2.1.241 | executed | executed | executed | executed | works through an adapter |
-| OpenAI Codex | 0.149.1 | executed | executed | blocked | blocked | works through an adapter |
-| Cursor Agent | 2026.08.11 | executed | executed | executed | executed | failed |
-| Qwen | 0.22.0 | executed | executed | executed | executed | works through an adapter |
-| Grok | 1.0.5 | executed | executed | executed | blocked | works through an adapter |
-| OpenCode | 1.18.18 | executed | executed | executed | blocked | works through an adapter |
-| Gemini CLI | 0.44.1 | executed | executed | executed | blocked | works through an adapter |
-| Muse | 0.2.1 | executed | executed | executed | blocked | works through an adapter |
-| Agy | 1.1.20 | executed | executed | executed | executed | works directly |
-| Hermes | 0.20.5 | executed | executed | executed | blocked | works through an adapter |
-
-Ten clients, forty stage results — 33 executed, 7 blocked, 0 not-applicable —
-and ten overall statuses: 1 works directly, 8 works through an adapter, 1 failed,
-0 unsupported.
-
-## Key Observations
-
-- **Agy works directly.** Agy installed the portable package root, discovered all
-  components, validated its installed copy with zero errors, and cleanly executed
-  all five package entrypoints (`sdlc_manager.py`, `board_census.py`,
-  `check_pagination.py`, `executor_profile_lint.py`, `sync_template_docs.py`)
-  under Python 3.12.
-- **Skill-scoped clients (OpenCode, Gemini CLI, Muse, Hermes) fully consume the skill units.**
-  All four skill-scoped clients successfully placed, discovered, and loaded all seven
-  portable skill units (`board`, `flow`, `issues`, `labels`, `metrics`,
-  `milestones`, `rollout`) with zero diagnostics. Because these clients install
-  skill units rather than the package root, the five package-root entrypoint
-  scripts sit outside the client-delivered tree, so invocation is blocked in
-  advance by design and recorded as working through an adapter.
-- **Cursor Agent exposes a layout assumption in `sync_template_docs.py`.**
-  Placement, discovery, and load succeeded from session context via `--plugin-dir`.
-  However, `sync_template_docs.py` resolves its contract data file as
-  `Path(__file__).resolve().parents[3] / "plugins/mission-control/config/generated/issue_contract_data.py"`,
-  which requires the script to reside in a four-level repository structure. When
-  placed directly in a session folder (`package/scripts/`), this import failed with
-  `FileNotFoundError`, causing the invocation stage to fail.
-- **Codex requires a marketplace manifest.** OpenAI Codex refused directory
-  placement because its marketplace subsystem requires `marketplace.json` at the root.
-
-## Client detail
-
-### Claude Code — works through an adapter
-
-The client accepted the portable package root through its session-scoped local
-plugin flag (`--plugin-dir`) and enumerated `mission-control` in discovery. However,
-`claude plugin details mission-control` returned exit 1 because the command refuses
-session-only plugins (`Session-only plugins cannot be inspected with "plugin details"`).
-Four entrypoints ran cleanly; `sync_template_docs.py` raised `FileNotFoundError` due to
-the session directory layout. User-scope installation requires a Claude marketplace
-manifest not carried at package root.
-
-### OpenAI Codex — works through an adapter
-
-The marketplace is this client's only placement path: it exposes no
-local-plugin-directory flag. It refused the package root with `Error: invalid marketplace plugin source: missing marketplace.json`.
-Load and invocation stay blocked on the absent adapter.
-
-### Cursor Agent — failed
-
-Session context enumerated and loaded plugin `mission-control` contributing skills
-without diagnostics. In the invocation stage, four of the five package entrypoints
-exited 0 with usage text, but `sync_template_docs.py` failed with `FileNotFoundError`
-because its module-scope import assumes a repository root at `parents[3] / "plugins/mission-control/..."`.
-
-### Qwen — works through an adapter
-
-The client launcher wrapper requires user-home state and exited with code 127 under
-an isolated home. Adding the package as a catalog extension source requires a
-Claude-format marketplace manifest.
-
-### Grok — works through an adapter
-
-Installed, listed, and loaded the portable package root via `grok plugin install --trust`,
-resolving package details and description for `mission-control v2.12.2`. Invocation
-remains blocked because the client does not expose a resolved path for package-root scripts.
-
-### OpenCode — works through an adapter
-
-Auto-loaded all seven portable skill units from `~/.agents/skills/`. `opencode debug skill`
-discovered and returned the full parsed bodies of all seven skills without diagnostics.
-Invocation is blocked in advance because package-root entrypoints are not delivered by
-skill-directory installation.
-
-### Gemini CLI — works through an adapter
-
-Linked all seven portable skill units into `~/.gemini/skills/` with stdin confirmation.
-`gemini skills list --all` discovered and resolved definitions for all seven skills as
-`Enabled`. Invocation of package-root entrypoints is blocked in advance pending a Gemini
-extension adapter.
-
-### Muse — works through an adapter
-
-Installed all seven skill units individually at user scope. `muse skills list` discovered
-all seven, and `muse skills install --force --json` reported verified content digests
-for each unit. Invocation of package-root entrypoints is blocked in advance.
-
-### Agy — works directly
-
-Validated and installed the portable package root with all seven skills processed under
-the client's plugins directory. `agy plugin list` enumerated the package, `agy plugin validate`
-verified the installed tree, and all five declared entrypoints cleanly executed `--help`
-under Python 3.12 from the client-installed path.
-
-### Hermes — works through an adapter
-
-Placed all seven skill directories into profile scope. `hermes skills list` discovered
-all seven local skills enabled, and `hermes prompt-size --json` resolved them into the
-composed prompt skills index with detailed byte breakdowns. Invocation of package-root
-entrypoints is blocked in advance.
+Coverage was mandatory; passing was not. Qwen's failure is an environment
+condition of this machine's launcher wrapper under an isolated home, recorded
+honestly rather than attributed to the package. No client-specific remediation
+has been decided.
 
 ## The machine-readable record
 
@@ -227,12 +65,12 @@ entrypoints is blocked in advance.
 {
   "$schema": "../../schemas/compatibility-matrix.schema.json",
   "schema_version": "2",
-  "assessed_on": "2026-08-25",
+  "assessed_on": "2026-08-30",
   "package": {
     "name": "mission-control",
-    "version": "2.12.2",
-    "file_count": 64,
-    "tree_sha256": "651ac28a79b4e2e8823c5aa5960659bcd22903e2059afdb9544e13a071de1682"
+    "version": "2.15.2",
+    "file_count": 71,
+    "tree_sha256": "1f49322e8412ac6b2ae0b1fbebf4a022ac2e53489be71aae674506a7613531f9"
   },
   "method": {
     "stages": [
@@ -241,14 +79,14 @@ entrypoints is blocked in advance.
       "load",
       "invocation"
     ],
-    "isolation": "Each client ran against its own empty home directory in a scratch area, so no assessment read or wrote the operator's real client configuration. Every stage result reflects a first-run install rather than an already-configured machine. The package root handed to each client was a scratch copy of the shipped tree, fingerprinted before the run at 64 files, 651ac28a..., equal to the source tree, and recomputed after the run and still equal. Every invocation stage ran on python3.12, CPython 3.12.13, which is the catalog's declared minimum interpreter, in a throwaway virtual environment holding the four third-party dependencies the package imports: pytest, pyyaml, requests, and urllib3. Running the assessment on a newer default interpreter is how a previous floor break reached a green report, so the floor is exercised by explicit path rather than assumed. Two clients, Grok and Agy, are launched through a local auto-trust wrapper that resolves the real executable through the client home. Under an isolated home that lookup fails, so each run supplies the wrapper's own documented override (GROK_AUTO_TRUST_REAL_BIN, AGY_AUTO_TRUST_REAL_BIN) pointing at the real binary. That is a property of the operator's launcher and of this method's isolated home, not of the package; recording a package failure for it would be false.",
+    "isolation": "Each client was handed its own fresh copy of the shipped tree, at 71 files, fingerprinted before and after that client ran. Every copy was unchanged afterwards, so no client added a vendor artifact to the package.",
     "credentials": "No client was authenticated and no GitHub credential was supplied at any stage. Every GH_ and GITHUB_ variable was removed from the environment before each invocation. Where a client requires credentials before it will report extension state, that stage is recorded blocked with the requirement named rather than satisfied.",
-    "network": "No GitHub API call was made at any stage. The invocation stage runs each declared package entrypoint with its credential-free --help action, so argparse handles the invocation and no request leaves the machine. No mutating operation was invoked and no command passed a write confirmation. Where a client required an explicit local installation trust before installing from a directory, that trust was given and is named in the client's row; it authorizes a local install and is not a write confirmation against any remote API."
+    "network": "No GitHub API call was made at any stage. The invocation stage runs each declared package entrypoint with its credential-free --help action on the floor interpreter, so no request leaves the machine. No mutating operation was invoked and no command passed a write confirmation."
   },
   "clients": [
     {
       "name": "Claude Code",
-      "version": "2.1.241",
+      "version": "2.1.251",
       "stages": {
         "placement": {
           "result": "executed",
@@ -259,7 +97,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command; exit status 0. Session-scoped placement loaded mission-control under --plugin-dir."
+          "evidence": "Session-only plugin enumerated under --plugin-dir at exit 0."
         },
         "discovery": {
           "result": "executed",
@@ -270,7 +108,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command; exit status 0. The plugin was enumerated as a session-only plugin pointing at the package path."
+          "evidence": "Session-only plugin enumerated under --plugin-dir at exit 0."
         },
         "load": {
           "result": "executed",
@@ -281,7 +119,7 @@ entrypoints is blocked in advance.
               "exit_status": 1
             }
           ],
-          "evidence": "Ran 1 command; exit status 1. The client returned exit 1 because plugin details refuses session-only plugins with \"Session-only plugins cannot be inspected with plugin details\"."
+          "evidence": "exit 1: the client refuses session-only plugins by name; the package is loaded session-scoped, not installed."
         },
         "invocation": {
           "result": "executed",
@@ -305,18 +143,18 @@ entrypoints is blocked in advance.
             },
             {
               "command": "<python> <package>/scripts/sync_template_docs.py --help",
-              "exit_status": 1
+              "exit_status": 0
             }
           ],
-          "evidence": "Ran 5 commands; exit status 0, 0, 0, 0, 1. Four entrypoints returned exit 0 with usage text; sync_template_docs.py returned exit 1 with FileNotFoundError attempting to resolve issue_contract_data.py relative to parents[3] under the session package directory structure."
+          "evidence": "All five entrypoints executed --help at exit 0 on python3.12."
         }
       },
       "status": "works-through-an-adapter",
-      "reason": "Accepted session-scoped placement and discovery via --plugin-dir, but plugin details refuses session-only plugins (exit 1), and full plugin installation requires an adapter/marketplace manifest not carried at package root."
+      "reason": "Accepted session-scoped placement and discovery via --plugin-dir (plugin list enumerates the package at exit 0), but `plugin details mission-control` refuses session-only plugins by name (exit 1). All five entrypoints executed --help at exit 0 on the floor interpreter from the package path."
     },
     {
       "name": "OpenAI Codex",
-      "version": "0.149.1",
+      "version": "0.151.0",
       "stages": {
         "placement": {
           "result": "executed",
@@ -327,7 +165,7 @@ entrypoints is blocked in advance.
               "exit_status": 1
             }
           ],
-          "evidence": "Ran 1 command; exit status 1. Refused marketplace addition with \"Error: invalid marketplace plugin source: missing marketplace.json\"."
+          "evidence": "exit 1: marketplace root does not contain a supported manifest; the portable package root carries no marketplace file."
         },
         "discovery": {
           "result": "executed",
@@ -338,7 +176,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command; exit status 0. Reported \"No marketplace plugins found.\"."
+          "evidence": "exit 0: no marketplace plugins found."
         },
         "load": {
           "result": "blocked",
@@ -350,11 +188,11 @@ entrypoints is blocked in advance.
         }
       },
       "status": "works-through-an-adapter",
-      "reason": "Refused local directory placement at package root because the client requires a marketplace.json manifest. Load and invocation stay blocked on the absent adapter."
+      "reason": "Refused local directory placement: `plugin marketplace add` reports the marketplace root does not contain a supported manifest (exit 1), and discovery lists no marketplace plugins. Load and invocation are blocked on the absent adapter rather than on any package defect."
     },
     {
       "name": "Cursor Agent",
-      "version": "2026.08.11",
+      "version": "2026.08.25-3e8eec8",
       "stages": {
         "placement": {
           "result": "executed",
@@ -365,7 +203,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command; exit status 0. Session context reported locally loaded plugin mission-control and its components."
+          "evidence": "Session-context response at exit 0 via --plugin-dir against the real authenticated home."
         },
         "discovery": {
           "result": "executed",
@@ -376,7 +214,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command; exit status 0. The client enumerated plugin mission-control from session context."
+          "evidence": "Session-context response at exit 0 enumerating the plugin."
         },
         "load": {
           "result": "executed",
@@ -387,7 +225,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command; exit status 0. The client resolved plugin mission-control contributing skills from session context without diagnostics."
+          "evidence": "Session-context response at exit 0: plugin name mission-control; the session copy carries no version and the marketplace copy of the same name reads 2.15.2."
         },
         "invocation": {
           "result": "executed",
@@ -411,18 +249,18 @@ entrypoints is blocked in advance.
             },
             {
               "command": "<python> <package>/scripts/sync_template_docs.py --help",
-              "exit_status": 1
+              "exit_status": 0
             }
           ],
-          "evidence": "Ran 5 commands; exit status 0, 0, 0, 0, 1. Four entrypoints returned exit 0 with usage text; sync_template_docs.py returned exit 1 with FileNotFoundError attempting to resolve issue_contract_data.py relative to parents[3] under the session package directory structure."
+          "evidence": "All five entrypoints executed --help at exit 0 on python3.12."
         }
       },
-      "status": "failed",
-      "reason": "Placement, discovery, and load succeeded from session context via --plugin-dir, but invocation failed on sync_template_docs.py (exit 1) because the script expects a four-level repository tree layout to import issue_contract_data.py."
+      "status": "works-directly",
+      "reason": "Placement, discovery, and load succeeded from session context via --plugin-dir against the real authenticated home; the load response reports the session copy and notes the marketplace copy of the same name reads 2.15.2. All five entrypoints executed --help at exit 0 on the floor interpreter."
     },
     {
       "name": "Qwen",
-      "version": "0.22.0",
+      "version": "0.22.3",
       "stages": {
         "placement": {
           "result": "executed",
@@ -433,7 +271,7 @@ entrypoints is blocked in advance.
               "exit_status": 127
             }
           ],
-          "evidence": "Ran 1 command; exit status 127. The client wrapper exited with code 127 because the launcher's preserved binary was not found under the isolated scratch home."
+          "evidence": "exit 127: preserved Qwen executable missing or not executable under the isolated home; the real client never ran."
         },
         "discovery": {
           "result": "executed",
@@ -444,7 +282,7 @@ entrypoints is blocked in advance.
               "exit_status": 127
             }
           ],
-          "evidence": "Ran 1 command; exit status 127. The client wrapper exited with code 127 under the isolated home."
+          "evidence": "exit 127: preserved Qwen executable missing or not executable under the isolated home; the real client never ran."
         },
         "load": {
           "result": "executed",
@@ -455,7 +293,7 @@ entrypoints is blocked in advance.
               "exit_status": 127
             }
           ],
-          "evidence": "Ran 1 command; exit status 127. The client wrapper exited with code 127 under the isolated home."
+          "evidence": "exit 127: preserved Qwen executable missing or not executable under the isolated home; the real client never ran."
         },
         "invocation": {
           "result": "executed",
@@ -482,15 +320,15 @@ entrypoints is blocked in advance.
               "exit_status": 2
             }
           ],
-          "evidence": "Ran 5 commands; exit status 2, 2, 2, 2, 2. The target scripts did not exist at the client extension path because placement did not run."
+          "evidence": "exit 2: the extension path was never placed, so the interpreter could not open the entrypoint scripts."
         }
       },
-      "status": "works-through-an-adapter",
-      "reason": "The client could not be executed under an isolated home because its launcher wrapper relies on user-home state; installing catalog sources requires an adapter/marketplace source in Claude format."
+      "status": "failed",
+      "reason": "Every stage exited 127: the isolated home's preserved Qwen wrapper was missing or not executable, so the real client never ran; invocation then could not open the extension path placement never produced (exit 2). This is an environment condition, not a package result, and the client was not actually exercised."
     },
     {
       "name": "Grok",
-      "version": "1.0.5",
+      "version": "1.0.13",
       "stages": {
         "placement": {
           "result": "executed",
@@ -501,7 +339,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command; exit status 0. Installed 1 plugin from local path: mission-control."
+          "evidence": "exit 0: Installed 1 plugin(s): mission-control."
         },
         "discovery": {
           "result": "executed",
@@ -512,7 +350,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command; exit status 0. Enumerated package-e20b77f6: mission-control from local path."
+          "evidence": "exit 0: plugin list resolves the install id with kind local."
         },
         "load": {
           "result": "executed",
@@ -523,7 +361,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command; exit status 0. Details resolved mission-control v2.12.2 and parsed description, reporting 1 skill dir."
+          "evidence": "exit 0: plugin details reports mission-control v2.15.2."
         },
         "invocation": {
           "result": "blocked",
@@ -532,11 +370,11 @@ entrypoints is blocked in advance.
         }
       },
       "status": "works-through-an-adapter",
-      "reason": "Installed, listed, and loaded the portable package root via grok plugin, but invocation remains blocked because the client does not expose a resolved path for package-root scripts."
+      "reason": "Placed the package as a local plugin (install --trust, exit 0); plugin list resolves the install id and plugin details reports mission-control v2.15.2 with kind local. Invocation is blocked: the resolved plugin id is internal to the install and no earlier stage resolved it to a path the harness may invoke."
     },
     {
       "name": "OpenCode",
-      "version": "1.18.18",
+      "version": "1.18.25",
       "stages": {
         "placement": {
           "result": "executed",
@@ -571,7 +409,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 7 commands; exit status 0, 0, 0, 0, 0, 0, 0. Placed all seven portable skill directories into ~/.agents/skills/."
+          "evidence": "All seven skill directories copied to the skills scope, exit 0 each."
         },
         "discovery": {
           "result": "executed",
@@ -582,7 +420,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command; exit status 0. Enumerated all seven placed skills by name and location."
+          "evidence": "exit 0: debug skill enumerates all seven placed skills."
         },
         "load": {
           "result": "executed",
@@ -593,7 +431,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command; exit status 0. Parsed and returned full skill bodies for all seven skills without diagnostics."
+          "evidence": "exit 0: debug skill enumerates all seven placed skills."
         },
         "invocation": {
           "result": "blocked",
@@ -601,11 +439,11 @@ entrypoints is blocked in advance.
         }
       },
       "status": "works-through-an-adapter",
-      "reason": "Consumed all seven portable skill units directly from its auto-load path, but declared package entrypoints sit outside individual skill directories and require a package adapter for execution."
+      "reason": "All seven skill directories were placed under the skills scope (exit 0 each) and `debug skill` enumerates all seven. Invocation is blocked in advance: OpenCode installs skill units rather than the package, so declared entrypoints outside every declared skill unit have no client-resolved path."
     },
     {
       "name": "Gemini CLI",
-      "version": "0.44.1",
+      "version": "0.57.0",
       "stages": {
         "placement": {
           "result": "executed",
@@ -640,7 +478,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 7 commands; exit status 0, 0, 0, 0, 0, 0, 0. Linked all seven portable skill units into ~/.gemini/skills/ with stdin confirmation."
+          "evidence": "Each skills link exited 0 after its interactive prompt was answered; seven skills linked."
         },
         "discovery": {
           "result": "executed",
@@ -651,7 +489,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command; exit status 0. Listed all seven skills as Enabled with frontmatter descriptions and linked paths."
+          "evidence": "exit 0: all seven discovered enabled."
         },
         "load": {
           "result": "executed",
@@ -662,7 +500,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command; exit status 0. Resolved frontmatter definitions for all seven skills without diagnostics."
+          "evidence": "exit 0: all seven discovered enabled."
         },
         "invocation": {
           "result": "blocked",
@@ -670,11 +508,11 @@ entrypoints is blocked in advance.
         }
       },
       "status": "works-through-an-adapter",
-      "reason": "Linked, discovered, and loaded all seven portable skill units, but package-root entrypoints sit outside individual skill directories and require a Gemini extension adapter to deliver."
+      "reason": "All seven skills were linked (each `skills link` exited 0 after its interactive prompt was answered) and `skills list --all` discovers them enabled. Invocation is blocked in advance: Gemini installs skill units rather than the package."
     },
     {
       "name": "Muse",
-      "version": "0.2.1",
+      "version": "1.0.1",
       "stages": {
         "placement": {
           "result": "executed",
@@ -709,7 +547,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 7 commands; exit status 0, 0, 0, 0, 0, 0, 0. Installed all seven portable skill units individually at user scope."
+          "evidence": "All seven installed to user scope, exit 0 each."
         },
         "discovery": {
           "result": "executed",
@@ -720,7 +558,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command; exit status 0. Listed all seven skills at user scope with active status."
+          "evidence": "exit 0: skills list --source user shows all seven with activation on."
         },
         "load": {
           "result": "executed",
@@ -755,7 +593,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 7 commands; exit status 0, 0, 0, 0, 0, 0, 0. Reported verified content digests for all seven skill units (board sha256:d8c00539..., flow sha256:22a466ba..., issues sha256:c3c0acdb..., labels sha256:1a930241..., metrics sha256:bf9a5ea0..., milestones sha256:eaa00d82..., rollout sha256:3aeaf9a8...)."
+          "evidence": "exit 0: --force --json reinstall reports each installed id."
         },
         "invocation": {
           "result": "blocked",
@@ -763,11 +601,11 @@ entrypoints is blocked in advance.
         }
       },
       "status": "works-through-an-adapter",
-      "reason": "Installed, listed, and loaded all seven portable skill units with verified content digests, but package-root entrypoints cannot be installed or resolved without a package adapter."
+      "reason": "All seven skills were installed to user scope and listed with activation on; the --force --json reinstall resolves each installed id at exit 0. Invocation is blocked in advance: Muse installs skill units rather than the package."
     },
     {
       "name": "Agy",
-      "version": "1.1.20",
+      "version": "1.1.22",
       "stages": {
         "placement": {
           "result": "executed",
@@ -778,7 +616,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command; exit status 0. Installed mission-control plugin and processed all seven skills under client plugins directory."
+          "evidence": "exit 0: 7 skills processed."
         },
         "discovery": {
           "result": "executed",
@@ -789,7 +627,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command; exit status 0. Listed imported plugin mission-control with skills component."
+          "evidence": "exit 0: plugin list imports mission-control."
         },
         "load": {
           "result": "executed",
@@ -800,7 +638,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command; exit status 0. Validated client-installed copy with 7 skills processed and zero errors."
+          "evidence": "exit 0: validate resolves the plugin directory."
         },
         "invocation": {
           "result": "executed",
@@ -827,15 +665,15 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 5 commands; exit status 0, 0, 0, 0, 0. All five entrypoint scripts returned exit status 0 and usage text under Python 3.12 from the client-owned installed copy."
+          "evidence": "All five entrypoints executed --help at exit 0 from the client-resolved install path on python3.12."
         }
       },
       "status": "works-directly",
-      "reason": "Validated, installed, and loaded the portable package root as shipped with all seven skills, and cleanly executed all five entrypoint scripts from the client-installed path."
+      "reason": "Plugin install processed all seven skills (exit 0), plugin list imports mission-control, and validate resolves the plugin directory cleanly. All five entrypoints executed --help at exit 0 from the client-resolved install path on the floor interpreter. The auto-trust wrapper emitted its unreadable-settings warning under the isolated home; the real binary was supplied, so the run is real."
     },
     {
       "name": "Hermes",
-      "version": "0.20.5",
+      "version": "0.20.6",
       "stages": {
         "placement": {
           "result": "executed",
@@ -870,7 +708,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 7 commands; exit status 0, 0, 0, 0, 0, 0, 0. Placed all seven skill directories into profile skills directory."
+          "evidence": "All seven skill directories placed into profile scope, exit 0 each."
         },
         "discovery": {
           "result": "executed",
@@ -881,7 +719,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command; exit status 0. Listed 7 local skills enabled (0 hub-installed, 0 builtin, 7 local)."
+          "evidence": "exit 0: skills list shows the seven installed skills."
         },
         "load": {
           "result": "executed",
@@ -892,7 +730,7 @@ entrypoints is blocked in advance.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command; exit status 0. Resolved all seven skills into the composed prompt skills index (639 chars) with per-skill breakdown."
+          "evidence": "exit 0: prompt-size --json resolves the skills into the composed prompt with a skills index."
         },
         "invocation": {
           "result": "blocked",
@@ -900,7 +738,7 @@ entrypoints is blocked in advance.
         }
       },
       "status": "works-through-an-adapter",
-      "reason": "Placed, discovered, and loaded all seven portable skill units into profile scope and composed prompt index, but package-root entrypoints require an adapter to execute."
+      "reason": "All seven skill directories were placed into profile scope (exit 0 each); `skills list` discovers them and `prompt-size --json` resolves them into the composed prompt with a skills index. Invocation of package-root entrypoints is blocked in advance."
     }
   ]
 }
