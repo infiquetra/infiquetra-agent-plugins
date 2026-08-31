@@ -1471,6 +1471,48 @@ class MissionControlShippedTests(unittest.TestCase):
         self.assertTrue(relocated.is_file())
         self.assertFalse((self.package / ".claude-plugin").exists())
 
+    def test_mission_control_skills_matches_the_shipped_roster(self) -> None:
+        """U4c roster confirmation, re-derived against the shipped tree rather
+        than copied forward: a removed skill would fail the frontmatter checks
+        above, but an added skill would silently go unchecked, so the tuple and
+        the shipped directories must be the same set in both directions."""
+        skill_dirs = sorted(
+            path.name
+            for path in (self.package / "skills").iterdir()
+            if path.is_dir()
+        )
+        self.assertEqual(sorted(MISSION_CONTROL_SKILLS), skill_dirs)
+        for skill in skill_dirs:
+            with self.subTest(skill=skill):
+                self.assertTrue(
+                    (self.package / "skills" / skill / "SKILL.md").is_file(),
+                    f"skill roster entry {skill} carries no SKILL.md",
+                )
+
+    def test_pyyaml_stays_required_at_module_scope(self) -> None:
+        """U4c PyYAML confirmation on the resynchronized package. Upstream
+        filing #828 deferred only sdlc_manager.py's import into a function;
+        these two module-scope imports still make PyYAML genuinely required,
+        so the CI install line must keep it — dropping it would break the
+        package suite in continuous integration while passing locally. The
+        assertion is anchored on the module-scope pattern, never a line
+        number, because line numbers may move at the next pin."""
+        module_scope_import = re.compile(r"^import yaml$", re.MULTILINE)
+        for relative in (
+            "scripts/sync_template_docs.py",
+            "tests/test_template_sync.py",
+        ):
+            with self.subTest(file=relative):
+                body = (self.package / relative).read_text(encoding="utf-8")
+                self.assertRegex(
+                    body,
+                    module_scope_import,
+                    f"{relative} no longer imports yaml at module scope; "
+                    "re-read upstream filing #828 before touching the CI install line",
+                )
+        ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        self.assertIn("pyyaml", ci, "the CI install line dropped pyyaml")
+
 
 # --- parser-to-parser command surface ------------------------------------------
 
