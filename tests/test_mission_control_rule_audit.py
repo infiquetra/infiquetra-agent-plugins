@@ -672,19 +672,33 @@ class TemplateSyncAuditTests(unittest.TestCase):
         self.assertTrue(sync_template_docs.check_reference())
 
     def test_template_sync_fails_on_drift(self) -> None:
-        """Proving failure capability: drifted reference file fails check_reference."""
+        """Proving failure capability: drifted reference file fails check_reference.
+
+        The injection happens in a temporary copy and the module constant is
+        redirected for the test's duration, so the drift marker never touches
+        the tracked file inside the fingerprinted package tree."""
         tmpl_dir = sync_template_docs.template_directory()
         if not tmpl_dir.exists():
             self.skipTest(f"infiquetra-sdlc templates not found at {tmpl_dir}; skipping drift check")
 
-        ref_path = sync_template_docs.REFERENCE_PATH
-        original = ref_path.read_text(encoding="utf-8")
-        try:
-            ref_path.write_text(original + "\n## Drift Injected Section\n", encoding="utf-8")
-            self.assertFalse(sync_template_docs.check_reference(), "check_reference() did not catch injected drift")
-        finally:
-            ref_path.write_text(original, encoding="utf-8")
-        self.assertTrue(sync_template_docs.check_reference())
+        real_path = sync_template_docs.REFERENCE_PATH
+        original = real_path.read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_copy = Path(tmp) / "templates-reference.md"
+            tmp_copy.write_text(original, encoding="utf-8")
+            with patch.object(sync_template_docs, "REFERENCE_PATH", tmp_copy):
+                tmp_copy.write_text(original + "\n## Drift Injected Section\n", encoding="utf-8")
+                self.assertFalse(
+                    sync_template_docs.check_reference(),
+                    "check_reference() did not catch injected drift",
+                )
+                tmp_copy.write_text(original, encoding="utf-8")
+                self.assertTrue(sync_template_docs.check_reference())
+        self.assertNotIn(
+            "Drift Injected Section",
+            real_path.read_text(encoding="utf-8"),
+            "the drift marker leaked into the tracked reference file",
+        )
 
 
 # ─── 6. Create-Option No-Write Guard (operator ruling 4) ─────────────────────
@@ -722,6 +736,7 @@ class CreateOptionNoWriteGuardTests(unittest.TestCase):
             patch.object(sdlc_manager, "get_project_config", return_value=project),
             patch.object(sdlc_manager, "get_project_fields", return_value=("PVT_asgard", [field])),
             patch.object(sdlc_manager, "_graphql") as mock_graphql,
+            patch.object(sdlc_manager, "_gh") as mock_gh,
         ):
             sdlc_manager.fields_create_option("asgard", "Status", "Idea", "json")
         self.assertEqual(
@@ -734,6 +749,11 @@ class CreateOptionNoWriteGuardTests(unittest.TestCase):
             mock_graphql.call_count,
             0,
             "fields create-option issued a GraphQL call on the discover-and-print path",
+        )
+        self.assertEqual(
+            mock_gh.call_count,
+            0,
+            "fields create-option reached the subprocess door (a live gh call would be a write)",
         )
 
     def test_create_option_still_prints_when_the_field_is_absent(self) -> None:
@@ -749,11 +769,13 @@ class CreateOptionNoWriteGuardTests(unittest.TestCase):
             patch.object(sdlc_manager, "get_project_config", return_value=project),
             patch.object(sdlc_manager, "get_project_fields", return_value=("PVT_asgard", [])),
             patch.object(sdlc_manager, "_graphql") as mock_graphql,
+            patch.object(sdlc_manager, "_gh") as mock_gh,
         ):
             with self.assertRaises(SystemExit):
                 sdlc_manager.fields_create_option("asgard", "Status", "Idea", "json")
         self.assertEqual(self._mutation_calls(mock_graphql), [])
         self.assertEqual(mock_graphql.call_count, 0)
+        self.assertEqual(mock_gh.call_count, 0)
 
 
 # ─── 7. Manifest-Version Derivation (KTD5) ───────────────────────────────────
@@ -826,17 +848,28 @@ class RootReadmePinTests(unittest.TestCase):
         )
 
     def test_the_test_file_count_is_recomputed_from_disk(self) -> None:
+        """The README claim is parsed and compared, not searched for a
+        rendering of the count: an out-of-table count fails explicitly instead
+        of falling back to a substring that unrelated text could satisfy."""
         test_files = sorted((PACKAGE / "tests").glob("*.py"))
         number_word = {
             27: "Twenty-seven",
             28: "Twenty-eight",
             29: "Twenty-nine",
         }
-        word = number_word.get(len(test_files), str(len(test_files)))
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn(
-            word,
-            readme,
+            len(test_files),
+            number_word,
+            "the package test-file count moved outside the word table; extend number_word "
+            "deliberately rather than letting the guard fall back to a substring search",
+        )
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        claim = re.search(r"(\S+) test files \((\d+) tests\)", readme)
+        self.assertIsNotNone(claim, "the root README's test-file sentence is missing")
+        assert claim is not None
+        self.assertEqual(
+            claim.group(1),
+            number_word[len(test_files)],
             "the root README's test-file count was retyped and went stale; "
             "recompute it from disk",
         )
@@ -844,6 +877,10 @@ class RootReadmePinTests(unittest.TestCase):
     def test_the_test_count_is_recomputed_by_collection(self) -> None:
         import subprocess
 
+        try:
+            import pytest  # noqa: F401
+        except ModuleNotFoundError as exc:  # pragma: no cover - hermetic baseline has no pytest
+            self.skipTest(f"pytest not installed in this interpreter: {exc}")
         collected = subprocess.run(
             [
                 sys.executable,
@@ -855,17 +892,24 @@ class RootReadmePinTests(unittest.TestCase):
             ],
             capture_output=True,
             text=True,
-            check=True,
             cwd=ROOT,
+        )
+        self.assertEqual(
+            collected.returncode,
+            0,
+            f"pytest --collect-only failed:\nstdout:\n{collected.stdout}\nstderr:\n{collected.stderr}",
         )
         match = re.search(r"(\d+) tests collected", collected.stdout)
         self.assertIsNotNone(match, collected.stdout)
         assert match is not None
         test_count = int(match.group(1))
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn(
-            f"{test_count} ported tests",
-            readme,
+        claim = re.search(r"(\S+) test files \((\d+) tests\)", readme)
+        self.assertIsNotNone(claim, "the root README's test-file sentence is missing")
+        assert claim is not None
+        self.assertEqual(
+            int(claim.group(2)),
+            test_count,
             "the root README's ported-test count was retyped and went stale; "
             "recompute it by collection",
         )

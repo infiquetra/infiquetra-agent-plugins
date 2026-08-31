@@ -574,6 +574,50 @@ class CommittedDescriptorTest(unittest.TestCase):
                     )
                     self.assertIn(rule, svs.TRANSFORM_RULES)
 
+    def test_the_marker_rules_site_table_joins_every_descriptor_selection(self) -> None:
+        """F20: `PACKAGE_ROOT_MARKER_SITE_COUNTS` is a second, per-file custody
+        table compiled into the shared script, so the descriptor paths that
+        select the rule and the table's keys are joined in both directions and
+        every row states all four site classes — the same gate the rule-name
+        registry already gets. The table keys are mission-control's
+        package-relative paths, so a package that selects the rule anywhere
+        must declare exactly the table, and mission-control must declare it."""
+        for config in port_config.load_all(ROOT):
+            declared = {
+                path
+                for path in config.custody.entrypoint_transforms
+                if config.custody.entrypoint_rules.get(path)
+                == svs.PACKAGE_ROOT_MARKER_TRANSFORM_NAME
+            }
+            if declared:
+                with self.subTest(package=config.name):
+                    self.assertEqual(
+                        declared,
+                        set(svs.PACKAGE_ROOT_MARKER_SITE_COUNTS),
+                        "a descriptor path selects resolve-package-root-marker without "
+                        "a matching site-count row, or the table names a path no "
+                        "descriptor selects",
+                    )
+        mission_control = next(
+            config for config in port_config.load_all(ROOT) if config.name == "mission-control"
+        )
+        declared_mission_control = {
+            path
+            for path in mission_control.custody.entrypoint_transforms
+            if mission_control.custody.entrypoint_rules.get(path)
+            == svs.PACKAGE_ROOT_MARKER_TRANSFORM_NAME
+        }
+        self.assertEqual(
+            declared_mission_control, set(svs.PACKAGE_ROOT_MARKER_SITE_COUNTS)
+        )
+        for path, row in svs.PACKAGE_ROOT_MARKER_SITE_COUNTS.items():
+            with self.subTest(path=path):
+                self.assertEqual(
+                    set(row),
+                    {"finder", "call", "is_file", "raises"},
+                    f"{path} declares an incomplete site-count row",
+                )
+
     def test_the_provenance_notes_name_the_real_bundle_directory(self) -> None:
         """The note is prose in a data file, so its one live reference is checked.
 
