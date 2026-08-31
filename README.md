@@ -74,7 +74,13 @@ and committed evidence:
   (`scripts/sdlc_manager.py`), board census, pagination, template sync, and
   executor profile lint entrypoints. Twenty-eight test files (391 tests) live
   inside the package under [`plugins/mission-control/tests/`](plugins/mission-control/tests/)
-  under provenance custody and run in CI on `python>=3.12`. The validation rule
+  under provenance custody and run in CI on `python>=3.12`. One degradation is
+  stated rather than hidden: the label catalog (`labels.json`) is a
+  remote-only input from a private repository, and when its read degrades to
+  an empty catalog, `rollout gap-analysis` can print "All labels present"
+  against a repository carrying zero SDLC labels — the refusal for an empty
+  catalog is filed upstream (QUEUED filing 8) and tracked there. The
+  validation rule
   audit ([`docs/plans/2026-08-24-mission-control-port-u7-phase2-rule-audit.md`](docs/plans/2026-08-24-mission-control-port-u7-phase2-rule-audit.md),
   [`tests/test_mission_control_rule_audit.py`](tests/test_mission_control_rule_audit.py))
   audits validation rules class-first against live authority.

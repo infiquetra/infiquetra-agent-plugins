@@ -1,6 +1,6 @@
 <!-- matrix-status: superseded -->
 <!-- superseded-by: 2026-08-30-mission-control-post-activation-readback.md -->
-<!-- superseded-reason: This readback binds the package at tree 1f49322e..., 71 files. When the F18/F11/F35 provenance and README corrections landed, the package moved to tree 659f91f6..., so the recorded readbacks describe installed copies that no longer exist. The successor was captured against the corrected package on 2026-08-30 and is current. -->
+<!-- superseded-reason: This readback binds the package at tree 1f49322e..., 71 files. When the F18/F11/F35 provenance and README corrections landed, the package moved to tree 659f91f6..., so the recorded readbacks describe installed copies that no longer exist. The successor was captured against the corrected package on 2026-08-30; that second generation was itself retired when the beads-config disclosure correction moved the tree again, and the current successor was captured on 2026-08-31 against tree 5fc16652…. -->
 
 > **Superseded - historical evidence. Do not read this as the current
 > post-activation readback.**

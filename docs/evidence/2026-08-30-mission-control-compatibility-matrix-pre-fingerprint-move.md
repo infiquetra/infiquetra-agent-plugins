@@ -1,6 +1,6 @@
 <!-- matrix-status: superseded -->
 <!-- superseded-by: 2026-08-30-mission-control-compatibility-matrix.md -->
-<!-- superseded-reason: This matrix binds the package at tree 1f49322e..., 71 files. When the F18/F11/F35 provenance and README corrections landed, the package moved to tree 659f91f6..., so this record no longer identifies the tree it claims to describe. The successor re-assessed the corrected package on 2026-08-30 and is current. The assessment itself made no GitHub API call and ran each entrypoint's credential-free --help, and that statement remains true of the assessment and is carried forward into the successor. -->
+<!-- superseded-reason: This matrix binds the package at tree 1f49322e..., 71 files. When the F18/F11/F35 provenance and README corrections landed, the package moved to tree 659f91f6..., so this record no longer identifies the tree it claims to describe. The successor re-assessed the corrected package on 2026-08-30; that second generation was itself retired when the beads-config disclosure correction moved the tree again, and the current successor re-assessed the package on 2026-08-31 against tree 5fc16652…. The assessment itself made no GitHub API call and ran each entrypoint's credential-free --help, and that statement remains true of the assessment and is carried forward into the successor. -->
 
 > **Superseded - historical evidence. Do not read this as the current
 > compatibility record.**
@@ -12,7 +12,7 @@
 >
 > **What superseded it:**
 > [`2026-08-30-mission-control-compatibility-matrix.md`](2026-08-30-mission-control-compatibility-matrix.md),
-> the re-assessment against the corrected package at tree `659f91f6…`.
+> the re-assessment chain: the second generation bound tree `659f91f6…` and was itself retired by the beads-config correction; the current record binds tree `5fc16652…`.
 
 # Ten-client compatibility matrix — portable mission-control package (2.15.2)
 

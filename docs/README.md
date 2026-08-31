@@ -51,7 +51,11 @@
   portable mission-control package across four stages with fingerprint-bound
   verification, with post-activation readback in
   [evidence/2026-08-30-mission-control-post-activation-readback.md](evidence/2026-08-30-mission-control-post-activation-readback.md).
-  The 2026-08-25 predecessor is superseded and kept as history.
+  The plain filename always holds the current document; three retired
+  generations are kept as history under descriptive suffixes — the
+  2026-08-25 pair (tree `651ac28a…`), the `-pre-fingerprint-move` pair (tree
+  `1f49322e…`), and the `-pre-beads-config-ladder` pair (tree `659f91f6…`) —
+  while the current pair binds tree `5fc16652…`.
 - [UniFi ten-client compatibility matrix](evidence/2026-08-22-unifi-compatibility-matrix.md)
   records what every installed coding-agent client did with the portable UniFi
   package, across four stages each, with the command and evidence behind every

@@ -561,7 +561,7 @@ issue #54, operator ruling 4.
 
 **Superseded-run note.** This entry describes the FIRST 2026-08-30 assessment,
 against tree `1f49322e…`. That tree was later retired by the F18/F11/F35
-corrections, and the assessment was re-run against the second tree — see the
+corrections, and the assessment was re-run against tree `659f91f6…` — see the
 second-run entry immediately below. The entry is kept as the record of the
 first run; its Qwen-failed outcome describes that run only, and its evidence
 filenames were renamed when the repository's naming convention (plain name =
@@ -615,7 +615,7 @@ which point these bindings fire red until the evidence is re-run.
 **Author.** Claude for Jeff Cox (repair round 2 of issue #50, child #56, branch `orch-agent-plugins-50`)
 
 **Decision.** When the F18/F11/F35 provenance and README corrections landed at
-`a1e84e0`, the package moved from tree `1f49322e…` to a second tree, and
+`a1e84e0`, the package moved from tree `1f49322e…` to tree `659f91f6…`, and
 the first 2026-08-30 evidence pair stopped describing the shipped bytes. That
 tree was itself retired one round later by the F71 beads-config disclosure
 correction (`143a71b`), which moved the package to `5fc16652…` — see the
@@ -656,6 +656,33 @@ path applies, and the assessment must precede the stamping.
 [`the second-run readback, superseded by the third run`](../evidence/2026-08-30-mission-control-post-activation-readback-pre-beads-config-ladder.md),
 `tests/test_check_compatibility_matrix.py`, issue #56, operator ruling 3.
 
+### The transform planner dispatches descriptor-level refusals through a precondition slot, not a hard-coded rule identity
+
+**Author.** Claude for Jeff Cox (repair round 3 of issue #50, branch `orch-agent-plugins-50`)
+
+**Decision.** `TransformRule` carries an optional `precondition` callable, and
+`plan_sync` runs it before dispatching any path to the rule, so a rule whose
+output depends on a descriptor value can refuse the synchronization at plan
+time without widening the `apply` signature every rule shares.
+`resolve-package-root-marker` attaches the marker-directory check through the
+slot; the planner's loop no longer names any rule's identity.
+
+**Rationale.** The previous shape tested `rule is PACKAGE_ROOT_MARKER_RULE`
+inside the generic loop, compiling one rule's identity into the planner; the
+slot keeps the loop dispatching on the abstraction and keeps the check beside
+the rule it guards, in the same module.
+
+**Rejected alternatives.** A per-rule subclass of `TransformRule` — more
+machinery for one optional behaviour; a second dispatch table keyed by rule
+name — reintroduces the hard-coded identity in another shape.
+
+**Revisit when** a second rule needs a descriptor-level precondition, at which
+point the slot is the established pattern.
+
+**Refs.** `scripts/sync_vendor_source.py` (`TransformRule`,
+`_package_root_marker_precondition`, `plan_sync`),
+`tests/test_port_config.py` (`test_the_marker_precondition_refuses_a_mismatched_client_extension_dir`).
+
 ### Mission Control 2.15.2 resync U5 third run: the beads-config disclosure correction moved the fingerprint again, and the evidence was re-run again
 
 **Author.** Claude for Jeff Cox (repair round 3 of issue #50, child #56, branch `orch-agent-plugins-50`)
@@ -665,7 +692,7 @@ absent `beads-config.json` was handled locally when the loader in fact first
 attempts a live `gh api` read of it from `infiquetra-sdlc` (and degrades to
 `{}` only when that read fails or returns nothing). The README is
 target-owned — this repository's own text — so the correction was authored
-here at `143a71b`, moving the package from the second tree to tree
+here at `143a71b`, moving the package from tree `659f91f6…` to tree
 `5fc16652…` and retiring the second evidence pair. Per the now twice-applied
 batch-and-rerun path, the assessment was re-run (run-003, 2026-08-31,
 assessed_on stated in the body while the filename prefix keeps the

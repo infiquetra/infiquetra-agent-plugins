@@ -2,8 +2,6 @@
 <!-- superseded-by: 2026-08-30-mission-control-post-activation-readback.md -->
 <!-- superseded-reason: This readback binds the package at tree 659f91f6..., 71 files. When the portable README was corrected to state that an absent beads-config.json triggers a live gh api read before degrading to {}, the package moved to tree 5fc16652..., so the recorded readbacks describe installed copies that no longer exist. The successor was captured against the corrected package on 2026-08-31 and is current. -->
 
-# Post-activation readback — portable mission-control package 2.15.2
-
 > **Superseded - historical evidence. Do not read this as the current
 > post-activation readback.**
 >
@@ -13,6 +11,9 @@
 >
 > **What superseded it:**
 > [`2026-08-30-mission-control-post-activation-readback.md`](2026-08-30-mission-control-post-activation-readback.md).
+
+# Post-activation readback — portable mission-control package 2.15.2
+
 
 The `mission-control` package in this repository, `plugins/mission-control/`, is a
 portable derived copy of an upstream Claude Code plugin synchronized from

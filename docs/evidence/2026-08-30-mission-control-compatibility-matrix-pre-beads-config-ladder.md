@@ -2,8 +2,6 @@
 <!-- superseded-by: 2026-08-30-mission-control-compatibility-matrix.md -->
 <!-- superseded-reason: This matrix binds the package at tree 659f91f6..., 71 files. When the portable README was corrected to state that an absent beads-config.json triggers a live gh api read before degrading to {}, the package moved to tree 5fc16652..., so this record no longer identifies the tree it claims to describe. The successor re-assessed the corrected package on 2026-08-31 and is current. -->
 
-# Ten-client compatibility matrix — portable mission-control package (2.15.2)
-
 > **Superseded - historical evidence. Do not read this as the current
 > compatibility record.**
 >
@@ -14,6 +12,9 @@
 >
 > **What superseded it:**
 > [`2026-08-30-mission-control-compatibility-matrix.md`](2026-08-30-mission-control-compatibility-matrix.md),
+
+# Ten-client compatibility matrix — portable mission-control package (2.15.2)
+
 > the re-assessment against the corrected package at tree `5fc16652…`.
 
 This repository holds the portable source catalog for Infiquetra Agent Skills

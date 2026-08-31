@@ -13,8 +13,11 @@ worked example of the policy; nothing in it remains open.
 ## Upstream filings raised by the integrated code review of the 2.15.2 resync
 
 The integrated review (cycle 1, reviewed revision `853411d`) attributed seven
-defects to upstream bytes this repository may not patch. Each reaches the
-portable catalog only through a future repin, per the recorded resync policy:
+defects to upstream bytes this repository may not patch. Six of the seven are
+upstream-owned outright and reach the portable catalog only through a future
+repin, per the recorded resync policy; item 7 is split, and its downstream
+half is gated only on accepting a fingerprint move (the six sibling skills'
+path rewrite is a downstream transform over already-transformed bytes):
 
 1. **Schema-resolution ladder puts the network first.** `sdlc_manager.py`
    `_resolve_sdlc_schema` resolves `sdlc-schema.json` as GitHub main →
@@ -44,7 +47,8 @@ portable catalog only through a future repin, per the recorded resync policy:
 3. **`--format json` silently ignored by twelve subcommands.** Ten handlers
    take the `fmt` parameter and never reference it, and two more — `fields
    set-options` (dispatched without a fmt argument) and
-   `issue render-intent-envelope` (prints markdown unconditionally) — accept
+   `issue intent-envelope` (renderer `issue_render_intent_envelope`, which
+   prints markdown unconditionally) — accept
    the top-level `--format` without honouring it, so an agent's `json.loads`
    raises with no hint the flag was unsupported. File the parser-level
    refusal first — reject json/markdown for subcommands that cannot honour
@@ -73,6 +77,14 @@ portable catalog only through a future repin, per the recorded resync policy:
    downstream transform (a portable-path rewrite of the fenced script path),
    never to a filing against upstream, whose layout that path correctly
    describes.
+8. **Degraded label catalog makes gap-analysis report false compliance (F72).**
+   `rollout gap-analysis` prints "All labels present" against a repository
+   carrying zero SDLC labels whenever the label catalog degrades to `{}`
+   (`labels.json` is a remote-only input from a private repository, and the
+   loader's failure paths leave the key empty). File upstream a refusal: gap-
+   analysis and the labels audit must refuse an empty catalog, matching the
+   guard `_validate_label_taxonomy` already carries. This file is a
+   deterministic-transform output, so the runbook forbids repairing it here.
 
 No client-specific remediation follows from any of these.
 
@@ -224,14 +236,16 @@ marketplace or catalog, which is a different surface and was never assessed for 
 For Qwen specifically, the two are distinct commands. `qwen extensions install <path>` takes
 a package and is what the matrix exercises. `qwen extensions sources add <source>` is the
 catalog command, and its own help declares it "Adds a marketplace source (Claude format)".
-This repository has no `.claude-plugin/marketplace.json` and no marketplace manifest anywhere
-at root level, so it cannot be registered that way today. The related
+The repository does ship a Claude marketplace manifest (`.claude-plugin/marketplace.json`,
+carrying the voice package), but catalog registration of this repository has never been
+assessed for any client — the matrix records only package-scoped commands, and whether the
+shipped manifest registers cleanly per client remains open. The related
 `marketplace-url:plugin-name` form of `extensions install` presupposes a registered source
-and is closed for the same reason.
+and is likewise unassessed.
 
-The gap is at the manifest, not at the client. Nothing published claims otherwise: the
-matrix records only package-scoped commands for every client, and its scope section now says
-in as many words that catalog registration was not assessed.
+What remains open is the assessment, not a missing manifest. Nothing published claims
+otherwise: the matrix's scope section says in as many words that catalog registration was
+not assessed.
 
 **Guardrail.** No manifest may be written and no distribution scope may be widened without a
 separate operator decision. This entry records a gap; it does not authorize closing it.

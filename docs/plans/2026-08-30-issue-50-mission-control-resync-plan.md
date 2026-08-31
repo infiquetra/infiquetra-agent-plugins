@@ -396,7 +396,7 @@ owned by exactly one unit.
 | R30 | U5 | A fresh ten-client, forty-stage assessment ran against the frozen package | the assessment record produced by `scripts/assess_clients.py --execute` |
 | R31 | U5 | The new compatibility matrix validates | `python3 scripts/check_compatibility_matrix.py docs/evidence/<new-matrix>.md` prints `Compatibility matrix validation passed.` |
 | R32 | U5 | The new readback records the release block, all seven per-skill-unit fingerprints, and every client readback | the readback binding test |
-| R33 | U5 | All four superseded mission-control documents — the 2026-08-25 pair and the 2026-08-30 `-pre-fingerprint-move` pair — carry `matrix-status: superseded`, a `superseded-by` naming a successor that exists and is itself current, and a `superseded-reason` | the superseded-document test class in `tests/test_check_compatibility_matrix.py` (the chain); the checker accepts the matrix's directives but is not a readback validator, so the readback half is test-bound only |
+| R33 | U5 | All six superseded mission-control documents — the 2026-08-25 pair, the 2026-08-30 `-pre-fingerprint-move` pair, and the 2026-08-30 `-pre-beads-config-ladder` pair — carry `matrix-status: superseded`, a `superseded-by` naming a successor that exists and is itself current, and a `superseded-reason` | the superseded-document test class in `tests/test_check_compatibility_matrix.py` (the chain); the checker accepts the matrix's directives but is not a readback validator, so the readback half is test-bound only |
 | R34 | U5 | New binding classes in `tests/test_check_compatibility_matrix.py` fail if either replacement's recorded fingerprint stops matching the live package | a deliberate local mutation that makes them red, then reverted, with the transcript captured |
 | R35 | U5 | No graded file changed | `git diff --name-only <base>..HEAD -- scripts/port_config.py scripts/check_repo.py scripts/check_compatibility_matrix.py scripts/assess_clients.py plugins/unifi/scripts/site_profile.py \| wc -l` prints `0` (the five cycle-16 graded files by name; KTD14 legitimately edits `scripts/sync_vendor_source.py`, which is not graded) |
 | R36 | all | The four mandated gates are green at each unit's frozen commit, plus the floor-interpreter package run | §2.6 |
@@ -887,10 +887,10 @@ commits may be red.
 | 13 | **U3b** | U3 | root `README.md` pin, version and counts, plus its pin test | **green — U3 completes, #54 met** |
 | 14 | **U4c** | U4 | skill-roster and PyYAML confirmations, and the recorded four-gate transcript | **green — U4 completes, #55 met** |
 
-Commits 4, 11 and 12 are real deliverables of their own issues, not bookkeeping.
+Commits 6, 13 and 14 are real deliverables of their own issues, not bookkeeping.
 The registry-name test is #55's file and #55's `MISSION_CONTROL_SKILLS` confirmation
 sits beside it; the root README's counts can only be finally correct once every unit
-has landed. Commits 10, 11 and 12 touch nothing under `plugins/mission-control/`, so
+has landed. Commits 12, 13 and 14 touch nothing under `plugins/mission-control/`, so
 the freeze holds and U5's single assessment stays valid.
 
 **This is a material deviation from §2.3's "six child-scoped commits, one per
@@ -1098,6 +1098,11 @@ pins           surface           │
           ▼
 U5 (#56)  fresh ten-client assessment, readback, supersession, bindings
 ```
+
+"Nothing may touch `plugins/mission-control/` after the freeze" held as planned
+only until Amendment 6 (§19): the F18/F11/F35 corrections and then the F71
+beads-config disclosure correction moved the tree twice after this point, each
+followed by a fresh assessment and re-binding.
 
 **Why each edge exists.**
 
@@ -1722,7 +1727,7 @@ recurring.
 `plugins/mission-control/` as planned. The package fingerprint is final when it
 lands — except for the one later exception Amendment 6 (§19) records: the
 F18/F11/F35 corrections at `a1e84e0` moved the tree after the freeze, and U5
-was re-run and re-bound at `863af58`, issue #56's frozen commit.**
+was re-run and re-bound at `863af58`; then `143a71b` moved the tree again to `5fc16652…` for the beads-config disclosure correction, and the third assessment was published at `16d8890`, which is issue #56's frozen commit.**
 
 **Base and landing order (KTD10, KTD15, R39, R43).** U3's work begins from the post-U2
 commit and runs concurrently with U4. **U3's commits do not.** U3 rebases onto
@@ -2048,7 +2053,7 @@ recorded. U5 is the run's **real checkpoint**; no synthetic checkpoint precedes 
    - a mission-control **readback**-binding class asserting the `release` block, the
      per-skill-unit fingerprints for all seven skills, `upstream_commit` and
      `version` against `PROVENANCE.json`, and every `readbacks` entry;
-   - a class asserting all four superseded mission-control documents carry a `superseded-by` naming a
+   - a class asserting all six superseded mission-control documents carry a `superseded-by` naming a
      current successor and a `superseded-reason`.
 
    **The two packages' readbacks are not the same shape.** Mission Control's record
@@ -2069,7 +2074,7 @@ recorded. U5 is the run's **real checkpoint**; no synthetic checkpoint precedes 
 
 **Files owned.** `docs/evidence/2026-08-30-mission-control-compatibility-matrix.md`
 (current), `docs/evidence/2026-08-30-mission-control-post-activation-readback.md`
-(current), the four superseded mission-control evidence documents — the
+(current), the six superseded mission-control evidence documents — the
 2026-08-25 pair and the 2026-08-30 `-pre-fingerprint-move` pair (supersession
 directives only — **never** their numbers),
 `tests/test_check_compatibility_matrix.py`,
@@ -2165,7 +2170,7 @@ ordering; graded-file containment; honest failure attribution.
 | 7 | **U2b** bumps `resolve-package-root-marker` to the assertion-covering v2, then runs the synchronization | `--check` round-trips clean; 71 files; `check_repo`, package pytest, floor run, `git diff --check` green. `unittest discover` red on the pin constants and `LiveDocumentTest` — allowed only because #53 has no such criterion |
 | 8 | **U4b** commits the three pin constants and the new rule's focused coverage | `python3 -m unittest tests.test_sync_vendor_source -v` reports `OK`; the pin reds clear. Not U4's completion |
 | 9 | **U3a** commits the package-root edits, the descriptor verb table, the verb constants, and the guard and derivation tests | `tests.test_mission_control_readme -v` and `tests.test_mission_control_rule_audit -v` report `OK`. Not U3's completion |
-| 10 | **Freeze integration** on `orch-agent-plugins-50` | tree clean; fingerprint recorded (§5). The last point at which any byte under `plugins/mission-control/` changes **as planned** — Amendment 6 (§19) records the one later exception: `a1e84e0`, the F18/F11/F35 corrections, moved the tree after this point, U5 was re-run and re-bound at `863af58`, and `863af58` is issue #56's frozen commit |
+| 10 | **Freeze integration** on `orch-agent-plugins-50` | tree clean; fingerprint recorded (§5). The last point at which any byte under `plugins/mission-control/` changes **as planned** — Amendment 6 (§19) records the one later exception: `a1e84e0`, the F18/F11/F35 corrections, moved the tree after this point, U5 was re-run and re-bound at `863af58`; `143a71b` then moved it again to `5fc16652…` for the beads-config disclosure correction, and the third assessment was published at `16d8890`, which is issue #56's frozen commit |
 | 11 | **U5** commits the fresh assessment, evidence, supersession, and bindings | all four gates green plus the floor run, **including `unittest discover` `OK`** — U4b cleared the pin constants and this commit clears `LiveDocumentTest`. Both new documents validate. **U5 completes here, satisfying #56** |
 | 12 | **U3b** commits the root `README.md` pin, version, and counts, and its pin test | all four gates green plus the floor run. **U3 completes here, satisfying #54** |
 | 13 | **U4c** commits the skill-roster and PyYAML confirmations and the recorded gate transcript | all four gates green plus the floor run. **U4 completes here, satisfying #55** |
@@ -2483,7 +2488,7 @@ custody and acceptance are decided per path and per command, never by a count.
 - [ ] `python3 -m pytest plugins/mission-control/tests -q` passes, on the floor interpreter.
 - [ ] `git diff --check` produces no output.
 - [ ] `check_compatibility_matrix.py <new matrix>` prints `Compatibility matrix validation passed.`
-- [ ] All four superseded mission-control documents — the 2026-08-25 pair and the 2026-08-30 `-pre-fingerprint-move` pair — carry `matrix-status: superseded`, a `superseded-by` naming a current successor, and a `superseded-reason`.
+- [ ] All six superseded mission-control documents — the 2026-08-25 pair, the 2026-08-30 `-pre-fingerprint-move` pair, and the 2026-08-30 `-pre-beads-config-ladder` pair — carry `matrix-status: superseded`, a `superseded-by` naming a current successor, and a `superseded-reason`.
 - [ ] No path under `plugins/mission-control/` differs from its upstream source except the recorded transforms, proven by the `--check` round-trip.
 - [ ] No graded file changed; the cycle-16 mutation proof still stands.
 
@@ -2492,7 +2497,7 @@ custody and acceptance are decided per path and per command, never by a count.
 
 ## 13. Doc-review disposition — cycle 1
 
-**Artifact.** `docs/reviews/2026-08-30-issue-50-mission-control-resync-plan-doc-review.md` (cycles 1–2; commits `b4cc17b`, `4d2cbe0`)
+**Artifact.** `docs/reviews/2026-08-30-issue-50-mission-control-resync-plan-doc-review.md` (cycles 1–2; commits `82dcb1c`, `4d2cbe0`)
 · **Bound revision.** `1e4da2be8dd2d1256f1e61765629ecf6a0571de9` · **Verdict.**
 BLOCK · **Cycle.** 1 · **Findings.** P0: 0 · P1: 1 · P2: 0 · P3: 1.
 
@@ -2874,7 +2879,29 @@ corrected the portable README's beads-config disclosure, moving it again to
 anti-pattern — each move was followed by a fresh assessment (run-002 on
 2026-08-30, run-003 on 2026-08-31) and re-binding; the third generation
 (2026-08-31, tree `5fc16652…`) is issue #56's current frozen record. The
-three freeze claims in this plan (§5, U3's section, the §8.1 table) are
+three freeze claims in this plan (the §5 diagram, U3's section, and the §8.1 table) are qualified
 qualified to point at this amendment. The batch-the-repairs rule applies:
 each round's corrections landed together, one assessment re-run, one new
 fingerprint.
+
+---
+
+## 20. Residual ledger at the review cycle cap
+
+The runbook caps review at three rounds. Cycle 3 returned
+`cycle_cap_best_available`; the findings below are left open by the cap, each
+with its reason, and are preserved here rather than repaired:
+
+| Finding | Reason it stays open |
+|---|---|
+| F01 — carried suite reaches GitHub and needs a gh binary | carried upstream bytes; the filing and the three measured grades are recorded in `QUEUED.md` filing 1 |
+| F02 — five agent surfaces instruct creation via a no-op verb | carried upstream bytes; filed in `QUEUED.md` filing 2 |
+| F16 — flow skill examples are not runnable as written | carried transform outputs; split and filed in `QUEUED.md` filing 7 (upstream half), downstream half gated on a fingerprint move |
+| F72 — degraded label catalog makes gap-analysis report false compliance | deterministic-transform output (`sdlc_manager.py`), forbidden to repair here; filed in `QUEUED.md` filing 8 and stated in the root README |
+| F36 — dropped_reason schema change | requires editing `scripts/port_config.py`, a cycle-16 graded file (hard stop) |
+| F38 — evidence redaction never reads prose | requires editing `scripts/check_compatibility_matrix.py`, a cycle-16 graded file (hard stop) |
+| F25, F26 — card-validator suite reports the machine | pre-existing, human-owned; vendoring-versus-dropping is an operator decision |
+| F30 — CI installs plugin test dependencies unpinned | pre-existing, release-owned (`.github/workflows/ci.yml`) |
+| F44 — no gate checks skill commands against the CLI surface | pre-existing, human-owned, unassigned |
+| F32 — issue #52 line-claim count | requires an issue-body mutation that was never authorized; recorded in §11.2 item 6 for the next touch |
+| Hermetic-baseline residual — the validate job's stdlib-only claim is false | latent contract violation, pre-existing on main, measured and recorded in `LEARNINGS.md`; fixing it changes what the baseline covers and belongs in its own change |

@@ -1,5 +1,61 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-08-31
+
+### A green local suite is never evidence for a hermetic gate
+
+**Author.** Claude for Jeff Cox (final repair pass of issue #50, branch `orch-agent-plugins-50`)
+
+**Evidence.** The CI `validate` job declares itself the repository's hermetic
+baseline that "runs the standard library only". It is not one:
+`tests/test_mission_control_rule_audit.py` imports `sync_template_docs` at
+module scope, which imports `yaml` at
+`plugins/mission-control/scripts/sync_template_docs.py:14`. Measured on a
+stdlib-only CPython 3.12.13: this branch reports `Ran 797 tests, FAILED
+(errors=1)` with `ModuleNotFoundError: No module named 'yaml'`, losing 43
+tests to the aborted module; origin/main reports `Ran 738 tests, FAILED
+(errors=1)` with the identical error. So it is pre-existing on main, not a
+regression from this run, and it does not break CI today because the GitHub
+runner supplies PyYAML — it is a latent contract violation: the job's own
+comment promises a stdlib-only baseline it does not have. Cycle 1's F03
+repair guarded `import pytest` with `try/except ModuleNotFoundError` plus
+`skipTest` in the same file, leaving the transitive yaml path unguarded —
+the fix pattern already exists twenty lines away. This pass deliberately
+does not fix it: it changes what the baseline covers and belongs in its own
+change.
+
+**Generalizable rule.** *A suite that passes locally proves nothing about a
+hermetic gate.* A baseline claim must be measured on the interpreter the
+baseline promises, and a module-scope transitive import behind a
+dependency-free job comment is a contract violation even when every
+runner happens to carry the dependency.
+
+**Refs.** `.github/workflows/ci.yml` (the `validate` job's comment),
+`tests/test_mission_control_rule_audit.py` (module-scope imports and the F03
+pytest guard), `plugins/mission-control/scripts/sync_template_docs.py:14`.
+
+## 2026-08-31
+
+### A refusal message must not depend on a hash seed
+
+**Author.** Claude for Jeff Cox (repair round 3 of issue #50, branch `orch-agent-plugins-50`)
+
+**Evidence.** The marker rule's count-mismatch refusal iterated
+`for site_class in expected_classes`, where `expected_classes` was a set —
+so the class the message named first was chosen by the interpreter's hash
+seed, and two runs of the same refusal could print different messages. The
+repair iterates a fixed `SITE_CLASSES` tuple for the comparison while the
+set remains only for the membership check.
+
+**Generalizable rule.** *Anything a human or an auditor reads must be
+deterministic in the order it prints.* Sets are for membership; iteration
+order that reaches an error message, a manifest, or a transcript must come
+from a sequence.
+
+**Refs.** `scripts/sync_vendor_source.py` (`SITE_CLASSES`,
+`package_root_marker_transform`), `tests/test_sync_vendor_source.py`
+(`PackageRootMarkerRuleTests`).
+
 ## 2026-08-30
 
 ### The carried package suite has three grades, not one: authenticated, unauthenticated, and no-gh

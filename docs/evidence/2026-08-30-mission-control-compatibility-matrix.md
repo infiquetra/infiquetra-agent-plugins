@@ -13,7 +13,7 @@ August 2026.
 
 The filename prefix names the evidence family (the 2026-08-30 mission-control
 family); the body names the run date. This is the family's third generation:
-the first assessed tree `1f49322e…`, the second a different tree, and this one
+the first assessed tree `1f49322e…`, the second tree `659f91f6…` (retired by the beads-config correction), and this one
 tree `5fc16652…`, which moved when the portable README was corrected to state
 that an absent `beads-config.json` triggers a live `gh api` read before
 degrading. Both earlier generations are superseded and kept as history.
@@ -41,13 +41,16 @@ Held identical across all ten:
 - **Credentials.** Nine clients ran unauthenticated in their own scratch homes;
   Cursor Agent ran against the operator's real authenticated home by design,
   because an isolated home strips its authentication and produces a false
-  failure. The harness supplied no GitHub credential to any client and
-  stripped every `GH_` and `GITHUB_` variable before each invocation. The
-  assessment itself makes no GitHub API call: every invocation stage runs
-  each declared entrypoint's credential-free `--help` action. This is a
-  different surface from the separately recorded finding that the package's
-  own test suite makes live `gh` calls through its schema-resolution ladder,
-  and the two are kept distinct.
+  failure — its authentication state was recorded only as present, no
+  credential created, changed, or read into this evidence, and no account
+  identity is published here; the real-home stages inherit the operator's
+  on-disk credential store. The harness supplied no GitHub credential to any
+  client and stripped every `GH_` and `GITHUB_` variable before each
+  invocation. The assessment itself makes no GitHub API call: every
+  invocation stage runs each declared entrypoint's credential-free `--help`
+  action. This is a different surface from the separately recorded finding
+  that the package's own test suite makes live `gh` calls through its
+  schema-resolution ladder, and the two are kept distinct.
 - **Network.** The assessment itself makes no GitHub API call at any stage: the
   invocation stage runs each declared entrypoint's credential-free `--help`
   action. This is a different surface from the separately recorded finding that
