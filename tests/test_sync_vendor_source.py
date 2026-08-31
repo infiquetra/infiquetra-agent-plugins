@@ -1357,7 +1357,7 @@ class ShippedPackageTests(unittest.TestCase):
 #: The audited mission-control pin (run plan R4; descriptor provenance notes).
 #: Pinned here on purpose: moving it is a deliberate act that has to change a
 #: test, not a silent drift.
-MISSION_CONTROL_PIN = "84eaf042f0e350005f7eddf8e7d80da25c12119d"
+MISSION_CONTROL_PIN = "3b2b7083fdda8e39e213b5f4acf9f8301d60dd52"
 MISSION_CONTROL_SKILLS = ("board", "flow", "issues", "labels", "metrics", "milestones", "rollout")
 
 
@@ -1380,7 +1380,7 @@ class MissionControlShippedTests(unittest.TestCase):
 
     def test_provenance_pins_the_audited_revision(self) -> None:
         self.assertEqual(self.manifest["source_commit"], MISSION_CONTROL_PIN)
-        self.assertEqual(self.manifest["source_version"], "2.12.2")
+        self.assertEqual(self.manifest["source_version"], "2.15.2")
         self.assertEqual(self.manifest["source_repository"], self.config.source.repository)
 
     def test_the_transformed_entrypoints_resolve_the_bundle_and_never_the_shim(self) -> None:
