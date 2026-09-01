@@ -1,0 +1,88 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-08-30T19:14:11.230228+00:00",
+  "created_at": "2026-08-30T19:24:21.797597+00:00",
+  "created_issue_number": 55,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/55",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-30-u4-downstream-pin-repair-and-full-suite-re-green.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-agent-plugins/efbb8f84-022f-42dd-a033-a2209f377143/scratchpad/shaping/resync-shaping.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created",
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-30-u4-downstream-pin-repair-and-full-suite-re-green.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-08-30\ntopic: mission-control-resync-2.15.2\nmaturity: requirements-ready\n---\n\n# Mission Control resynchronization 2.12.2 -> 2.15.2 \u2014 settled shaping\n\n## Verified ground truth\n\n- Downstream pin today: upstream commit 84eaf042f0e350005f7eddf8e7d80da25c12119d, plugin version 2.12.2.\n- Target pin: upstream origin/main 3b2b7083, plugin version 2.15.2. All four upstream workflows green at that exact commit.\n- Diff: 36 files, +7706/-524. 8 new files (all tests), 28 modified, 0 deleted.\n- Custody mapping of the 36: 17 upstream byte copies, 5 transforms, 5 client byte copies,\n  1 Claude manifest transform, 1 superseded README, 1 dropped test, 8 unclassified new tests.\n- sync_vendor_source.py --check refuses today, naming exactly the 8 unclassified paths.\n- Fleet Core unchanged upstream across the window; no bundle regeneration needed.\n- Python floor unchanged: upstream requires-python >=3.12; downstream CI pins 3.12.\n- All 7 SKILL.md still carry when_to_use; executor_profile_lint.py unchanged; the guarded\n  fleet-shim block in sdlc_manager.py is byte-identical in shape (line 4283 -> 5134).\n- Package fingerprint today: 64 files, tree_sha256 651ac28a79b4e2e8823c5aa5960659bcd2290",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-agent-plugins/efbb8f84-022f-42dd-a033-a2209f377143/scratchpad/shaping/resync-shaping.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-agent-plugins/efbb8f84-022f-42dd-a033-a2209f377143/scratchpad/shaping/resync-shaping.md",
+    "title": "Mission Control resynchronization 2.12.2 -> 2.15.2 \u2014 settled shaping",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "U4 \u2014 Downstream pin repair and full-suite re-green",
+  "updated_at": "2026-08-30T19:24:35.201658+00:00"
+}
