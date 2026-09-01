@@ -15,6 +15,7 @@ vault_pass.txt
 .saga/
 .serena/
 .hermes/
+.qwen/
 memories/
 sessions/
 state.db
