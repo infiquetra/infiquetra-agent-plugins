@@ -212,16 +212,34 @@ def non_host_dotted_tokens(root: Path | None = None) -> frozenset[str]:
     redaction rule stricter rather than looser: an unlisted directory is
     reported as a hostname. `scripts/check_repo.py` fails on a descriptor that
     does not load, so the strictness is never how the problem is discovered.
+
+    An authored descriptor (schema version 4, stating no `source`) names no
+    client extension directory, because that name is a property of the upstream
+    layout a port lands under and an authored package was never laid out from
+    one. The shipped package trees are read as well, so the directory keeps
+    being recognized as a directory once custody moves here and the descriptors
+    stop naming it. Without that, a catalog of authored packages would report
+    every mention of `com.infiquetra.claude` in its own evidence as an
+    unredacted hostname.
     """
+    declared: set[str] = set()
     try:
         configs = port_config.load_all(root)
     except PortConfigError:
-        return frozenset()
-    return frozenset(
-        config.source.client_extension_dir
-        for config in configs
-        if config.source.client_extension_dir
-    )
+        configs = []
+    for config in configs:
+        if config.source is not None and config.source.client_extension_dir:
+            declared.add(config.source.client_extension_dir)
+
+    packages = (root or port_config.repository_root()) / port_config.PACKAGE_PARENT
+    if packages.is_dir():
+        for package in sorted(path for path in packages.iterdir() if path.is_dir()):
+            declared.update(
+                child.name
+                for child in package.iterdir()
+                if child.is_dir() and "." in child.name.strip(".")
+            )
+    return frozenset(declared)
 
 CREDENTIAL_ASSIGNMENT = re.compile(
     r"(?i)\b(?:password|passwd|secret|api[_-]?key|token|auth[_-]?token|bearer)\b"
@@ -403,6 +421,17 @@ def resolve_config(
         return None, [f"$.package.name: {error}"]
 
 
+#: The two binding fields that move on every commit to the package tree. Kept
+#: as a named set because the current-document rule reports them rather than
+#: failing on them, and a rule that partitions problems by a string prefix
+#: written twice is a rule that can disagree with itself.
+FINGERPRINT_PROBLEM_PREFIXES = ("$.package.file_count:", "$.package.tree_sha256:")
+
+#: The one binding field that fails a current document: the release this
+#: evidence describes.
+VERSION_PROBLEM_PREFIX = "$.package.version:"
+
+
 def check_package_binding(
     record: dict[str, Any],
     config: PortConfig,
@@ -412,6 +441,12 @@ def check_package_binding(
     This is the check whose absence let a matrix describe a package that no
     longer existed: every other rule here was satisfied by a well-formed digest
     of the wrong artifact.
+
+    Every problem, unpartitioned. `split_binding_problems` is what decides which
+    of them fail a current document and which are only reported; supersession
+    reads this function directly, because the exemption it grants has to be
+    tested against the whole binding rather than against the part that still
+    fails.
     """
     package = record.get("package")
     if not isinstance(package, dict):
@@ -455,11 +490,43 @@ def check_package_binding(
     return problems
 
 
+def split_binding_problems(problems: list[str]) -> tuple[list[str], list[str]]:
+    """Partition a binding's problems into what fails and what is only reported.
+
+    The rule, from the 2026-09-22 custody decision: **compatibility evidence
+    binds to a released version, not to every tree.**
+
+    For a derived package every byte came from one pin, so a moved fingerprint
+    meant a moved pin and binding the matrix to the tree was exactly right. An
+    authored package's tree moves on every commit -- a typo fixed in a README
+    moves it -- and a ten-client run per commit is not a standard anyone will
+    keep. Left as a failure, the rule would be switched off within a week, which
+    is worse than a rule that reports.
+
+    So `$.package.version` is the binding and fails: a version bump with no
+    fresh run is evidence that claims to describe a release it never saw. The
+    fingerprint fields are reported instead, non-failing, printed: they say the
+    tree has moved under an unchanged version, which is information the operator
+    wants at the next release and not a reason to fail continuous integration
+    today.
+
+    Nothing is dropped. Every problem comes back in one list or the other.
+    """
+    failures = [
+        problem
+        for problem in problems
+        if not problem.startswith(FINGERPRINT_PROBLEM_PREFIXES)
+    ]
+    reports = [problem for problem in problems if problem.startswith(FINGERPRINT_PROBLEM_PREFIXES)]
+    return failures, reports
+
+
 def check_document_status(
     text: str,
     record: dict[str, Any],
     document: Path,
     config: PortConfig | None,
+    reports: list[str] | None = None,
 ) -> list[str]:
     """Bind a current matrix to the tree; hold a superseded one to its notice.
 
@@ -490,7 +557,27 @@ def check_document_status(
                     "superseded one, never both"
                 )
         if config is not None:
-            problems.extend(check_package_binding(record, config))
+            failures, moved = split_binding_problems(check_package_binding(record, config))
+            problems.extend(failures)
+            if reports is not None and moved:
+                # The reason a fingerprint is only reported depends on whether
+                # the version is what failed. Saying "the version still matches"
+                # while the version problem sits in the failure list would be a
+                # message that contradicts the run it belongs to.
+                if any(problem.startswith(VERSION_PROBLEM_PREFIX) for problem in failures):
+                    because = (
+                        "the recorded version already failed above, which is the finding; a "
+                        "moved fingerprint is what a stale version looks like on disk"
+                    )
+                else:
+                    because = (
+                        "the recorded version still matches, so the tree moved under an "
+                        "unchanged version and the next release needs a fresh run"
+                    )
+                reports.extend(
+                    f"{document.name}: {problem} (reported, not failing: {because})"
+                    for problem in moved
+                )
         return problems
 
     successor = directives.get(SUPERSEDED_BY_DIRECTIVE, "").strip()
@@ -976,8 +1063,16 @@ def check_matrix(
     document: Path,
     config: PortConfig | None = None,
     root: Path | None = None,
+    reports: list[str] | None = None,
 ) -> list[str]:
     """Every problem with the matrix, or an empty list when it is clean.
+
+    `reports` collects the non-failing observations a run produces -- today,
+    only a fingerprint that moved under an unchanged version. It is an optional
+    out-parameter rather than a second return value because a report is by
+    definition not a problem: a caller that only asks "is this matrix valid"
+    should not have to unpack a tuple to find out, and every existing caller
+    keeps working unchanged.
 
     `config` names the package to validate against. Left unset it is resolved
     from the record's own `$.package.name`, which is how a run over every
@@ -1008,7 +1103,7 @@ def check_matrix(
     problems.extend(check_coverage(record))
     problems.extend(check_safety_rules(record, config))
     problems.extend(check_public_evidence_rules(record, non_host_dotted_tokens(root)))
-    problems.extend(check_document_status(text, record, document, config))
+    problems.extend(check_document_status(text, record, document, config, reports))
     return problems
 
 
@@ -1111,8 +1206,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     failed = 0
+    reports: list[str] = []
     for document in documents:
-        problems = check_matrix(document)
+        problems = check_matrix(document, reports=reports)
         if problems:
             failed += 1
             print(f"{document}:")
@@ -1125,6 +1221,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"{document.name} ({status}):")
         print(summarize(extract_record(document.read_text(encoding="utf-8"))))
+        print()
+    if reports:
+        # Printed whether the run passed or failed. A report that only appeared
+        # on a green run would be invisible exactly when a package is being
+        # repaired, which is when it matters most.
+        print("Reported (not failing):")
+        for report in reports:
+            print(f"  {report}")
         print()
     if failed:
         return 1

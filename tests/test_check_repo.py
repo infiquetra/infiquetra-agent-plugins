@@ -185,6 +185,75 @@ class PortDescriptorGateTests(unittest.TestCase):
             self.assertTrue(check_repo.check_port_descriptors(root))
 
 
+class GateWiringTests(unittest.TestCase):
+    """Every check the gate defines must also be a check the gate runs.
+
+    Same defect as `PortDescriptorGateTests` above, found the same way. The
+    cycle-17 mutation campaign deleted each check's line from `check_repo` one
+    at a time; the skill-frontmatter and fleet-bundle-output deletions were the
+    two mutations no shipping test noticed. Both checks had thorough tests of
+    their own, and the aggregation that calls them had none, so removing either
+    wire left every one of those tests passing while the gate stopped looking.
+
+    These are behavioural: each builds a tree the named check is the only thing
+    that objects to, and asserts the aggregate objects. A test that asserted the
+    source of `check_repo` contains a string would pass over a call that was
+    wired in and then broken.
+    """
+
+    @staticmethod
+    def broken_skill(root: Path) -> None:
+        plugin = make_plugin(root)
+        write(plugin / "skills" / "example" / "SKILL.md", "no frontmatter here\n")
+
+    @staticmethod
+    def undeclared_bundle(root: Path) -> None:
+        plugin = make_plugin(root)
+        write(
+            plugin / check_repo.FLEET_BUNDLE_FILENAME,
+            json.dumps(
+                {
+                    "schema_version": "1",
+                    "modules": [{"name": "absent_module"}],
+                }
+            ),
+        )
+
+    def test_the_gate_reports_a_skill_with_no_frontmatter(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.broken_skill(root)
+            problems = check_repo.check_repo(root)
+        self.assertTrue(
+            any("frontmatter" in problem for problem in problems),
+            f"check_repo did not run the skill frontmatter check; it reported {problems}",
+        )
+
+    def test_the_frontmatter_check_finds_it_on_its_own_too(self) -> None:
+        """So a failure of the test above localizes to the wiring, not the check."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.broken_skill(root)
+            self.assertTrue(check_repo.check_skill_frontmatter(root))
+
+    def test_the_gate_reports_a_declared_bundle_that_was_never_generated(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.undeclared_bundle(root)
+            problems = check_repo.check_repo(root)
+        self.assertTrue(
+            any("absent_module" in problem for problem in problems),
+            f"check_repo did not run the fleet bundle output check; it reported {problems}",
+        )
+
+    def test_the_bundle_output_check_finds_it_on_its_own_too(self) -> None:
+        """So a failure of the test above localizes to the wiring, not the check."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.undeclared_bundle(root)
+            self.assertTrue(check_repo.check_fleet_bundle_outputs(root))
+
+
 class ProvenanceManifestTests(unittest.TestCase):
     def test_package_without_provenance_manifest_passes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

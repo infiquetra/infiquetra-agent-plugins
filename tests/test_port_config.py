@@ -59,6 +59,21 @@ def minimal(**overrides: object) -> dict:
     return document
 
 
+def authored(**overrides: object) -> dict:
+    """The smallest authored descriptor: identity and assessment, no derivation.
+
+    Built by removing the derivation pair from `minimal()` rather than by
+    writing a second literal, so a field added to either mode has to be added
+    in one place and the two builders cannot drift into describing different
+    schemas.
+    """
+    document = minimal()
+    for field in port_config.DERIVATION_FIELDS:
+        document.pop(field, None)
+    document.update(overrides)
+    return document
+
+
 def parse(document: dict, name: str = "example") -> port_config.PortConfig:
     return port_config.parse(
         document,
@@ -369,6 +384,109 @@ class ClosedContractTest(unittest.TestCase):
         self.assertIn("no safety decision", str(caught.exception))
 
 
+class AuthoredModeTest(unittest.TestCase):
+    """Schema version 4: a package written here rather than derived from a pin.
+
+    The 2026-09-22 custody decision makes this the norm. What the mode may drop
+    is the derivation pair; what it may not drop is the assessment, whose safety
+    fields fail open exactly as hard for source authored here.
+    """
+
+    def test_a_descriptor_with_neither_source_nor_custody_is_authored(self) -> None:
+        config = parse(authored())
+        self.assertTrue(config.is_authored)
+        self.assertIsNone(config.source)
+        self.assertIsNone(config.custody)
+
+    def test_a_derived_descriptor_is_not_authored(self) -> None:
+        config = parse(minimal())
+        self.assertFalse(config.is_authored)
+        self.assertIsNotNone(config.source)
+        self.assertIsNotNone(config.custody)
+
+    def test_the_derivation_pair_is_optional_together_and_never_singly(self) -> None:
+        """The corpus is the module's own pair, so a third member is covered."""
+        for field in port_config.DERIVATION_FIELDS:
+            other = next(key for key in port_config.DERIVATION_FIELDS if key != field)
+            with self.subTest(stated=field):
+                document = authored()
+                document[field] = minimal()[field]
+                with self.assertRaises(port_config.PortConfigError) as caught:
+                    parse(document)
+                message = str(caught.exception)
+                self.assertIn(field, message)
+                self.assertIn(other, message)
+
+    def test_an_authored_descriptor_still_states_every_safety_field(self) -> None:
+        """The whole point of the mode is custody, not a relaxed assessment."""
+        for field in port_config.SAFETY_FIELDS:
+            with self.subTest(field=field):
+                document = authored()
+                assessment = dict(document["assessment"])  # type: ignore[arg-type]
+                del assessment[field]
+                document["assessment"] = assessment
+                with self.assertRaises(port_config.PortConfigError) as caught:
+                    parse(document)
+                self.assertIn(field, str(caught.exception))
+
+    def test_an_authored_descriptor_needs_no_provenance(self) -> None:
+        config = parse(authored())
+        self.assertEqual(config.notes, ())
+        self.assertEqual(config.dropped_reason, "")
+
+    def test_an_authored_descriptor_may_still_carry_provenance_notes(self) -> None:
+        config = parse(authored(provenance={"notes": ["Imported once, then authored here."]}))
+        self.assertEqual(config.notes, ("Imported once, then authored here.",))
+
+    def test_identity_is_validated_in_authored_mode_too(self) -> None:
+        for override in (
+            {"package_root": "/etc/example"},
+            {"package_root": "elsewhere/example"},
+            {"package_root": "plugins/other"},
+        ):
+            with self.subTest(**override):
+                with self.assertRaises(port_config.PortConfigError):
+                    parse(authored(**override))
+
+    def test_the_synchronization_tool_refuses_an_authored_descriptor(self) -> None:
+        """It reads source and custody in every branch; neither exists here.
+
+        An empty run would be worse than a stop: an authored package's tree is
+        the only copy of itself, and a missing custody table read as "nothing is
+        classified" plans the deletion of every managed path in it.
+        """
+        with self.assertRaises(svs.SyncError) as caught:
+            svs.require_derived(parse(authored()))
+        message = str(caught.exception)
+        self.assertIn("authored", message)
+        self.assertIn("import_vendor_package.py", message)
+
+    def test_the_synchronization_tool_accepts_a_derived_descriptor(self) -> None:
+        svs.require_derived(parse(minimal()))
+
+    def test_the_repository_gate_validates_an_authored_descriptor(self) -> None:
+        """`check_repo.py` reads identity and assessment, so it needs no pin."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / port_config.CONFIG_DIRECTORY_NAME).mkdir()
+            package = root / "plugins" / "example"
+            (package / "scripts").mkdir(parents=True)
+            (package / "scripts" / "example.py").write_text("", encoding="utf-8")
+            (package / "plugin.json").write_text("{}", encoding="utf-8")
+            (root / port_config.CONFIG_DIRECTORY_NAME / "example.json").write_text(
+                json.dumps(authored()), encoding="utf-8"
+            )
+            self.assertEqual(check_repo.check_port_descriptors(root), [])
+
+    def test_the_descriptor_spec_documents_the_authored_mode(self) -> None:
+        """The mode is a rule a reader has to find, so the spec has to state it."""
+        spec = (ROOT / "ports" / "README.md").read_text(encoding="utf-8")
+        self.assertIn(f"schema version {port_config.SCHEMA_VERSION}", spec)
+        for field in port_config.DERIVATION_FIELDS:
+            with self.subTest(field=field):
+                self.assertIn(f"`{field}`", spec)
+
+
 class ManifestDestinationTest(unittest.TestCase):
     """A relocation with no destination plans a path built from a missing value."""
 
@@ -471,6 +589,17 @@ class CommittedDescriptorTest(unittest.TestCase):
     def setUp(self) -> None:
         self.config = port_config.load("unifi", ROOT)
 
+    def _require_derived(self) -> None:
+        """Skip a custody assertion once this package is authored here.
+
+        The 2026-09-22 custody decision imports each package once and drops its
+        upstream pin. A derived-only assertion is then not failing, it is no
+        longer applicable, and `custody` is `None` rather than empty so that the
+        difference cannot be read as "nothing is classified".
+        """
+        if self.config.is_authored:
+            self.skipTest(f"{self.config.name} is authored here and carries no custody table")
+
     def test_it_names_the_package_that_ships(self) -> None:
         self.assertTrue(self.config.package_directory.is_dir())
         manifest = json.loads(self.config.manifest_path.read_text(encoding="utf-8"))
@@ -540,12 +669,14 @@ class CommittedDescriptorTest(unittest.TestCase):
         descriptor no longer names it is a package whose own derivation tool
         would drop it on the next run.
         """
+        self._require_derived()
         manifest = json.loads(
             (self.config.package_directory / check_repo.PROVENANCE_FILENAME).read_text(
                 encoding="utf-8"
             )
         )
         recorded = {entry["path"]: entry["classification"] for entry in manifest["files"]}
+        assert self.config.source is not None and self.config.custody is not None
         extension = self.config.source.client_extension_dir
         for relative in self.config.custody.byte_copies:
             self.assertEqual(recorded.get(relative), check_repo.BYTE_COPY, relative)
@@ -567,6 +698,9 @@ class CommittedDescriptorTest(unittest.TestCase):
         a synchronization. Joining the two here fails at the gate instead.
         """
         for config in port_config.load_all(ROOT):
+            if config.is_authored:
+                continue  # no upstream pin, so no path is rewritten on the way in
+            assert config.custody is not None
             for relative in config.custody.entrypoint_transforms:
                 with self.subTest(package=config.name, path=relative):
                     rule = config.custody.entrypoint_rules.get(relative)
@@ -629,6 +763,9 @@ class CommittedDescriptorTest(unittest.TestCase):
         states all four site classes, and every row's call count equals its
         finder count so the definition-before-call check can pair them."""
         for config in port_config.load_all(ROOT):
+            if config.is_authored:
+                continue  # no custody table to join the site-count slice against
+            assert config.custody is not None
             declared = {
                 path
                 for path in config.custody.entrypoint_transforms
@@ -651,6 +788,12 @@ class CommittedDescriptorTest(unittest.TestCase):
                 for candidate in port_config.load_all(ROOT)
                 if candidate.name == package
             )
+            self.assertFalse(
+                config.is_authored,
+                f"{package} selects resolve-package-root-marker but is authored here, so "
+                "no synchronization will ever apply that rule to it",
+            )
+            assert config.custody is not None
             declared = {
                 path
                 for path in config.custody.entrypoint_transforms
@@ -737,6 +880,8 @@ class CommittedDescriptorTest(unittest.TestCase):
         the assessment could not invoke it. Catching that here is cheaper than
         catching it in the middle of a ten-client run.
         """
+        self._require_derived()
+        assert self.config.custody is not None
         for relative in self.config.custody.entrypoint_transforms:
             with self.subTest(entrypoint=relative):
                 self.assertTrue(

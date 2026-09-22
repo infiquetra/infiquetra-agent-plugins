@@ -1,0 +1,312 @@
+# Cycle-17 mutation proof - the custody-move tooling (authored mode, one-shot
+# import, generated marketplace, version-bound evidence)
+# Digests are bound by MutationProofBindingTest: change a graded file
+# without re-running this proof and the suite fails. Paths are repository-relative.
+#
+# Supersedes 2026-08-25-cycle16-mutation-proof-portable-copies.txt, which is
+# preserved unedited. Reason: unit U1 of the 2026-09-22 custody-move run plan
+# edited three graded files, so the cycle-16 digests for those three no longer
+# name the shipped bytes:
+#   * scripts/port_config.py -- port descriptor schema version 4 and its
+#     authored mode (source and custody optional together, None rather than
+#     empty, assessment still mandatory).
+#   * scripts/check_compatibility_matrix.py -- evidence binds to a released
+#     version rather than to every tree: the version fails, the tree
+#     fingerprint reports.
+#   * scripts/check_repo.py -- the repository gate now also refuses a stale
+#     generated marketplace.
+#
+# The other two graded files (plugins/unifi/scripts/site_profile.py and
+# scripts/assess_clients.py) were NOT touched by U1 and were NOT re-graded in
+# this cycle. Their cycle-16 digests are carried forward unchanged below and
+# marked as carried. Their anchors remain proved by cycle 16; this document
+# does not restate them.
+#
+# How this cycle's anchors relate to cycle 16's. The cycle-16 document records
+# each anchor's description and result, not the patch that produced it, so the
+# 21 cycle-16 anchors that live in these three files are re-covered here by
+# mutations authored for this run against the current bytes. Each is described
+# by what this run actually did to the file, not by cycle 16's wording, because
+# a description that named a patch nobody can reproduce would be the same
+# identification failure the binding test exists to prevent. 12 further anchors
+# grade the guards U1 introduced.
+#
+# Standing disclosures carried forward: MutationProofBindingTest is excluded
+# from grading entirely (every mutation edits a graded file, so counting its
+# failure as a kill made every mutation a kill by construction, which is what
+# made cycle 11 vacuous); the proof cannot start from a fully green suite
+# because this run computes the digests that test asserts; "0 survivors" means
+# every listed guard is tested, never that the code is correct.
+#
+# Also excluded from grading, and failing in the baseline for reasons this
+# branch did not cause: the two TemplateSyncAuditTests cases in
+# tests/test_mission_control_rule_audit.py. They fail on origin/main at b875e50
+# on this machine and pass in continuous integration; the known cause is the
+# QUEUED.md item 1 schema-resolution ladder, which reads infiquetra-sdlc over
+# the network first when an authenticated gh is present. Counting them would
+# have made every mutation a kill for a reason unrelated to the mutation.
+#
+# Survivor resolution and status: 3 of 33 mutations
+# survived the first grading. Each is recorded below with its SURVIVED
+# result, and each was then given a test in the same commit as this
+# document and the anchor re-run against the unchanged graded bytes:
+#   * the client extension directory is no longer read from the package trees [scripts/check_compatibility_matrix.py] -- now killed by 2 test(s)
+#   * fleet bundle output check dropped from the repository gate [scripts/check_repo.py] -- now killed by 1 test(s)
+#   * skill frontmatter check dropped from the repository gate [scripts/check_repo.py] -- now killed by 1 test(s)
+#
+# Two of the three were pre-existing gate-wiring gaps this campaign
+# found rather than introduced: check_skill_frontmatter and
+# check_fleet_bundle_outputs each had thorough tests of their own while
+# the aggregation that calls them had none, so deleting either wire from
+# check_repo left every one of those tests passing. The third is a guard
+# this unit introduced and shipped untested: reading the client
+# extension directory out of the package trees, which is what keeps it
+# from reading as a hostname once every descriptor is authored.
+#
+# Adding the tests changed no graded file, so the digests below are the
+# bytes all 33 anchors were graded against, first pass and re-run alike.
+## BASELINE: FAILED (failures=5), none of them outside the
+## excluded proof binding and the two pre-existing TemplateSync cases
+
+## MUTATION: descriptor path-escape refusal removed  [scripts/port_config.py]
+   FAILED (failures=12)
+   FAIL: test_a_traversing_entrypoint_is_refused (test_port_config.EntrypointDeclarationTest.test_a_traversing_entrypoint_is_refused)
+   FAIL: test_a_traversing_entry_path_is_refused (test_port_config.EntrypointTransformRuleTest.test_a_traversing_entry_path_is_refused)
+   FAIL: test_a_traversing_custody_path_is_refused (test_port_config.PathSafetyTest.test_a_traversing_custody_path_is_refused) (field='byte_copies')
+   FAIL: test_a_traversing_custody_path_is_refused (test_port_config.PathSafetyTest.test_a_traversing_custody_path_is_refused) (field='client_byte_copies')
+   FAIL: test_a_traversing_custody_path_is_refused (test_port_config.PathSafetyTest.test_a_traversing_custody_path_is_refused) (field='superseded_by_target_owned')
+   FAIL: test_a_traversing_custody_path_is_refused (test_port_config.PathSafetyTest.test_a_traversing_custody_path_is_refused) (field='dropped_from_source')
+   FAIL: test_an_absolute_source_package_path_is_refused (test_port_config.PathSafetyTest.test_an_absolute_source_package_path_is_refused)
+
+## MUTATION: descriptor duplicate-custody refusal removed  [scripts/port_config.py]
+   FAILED (failures=7)
+   FAIL: test_a_path_claimed_by_two_custody_classes_is_refused (test_port_config.CustodyTest.test_a_path_claimed_by_two_custody_classes_is_refused)
+   FAIL: test_two_entries_may_not_claim_the_same_path (test_port_config.EntrypointTransformRuleTest.test_two_entries_may_not_claim_the_same_path)
+
+## MUTATION: client custody without an extension directory allowed  [scripts/port_config.py]
+   FAILED (failures=6)
+   FAIL: test_client_custody_without_an_extension_directory_is_refused (test_port_config.CustodyTest.test_client_custody_without_an_extension_directory_is_refused)
+
+## MUTATION: descriptor schema_version check removed  [scripts/port_config.py]
+   FAILED (failures=6)
+   FAIL: test_an_unreadable_schema_version_is_refused_rather_than_assumed (test_port_config.ShapeTest.test_an_unreadable_schema_version_is_refused_rather_than_assumed)
+
+## MUTATION: package root no longer confined to plugins/  [scripts/port_config.py]
+   FAILED (failures=7)
+   FAIL: test_identity_is_validated_in_authored_mode_too (test_port_config.AuthoredModeTest.test_identity_is_validated_in_authored_mode_too) (package_root='elsewhere/example')
+   FAIL: test_a_package_root_outside_the_plugins_directory_is_refused (test_port_config.PathSafetyTest.test_a_package_root_outside_the_plugins_directory_is_refused)
+
+## MUTATION: descriptor objects stop refusing unknown keys  [scripts/port_config.py]
+   FAILED (failures=10)
+   FAIL: test_an_unknown_key_is_refused_at_every_level (test_port_config.ClosedContractTest.test_an_unknown_key_is_refused_at_every_level) (object='top level')
+   FAIL: test_an_unknown_key_is_refused_at_every_level (test_port_config.ClosedContractTest.test_an_unknown_key_is_refused_at_every_level) (object='source')
+   FAIL: test_an_unknown_key_is_refused_at_every_level (test_port_config.ClosedContractTest.test_an_unknown_key_is_refused_at_every_level) (object='assessment')
+   FAIL: test_an_unknown_key_is_refused_at_every_level (test_port_config.ClosedContractTest.test_an_unknown_key_is_refused_at_every_level) (object='provenance')
+   FAIL: test_an_entry_with_an_unknown_field_is_refused (test_port_config.EntrypointTransformRuleTest.test_an_entry_with_an_unknown_field_is_refused)
+
+## MUTATION: descriptor safety fields stop being required  [scripts/port_config.py]
+   FAILED (failures=9)
+   FAIL: test_a_missing_field_is_named_as_missing_rather_than_as_empty (test_port_config.ClosedContractTest.test_a_missing_field_is_named_as_missing_rather_than_as_empty) (field='credential_prefixes')
+   FAIL: test_a_missing_field_is_named_as_missing_rather_than_as_empty (test_port_config.ClosedContractTest.test_a_missing_field_is_named_as_missing_rather_than_as_empty) (field='package_scripts')
+   FAIL: test_a_missing_field_is_named_as_missing_rather_than_as_empty (test_port_config.ClosedContractTest.test_a_missing_field_is_named_as_missing_rather_than_as_empty) (field='mutating_operations')
+   FAIL: test_a_missing_field_is_named_as_missing_rather_than_as_empty (test_port_config.ClosedContractTest.test_a_missing_field_is_named_as_missing_rather_than_as_empty) (field='entrypoints')
+
+## MUTATION: descriptor accepts a manifest with no destination  [scripts/port_config.py]
+   FAILED (failures=6)
+   FAIL: test_a_manifest_path_without_an_extension_directory_is_refused (test_port_config.ManifestDestinationTest.test_a_manifest_path_without_an_extension_directory_is_refused)
+
+## MUTATION: bare-string entrypoint_transforms entries allowed  [scripts/port_config.py]
+   FAILED (failures=7)
+   FAIL: test_a_bare_path_string_entry_is_refused_as_the_schema_2_shape (test_port_config.EntrypointTransformRuleTest.test_a_bare_path_string_entry_is_refused_as_the_schema_2_shape)
+   FAIL: test_a_traversing_custody_path_is_refused (test_port_config.PathSafetyTest.test_a_traversing_custody_path_is_refused) (field='entrypoint_transforms')
+
+## MUTATION: entrypoint_transforms entry without a rule name allowed  [scripts/port_config.py]
+   FAILED (failures=10)
+   FAIL: test_an_empty_or_non_string_rule_is_refused (test_port_config.EntrypointTransformRuleTest.test_an_empty_or_non_string_rule_is_refused) (value='')
+   FAIL: test_an_empty_or_non_string_rule_is_refused (test_port_config.EntrypointTransformRuleTest.test_an_empty_or_non_string_rule_is_refused) (value='   ')
+   FAIL: test_an_empty_or_non_string_rule_is_refused (test_port_config.EntrypointTransformRuleTest.test_an_empty_or_non_string_rule_is_refused) (value=3)
+   FAIL: test_an_empty_or_non_string_rule_is_refused (test_port_config.EntrypointTransformRuleTest.test_an_empty_or_non_string_rule_is_refused) (value=None)
+   FAIL: test_an_entry_without_a_rule_is_refused_rather_than_defaulted (test_port_config.EntrypointTransformRuleTest.test_an_entry_without_a_rule_is_refused_rather_than_defaulted)
+
+## MUTATION: half a derivation pair accepted instead of refused  [scripts/port_config.py]
+   FAILED (failures=5, errors=2)
+   ERROR: test_the_derivation_pair_is_optional_together_and_never_singly (test_port_config.AuthoredModeTest.test_the_derivation_pair_is_optional_together_and_never_singly) (stated='source')
+   ERROR: test_the_derivation_pair_is_optional_together_and_never_singly (test_port_config.AuthoredModeTest.test_the_derivation_pair_is_optional_together_and_never_singly) (stated='custody')
+
+## MUTATION: authored mode hands back an empty custody table instead of None  [scripts/port_config.py]
+   FAILED (failures=7)
+   FAIL: test_a_descriptor_with_neither_source_nor_custody_is_authored (test_port_config.AuthoredModeTest.test_a_descriptor_with_neither_source_nor_custody_is_authored)
+   FAIL: test_the_synchronization_tool_refuses_an_authored_descriptor (test_port_config.AuthoredModeTest.test_the_synchronization_tool_refuses_an_authored_descriptor)
+
+## MUTATION: authored mode skips the assessment block  [scripts/port_config.py]
+   FAILED (failures=9)
+   FAIL: test_an_authored_descriptor_still_states_every_safety_field (test_port_config.AuthoredModeTest.test_an_authored_descriptor_still_states_every_safety_field) (field='credential_prefixes')
+   FAIL: test_an_authored_descriptor_still_states_every_safety_field (test_port_config.AuthoredModeTest.test_an_authored_descriptor_still_states_every_safety_field) (field='package_scripts')
+   FAIL: test_an_authored_descriptor_still_states_every_safety_field (test_port_config.AuthoredModeTest.test_an_authored_descriptor_still_states_every_safety_field) (field='mutating_operations')
+   FAIL: test_an_authored_descriptor_still_states_every_safety_field (test_port_config.AuthoredModeTest.test_an_authored_descriptor_still_states_every_safety_field) (field='entrypoints')
+
+## MUTATION: matrix package resolution falls back instead of failing closed  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=11)
+   FAIL: test_a_record_naming_an_unported_package_is_refused (test_check_compatibility_matrix.PackageResolutionTest.test_a_record_naming_an_unported_package_is_refused)
+   FAIL: test_an_unresolvable_record_still_has_its_other_rules_applied (test_check_compatibility_matrix.PackageResolutionTest.test_an_unresolvable_record_still_has_its_other_rules_applied)
+   FAIL: test_resolution_never_returns_a_package_the_record_did_not_name (test_check_compatibility_matrix.PackageResolutionTest.test_resolution_never_returns_a_package_the_record_did_not_name) (name='not-a-package')
+   FAIL: test_resolution_never_returns_a_package_the_record_did_not_name (test_check_compatibility_matrix.PackageResolutionTest.test_resolution_never_returns_a_package_the_record_did_not_name) (name='unifi-')
+   FAIL: test_resolution_never_returns_a_package_the_record_did_not_name (test_check_compatibility_matrix.PackageResolutionTest.test_resolution_never_returns_a_package_the_record_did_not_name) (name='UNIFI')
+   FAIL: test_resolution_never_returns_a_package_the_record_did_not_name (test_check_compatibility_matrix.PackageResolutionTest.test_resolution_never_returns_a_package_the_record_did_not_name) (name='../unifi')
+
+## MUTATION: the shared --confirm safety rule removed  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=8)
+   FAIL: test_a_confirmed_command_is_refused_before_it_runs (test_assess_clients.SafetyRefusalTest.test_a_confirmed_command_is_refused_before_it_runs)
+   FAIL: test_a_recorded_invocation_passing_confirm_fails (test_check_compatibility_matrix.SafetyBoundaryTest.test_a_recorded_invocation_passing_confirm_fails)
+   FAIL: test_confirm_is_refused_in_any_stage_not_only_invocation (test_check_compatibility_matrix.SafetyBoundaryTest.test_confirm_is_refused_in_any_stage_not_only_invocation)
+
+## MUTATION: the shared mutating-operation rule removed  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=17)
+   FAIL: test_a_version_one_stage_is_still_graded (test_assess_clients.DuplicateDiagnosticTest.test_a_version_one_stage_is_still_graded)
+   FAIL: test_an_unsafe_second_command_is_still_caught (test_assess_clients.DuplicateDiagnosticTest.test_an_unsafe_second_command_is_still_caught)
+   FAIL: test_one_unsafe_command_yields_one_problem (test_assess_clients.DuplicateDiagnosticTest.test_one_unsafe_command_yields_one_problem)
+   FAIL: test_a_mutating_package_operation_is_refused_before_it_runs (test_assess_clients.SafetyRefusalTest.test_a_mutating_package_operation_is_refused_before_it_runs)
+   FAIL: test_the_refusal_uses_the_same_predicate_as_the_matrix_validator (test_assess_clients.SafetyRefusalTest.test_the_refusal_uses_the_same_predicate_as_the_matrix_validator)
+   FAIL: test_a_blocked_stage_still_has_its_commands_safety_graded (test_check_compatibility_matrix.PerCommandStatusRecordTest.test_a_blocked_stage_still_has_its_commands_safety_graded)
+   FAIL: test_a_recorded_mutating_operation_fails (test_check_compatibility_matrix.SafetyBoundaryTest.test_a_recorded_mutating_operation_fails) (operation='restart')
+   FAIL: test_a_recorded_mutating_operation_fails (test_check_compatibility_matrix.SafetyBoundaryTest.test_a_recorded_mutating_operation_fails) (operation='block')
+   FAIL: test_a_recorded_mutating_operation_fails (test_check_compatibility_matrix.SafetyBoundaryTest.test_a_recorded_mutating_operation_fails) (operation='delete')
+   FAIL: test_a_recorded_mutating_operation_fails (test_check_compatibility_matrix.SafetyBoundaryTest.test_a_recorded_mutating_operation_fails) (operation='adopt')
+   FAIL: test_a_recorded_mutating_operation_fails (test_check_compatibility_matrix.SafetyBoundaryTest.test_a_recorded_mutating_operation_fails) (operation='forget')
+   FAIL: test_a_recorded_mutating_operation_fails (test_check_compatibility_matrix.SafetyBoundaryTest.test_a_recorded_mutating_operation_fails) (operation='snapshot')
+
+## MUTATION: matrix safety rule reads only the first recorded command  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=14)
+   FAIL: test_an_unsafe_second_command_is_still_caught (test_assess_clients.DuplicateDiagnosticTest.test_an_unsafe_second_command_is_still_caught)
+   FAIL: test_a_blocked_stage_still_has_its_commands_safety_graded (test_check_compatibility_matrix.PerCommandStatusRecordTest.test_a_blocked_stage_still_has_its_commands_safety_graded)
+   FAIL: test_a_recorded_invocation_passing_confirm_fails (test_check_compatibility_matrix.SafetyBoundaryTest.test_a_recorded_invocation_passing_confirm_fails)
+   FAIL: test_a_recorded_mutating_operation_fails (test_check_compatibility_matrix.SafetyBoundaryTest.test_a_recorded_mutating_operation_fails) (operation='restart')
+   FAIL: test_a_recorded_mutating_operation_fails (test_check_compatibility_matrix.SafetyBoundaryTest.test_a_recorded_mutating_operation_fails) (operation='block')
+   FAIL: test_a_recorded_mutating_operation_fails (test_check_compatibility_matrix.SafetyBoundaryTest.test_a_recorded_mutating_operation_fails) (operation='delete')
+   FAIL: test_a_recorded_mutating_operation_fails (test_check_compatibility_matrix.SafetyBoundaryTest.test_a_recorded_mutating_operation_fails) (operation='adopt')
+   FAIL: test_a_recorded_mutating_operation_fails (test_check_compatibility_matrix.SafetyBoundaryTest.test_a_recorded_mutating_operation_fails) (operation='forget')
+   FAIL: test_a_recorded_mutating_operation_fails (test_check_compatibility_matrix.SafetyBoundaryTest.test_a_recorded_mutating_operation_fails) (operation='snapshot')
+
+## MUTATION: matrix version gate lets a version-1 record carry version-2 statuses  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=6)
+   FAIL: test_a_version_one_record_may_not_carry_per_command_statuses (test_check_compatibility_matrix.PerCommandStatusRecordTest.test_a_version_one_record_may_not_carry_per_command_statuses)
+
+## MUTATION: matrix validator stops requiring per-command statuses  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=7)
+   FAIL: test_an_executed_stage_with_an_empty_command_list_is_refused (test_check_compatibility_matrix.PerCommandStatusRecordTest.test_an_executed_stage_with_an_empty_command_list_is_refused)
+   FAIL: test_an_executed_stage_without_commands_is_refused (test_check_compatibility_matrix.PerCommandStatusRecordTest.test_an_executed_stage_without_commands_is_refused)
+
+## MUTATION: matrix stops checking the alias against the first per-command status  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=8)
+   FAIL: test_a_non_executed_stage_command_must_still_match_its_first_status (test_check_compatibility_matrix.PerCommandStatusRecordTest.test_a_non_executed_stage_command_must_still_match_its_first_status) (result='blocked')
+   FAIL: test_a_non_executed_stage_command_must_still_match_its_first_status (test_check_compatibility_matrix.PerCommandStatusRecordTest.test_a_non_executed_stage_command_must_still_match_its_first_status) (result='not-applicable')
+   FAIL: test_the_recorded_command_must_be_the_first_of_its_statuses (test_check_compatibility_matrix.PerCommandStatusRecordTest.test_the_recorded_command_must_be_the_first_of_its_statuses)
+
+## MUTATION: matrix stops grading how each command ended  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=7)
+   FAIL: test_a_command_cannot_carry_both_exit_status_and_timed_out (test_check_compatibility_matrix.PerCommandStatusRecordTest.test_a_command_cannot_carry_both_exit_status_and_timed_out)
+   FAIL: test_a_command_must_say_how_it_ended (test_check_compatibility_matrix.PerCommandStatusRecordTest.test_a_command_must_say_how_it_ended)
+
+## MUTATION: the version stops binding a current matrix to its release  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=9)
+   FAIL: test_a_directive_inside_a_code_fence_is_an_example_not_a_declaration (test_check_compatibility_matrix.DocumentStatusTest.test_a_directive_inside_a_code_fence_is_an_example_not_a_declaration)
+   FAIL: test_status_defaults_to_current_so_the_binding_is_fail_closed (test_check_compatibility_matrix.DocumentStatusTest.test_status_defaults_to_current_so_the_binding_is_fail_closed)
+   FAIL: test_a_version_bump_without_a_fresh_run_fails (test_check_compatibility_matrix.VersionBoundEvidenceTest.test_a_version_bump_without_a_fresh_run_fails)
+   FAIL: test_the_report_wording_matches_the_run_it_belongs_to (test_check_compatibility_matrix.VersionBoundEvidenceTest.test_the_report_wording_matches_the_run_it_belongs_to)
+
+## MUTATION: the binding partition is inverted: fingerprints fail, the version reports  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=15)
+   FAIL: test_a_directive_inside_a_code_fence_is_an_example_not_a_declaration (test_check_compatibility_matrix.DocumentStatusTest.test_a_directive_inside_a_code_fence_is_an_example_not_a_declaration)
+   FAIL: test_status_defaults_to_current_so_the_binding_is_fail_closed (test_check_compatibility_matrix.DocumentStatusTest.test_status_defaults_to_current_so_the_binding_is_fail_closed)
+   FAIL: test_a_wrong_package_name_fails (test_check_compatibility_matrix.PackageBindingTest.test_a_wrong_package_name_fails)
+   FAIL: test_a_wrong_package_version_fails (test_check_compatibility_matrix.PackageBindingTest.test_a_wrong_package_version_fails)
+   FAIL: test_a_moved_tree_is_reported_rather_than_dropped (test_check_compatibility_matrix.VersionBoundEvidenceTest.test_a_moved_tree_is_reported_rather_than_dropped)
+   FAIL: test_a_moved_tree_under_an_unchanged_version_does_not_fail (test_check_compatibility_matrix.VersionBoundEvidenceTest.test_a_moved_tree_under_an_unchanged_version_does_not_fail)
+   FAIL: test_a_version_bump_without_a_fresh_run_fails (test_check_compatibility_matrix.VersionBoundEvidenceTest.test_a_version_bump_without_a_fresh_run_fails)
+   FAIL: test_the_report_says_the_next_release_needs_a_fresh_run (test_check_compatibility_matrix.VersionBoundEvidenceTest.test_the_report_says_the_next_release_needs_a_fresh_run)
+   FAIL: test_the_report_wording_matches_the_run_it_belongs_to (test_check_compatibility_matrix.VersionBoundEvidenceTest.test_the_report_wording_matches_the_run_it_belongs_to)
+   FAIL: test_the_version_is_the_only_binding_field_that_fails (test_check_compatibility_matrix.VersionBoundEvidenceTest.test_the_version_is_the_only_binding_field_that_fails)
+
+## MUTATION: supersession reads the partitioned failures instead of the whole binding  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=17)
+   FAIL: test_every_discovered_matrix_document_validates (test_check_compatibility_matrix.EvidenceDiscoveryTest.test_every_discovered_matrix_document_validates) (document='2026-08-27-agent-launcher-compatibility-matrix-pre-cycle2-repair.md')
+   FAIL: test_every_discovered_matrix_document_validates (test_check_compatibility_matrix.EvidenceDiscoveryTest.test_every_discovered_matrix_document_validates) (document='2026-08-27-agent-launcher-compatibility-matrix-pre-cycle3-repair.md')
+   FAIL: test_every_discovered_matrix_document_validates (test_check_compatibility_matrix.EvidenceDiscoveryTest.test_every_discovered_matrix_document_validates) (document='2026-08-27-agent-launcher-compatibility-matrix-pre-pr-ci-repair.md')
+   FAIL: test_every_discovered_matrix_document_validates (test_check_compatibility_matrix.EvidenceDiscoveryTest.test_every_discovered_matrix_document_validates) (document='2026-08-30-mission-control-compatibility-matrix-pre-beads-config-ladder.md')
+   FAIL: test_every_discovered_matrix_document_validates (test_check_compatibility_matrix.EvidenceDiscoveryTest.test_every_discovered_matrix_document_validates) (document='2026-08-30-mission-control-compatibility-matrix-pre-fingerprint-move.md')
+   FAIL: test_the_no_argument_run_validates_every_committed_matrix (test_check_compatibility_matrix.LiveDocumentTest.test_the_no_argument_run_validates_every_committed_matrix)
+   FAIL: test_the_intermediate_pair_validates_as_superseded (test_check_compatibility_matrix.MissionControlSupersededDocumentTest.test_the_intermediate_pair_validates_as_superseded)
+   FAIL: test_a_package_with_no_matrix_at_all_is_allowed (test_check_compatibility_matrix.VersionBoundEvidenceTest.test_a_package_with_no_matrix_at_all_is_allowed) (document='2026-08-27-agent-launcher-compatibility-matrix-pre-cycle2-repair.md')
+   FAIL: test_a_package_with_no_matrix_at_all_is_allowed (test_check_compatibility_matrix.VersionBoundEvidenceTest.test_a_package_with_no_matrix_at_all_is_allowed) (document='2026-08-27-agent-launcher-compatibility-matrix-pre-cycle3-repair.md')
+   FAIL: test_a_package_with_no_matrix_at_all_is_allowed (test_check_compatibility_matrix.VersionBoundEvidenceTest.test_a_package_with_no_matrix_at_all_is_allowed) (document='2026-08-27-agent-launcher-compatibility-matrix-pre-pr-ci-repair.md')
+   FAIL: test_a_package_with_no_matrix_at_all_is_allowed (test_check_compatibility_matrix.VersionBoundEvidenceTest.test_a_package_with_no_matrix_at_all_is_allowed) (document='2026-08-30-mission-control-compatibility-matrix-pre-beads-config-ladder.md')
+   FAIL: test_a_package_with_no_matrix_at_all_is_allowed (test_check_compatibility_matrix.VersionBoundEvidenceTest.test_a_package_with_no_matrix_at_all_is_allowed) (document='2026-08-30-mission-control-compatibility-matrix-pre-fingerprint-move.md')
+
+## MUTATION: the client extension directory is no longer read from the package trees  [scripts/check_compatibility_matrix.py]
+   FAILED (failures=5)
+   SURVIVED: no shipping test failed
+   RE-RUN after the test added in this commit: FAILED (failures=7)
+   FAIL: test_it_is_collected_even_when_no_descriptor_names_it (test_check_compatibility_matrix.ClientExtensionRedactionTest.test_it_is_collected_even_when_no_descriptor_names_it)
+   FAIL: test_the_directory_is_collected_from_the_package_trees (test_check_compatibility_matrix.ClientExtensionRedactionTest.test_the_directory_is_collected_from_the_package_trees)
+
+## MUTATION: credential break set narrowed to newline only  [scripts/check_repo.py]
+   FAILED (failures=7)
+   FAIL: test_the_assignment_family_is_the_same_rule (test_site_profile.CredentialRuleDriftTest.test_the_assignment_family_is_the_same_rule)
+   FAIL: test_the_break_set_is_exactly_what_splitlines_recognises (test_site_profile.LineBreakAgreementTest.test_the_break_set_is_exactly_what_splitlines_recognises) (copy='repository gate')
+
+## MUTATION: one credential break boundary dropped (carriage return)  [scripts/check_repo.py]
+   FAILED (failures=7)
+   FAIL: test_the_assignment_family_is_the_same_rule (test_site_profile.CredentialRuleDriftTest.test_the_assignment_family_is_the_same_rule)
+   FAIL: test_the_break_set_is_exactly_what_splitlines_recognises (test_site_profile.LineBreakAgreementTest.test_the_break_set_is_exactly_what_splitlines_recognises) (copy='repository gate')
+
+## MUTATION: exact in-text credential key set emptied  [scripts/check_repo.py]
+   FAILED (failures=17)
+   FAIL: test_both_copies_agree_which_keys_are_strict (test_site_profile.CredentialRuleDriftTest.test_both_copies_agree_which_keys_are_strict) (key='auth')
+   FAIL: test_both_copies_agree_which_keys_are_strict (test_site_profile.CredentialRuleDriftTest.test_both_copies_agree_which_keys_are_strict) (key='accesskey')
+   FAIL: test_both_copies_agree_which_keys_are_strict (test_site_profile.CredentialRuleDriftTest.test_both_copies_agree_which_keys_are_strict) (key='access-key')
+   FAIL: test_the_assignment_family_is_the_same_rule (test_site_profile.CredentialRuleDriftTest.test_the_assignment_family_is_the_same_rule)
+   FAIL: test_all_three_copies_reach_the_recorded_verdict (test_site_profile.CredentialVerdictCorpusTest.test_all_three_copies_reach_the_recorded_verdict) (text='auth: rainbowtrout')
+   FAIL: test_all_three_copies_reach_the_recorded_verdict (test_site_profile.CredentialVerdictCorpusTest.test_all_three_copies_reach_the_recorded_verdict) (text='accesskey: rainbowtrout')
+   FAIL: test_all_three_copies_reach_the_recorded_verdict (test_site_profile.CredentialVerdictCorpusTest.test_all_three_copies_reach_the_recorded_verdict) (text='access_key: rainbowtrout')
+   FAIL: test_all_three_copies_reach_the_recorded_verdict (test_site_profile.CredentialVerdictCorpusTest.test_all_three_copies_reach_the_recorded_verdict) (text='access-key: rainbowtrout')
+   FAIL: test_the_exact_key_set_cannot_be_emptied_without_failures (test_site_profile.LineBreakAgreementTest.test_the_exact_key_set_cannot_be_emptied_without_failures) (key='auth')
+   FAIL: test_the_exact_key_set_cannot_be_emptied_without_failures (test_site_profile.LineBreakAgreementTest.test_the_exact_key_set_cannot_be_emptied_without_failures) (key='accesskey')
+   FAIL: test_the_exact_key_set_cannot_be_emptied_without_failures (test_site_profile.LineBreakAgreementTest.test_the_exact_key_set_cannot_be_emptied_without_failures) (key='access_key')
+   FAIL: test_the_exact_key_set_cannot_be_emptied_without_failures (test_site_profile.LineBreakAgreementTest.test_the_exact_key_set_cannot_be_emptied_without_failures) (key='access-key')
+
+## MUTATION: gate stops checking that declared entrypoints exist  [scripts/check_repo.py]
+   FAILED (failures=6)
+   FAIL: test_the_repository_gate_refuses_it_too (test_assess_clients.InvalidEntrypointTest.test_the_repository_gate_refuses_it_too)
+
+## MUTATION: descriptor validation dropped from the repository gate  [scripts/check_repo.py]
+   FAILED (failures=6)
+   FAIL: test_the_gate_reports_a_descriptor_that_does_not_load (test_check_repo.PortDescriptorGateTests.test_the_gate_reports_a_descriptor_that_does_not_load)
+
+## MUTATION: marketplace staleness check dropped from the repository gate  [scripts/check_repo.py]
+   FAILED (failures=6)
+   FAIL: test_the_repository_gate_runs_this_check (test_sync_marketplace.StalenessTests.test_the_repository_gate_runs_this_check)
+
+## MUTATION: fleet bundle output check dropped from the repository gate  [scripts/check_repo.py]
+   FAILED (failures=5)
+   SURVIVED: no shipping test failed
+   RE-RUN after the test added in this commit: FAILED (failures=6)
+   FAIL: test_the_gate_reports_a_declared_bundle_that_was_never_generated (test_check_repo.GateWiringTests.test_the_gate_reports_a_declared_bundle_that_was_never_generated)
+
+## MUTATION: skill frontmatter check dropped from the repository gate  [scripts/check_repo.py]
+   FAILED (failures=5)
+   SURVIVED: no shipping test failed
+   RE-RUN after the test added in this commit: FAILED (failures=6)
+   FAIL: test_the_gate_reports_a_skill_with_no_frontmatter (test_check_repo.GateWiringTests.test_the_gate_reports_a_skill_with_no_frontmatter)
+
+## RESTORED
+# carried from cycle 16, not re-graded in this cycle:
+plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
+# carried from cycle 16, not re-graded in this cycle:
+scripts/assess_clients.py sha256: 2f8fafe988f791e53403d619ed61e4749930838435d001993e8cf581ca1ad9d8
+scripts/check_compatibility_matrix.py sha256: fd8541e7ddf7c9add9552ded78ee342e474e5ee1c99471d68b8e2cabdbe488b4
+scripts/check_repo.py sha256: d7e59f20bdfe317cf4aa1d1dc7507543e80dc7976266b3237fd81000256ef9e1
+scripts/port_config.py sha256: 56216b7c8018b361d611356e21bc2383cb7d71ebf478f28436fee3c5c8e46b17
+byte-identical to pristine: YES
+final suite: FAILED (failures=5)
+final suite failures outside the excluded proof binding and the two pre-existing TemplateSync cases: none
+mutations run: 33; survived first grading: 3; surviving after the tests added in this commit: 0

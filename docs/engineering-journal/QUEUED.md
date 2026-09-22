@@ -217,6 +217,23 @@ operator decision.
 
 ### The repository carries no marketplace manifest, so it cannot be registered as a catalog
 
+**Consumed by the 2026-09-22 custody decision (custody moves here;
+`infiquetra-claude-plugins` is retired).** The gap this entry recorded was that
+catalog registration of *this repository* had never been assessed, and its
+guardrail withheld any widening of distribution scope until an operator decided.
+That is the decision. Every package becomes Claude-installable from this
+repository: each package root carries `.claude-plugin/plugin.json`, and the root
+`.claude-plugin/marketplace.json` lists exactly the set of packages that do.
+`tests/test_claude_plugin_packaging.py` derives that set from the tree and checks
+the agreement in both directions, and the agent-launcher assertion that the
+marketplace lists voice only was retired in the same change, the operator
+decision it was withholding on having been taken.
+
+What remains open is narrower than what this entry recorded, and is carried by
+the plan's own units rather than here: per-harness placement is unit U5
+(`scripts/install_client.py`), and reading each harness back as installed from
+this repository is unit U7 (cutover). Neither is a missing manifest.
+
 **Author.** Jeff Cox and Claude
 
 **Priority.** P1

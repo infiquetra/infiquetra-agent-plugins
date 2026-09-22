@@ -40,6 +40,11 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import check_compatibility_matrix as ccm  # noqa: E402
 import port_config  # noqa: E402
+import sync_vendor_source as svs  # noqa: E402
+
+#: The client extension directory, read from the module that owns the name
+#: rather than spelled again here.
+EXTENSION_DIRECTORY = svs.PORTABLE_PACKAGE_ROOT_MARKER
 
 
 EVIDENCE = ROOT / "docs" / "evidence"
@@ -167,6 +172,18 @@ def check(record: dict, preamble: str = "# Matrix\n\nProse first.\n\n") -> list[
     document = write_document(record, preamble)
     try:
         return ccm.check_matrix(document, FAKE_CONFIG)
+    finally:
+        document.unlink()
+
+
+def check_with_reports(
+    record: dict, preamble: str = "# Matrix\n\nProse first.\n\n"
+) -> tuple[list[str], list[str]]:
+    """The problems and the non-failing reports, from one run over a document."""
+    document = write_document(record, preamble)
+    reports: list[str] = []
+    try:
+        return ccm.check_matrix(document, FAKE_CONFIG, reports=reports), reports
     finally:
         document.unlink()
 
@@ -807,23 +824,23 @@ class PackageBindingTest(unittest.TestCase):
     of a package that had been replaced.
     """
 
-    def test_a_wellformed_digest_of_the_wrong_tree_fails(self) -> None:
+    def test_a_wellformed_digest_of_the_wrong_tree_is_still_detected(self) -> None:
         record = valid_record()
         record["package"]["tree_sha256"] = "9" * 64
-        problems = check(record)
+        problems = ccm.check_package_binding(record, FAKE_CONFIG)
         self.assertTrue(any("tree_sha256" in problem for problem in problems))
         self.assertTrue(any("does not describe the shipped tree" in p for p in problems))
 
-    def test_a_wrong_file_count_fails(self) -> None:
+    def test_a_wrong_file_count_is_still_detected(self) -> None:
         record = valid_record()
         record["package"]["file_count"] = FAKE_FILE_COUNT + 2
-        problems = check(record)
+        problems = ccm.check_package_binding(record, FAKE_CONFIG)
         self.assertTrue(any("file_count" in problem for problem in problems))
 
-    def test_the_failure_says_the_assessment_must_be_re_run_not_renumbered(self) -> None:
+    def test_the_message_says_the_assessment_must_be_re_run_not_renumbered(self) -> None:
         record = valid_record()
         record["package"]["file_count"] = FAKE_FILE_COUNT + 2
-        problems = check(record)
+        problems = ccm.check_package_binding(record, FAKE_CONFIG)
         self.assertTrue(any("re-run rather than renumbered" in p for p in problems))
 
     def test_a_wrong_package_name_fails(self) -> None:
@@ -950,6 +967,150 @@ class PackageResolutionTest(unittest.TestCase):
             self.assertNotIn(f'"{forbidden}"', source)
 
 
+class ClientExtensionRedactionTest(unittest.TestCase):
+    """The client extension directory must stay a directory, not read as a host.
+
+    The redaction rule reports dotted tokens in evidence as hostnames. The
+    client extension directory is spelled in reverse-domain form
+    (`com.infiquetra.claude`), so it has to be collected as a known
+    non-host token or every matrix that mentions it fails redaction.
+
+    It used to be collected from the port descriptors alone. Under the
+    2026-09-22 custody decision every descriptor becomes authored and states no
+    `source`, so that reading returns nothing and the directory reads as a
+    hostname again -- in a catalog whose own evidence is full of it. The
+    package trees are therefore read as well.
+
+    The cycle-17 mutation campaign found this guard untested: deleting the tree
+    scan survived. These tests are that gap closed.
+    """
+
+    def setUp(self) -> None:
+        self.directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.directory, True)
+
+    def package_with_extension(self, name: str = "example") -> None:
+        extension = self.directory / "plugins" / name / EXTENSION_DIRECTORY
+        extension.mkdir(parents=True)
+        (extension / "plugin.json").write_text("{}", encoding="utf-8")
+
+    def test_the_directory_is_collected_from_the_package_trees(self) -> None:
+        self.package_with_extension()
+        self.assertIn(EXTENSION_DIRECTORY, ccm.non_host_dotted_tokens(self.directory))
+
+    def test_it_is_collected_even_when_no_descriptor_names_it(self) -> None:
+        """Which is every package's state once custody has moved here."""
+        self.package_with_extension()
+        self.assertEqual(port_config.available(self.directory), [])
+        self.assertIn(EXTENSION_DIRECTORY, ccm.non_host_dotted_tokens(self.directory))
+
+    def test_an_ordinary_package_directory_is_not_collected(self) -> None:
+        """Only reverse-domain names are directories; the rest stay hostnames."""
+        package = self.directory / "plugins" / "example" / "scripts"
+        package.mkdir(parents=True)
+        self.assertEqual(ccm.non_host_dotted_tokens(self.directory), frozenset())
+
+    def test_the_committed_catalog_still_declares_the_directory(self) -> None:
+        self.assertIn(EXTENSION_DIRECTORY, ccm.non_host_dotted_tokens(ROOT))
+
+
+class VersionBoundEvidenceTest(unittest.TestCase):
+    """Evidence binds to a released version, not to every tree (2026-09-22).
+
+    For a derived package every byte came from one pin, so a moved fingerprint
+    meant a moved pin and failing on it was right. An authored package's tree
+    moves on every commit -- a typo fixed in a README moves it -- and a
+    per-commit ten-client run is not a standard anyone will keep. Left as a
+    failure the rule would be switched off within a week, which is worse than a
+    rule that reports.
+
+    So the version fails and the fingerprint reports. Both halves are pinned
+    here, including that nothing is silently dropped.
+    """
+
+    def test_a_version_bump_without_a_fresh_run_fails(self) -> None:
+        record = valid_record()
+        record["package"]["version"] = "1.9.0"
+        problems, _reports = check_with_reports(record)
+        self.assertTrue(any(p.startswith(ccm.VERSION_PROBLEM_PREFIX) for p in problems))
+
+    def test_a_moved_tree_under_an_unchanged_version_does_not_fail(self) -> None:
+        record = valid_record()
+        record["package"]["tree_sha256"] = "9" * 64
+        record["package"]["file_count"] = FAKE_FILE_COUNT + 2
+        problems, _reports = check_with_reports(record)
+        self.assertEqual(problems, [])
+
+    def test_a_moved_tree_is_reported_rather_than_dropped(self) -> None:
+        """Not failing is not the same as not saying anything."""
+        record = valid_record()
+        record["package"]["tree_sha256"] = "9" * 64
+        record["package"]["file_count"] = FAKE_FILE_COUNT + 2
+        _problems, reports = check_with_reports(record)
+        self.assertTrue(any("tree_sha256" in report for report in reports))
+        self.assertTrue(any("file_count" in report for report in reports))
+
+    def test_the_report_says_the_next_release_needs_a_fresh_run(self) -> None:
+        record = valid_record()
+        record["package"]["tree_sha256"] = "9" * 64
+        _problems, reports = check_with_reports(record)
+        self.assertTrue(any("fresh run" in report for report in reports))
+
+    def test_every_binding_problem_is_either_a_failure_or_a_report(self) -> None:
+        """The partition is total, so no rule is turned off by being forgotten."""
+        record = valid_record()
+        record["package"]["version"] = "1.9.0"
+        record["package"]["name"] = "unifi-portable"
+        record["package"]["tree_sha256"] = "9" * 64
+        record["package"]["file_count"] = FAKE_FILE_COUNT + 2
+        everything = ccm.check_package_binding(record, FAKE_CONFIG)
+        failures, reports = ccm.split_binding_problems(everything)
+        self.assertEqual(sorted(failures + reports), sorted(everything))
+        self.assertEqual(len(everything), 4)
+
+    def test_the_version_is_the_only_binding_field_that_fails(self) -> None:
+        record = valid_record()
+        record["package"]["tree_sha256"] = "9" * 64
+        record["package"]["file_count"] = FAKE_FILE_COUNT + 2
+        failures, _reports = ccm.split_binding_problems(
+            ccm.check_package_binding(record, FAKE_CONFIG)
+        )
+        self.assertEqual(failures, [])
+
+    def test_a_package_with_no_matrix_at_all_is_allowed(self) -> None:
+        """Voice ships none today, and shipping none is not a defect.
+
+        Discovery is over the evidence documents that exist, so a package with
+        no matrix contributes no document and no problem. Asserted rather than
+        assumed: a later change that made a missing matrix a failure would make
+        every authored package fail on the day it lands.
+        """
+        documents = ccm.matrix_documents()
+        assessed = set()
+        for document in documents:
+            record = ccm.extract_record(document.read_text(encoding="utf-8"))
+            assessed.add(record["package"]["name"])
+        unassessed = {
+            path.name
+            for path in (ROOT / "plugins").iterdir()
+            if path.is_dir() and path.name not in assessed
+        }
+        self.assertTrue(unassessed, "every package has a matrix, so this proves nothing")
+        for document in documents:
+            with self.subTest(document=document.name):
+                self.assertEqual(ccm.check_matrix(document), [])
+
+    def test_the_report_wording_matches_the_run_it_belongs_to(self) -> None:
+        """A report may not say the version matches while the version failed."""
+        record = valid_record()
+        record["package"]["version"] = "1.9.0"
+        record["package"]["tree_sha256"] = "9" * 64
+        _problems, reports = check_with_reports(record)
+        self.assertTrue(reports)
+        for report in reports:
+            self.assertNotIn("the recorded version still matches", report)
+
+
 class DocumentStatusTest(unittest.TestCase):
     """Supersession is the only exemption, and it carries obligations."""
 
@@ -963,7 +1124,15 @@ class DocumentStatusTest(unittest.TestCase):
         return path
 
     def stale_record(self) -> dict:
+        """A record the binding rejects: a different release *and* a moved tree.
+
+        The version is what moved it from "reported" to "failed" after the
+        2026-09-22 rule change. Both fields are stale because a superseded
+        matrix in practice is both, and the supersession tests below have to be
+        exempting a document that really would fail.
+        """
         record = valid_record()
+        record["package"]["version"] = "1.9.0"
         record["package"]["file_count"] = FAKE_FILE_COUNT + 5
         record["package"]["tree_sha256"] = "1" * 64
         return record
@@ -974,7 +1143,9 @@ class DocumentStatusTest(unittest.TestCase):
     def test_status_defaults_to_current_so_the_binding_is_fail_closed(self) -> None:
         path = self.write("no-directive.md", self.stale_record(), "# Matrix\n\n")
         problems = ccm.check_matrix(path, FAKE_CONFIG)
-        self.assertTrue(any("tree_sha256" in problem for problem in problems))
+        self.assertTrue(
+            any(problem.startswith(ccm.VERSION_PROBLEM_PREFIX) for problem in problems)
+        )
 
     def test_a_superseded_document_is_exempt_from_the_binding(self) -> None:
         self.current_successor()
@@ -1064,7 +1235,9 @@ class DocumentStatusTest(unittest.TestCase):
         self.assertEqual(ccm.read_directives(fenced), {})
         path = self.write("live.md", self.stale_record(), fenced)
         problems = ccm.check_matrix(path, FAKE_CONFIG)
-        self.assertTrue(any("tree_sha256" in problem for problem in problems))
+        self.assertTrue(
+            any(problem.startswith(ccm.VERSION_PROBLEM_PREFIX) for problem in problems)
+        )
 
     def test_the_last_declaration_of_a_key_wins(self) -> None:
         text = (

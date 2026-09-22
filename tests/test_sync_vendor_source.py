@@ -1942,18 +1942,38 @@ class MissionControlShippedTests(unittest.TestCase):
                     "re-read upstream filing #828 before touching the CI install line",
                 )
 
-    def test_the_ci_install_line_keeps_pyyaml(self) -> None:
-        """F46: the PyYAML confirmation is anchored on the CI job's install
-        line — a line that itself starts with `run:` and carries the
-        pip-install text — rather than on a file-global substring, so a
-        comment or a different workflow line cannot silently satisfy the
-        guard."""
+    def test_the_ci_dependency_list_keeps_pyyaml(self) -> None:
+        """F46: the PyYAML confirmation is anchored on what CI actually
+        installs. That list moved out of the workflow's `run:` line and into
+        `requirements-plugin-tests.txt`, so twelve package-import branches can
+        append a test-time package without twelve conflicts on one line. The
+        guard follows it: the requirement is still that something CI installs
+        names pyyaml, and both halves are checked — the file names it, and the
+        job installs that file — so neither a requirements file nobody installs
+        nor an install of a file that lost the entry can satisfy it."""
+        requirements = ROOT / "requirements-plugin-tests.txt"
+        self.assertTrue(
+            requirements.is_file(),
+            "the plugin-test dependency list is missing; the package still imports "
+            "yaml at module scope (see the confirmation beside this test)",
+        )
+        listed = {
+            line.strip().lower()
+            for line in requirements.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.startswith("#")
+        }
+        self.assertIn(
+            "pyyaml",
+            listed,
+            "the plugin-test dependency list no longer names pyyaml; the package "
+            "still imports it at module scope",
+        )
         ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         self.assertRegex(
             ci,
-            r"(?m)^\s*run:.*pip install .*\bpyyaml\b",
-            "no CI step's run line installs pyyaml; the package still imports it at "
-            "module scope (see the confirmation beside this test)",
+            r"(?m)^\s*(?:run:|\s+)?.*pip install -r requirements-plugin-tests\.txt",
+            "no CI step installs the plugin-test dependency list, so naming pyyaml "
+            "in it would install nothing",
         )
 
 

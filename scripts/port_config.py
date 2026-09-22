@@ -16,9 +16,11 @@ tooling needs:
 * **identity** -- the package name and the tree it lives in, which is what binds
   a compatibility matrix to an artifact rather than to a well-formed digest;
 * **source** -- the upstream repository, the path inside it, and the client
-  extension directory the Claude adapter lands under;
+  extension directory the Claude adapter lands under. Absent for a package
+  authored in this repository;
 * **custody** -- every upstream path classified exactly once, which is the table
-  `classify_source_tree` refuses to run without;
+  `classify_source_tree` refuses to run without. Absent for the same packages,
+  and for the same reason: an authored package has no upstream path to classify;
 * **assessment** -- the package's own entrypoint scripts and the operations it
   classifies as mutating, which is what keeps the matrix safety rule precise
   rather than a keyword search over every command;
@@ -72,7 +74,20 @@ CONFIG_SUFFIX = ".json"
 #: the version, and an entry with no rule name is refused for the same reason a
 #: bare string is -- reading either with an assumed default rule would select a
 #: rewrite nobody named.
-SCHEMA_VERSION = "3"
+#:
+#: Version 4 adds an *authored* mode: `source` and `custody` become optional,
+#: together. A descriptor that states neither describes a package written in
+#: this repository rather than derived from an upstream pin, which is what the
+#: 2026-09-22 custody decision makes the norm. The two fields are optional as a
+#: pair and never singly: `source` without `custody` is a synchronization with
+#: no classification table, and `custody` without `source` classifies paths in a
+#: repository nobody named. Either one alone is refused.
+#:
+#: `assessment` stays mandatory in both modes, with every safety field still
+#: stated. Custody moving here changes where a package's bytes come from; it
+#: does not change what an assessment must strip, scope, or invoke, and a
+#: safety field that fails open fails open just as hard for authored source.
+SCHEMA_VERSION = "4"
 
 #: Package roots live under this directory. Enforced rather than assumed: the
 #: descriptor is the input that decides which tree a synchronization overwrites
@@ -84,15 +99,18 @@ REQUIRED_TOP_LEVEL = (
     "schema_version",
     "package",
     "package_root",
-    "source",
-    "custody",
     "assessment",
 )
+
+#: The derivation pair. Present together, the descriptor describes a package
+#: derived from an upstream pin; absent together, one authored here. Never one
+#: without the other -- see `SCHEMA_VERSION`.
+DERIVATION_FIELDS = ("source", "custody")
 
 #: Every key the top level may carry. Closed, like every other object here: an
 #: unknown key is a typo, and a typo in a descriptor is a setting that silently
 #: did not take effect.
-TOP_LEVEL_FIELDS = REQUIRED_TOP_LEVEL + ("package_manifest", "provenance")
+TOP_LEVEL_FIELDS = REQUIRED_TOP_LEVEL + DERIVATION_FIELDS + ("package_manifest", "provenance")
 
 REQUIRED_SOURCE_FIELDS = ("repository", "package_path")
 
@@ -396,8 +414,8 @@ class PortConfig:
         name: str,
         package_root: str,
         package_manifest: str,
-        source: SourceConfig,
-        custody: CustodyTable,
+        source: SourceConfig | None,
+        custody: CustodyTable | None,
         assessment: AssessmentConfig,
         notes: tuple[str, ...],
         dropped_reason: str,
@@ -416,6 +434,20 @@ class PortConfig:
         self.path = path
 
     @property
+    def is_authored(self) -> bool:
+        """True when this package is written here rather than derived from a pin.
+
+        An authored descriptor carries neither `source` nor `custody`, so both
+        attributes are `None` rather than empty. `None` is deliberate: a tool
+        that reaches for a custody table without asking this question first
+        fails loudly, where an empty table would have let it plan a
+        synchronization of nothing and report success. The emptiness that reads
+        as "no work to do" is the same fail-open shape every closed object in
+        this file exists to refuse.
+        """
+        return self.source is None
+
+    @property
     def package_directory(self) -> Path:
         """The package tree on disk: the root a matrix fingerprints and a sync writes."""
         return self.root / self.package_root
@@ -426,6 +458,133 @@ class PortConfig:
 
     def __repr__(self) -> str:  # pragma: no cover - diagnostic only
         return f"PortConfig(name={self.name!r}, package_root={self.package_root!r})"
+
+
+def _assessment_config(document: dict[str, Any], where: str) -> AssessmentConfig:
+    """The assessment block, with every safety field stated.
+
+    Shared by both descriptor modes on purpose. Custody moving into this
+    repository changes where a package's bytes come from; it does not change
+    what an assessment must strip, scope, or invoke. A safety field that fails
+    open fails open just as hard for source authored here, so an authored
+    descriptor is held to exactly this block and not a relaxed copy of it.
+    """
+    assessment_document = document["assessment"]
+    _require(isinstance(assessment_document, dict), f"{where}.assessment must be an object")
+    assert isinstance(assessment_document, dict)
+    _closed(assessment_document, ASSESSMENT_FIELDS, f"{where}.assessment")
+
+    declared_none = _string_tuple(assessment_document, "declared_none", f"{where}.assessment")
+    unknown_none = sorted(set(declared_none) - set(SAFETY_FIELDS))
+    _require(
+        not unknown_none,
+        f"{where}.assessment.declared_none names field(s) that carry no safety decision: "
+        f"{', '.join(unknown_none)}. The safety fields are {', '.join(SAFETY_FIELDS)}",
+    )
+
+    # Every safety field is stated, and a field that is genuinely empty says so.
+    # Absent, each one fails open in its own way -- see SAFETY_FIELDS. Requiring
+    # the declaration is what makes "this package has no mutating operations" a
+    # decision a reader can see rather than a typo nobody noticed.
+    for field in SAFETY_FIELDS:
+        stated = field in assessment_document
+        _require(
+            stated or field in declared_none,
+            f"{where}.assessment.{field} is a safety declaration and must be stated. If this "
+            f"package genuinely has none, write it as an empty list and name {field!r} in "
+            "assessment.declared_none",
+        )
+        values = _string_tuple(assessment_document, field, f"{where}.assessment")
+        if field in declared_none:
+            _require(
+                not values,
+                f"{where}.assessment.{field} is named in declared_none but is not empty",
+            )
+        else:
+            _require(
+                bool(values),
+                f"{where}.assessment.{field} is empty. An empty safety declaration fails open, "
+                f"so name {field!r} in assessment.declared_none to say the emptiness is meant",
+            )
+
+    assessment = AssessmentConfig(
+        package_scripts=_string_tuple(assessment_document, "package_scripts", f"{where}.assessment"),
+        mutating_operations=frozenset(
+            _string_tuple(assessment_document, "mutating_operations", f"{where}.assessment")
+        ),
+        credential_prefixes=_string_tuple(
+            assessment_document, "credential_prefixes", f"{where}.assessment"
+        ),
+        skill_units=_string_tuple(assessment_document, "skill_units", f"{where}.assessment"),
+        entrypoints=_string_tuple(assessment_document, "entrypoints", f"{where}.assessment"),
+        declared_none=declared_none,
+    )
+    for unit in assessment.skill_units:
+        _relative_path(unit, f"{where}.assessment.skill_units")
+    for entrypoint in assessment.entrypoints:
+        _relative_path(entrypoint, f"{where}.assessment.entrypoints")
+    return assessment
+
+
+def _provenance_fields(
+    document: dict[str, Any], where: str, *, drops_paths: bool
+) -> tuple[tuple[str, ...], str]:
+    """The optional provenance block: manifest notes, and why a path was dropped.
+
+    `drops_paths` is false for an authored descriptor, which carries no custody
+    table and therefore drops nothing: there is no upstream tree for a path to
+    be left behind in.
+    """
+    provenance_document = document.get("provenance", {})
+    _require(isinstance(provenance_document, dict), f"{where}.provenance must be an object")
+    assert isinstance(provenance_document, dict)
+    _closed(provenance_document, PROVENANCE_FIELDS, f"{where}.provenance")
+    notes = _string_tuple(provenance_document, "notes", f"{where}.provenance")
+    dropped_reason = provenance_document.get("dropped_reason", "")
+    _require(
+        isinstance(dropped_reason, str),
+        f"{where}.provenance.dropped_reason must be a string",
+    )
+    assert isinstance(dropped_reason, str)
+    if drops_paths:
+        _require(
+            dropped_reason.strip() != "",
+            f"{where}: drops upstream paths but records no provenance.dropped_reason; a "
+            "derived tree has to say why a path it does not carry was left behind",
+        )
+    return notes, dropped_reason
+
+
+def _authored(
+    document: dict[str, Any],
+    *,
+    where: str,
+    name: str,
+    package_root: str,
+    manifest: str,
+    root: Path,
+    path: Path,
+) -> PortConfig:
+    """A descriptor for a package written here rather than derived from a pin.
+
+    It carries identity and assessment and nothing else. `source` and `custody`
+    are `None` rather than empty objects, so a tool that needs an upstream --
+    `sync_vendor_source.py` is the only one -- has a question it can ask
+    (`is_authored`) and a failure it cannot miss, instead of an empty table that
+    would read as a synchronization with no work to do.
+    """
+    return PortConfig(
+        name=name,
+        package_root=package_root,
+        package_manifest=manifest,
+        source=None,
+        custody=None,
+        assessment=_assessment_config(document, where),
+        notes=_provenance_fields(document, where, drops_paths=False)[0],
+        dropped_reason="",
+        root=root,
+        path=path,
+    )
 
 
 def parse(document: object, *, root: Path, path: Path) -> PortConfig:
@@ -488,6 +647,32 @@ def parse(document: object, *, root: Path, path: Path) -> PortConfig:
     )
     assert isinstance(manifest, str)
     _relative_path(manifest, f"{where}.package_manifest")
+
+    # The derivation pair: both present (derived from an upstream pin) or both
+    # absent (authored in this repository). One without the other is refused
+    # rather than half-read, because each half is meaningless alone -- a source
+    # with no custody table is a synchronization that classifies nothing, and a
+    # custody table with no source classifies paths in a repository nobody
+    # named.
+    stated = [key for key in DERIVATION_FIELDS if key in document]
+    if len(stated) == 1:
+        missing_half = next(key for key in DERIVATION_FIELDS if key not in document)
+        raise PortConfigError(
+            f"{where}: states {stated[0]!r} but not {missing_half!r}. They are optional as a "
+            "pair: both present describes a package derived from an upstream pin, both absent "
+            "one authored in this repository. Either alone is a descriptor that cannot be "
+            "acted on"
+        )
+    if not stated:
+        return _authored(
+            document,
+            where=where,
+            name=name,
+            package_root=package_root,
+            manifest=manifest,
+            root=root,
+            path=path,
+        )
 
     source_document = document["source"]
     _require(isinstance(source_document, dict), f"{where}.source must be an object")
@@ -574,78 +759,10 @@ def parse(document: object, *, root: Path, path: Path) -> PortConfig:
             "would plan it at a path built from the missing value"
         )
 
-    assessment_document = document["assessment"]
-    _require(isinstance(assessment_document, dict), f"{where}.assessment must be an object")
-    assert isinstance(assessment_document, dict)
-    _closed(assessment_document, ASSESSMENT_FIELDS, f"{where}.assessment")
-
-    declared_none = _string_tuple(assessment_document, "declared_none", f"{where}.assessment")
-    unknown_none = sorted(set(declared_none) - set(SAFETY_FIELDS))
-    _require(
-        not unknown_none,
-        f"{where}.assessment.declared_none names field(s) that carry no safety decision: "
-        f"{', '.join(unknown_none)}. The safety fields are {', '.join(SAFETY_FIELDS)}",
+    assessment = _assessment_config(document, where)
+    notes, dropped_reason = _provenance_fields(
+        document, where, drops_paths=bool(custody.dropped_from_source)
     )
-
-    # Every safety field is stated, and a field that is genuinely empty says so.
-    # Absent, each one fails open in its own way -- see SAFETY_FIELDS. Requiring
-    # the declaration is what makes "this package has no mutating operations" a
-    # decision a reader can see rather than a typo nobody noticed.
-    for field in SAFETY_FIELDS:
-        stated = field in assessment_document
-        _require(
-            stated or field in declared_none,
-            f"{where}.assessment.{field} is a safety declaration and must be stated. If this "
-            f"package genuinely has none, write it as an empty list and name {field!r} in "
-            "assessment.declared_none",
-        )
-        values = _string_tuple(assessment_document, field, f"{where}.assessment")
-        if field in declared_none:
-            _require(
-                not values,
-                f"{where}.assessment.{field} is named in declared_none but is not empty",
-            )
-        else:
-            _require(
-                bool(values),
-                f"{where}.assessment.{field} is empty. An empty safety declaration fails open, "
-                f"so name {field!r} in assessment.declared_none to say the emptiness is meant",
-            )
-
-    assessment = AssessmentConfig(
-        package_scripts=_string_tuple(assessment_document, "package_scripts", f"{where}.assessment"),
-        mutating_operations=frozenset(
-            _string_tuple(assessment_document, "mutating_operations", f"{where}.assessment")
-        ),
-        credential_prefixes=_string_tuple(
-            assessment_document, "credential_prefixes", f"{where}.assessment"
-        ),
-        skill_units=_string_tuple(assessment_document, "skill_units", f"{where}.assessment"),
-        entrypoints=_string_tuple(assessment_document, "entrypoints", f"{where}.assessment"),
-        declared_none=declared_none,
-    )
-    for unit in assessment.skill_units:
-        _relative_path(unit, f"{where}.assessment.skill_units")
-    for entrypoint in assessment.entrypoints:
-        _relative_path(entrypoint, f"{where}.assessment.entrypoints")
-
-    provenance_document = document.get("provenance", {})
-    _require(isinstance(provenance_document, dict), f"{where}.provenance must be an object")
-    assert isinstance(provenance_document, dict)
-    _closed(provenance_document, PROVENANCE_FIELDS, f"{where}.provenance")
-    notes = _string_tuple(provenance_document, "notes", f"{where}.provenance")
-    dropped_reason = provenance_document.get("dropped_reason", "")
-    _require(
-        isinstance(dropped_reason, str),
-        f"{where}.provenance.dropped_reason must be a string",
-    )
-    assert isinstance(dropped_reason, str)
-    if custody.dropped_from_source:
-        _require(
-            dropped_reason.strip() != "",
-            f"{where}: drops upstream paths but records no provenance.dropped_reason; a "
-            "derived tree has to say why a path it does not carry was left behind",
-        )
 
     return PortConfig(
         name=name,
