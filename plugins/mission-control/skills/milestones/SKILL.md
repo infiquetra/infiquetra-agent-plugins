@@ -33,10 +33,10 @@ GitHub progress rollups, and release coordination.
 ## Script Location
 
 ```bash
-$INFIQUETRA_SDLC_PATH/../infiquetra-claude-plugins/plugins/mission-control/scripts/sdlc_manager.py
+python3 scripts/sdlc_manager.py
 ```
 
-If `$INFIQUETRA_SDLC_PATH` is unset, use `~/workspace/infiquetra/infiquetra-sdlc` as the default base path.
+Run that command from the mission-control package root (the directory that contains `scripts/` and `skills/`). `INFIQUETRA_SDLC_PATH` names the infiquetra-sdlc checkout the schema loader reads.
 Always run the script with `python3`.
 
 ## Core Operations
@@ -120,8 +120,8 @@ Flag Objectives as at-risk when:
 
 - Due date is less than 7 days away and milestone completion is below 80%.
 - Any linked work item is blocked.
-- Linked work is aging in `Assigned`, `In Review`, `Active`, or `Verify`.
-- A required Jeff decision is still in `Needs Question` or equivalent state.
+- Linked work is aging in `Implementing`, `Code review`, `Active`, or `Verify`.
+- A required Jeff decision is still in `Needs clarification` or equivalent state.
 
 Check progress:
 
@@ -143,7 +143,7 @@ For Objectives spanning multiple repositories:
 
 An Objective is complete when:
 
-- Linked work items are in a terminal workflow status (`Done`, `Closed`, or equivalent).
+- Linked work items have reached the terminal Status `Ready to close`, or their GitHub issue is closed.
 - Success criteria in the Outcome Scorecard are validated.
 - No critical/high defects remain open against the Objective.
 - The GitHub Milestone is closed if one was created.

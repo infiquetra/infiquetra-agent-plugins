@@ -1,7 +1,8 @@
 """Tests for the card_validator shim.
 
 The shim mirrors home-lab/.../card_validator.py's always-required, body-only
-checks: the required H3 headers (incl. the U8 Intent + Context library links),
+checks: the required H3 headers (incl. the U8 Intent + Context library links and
+the #1000 common Risk field),
 AC has >=1 checklist item AND names a runnable check (executable acceptance,
 R2/KTD8), Verification has >=1 fenced code block, Files-expected has >=1 path-like
 line, no placeholder-only sections (the Context library links `_none_`
@@ -50,6 +51,10 @@ tests/test_card_validator.py::test_accepts_fully_populated_card
 cd ansible/roles/hermes_orchestrator/files
 pytest tests/test_card_validator.py -v
 ```
+
+### Risk
+medium
+The change is confined to the card validator gate.
 
 ### Notes / conventions
 - GitHub issue forms render fields as `### <Field Label>` headers
@@ -130,7 +135,7 @@ def test_rejects_empty_required_section() -> None:
 def test_handles_empty_body() -> None:
     is_valid, errors = sdlc_manager.validate_card_body("")
     assert not is_valid
-    # All 6 required sections missing
+    # Every required H3 section missing
     assert any("Missing required H3" in e for e in errors)
 
 

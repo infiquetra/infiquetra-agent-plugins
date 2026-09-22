@@ -76,12 +76,20 @@ import subprocess
 import sys
 import tempfile
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import quote
+
+# This script's own directory, so the sibling modules beside it import whether
+# the file is run by path, imported by a test that inserted this directory, or
+# loaded from an installed plugin tree.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import triage_suggest  # noqa: E402 - must follow the sys.path line above
 
 # ===========================
 # CONFIGURATION
@@ -458,26 +466,6 @@ def _status_order(
     if "No Status" not in ordered:
         ordered.append("No Status")
     return ordered
-
-
-def _wip_limits(config: dict, project_name: str, proj: dict) -> dict[str, Any]:
-    """Return schema-backed WIP limits for the project."""
-    schema = config.get("sdlc_schema", {})
-    board_key = _project_board_key(project_name, proj)
-    limits = schema.get("wip_limits", {}).get(board_key, {})
-    if limits:
-        return cast(dict[str, Any], limits)
-
-    legacy_limits = config.get("legacy_rollout_config", {}).get("wip_limits", {})
-    if project_name == "mount-olympus" and isinstance(legacy_limits, dict) and legacy_limits:
-        return {
-            "Ready": legacy_limits.get("ready", 10),
-            "In Development": legacy_limits.get("in_development", 10),
-            "E2E Testing": legacy_limits.get("e2e_testing", 3),
-            "Deployment Ready": legacy_limits.get("deployment_ready", 5),
-        }
-
-    return {"Ready": 10, "In Progress": 10 if project_name == "mount-olympus" else 5}
 
 
 def _terminal_statuses(config: dict, project_name: str, proj: dict) -> list[str]:
@@ -1229,7 +1217,6 @@ def board_view(project_name: str, status_filter: str | None, fmt: str) -> None:
             continue
         columns.setdefault(status, []).append(item)
 
-    wip_limits = _wip_limits(config, project_name, proj)
     column_order = _status_order(config, project_name, proj, columns)
 
     if fmt == "json":
@@ -1242,22 +1229,12 @@ def board_view(project_name: str, status_filter: str | None, fmt: str) -> None:
 
     for col in column_order:
         col_items = columns.get(col, [])
-        if not col_items and col not in wip_limits:
+        if not col_items:
             continue
 
-        limit = wip_limits.get(col)
-        if isinstance(limit, int):
-            limit_str = f" [WIP: {len(col_items)}/{limit}]"
-            over_limit = len(col_items) > limit
-        elif isinstance(limit, str):
-            limit_str = f" [WIP: {len(col_items)}; limit {limit}]"
-            over_limit = False
-        else:
-            limit_str = f" [{len(col_items)} items]"
-            over_limit = False
-        marker = " OVER LIMIT" if over_limit else ""
-
-        print(f"### {col}{limit_str}{marker}")
+        # WIP limits are retired (#999): the schema defines none, so columns
+        # report a plain count without limit decoration.
+        print(f"### {col} [{len(col_items)} items]")
         for item in col_items:
             content = item.get("content", {})
             repo = content.get("repository", {}).get("name", "unknown")
@@ -1437,41 +1414,27 @@ def board_archive(project_name: str, dry_run: bool, fmt: str) -> None:
 
 
 def board_wip(project_name: str, fmt: str) -> None:
-    """Show WIP counts vs limits."""
+    """Show WIP counts per status (limits are retired; the schema defines none)."""
     config = load_config()
     proj = get_project_config(config, project_name)
     _, items = get_project_items(proj["number"])
 
-    wip_limits = _wip_limits(config, project_name, proj)
-
-    counts: dict[str, int] = {}
+    columns: dict[str, list[dict]] = {}
     for item in items:
         status = get_item_status(item)
         if status:
-            counts[status] = counts.get(status, 0) + 1
+            columns.setdefault(status, []).append(item)
 
     print(f"\nWIP Status — {proj['name']}")
     print("=" * 50)
-    violations = []
-    for col, limit in wip_limits.items():
-        if col == "pause_states" or limit is None:
-            continue
-        count = counts.get(col, 0)
-        if isinstance(limit, int):
-            over = count > limit
-            if over:
-                violations.append(col)
-            bar = "X" * count + "." * max(0, limit - count)
-            marker = " OVER LIMIT" if over else ""
-            print(f"  {col:20} {count:2}/{limit:<2} [{bar}]{marker}")
-        else:
-            print(f"  {col:20} {count:2} (limit: {limit})")
+    if not columns:
+        print("  (no cards carrying a Status)")
+        return
 
-    if violations:
-        print(f"\nWIP VIOLATIONS: {', '.join(violations)}")
-        print("Stop pulling new work until WIP returns to limit.")
-    else:
-        print("\nAll WIP limits respected.")
+    for col in _status_order(config, project_name, proj, columns):
+        count = len(columns.get(col, []))
+        if count:
+            print(f"  {col:20} {count:2}")
 
 
 def board_standup(project_name: str, fmt: str) -> None:
@@ -1772,8 +1735,98 @@ def _validate_label_taxonomy(label_defs: list[dict[str, Any]]) -> None:
         raise RuntimeError(f"Invalid SDLC label taxonomy:\n{details}")
 
 
-def labels_auto_label(repo: str, number: int, fmt: str) -> None:
-    """Apply auto-label rules based on issue title/content."""
+# Routing labels the auto-label rules carry alongside their content ones.
+# Kept beside the issue-type names in `_label_widening_exclusions()` below.
+_LABEL_ROUTING_NAMES = frozenset({"needs-plan", "needs-analysis", "needs-triage", "research"})
+
+
+def _label_widening_exclusions() -> frozenset[str]:
+    """Labels the model must NOT be asked about in the labels path (#1035, R14a).
+
+    The configured rules add issue-TYPE labels alongside the content ones --
+    `title_contains_capability` adds `capability` and `needs-plan` -- and
+    widening the label question with those would make the labels path re-decide
+    the issue type, which is the prepare path's judgment.
+
+    A function rather than a module constant because `_ISSUE_TYPES` is defined
+    far below this point in the file; evaluating it here at import time would
+    raise `NameError`.
+
+    `documentation` is deliberately NOT excluded: the taxonomy pairs it with
+    `context-update`, but it is a content label in its own right and one of the
+    four the labels reference documents.
+    """
+    return frozenset(_ISSUE_TYPES) | _LABEL_ROUTING_NAMES
+
+
+def _suggest_label_union(
+    text: str,
+    rule_labels: Sequence[str],
+    *,
+    configured_labels: Sequence[str] = (),
+    ask: Callable[..., Any] | None = None,
+    client: Any = None,
+) -> tuple[list[dict[str, str]], str | None]:
+    """The widen-only union of rule-matched and model-suggested labels (#1035).
+
+    Returns the union and, on a failed call, a note naming why the model added
+    nothing.  The regular expressions are the floor in both cases: a failure
+    degrades to exactly today's rule-derived set, never to nothing.
+    """
+    try:
+        client = client if client is not None else _fleet_commons("typesafe_client")
+        ask = ask if ask is not None else client.ask
+    except Exception as exc:  # noqa: BLE001 - a missing fleet-core is not a broken command
+        # An empty answer map never reaches the client's helpers, so the rule
+        # floor renders without one.
+        return (
+            triage_suggest.union_labels(rule_labels, {}, client=None),
+            f"the TypeSafe client could not be loaded ({exc})",
+        )
+
+    candidates = triage_suggest.candidate_labels(
+        configured_labels, exclude=_label_widening_exclusions()
+    )
+    questions = triage_suggest.label_questions(candidates)
+    state = triage_suggest.build_state(text)
+
+    try:
+        result = ask(state, questions)
+    except Exception as exc:  # noqa: BLE001 - never let a vendor exception escape the command
+        note = f"the request failed ({type(exc).__name__}: {exc})"
+        return (
+            triage_suggest.union_labels(rule_labels, {}, client=client),
+            note,
+        )
+
+    if getattr(result, "status", "error") != "ok":
+        note = getattr(result, "note", "") or "the request did not succeed"
+        return (
+            triage_suggest.union_labels(rule_labels, {}, client=client),
+            f"{getattr(result, 'status', 'error')}: {note}",
+        )
+
+    union = triage_suggest.union_labels(
+        rule_labels, dict(getattr(result, "answers", {}) or {}), client=client
+    )
+    return union, None
+
+
+def labels_auto_label(
+    repo: str,
+    number: int,
+    fmt: str,
+    suggest: bool = False,
+    ask: Callable[..., Any] | None = None,
+    suggest_client: Any = None,
+) -> None:
+    """Apply auto-label rules based on issue title/content.
+
+    `--suggest` (#1035) turns this into a read-only advisory: it prints the
+    union of the rule-matched labels and the labels a model judged applicable,
+    each tagged with its provenance, and applies NOTHING.  Without the flag the
+    command posts its regular-expression matches exactly as it always has.
+    """
     config = load_config()
     rules = config.get("labels", {}).get("auto_label_rules", {})
 
@@ -1788,12 +1841,39 @@ def labels_auto_label(repo: str, number: int, fmt: str) -> None:
 
     text = f"{title} {body}"
     labels_to_add = []
+    configured_labels: list[str] = []
     for _rule_name, rule in rules.items():
+        rule_labels = rule.get("add_labels", [])
+        configured_labels.extend(rule_labels)
         pattern = rule.get("pattern", "")
         if re.search(pattern, text, re.IGNORECASE):
-            labels_to_add.extend(rule.get("add_labels", []))
+            labels_to_add.extend(rule_labels)
 
     labels_to_add = list(set(labels_to_add))
+
+    if suggest:
+        union, note = _suggest_label_union(
+            text,
+            labels_to_add,
+            configured_labels=configured_labels,
+            ask=ask,
+            client=suggest_client,
+        )
+        payload: dict[str, Any] = {"repo": repo, "number": number, "union": union}
+        if note:
+            payload["note"] = note
+        if fmt == "json":
+            _out(payload, fmt)
+        else:
+            print(f"Suggested labels for {repo}#{number} (advisory — nothing was applied):")
+            for line in triage_suggest.render_union(union):
+                print(line)
+            if not union:
+                print("  (no rule matched and the model suggested none)")
+            if note:
+                print(f"  model suggestions unavailable: {note}")
+        return
+
     if not labels_to_add:
         print(f"No auto-label rules matched for {repo}#{number}")
         return
@@ -2659,8 +2739,10 @@ def rollout_deploy_all(repo: str, fmt: str) -> None:
 # #812 correction seam: saga submits Stage/Status through ``flow set-field --correction``.
 # The operator CLI without ``--correction`` still sets Initiative / Objective / other
 # live fields. No new operation; field name is part of operation, authorization, and
-# retry identity. Stage is allowed by name only — no Stage field exists on the live
-# boards and no ``set-field-stage`` op-kind is created.
+# retry identity. Stage is allowed by name and resolved live like any other field;
+# no ``set-field-stage`` op-kind is created. (The older note here said no Stage
+# field existed on the live boards. That stopped being true at the board-stage
+# migration: all three boards carry one, as the regenerated census records — #1020.)
 CORRECTION_FIELDS = frozenset({"Status", "Stage"})
 
 
@@ -2984,9 +3066,11 @@ def _lifecycle_field_boards(repo: str, number: int, field_name: str) -> list[dic
             value = field_value.get("name")
             if value:
                 prior_value = value
+        project_number = project.get("number")
+        key = number_to_key.get(project_number) if isinstance(project_number, int) else None
         records.append(
             {
-                "key": number_to_key.get(project.get("number")),
+                "key": key,
                 "title": project.get("title"),
                 "project_number": project.get("number"),
                 "item_id": item.get("id"),
@@ -3134,7 +3218,7 @@ def _set_lifecycle_field_cross_board(
             )
             written.append(entry)
     except Exception as write_exc:
-        divergent: list[dict[str, Any]] = []
+        unrestored: list[dict[str, Any]] = []
         restored: list[str] = []
         for entry in written:
             new_value = option_name
@@ -3143,7 +3227,7 @@ def _set_lifecycle_field_cross_board(
                 # KTD8: the board carried no prior value (or the prior option no
                 # longer resolves), and no clear mutation exists — the board
                 # cannot be put back. Report it, never silently leave it.
-                divergent.append(
+                unrestored.append(
                     {
                         "board": entry["key"],
                         "held_value": new_value,
@@ -3164,15 +3248,15 @@ def _set_lifecycle_field_cross_board(
                 )
                 restored.append(entry["key"])
             except Exception as restore_exc:
-                divergent.append(
+                unrestored.append(
                     {
                         "board": entry["key"],
                         "held_value": new_value,
                         "reason": f"restore failed: {restore_exc}",
                     }
                 )
-        if divergent:
-            divergent_boards = {d["board"] for d in divergent}
+        if unrestored:
+            divergent_boards = {d["board"] for d in unrestored}
             board_state = [
                 {
                     "board": entry["key"],
@@ -3184,11 +3268,11 @@ def _set_lifecycle_field_cross_board(
             ]
             raise LifecycleMutationHaltError(
                 f"COMPENSATION FAILED writing {field_name}='{option_name}' to "
-                f"{repo}#{number}. {len(divergent)} already-written board(s) could "
+                f"{repo}#{number}. {len(unrestored)} already-written board(s) could "
                 f"not be restored: "
                 + "; ".join(
                     f"{d['board']} still shows '{d['held_value']}' ({d['reason']})"
-                    for d in divergent
+                    for d in unrestored
                 )
                 + f". Restored OK: {restored or 'none'}. Board state now: "
                 + "; ".join(f"{s['board']} shows '{s['shows']}'" for s in board_state)
@@ -3809,6 +3893,187 @@ def flow_verify_label(
 
 
 # ===========================
+# REPAIR WINDOW (#1000, schema decision E9)
+# ===========================
+# The schema's `work_hierarchy...own_verification_failed.repair_window_encoding`
+# block declares how a card's own-verification-failed window is durably encoded:
+# a LABEL (`marker_kind: "label"`, `marker: "repair-window"`), whose definition
+# lives in the SDLC labels config (`marker_source: "config/labels.json"`). The
+# verb reads that declaration rather than hardcoding the encoding, and refuses
+# schemas old enough to lack the block — a repair window is never guessed from
+# a Status (decision E1 retired every project-field encoding of Risk; the
+# marker is likewise never a GraphQL project-field write).
+_REPAIR_WINDOW_MARKER_PATH = (
+    "work_hierarchy",
+    "parent_stage_derivation",
+    "parent_outcome_state",
+    "own_verification_failed",
+    "repair_window_encoding",
+)
+
+
+def _repair_window_marker(schema: dict[str, Any]) -> dict[str, Any] | None:
+    """Read the schema's repair-window marker block (None when absent/too shallow)."""
+    cursor: Any = schema
+    for key in _REPAIR_WINDOW_MARKER_PATH:
+        if not isinstance(cursor, dict):
+            return None
+        cursor = cursor.get(key)
+    return cursor if isinstance(cursor, dict) else None
+
+
+def flow_repair_window(
+    repo: str,
+    number: int,
+    action: str,
+    citation: str | None,
+    fmt: str = "text",
+) -> None:
+    """Open or close a repair window on a card (#1000).
+
+    The window is the schema-declared `repair-window` LABEL on the card plus a
+    comment citing the test result that justifies the transition — never a
+    GraphQL project-field write.
+
+    - ``open``: adds the marker label and posts the FAILING result. Idempotent:
+      a card already carrying the label is a no-op (no second comment).
+    - ``close``: removes the marker label and posts the PASSING result.
+      Idempotent: a card without the label is a no-op.
+
+    Refusals, both BEFORE any network call:
+
+    - ``citation`` missing or blank. The schema's events require citing the
+      failing result (open) / passing result (close) verbatim; an uncited
+      window transition is unauditable and is refused.
+    - the schema does not declare a ``marker_kind: "label"`` marker with a
+      non-empty ``marker`` (schema too old), OR it declares a ``marker_source``
+      whose labels config does not define the marker. The encoding must be
+      resolvable from its declared source — never invented at write time.
+    """
+    if action not in ("open", "close"):
+        raise RuntimeError(f"flow repair-window action must be 'open' or 'close', not {action!r}")
+    if not citation or not citation.strip():
+        raise RuntimeError(
+            "flow repair-window requires a --citation carrying the test result "
+            f"that justifies the {action}: the failing result on open, the "
+            "passing result on close. Refusing to transition a repair window "
+            "without its citation."
+        )
+
+    config = load_config()
+    marker_block = _repair_window_marker(config.get("sdlc_schema") or {})
+    if (
+        not marker_block
+        or marker_block.get("marker_kind") != "label"
+        or not marker_block.get("marker")
+    ):
+        raise RuntimeError(
+            "vendored SDLC schema does not declare a repair-window marker "
+            f"({'.'.join(_REPAIR_WINDOW_MARKER_PATH)} with marker_kind 'label' "
+            "and a non-empty marker); this schema is too old to encode repair "
+            "windows — update the vendored schema rather than guessing the "
+            "encoding"
+        )
+    marker_name = str(marker_block["marker"])
+
+    # Resolve the marker's definition from its declared source so the label can
+    # be self-healed with its canonical color/description. An unresolvable
+    # definition is a refusal — never write a marker label from thin air.
+    color: str | None = None
+    description: str | None = None
+    source = marker_block.get("marker_source")
+    if source:
+        definition = None
+        labels_config = config.get("labels")
+        if isinstance(labels_config, dict):
+            entries = labels_config.get("labels", [])
+            if isinstance(entries, list):
+                for entry in entries:
+                    if isinstance(entry, dict) and entry.get("name") == marker_name:
+                        definition = entry
+                        break
+        if definition is None:
+            raise RuntimeError(
+                f"schema declares the {marker_name!r} repair-window marker with "
+                f"marker_source {source!r}, but that labels config does not "
+                f"define {marker_name!r}; re-sync the SDLC labels source before "
+                "transitioning repair windows"
+            )
+        color = definition.get("color")
+        description = definition.get("description")
+
+    present = _get_item_labels(repo, number)
+    if action == "open":
+        if marker_name in present:
+            _out(
+                {
+                    "action": "repair_window_noop",
+                    "window": "open",
+                    "repo": repo,
+                    "number": number,
+                    "marker": marker_name,
+                },
+                fmt,
+            )
+            return
+        if source:
+            flow_verify_label(repo, marker_name, color, description, fmt)
+        issue_label_add(repo, number, marker_name)
+        issue_comment(
+            repo,
+            number,
+            "Repair window OPENED: this card's own verification failed, so the "
+            f"`{marker_name}` label is now present. The window stays open exactly "
+            "while repairs run — consumers read the marker, they never re-derive "
+            "the boolean from a Status.\n\nFailing result citation:\n\n```\n"
+            f"{citation.strip()}\n```\n\nClose the window only when a later "
+            "deployed version passes every prescribed scenario:\n"
+            f"`flow repair-window --repo {repo} --number {number} --action close "
+            '--citation "<passing result>"`',
+        )
+        _out(
+            {
+                "action": "repair_window_opened",
+                "repo": repo,
+                "number": number,
+                "marker": marker_name,
+            },
+            fmt,
+        )
+    else:
+        if marker_name not in present:
+            _out(
+                {
+                    "action": "repair_window_noop",
+                    "window": "close",
+                    "repo": repo,
+                    "number": number,
+                    "marker": marker_name,
+                },
+                fmt,
+            )
+            return
+        issue_label_remove(repo, number, marker_name)
+        issue_comment(
+            repo,
+            number,
+            "Repair window CLOSED: a later deployed version passed every "
+            f"prescribed scenario, so the `{marker_name}` label is removed.\n\n"
+            "Passing result citation:\n\n```\n"
+            f"{citation.strip()}\n```",
+        )
+        _out(
+            {
+                "action": "repair_window_closed",
+                "repo": repo,
+                "number": number,
+                "marker": marker_name,
+            },
+            fmt,
+        )
+
+
+# ===========================
 # CARD VALIDATOR (generated-data-backed pre-flight, mirrors home-lab card_validator.py)
 # ===========================
 # Pre-flight-checks an issue body before plan-review fires. This is the
@@ -3879,6 +4144,61 @@ def _split_sections(body: str) -> dict[str, str]:
         end = matches[i + 1].start() if i + 1 < len(matches) else len(body)
         sections[header] = body[start:end].strip()
     return sections
+
+
+# #1000 R3: the Risk tier vocabulary and the UNKNOWN marker. The generated
+# SEMANTIC_CHECKS deliberately carry no risk entry — the tier-vocabulary check is
+# mission-control's own READER logic (KTD2), so these live here, not in the
+# vendored DATA. `UNKNOWN` is exact-uppercase; the tiers are exact-lowercase
+# (matching the config/labels.json `risk:<level>` option values).
+_RISK_TIER_VOCABULARY = ("low", "medium", "high", "very-high")
+_RISK_UNKNOWN_TOKEN = "UNKNOWN"
+# The justification seeded alongside UNKNOWN — the missing Architect assessment
+# is the one sentence the section carries until the Architect fills it in.
+_RISK_UNKNOWN_JUSTIFICATION = "Architect has not yet assessed blast radius."
+
+
+def _risk_from_body(body: str) -> tuple[str | None, list[str]]:
+    """Parse the `### Risk` section of a card body (the single Risk reader, #1000 R3).
+
+    The body is the ONLY source of a card's Risk: the sidecar ``risk`` value, the
+    frontmatter ``risk:`` line, and any ``risk:<level>`` label are projections or
+    scaffold seeds, never consulted here. Returns ``(token, errors)``:
+
+    * ``token`` is a vocabulary tier or ``UNKNOWN`` exactly when the section is
+      well-formed — a first line equal to one of the tokens and at least one
+      justification line below it that is neither empty nor a placeholder.
+    * ``errors`` is non-empty exactly when the section is missing, empty, or
+      malformed; every message names "Risk" so blocking gaps are greppable.
+
+    Works on a bare body or a full prepared draft (front matter + H1 + body): the
+    header parser only sees ``###`` sections, so both shapes parse identically.
+    """
+    section = _split_sections(body).get("Risk")
+    if section is None:
+        return None, [
+            "Missing Risk section: expected '### Risk' opening with a tier token "
+            "(low, medium, high, very-high, or UNKNOWN) followed by a one-sentence justification."
+        ]
+    non_empty = [ln.strip() for ln in section.splitlines() if ln.strip()]
+    if not non_empty:
+        return None, [
+            "Risk section is empty: expected a tier token (low, medium, high, "
+            "very-high, or UNKNOWN) on the first line and a one-sentence justification."
+        ]
+    token = non_empty[0]
+    if token not in (*_RISK_TIER_VOCABULARY, _RISK_UNKNOWN_TOKEN):
+        return None, [
+            "Risk section must open with a tier token (low, medium, high, "
+            f"very-high, or UNKNOWN); {token!r} is not one."
+        ]
+    justification = [ln for ln in non_empty[1:] if ln.lower() not in _PLACEHOLDER_LINES]
+    if not justification:
+        return None, [
+            "Risk section is missing its justification: add a one-sentence "
+            "rationale below the tier token."
+        ]
+    return token, []
 
 
 def validate_card_body(body: str) -> tuple[bool, list[str]]:
@@ -4020,6 +4340,15 @@ def validate_card_body_for_context(
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
         if lines and all(ln.lower() in _PLACEHOLDER_LINES for ln in lines):
             errors.append(f"'{header}' contains only placeholder text")
+
+    # #1000 R3: the Risk section's FORMAT (tier token + justification) is
+    # mission-control reader logic layered here — the shim stays the vendored
+    # always-required surface, and the matrix keys the risk-conditional fields
+    # off the tier. A present-but-malformed Risk (prose first line, missing
+    # justification, unrecognized token) blocks alongside the matrix checks; the
+    # missing-section case is already reported above by both header passes.
+    _risk_token, risk_errors = _risk_from_body(body)
+    errors.extend(risk_errors)
 
     return (valid and not errors, errors)
 
@@ -4259,13 +4588,6 @@ _ISSUE_TYPE_LABELS = {
     "context-update": ["context-update", "documentation"],
 }
 _PREPARED_DRAFT_DIR = Path("docs") / "sdlc-issue-drafts"
-_HANDOFF_MATURITY_CHOICES = (
-    "idea-ready",
-    "requirements-ready",
-    "plan-ready",
-    "resume-ready",
-    "deferred-context",
-)
 _SOURCE_SEARCH_DIRS = (
     Path(".claude") / "saga",
     Path("docs") / "plans",
@@ -4301,7 +4623,7 @@ _CONTRACT_ISSUE_TYPES = frozenset(
 # IMPORTANT — PROJECT FIELD REALITY (verified 2026-05-04):
 # As of today, the only single-select field on the Olympus project (#1) is
 # `Status`. `Initiative`, `Objective`, `Capability Size`, `Business Value`,
-# `Technical Risk`, `Target Quarter` are all "decided, not yet created" per
+# `Target Quarter` are all "decided, not yet created" per
 # Phase A carry-over #2 in `infiquetra-sdlc`. The interactive flow is built
 # to handle the post-create world (per-project schema discovery silently
 # skips prompts for fields the project doesn't expose), so today operators
@@ -4338,9 +4660,11 @@ _APPROVABLE_APPROVAL_STATES = frozenset({_APPROVAL_NEEDS_OPERATOR})
 # VALUES (not the project's live field schema): "field-schema discovery" against
 # a real project stays behind `_resolve_project_field` (live GraphQL), which
 # `flow set-field` uses. Lifecycle Origin is the auto-populated field (R10) —
-# never author-supplied. Risk maps to the `Technical Risk` single-select named
-# in the PROJECT FIELD REALITY note above.
-_PREPARED_FIELD_RISK = "Technical Risk"
+# never author-supplied. Risk is deliberately NOT among these fields: decision
+# E1 (#1000, 2026-09-13) retired the risk project-field projection — Risk lives
+# in the body's `### Risk` section and is re-derived from it on every read;
+# no board field ever carries the value. Historical sidecars keep whatever key
+# they were written with; nothing reads it, so no migration.
 _PREPARED_FIELD_OBJECTIVE = "Objective"
 _PREPARED_FIELD_ISSUE_TYPE = "Issue Type"
 _PREPARED_FIELD_LIFECYCLE_ORIGIN = "Lifecycle Origin"
@@ -4365,6 +4689,12 @@ class SourceArtifact:
     path: str | None = None
     url: str | None = None
     branch: str | None = None
+    # Saga-owned readiness detail (#942): the owner's routing command (live
+    # states only) and its diagnostic prose, carried as plain strings so the
+    # sidecar payload (asdict) stays serializable and create-prepared never
+    # re-derives them.
+    readiness_next_action: str | None = None
+    readiness_diagnostic: str | None = None
 
 
 @dataclass
@@ -4406,8 +4736,9 @@ def _prepared_project_fields(
     populate; do not read more into the presence of this key than "recorded".
     """
     fields: dict[str, str] = {_PREPARED_FIELD_ISSUE_TYPE: issue.issue_type}
-    if issue.risk:
-        fields[_PREPARED_FIELD_RISK] = issue.risk
+    # Risk is NOT recorded here — decision E1 (#1000) retired the project-field
+    # projection; the body's `### Risk` section is the only source, re-derived
+    # on read.
     # Lifecycle Origin is auto-populated from the handoff maturity that drove
     # this draft (R10) — it is the compile step's record of "where this card
     # came from", never an author-required input.
@@ -4472,19 +4803,106 @@ def _markdown_title(text: str, fallback: str) -> str:
     return fallback
 
 
-def _infer_maturity_from_path(path: Path) -> str:
-    normalized = path.as_posix()
-    if "docs/ideation/" in normalized:
-        return "idea-ready"
-    if "docs/brainstorms/" in normalized:
-        return "requirements-ready"
-    if "docs/plans/" in normalized or "docs/reviews/" in normalized:
-        return "plan-ready"
-    if "docs/work-sessions/" in normalized or "docs/sdlc-issue-drafts/" in normalized:
-        return "resume-ready"
-    if ".claude/saga/" in normalized:
-        return "resume-ready"
-    return "requirements-ready"
+# ---------------------------------------------------------------------------
+# Saga readiness owner (#942): readiness vocabulary and assessment are owned
+# by the saga plugin's handoff_envelope module; this consumer resolves, gates,
+# and delegates — it never infers maturity locally.
+# ---------------------------------------------------------------------------
+
+#: Contract major this consumer requires of the readiness owner.
+_SAGA_READINESS_CONTRACT_MAJOR = 1
+
+#: The full declared vocabulary the owner must recognize. This is a validation
+#: probe (every value must self-classify), NOT a routing table — routing
+#: decisions come from the owner's assessments alone.
+_SAGA_READINESS_VOCABULARY = (
+    "idea-ready",
+    "requirements-ready",
+    "plan-ready",
+    "resume-ready",
+    "deferred-context",
+    "pending-confirmation",
+)
+
+_SAGA_OWNER_MARKER = "scripts/handoff_envelope.py"
+
+
+def _load_saga_readiness_owner() -> Any:
+    """Resolve and load the Saga handoff_envelope module (the readiness owner).
+
+    Saga is a dependency, not an optional extra: a missing plugin, a missing
+    import, or an unresolvable root surfaces as ONE actionable dependency
+    error — the caller never falls back to local inference (#942).
+    """
+    try:
+        bundled = str(Path(__file__).resolve().parent / "_bundled")
+        if bundled not in sys.path:
+            sys.path.insert(0, bundled)
+        import plugin_resolution
+    except ImportError as e:
+        raise RuntimeError(
+            "Saga readiness owner dependency problem: the bundled plugin_resolution "
+            f"module could not be imported ({e}). Fix: regenerate the Fleet Core "
+            "bundle with scripts/bundle_fleet_module.py."
+        ) from e
+    try:
+        saga_root, _rung = plugin_resolution.resolve_plugin_root(
+            "saga",
+            markers=(_SAGA_OWNER_MARKER,),
+            env_var="SAGA_ROOT",
+        )
+        owner_path = saga_root / _SAGA_OWNER_MARKER
+        spec = importlib.util.spec_from_file_location("saga_handoff_envelope", owner_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Saga readiness owner module is unloadable: {owner_path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except (RuntimeError, OSError, ImportError) as e:
+        raise RuntimeError(
+            "Saga readiness owner dependency problem: the saga plugin could not be "
+            f"resolved ({e}). Fix: install the saga plugin beside mission-control, "
+            f"or point SAGA_ROOT at a checkout containing {_SAGA_OWNER_MARKER}."
+        ) from e
+
+
+def _saga_readiness_owner() -> Any:
+    """Return the Saga readiness owner after a contract and vocabulary gate.
+
+    Gates in order: contract major, required API surface, then a functional
+    vocabulary probe (each known value must self-classify). Any mismatch is an
+    incompatibility error — never a silent fallback (#942).
+    """
+    owner = _load_saga_readiness_owner()
+    major = getattr(owner, "READINESS_CONTRACT_MAJOR", None)
+    if major != _SAGA_READINESS_CONTRACT_MAJOR:
+        raise RuntimeError(
+            "Saga readiness owner is incompatible: contract major "
+            f"{major!r} != required {_SAGA_READINESS_CONTRACT_MAJOR}. Fix: upgrade "
+            "the saga plugin to the readiness-owner release."
+        )
+    assess_source = getattr(owner, "assess_source", None)
+    assess_declared = getattr(owner, "assess_declared", None)
+    if not callable(assess_source) or not callable(assess_declared):
+        raise RuntimeError(
+            "Saga readiness owner is incompatible: missing required API "
+            "(assess_source/assess_declared). Fix: upgrade the saga plugin."
+        )
+    for value in _SAGA_READINESS_VOCABULARY:
+        try:
+            probe = assess_declared(value, "contract-probe", declaration_required=False)
+        except Exception as e:
+            raise RuntimeError(
+                "Saga readiness owner is incompatible: vocabulary probe failed for "
+                f"{value!r} ({e}). Fix: upgrade the saga plugin."
+            ) from e
+        if getattr(probe, "maturity", None) != value:
+            raise RuntimeError(
+                "Saga readiness owner is incompatible: vocabulary probe misclassifies "
+                f"{value!r} as {getattr(probe, 'maturity', None)!r}. Fix: upgrade the "
+                "saga plugin."
+            )
+    return owner
 
 
 def _infer_kind_from_path(path: Path) -> str:
@@ -4513,18 +4931,47 @@ def _source_from_local_path(path: Path, root: Path | None = None) -> SourceArtif
         resolved = root / resolved
     if not resolved.exists() or not resolved.is_file():
         raise RuntimeError(f"Source artifact path does not exist or is not a file: {path}")
-    content = resolved.read_text(encoding="utf-8")
     try:
         display_path = resolved.relative_to(root).as_posix()
     except ValueError:
         display_path = resolved.as_posix()
+    # #942: readiness is Saga-owned. The owner assesses the published source —
+    # declaration reads, out-of-root refusal, vocabulary classification — and
+    # this consumer acts on the assessment instead of a folder fallback.
+    # Review finding #2: the assessment happens BEFORE any byte of the file is
+    # read, so a refused source is never opened; and the bytes then come from
+    # the assessment's own read (`assessment.path_read`), which is the
+    # re-anchored twin when the owner re-anchored — read, draft, sidecar, and
+    # published source agree on the chosen source instead of pairing the
+    # twin's identity with the outside original's content.
+    readiness_owner = _saga_readiness_owner()
+    assessment = readiness_owner.assess_source(display_path, root)
+    if assessment.refused:
+        raise RuntimeError(
+            f"Source artifact refused (out-of-root): {display_path}. Sources must "
+            "live inside the declared root; name the source inside the root."
+        )
+    maturity = assessment.maturity
+    if not maturity or maturity.startswith("unknown:"):
+        raise RuntimeError(
+            f"Source artifact readiness problem for {display_path}: "
+            f"{maturity or 'blank'}. {assessment.diagnostic}".strip()
+        )
+    if not assessment.path_read:
+        raise RuntimeError(
+            f"Source artifact readiness problem for {display_path}: the Saga "
+            f"owner resolved no readable file ({maturity})."
+        )
+    content = Path(assessment.path_read).read_text(encoding="utf-8")
     return SourceArtifact(
-        ref=display_path,
+        ref=assessment.published_source,
         kind=_infer_kind_from_path(Path(display_path)),
-        title=_markdown_title(content, resolved.stem),
+        title=_markdown_title(content, Path(assessment.path_read).stem),
         content=content,
-        inferred_maturity=_infer_maturity_from_path(Path(display_path)),
+        inferred_maturity=maturity,
         path=display_path,
+        readiness_next_action=assessment.next_action or None,
+        readiness_diagnostic=assessment.diagnostic or None,
     )
 
 
@@ -4561,13 +5008,21 @@ def _source_from_github_url(url: str) -> SourceArtifact:
     title = str(data.get("title") or f"{repo}#{number}").strip()
     body = str(data.get("body") or "").strip()
     content = f"# {title}\n\n{body}".strip()
+    published = str(data.get("url") or url)
+    # #942: even a URL seed is classified by the Saga owner, not assumed here.
+    readiness_owner = _saga_readiness_owner()
+    assessment = readiness_owner.assess_declared(
+        "resume-ready" if is_pr else "requirements-ready", published, declaration_required=False
+    )
     return SourceArtifact(
         ref=f"{owner}/{repo}#{number}",
         kind="github-pr" if is_pr else "github-issue",
         title=title,
         content=content,
-        inferred_maturity="resume-ready" if is_pr else "requirements-ready",
-        url=str(data.get("url") or url),
+        inferred_maturity=assessment.maturity,
+        url=published,
+        readiness_next_action=assessment.next_action or None,
+        readiness_diagnostic=assessment.diagnostic or None,
     )
 
 
@@ -4592,13 +5047,20 @@ def _source_from_branch_ref(ref: str, root: Path | None = None) -> SourceArtifac
         "## Working tree\n\n"
         f"```text\n{status}\n```\n"
     )
+    # #942: the branch seed is classified by the Saga owner, not assumed here.
+    readiness_owner = _saga_readiness_owner()
+    assessment = readiness_owner.assess_declared(
+        "resume-ready", f"branch:{branch}", declaration_required=False
+    )
     return SourceArtifact(
         ref=f"branch:{branch}",
         kind="branch",
         title=f"Branch handoff: {branch}",
         content=content,
-        inferred_maturity="resume-ready",
+        inferred_maturity=assessment.maturity,
         branch=branch,
+        readiness_next_action=assessment.next_action or None,
+        readiness_diagnostic=assessment.diagnostic or None,
     )
 
 
@@ -4651,7 +5113,13 @@ def find_source_artifacts(hint: str, root: Path | None = None) -> list[SourceArt
                 continue
             text = candidate.read_text(encoding="utf-8")
             if _source_matches_hint(candidate, text, hint):
-                artifact = _source_from_local_path(candidate, root)
+                try:
+                    artifact = _source_from_local_path(candidate, root)
+                except RuntimeError:
+                    # Review finding #6: a non-routable candidate is simply
+                    # not a match — an undeclared, blank, or refused file is
+                    # skipped and the search continues instead of aborting.
+                    continue
                 matches.append((candidate.stat().st_mtime, artifact))
     matches.sort(key=lambda item: item[0], reverse=True)
     return [artifact for _, artifact in matches]
@@ -4800,19 +5268,10 @@ def _render_draft_markdown(issue: PreparedIssue, approval_state: str | None = No
     return "\n".join(frontmatter) + f"\n\n# {issue.title}\n\n{clean_body.rstrip()}\n"
 
 
-def _suggested_next_action(handoff_maturity: str) -> str:
-    return {
-        "idea-ready": "Use `/plan <issue>` to shape requirements before implementation.",
-        "requirements-ready": "Use `/plan <issue>` to create an implementation plan.",
-        "plan-ready": "Use `/work <issue>` to execute from the plan-grade context.",
-        "resume-ready": "Use `/work <issue>` to resume from the captured work state.",
-        "deferred-context": "Clarify current intent before planning or working this issue.",
-    }[handoff_maturity]
-
-
 def _render_handoff_context(
     handoff_maturity: str | None,
     source_artifact: SourceArtifact | None,
+    next_action: str | None = None,
 ) -> str:
     if not handoff_maturity and not source_artifact:
         return ""
@@ -4820,10 +5279,13 @@ def _render_handoff_context(
     lines = [
         "### Handoff maturity",
         maturity,
-        "",
-        "### Suggested next action",
-        _suggested_next_action(maturity),
     ]
+    # #942: the suggested next action is Saga-owned — rendered only when the
+    # owner supplied one (live states carry a command; pending-confirmation and
+    # deferred-context carry clarification prose or nothing at all, never a
+    # locally invented route).
+    if next_action:
+        lines.extend(["", "### Suggested next action", next_action])
     if source_artifact:
         lines.extend(
             [
@@ -4855,6 +5317,7 @@ def _contract_field_placeholder(
     field: str,
     source: str,
     source_artifact: SourceArtifact | None,
+    risk: str | None = None,
 ) -> str:
     if field == "objective":
         return source
@@ -4862,6 +5325,18 @@ def _contract_field_placeholder(
         return _context_links_from_source(source_artifact)
     if field == "acceptance_criteria":
         return "- [ ] _No response_"
+    if field == "risk":
+        # #1000 R3: the compiled scaffold seeds the body Risk with the supplied
+        # tier, or UNKNOWN when none was supplied. The seed is never a bare
+        # token — it always carries a justification line so the seeded section
+        # passes the Risk reader; UNKNOWN passes prepare/create with the
+        # missing-Architect warning instead of blocking.
+        if risk in _RISK_TIER_VOCABULARY:
+            return (
+                f"{risk}\n"
+                "Risk seeded from the prepare request; confirm the blast radius before Active."
+            )
+        return f"{_RISK_UNKNOWN_TOKEN}\n{_RISK_UNKNOWN_JUSTIFICATION}"
     return "_No response_"
 
 
@@ -4874,7 +5349,7 @@ def _contract_scaffold_body(
     sections: list[str] = []
     for field in _required_contract_field_keys(issue_type, risk):
         header = _CONTRACT_FIELD_HEADERS[field]
-        value = _contract_field_placeholder(field, source, source_artifact)
+        value = _contract_field_placeholder(field, source, source_artifact, risk)
         sections.append(f"### {header}\n{value}")
     return "\n\n".join(sections)
 
@@ -4882,7 +5357,7 @@ def _contract_scaffold_body(
 # Issue-carried recommended tier band (#368 AC5): a coarse issue-time seed for
 # /plan's per-unit tier table (saga's tier_defaults.resolve_tier_for_plan reads
 # it; precedence there is repo overlay > this band > shared registry). The map
-# mirrors tier_policy.json's work-shape bands: judgment→opus/high,
+# mirrors the work_shapes block of fleet-core's staffing.json: judgment→opus/high,
 # mechanical→sonnet/medium, read-only-survey→sonnet/low.
 _TIER_BAND_HEADER = "Recommended Tier Band"
 _ISSUE_TYPE_TIER_BANDS: dict[str, tuple[str, str] | None] = {
@@ -4968,6 +5443,7 @@ def _source_to_issue_body(
     mode: str | None,
     handoff_maturity: str | None = None,
     source_artifact: SourceArtifact | None = None,
+    next_action: str | None = None,
 ) -> str:
     """Assemble the issue body, then stamp the recommended tier band (AC5).
 
@@ -4976,9 +5452,50 @@ def _source_to_issue_body(
     silently miss it.
     """
     body = _source_to_issue_body_unstamped(
-        source, issue_type, team, repo, risk, mode, handoff_maturity, source_artifact
+        source, issue_type, team, repo, risk, mode, handoff_maturity, source_artifact, next_action
     )
     return _append_tier_band(body, issue_type)
+
+
+# Machine-rendered handoff sections (review-finding #5 cascade): a prepare
+# owns these the way it owns the sidecar mirror — they are re-rendered from
+# the current maturity/artifact on every compile, never carried from a prior
+# generation.
+_HANDOFF_CONTEXT_SECTIONS = (
+    "### Handoff maturity",
+    "### Suggested next action",
+    "### Source context",
+    f"### {_TIER_BAND_HEADER}",
+)
+
+
+def _strip_trailing_handoff_context(body: str) -> str:
+    """Drop machine-rendered handoff sections from the tail of a supplied body.
+
+    A revision chain passes the prior draft in as the --from source still
+    carrying ITS handoff sections; passing those through verbatim would keep
+    the PREVIOUS source's identity in the body while the sidecar records the
+    new one. Stripping the trailing machine sections lets the caller re-render
+    them from the current maturity/artifact, keeping read, draft, sidecar, and
+    published handoff in agreement (R9). Only unfenced trailing headings are
+    touched, and the tier band is re-stamped idempotently by the wrapper.
+    """
+    lines = body.splitlines()
+    while lines:
+        in_fence = False
+        last_heading = -1
+        for idx, line in enumerate(lines):
+            if line.lstrip().startswith("```"):
+                in_fence = not in_fence
+                continue
+            if not in_fence and line.startswith("### "):
+                last_heading = idx
+        if last_heading == -1:
+            break
+        if lines[last_heading].strip() not in _HANDOFF_CONTEXT_SECTIONS:
+            break
+        del lines[last_heading:]
+    return "\n".join(lines).rstrip()
 
 
 def _source_to_issue_body_unstamped(
@@ -4990,17 +5507,24 @@ def _source_to_issue_body_unstamped(
     mode: str | None,
     handoff_maturity: str | None = None,
     source_artifact: SourceArtifact | None = None,
+    next_action: str | None = None,
 ) -> str:
     _, clean_source = _strip_frontmatter_and_title(source)
     stripped = clean_source.strip()
     if "### " in stripped:
-        if "### Handoff maturity" in stripped:
-            return stripped
-        return stripped + _render_handoff_context(handoff_maturity, source_artifact)
+        # The handoff sections are machine-rendered projections of THIS
+        # prepare (like the sidecar), not author content — a revision chain
+        # passes the prior draft in as the source, so its stale sections are
+        # stripped and re-rendered from the current maturity/artifact
+        # (review-finding #5 cascade: R9 requires the body's source context
+        # to agree with the sidecar on the chosen source).
+        return _strip_trailing_handoff_context(stripped) + _render_handoff_context(
+            handoff_maturity, source_artifact, next_action
+        )
     if issue_type in _DISPATCH_ACTIONABLE_TYPES:
         return _contract_scaffold_body(
             stripped, issue_type, risk, source_artifact
-        ) + _render_handoff_context(handoff_maturity, source_artifact)
+        ) + _render_handoff_context(handoff_maturity, source_artifact, next_action)
     if team == "asgard":
         return f"""### Intent
 {stripped}
@@ -5015,11 +5539,12 @@ def _source_to_issue_body_unstamped(
 TBD
 
 ### Risk
-TBD
+{_RISK_UNKNOWN_TOKEN}
+{_RISK_UNKNOWN_JUSTIFICATION}
 
 ### Transfer notes
 - [ ] Record any explicit cross-team transfer target, or leave as none.
-""" + _render_handoff_context(handoff_maturity, source_artifact)
+""" + _render_handoff_context(handoff_maturity, source_artifact, next_action)
     return f"""### Objective
 {stripped}
 
@@ -5037,7 +5562,7 @@ TBD
 
 ### Verification
 TBD
-""" + _render_handoff_context(handoff_maturity, source_artifact)
+""" + _render_handoff_context(handoff_maturity, source_artifact, next_action)
 
 
 def _safe_slug(text: str) -> str:
@@ -5082,7 +5607,11 @@ def _read_prepared_issue(draft_path: Path) -> PreparedIssue:
         project=field("project"),
         status=field("status"),
         labels=_normalize_label_list(metadata.get("labels") or sidecar.get("labels")),
-        risk=field("risk") or None,
+        # #1000 R3: Risk is re-derived from the body on every read — the
+        # frontmatter/sidecar `risk` values are write-time projections. A
+        # hand-edit of the body's Risk section is therefore honored (the R3b
+        # fill-in path) without touching the metadata.
+        risk=_risk_from_body(body)[0],
         mode=field("mode") or None,
         stage=field("stage") or None,
         body=body.strip(),
@@ -5111,6 +5640,17 @@ def _read_prepared_issue(draft_path: Path) -> PreparedIssue:
             )
         if not value:
             raise RuntimeError(f"Prepared issue draft is missing required metadata: {key}")
+    # KTD8 (review finding #9): the frontmatter-sidecar mirror must agree on
+    # handoff_maturity too, so a one-sided hand-edit cannot be honored
+    # silently. The key is optional on both carriers — checked only when BOTH
+    # are present, so an absent declaration never blocks.
+    frontmatter_maturity = metadata.get("handoff_maturity")
+    sidecar_maturity = sidecar.get("handoff_maturity")
+    if frontmatter_maturity and sidecar_maturity and frontmatter_maturity != sidecar_maturity:
+        raise RuntimeError(
+            f"Draft metadata handoff_maturity={frontmatter_maturity!r} conflicts "
+            f"with sidecar handoff_maturity={sidecar_maturity!r}"
+        )
     if issue.issue_type not in _ISSUE_TYPES:
         raise RuntimeError(f"Unknown issue type in prepared draft: {issue.issue_type}")
     if issue.team not in _TEAM_CHOICES:
@@ -5230,8 +5770,82 @@ def _extract_unfenced_headers(body: str) -> list[tuple[int, str]]:
     return headers
 
 
-def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
-    blocking: list[str] = []
+def _saga_maturity_block(maturity: str) -> str | None:
+    """Saga-owned readiness verdict for a stored handoff maturity (#942).
+
+    Returns a blocking-gap message, or None when the owner accepts the value:
+    a live state, or a declared non-routing state (deferred-context /
+    pending-confirmation) that is creatable but never routed. A dependency
+    failure is a blocking gap here — create-prepared reports it and refuses
+    to route instead of crashing or silently trusting the value.
+    """
+    try:
+        readiness_owner = _saga_readiness_owner()
+        assessment = readiness_owner.assess_declared(maturity, "", declaration_required=False)
+    except RuntimeError as e:
+        return f"Handoff maturity {maturity!r} could not be verified: {e}"
+    if not assessment.maturity or assessment.maturity.startswith("unknown:"):
+        return (
+            f"Unknown handoff maturity {maturity!r} — the Saga owner classifies it as "
+            f"{assessment.maturity or 'blank'}"
+        )
+    if assessment.routable:
+        return None
+    if assessment.maturity in ("deferred-context", "pending-confirmation"):
+        return None
+    return (
+        f"Unknown handoff maturity {maturity!r} — the Saga owner classifies it as "
+        f"{assessment.maturity or 'blank'}"
+    )
+
+
+def _maturity_declaration_conflicts(
+    explicit_maturity: str, source_artifact: SourceArtifact
+) -> list[str]:
+    """Ruling 942-5: reconcile an explicit --maturity with the source's declaration.
+
+    Re-assesses the artifact's named source through the owner and blocks only on
+    a POSITIVELY-confirmed declaration: a declaration-class source (draft
+    sidecar, Saga state), or a pending-confirmation / deferred-context value,
+    which only a real declaration can produce. A path-only fallback is not a
+    declaration, so the override keeps winning there. Known contract residue
+    (flagged to the review): a plain-class file whose FRONTMATTER declares a
+    ready-state value is indistinguishable from the path-only fallback through
+    the owner's major-1 contract, so the override also wins there.
+    """
+    readiness_owner = _saga_readiness_owner()
+    named = source_artifact.path or source_artifact.ref
+    try:
+        assessment = readiness_owner.assess_source(named)
+    except RuntimeError:
+        # The owner cannot re-resolve the named source (dependency problem, or
+        # a path outside the process root). Nothing is confirmed, so no gap —
+        # readiness still governs the recorded maturity.
+        return []
+    if assessment.refused:
+        return []
+    declared = assessment.maturity
+    confirmed = bool(assessment.declaration_required) or declared in (
+        "pending-confirmation",
+        "deferred-context",
+    )
+    if (
+        not confirmed
+        or declared == explicit_maturity
+        or declared != source_artifact.inferred_maturity
+    ):
+        return []
+    return [
+        f"--maturity {explicit_maturity!r} conflicts with the source's declared "
+        f"handoff maturity {declared!r} ({named}); an override must not promote an "
+        "artifact whose own declaration says otherwise"
+    ]
+
+
+def _readiness_for_prepared_issue(
+    issue: PreparedIssue, extra_blocking_gaps: list[str] | None = None
+) -> PreparedReadiness:
+    blocking: list[str] = list(extra_blocking_gaps or [])
     warnings: list[str] = []
 
     if issue.draft_path and Path(issue.draft_path).is_file():
@@ -5296,10 +5910,25 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
     if missing_labels:
         blocking.append(f"Missing expected labels: {missing_labels}")
 
-    if issue.handoff_maturity and issue.handoff_maturity not in _HANDOFF_MATURITY_CHOICES:
-        allowed = ", ".join(_HANDOFF_MATURITY_CHOICES)
-        blocking.append(f"Unknown handoff maturity {issue.handoff_maturity!r}; expected {allowed}")
-    elif not issue.handoff_maturity:
+    # #942: the maturity vocabulary and verdict belong to the Saga owner. Live
+    # states route; deferred-context and pending-confirmation are creatable
+    # (with their clarification text, no live command); unknown values and
+    # dependency failures block.
+    if issue.handoff_maturity:
+        maturity_block = _saga_maturity_block(issue.handoff_maturity)
+        if maturity_block:
+            blocking.append(maturity_block)
+        elif issue.handoff_maturity == "deferred-context":
+            warnings.append(
+                "Handoff maturity deferred-context: parked — clarify current intent "
+                "before planning or working this issue"
+            )
+        elif issue.handoff_maturity == "pending-confirmation":
+            warnings.append(
+                "Handoff maturity pending-confirmation: scope is proposed, not "
+                "confirmed — an operator must confirm before any route exists"
+            )
+    else:
         warnings.append("Missing handoff maturity metadata")
 
     # W10 (R77, AE32): Stage is author-supplied, with no default and no
@@ -5335,7 +5964,6 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
             "Target repo / surface": "target repo/surface",
             "Mode": "mode",
             "Constraints": "constraints",
-            "Risk": "risk",
             "Transfer notes": "transfer notes",
         }
         for header, label in required.items():
@@ -5344,8 +5972,23 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
                 blocking.append(f"Missing Asgard {label}")
         if not issue.mode:
             blocking.append("Missing Asgard mode metadata")
-        if not issue.risk:
-            blocking.append("Missing Asgard risk metadata")
+        # #1000 R3/R4: the separate Asgard risk-metadata gate is retired — the
+        # single Risk reader governs the body's `### Risk` for Asgard cards too
+        # (missing, malformed, or UNKNOWN all flow through the same contract as
+        # the actionable types above).
+        _asgard_risk_token, asgard_risk_errors = _risk_from_body(issue.body)
+        blocking.extend(asgard_risk_errors)
+
+    # #1000 R4: UNKNOWN passes readiness — the card can be created — but the
+    # missing Architect assessment is surfaced as a warning on every surface,
+    # and the Planning-to-Active gate (planning_to_active_risk_ready) refuses
+    # the move until a real tier lands in the body.
+    if issue.risk == _RISK_UNKNOWN_TOKEN:
+        warnings.append(
+            "Risk is UNKNOWN: the Architect blast-radius assessment is missing; "
+            "the card may be created but stays in Planning until the "
+            "Planning-to-Active Risk gate receives a real tier."
+        )
 
     return PreparedReadiness(
         profile=issue.team,
@@ -5355,13 +5998,232 @@ def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
     )
 
 
+def planning_to_active_risk_ready(body: str) -> bool:
+    """Planning-to-Active Risk gate (#1000 R4): refuse any card whose body Risk
+    is not a real, well-formed tier.
+
+    Accepts a bare card body or a full prepared draft (front matter + H1 +
+    sections) — the reader only looks at `### Risk` sections. A MISSING,
+    UNKNOWN, or malformed Risk all refuse the move; only ``low`` / ``medium`` /
+    ``high`` / ``very-high`` with a justification pass. This is the gate that
+    keeps a created UNKNOWN-risk card in Planning until the Architect's
+    assessment lands in the body.
+    """
+    token, _errors = _risk_from_body(body)
+    return token in _RISK_TIER_VOCABULARY
+
+
+# --------------------------------------------------------------------------- #
+# Advisory triage suggestions (#1035)
+#
+# Every function below is opt-in behind `--suggest` and APPLIES NOTHING.  The
+# author's `--type` / `--risk` / `--status` flags stay the decision; a model
+# answer that differs from one of them is recorded as an override in the verdict
+# log and nowhere else (DECISIONS {#1035-flag-is-the-decision-difference-is-the-
+# override}).  A client failure leaves the draft exactly as it would have been.
+# --------------------------------------------------------------------------- #
+
+# The decision-id namespace the evaluation harness joins on.  Namespaced to this
+# consumer so `jev eval` can score the prepare path separately from every other
+# judgment point.
+_SUGGEST_DECISION_PREFIX = "mission-control/issue-prepare"
+_ISSUE_TYPES_REFERENCE = (
+    Path(__file__).resolve().parent.parent / "skills" / "issues" / "references" / "issue-types.md"
+)
+
+
+def _fleet_commons(module: str) -> Any:
+    """Load a bundled Fleet Core module, lazily.
+
+    Lazy on purpose: a prepare without `--suggest` never imports the bundle, so
+    the ordinary offline path keeps exactly the dependency graph it had before
+    this card (plan KTD4, KTD6). The build-time bundle replaces
+    fleet_commons_shim; the caller's module name is unchanged.
+    """
+    bundled = str(Path(__file__).resolve().parent / "_bundled")
+    if bundled not in sys.path:
+        sys.path.insert(0, bundled)
+    return importlib.import_module(module)
+
+
+def _issue_types_policy_text() -> str:
+    """This repository's own issue-type criteria, passed to the model as policy.
+
+    Passing it lifted the research's probe from 17 to 19 of 30.  An unreadable
+    reference is not an error: the question is still asked, just with the
+    generic criteria the question set carries on its own.
+    """
+    try:
+        return _ISSUE_TYPES_REFERENCE.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _suggestion_status_options(stage: str | None) -> list[str]:
+    """Board Status candidates, read offline from the vendored schema.
+
+    A stage narrows the list to its own options; with no stage the candidates
+    are the ordered, de-duplicated union of every stage's list.  `issue prepare`
+    has no `--stage` flag, so the union is what a command-line prepare gets --
+    the narrowing branch serves the Python callers that do pass one.
+    """
+    rules = _stage_flow_rules().get("stage_statuses", {})
+    if stage and stage in rules:
+        return list(rules[stage])
+    ordered: list[str] = []
+    for options in rules.values():
+        for option in options:
+            if option not in ordered:
+                ordered.append(option)
+    return ordered
+
+
+def _record_suggestion_verdicts(
+    log: Any,
+    client: Any,
+    *,
+    answers: dict[str, Any],
+    suggestions: dict[str, Any],
+    state: Any,
+    questions: dict[str, Any],
+    resolved_model: str,
+    floor: float,
+    log_dir: Path | None,
+) -> None:
+    """Append one verdict per answer, plus an override where the author differed.
+
+    The author's own value rides along as the record's `label`: it is the best
+    ground truth available at prepare time, and without it the evaluation
+    harness cannot score accumulated history at all (plan R10a).
+
+    An unwritable log never fails a prepare.  The draft is the product; the
+    verdict is evidence about a suggestion that changed nothing.
+    """
+    for key, answer in answers.items():
+        entry = suggestions.get(key) or {}
+        try:
+            record = log.record_verdict(
+                decision_id=f"{_SUGGEST_DECISION_PREFIX}:{key}",
+                state=state,
+                questions=questions,
+                answer=answer,
+                confidence=client.answer_confidence(answer),
+                threshold=floor,
+                resolved_model=resolved_model,
+                label=entry.get("chosen"),
+                directory=log_dir,
+            )
+            if entry.get("overridden"):
+                log.record_override(
+                    verdict_hash=record["verdict_hash"],
+                    chosen=entry.get("chosen"),
+                    rationale=(
+                        f"the author's prepare flag for {key} named "
+                        f"{entry.get('chosen')!r}; the suggestion was "
+                        f"{entry.get('suggested')!r}"
+                    ),
+                    directory=log_dir,
+                )
+        except Exception:  # noqa: BLE001 - evidence is never worth failing a draft for
+            return
+
+
+def _collect_suggestions(
+    issue: PreparedIssue,
+    *,
+    objective_options: Sequence[str] = (),
+    ask: Callable[..., Any] | None = None,
+    client: Any = None,
+    log: Any = None,
+    log_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Ask every triage question about one draft in one request, and shape the answers.
+
+    Returns the `suggestions` block for the sidecar.  On any failure -- a client
+    error, a timeout, a malformed body, or an unexpected exception from the
+    vendor library -- it returns a block carrying the status and a note and
+    nothing else, so the draft is written exactly as it would have been without
+    `--suggest` (plan KTD5, R16).
+    """
+    try:
+        client = client if client is not None else _fleet_commons("typesafe_client")
+        ask = ask if ask is not None else client.ask
+        log = log if log is not None else _fleet_commons("jev_log")
+    except Exception as exc:  # noqa: BLE001 - a missing fleet-core is not a broken draft
+        return {"status": "error", "note": f"the TypeSafe client could not be loaded ({exc})"}
+
+    floor = triage_suggest.DEFAULT_CONFIDENCE_FLOOR
+    # Read once: the reference is 309 lines and both the question's policy and
+    # the state carry it.
+    policy_text = _issue_types_policy_text()
+    questions = triage_suggest.build_questions(
+        issue_types=_ISSUE_TYPES,
+        risk_levels=_RISK_TIER_VOCABULARY,
+        status_options=_suggestion_status_options(issue.stage),
+        objective_options=objective_options,
+        policy_text=policy_text,
+    )
+    state = triage_suggest.build_state(issue.body, policy_text)
+
+    try:
+        result = ask(state, questions)
+    except Exception as exc:  # noqa: BLE001 - never let a vendor exception escape a prepare
+        return {"status": "error", "note": f"the request failed ({type(exc).__name__}: {exc})"}
+
+    status = getattr(result, "status", "error")
+    if status != "ok":
+        return {
+            "status": status,
+            "note": getattr(result, "note", "") or "the request did not succeed",
+        }
+
+    answers = dict(getattr(result, "answers", {}) or {})
+    suggestions = triage_suggest.shape_suggestions(
+        answers,
+        client=client,
+        chosen_type=issue.issue_type,
+        chosen_risk=issue.risk,
+        chosen_status=issue.status,
+        chosen_objective=(issue.project_fields or {}).get(_PREPARED_FIELD_OBJECTIVE),
+        risk_levels=_RISK_TIER_VOCABULARY,
+        floor=floor,
+    )
+
+    _record_suggestion_verdicts(
+        log,
+        client,
+        answers=answers,
+        suggestions=suggestions,
+        state=state,
+        questions=questions,
+        resolved_model=getattr(result, "model", ""),
+        floor=floor,
+        log_dir=log_dir,
+    )
+
+    return {
+        "status": "ok",
+        "resolved_model": getattr(result, "model", ""),
+        # Which truncation stages fired on the way out.  A shortened policy
+        # document is the quiet way this judgment degrades, so it is recorded
+        # rather than left invisible.
+        "truncation": list(getattr(result, "truncation", ()) or ()),
+        "floor": floor,
+        # Nested rather than spread across this block: the board-status question
+        # is keyed `status`, which would otherwise overwrite the client outcome
+        # above and make a successful call read as a suggestion object.
+        "judgments": suggestions,
+    }
+
+
 def _sidecar_payload(
     issue: PreparedIssue,
     readiness: PreparedReadiness,
     state: str,
     approval_state: str | None,
+    suggestions: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "schema_version": "1.0",
         "state": state,
         # The U11 human gate (None when blocked — a blocked draft never reaches
@@ -5385,6 +6247,19 @@ def _sidecar_payload(
         "readiness": asdict(readiness),
         "updated_at": datetime.now(UTC).isoformat(),
     }
+    if suggestions is not None:
+        payload["suggestions"] = suggestions
+        # The card's acceptance criterion names these two at the TOP level, so
+        # they are mirrored there as well as carried inside the block.  A
+        # failed call has neither: there is no suggestion to mirror.
+        judgments = suggestions.get("judgments") or {}
+        for key, sidecar_key in (
+            (triage_suggest.QUESTION_TYPE, "type_suggestion"),
+            (triage_suggest.QUESTION_RISK, "risk_suggestion"),
+        ):
+            if key in judgments:
+                payload[sidecar_key] = judgments[key]
+    return payload
 
 
 def issue_prepare(
@@ -5402,6 +6277,14 @@ def issue_prepare(
     draft_dir: Path | None = None,
     fmt: str = "text",
     stage: str | None = None,
+    # #1035: advisory triage suggestions.  Opt-in, apply nothing, and every one
+    # of these defaults keeps the command exactly as offline as it was.
+    suggest: bool = False,
+    objective_options: Sequence[str] = (),
+    ask: Callable[..., Any] | None = None,
+    suggest_client: Any = None,
+    suggest_log: Any = None,
+    suggest_log_dir: Path | None = None,
 ) -> Path:
     if not source.strip():
         raise RuntimeError("issue prepare requires non-empty source text")
@@ -5420,12 +6303,71 @@ def issue_prepare(
     # empty and readiness blocks on the missing Stage instead.
     safe_status = status or _stage_entry_options().get(stage or "", "")
     draft_title = title or f"{issue_type}: {repo} {team} work"
-    maturity = handoff_maturity or (
-        source_artifact.inferred_maturity if source_artifact else "requirements-ready"
+    # #942: maturity resolution order — explicit --maturity wins over the
+    # artifact's Saga assessment; the artifact's owner-derived value comes
+    # next; a text-only prepare (no --from, no --maturity) records NO handoff
+    # maturity (review finding #5): readiness reports the missing-maturity
+    # warning, nothing routes, and the owner is never loaded (lazy dependency:
+    # no source, no assessment, no Saga requirement).
+    next_action: str | None = None
+    if handoff_maturity:
+        readiness_owner = _saga_readiness_owner()
+        published = ""
+        if source_artifact is not None:
+            published = source_artifact.url or source_artifact.path or source_artifact.ref
+        assessment = readiness_owner.assess_declared(
+            handoff_maturity, published, declaration_required=False
+        )
+        maturity = assessment.maturity
+        if not maturity or maturity.startswith("unknown:"):
+            diagnostic = f" {assessment.diagnostic}" if assessment.diagnostic else ""
+            raise RuntimeError(
+                f"Unknown handoff maturity {handoff_maturity!r} — the Saga owner "
+                f"classifies it as {maturity or 'blank'}.{diagnostic}"
+            )
+        # A live route names its target; with no source artifact there is
+        # nothing to route to, so the section is omitted rather than rendering
+        # a command against an empty path.
+        next_action = assessment.next_action or None if published else None
+    elif source_artifact is not None:
+        maturity = source_artifact.inferred_maturity
+        if not maturity or maturity.startswith("unknown:"):
+            diagnostic = (
+                f" {source_artifact.readiness_diagnostic}"
+                if source_artifact.readiness_diagnostic
+                else ""
+            )
+            raise RuntimeError(
+                f"Source artifact is not routable: readiness {maturity or 'blank'} "
+                f"for {source_artifact.ref}.{diagnostic}"
+            )
+        next_action = source_artifact.readiness_next_action
+    else:
+        maturity = None
+    # Ruling 942-5 (review finding #4): an explicit --maturity must reconcile
+    # with the source's own declaration before it wins. A positively-confirmed
+    # differing declaration (sidecar or state file, or a pending-confirmation /
+    # deferred-context value that only a declaration can produce) blocks naming
+    # both values; the override keeps winning over a path-only fallback, which
+    # is not a declaration.
+    extra_gaps: list[str] = []
+    if handoff_maturity and source_artifact is not None:
+        extra_gaps.extend(_maturity_declaration_conflicts(handoff_maturity, source_artifact))
+    body = _source_to_issue_body(
+        source, issue_type, team, repo, risk, mode, maturity, source_artifact, next_action
     )
-    if maturity not in _HANDOFF_MATURITY_CHOICES:
-        allowed = ", ".join(_HANDOFF_MATURITY_CHOICES)
-        raise RuntimeError(f"Unknown handoff maturity {maturity!r}; expected {allowed}")
+    # Ruling 1000-2 (review finding #3): a `--risk` seed that contradicts a
+    # well-formed `### Risk` section in a supplied body is recorded as a
+    # blocking gap naming both values. The body stays authoritative; the
+    # disagreement is loud instead of silently dropped on the floor. A
+    # malformed or missing body section already blocks through the Risk reader.
+    body_risk_token, body_risk_errors = _risk_from_body(body)
+    if risk and body_risk_token and not body_risk_errors and body_risk_token != risk:
+        extra_gaps.append(
+            f"--risk {risk!r} conflicts with the body's `### Risk` token "
+            f"{body_risk_token!r}; the body is authoritative — align the flag "
+            "with the body or drop the flag before creation"
+        )
     issue = PreparedIssue(
         title=draft_title,
         repo=repo,
@@ -5434,12 +6376,15 @@ def issue_prepare(
         project=project,
         status=safe_status,
         labels=_issue_expected_labels(issue_type),
-        risk=risk,
+        # #1000 R3: the body is the source of Risk — the `--risk` argument only
+        # seeded the compiled scaffold above and is never carried as metadata
+        # past this point. Supplied bodies pass through untouched, so a missing
+        # or malformed Risk section there derives None and blocks in readiness
+        # no matter what --risk or the risk labels said.
+        risk=body_risk_token,
         mode=mode,
         stage=stage,
-        body=_source_to_issue_body(
-            source, issue_type, team, repo, risk, mode, maturity, source_artifact
-        ),
+        body=body,
         handoff_maturity=maturity,
         source_artifact=_source_artifact_payload(source_artifact),
     )
@@ -5450,7 +6395,7 @@ def issue_prepare(
     # it can reach approval. The validator runs inside readiness (the olympus
     # profile calls validate_card_body), so a malformed body fails readiness and
     # is forced to `blocked` below — it never reaches `needs_operator_approval`.
-    readiness = _readiness_for_prepared_issue(issue)
+    readiness = _readiness_for_prepared_issue(issue, extra_blocking_gaps=extra_gaps)
 
     target_dir = draft_dir or _PREPARED_DRAFT_DIR
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -5465,26 +6410,46 @@ def issue_prepare(
     # no approval gate to enter.
     state = _PREPARE_STATE_READY if readiness.passed else _PREPARE_STATE_BLOCKED
     approval_state = _APPROVAL_NEEDS_OPERATOR if readiness.passed else None
+
+    # #1035: the suggestions are collected AFTER the draft's every field and its
+    # readiness verdict are settled, so no answer can reach a field, a gap, or a
+    # label. The call is the last thing before serialization and the first thing
+    # dropped on failure.
+    suggestions = (
+        _collect_suggestions(
+            issue,
+            objective_options=objective_options,
+            ask=ask,
+            client=suggest_client,
+            log=suggest_log,
+            log_dir=suggest_log_dir,
+        )
+        if suggest
+        else None
+    )
+
     draft_path.write_text(
         _render_draft_markdown(issue, approval_state=approval_state), encoding="utf-8"
     )
     sidecar_path.write_text(
         json.dumps(
-            _sidecar_payload(issue, readiness, state, approval_state), indent=2, sort_keys=True
+            _sidecar_payload(issue, readiness, state, approval_state, suggestions),
+            indent=2,
+            sort_keys=True,
         )
         + "\n",
         encoding="utf-8",
     )
 
     if fmt == "json":
-        _out(
-            {
-                "draft": str(draft_path),
-                "sidecar": str(sidecar_path),
-                "readiness": asdict(readiness),
-            },
-            fmt,
-        )
+        output: dict[str, Any] = {
+            "draft": str(draft_path),
+            "sidecar": str(sidecar_path),
+            "readiness": asdict(readiness),
+        }
+        if suggestions is not None:
+            output["suggestions"] = suggestions
+        _out(output, fmt)
     else:
         print(f"Prepared draft: {draft_path}")
         print(f"Readiness: {'passed' if readiness.passed else 'blocked'}")
@@ -5492,6 +6457,16 @@ def issue_prepare(
             print(f"  - BLOCKING: {gap}")
         for warning in readiness.warnings:
             print(f"  - WARNING: {warning}")
+        if suggestions is not None:
+            if suggestions.get("status") == "ok":
+                print("Suggestions (advisory — nothing was applied):")
+                for line in triage_suggest.render_suggestions(suggestions.get("judgments") or {}):
+                    print(line)
+            else:
+                print(
+                    f"Suggestions: unavailable ({suggestions.get('status')}) — "
+                    f"{suggestions.get('note', '')}"
+                )
     return draft_path
 
 
@@ -6448,7 +7423,7 @@ def issue_create(
 
     **Today's reality (2026-05-04)**: the Olympus project (#1) only exposes
     `Status` as a single-select field. Initiative, Objective, Capability
-    Size, Business Value, Technical Risk, Target Quarter are all "decided,
+    Size, Business Value, Target Quarter are all "decided,
     not yet created" per Phase A carry-over #2. The per-project schema
     discovery silently skips prompts for missing fields, so today operators
     will see only the type, parent, Status, and confirm prompts. When the
@@ -6563,7 +7538,6 @@ def issue_create(
         for adaptive_field in (
             "Capability Size",
             "Business Value",
-            "Technical Risk",
             "Target Quarter",
         ):
             opts = _project_field_options(project_name, adaptive_field)
@@ -6720,7 +7694,9 @@ def main() -> None:
     board_move_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     board_move_p.add_argument("--number", required=True, type=int)
     board_move_p.add_argument(
-        "--status", required=True, help="Target status (e.g. 'Assigned', 'In Review', 'Active')"
+        "--status",
+        required=True,
+        help="Target status (e.g. 'Implementing', 'Code review', 'Ready to close')",
     )
 
     board_archive_p = board_sp.add_parser("archive", help="Archive terminal workflow items")
@@ -6794,8 +7770,23 @@ def main() -> None:
         "--maturity",
         dest="handoff_maturity",
         default=None,
-        choices=_HANDOFF_MATURITY_CHOICES,
-        help="Override inferred handoff maturity",
+        help="Override inferred handoff maturity (classified by the Saga owner; "
+        "accepts pending-confirmation and deferred-context)",
+    )
+    issue_prepare_p.add_argument(
+        "--suggest",
+        action="store_true",
+        help="Record advisory issue-type, risk, status and objective suggestions in the "
+        "sidecar. Applies nothing: --type/--risk/--status stay the decision, and a "
+        "differing suggestion is logged as an override. Requires TYPESAFE_API_KEY.",
+    )
+    issue_prepare_p.add_argument(
+        "--objective-option",
+        dest="objective_options",
+        action="append",
+        default=[],
+        help="An Objective candidate the --suggest judgment may choose among (repeatable). "
+        "With none supplied the objective question is not asked.",
     )
     issue_prepare_p.add_argument("source", nargs="*")
 
@@ -6901,6 +7892,13 @@ def main() -> None:
     labels_deploy_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
 
     labels_auto_p = labels_sp.add_parser("auto-label", help="Apply auto-label rules to issue")
+    labels_auto_p.add_argument(
+        "--suggest",
+        action="store_true",
+        help="Print the widen-only union of rule-matched and model-suggested labels and "
+        "apply NOTHING. The regular-expression rules stay the floor; the model may only "
+        "add. Requires TYPESAFE_API_KEY.",
+    )
     labels_auto_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     labels_auto_p.add_argument("--number", required=True, type=int)
 
@@ -7131,6 +8129,33 @@ def main() -> None:
     flow_validate_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
     flow_validate_p.add_argument("--number", required=True, type=int)
 
+    flow_repair_p = flow_sp.add_parser(
+        "repair-window",
+        help=(
+            "Open/close a repair window (schema-declared repair-window label + "
+            "test-result citation; idempotent; never a project-field write)"
+        ),
+    )
+    flow_repair_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
+    flow_repair_p.add_argument("--number", required=True, type=int)
+    # dest != "action": the flow subparsers already claim dest="action" for the
+    # subcommand name — a bare --action would overwrite it and the dispatch
+    # would never see "repair-window".
+    flow_repair_p.add_argument(
+        "--action",
+        dest="repair_action",
+        required=True,
+        choices=("open", "close"),
+    )
+    flow_repair_p.add_argument(
+        "--citation",
+        required=True,
+        help=(
+            "Verbatim test result justifying this transition: the FAILING "
+            "result on open, the PASSING result on close"
+        ),
+    )
+
     # ===========================
     # CONFIG
     # ===========================
@@ -7210,6 +8235,8 @@ def main() -> None:
                     handoff_maturity=args.handoff_maturity,
                     source_artifact=source_artifact,
                     fmt=fmt,
+                    suggest=args.suggest,
+                    objective_options=args.objective_options,
                 )
             elif args.action == "create-prepared":
                 issue_create_prepared(
@@ -7249,7 +8276,7 @@ def main() -> None:
             elif args.action == "deploy":
                 labels_deploy(args.repo, fmt)
             elif args.action == "auto-label":
-                labels_auto_label(args.repo, args.number, fmt)
+                labels_auto_label(args.repo, args.number, fmt, suggest=args.suggest)
 
         elif args.resource == "fields":
             if args.action == "create-option":
@@ -7336,6 +8363,8 @@ def main() -> None:
                 flow_verify_label(args.repo, args.name, args.color, args.description, fmt)
             elif args.action == "validate-card":
                 flow_validate_card(args.repo, args.number, fmt)
+            elif args.action == "repair-window":
+                flow_repair_window(args.repo, args.number, args.repair_action, args.citation, fmt)
 
         elif args.resource == "config":
             if args.action == "show":

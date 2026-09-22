@@ -24,6 +24,7 @@ REQUIRED_H3_HEADERS = (
     'Context library links',
     'Acceptance criteria',
     'Verification',
+    'Risk',
 )
 
 OPTIONAL_H3_HEADERS = (

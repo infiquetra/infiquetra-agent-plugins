@@ -1516,6 +1516,7 @@ class ReadbackEvidenceTest(unittest.TestCase):
         self.assertEqual(ccm.check_public_evidence_rules(self.record), [])
 
 
+MISSION_CONTROL_NOTICE = EVIDENCE / "2026-09-22-mission-control-compatibility-notice.md"
 MISSION_CONTROL_LIVE_DOCUMENT = (
     EVIDENCE / "2026-08-30-mission-control-compatibility-matrix.md"
 )
@@ -1587,14 +1588,19 @@ class MissionControlMatrixBindingTest(unittest.TestCase):
 
     def test_it_declares_itself_current(self) -> None:
         directives = ccm.read_directives(self.text)
-        self.assertEqual(directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_CURRENT)
+        self.assertEqual(directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_SUPERSEDED)
+        self.assertEqual(
+            directives.get(ccm.SUPERSEDED_BY_DIRECTIVE),
+            MISSION_CONTROL_NOTICE.name,
+        )
 
     def test_the_recorded_fingerprint_identifies_the_shipped_package(self) -> None:
-        assert_version_binds_and_a_moved_tree_is_only_reported(
-            self,
-            self.record["package"],
-            port_config.load("mission-control", ROOT),
+        """The 2026-08-30 record stays bound to derived 2.15.2. It is not the 2.21.1 tree."""
+        self.assertEqual(self.record["package"]["version"], "2.15.2")
+        _name, version = ccm.package_identity(
+            MISSION_CONTROL_PACKAGE_ROOT, "plugin.json"
         )
+        self.assertNotEqual(self.record["package"]["version"], version)
 
     def test_it_covers_exactly_the_ten_canonical_clients(self) -> None:
         names = {client["name"] for client in self.record["clients"]}
@@ -1679,36 +1685,29 @@ class MissionControlReadbackBindingTest(unittest.TestCase):
     def setUp(self) -> None:
         self.text = MISSION_CONTROL_READBACK_DOCUMENT.read_text(encoding="utf-8")
         self.record = ccm.extract_record(self.text)
-        self.provenance = json.loads(
-            (MISSION_CONTROL_PACKAGE_ROOT / "PROVENANCE.json").read_text(encoding="utf-8")
-        )
 
     def test_the_document_exists(self) -> None:
         self.assertTrue(MISSION_CONTROL_READBACK_DOCUMENT.is_file())
 
     def test_the_release_fingerprint_identifies_the_shipped_package(self) -> None:
-        assert_version_binds_and_a_moved_tree_is_only_reported(
-            self,
-            self.record["release"],
-            port_config.load("mission-control", ROOT),
-        )
+        directives = ccm.read_directives(self.text)
+        self.assertEqual(directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_SUPERSEDED)
+        self.assertEqual(self.record["release"]["version"], "2.15.2")
 
     def test_the_recorded_upstream_commit_matches_the_synchronization_pin(self) -> None:
         self.assertEqual(
-            self.record["release"]["upstream_commit"], self.provenance["source_commit"]
+            self.record["release"]["upstream_commit"],
+            "3b2b7083fdda8e39e213b5f4acf9f8301d60dd52",
         )
-        self.assertEqual(self.record["release"]["version"], self.provenance["source_version"])
+        self.assertEqual(self.record["release"]["version"], "2.15.2")
 
     def test_all_seven_skill_unit_fingerprints_are_recorded_and_match(self) -> None:
         units = self.record["release"]["units"]
         self.assertEqual(set(units), set(MISSION_CONTROL_SKILLS))
         for unit in MISSION_CONTROL_SKILLS:
             with self.subTest(unit=unit):
-                file_count, tree_sha256 = ccm.package_fingerprint(
-                    MISSION_CONTROL_PACKAGE_ROOT / "skills" / unit
-                )
-                self.assertEqual(units[unit]["file_count"], file_count)
-                self.assertEqual(units[unit]["tree_sha256"], tree_sha256)
+                self.assertIsInstance(units[unit]["file_count"], int)
+                self.assertRegex(units[unit]["tree_sha256"], r"^[0-9a-f]{64}$")
 
     def test_every_readback_reports_bytes_equal_to_the_release(self) -> None:
         """Every readback entry is asserted, branching on the install unit so
@@ -1780,7 +1779,7 @@ class MissionControlSupersededDocumentTest(unittest.TestCase):
         )
         self.assertEqual(directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_SUPERSEDED)
         successor = directives.get(ccm.SUPERSEDED_BY_DIRECTIVE)
-        self.assertEqual(successor, MISSION_CONTROL_LIVE_DOCUMENT.name)
+        self.assertEqual(successor, MISSION_CONTROL_NOTICE.name)
         assert successor is not None
         self.assertTrue(directives.get(ccm.SUPERSEDED_REASON_DIRECTIVE, "").strip())
         self.assertTrue((EVIDENCE / successor).is_file())
@@ -1791,7 +1790,7 @@ class MissionControlSupersededDocumentTest(unittest.TestCase):
         )
         self.assertEqual(directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_SUPERSEDED)
         successor = directives.get(ccm.SUPERSEDED_BY_DIRECTIVE)
-        self.assertEqual(successor, MISSION_CONTROL_READBACK_DOCUMENT.name)
+        self.assertEqual(successor, MISSION_CONTROL_NOTICE.name)
         assert successor is not None
         self.assertTrue(directives.get(ccm.SUPERSEDED_REASON_DIRECTIVE, "").strip())
         self.assertTrue((EVIDENCE / successor).is_file())
@@ -1801,9 +1800,11 @@ class MissionControlSupersededDocumentTest(unittest.TestCase):
             with self.subTest(document=document.name):
                 directives = ccm.read_directives(document.read_text(encoding="utf-8"))
                 self.assertEqual(
-                    directives.get(ccm.STATUS_DIRECTIVE, ccm.STATUS_CURRENT),
-                    ccm.STATUS_CURRENT,
+                    directives.get(ccm.STATUS_DIRECTIVE),
+                    ccm.STATUS_SUPERSEDED,
                 )
+        notice = ccm.read_directives(MISSION_CONTROL_NOTICE.read_text(encoding="utf-8"))
+        self.assertEqual(notice.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_CURRENT)
 
     def test_the_old_records_preserve_the_fingerprints_they_were_published_with(self) -> None:
         record = ccm.extract_record(
@@ -1837,7 +1838,7 @@ class MissionControlSupersededDocumentTest(unittest.TestCase):
                     directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_SUPERSEDED
                 )
                 successor = directives.get(ccm.SUPERSEDED_BY_DIRECTIVE)
-                self.assertEqual(successor, successor_document.name)
+                self.assertEqual(successor, MISSION_CONTROL_NOTICE.name)
                 assert successor is not None
                 self.assertTrue(
                     directives.get(ccm.SUPERSEDED_REASON_DIRECTIVE, "").strip()
@@ -1855,7 +1856,7 @@ class MissionControlSupersededDocumentTest(unittest.TestCase):
                     directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_SUPERSEDED
                 )
                 successor = directives.get(ccm.SUPERSEDED_BY_DIRECTIVE)
-                self.assertEqual(successor, successor_document.name)
+                self.assertEqual(successor, MISSION_CONTROL_NOTICE.name)
                 assert successor is not None
                 self.assertTrue(
                     directives.get(ccm.SUPERSEDED_REASON_DIRECTIVE, "").strip()

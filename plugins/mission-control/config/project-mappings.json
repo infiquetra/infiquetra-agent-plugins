@@ -8,7 +8,6 @@
       "id": "PVT_kwDODdfJoc4BZLMK",
       "name": "Operations",
       "board_key": "operations",
-      "workflow": "intent_flow",
       "_id_note": "Project node id captured 2026-05-29. If it rotates, re-fetch via: gh project view 3 --owner infiquetra --format json -q .id",
       "repositories": []
     },
@@ -17,7 +16,6 @@
       "id": "PVT_kwDODdfJoc4BZLMH",
       "name": "Asgard",
       "board_key": "asgard",
-      "workflow": "intent_flow",
       "_id_note": "Project node id captured 2026-05-29. If it rotates, re-fetch via: gh project view 2 --owner infiquetra --format json -q .id",
       "repositories": []
     },
@@ -26,7 +24,6 @@
       "id": "PVT_kwDODdfJoc4BanD0",
       "name": "CAMPPS",
       "board_key": "campps",
-      "workflow": "campps_initiative",
       "_id_note": "Project node id captured 2026-06-20. If it rotates, re-fetch via: gh project view 4 --owner infiquetra --format json -q .id",
       "repositories": []
     }

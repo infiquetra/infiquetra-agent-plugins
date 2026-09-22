@@ -36,10 +36,10 @@ import pytest
 def _find_package_root(start: Path | None = None) -> Path:
     current = start or Path(__file__)
     for parent in current.resolve().parents:
-        if (parent / "com.infiquetra.claude" / "plugin.json").is_file():
+        if (parent / ".claude-plugin" / "plugin.json").is_file():
             return parent
     raise RuntimeError(
-        f"package root containing com.infiquetra.claude/plugin.json not found from {current.resolve()}"
+        f"package root containing .claude-plugin/plugin.json not found from {current.resolve()}"
     )
 
 
@@ -53,12 +53,13 @@ PARITY_PATH = VENDOR_DIR / "check_issue_contract_parity.py"
 # INDEPENDENT oracle: the sha256 of the vendored issue_contract_data.py, pinned
 # here as a literal. Update this DELIBERATELY when re-vendoring a new artifact
 # from infiquetra-sdlc -- a silent data+manifest edit cannot pass this.
-# Updated 2026-06-14 for the U8 context-package expansion.
-EXPECTED_DATA_SHA256 = "22fa2b5b77acd739a7a0648d163f3292ddf433903e3f2c97f8c8f2e2feb0afec"
+# Updated 2026-09-13 for the common Risk field (#1000 U2, SDLC commit 67845cd).
+EXPECTED_DATA_SHA256 = "de8c98c8ef16d2c5887bb9b1e48a807c0952e614ca2e97776fc3ad3dbd3f52e5"
 # INDEPENDENT oracle for the vendored shim module (same discipline as the data
 # oracle above). Update DELIBERATELY when re-vendoring the shim from sdlc.
-# Updated 2026-06-14 for the U8 context-package expansion.
-EXPECTED_SHIM_SHA256 = "65d972ff3a049ba8103c501d61cdf16266f12eba35c749d76a937fcfe87357ff"
+# Updated 2026-09-13 for the common Risk field (#1000 U2, SDLC commit 67845cd;
+# the shim manifest is generated locally -- the source ships no shim sidecar).
+EXPECTED_SHIM_SHA256 = "0e853d5c3a8e36297e8ef0e48f58180bd3ab95373f5a6c969f40f9800c57aa80"
 
 
 def _load_parity():
@@ -137,7 +138,8 @@ def test_vendored_schema_carries_issue_fields_block() -> None:
 # REQUIRED_FIELDS). A wrong header or a required-flag flip fails here.
 # Updated 2026-06-14 for the U8 context-package expansion (Intent + risk-
 # conditional fields + Lifecycle Origin; context_library_links promoted to
-# required). Order is the U10/R11 canonical order.
+# required); 2026-09-13 for the common Risk field (#1000 U2). Order is the
+# U10/R11 canonical order.
 EXPECTED_FIELD_HEADERS = {
     "objective": "Objective",
     "intent": "Intent",
@@ -151,6 +153,7 @@ EXPECTED_FIELD_HEADERS = {
     "notes": "Notes / conventions",
     "acceptance_criteria": "Acceptance criteria",
     "verification": "Verification",
+    "risk": "Risk",
     "lifecycle_origin": "Lifecycle Origin",
 }
 # The always-required core (risk-independent). The risk-conditional + auto fields
@@ -164,6 +167,7 @@ EXPECTED_REQUIRED_FIELDS = (
     "context_library_links",
     "acceptance_criteria",
     "verification",
+    "risk",
 )
 
 
@@ -192,7 +196,9 @@ def test_vendored_data_carries_risk_matrix() -> None:
 # (U4); a wrong header, a lost lowercased-placeholder, or a renamed regex const
 # fails here. Updated 2026-06-14: Intent + Context library links are now required
 # H3 headers (R1/R4); the risk-conditional fields + Lifecycle Origin are OPTIONAL
-# at the shim layer (it has no Risk input). The placeholder set stays LOWERCASED.
+# at the shim layer (it has no Risk-tier input). Updated 2026-09-13 (#1000 U2):
+# the common Risk H3 header is REQUIRED at the shim layer too. The placeholder
+# set stays LOWERCASED.
 EXPECTED_SHIM_REQUIRED_H3 = (
     "Objective",
     "Intent",
@@ -202,6 +208,7 @@ EXPECTED_SHIM_REQUIRED_H3 = (
     "Context library links",
     "Acceptance criteria",
     "Verification",
+    "Risk",
 )
 EXPECTED_SHIM_OPTIONAL_H3 = (
     "Inputs inventory",
@@ -272,8 +279,8 @@ def test_live_leg_flags_rename(tmp_path) -> None:
     def fake_fetch_fields_census(project_number):
         # Upstream renamed "Ready" -> "In Review"; "Idea"/"Shaping"/"Done" unchanged.
         return {
-            "fields": [
-                {
+            "fields": {
+                "Status": {
                     "name": "Status",
                     "options": [
                         {"id": "1", "name": "Idea"},
@@ -282,7 +289,7 @@ def test_live_leg_flags_rename(tmp_path) -> None:
                         {"id": "4", "name": "Done"},
                     ],
                 }
-            ]
+            }
         }
 
     schema_path = tmp_path / "sdlc-schema.json"
@@ -311,12 +318,12 @@ def test_live_leg_passes_when_all_options_resolve(tmp_path) -> None:
 
     def fake_fetch_fields_census(project_number):
         return {
-            "fields": [
-                {
+            "fields": {
+                "Status": {
                     "name": "Status",
                     "options": [{"id": "1", "name": "Idea"}, {"id": "2", "name": "Done"}],
                 }
-            ]
+            }
         }
 
     schema_path = tmp_path / "sdlc-schema.json"
@@ -334,7 +341,7 @@ def test_live_leg_raises_unavailable_when_schema_missing(tmp_path) -> None:
     with pytest.raises(mod.LiveParityUnavailableError):
         mod.live_status_option_errors(
             schema_path=tmp_path / "does-not-exist.json",
-            fetch_fields_census=lambda n: {"fields": []},
+            fetch_fields_census=lambda n: {"fields": {}},
             project_mappings={},
         )
 
@@ -402,7 +409,7 @@ def test_main_default_path_prints_explicit_skipped_line(monkeypatch, capsys) -> 
 
 def test_find_package_root_resolves_plugin_root() -> None:
     root = _find_package_root()
-    assert (root / "com.infiquetra.claude" / "plugin.json").is_file()
+    assert (root / ".claude-plugin" / "plugin.json").is_file()
     assert (root / "config" / "sdlc-schema.json").is_file()
     assert root == PACKAGE_ROOT
 
@@ -412,6 +419,56 @@ def test_find_package_root_fails_loudly_when_missing(tmp_path: Path) -> None:
     dummy_file.parent.mkdir(parents=True)
     dummy_file.touch()
     with pytest.raises(
-        RuntimeError, match=r"package root containing com\.infiquetra\.claude/plugin\.json not found"
+        RuntimeError, match=r"package root containing \.claude-plugin/plugin\.json not found"
     ):
         _find_package_root(dummy_file)
+
+
+def test_a_duplicate_field_name_fails_hard_rather_than_skipping(tmp_path) -> None:
+    """The census refuses a board with two same-named fields (#1020). That is a
+    defect on the board, not an access failure, so it must not be folded into
+    LiveParityUnavailableError -- which callers read as "skip"."""
+    mod = _load_parity()
+    sys.path.insert(0, str(PACKAGE_ROOT / "scripts"))
+    from board_census import DuplicateFieldNameError
+
+    schema = {
+        "boards": {"operations": {"workflow": "stage_flow"}},
+        "workflows": {"stage_flow": {"statuses": ["Capturing"]}},
+    }
+    schema_path = tmp_path / "sdlc-schema.json"
+    schema_path.write_text(json.dumps(schema))
+
+    def raises_duplicate(project_number):
+        raise DuplicateFieldNameError("duplicate field name 'Status'")
+
+    with pytest.raises(DuplicateFieldNameError):
+        mod.live_status_option_errors(
+            schema_path=schema_path,
+            fetch_fields_census=raises_duplicate,
+            project_mappings={"operations": {"number": 3}},
+        )
+
+
+def test_a_non_json_response_still_skips_rather_than_failing_hard(tmp_path) -> None:
+    """`json.JSONDecodeError` subclasses `ValueError`, so a handler written
+    against the bare type would turn a failing live call into a hard failure.
+    The documented posture for unreachable live access is SKIP."""
+    mod = _load_parity()
+
+    schema = {
+        "boards": {"operations": {"workflow": "stage_flow"}},
+        "workflows": {"stage_flow": {"statuses": ["Capturing"]}},
+    }
+    schema_path = tmp_path / "sdlc-schema.json"
+    schema_path.write_text(json.dumps(schema))
+
+    def returns_non_json(project_number):
+        json.loads("not json at all")
+
+    with pytest.raises(mod.LiveParityUnavailableError):
+        mod.live_status_option_errors(
+            schema_path=schema_path,
+            fetch_fields_census=returns_non_json,
+            project_mappings={"operations": {"number": 3}},
+        )

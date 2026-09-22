@@ -1,5 +1,229 @@
 # Changelog
 
+## [2.21.1] - 2026-09-22
+
+2.21.1 — imported from infiquetra-claude-plugins@acc99fe7 (upstream 2.21.0); authored here from this commit; no provenance manifest from now on.
+
+### Changed
+
+- The package is maintained in this repository. `PROVENANCE.json` is gone. The port descriptor keeps the assessment block and no longer names an upstream pin.
+- Version 2.21.1 is upstream 2.21.0 plus a patch bump for this authored cut. The portable manifest, the root Claude manifest, and `com.infiquetra.claude/plugin.json` all say 2.21.1.
+- `fleet-bundle.json` declares `intent_envelope`, `plugin_resolution`, `tier_palette`, `tier_resolver`, `typesafe_client`, `retry_backoff`, `jev_log`, and `staffing.json`. The guarded import rewrite covers only `_load_intent_envelope`. The saga-readiness loader and `_fleet_commons` still called `fleet_commons_shim` after that rewrite, so both now import the bundle beside the script.
+- Skill script locations no longer walk from `INFIQUETRA_SDLC_PATH` into `infiquetra-claude-plugins`. Run `python3 scripts/sdlc_manager.py` from this package root. Claude commands still use `$CLAUDE_PLUGIN_ROOT/scripts/sdlc_manager.py`, which is correct because `scripts/` stays at the package root.
+- `flow repair-window` is a GitHub label write. It is listed in the assessment's mutating operations.
+- A `triage` skill documents the same script the `/triage` command runs, so a skill-scoped harness can reach it.
+
+### Dropped tests
+
+- `tests/test_executor_profile_lint.py::test_palette_arrives_via_shim_rung_provenance` — its premise is `fleet_commons_shim` discovery via `FLEET_COMMONS_ROOT`. The lint imports the bundled `tier_palette` directly, so a fake fleet-core root is not on its path. The rest of that file is carried.
+
+`tests/test_prompt_alignment.py` and `tests/test_card_validator_agreement.py` are carried. The first walks `.claude-plugin/plugin.json`, which this layout has at the package root, and its command and agent paths now point under `com.infiquetra.claude/`. The second skips when the home-lab card validator is not on disk. `tests/test_saga_readiness_alignment.py` skips the cases that load saga's `handoff_envelope.py` when that file is not in this catalog.
+
+## [2.21.0] - 2026-09-20
+
+### Fixed
+
+- **The retired Mount Olympus status vocabulary is gone from agent-facing prose and the
+  `board move` help (issue #1042).** The milestones and metrics skills still named `Assigned`,
+  `In Review`, and `Needs Question` as live states -- none is a Status option on any active
+  board, so each of those instructions failed at runtime with no migration hint. The prose now
+  names the live statuses (`Implementing`, `Code review`, `Needs clarification`), the history
+  notes no longer spell the retired active-start name, and the `board move --status` help
+  examples -- `Assigned`, `In Review`, and `Active`, the last a Stage rather than a Status --
+  are replaced with statuses the committed census records. The board-schema drift guard now
+  scans prose for the Mount Olympus names and pins the help examples to the census.
+
+## [2.20.0] - 2026-09-20
+
+### Changed
+
+- **The saga readiness reader loses its handoff-envelope and reversibility-certificate paths
+  (issue #1030).** Both saga modules were removed with the `/handoff` command and the ship ceremony;
+  `sdlc_manager.py` no longer resolves or loads them. Mission Control's own command surface,
+  its board writes and its issue handling are unchanged -- this is the consumer side of a removal,
+  not a change to what this plugin does.
+
+## [2.19.0] - 2026-09-19
+
+Renumbered from 2.18.0 and 2.17.0 when `main` was folded into `parent/1018`: issue #1035 took
+2.17.0 on `main` first (commit 49618446), so the two integration-branch sections sit above it.
+
+### Fixed
+
+- **The recommended-tier-band comment names the merged staffing data (#1021).** The band map in
+  `scripts/sdlc_manager.py` said it mirrors `tier_policy.json`'s work-shape bands. Issue #1021
+  merged that file into `plugins/fleet-core/scripts/fleet_commons/staffing.json`, so the comment
+  now names its `work_shapes` block. The bands themselves are unchanged, and no behaviour moved.
+
+## [2.18.0] - 2026-09-19
+
+### Fixed
+
+- **Board vocabulary drift, three surfaces at once (issue #1020).** The cached board census
+  `config/board-schema.json` was last regenerated on 2026-07-14 and had fallen two board
+  migrations behind: it recorded no `Stage` field on any board, gave Operations and Asgard the
+  retired `Idea / Shaping / Ready / Active / Verify / Done` ladder, and gave CAMPPS an even older
+  `Todo / In Progress / Done`. It is regenerated from the live boards and now records, for all
+  three, the `Stage` field with six stages and the `Status` field with the 26 stage-flow options
+  that `config/sdlc-schema.json` declares. The regeneration also picks up field membership that
+  had drifted: `Stage` added to all three boards and `Priority` to Asgard and CAMPPS, with
+  `Risk` and `Work Type` gone from Operations, `Jeff Needed`, `Mode`, `Risk`, `Target Repository`
+  and `Transfer Target` gone from Asgard, and `Initiative`, `Start`, `Target` and `Test Strategy`
+  gone from CAMPPS. No live board changed; only the snapshot of it did.
+- **The vendored `config/project-mappings.json` no longer overrides each board's declared
+  workflow.** It pinned `intent_flow` for Operations and Asgard — a workflow `sdlc-schema.json`
+  no longer defines at all — and `campps_initiative` for CAMPPS, which the schema does define but
+  marks `retired_historical` with `active_routing` false. Because `_project_workflow_name` prefers
+  the mapping's label over the board's own declaration, an environment resolving through the
+  vendored file got a one-entry status order (`['No Status']`) for Operations and Asgard and the
+  retired five-status ladder for CAMPPS. The three labels are removed so resolution falls through
+  to the board's declared `stage_flow`. This was invisible on any machine with an
+  `infiquetra-sdlc` checkout, whose external copy is current and wins the resolution ladder.
+- **The board and metrics prose stopped describing a vocabulary the boards do not have.**
+  `skills/board/references/kanban-workflow.md` and `skills/board/SKILL.md` each carried the
+  retired ladder plus a sentence admitting the section was stale and deferring the fix; both now
+  describe the single shared `stage_flow`. The withdrawn work-in-progress limits are removed
+  rather than restated, matching the schema decision that retired them. Terminal-status and
+  cycle-time boundary tables across `skills/metrics/SKILL.md` and
+  `skills/metrics/references/metrics-targets.md` no longer name `Done` or `In Progress`, neither
+  of which is an option on any live board; the terminal is `Ready to close` everywhere. The
+  work-in-progress **age** tables in both metrics files are rewritten to the one threshold
+  `_active_age_thresholds` actually computes — three days for every non-terminal Status on every
+  board — replacing a per-board split with a five-day CAMPPS row keyed on the retired Status
+  `In Progress`. The cycle-time boundary tables now also record how the start boundary is really
+  detected: `_cycle_start_statuses` returns the literal option name `Active`, and the timeline query
+  it feeds captures only the option *name* of a single-select change — it records no field name, so
+  it cannot tell a `Stage` change from a `Status` change. `Active` is a live `Stage` option and not
+  a `Status` option, so the boundary is whichever field first carried an option of that name. Making
+  the field explicit is left to a separate card.
+- **No prose surface tells an agent to write a Status the boards reject.** Fourteen lines across six
+  files did: `skills/board/SKILL.md`, `README.md`, `commands/triage.md`,
+  `agents/sdlc-operator.md`, `skills/flow/SKILL.md` and `skills/issues/SKILL.md` variously wrote
+  `Active`, `Shaping`, `In Progress`, `Ready`, `Idea` or `Committed` — Stage names or retired
+  names, none of them a valid Status option — through three different syntaxes and in plain
+  English. `LIVE_LEGACY_STATUS_ALIASES` carries no entry for any of them, so an agent following one
+  got a rejected option with no migration hint.
+
+  `tests/test_board_schema_drift.py` now guards this from the names outward rather than from one
+  syntax: it reads every Status value written as `--status <value>` (quoted or bare) or as
+  `--field Status --option <value>`, and separately catches a retired name used bare in a sentence,
+  across all 21 Markdown instruction surfaces under `skills/`, `commands/` and `agents/` plus the
+  README. Lines inside a section marked as history are exempt, and `CHANGELOG.md` is not swept at
+  all — a record of what a release retired must be free to name it. The guard was confirmed red
+  against the unfixed tree before being trusted.
+
+### Changed
+
+- **BREAKING (consumed shape): `board-schema.json` keys `fields` by field name instead of listing
+  them.** A cached expression like `.boards.operations.fields[] | select(.name=="Status")` stops
+  working; the equivalent is `.boards.operations.fields.Status`. Every in-repository consumer is
+  updated, and the artifact has no documented external consumer, which is why this ships as a minor
+  rather than a major version. A consumer outside this repository must update its path. A
+  consumer can now
+  ask for one field directly — `.boards.operations.fields.Status.options[].name` — instead of
+  scanning a list. Keys are emitted sorted and `--write` still serializes with `sort_keys=True`,
+  so the committed file diffs as stably as before. A duplicate field name now raises rather than
+  silently overwriting, since a name-keyed mapping can lose a field that a list cannot.
+  `config/generated/check_issue_contract_parity.py` consumes the census by calling the producing
+  function rather than by reading the file, so its live parity leg moves to the mapping too; it was
+  verified against the real boards rather than only against its own fixtures.
+
+### Added
+
+- **`tests/test_board_schema_drift.py`, a credential-free drift guard.** The existing
+  `board_census.py --check` compares against the live boards but deliberately prints SKIPPED and
+  exits 0 without a `project`-scoped token, which is every normal continuous-integration run —
+  so a drift can sit unnoticed, and this one did for two months. The new guard needs no network:
+  it asserts that every Status and Stage option in the committed census matches the vocabulary
+  `sdlc-schema.json` declares, that no retired status name survives, and that `fields` is a
+  mapping. The live comparison remains available as an opt-in leg under `BOARD_SCHEMA_LIVE=1`.
+  The guard was confirmed to fail against the pre-regeneration census before being trusted.
+
+## [2.17.0] - 2026-09-19
+
+Bumped from 2.16.0, the version on `main` at the time this work branched (commit 866d3670).
+
+### Added
+
+- **Advisory triage suggestions on `issue prepare` (issue #1035).** A new opt-in `--suggest`
+  flag records a suggested issue type with its full probability distribution over all five
+  types, a suggested risk tier over the repository's own four-tier vocabulary, and — when
+  candidates are supplied with the repeatable `--objective-option` — a suggested Objective and
+  board Status, in the draft's sidecar JSON. `type_suggestion` and `risk_suggestion` are
+  mirrored at the top level of the sidecar beside the full `suggestions` block.
+
+  **Nothing is applied.** The author's own `--type`, `--risk` and `--status` flags remain the
+  decision; a suggestion that differs from one of them is recorded as an override in the
+  verdict log, linked to its verdict by hash. Suggestions never reach the compiled issue body,
+  so the card validator is untouched, and the risk suggestion never reaches the card's own Risk,
+  which the body still owns. Without the flag the command makes no model call, imports no
+  client, and writes a byte-identical draft.
+
+- **Advisory label union on `labels auto-label` (issue #1035).** The same `--suggest` flag turns
+  the command into a read-only advisory: it prints the union of the labels the existing
+  regular-expression rules matched and the labels a model judged applicable, each tagged `rule`,
+  `model` or `both`, and applies nothing. The union is widen-only — every rule-derived label
+  survives every possible model answer — and the threshold is the answer's yes-probability, not
+  its banding confidence, so a confident rejection cannot add a label. Without the flag the
+  command posts its regular-expression matches exactly as it always has.
+
+- **`plugins/mission-control/scripts/triage_suggest.py`**, a new module holding the question
+  set, the answer shaping and the pure `union_labels` function. Every judgment goes through the
+  fleet-core TypeSafe client (`plugins/fleet-core/scripts/fleet_commons/typesafe_client.py`,
+  shipped by issue #1032); this plugin adds no HTTP code and no second client. The key is read
+  only by that client, from `TYPESAFE_API_KEY` in the environment, and is never printed, logged
+  or written to a sidecar.
+
+### Notes
+
+- A client failure of any kind — error, timeout, malformed body, or an unexpected exception —
+  leaves the draft and the sidecar exactly as they would have been, plus one note recording the
+  failure. No readiness gap is added and the exit status is unchanged.
+- Every new test drives a fake client; none touches the network or the real verdict log.
+
+## [2.16.0] - 2026-09-13
+
+### Added
+
+- **Saga-owned readiness for prepared sources (issue #942).** `issue prepare` no longer infers
+  handoff maturity from folder location or a local vocabulary. All readiness assessment is
+  delegated to the saga plugin's handoff envelope (`scripts/handoff_envelope.py`), resolved
+  through the installed-plugin registry (or `SAGA_ROOT`) and gated by contract major, API
+  surface, and a six-value functional vocabulary probe; an absent, incompatible, or broken Saga
+  dependency fails closed with a repairable diagnostic naming the fix. Undeclared drafts and
+  Saga state files are refused (`unknown:` sentinels), out-of-root sources are refused outright,
+  and only the four ready states route — `pending-confirmation` and `deferred-context` create
+  with warnings and never carry a live `/plan` or `/work` command. Explicit `--maturity` values
+  are classified by the owner, so those two states are now accepted alongside the four ready
+  ones.
+- **`flow repair-window` verb (issue #1000).** Opens or closes the schema-marker
+  `repair-window` label on an issue over REST labels: citation-first refusal (missing or blank
+  citation never reaches the network), idempotent transitions (open no-ops when the label is
+  present, close no-ops when absent), one citation comment per real transition, and no GraphQL
+  project-field writes. When the vendored schema declares `marker_source`, the marker definition
+  resolves from the loaded config and an old schema lacking the marker refuses.
+
+### Changed
+
+- **Risk is a common body field (issue #1000).** `### Risk` is the 14th required card section:
+  `low`, `medium`, `high`, or `very-high` on the first line plus a non-placeholder
+  justification, or uppercase `UNKNOWN` with an Architect-assessment justification. UNKNOWN
+  cards pass validation and creation with a warning naming the missing assessment; the
+  Planning-to-Active gate refuses UNKNOWN, missing, or malformed Risk. `--risk` seeds only
+  compiled scaffolds — supplied bodies pass through untouched — and risk is re-derived from the
+  body on every read.
+- **Count-only WIP tracking (issue #999).** WIP limits count cards only; the per-card estimate
+  reading is retired along with the schema's estimate keys.
+- **Vendored SDLC schema re-synced to `2026-09-07.5` (issue #999).** The vendored snapshot and
+  generated contract files move to the authoritative source; `workflows.intent_flow` is retired
+  in favor of `workflows.stage_flow`.
+
+### Removed
+
+- **Technical Risk GraphQL project field (issue #1000).** The prepared-field Risk producer, its
+  project-field mapping, and the interactive prompt entry are gone; Technical Risk is retired
+  as a project field (E1) and Risk lives in the body only.
+
 ## [2.15.2] - 2026-08-30
 
 ### Fixed - retire the CAMPPS ladder from the board skill and kanban reference (unit W19, issue infiquetra/infiquetra-sdlc#100)

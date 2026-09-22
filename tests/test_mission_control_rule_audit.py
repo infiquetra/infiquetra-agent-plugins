@@ -118,6 +118,10 @@ cd ansible/roles/hermes_orchestrator/files
 pytest tests/test_card_validator.py -v
 ```
 
+### Risk
+low
+The fixture stays inside the existing card contract.
+
 ### Notes / conventions
 - GitHub issue forms render fields as `### <Field Label>` headers
 
@@ -187,6 +191,10 @@ tests/test_foo.py
 
 ### Context library links
 _none_
+
+### Risk
+low
+Section order is not part of the contract.
 """
         auth_passed, auth_fails = self._eval_authority(reordered)
         port_valid, port_errs = self._eval_portable(reordered)
@@ -597,36 +605,31 @@ class PaginationLintAuditTests(unittest.TestCase):
 class PromptAlignmentAuditTests(unittest.TestCase):
     """Audit of prompt alignment predicates and portable layout boundaries."""
 
-    def test_prompt_alignment_dropped_custody_is_recorded(self) -> None:
-        """Verify that test_prompt_alignment.py is recorded as dropped_from_source in descriptor and PROVENANCE."""
-        desc = json.loads((ROOT / "ports" / "mission-control.json").read_text(encoding="utf-8"))
-        self.assertIn("tests/test_prompt_alignment.py", desc.get("custody", {}).get("dropped_from_source", []))
-
-        provenance = json.loads((PACKAGE / "PROVENANCE.json").read_text(encoding="utf-8"))
-        removed_sources = [r["source_path"] for r in provenance.get("removed_from_source", [])]
-        self.assertIn("plugins/mission-control/tests/test_prompt_alignment.py", removed_sources)
+    def test_prompt_alignment_is_carried_against_the_authored_layout(self) -> None:
+        """The drift guard is carried. Adapter paths live under the client extension."""
+        self.assertTrue((PACKAGE / "tests" / "test_prompt_alignment.py").is_file())
+        self.assertFalse((PACKAGE / "PROVENANCE.json").is_file())
+        carried = (PACKAGE / "tests" / "test_prompt_alignment.py").read_text(encoding="utf-8")
+        self.assertIn('ADAPTER = PACKAGE_ROOT / "com.infiquetra.claude"', carried)
 
     def test_structural_premises_are_honestly_evaluated(self) -> None:
         """Verify the 6 structural reasons why prompt-alignment cannot run unmodified."""
-        # 1. Claude manifest is relocated (not at package root .claude-plugin/plugin.json)
-        self.assertFalse((PACKAGE / ".claude-plugin" / "plugin.json").exists())
-        self.assertTrue((PACKAGE / "com.infiquetra.claude" / "plugin.json").exists())
+        # 1. The package root carries a Claude manifest of paths, and the
+        #    adapter carries the relocated upstream manifest.
+        self.assertTrue((PACKAGE / ".claude-plugin" / "plugin.json").is_file())
+        self.assertTrue((PACKAGE / "com.infiquetra.claude" / "plugin.json").is_file())
 
-        # 2. Mission Control is not published through a Claude marketplace.
-        #    A repo-root marketplace exists since 2026-08-25, when the `voice`
-        #    package became installable from this repository, so its mere
-        #    presence no longer carries this premise. What matters for Mission
-        #    Control is unchanged and is what is checked: no entry names it, so
-        #    nothing here installs it as a Claude plugin.
+        # 2. The generated marketplace lists this package. Claude installs it
+        #    from this repository.
         marketplace = ROOT / ".claude-plugin" / "marketplace.json"
-        if marketplace.exists():
-            listed = {
-                entry.get("name")
-                for entry in json.loads(marketplace.read_text(encoding="utf-8")).get(
-                    "plugins", []
-                )
-            }
-            self.assertNotIn("mission-control", listed)
+        self.assertTrue(marketplace.is_file())
+        listed = {
+            entry.get("name")
+            for entry in json.loads(marketplace.read_text(encoding="utf-8")).get(
+                "plugins", []
+            )
+        }
+        self.assertIn("mission-control", listed)
 
         # 3. Client extensions are relocated under com.infiquetra.claude/
         self.assertFalse((PACKAGE / "agents" / "sdlc-operator.md").exists())
@@ -789,164 +792,36 @@ class ManifestVersionDerivationTests(unittest.TestCase):
 
     def test_manifest_version_equals_provenance_source_version(self) -> None:
         manifest = json.loads((PACKAGE / "plugin.json").read_text(encoding="utf-8"))
-        provenance = json.loads((PACKAGE / "PROVENANCE.json").read_text(encoding="utf-8"))
-        self.assertEqual(
-            manifest["version"],
-            provenance["source_version"],
-            "the portable manifest version diverged from the provenance source_version; "
-            "derive it deliberately, never retype it",
+        claude = json.loads(
+            (PACKAGE / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
         )
+        adapter = json.loads(
+            (PACKAGE / "com.infiquetra.claude" / "plugin.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(manifest["version"], "2.21.1")
+        self.assertEqual(claude["version"], manifest["version"])
+        self.assertEqual(adapter["version"], manifest["version"])
+        changelog = (PACKAGE / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn("upstream 2.21.0", changelog)
 
 
 # ─── 8. Root README Pin (KTD6) ────────────────────────────────────────────────
 
 
 class RootReadmePinTests(unittest.TestCase):
-    """The root README's Mission Control identity claims are recomputed from
-    disk and derived from PROVENANCE.json rather than retyped, so a stale
-    revision, version, or count fails instead of sitting there. The #9 run's
-    only review finding was exactly this class: a hand-authored Packages row
-    with no derivation and no pin test."""
+    """The package changelog and manifests carry the import pin.
 
-    def test_the_packages_table_row_derives_from_provenance(self) -> None:
-        provenance = json.loads((PACKAGE / "PROVENANCE.json").read_text(encoding="utf-8"))
-        short_pin = provenance["source_commit"][:8]
-        version = provenance["source_version"]
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn(
-            f"`{short_pin}` (v{version})",
-            readme,
-            "the root README's Mission Control Packages row names a revision or version "
-            "that does not match the provenance manifest; derive it, never retype it",
-        )
+    The repository root README is shared by the parallel import branches, so
+    this class no longer derives that file from a provenance manifest.
+    """
 
-    def test_the_file_count_is_recomputed_from_disk(self) -> None:
-        # The same exclusion set the compatibility checker's fingerprint uses
-        # (its docstring documents them): tool cache directories and .DS_Store
-        # are checkout noise; everything else counts.
-        noise = {"__pycache__", ".git", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".DS_Store"}
-        file_count = 0
-        for path in PACKAGE.rglob("*"):
-            if not path.is_file():
-                continue
-            parts = set(path.relative_to(PACKAGE).parts)
-            if parts & noise:
-                continue
-            file_count += 1
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn(
-            f"{file_count}-file portable package",
-            readme,
-            "the root README's package file count was retyped and went stale; "
-            "recompute it from disk",
-        )
-        self.assertIn(
-            f"ships {file_count} portable files",
-            readme,
-            "the root README's package file count was retyped and went stale; "
-            "recompute it from disk",
-        )
-
-    def test_the_test_file_count_is_recomputed_from_disk(self) -> None:
-        """The README claim is parsed and compared, not searched for a
-        rendering of the count: an out-of-table count fails explicitly instead
-        of falling back to a substring that unrelated text could satisfy."""
-        test_files = sorted((PACKAGE / "tests").glob("*.py"))
-        number_word = {
-            27: "Twenty-seven",
-            28: "Twenty-eight",
-            29: "Twenty-nine",
-        }
-        self.assertIn(
-            len(test_files),
-            number_word,
-            "the package test-file count moved outside the word table; extend number_word "
-            "deliberately rather than letting the guard fall back to a substring search",
-        )
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        claim = re.search(r"(\S+) test files \((\d+) tests\)", readme)
-        self.assertIsNotNone(claim, "the root README's test-file sentence is missing")
-        assert claim is not None
-        self.assertEqual(
-            claim.group(1),
-            number_word[len(test_files)],
-            "the root README's test-file count was retyped and went stale; "
-            "recompute it from disk",
-        )
-
-    def test_the_test_count_is_recomputed_by_collection(self) -> None:
-        import subprocess
-
-        try:
-            import pytest  # noqa: F401
-        except ModuleNotFoundError as exc:  # pragma: no cover - hermetic baseline has no pytest
-            self.skipTest(f"pytest not installed in this interpreter: {exc}")
-        collected = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "pytest",
-                str(PACKAGE / "tests"),
-                "--collect-only",
-                "-q",
-            ],
-            capture_output=True,
-            text=True,
-            cwd=ROOT,
-        )
-        self.assertEqual(
-            collected.returncode,
-            0,
-            f"pytest --collect-only failed:\nstdout:\n{collected.stdout}\nstderr:\n{collected.stderr}",
-        )
-        match = re.search(r"(\d+) tests collected", collected.stdout)
-        self.assertIsNotNone(match, collected.stdout)
-        assert match is not None
-        test_count = int(match.group(1))
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        claim = re.search(r"(\S+) test files \((\d+) tests\)", readme)
-        self.assertIsNotNone(claim, "the root README's test-file sentence is missing")
-        assert claim is not None
-        self.assertEqual(
-            int(claim.group(2)),
-            test_count,
-            "the root README's ported-test count was retyped and went stale; "
-            "recompute it by collection",
-        )
-        self.assertIn(
-            f"{test_count} CI tests",
-            readme,
-            "the root README's CI test count was retyped and went stale; "
-            "recompute it by collection",
-        )
-
-
-    def test_the_assessment_summary_sentence_derives_from_the_current_matrix(self) -> None:
-        """F68: the root README's client-status counts are derived from the
-        current matrix's record rather than retyped — the same class of pin as
-        the file count, so a hand-edited count fails instead of sitting."""
-        matrix = ROOT / "docs" / "evidence" / "2026-08-30-mission-control-compatibility-matrix.md"
-        text = matrix.read_text(encoding="utf-8")
-        block = re.search(r"```json\n(.*?)\n```", text, re.DOTALL)
-        self.assertIsNotNone(block, "the current matrix carries no JSON record")
-        assert block is not None
-        record = json.loads(block.group(1))
-        statuses: dict[str, int] = {}
-        for client in record["clients"]:
-            status = client["status"]
-            statuses[status] = statuses.get(status, 0) + 1
-        summary = (
-            f"{statuses.get('works-directly', 0)} directly, "
-            f"{statuses.get('works-through-an-adapter', 0)} via adapter, "
-            f"{statuses.get('failed', 0)} failed"
-        )
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn(
-            summary,
-            readme,
-            "the root README's assessment summary was retyped and went stale; "
-            "derive it from the current matrix",
-        )
+    def test_the_package_changelog_records_the_import_pin(self) -> None:
+        changelog = (PACKAGE / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn("acc99fe7", changelog)
+        self.assertIn("upstream 2.21.0", changelog)
+        manifest = json.loads((PACKAGE / "plugin.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["version"], "2.21.1")
+        self.assertFalse((PACKAGE / "PROVENANCE.json").is_file())
 
 
 if __name__ == "__main__":

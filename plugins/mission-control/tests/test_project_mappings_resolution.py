@@ -222,13 +222,13 @@ def test_vendored_sdlc_schema_declares_current_live_boards() -> None:
     assert data["boards"]["operations"]["live_creation"] == "created_2026-05-29_project_3"
     assert data["boards"]["asgard"]["status"] == "active"
     assert data["boards"]["asgard"]["live_creation"] == "created_2026-05-29_project_2"
-    assert data["workflows"]["intent_flow"]["statuses"] == [
-        "Idea",
+    assert data["workflows"]["stage_flow"]["stages"] == [
+        "Intake",
         "Shaping",
-        "Ready",
+        "Planning",
         "Active",
         "Verify",
-        "Done",
+        "Retro",
     ]
 
 
@@ -264,3 +264,55 @@ def test_legacy_status_hint_points_to_current_status() -> None:
     hint = sdlc_manager._legacy_status_hint("E2E Testing", ["Assigned", "In Review", "Done"])
 
     assert hint == "'E2E Testing' is legacy; use 'In Review' on this board."
+
+
+class TestVendoredMappingsDoNotOverrideTheBoardWorkflow:
+    """The vendored mappings must not name a workflow at all (#1020 U5).
+
+    These tests read the REAL vendored file on purpose. `load_config()` prefers
+    an external `$INFIQUETRA_SDLC_PATH` checkout, which on a developer machine
+    is current and masks this defect completely -- a test written against
+    `load_config()` would have passed before the fix and proved nothing. The
+    rung that ships is the vendored one, so that is the rung under test.
+    """
+
+    @staticmethod
+    def _vendored_projects() -> dict:
+        path = Path(__file__).resolve().parent.parent / "config" / "project-mappings.json"
+        loaded: dict = json.loads(path.read_text(encoding="utf-8"))
+        projects: dict = loaded["projects"]
+        return projects
+
+    @staticmethod
+    def _schema() -> dict:
+        path = Path(__file__).resolve().parent.parent / "config" / "sdlc-schema.json"
+        schema: dict = json.loads(path.read_text(encoding="utf-8"))
+        return schema
+
+    def test_no_vendored_mapping_pins_a_workflow(self) -> None:
+        """A mapping that duplicates a name the schema owns can outlive the
+        name. Let each board declare its own workflow instead."""
+        for name, proj in self._vendored_projects().items():
+            assert "workflow" not in proj, (
+                f"{name} pins workflow {proj.get('workflow')!r}; let sdlc-schema.json's "
+                "board declaration decide, so the two cannot drift apart"
+            )
+
+    def test_every_vendored_project_resolves_to_stage_flow(self) -> None:
+        schema = self._schema()
+        for name, proj in self._vendored_projects().items():
+            resolved = sdlc_manager._project_workflow_name(schema, name, proj)
+            assert resolved == "stage_flow", f"{name} resolves to {resolved!r}, not stage_flow"
+
+    def test_vendored_status_order_is_the_live_stage_flow_vocabulary(self) -> None:
+        """Before the fix this returned ['No Status'] for operations and asgard
+        (intent_flow is undefined) and the retired Idea/Committed/... ladder for
+        campps (campps_initiative is defined but retired_historical)."""
+        schema = self._schema()
+        config = {"sdlc_schema": schema}
+        for name, proj in self._vendored_projects().items():
+            order = sdlc_manager._status_order(config, name, proj)
+            assert "Capturing" in order, f"{name}: stage_flow entry status missing from order"
+            assert "Ready to close" in order, f"{name}: terminal status missing from order"
+            for retired in ("Idea", "Ready", "Active", "Done", "Committed", "Parked"):
+                assert retired not in order, f"{name}: retired status {retired!r} still ordered"

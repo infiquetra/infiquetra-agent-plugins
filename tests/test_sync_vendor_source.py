@@ -1765,8 +1765,25 @@ MISSION_CONTROL_SKILLS = ("board", "flow", "issues", "labels", "metrics", "miles
 def _skip_unless_mission_control_shipped(test: unittest.TestCase) -> Path:
     package = ROOT / "plugins" / "mission-control"
     if not (package / "PROVENANCE.json").is_file():
-        test.skipTest("the portable mission-control package has not been synchronized yet")
+        test.skipTest(
+            "mission-control is authored here and has no provenance manifest; "
+            "the custody assertions in this class describe the derived tree"
+        )
     return package
+
+
+class AuthoredMissionControlTests(unittest.TestCase):
+    """The package is maintained here. Custody assertions above stay on the derived shape."""
+
+    def test_the_package_is_authored_without_a_provenance_manifest(self) -> None:
+        config = port_config.load("mission-control", ROOT)
+        self.assertTrue(config.is_authored)
+        package = ROOT / "plugins" / "mission-control"
+        self.assertFalse((package / "PROVENANCE.json").is_file())
+        manifest = json.loads((package / "plugin.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["version"], "2.21.1")
+        source = (package / "scripts" / "sdlc_manager.py").read_text(encoding="utf-8")
+        self.assertNotIn("import fleet_commons_shim", source)
 
 
 class MissionControlShippedTests(unittest.TestCase):

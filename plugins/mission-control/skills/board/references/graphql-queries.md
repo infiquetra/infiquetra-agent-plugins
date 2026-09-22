@@ -337,7 +337,7 @@ while True:
 
 ### Field ID vs. Option ID
 - `fieldId`: the node ID of the field itself (e.g., the "Status" field)
-- `optionId`: the node ID of a specific option within that field (e.g., "Assigned")
+- `optionId`: the node ID of a specific option within that field (e.g., "Implementing")
 - Both are opaque strings — discover them via `QUERY_GET_PROJECT_FIELDS` or
   `board discover-fields`
 

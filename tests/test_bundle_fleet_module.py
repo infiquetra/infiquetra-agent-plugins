@@ -684,13 +684,22 @@ class LiveTreeTests(unittest.TestCase):
         planned = bfm.plan_copies(ROOT, consumer)
         self.assertEqual(
             {copy.name for copy in planned},
-            {"intent_envelope", "tier_palette", "models.json", "staffing.json"},
+            {
+                "intent_envelope",
+                "jev_log",
+                "plugin_resolution",
+                "retry_backoff",
+                "staffing.json",
+                "tier_palette",
+                "tier_resolver",
+                "typesafe_client",
+            },
         )
         for copy in planned:
             self.assertTrue(copy.source.is_file())
             self.assertTrue(copy.destination.is_file())
         data_copies = [copy for copy in planned if copy.is_data]
-        self.assertEqual({copy.name for copy in data_copies}, {"models.json", "staffing.json"})
+        self.assertEqual({copy.name for copy in data_copies}, {"staffing.json"})
 
     def test_live_mission_control_bundled_files_are_fresh(self) -> None:
         consumer = ROOT / "plugins" / "mission-control"

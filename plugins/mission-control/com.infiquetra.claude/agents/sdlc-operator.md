@@ -129,14 +129,14 @@ You are deeply familiar with the Infiquetra SDLC process as documented in the
 - **Coordination layer**: Redis pub/sub (`olympus:*` channels) + GitHub Projects v2 +
   per-card Discord threads. Beads/Dolt was removed 2026-04-26.
 - **Organization**: `infiquetra` on github.com (NOT GitHub Enterprise).
-- **Config source**: `~/workspace/infiquetra/infiquetra-sdlc/`; vendored fallbacks live in
-  `plugins/mission-control/config/`.
+- **Config source**: `$INFIQUETRA_SDLC_PATH` when set; vendored fallbacks live in
+  this package's `config/`.
 
 ## Tools Available
 
 **Primary**: `sdlc_manager.py` (this plugin's shared script)
 - Installed: `~/.claude/plugins/cache/infiquetra-plugins/mission-control/<version>/scripts/sdlc_manager.py`
-- Dev/source: `~/workspace/infiquetra/infiquetra-claude-plugins/plugins/mission-control/scripts/sdlc_manager.py`
+- Dev/source: `$CLAUDE_PLUGIN_ROOT/scripts/sdlc_manager.py`
 
 **Subcommand groups** (full list: `sdlc_manager.py --help`):
 - `board {view,add,move,archive,wip,standup,discover-fields}` — project board operations
@@ -169,8 +169,8 @@ You are deeply familiar with the Infiquetra SDLC process as documented in the
 - `config {show,show-defaults,init-defaults}` — config + per-user defaults wizard
 
 **Also available**:
-- `gh` CLI (standard github.com — no `--hostname` flag needed; the `INFIQUETRA_SDLC_PATH` env
-  var defaults to `~/workspace/infiquetra/infiquetra-sdlc/`)
+- `gh` CLI (standard github.com — no `--hostname` flag needed). `INFIQUETRA_SDLC_PATH`
+  names the infiquetra-sdlc checkout; the script documents the default when it is unset.
 - Read/Glob/Grep for reading blueprint and SDLC files
 - Bash for running the script
 
@@ -408,8 +408,12 @@ gh issue edit <N> --repo infiquetra/<repo> \
 # 3. Add to project board if not already
 python3 "$SCRIPT" board add --repo <repo> --number <N>
 
-# 4. Move to Ready if context complete; else keep in Backlog or Shaping
-python3 "$SCRIPT" board move --repo <repo> --number <N> --status Ready
+# 4. Move to Ready for Planning if context complete; else keep in Backlog or Discovering.
+#    board move writes Status only. Ready for Planning is a Shaping-stage Status, so set
+#    the Stage alongside it or the card is left out-of-Stage.
+python3 "$SCRIPT" board move --repo <repo> --number <N> --status "Ready for Planning"
+python3 "$SCRIPT" flow set-field --project <board> --repo <repo> --number <N> \
+    --field Stage --option Shaping
 ```
 
 ## Key Configuration
@@ -419,7 +423,7 @@ python3 "$SCRIPT" board move --repo <repo> --number <N> --status Ready
 # `version` field — list the actual installed dir if unsure:
 #   ls ~/.claude/plugins/cache/infiquetra-plugins/mission-control/
 SCRIPT_INSTALLED="$HOME/.claude/plugins/cache/infiquetra-plugins/mission-control/<version>/scripts/sdlc_manager.py"
-SCRIPT_DEV="$HOME/workspace/infiquetra/infiquetra-claude-plugins/plugins/mission-control/scripts/sdlc_manager.py"
+SCRIPT_DEV="$CLAUDE_PLUGIN_ROOT/scripts/sdlc_manager.py"
 
 # Per-user defaults (Phase C foundation)
 # First-run setup: python3 "$SCRIPT" config init-defaults

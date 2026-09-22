@@ -23,6 +23,12 @@ page on a >200-item board) is proven independently by
 ``get_project_items()`` — its own tests assert the full count is returned,
 not truncated at a single page.
 
+``fields`` is a mapping keyed by field name, so a consumer can ask for one
+field directly (``.boards.operations.fields.Status.options[].name``) instead
+of scanning a list. Keys are emitted in sorted order and ``--write``
+serializes with ``sort_keys=True``, so the committed file still diffs
+stably; a duplicate field name raises rather than overwriting (#1020).
+
 Usage::
 
     python3 board_census.py --write   # regenerate config/board-schema.json
@@ -53,6 +59,20 @@ from sdlc_manager import (  # noqa: E402
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "config" / "board-schema.json"
 
 
+class DuplicateFieldNameError(ValueError):
+    """Two fields on one board share a name, so the name-keyed census cannot
+    represent the board without losing one (#1020).
+
+    A distinct type, not a bare ``ValueError``, because callers must be able to
+    separate this from an access failure. ``sdlc_manager._graphql`` parses the
+    ``gh`` response with ``json.loads``, and ``json.JSONDecodeError`` is itself
+    a ``ValueError`` -- so a handler written against the bare type would turn a
+    non-JSON response from a failing live call into a hard failure where the
+    documented posture is a SKIP. Kept in the ``ValueError`` hierarchy so
+    existing broad handlers still behave sensibly.
+    """
+
+
 def fetch_project_fields_census(project_number: int, *, max_pages: int = 200) -> dict[str, Any]:
     """Live field/option shape for one project (id, name, dataType, options).
 
@@ -76,10 +96,22 @@ def fetch_project_fields_census(project_number: int, *, max_pages: int = 200) ->
 
     fields = paginate_or_raise(_fetch_page, max_pages=max_pages)
 
-    census_fields = []
+    census_fields: dict[str, dict[str, Any]] = {}
     for field in fields:
+        name = field.get("name", "")
+        if name in census_fields:
+            # A mapping keyed by name can silently lose a field that a list
+            # cannot. GitHub project field names are unique in practice, so
+            # this never fires -- but drop loudly rather than quietly if it
+            # ever does (#1020 KTD2). Raised here, AFTER `paginate_or_raise`
+            # has had its chance, so a runaway-pagination fixture whose pages
+            # repeat one field name still reports the pagination fault.
+            raise DuplicateFieldNameError(
+                f"duplicate field name {name!r} in project {project_number} census; "
+                "the census keys fields by name and cannot represent this board"
+            )
         entry: dict[str, Any] = {
-            "name": field.get("name", ""),
+            "name": name,
             "id": field.get("id", ""),
             "dataType": field.get("dataType", ""),
         }
@@ -88,14 +120,13 @@ def fetch_project_fields_census(project_number: int, *, max_pages: int = 200) ->
                 ({"id": o["id"], "name": o["name"]} for o in field.get("options", [])),
                 key=lambda o: str(o.get("name", "")),
             )
-        census_fields.append(entry)
-    census_fields.sort(key=lambda f: str(f.get("name", "")))
+        census_fields[name] = entry
 
     return {
         "number": project_number,
         "id": project_id_box["id"],
         "title": project_id_box["title"],
-        "fields": census_fields,
+        "fields": {name: census_fields[name] for name in sorted(census_fields)},
     }
 
 
@@ -153,10 +184,24 @@ def cmd_check() -> int:
     except PaginationExhaustedError as exc:
         print(f"FAIL board census pagination did not terminate: {exc}")
         return 1
-    except (GhApiError, RuntimeError, OSError) as exc:
+    except DuplicateFieldNameError as exc:
+        # A board carries two fields with one name, so the census cannot
+        # represent it. A real defect on the board, not an access failure:
+        # report it in this script's own FAIL convention rather than letting
+        # it surface as a traceback. Caught by its own type, never as a bare
+        # `ValueError`, so a `json.JSONDecodeError` from a failing live call
+        # is not misreported as a malformed board.
+        print(f"FAIL board census is not representable: {exc}")
+        return 1
+    except (GhApiError, RuntimeError, OSError, json.JSONDecodeError) as exc:
         # Live GitHub Projects access is unavailable (no auth/network in this
         # environment, e.g. a CI runner with no Projects-scoped token) — a
-        # SKIP, printed explicitly, never a silent pass. Mirrors the
+        # SKIP, printed explicitly, never a silent pass. `json.JSONDecodeError`
+        # is named explicitly: `_graphql` parses `gh` stdout after a zero exit,
+        # so a truncated or non-JSON body lands here, and it subclasses
+        # `ValueError` rather than `RuntimeError`, so the tuple above would
+        # otherwise miss it and the failure would surface as a traceback.
+        # Mirrors the
         # `--live`-gated skip posture of check_issue_contract_parity.py's
         # third leg for the same reason (#424 T14-F5-3).
         print(f"SKIPPED board-schema.json --check: live derivation unavailable ({exc})")

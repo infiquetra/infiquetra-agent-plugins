@@ -55,10 +55,35 @@ class TestFetchProjectFieldsCensus:
 
         assert census["id"] == "PVT_test"
         assert census["number"] == 3
-        names = [f["name"] for f in census["fields"]]
+        # `fields` is a mapping keyed by field name (#1020), so a consumer
+        # indexes it directly instead of scanning. Keys are emitted sorted;
+        # assert on the list of keys, never on dict iteration order, which
+        # only the on-disk `sort_keys=True` serialization guarantees.
+        names = list(census["fields"])
         assert names == sorted(names)
-        status_field = next(f for f in census["fields"] if f["name"] == "Status")
+        assert names == ["Assignees", "Status"]
+        status_field = census["fields"]["Status"]
         assert [o["name"] for o in status_field["options"]] == ["Active", "Done"]
+        # A field with no options keeps no `options` key at all.
+        assert "options" not in census["fields"]["Assignees"]
+
+    def test_duplicate_field_name_raises_instead_of_overwriting(self, monkeypatch):
+        """Two fields sharing a name cannot both survive a name-keyed mapping,
+        so the census raises rather than silently dropping one (#1020 KTD2)."""
+
+        def fake_graphql(query, variables):
+            return _fields_response(
+                [
+                    {"id": "F_one", "name": "Status", "dataType": "SINGLE_SELECT", "options": []},
+                    {"id": "F_two", "name": "Status", "dataType": "TEXT"},
+                ]
+            )
+
+        monkeypatch.setattr(board_census, "_graphql", fake_graphql)
+        with pytest.raises(
+            board_census.DuplicateFieldNameError, match="duplicate field name 'Status'"
+        ):
+            board_census.fetch_project_fields_census(3)
 
     def test_over_thirty_fields_returns_full_census_not_truncated(self, monkeypatch):
         """A >30-field board across two mocked pages returns the FULL field
@@ -92,9 +117,11 @@ class TestFetchProjectFieldsCensus:
 
         monkeypatch.setattr(board_census, "_graphql", fake_graphql)
         census = board_census.fetch_project_fields_census(3)
+        # The property under test is that pagination returned every field, which
+        # survives the name-keyed shape intact (#1020) -- only the indexing moves.
         assert len(census["fields"]) == total_fields
-        assert census["fields"][0]["name"] == "Field_00"
-        assert census["fields"][-1]["name"] == "Field_44"
+        assert "Field_00" in census["fields"]
+        assert "Field_44" in census["fields"]
 
     def test_runaway_fields_pagination_raises_instead_of_truncating(self, monkeypatch):
         def fake_graphql(query, variables):
@@ -171,7 +198,7 @@ class TestCountProjectItems:
 class TestDeriveCensus:
     def test_derive_census_covers_every_tracked_project(self, monkeypatch):
         def fake_fields_census(project_number):
-            return {"number": project_number, "id": f"PVT_{project_number}", "fields": []}
+            return {"number": project_number, "id": f"PVT_{project_number}", "fields": {}}
 
         monkeypatch.setattr(board_census, "fetch_project_fields_census", fake_fields_census)
         projects = {
@@ -186,7 +213,7 @@ class TestDeriveCensus:
 class TestCmdCheck:
     def test_check_passes_when_committed_matches_live(self, tmp_path, monkeypatch):
         schema_path = tmp_path / "board-schema.json"
-        census = {"boards": {"operations": {"number": 3, "id": "PVT_3", "fields": []}}}
+        census = {"boards": {"operations": {"number": 3, "id": "PVT_3", "fields": {}}}}
         schema_path.write_text(json.dumps(census))
 
         monkeypatch.setattr(board_census, "SCHEMA_PATH", schema_path)
@@ -202,12 +229,18 @@ class TestCmdCheck:
         must fail the `--check` diff step (T9-F2-6, primary)."""
         schema_path = tmp_path / "board-schema.json"
         fresh_census = {
-            "boards": {"operations": {"number": 3, "id": "PVT_3", "fields": [{"name": "Status"}]}}
+            "boards": {
+                "operations": {"number": 3, "id": "PVT_3", "fields": {"Status": {"name": "Status"}}}
+            }
         }
         # Committed snapshot has drifted: a mutated field name.
         mutated_committed = {
             "boards": {
-                "operations": {"number": 3, "id": "PVT_3", "fields": [{"name": "OldStatusName"}]}
+                "operations": {
+                    "number": 3,
+                    "id": "PVT_3",
+                    "fields": {"OldStatusName": {"name": "OldStatusName"}},
+                }
             }
         }
         schema_path.write_text(json.dumps(mutated_committed))
@@ -244,7 +277,7 @@ class TestCmdCheck:
 
     def test_write_regenerates_schema_file(self, tmp_path, monkeypatch):
         schema_path = tmp_path / "board-schema.json"
-        census = {"boards": {"operations": {"number": 3, "id": "PVT_3", "fields": []}}}
+        census = {"boards": {"operations": {"number": 3, "id": "PVT_3", "fields": {}}}}
 
         monkeypatch.setattr(board_census, "SCHEMA_PATH", schema_path)
         monkeypatch.setattr(

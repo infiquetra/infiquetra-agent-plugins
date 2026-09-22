@@ -1,58 +1,76 @@
 # mission-control portable package
 
 Portable Agent Plugins 1.0 package for SDLC management on Infiquetra's active
-boards — Operations, Asgard, and CAMPPS. It ships one shared CLI
-(`scripts/sdlc_manager.py`), seven Agent Skills over it, the board census,
-pagination, and template-sync helpers, and vendored board configuration.
-Claude-only files live under the client extension directory
-`com.infiquetra.claude/`; they are an adapter, not the identity of this
-package.
+boards — Operations, Asgard, and CAMPPS (upstream plugin version 2.21.0).
+This tree is authored in this repository from the import of
+`infiquetra-claude-plugins` at `acc99fe7`. The package version is 2.21.1.
+It does not ship `PROVENANCE.json`; the pin is the changelog entry above
+the 2.21.0 history.
 
-This tree is a derived artifact of `infiquetra-claude-plugins` at the commit
-recorded in `PROVENANCE.json` (upstream plugin version 2.15.2). Custody has
-not moved. The upstream repository remains the runtime source of truth; a
-needed byte change in copied content is an upstream filing, never a downstream
-patch.
+The shared CLI is `scripts/sdlc_manager.py`. Eight Agent Skills document
+slices of it. Claude-only files live under `com.infiquetra.claude/`.
+
+`/issue [type]` is the Claude command for issue creation. The script verbs
+are `issue prepare` and `issue create-prepared`.
 
 ## What is in the package
 
 | Path | What it is |
 |---|---|
-| [`plugin.json`](plugin.json) | Agent Plugins 1.0 manifest (target-owned) |
-| [`README.md`](README.md) | This document: the portable package README (target-owned; supersedes the upstream README) |
-| `PROVENANCE.json` | Source repository, pinned commit, and per-path custody |
-| `CHANGELOG.md` | Upstream version history (byte copy) |
-| `fleet-bundle.json` | Build declaration: which Fleet Core modules this package consumes |
-| `scripts/sdlc_manager.py` | The shared CLI every skill documents a subset of |
-| `scripts/board_census.py` | Board-schema census: `--check` reports drift, `--write` regenerates `config/board-schema.json` |
-| `scripts/check_pagination.py` | Pagination helper for `gh api` list operations |
-| `scripts/sync_template_docs.py` | Syncs issue-template documentation from `infiquetra-sdlc` |
-| `scripts/executor_profile_lint.py` | Executor profile lint (transformed entrypoint; resolves the bundled Fleet Core modules) |
-| `skills/` | The seven skills below, each with its reference material |
-| `config/sdlc-schema.json`, `config/project-mappings.json`, `config/board-schema.json` | Vendored board and workflow configuration |
-| `com.infiquetra.claude/` | Claude adapter: relocated manifest, slash commands, agent definition |
-| `tests/` | The package's own pytest suite (upstream byte copies) |
+| [`plugin.json`](plugin.json) | Agent Plugins 1.0 manifest |
+| [`CHANGELOG.md`](CHANGELOG.md) | Version history, including the import pin |
+| [`fleet-bundle.json`](fleet-bundle.json) | Fleet Core modules this package loads |
+| `scripts/sdlc_manager.py` | The shared CLI |
+| `scripts/board_census.py` | Board-schema census |
+| `scripts/check_pagination.py` | Pagination check for `gh api` list calls |
+| `scripts/sync_template_docs.py` | Regenerates the issue-template reference from infiquetra-sdlc |
+| `scripts/executor_profile_lint.py` | Executor-profile lint over the bundled tier palette |
+| `scripts/triage_suggest.py` | Advisory triage judgments; imported by the CLI, not a second entrypoint |
+| `skills/` | The eight skills below |
+| `config/` | Vendored board and workflow configuration |
+| `com.infiquetra.claude/` | Claude adapter: manifest, four commands, `sdlc-operator` agent |
+| `tests/` | This package's pytest suite |
 
 ## Skills
 
-All seven skills share the one CLI; each skill's `SKILL.md` documents the
-subset of the command surface it uses.
-
 | Skill | Activates when... |
 |---|---|
-| `board` | Board review, item movement, WIP analysis, standup prep. Board commands require an explicit `--project` (`operations`, `asgard`, or `campps`); no board is a default. |
-| `flow` | Operator-facing GraphQL + REST helpers: project field assignment, live field-option discovery, repo-to-project resolution, Team Mimir intake, native sub-issue link and unlink, self-healing label create, and card body pre-flight validation. |
-| `issues` | Issue creation, the five issue types, template guidance, and prepared handoff drafts with readiness checks and source artifact resolution. |
-| `labels` | Label deployment, audit, initiative/objective field sync, and auto-label rules. |
-| `metrics` | Cycle time, throughput, and WIP age computed from GitHub timeline events. |
-| `milestones` | Objective milestones via GitHub Milestones: create, list, progress, and issue linking. |
-| `rollout` | Rollout status, gap analysis, and SDLC deployment (labels and templates) to any Infiquetra repository. |
+| `board` | Board review, item movement, WIP analysis, standup prep |
+| `flow` | Project field assignment, sub-issue link and unlink, label verification, and card validation |
+| `issues` | Issue creation, the five issue types, and prepared drafts |
+| `labels` | Label deployment, audit, and auto-label rules |
+| `metrics` | Cycle time, throughput, and WIP age |
+| `milestones` | Objective milestones: create, list, progress, and linking |
+| `rollout` | Rollout status, gap analysis, and SDLC deployment |
+| `triage` | Recommend a type label and place an existing issue on a board |
+
+## How a harness runs it
+
+From this package root, the directory that contains `scripts/` and `skills/`:
+
+```text
+python3 scripts/sdlc_manager.py --help
+```
+
+A skill-scoped harness (OpenCode, Gemini CLI, Muse, Hermes) installs a skill
+directory and follows that skill's commands. Those commands use the same
+package-root invocation.
+
+Claude Code installs the package root. The root `.claude-plugin/plugin.json`
+points at `com.infiquetra.claude/` for commands and the agent, and at
+`skills/` for the skills. Adapter commands set:
+
+```bash
+SCRIPT="$CLAUDE_PLUGIN_ROOT/scripts/sdlc_manager.py"
+```
+
+`scripts/` stays at the package root, so that variable still names the CLI.
+The catalog requires `python>=3.12`.
 
 ## Read-only and GitHub-mutating subcommands
 
-Every GitHub access this package performs goes through the `gh` CLI. The
-audited split of the CLI surface, as recorded in the port descriptor
-([`ports/mission-control.json`](../../ports/mission-control.json)):
+Every GitHub access goes through the `gh` CLI. The split recorded in
+[`ports/mission-control.json`](../../ports/mission-control.json):
 
 | Group | Read-only against GitHub | Mutates GitHub |
 |---|---|---|
@@ -63,99 +81,51 @@ audited split of the CLI surface, as recorded in the port descriptor
 | `metrics` | `cycle-time`, `throughput`, `wip-age`, `column-time` | — |
 | `milestones` | `list`, `progress` | `create`, `link` |
 | `rollout` | `status`, `gap-analysis` | `deploy-labels`, `deploy-templates`, `deploy-all` |
-| `flow` | `field-options`, `discover-project`, `validate-card` | `set-field`, `assign-mimir`, `link-sub-issue`, `unlink-sub-issue`, `verify-label` |
+| `flow` | `field-options`, `discover-project`, `validate-card` | `set-field`, `assign-mimir`, `link-sub-issue`, `unlink-sub-issue`, `verify-label`, `repair-window` |
 | `config` | `show`, `show-defaults`, `init-defaults` | — |
 
-"Read-only" means the subcommand performs no GitHub write. A few read-only
-subcommands still write local state: `issue prepare` writes a draft and JSON
-sidecar under `docs/sdlc-issue-drafts/` of the current repository, and
-`config init-defaults` seeds `~/.claude/sdlc-defaults.json`. `fields
-create-option` performs no mutation of any kind — it discovers a field,
-prints its id and the options already on it, and stops. `rollout status`,
-`board wip`, and `config show` read the retired upstream `beads-config.json`;
-when the file is absent locally the loader first attempts a live `gh api`
-read of it from `infiquetra-sdlc`, and only if that read fails or returns
-nothing does the value degrade to `{}`, at which point these commands report
-zero rolled-out repositories rather than erroring.
-
-One mutation route is an internal code path rather than a CLI verb: when
-`issue create-prepared` meets a repository that is not mapped to the requested
-project, it opens a mapping pull request — real `git` worktree add, commit,
-and push plus `gh pr create` — before continuing. The descriptor lists that
-path as `_open_mapping_pr` so the safety predicate treats the route as
-mutating.
+`issue prepare` writes a local draft. `config init-defaults` writes a local
+defaults file. `flow repair-window` adds or removes the repair-window label
+and posts a comment. When `issue create-prepared` meets an unmapped
+repository it opens a mapping pull request (`_open_mapping_pr` in the
+descriptor): real `git` worktree add, commit, and push, plus `gh pr create`.
 
 ## Authentication and environment
 
-- The `gh` CLI must be installed and authenticated (`gh auth status`);
-  project-field writes additionally need the Projects write scope.
-- The scripts delegate all GitHub access to the `gh` CLI and read no token
-  environment variable themselves. `gh` manages its own credentials and
-  itself honors `GH_TOKEN`, `GITHUB_TOKEN`, and `GH_HOST` — which is why the
-  compatibility assessment strips both the `GH_` and the `GITHUB_` prefix from
-  every subprocess it runs against this package.
-- `INFIQUETRA_SDLC_PATH` is the only environment override the scripts read.
-  It points at an `infiquetra-sdlc` checkout and defaults to
-  `~/workspace/infiquetra/infiquetra-sdlc`.
+- `gh` must be installed and authenticated. The scripts do not read a token
+  themselves. `gh` honors `GH_TOKEN`, `GITHUB_TOKEN`, and `GH_HOST`.
+- `INFIQUETRA_SDLC_PATH` names an infiquetra-sdlc checkout. The script
+  documents the path it uses when the variable is unset.
+- `TYPESAFE_API_KEY` is required only for `--suggest`. When it is unset, the
+  advisory path reports that and does not fail the command.
+- `sync_template_docs.py` imports PyYAML at module scope.
+  `sdlc_manager.py` imports PyYAML inside Team Mimir coverage validation and
+  names PyYAML in the error if the import fails.
 
 ## Configuration resolution
 
-The catalog requires `python>=3.12`. `sdlc_manager.py` and
-`sync_template_docs.py` import PyYAML at module scope, so PyYAML must be
-installed before any command runs.
-
-Resolution orders at startup, from `sdlc_manager.py`:
-
-- **Board and workflow schema** (`config/sdlc-schema.json`) — network-first:
-  read from `infiquetra-sdlc` on GitHub `main` via the `gh` API first,
-  because a local checkout may be stale; on failure fall back to the vendored
-  `config/sdlc-schema.json` inside this package, then to the local
-  checkout's copy.
-- **Project mappings** (`config/project-mappings.json`) — local-first: the
-  `INFIQUETRA_SDLC_PATH` checkout, then the vendored copy, then the remote
-  via the `gh` API.
-- **Board schema** — the vendored `config/board-schema.json`;
-  `board_census.py --check` reports drift against the live boards and
-  `--write` regenerates it.
-
-## Client extension directory
-
-Agent Plugins 1.0 puts client-specific files in an explicit extension
-directory rather than at the package root. This package's Claude adapter is
-`com.infiquetra.claude/`: the relocated Claude Code manifest, the four slash
-commands (`board`, `issue`, `metrics`, `triage`), and the `sdlc-operator`
-agent definition, all byte copies of the upstream client files. The portable
-manifest, skills, and scripts beside that directory carry no Claude loading
-convention.
+- **Workflow schema** (`config/sdlc-schema.json`) — the `gh` API read of
+  infiquetra-sdlc on `main` first, then the vendored file, then a local checkout.
+- **Project mappings** — the `INFIQUETRA_SDLC_PATH` checkout, then the vendored
+  file, then the `gh` API.
+- **Board schema** — vendored `config/board-schema.json`.
+  `board_census.py --check` reports drift; `--write` regenerates the file.
 
 ## Fleet Core bundle
 
-`sdlc_manager.py` and `executor_profile_lint.py` consume three Fleet Core
-modules: `intent_envelope`, `tier_palette`, and the `models.json` registry.
-Agent Plugins 1.0 has no dependency field, so this package does not install
-Fleet Core at runtime. `fleet-bundle.json` declares the modules and their
-destinations, and
+The CLI loads `intent_envelope`, `plugin_resolution`, `typesafe_client`, and
+`jev_log`. Those modules load `tier_resolver`, `tier_palette`,
+`retry_backoff`, and `staffing.json`. `executor_profile_lint.py` loads
+`tier_palette`. `fleet-bundle.json` declares that set.
 [`scripts/bundle_fleet_module.py`](../../scripts/bundle_fleet_module.py)
-generates them under `scripts/_bundled/` as digest-stamped build artifacts.
-The dropped `fleet_commons_shim` used Claude-specific runtime discovery; this
-package does not ship it.
+writes `scripts/_bundled/`. This package does not ship `fleet_commons_shim`.
 
-Verify the stamps without writing:
+The Fleet Core source is [`plugins/fleet-core/`](../fleet-core/README.md).
 
-```bash
-python3 scripts/bundle_fleet_module.py --check
-```
+## Validation
 
-The Fleet Core source is the sibling package
-[`plugins/fleet-core/`](../fleet-core/README.md); deferred modules are named
-in its `DEFERRED.md`.
-
-## Validation in this repository
-
-These commands run from the repository root. None of them contacts GitHub:
-the live operations above all go through the `gh` CLI, and every command
-below is a repository check or a usage probe that exercises import and
-argument parsing without credentials or a network call.
+From the repository root. The probes below parse arguments and do not call
+GitHub.
 
 ```bash
 python3 scripts/bundle_fleet_module.py --check
@@ -165,23 +135,12 @@ python3 plugins/mission-control/scripts/board_census.py --help
 python3 plugins/mission-control/scripts/check_pagination.py --help
 python3 plugins/mission-control/scripts/sync_template_docs.py --help
 python3 plugins/mission-control/scripts/executor_profile_lint.py --help
-python3 -m unittest discover -s tests -v
 python3 -m pytest plugins/mission-control/tests -q
 ```
-
-The package's own pytest suite lives under `plugins/mission-control/tests/`
-(upstream byte copies). This repository additionally enforces this README the
-way a consumer reads it — the opening paragraph must identify the portable
-package, every relative link must resolve, every documented `python3` command
-above must actually run with the `GH_` and `GITHUB_` variables stripped, and
-no documented invocation may be mutating. That check is
-[`tests/test_mission_control_readme.py`](../../tests/test_mission_control_readme.py).
 
 ## Further reading
 
 - [Port descriptor](../../ports/mission-control.json)
-- [Portable port runbook](../../docs/runbooks/portable-plugin-port.md)
-- [Migration run plan](../../docs/plans/2026-08-24-mission-control-port-run-plan.md)
+- [Changelog](CHANGELOG.md)
 - [Portable Fleet Core](../fleet-core/README.md)
 - [Repository commands](../../AGENTS.md)
-- Upstream source: `infiquetra/infiquetra-claude-plugins`

@@ -18,41 +18,15 @@ truth is `$INFIQUETRA_SDLC_PATH/config/sdlc-schema.json`, with prose context in
 No board is a default: board operations require an explicit `--project`. Prefer project
 views over new boards until scale, automation, or reporting needs justify a separate board.
 
-The former project #1 (`Mount Olympus`) is retired-historical and closed (see the legacy
+The former project #1 (`Mount Olympus`) is closed and archived history (see the legacy
 read-only section below); it is not an active board or a routing target.
 
 ---
 
-## Workflows
+## Workflow
 
-### Operations And Asgard
-
-```
-Idea -> Shaping -> Ready -> Active -> Verify -> Done
-```
-
-| Status | Purpose |
-|--------|---------|
-| Idea | Captured thought or opportunity. Not shaped enough for execution. |
-| Shaping | Intent is being clarified, scoped, or turned into an actionable card. |
-| Ready | Work is shaped enough to route or start. Operations must name a target team before promotion. |
-| Active | The owner is working the card. |
-| Verify | Outcome is being checked before closure or promotion. |
-| Done | Completed or intentionally closed for this board. |
-
-Asgard modes:
-
-| Mode | Use |
-|------|-----|
-| Rapid Action | Reversible, time-sensitive work that benefits from low ceremony. |
-| Incubator | Exploratory work likely to define future initiative execution. |
-| Mission | Focused, high-leverage work close to Jeff with a clear outcome. |
-
-### CAMPPS
-
-CAMPPS runs the shared `stage_flow` workflow. The Operations and Asgard section
-above still shows the retired `intent_flow` names; correcting them is tracked as
-a separate change and is not done here:
+All three active boards — Operations, Asgard and CAMPPS — run the one shared
+`stage_flow` workflow. There is no per-board ladder:
 
 ```
 Intake -> Shaping -> Planning -> Active -> Verify -> Retro
@@ -83,40 +57,30 @@ the core Status workflow.
 
 The former `Mount Olympus` board (project #1) used
 `Backlog -> Ready -> Planning -> Assigned -> In Review -> Done / Closed`. It is closed and
-retired; tooling may read its historical timeline values for history, but no new cards are
+archived; tooling may read its historical timeline values for history, but no new cards are
 created or routed there. The authoritative list of those legacy timeline values is
 `LIVE_LEGACY_STATUS_ALIASES` in `plugins/mission-control/scripts/sdlc_manager.py` — rely on
 that map, not on a hand-copied list here.
 
 ---
 
-## WIP Limits
+## Work In Progress
 
-| Board | Status | Limit |
-|-------|--------|-------|
-| Operations | Shaping | 10 |
-| Operations | Ready | 10 |
-| Operations | Active | 5 |
-| Operations | Verify | 5 |
-| Asgard | Shaping | 8 |
-| Asgard | Ready | 8 |
-| Asgard | Active | 5 |
-| Asgard | Verify | 5 |
-
-CAMPPS is an initiative rollup board and does not enforce per-column WIP limits.
-When a limit is exceeded, finish or unblock current work before pulling more into that status.
-Critical defects can temporarily override WIP, but the exception should be visible in the card.
+No board enforces a card-count limit on any Stage. The former per-column limits were
+withdrawn along with the `wip_limits` block in `sdlc-schema.json`; `board wip` reports a
+count per Status and names no limit. Run concurrency is resolved from the staffing roster
+and the applicable per-vendor and per-account constraints, not from a column cap.
 
 ---
 
 ## Standup Format
 
-Walk right-to-left through the relevant board:
+Walk right-to-left through the relevant board. All three boards share one Stage ladder,
+so the review order is the same everywhere:
 
 | Board | Review order |
 |-------|--------------|
-| Operations / Asgard | Done -> Verify -> Active -> Ready -> Shaping -> Idea |
-| CAMPPS | Retro -> Verify -> Active -> Planning -> Shaping -> Intake |
+| Operations / Asgard / CAMPPS | Retro -> Verify -> Active -> Planning -> Shaping -> Intake |
 
 Ask:
 
@@ -132,9 +96,9 @@ Ask:
 
 ### Raw Intent From Jeff
 
-1. Capture on Operations as `Idea`.
-2. Shape until target team and context pack are clear.
-3. Move to `Ready`.
+1. Capture on Operations in the `Intake` stage (entry status `Capturing`).
+2. Shape in `Shaping` until the target team and context pack are clear.
+3. Move to `Ready for Planning`, the terminal status of the `Shaping` stage.
 4. Route to Asgard, CAMPPS, Jeff, or External/Deferred based on target team.
 
 ### Explicit Cross-Team Transfer
@@ -162,8 +126,19 @@ Cycle time starts when active ownership begins:
 
 | Board | Start | Terminal |
 |-------|-------|----------|
-| Operations / Asgard | Active | Done |
-| CAMPPS | Active | Ready to close |
+| Operations / Asgard / CAMPPS | `Active` stage | `Ready to close` |
+
+> **How the start boundary is actually detected.** `_cycle_start_statuses` in
+> `scripts/sdlc_manager.py` returns the literal option name `Active`, and the
+> timeline query it feeds (`QUERY_GET_ISSUE_TIMELINE`) captures only the option
+> *name* of a single-select change — it records no field name or id, so it cannot
+> tell a `Stage` change from a `Status` change. `Active` is a live `Stage` option
+> on all three boards and is not a `Status` option at all, so the start boundary is
+> whichever field first carried an option named `Active`. That is close to the
+> boundary this table declares, but it is matched by name rather than by field.
+> Making the field explicit is outside issue #1020, whose scope is the cached
+> census and the prose describing it.
+
 
 Legacy `Mount Olympus` timeline values may be read for history but are never used to create
 new cards; the authoritative value list is `LIVE_LEGACY_STATUS_ALIASES` in

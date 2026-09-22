@@ -71,6 +71,7 @@ MUTATING_VERBS = frozenset(
         "set-field",
         "set-options",
         "sync-fields",
+        "repair-window",
         "unlink-sub-issue",
         "verify-label",
     }
@@ -209,17 +210,13 @@ class PortableReadmeTests(unittest.TestCase):
         self.text = README.read_text(encoding="utf-8")
 
     def test_the_readme_states_the_upstream_version(self) -> None:
-        """F37: the README's upstream-version claim is derived from the
-        provenance manifest, mirroring the Packages-row derivation test — a
-        hand-edited version line that diverges from the resynchronized pin
-        fails here instead of sitting."""
-        provenance = json.loads(PROVENANCE.read_text(encoding="utf-8"))
-        self.assertIn(
-            f"(upstream plugin version {provenance['source_version']})",
-            self.text,
-            "the portable README's upstream-version line diverged from the "
-            "provenance source_version; derive it, never retype it",
-        )
+        """The README names the upstream version the import read and the
+        authored version the manifests declare. There is no provenance file
+        to derive either number from."""
+        manifest = json.loads((PACKAGE / "plugin.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["version"], "2.21.1")
+        self.assertIn("(upstream plugin version 2.21.0)", self.text)
+        self.assertFalse(PROVENANCE.is_file())
 
     def test_lede_identifies_the_portable_package_not_a_claude_code_plugin(self) -> None:
         """The upstream lede introduced the Claude Code plugin, not this package."""
@@ -384,24 +381,11 @@ class PortableReadmeTests(unittest.TestCase):
 
 class ReadmeCustodyTests(unittest.TestCase):
     def test_readme_is_target_owned_so_a_resync_cannot_restore_the_upstream_readme(self) -> None:
-        """Descriptor custody: README.md is superseded_by_target_owned, never a byte copy."""
-        if not PROVENANCE.is_file():
-            self.skipTest(
-                "Lane A sync artifacts are absent on this branch "
-                f"({PROVENANCE.relative_to(ROOT)}); custody asserts on the "
-                "assembled integration branch"
-            )
-        payload = json.loads(PROVENANCE.read_text(encoding="utf-8"))
-        entries = [entry for entry in payload["files"] if entry.get("path") == "README.md"]
-        self.assertEqual(len(entries), 1, "README.md must appear once in PROVENANCE.json")
-        entry = entries[0]
-        self.assertEqual(
-            entry.get("classification"),
-            "target-owned",
-            "classifying README as an upstream byte copy would let a later "
-            "synchronization restore the Claude-specific README this one supersedes",
-        )
-        self.assertNotIn("sha256", entry)
+        """An authored package has no provenance manifest that a later sync could obey."""
+        self.assertFalse(PROVENANCE.is_file())
+        changelog = (PACKAGE / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn("acc99fe7", changelog)
+        self.assertIn("no provenance manifest", changelog)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,9 @@
-<!-- matrix-status: current -->
+<!-- matrix-status: superseded -->
+<!-- superseded-by: 2026-09-22-mission-control-compatibility-notice.md -->
+<!-- superseded-reason: Custody moved into this repository on 2026-09-22 and the package version is 2.21.1. This record assessed derived 2.15.2. No new ten-client run was performed. The successor is a notice, not an assessment. -->
+
+> **Superseded — historical evidence.** This record assessed the derived package at version 2.15.2. It is not the compatibility record for the authored package.
+
 
 # Post-activation readback — portable mission-control package 2.15.2
 

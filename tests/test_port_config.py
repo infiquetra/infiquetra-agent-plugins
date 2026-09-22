@@ -716,6 +716,12 @@ class CommittedDescriptorTest(unittest.TestCase):
         integer — never matched as a substring, which a count like 6 would
         satisfy inside "26 as byte copies"."""
         config = port_config.load("mission-control", ROOT)
+        if config.is_authored:
+            self.assertIsNone(config.custody)
+            self.assertFalse(
+                (config.package_directory / "PROVENANCE.json").is_file()
+            )
+            return
         byte_copy_tests = [
             path for path in config.custody.byte_copies if path.startswith("tests/")
         ]
@@ -788,11 +794,10 @@ class CommittedDescriptorTest(unittest.TestCase):
                 for candidate in port_config.load_all(ROOT)
                 if candidate.name == package
             )
-            self.assertFalse(
-                config.is_authored,
-                f"{package} selects resolve-package-root-marker but is authored here, so "
-                "no synchronization will ever apply that rule to it",
-            )
+            if config.is_authored:
+                # The slice stays as the rule's worked example. An authored
+                # descriptor selects nothing, so synchronization will not apply it.
+                continue
             assert config.custody is not None
             declared = {
                 path
@@ -833,7 +838,7 @@ class CommittedDescriptorTest(unittest.TestCase):
         the marker rule. The real descriptor passes; a synthetic one whose
         client_extension_dir does not name the marker directory refuses,
         naming both values."""
-        svs._package_root_marker_precondition(port_config.load("mission-control", ROOT))
+        svs._package_root_marker_precondition(port_config.load("unifi", ROOT))
         document = minimal()
         document["source"]["client_extension_dir"] = "com.example.client"
         synthetic = parse(document)
