@@ -95,8 +95,9 @@ walk would change behavior for those machines. Three tests skip until saga or
 - `test_stage_skills_do_not_invoke_retired_transport_as_launch_path` reads
   saga stage skills. That premise is the upstream repository layout.
 - `test_fleet_commons_internal_team_execution_routing_unaffected` imports
-  `fleet_commons.tier_resolver`, which this branch's fleet-core slice does
-  not ship. The test does not call Orchestrate.
+  `fleet_commons.tier_resolver`. The test skips when that module is absent.
+  It does not call Orchestrate. Rebase onto `origin/main` brought the full
+  fleet-core tree, which ships the module, so the test runs.
 
 No test was deleted.
 
@@ -109,7 +110,8 @@ and `test_orchestrate_review_transport.py`. The unit brief's
 Package version 6.0.1. Portable core at `plugins/orchestrate/`, Claude command
 under `com.infiquetra.claude/commands/`, root `.claude-plugin/plugin.json`
 carries paths. `ports/orchestrate.json` is an authored descriptor (no
-`source`, no `custody`). The orchestrate pytest suite: 619 passed, 3 skipped.
+`source`, no `custody`). The orchestrate pytest suite, after rebase onto `origin/main`: 620 passed,
+2 skipped. The skips are the two saga-file tests. The tier-resolver test runs.
 
 `python3 -m unittest discover -s tests` reports two failures in
 `tests/test_mission_control_rule_audit.py` (`TemplateSyncAuditTests`). Both

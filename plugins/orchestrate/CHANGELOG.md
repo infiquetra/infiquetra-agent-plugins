@@ -20,7 +20,7 @@
 - The suite pins `AGENT_LAUNCHER_ROOT` at a frozen agent-launcher 1.7.0 from the same commit, plus its `composer.py`. This catalog's `plugins/agent-launcher` is 1.0.0 and does not define the names Orchestrate execs, so an unset variable degrades instead of ingesting it. Production resolution is unchanged: sibling, then the variable.
 - `tests/test_review_loop_end_to_end.py` skips until `plugins/saga/scripts/review_consensus.py` exists. It drives saga's review engine and Orchestrate together.
 - `test_stage_skills_do_not_invoke_retired_transport_as_launch_path` skips until saga's stage skills are in this catalog. Its premise is those files in the upstream repository layout, and it does not call the driver.
-- `test_fleet_commons_internal_team_execution_routing_unaffected` skips when `fleet_commons.tier_resolver` cannot be imported. This branch's fleet-core slice does not ship that module, and the test does not exercise Orchestrate.
+- `test_fleet_commons_internal_team_execution_routing_unaffected` skips when `fleet_commons.tier_resolver` cannot be imported. It guards Fleet Core's tier resolver, not the driver. After rebase onto `origin/main` this catalog's fleet-core ships that module, so the test runs.
 - Dropped tests: none.
 
 ## [6.0.0] - 2026-09-20
