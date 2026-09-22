@@ -46,6 +46,35 @@ Studio reads back as installed from this repository) has completed.
 - **Archive `infiquetra-claude-plugins`** on GitHub after cutover, and update
   the home-lab repository's `scripts/vendor_blueprint_rubrics.sh` default and
   the `hermes_orchestrator` watched-repo list, which still name it.
+- **Antigravity still places six packages from infiquetra-antigravity-plugins.**
+  `deploy`, `hermes-profile-evolution`, `home-lab-ops`, `mission-control`,
+  `saga` and `unifi` under `~/.gemini/config/plugins` are byte-identical to that
+  repository at 87caa36 and carry no source manifest, so
+  `install_client.py --uninstall-legacy` refuses them by design. Decide whether
+  Antigravity moves to this catalog for those six or keeps its dedicated
+  repository.
+- **OpenCode still places saga's skills from infiquetra-opencode-plugins.**
+  `~/.config/opencode/skills/*` link to that repository's saga skills. Same
+  decision as above, for OpenCode.
+- **hermes-profile-evolution: keep or retire.** Carried as a Claude-only
+  package (one command and one hook) tied to the Team Mimir Hermes system; the
+  operator has not yet said whether it survives the retirement of the old
+  repository.
+- **Archive infiquetra-claude-plugins on GitHub.** Every harness reads back
+  from this repository (closure paragraph in DECISIONS.md, entry "The
+  custody-move run: decisions taken while it ran"); the archive is an outward
+  step and waits for the operator's confirmation. The claude.ai account
+  marketplace listing "infiquetra-claude-plugins (available, not added)" is an
+  organisation-level listing, not a local registration.
+- **Grok's cache of the removed marketplace remains.**
+  `~/.grok/marketplace-cache/a27130f557770874` is Grok's own cache of the
+  removed `infiquetra-plugins` source; nothing in the registry references it.
+  Leave it to Grok or remove it by hand.
+- **Conventional squash-merge subjects.** `merge_pipeline.sh` uses the pull
+  request title as the squash commit subject, so main carries "Ten-client
+  compatibility assessment for the imported packages (#87)" without a type
+  prefix. Have the pipeline refuse a title that is not a conventional-commit
+  subject.
 
 ## Consume the eight open upstream mission-control filings via a deliberate repin + resync
 

@@ -72,6 +72,29 @@ resolution (would have left main red between the two merges).
 finds a third package in a resolution cycle, at which point the resolver's
 repo walk-up should accept a fixture root in tests instead of the live tree.
 
+**Closure (2026-09-22, end of run).** The review's findings closed as follows:
+finding 1 by PR #81 (the agent-launcher readback restored to the bytes it
+assessed and superseded), finding 2 by PR #86 (a `notice` document status, a
+per-package current-matrix report, a machine-path scanner, mutation-proof
+cycles 19 and 20), finding 3 by PR #82 (three saga tests carried), findings 4
+to 10 by PR #84. Installer defects found during the cutover closed by PR #83
+(idempotent placement, `--client all` continuing past a failure,
+`not-applicable` readback) and PR #85 (Grok legacy removal by marketplace
+name). The ten-client assessment landed as PR #87: twelve packages carry a
+`docs/evidence/2026-09-22-<package>-compatibility-matrix.md` bound to their
+shipped version; house-style and fleet-core are blocked on harness defects
+recorded in QUEUED.md. The cutover then ran
+`install_client.py --client all --uninstall-legacy --execute`, which removed
+nine Claude plugin registrations and the `infiquetra-plugins` marketplace,
+Cursor's old marketplace, and Grok's legacy marketplace; Grok's four orphaned
+plugin entries were removed by observation (LEARNINGS.md, same date). The
+final readback records infiquetra-claude-plugins nowhere. The only non-catalog
+placements left are six Antigravity packages from
+infiquetra-antigravity-plugins and OpenCode's saga skills from
+infiquetra-opencode-plugins, both dedicated repositories outside this
+retirement. Item 6 above is done (PR #84). Archiving infiquetra-claude-plugins
+waits for the operator.
+
 ### Codex packaging sits at the repository root because the Codex CLI looks nowhere else
 
 **Author.** Grok (custody-move unit U5b, branch `mg/codex-pkg`)

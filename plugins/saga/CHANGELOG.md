@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Docs
+
+Four skill-instruction sentences named scripts that are not in this package at acc99fe7, marked
+"retired in the portable package" in place rather than deleted, because the step they describe is
+still the intended one once a replacement ships:
+
+- `skills/work/SKILL.md` §5.2 named `evidence_ledger.py`.
+- `skills/retro/SKILL.md` §1.5 named `discover_sessions.py` and `extract_session_skeleton.py`.
+- `skills/retro/SKILL.md` §1.7 named `scripts/outcome_costs.py`.
+
+All four existed upstream at one point (`plugins/saga/scripts/evidence_ledger.py` and
+`plugins/saga/scripts/outcome_costs.py`; `discover_sessions.py` and `extract_session_skeleton.py`
+under the pre-rename `infiquetra-lifecycle` plugin, later `plugins/saga/scripts/`), but upstream's
+own commit `296c1f0a` ("refactor: the removals, and saga 1.0.0", 2026-09-20 09:26 -0400) removed
+all four — along with the session-forensics and spend-reader script families they belonged to —
+roughly four hours before commit `acc99fe7` (2026-09-20 13:48 -0400), the commit this package
+imported from. None of the four scripts were dropped by this package's own import step; they were
+already gone from the upstream tree at the commit this package pinned to.
+
 ## [1.2.2] - 2026-09-22
 
 Carried three upstream tests the 1.2.1 import had omitted. A review of the import found that
@@ -29,25 +50,6 @@ the file requested the fixture, so nothing it asserts changed.
 - `fleet_commons_shim` is not carried. Scripts load Fleet Core through `scripts/bundled_fleet.py`, which imports the build-time bundle in `scripts/_bundled/`. The bundle declares `intent_envelope`, `jev_log`, `jev_verbs`, `jev_widen`, `merge_guard`, `plugin_resolution`, `retry_backoff`, `staffing`, `tier_palette`, `tier_resolver`, `typesafe_client`, and the `staffing.json` data file those modules read. `jev_verbs` and `retry_backoff` are declared because `jev_widen` and `typesafe_client` load them. `typesafe-sdk` stays a lazy import inside the client, so `--help` runs without it.
 - The gate-absence lint skips a `tests/` directory on a package scan. The red-path fixtures live under `plugins/saga/tests/fixtures/` and are judged only when named with `--fixture`. Upstream those fixtures sat outside the plugin, so the shipped scan never saw them.
 - `/ceo-review` stays an alias of `/founder-review`. No second skill was added. The capability already has `skills/founder-review/`.
-
-### Docs
-
-Four skill-instruction sentences named scripts that are not in this package at acc99fe7, marked
-"retired in the portable package" in place rather than deleted, because the step they describe is
-still the intended one once a replacement ships:
-
-- `skills/work/SKILL.md` §5.2 named `evidence_ledger.py`.
-- `skills/retro/SKILL.md` §1.5 named `discover_sessions.py` and `extract_session_skeleton.py`.
-- `skills/retro/SKILL.md` §1.7 named `scripts/outcome_costs.py`.
-
-All four existed upstream at one point (`plugins/saga/scripts/evidence_ledger.py` and
-`plugins/saga/scripts/outcome_costs.py`; `discover_sessions.py` and `extract_session_skeleton.py`
-under the pre-rename `infiquetra-lifecycle` plugin, later `plugins/saga/scripts/`), but upstream's
-own commit `296c1f0a` ("refactor: the removals, and saga 1.0.0", 2026-09-20 09:26 -0400) removed
-all four — along with the session-forensics and spend-reader script families they belonged to —
-roughly four hours before commit `acc99fe7` (2026-09-20 13:48 -0400), the commit this package
-imported from. None of the four scripts were dropped by this package's own import step; they were
-already gone from the upstream tree at the commit this package pinned to.
 
 ### Tests
 

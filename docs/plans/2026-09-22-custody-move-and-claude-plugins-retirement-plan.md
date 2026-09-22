@@ -1,7 +1,9 @@
 # Custody move and retirement of infiquetra-claude-plugins
 
-**Date:** 2026-09-22. **Status:** approved run plan (operator goal set in
-session; this document is the record). **Owner:** repository maintainer.
+**Date:** 2026-09-22. **Status:** run completed 2026-09-22; the closure is
+recorded in DECISIONS.md under "The custody-move run: decisions taken while
+it ran". Originally an approved run plan (operator goal set in session; this
+document is the record). **Owner:** repository maintainer.
 
 ## Goal, in one paragraph
 
