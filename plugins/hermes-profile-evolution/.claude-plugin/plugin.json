@@ -1,0 +1,19 @@
+{
+  "name": "hermes-profile-evolution",
+  "version": "0.1.5",
+  "description": "Claude Code request surface for target-sovereign Hermes profile evolution.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "keywords": [
+    "hermes",
+    "profiles",
+    "sovereignty",
+    "governance"
+  ],
+  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+  "commands": "./com.infiquetra.claude/commands/",
+  "hooks": "./com.infiquetra.claude/hooks/hooks.json",
+  "skills": "./skills/"
+}

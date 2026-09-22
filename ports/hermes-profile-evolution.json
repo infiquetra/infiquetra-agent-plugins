@@ -1,0 +1,33 @@
+{
+  "schema_version": "4",
+  "package": "hermes-profile-evolution",
+  "package_root": "plugins/hermes-profile-evolution",
+  "package_manifest": "plugin.json",
+  "assessment": {
+    "credential_prefixes": [
+      "HERMES_PROFILE_REQUEST_",
+      "HERMES_TEAM_MIMIR_"
+    ],
+    "package_scripts": [
+      "profile_edit_guard.py",
+      "profile_request.py"
+    ],
+    "mutating_operations": [
+      "reply",
+      "resume",
+      "suggest"
+    ],
+    "entrypoints": [
+      "scripts/profile_request.py"
+    ],
+    "skill_units": [
+      "skills/hermes-profile-evolution"
+    ],
+    "declared_none": []
+  },
+  "provenance": {
+    "notes": [
+      "Imported once from infiquetra-claude-plugins at acc99fe71e25ad8a898eace7033051a7f1c3079e (upstream 0.1.4) and authored here from 0.1.5. No provenance manifest."
+    ]
+  }
+}
