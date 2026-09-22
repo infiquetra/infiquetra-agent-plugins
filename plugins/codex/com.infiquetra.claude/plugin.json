@@ -1,0 +1,17 @@
+{
+  "name": "codex",
+  "version": "0.1.5",
+  "description": "Claude client extension for the Codex delegation package: the delegate command and the coder and reviewer agents.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+  "keywords": [
+    "codex",
+    "openai",
+    "delegation",
+    "teammate",
+    "evidence"
+  ]
+}
