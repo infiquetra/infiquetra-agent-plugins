@@ -22,7 +22,13 @@ from pathlib import Path
 
 import pytest
 
-from orchestrate_support import RUN_RECORD_SCRIPT
+# The catalog runs pytest with --import-mode=importlib, which does not put
+# this directory on sys.path; the sibling helper is resolved by path.
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from orchestrate_support import RUN_RECORD_SCRIPT  # noqa: E402
 
 FIXTURE_LAUNCHER_ROOT = (
     Path(__file__).resolve().parent / "fixtures" / "agent-launcher-1.7.0"
