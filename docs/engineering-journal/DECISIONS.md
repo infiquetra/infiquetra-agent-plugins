@@ -51,6 +51,182 @@ catalog through a distribution path that a git checkout cannot serve (Cursor
 Agent's marketplace takes only a git URL; OpenAI Codex's marketplace needs a
 manifest this repository does not ship); or when a harness on the machine is
 found to have consumed the old repository through a path the cutover missed.
+### Authored mode states nothing rather than stating emptiness, and the sync refuses it
+
+**Author.** Claude for Jeff Cox (custody-move unit U1, branch `mg/tooling`)
+
+**Decision.** In port descriptor schema version 4, an authored package's
+`source` and `custody` are `None` on the parsed `PortConfig`, not empty objects,
+and `sync_vendor_source.require_derived` refuses such a descriptor at the
+module's single entry point (`load_config`) and again inside
+`classify_source_tree`. `PortConfig.is_authored` is the question a caller asks.
+The two fields are optional as a pair and never singly.
+
+**Rationale.** Every other object in a descriptor is closed because an unknown
+key is a setting that silently did not take effect. The same asymmetry applies
+here in the other direction: an empty custody table does not read as "this
+package has no upstream", it reads as "nothing is classified", and
+`classify_source_tree` would then have no path to preserve and
+`plan_sync` nothing to copy. An authored package's tree is the only copy of
+itself, so a synchronization that took that reading would report success having
+deleted the managed paths of the only copy. `None` makes the same mistake an
+`AttributeError`, and the explicit refusal makes it a sentence. Refusing one
+half without the other follows the same logic: a `source` with no `custody` is a
+synchronization with no classification table, and a `custody` with no `source`
+classifies paths in a repository nobody named.
+
+**Rejected alternatives.** Empty `SourceConfig` and `CustodyTable` objects
+(reads as "nothing to do", which is the fail-open shape this repository already
+rejects for safety fields). A separate `mode` field naming "derived" or
+"authored" (a third thing to keep in agreement with the two fields that already
+say it, and a descriptor whose `mode` disagreed with its contents would have to
+be adjudicated). Leaving the refusal to argparse's `--source` requirement alone
+(it guards the command line, not a programmatic caller, and the run plan has
+twelve units calling this tooling).
+
+**Revisit when.** A package needs to be re-derived from an upstream after
+custody has moved -- which would mean the custody decision is being reversed,
+not that this shape is wrong.
+
+**Refs.** `scripts/port_config.py` (`SCHEMA_VERSION`, `DERIVATION_FIELDS`,
+`is_authored`), `scripts/sync_vendor_source.py` (`require_derived`),
+[`ports/README.md`](../../ports/README.md) ("Derived and authored packages"),
+`tests/test_port_config.py` (`AuthoredModeTest`).
+
+### An import carries a shim use it cannot rewrite, names it, and exits non-zero
+
+**Author.** Claude for Jeff Cox (custody-move unit U1, branch `mg/tooling`)
+
+**Decision.** When `scripts/import_vendor_package.py` finds a
+`fleet_commons_shim` use that none of the three `resolve-bundled-fleet-module`
+rules matches, it writes the file unchanged, lists it under `UNRESOLVED` in the
+summary, and returns exit status 1 with the tree written. `--dry-run` reports
+the same list and exits 1 before writing anything. Any module such a file
+reaches is still declared in the generated `fleet-bundle.json`.
+
+**Rationale.** Measured against the real upstream at `acc99fe7`: four of the
+thirteen packages (`saga`, `mission-control`, `orchestrate`, `agy`) use the shim
+in a shape outside the rule family -- inside a function, or loading two modules
+from one file. `saga` alone has nine such files. A hard stop would mean those
+four packages could not be laid out at all, and the plan's per-package recipe
+already has a step for exactly this work ("fix what the transform could not").
+Carrying the file silently is the other failure: an unrewritten shim import is a
+package that imports a module nothing generated, which installs cleanly and
+fails at first invocation, and is the defect AGENTS.md records against the UniFi
+clients. Non-zero with the tree written is the only outcome that both lets the
+work continue and refuses to call it finished.
+
+**Rejected alternatives.** Stop the import on the first unmatched file (blocks
+four packages on work the recipe assigns to a later step). Carry it silently and
+let a later check catch it (nothing checks for a shim import today, so "later"
+is the first invocation on the operator's machine). Extend the rule family to
+cover the new shapes (each rule is a versioned rewrite with its own proof
+obligations; inventing three more inside an import tool would put the rewriting
+authority in two places, which is what the descriptor schema already refuses).
+
+**Revisit when.** The rule family grows to cover the function-scope and
+multiple-load shapes, at which point the unresolved list should be empty for
+every upstream package and a hard stop becomes affordable.
+
+**Refs.** `scripts/import_vendor_package.py` (`apply_fleet_rule`,
+`unresolved_shim_files`), `tests/test_import_vendor_package.py`
+(`UnresolvedShimTests`), `AGENTS.md` (the runnable-not-merely-present rule).
+
+### The shim's own source file is dropped by default, not per package
+
+**Author.** Claude for Jeff Cox (custody-move unit U1, branch `mg/tooling`)
+
+**Decision.** `import_vendor_package.py` drops any file named
+`fleet_commons_shim.py`, wherever it sits in the upstream package, and reports
+it as not carried with the reason.
+
+**Rationale.** `ports/mission-control.json` already records this drop, with the
+reason that the build-time Fleet Core bundle replaces the shim and its
+resolution ladder is Claude-specific runtime discovery the portable package must
+not retain. That is not a judgement each of twelve packages should re-argue; it
+follows from the catalog's own rule that Fleet Core is bundled at build time and
+never discovered. UniFi carries the file twice and mission-control once, and the
+committed ports drop all three.
+
+**Rejected alternatives.** Classify it as an entrypoint transform (there is
+nothing to rewrite; the file *is* the ladder). Leave it to each import unit's
+descriptor (twelve chances to carry the one file whose whole purpose the port
+removes).
+
+**Revisit when.** Fleet Core stops being bundled at build time.
+
+**Refs.** `scripts/import_vendor_package.py` (`DROPPED_FILE_NAMES`),
+`ports/mission-control.json` (`provenance.dropped_reason`),
+`tests/test_import_vendor_package.py`
+(`test_the_shim_source_file_is_dropped_rather_than_carried`).
+
+### A non-failing report is an out-parameter, not a changed return type
+
+**Author.** Claude for Jeff Cox (custody-move unit U1, branch `mg/tooling`)
+
+**Decision.** `check_compatibility_matrix.check_matrix` keeps returning
+`list[str]` of problems and gains an optional `reports: list[str] | None`
+parameter that collects non-failing observations. `check_document_status` takes
+the same parameter. `main` prints the collected reports whether the run passed
+or failed.
+
+**Rationale.** A report is by definition not a problem, so a caller asking "is
+this matrix valid" should not have to unpack a tuple to find out. Returning
+`(problems, reports)` would have changed the signature every one of the 164
+existing tests in `tests/test_check_compatibility_matrix.py` calls, turning a
+behaviour change into a mechanical rewrite of the file that proves it -- which
+is how a rule change stops being reviewable. Printing reports on failing runs as
+well as passing ones is deliberate: a report that appeared only on a green run
+would be invisible exactly while a package is being repaired.
+
+**Rejected alternatives.** A `(problems, reports)` tuple return (rewrites the
+suite that guards the change). A module-level accumulator (makes two runs in one
+process share state, which the tests do). Logging (the tool is standard-library
+only and its output is read by a human at a terminal, not collected).
+
+**Revisit when.** A second kind of non-failing observation appears and the two
+need to be distinguished by category rather than by message.
+
+**Refs.** `scripts/check_compatibility_matrix.py` (`check_matrix`,
+`split_binding_problems`), `tests/test_check_compatibility_matrix.py`
+(`VersionBoundEvidenceTest`, `check_with_reports`).
+
+### The Claude-installable set is derived from the tree, and the marketplace must equal it
+
+**Author.** Claude for Jeff Cox (custody-move unit U1, branch `mg/tooling`)
+
+**Decision.** `tests/test_claude_plugin_packaging.py` takes its subject to be
+every `plugins/*/` carrying `.claude-plugin/plugin.json`, with a subTest per
+package, and requires `.claude-plugin/marketplace.json` to list exactly that
+set in both directions. The per-package version agreement is derived from the
+sites each package has, with no literal version written in the test.
+`SubjectTests` fails when the derived subject is empty.
+
+**Rationale.** The module named `plugins/voice` in a constant, so the rules it
+carries applied to one package while eleven more are about to arrive carrying
+the same manifests. Deriving the subject is what makes each import unit's
+package covered on the day it lands rather than on the day someone remembers to
+add it here. Both marketplace directions are checked because the two failures
+are different bugs: an unlisted package is one nobody can install from this
+repository, and a listed package with no root manifest is an entry whose install
+ends in "No manifest found in directory". The version literal was itself a
+version site that could drift from the five it was checking.
+
+**Rejected alternatives.** Keep the voice constant and add a second module per
+package (twelve copies of one rule). Derive the subject from the marketplace
+instead of from the tree (a package missing from both would then be invisible,
+which is the failure most worth catching). Keep the literal version as a
+release-gate cross-check (a sixth hand-edited copy of the number the other five
+already have to agree on).
+
+**Revisit when.** A package needs to ship a root Claude manifest without being
+distributed through this marketplace, which would make the equality wrong rather
+than the derivation.
+
+**Refs.** `tests/test_claude_plugin_packaging.py`,
+`tests/test_agent_launcher_packaging.py` (the retired assertion),
+[`QUEUED.md`](QUEUED.md) (the P1 entry this consumes).
+
 
 ## 2026-08-30
 

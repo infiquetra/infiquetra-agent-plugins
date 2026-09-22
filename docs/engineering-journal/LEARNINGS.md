@@ -1,5 +1,86 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-09-22
+
+### A generated build declaration has to follow the client, not the package root
+
+**Author.** Claude for Jeff Cox (custody-move unit U1, branch `mg/tooling`)
+
+**Evidence.** `scripts/import_vendor_package.py` generates each package's
+`fleet-bundle.json` from the `fleet_commons_shim.load("<module>")` calls it
+finds in the upstream bytes. The schema documents the destination default as
+`scripts/_bundled/<name>.py`, package-relative, which reads as "the bundle goes
+at the package root". Taking that default would have been wrong for the first
+package tried. The rewriting rule
+(`sync_vendor_source.bundled_module_transform`) emits
+`sys.path.insert(0, str(Path(__file__).resolve().parent / "_bundled"))` -- the
+bundle directory *beside the rewritten file*, not beside the package. UniFi's
+two clients sit at `skills/unifi-network/scripts/` and
+`skills/unifi-protect/scripts/`, so the generator has to derive
+`skills/unifi-network/scripts/_bundled/retry_backoff.py` and its sibling. It
+does, and the generated declaration reproduces the committed
+`plugins/unifi/fleet-bundle.json` destinations exactly, which is how this was
+confirmed rather than assumed.
+
+**Mechanism.** The schema's default is a convenience for the common case where
+the client is at `scripts/`, and it is stated package-relative because every
+path in that file is. The rewritten import is resolved *relative to the file
+doing the importing*, so the two agree only when the client happens to sit at
+the package root's `scripts/`. A generator that read the documented default as
+the rule would declare a bundle the bundler duly writes at the package root,
+where the client never looks. Nothing would fail at build time: the declaration
+is satisfied, the file exists, and the package fails at first invocation with
+`ModuleNotFoundError` -- the same shape as the defect AGENTS.md records against
+the UniFi clients shipping an import nothing generated.
+
+**Generalizable rule.** *When generating a declaration that a second tool will
+act on, derive it from what the runtime resolution actually does, and check the
+output against an artifact a human already got right.* A documented default
+describes a common case; the rule is in the code that resolves the path.
+
+**Refs.** `scripts/import_vendor_package.py` (`bundle_destination`),
+`scripts/sync_vendor_source.py` (`bundled_module_transform`),
+`schemas/fleet-bundle.schema.json` (the `destinations` default),
+`plugins/unifi/fleet-bundle.json` (the artifact the generator was checked
+against), `tests/test_import_vendor_package.py`
+(`test_the_destination_follows_the_client_rather_than_the_package_root`).
+
+### The field a plan says to add can already exist, and the real change is elsewhere
+
+**Author.** Claude for Jeff Cox (custody-move unit U1, branch `mg/tooling`)
+
+**Evidence.** The approved run plan's rule 4 and the unit brief both say a
+compatibility matrix should record "the package `version` it assessed (add the
+field to the schema)", and that existing live records should have it backfilled
+"with the version they assessed". `schemas/compatibility-matrix.schema.json`
+already carried `$.package.version`, already listed it in the `package` object's
+`required` array, and all three live records
+(`docs/evidence/2026-08-22-unifi-*`, `2026-08-27-agent-launcher-*`,
+`2026-08-30-mission-control-*`) already stated the correct version. More than
+that, `check_package_binding` already *failed* on a version mismatch. Adding the
+field would have produced a duplicate, and backfilling would have rewritten
+values that were already right.
+
+**Mechanism.** The rule the decision wanted -- evidence binds to a released
+version rather than to every tree -- is a change of *consequence*, not of
+schema. Both halves of the desired behaviour were half-present: the version
+already failed, and the fingerprint also failed. The work was demoting the
+fingerprint to a non-failing report, not adding a field. A plan describes an
+intent, and an intent expressed as "add X" can be satisfied by machinery that
+predates it.
+
+**Generalizable rule.** *Read the artifact before implementing the instruction
+that describes it.* When a plan says to add a field, check whether it is there;
+the gap between what a plan assumes and what the code holds is usually where
+the actual change is.
+
+**Refs.** `schemas/compatibility-matrix.schema.json` (the `package` object's
+`required` array), `scripts/check_compatibility_matrix.py`
+(`split_binding_problems`, `check_package_binding`),
+`docs/plans/2026-09-22-custody-move-and-claude-plugins-retirement-plan.md`
+(rule 4).
+
+
 ## 2026-08-31
 
 ### A green local suite is never evidence for a hermetic gate
