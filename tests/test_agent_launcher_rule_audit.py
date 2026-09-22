@@ -1,16 +1,11 @@
-"""Rule audit for the agent-launcher port (runbook Phase 2).
+"""Rule audit for the agent-launcher package.
 
-Three rules this port authored, audited class-first:
-
-1. Custody classification — every upstream path at the pin carries exactly one
-   classification, derived from the descriptor (the authority), never restated.
-2. Documentation guards — the predicate lives in the package suite
-   (``plugins/agent-launcher/tests/test_portable_docs.py``); this audit
-   derives its corpus constants from that file at test time and asserts the
-   guard verdict flips under every member of a mutation class corpus.
-3. Mutation proof binding — the proof record in ``docs/evidence/`` must name
-   the exact committed blobs it exercised, so an edit to a guarded file
-   without re-running the proof fails loudly.
+The 2026-09-22 import authors the package here, so the custody classification
+applies only while a descriptor still carries a custody table. Documentation
+guards stay: the predicate lives in
+``plugins/agent-launcher/tests/test_portable_docs.py``, this audit derives
+its corpus constants from that file at test time, and the mutation proof in
+``docs/evidence/`` must name the exact bytes it graded.
 
 Standard library only, matching the repository baseline.
 """
@@ -37,13 +32,10 @@ README = PACKAGE / "README.md"
 GUARD_SOURCE = PACKAGE / "tests" / "test_portable_docs.py"
 PROOF_DOCUMENT = ROOT / "docs" / "evidence" / "2026-08-27-agent-launcher-mutation-proof-portable-docs.txt"
 
-#: The keep-list the portable skill must carry: the receipt keys launch prints,
-#: in order, allowing prose and line breaks between them.
-KEEP_LIST_PATTERN = re.compile(r"keep `tab_id`.*?`reused`", re.S)
-
-#: Names the superseded upstream keep-list carried that the launch receipt does
-#: not print; none may re-enter the portable skill.
-STALE_KEEP_LIST_NAMES = ("`pane_id`", "`workspace_id`", "`tab_name`", "`session`")
+#: The launcher receipt must still name tab_id and then reused. The wrapper's
+#: own JSON keep-list is a different list and may name pane_id.
+KEEP_LIST_PATTERN = re.compile(r"receipt `tab_id`.*?`reused`", re.S)
+NO_PANE_ID_SENTENCE = "There is no `pane_id` key"
 
 #: The six upstream paths at the pin (git ls-tree plugins/agent-launcher/),
 #: each with the classification the port decided. Derived against, not in
@@ -62,6 +54,10 @@ class CustodyClassificationTest(unittest.TestCase):
     """The descriptor classifies every pinned upstream path exactly once."""
 
     def setUp(self) -> None:
+        if CONFIG.is_authored:
+            self.skipTest(
+                "agent-launcher is authored here and carries no custody table or provenance manifest"
+            )
         custody = CONFIG.custody
         self.declared = {path: "byte_copies" for path in custody.byte_copies}
         for entry in custody.entrypoint_transforms:
@@ -134,12 +130,12 @@ def _skill_guard_problems(text: str, constants: dict[str, tuple[str, ...]]) -> l
         problems.append("forbidden:tab-id close form")
     if "canonical `herdr` skill" not in text or "does not ship a copy" not in text:
         problems.append("missing:herdr dependency declaration")
-    if '--prompt "<first instruction>" > receipt.json' not in text:
+    if "--prompt <text> > receipt.json" not in text:
         problems.append("missing:launch prompt example")
     if not KEEP_LIST_PATTERN.search(text):
         problems.append("missing:receipt keep-list")
-    if any(name in text for name in STALE_KEEP_LIST_NAMES):
-        problems.append("forbidden:stale keep-list name")
+    if NO_PANE_ID_SENTENCE not in text:
+        problems.append("missing:no pane_id sentence")
     return problems
 
 
@@ -185,11 +181,12 @@ class DocGuardMutationCorpusTest(unittest.TestCase):
                 "canonical `herdr` skill", "herdr skill"
             ),
             "launch prompt flag removed": self.skill.replace(
-                ' --prompt "<first instruction>" > receipt.json', " > receipt.json", 1
+                "--prompt <text> > receipt.json", "> receipt.json", 1
             ),
             "receipt keep-list mangled": KEEP_LIST_PATTERN.sub(
-                "keep `agent`, `pane_id`, and `session`", self.skill, count=1
+                "receipt `agent` and `session`", self.skill, count=1
             ),
+            "pane-id sentence removed": self.skill.replace(NO_PANE_ID_SENTENCE, "pane id", 1),
         }
         for name, mutated in mutations.items():
             with self.subTest(mutation=name):

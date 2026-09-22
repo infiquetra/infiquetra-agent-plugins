@@ -1,19 +1,10 @@
-"""Packaging smoke for the generated agent-launcher package.
+"""Packaging smoke for the authored agent-launcher package.
 
-The package is assembled by the portability workflow (descriptor + sync), so
-the smoke binds the assembly: the relocated Claude manifest preserves the
-upstream identity and version, the portable manifest is the Agent Plugins
-shape at the same version, and the package root carries no Claude convention
-directories.
-
-This module used to assert that the repository marketplace lists voice and not
-this package, because catalog distribution was withheld pending an operator
-decision (QUEUED.md P1, plan KTD7). The 2026-09-22 custody decision is that
-decision: every package becomes Claude-installable from this repository, and
-the marketplace lists exactly the set that carries a root Claude manifest.
-`tests/test_claude_plugin_packaging.py` derives that set from the tree and
-checks the agreement in both directions, so a rule that named one package in a
-constant is now a rule that would contradict it.
+The 2026-09-22 import drops ``PROVENANCE.json``. The three manifests agree on
+name and version. The portable manifest is the Agent Plugins shape. The
+package root carries no Claude convention directories. Marketplace membership
+is checked by ``tests/test_claude_plugin_packaging.py``, which derives the set
+from the tree.
 
 Standard library only, matching the repository baseline.
 """
@@ -31,35 +22,29 @@ CLAUDE_CONVENTION_DIRS = ("hooks", "agents", "commands")
 
 
 class RelocatedManifestTests(unittest.TestCase):
-    """The Claude manifest arrives under the client extension, bytes preserved."""
+    """The Claude manifest lives under the client extension and agrees on version."""
 
     def setUp(self) -> None:
         self.manifest_path = PACKAGE / "com.infiquetra.claude" / "plugin.json"
-        self.provenance = json.loads((PACKAGE / "PROVENANCE.json").read_text(encoding="utf-8"))
+        self.portable = json.loads((PACKAGE / "plugin.json").read_text(encoding="utf-8"))
 
-    def test_the_relocated_manifest_preserves_upstream_identity(self) -> None:
+    def test_the_relocated_manifest_agrees_with_the_portable_manifest(self) -> None:
         manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(manifest["name"], "agent-launcher")
-        self.assertEqual(manifest["version"], self.provenance["source_version"])
+        self.assertEqual(manifest["version"], self.portable["version"])
 
-    def test_the_relocated_manifest_is_the_transform_output(self) -> None:
-        entries = {
-            entry["path"]: entry
-            for entry in self.provenance["files"]
-            if entry["path"] == "com.infiquetra.claude/plugin.json"
-        }
-        self.assertEqual(len(entries), 1)
-        entry = entries["com.infiquetra.claude/plugin.json"]
-        self.assertEqual(entry["classification"], "deterministic-transform")
-        self.assertEqual(entry["source_path"], "plugins/agent-launcher/.claude-plugin/plugin.json")
+    def test_there_is_no_provenance_manifest(self) -> None:
+        self.assertFalse((PACKAGE / "PROVENANCE.json").exists())
 
 
 class PortableManifestTests(unittest.TestCase):
-    """The portable manifest is the Agent Plugins shape at the derived version."""
+    """The portable manifest is the Agent Plugins shape at the authored version."""
 
     def setUp(self) -> None:
         self.manifest = json.loads((PACKAGE / "plugin.json").read_text(encoding="utf-8"))
-        self.provenance = json.loads((PACKAGE / "PROVENANCE.json").read_text(encoding="utf-8"))
+        self.claude = json.loads(
+            (PACKAGE / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
 
     def test_the_portable_manifest_is_agent_plugins_shape(self) -> None:
         self.assertEqual(self.manifest["$schema"], AGENT_PLUGINS_SCHEMA)
@@ -69,9 +54,10 @@ class PortableManifestTests(unittest.TestCase):
                     isinstance(self.manifest[field], str) and self.manifest[field]
                 )
 
-    def test_the_portable_version_is_the_derivation_claim(self) -> None:
+    def test_the_three_manifests_agree_on_version(self) -> None:
         self.assertEqual(self.manifest["name"], "agent-launcher")
-        self.assertEqual(self.manifest["version"], self.provenance["source_version"])
+        self.assertEqual(self.manifest["version"], self.claude["version"])
+        self.assertEqual(self.claude["skills"], "./skills/")
 
 
 class PackageRootShapeTests(unittest.TestCase):

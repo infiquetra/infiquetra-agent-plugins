@@ -1,12 +1,9 @@
-"""Documentation guards for the target-owned portable skill and README.
+"""Documentation guards for the authored skill and README.
 
-The portable skill and README supersede the upstream documents
-(``ports/agent-launcher.json``, ``superseded_by_target_owned``). These guards
-hold the class properties the supersession exists for: package-relative script
-discovery, the contract's stop conditions carried verbatim, the herdr
-dependency declared without a duplicated herdr skill, and the adapter
-limitations stated. The mutation proofs for these guards land with
-``tests/test_agent_launcher_rule_audit.py`` at the repository root.
+The skill may name ``$CLAUDE_PLUGIN_ROOT`` because that variable is the
+installed package root and the scripts stay at ``skills/``. It must not fall
+back into a Claude plugin cache. The stop conditions and the receipt contract
+are the 1.7.0 wording.
 """
 
 from __future__ import annotations
@@ -19,11 +16,9 @@ PACKAGE = Path(__file__).resolve().parents[1]
 SKILL = PACKAGE / "skills" / "agent-launcher" / "SKILL.md"
 README = PACKAGE / "README.md"
 
-# Every Claude-runtime discovery path that must never appear in the portable
-# skill: the portable contract resolves its script from this package only.
+# Claude-cache discovery must never appear. ``$CLAUDE_PLUGIN_ROOT`` is the
+# installed package root, so it is not on this list.
 FORBIDDEN_CLAUDE_RUNTIME_PATHS = (
-    "$CLAUDE_PLUGIN_ROOT",
-    "CLAUDE_PLUGIN_ROOT",
     "~/.claude/plugins/cache",
     ".claude/plugins/cache",
 )
@@ -48,7 +43,7 @@ def readme_text() -> str:
 
 def test_skill_resolves_the_script_package_relative(skill_text: str) -> None:
     assert "skills/agent-launcher/scripts/launcher.py" in skill_text
-    assert "scripts/launcher.py" in skill_text
+    assert "Resolve the script from this package" in skill_text
 
 
 @pytest.mark.parametrize("forbidden", FORBIDDEN_CLAUDE_RUNTIME_PATHS)
@@ -74,42 +69,24 @@ def test_skill_cleanup_example_redirects_the_receipt(skill_text: str) -> None:
 
 
 def test_skill_launch_example_delivers_a_prompt(skill_text: str) -> None:
-    """launch sends the task and records delivery; the documented create path
-    must carry --prompt, because a promptless launch sends an empty task and
-    exits nonzero when the session stays idle."""
-    assert '--prompt "<first instruction>" > receipt.json' in skill_text
+    assert "--prompt <text> > receipt.json" in skill_text
 
 
-def test_skill_keep_list_names_the_receipt_keys(skill_text: str) -> None:
-    """The handoff list must name keys the launch receipt actually prints."""
-    section = skill_text.split("## Verify, then hand off", 1)[1]
-    for key in ("`tab_id`", "`pane`", "`agent_name`", "`workspace`", "`owned`", "`reused`"):
-        assert key in section
-    for absent in ("`pane_id`", "`workspace_id`", "`tab_name`", "`session`"):
-        assert absent not in skill_text
+def test_skill_states_the_launcher_receipt_has_no_pane_id(skill_text: str) -> None:
+    assert "There is no `pane_id` key" in skill_text
 
 
 def test_skill_frontmatter_name_matches_the_directory(skill_text: str) -> None:
     assert skill_text.startswith("---\n")
-    frontmatter = skill_text.split("---\n", 2)[1]
-    names = [
-        line.split(":", 1)[1].strip()
-        for line in frontmatter.splitlines()
-        if line.startswith("name:")
-    ]
-    assert names == ["agent-launcher"]
+    assert "name: agent-launcher\n" in skill_text.split("---", 2)[1]
 
 
 def test_readme_opens_as_a_portable_package_document(readme_text: str) -> None:
     assert "Portable Agent Plugins 1.0 package" in readme_text
-    assert "# agent-launcher portable package" in readme_text
+    assert "python>=3.12" in readme_text
 
 
 def test_readme_states_the_adapter_limitations(readme_text: str) -> None:
     assert "Account verification applies only to `vendor claude`" in readme_text
     assert "installed `agents` wrapper and Herdr" in readme_text
     assert "no vendor or model registry" in readme_text
-
-
-def test_readme_declares_the_floor(readme_text: str) -> None:
-    assert "python>=3.12" in readme_text

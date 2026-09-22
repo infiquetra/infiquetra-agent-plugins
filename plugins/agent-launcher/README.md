@@ -1,71 +1,104 @@
-# agent-launcher portable package
+# agent-launcher
 
-Portable Agent Plugins 1.0 package for the shared single-session launch
-contract: create one verified coding-agent session through the installed
-`agents` wrapper, verify it through Herdr, deliver a prompt, and close only a
-session the launch proved it owns. It ships one entrypoint
-(`skills/agent-launcher/scripts/launcher.py`) and one Agent Skill over it.
-The Claude Code manifest lives under the client extension directory
-`com.infiquetra.claude/`; it is an adapter, not the identity of this package.
+Portable Agent Plugins 1.0 package for the shared single-session launch contract.
+The portable core is this directory: `plugin.json`, the `agent-launcher` skill, the
+scripts under `skills/agent-launcher/scripts/`, and the `roles/` prompt library.
+Claude-only packaging sits in two manifests that carry paths and no behaviour: the
+root `.claude-plugin/plugin.json` (what the Claude CLI reads at the installed
+package root) and `com.infiquetra.claude/plugin.json` (the relocated upstream
+manifest). This package is authored in this repository from the 1.7.1 cut. There
+is no provenance manifest.
 
-This tree is a derived artifact of `infiquetra-claude-plugins` at the commit
-recorded in `PROVENANCE.json` (upstream plugin version 1.0.0, accepted under
-issue #777 there and split to this repository by operator ruling G2). Custody
-has not moved. The upstream repository remains the runtime source of truth; a
-needed byte change in copied content is an upstream filing, never a downstream
-patch.
+Create one verified coding-agent session in the current Herdr workspace. The package requires the installed `agents` wrapper and Herdr on the machine. An absent wrapper is a stop before launch, not a fallback. The wrapper is the only creation path. Herdr is the only interaction path after creation. The scripts are standard library only, on the catalog floor `python>=3.12`.
 
-## What is in the package
+Orchestrate consumes this plugin's `skills/agent-launcher/scripts/launcher.py` as its
+launch seam. An ordinary session uses the same script as a CLI, or follows
+`skills/agent-launcher/SKILL.md`.
 
-| Path | What it is |
-|---|---|
-| [`plugin.json`](plugin.json) | Agent Plugins 1.0 manifest (target-owned) |
-| [`README.md`](README.md) | This document: the portable package README (target-owned; supersedes the upstream README) |
-| `PROVENANCE.json` | Source repository, pinned commit, and per-path custody |
-| [`CHANGELOG.md`](CHANGELOG.md) | Upstream version history (byte copy) |
-| [`skills/agent-launcher/SKILL.md`](skills/agent-launcher/SKILL.md) | The portable skill: contract, stop conditions, and package-relative discovery (target-owned; supersedes the upstream skill) |
-| [`skills/agent-launcher/scripts/launcher.py`](skills/agent-launcher/scripts/launcher.py) | The shared launch contract: preview, launch, verify, deliver, owned close (byte copy) |
-| `com.infiquetra.claude/plugin.json` | Relocated Claude Code manifest (adapter metadata only) |
-| [`tests/`](tests/) | The portable contract suite, authored here (target-owned) |
+This plugin does not ship a copy of the `herdr` skill. After a session exists, use that
+skill for prompt, wait, read, input, and cleanup.
 
-The upstream `README.md` and `skills/agent-launcher/SKILL.md` are superseded
-rather than copied: the upstream README documents the Claude plugin, and the
-upstream skill resolves its script through Claude-runtime discovery paths that
-have no meaning for other clients. The portable skill adapts the same contract
-with package-relative discovery. The upstream test suite is dropped at the pin
-for the same class of reason — its remaining premises belong to the upstream
-repository — and the portable suite in this package re-proves the portable
-contract. See `PROVENANCE.json` for the custody of every path.
+`roles/` holds one reusable prompt per role the software development lifecycle names — what to
+send a session once it exists, so the briefing is not hand-written each time. Its contract is in
+[`roles/README.md`](roles/README.md). Nothing in this plugin spawns or orders those roles today.
 
-## Running it
+## Quick start
 
-Standard library only, on the catalog floor `python>=3.12`. The launcher reads
-no credentials and answers `--help` before any external command runs:
+From the package root, any harness runs the script by path:
 
 ```bash
 python3 skills/agent-launcher/scripts/launcher.py --help
-python3 skills/agent-launcher/scripts/launcher.py roster
+python3 skills/agent-launcher/scripts/roster.py --help
 ```
 
-`roster` asks the live `agents` wrapper what this machine can launch and
-intersects that with the vendors the contract knows how to tier; with the
-wrapper present but listing nothing usable it prints nothing, and with no
-wrapper on PATH it stops before printing, naming the missing binary — the
-contract's no-fallback rule. `preview` and `launch` additionally
-require Herdr, and `launch` always dry-runs first and refuses `--skip-preview`.
-A launch writes one JSON receipt to stdout; pass `--prompt` with the first
-instruction (a launch with no prompt sends an empty task and exits nonzero when
-the session stays idle). `close` acts only on the tab that
-receipt proves this launch created.
+Claude Code sets `CLAUDE_PLUGIN_ROOT` to the installed package root, so the same
+files are `$CLAUDE_PLUGIN_ROOT/skills/agent-launcher/scripts/launcher.py` and
+`roster.py`. Skill-scoped harnesses (OpenCode, Gemini CLI, Muse, Hermes) install
+the `skills/agent-launcher/` unit and run those paths from the skill directory's
+parent package. Nothing in this package searches a Claude plugin cache.
 
-## Adapter-specific limitations
+```bash
+S="$CLAUDE_PLUGIN_ROOT/skills/agent-launcher/scripts/launcher.py"
 
-- Account verification applies only to `vendor claude` and reads that vendor's
-  transcript roots and statusline evidence on the operator's machine; every
-  other vendor passes through it untouched.
-- The package requires the installed `agents` wrapper and Herdr on the
-  machine. An absent wrapper is a stop before launch, not a fallback.
-- The launcher keeps no vendor or model registry; availability and syntax come
-  from the live wrapper and the contract's own tables, asked every run.
-- OpenCode variant selection and the qwen typing-limit file handover are
-  interactive behaviors of the shared contract, unchanged by this port.
+python3 "$S" roster
+python3 "$S" preview --vendor codex --task reviewer --cwd "$PWD" --model gpt-5.4 --effort xhigh
+python3 "$S" launch  --vendor codex --task reviewer --cwd "$PWD" --model gpt-5.4 --effort xhigh --prompt "review the diff" > receipt.json
+python3 "$S" close --receipt-json receipt.json
+# after a staged-input stop, once the composer is clear -- never a second launch:
+python3 "$S" redeliver --vendor <tool> --task <tab-name> --cwd "$PWD" --prompt <text> --receipt-json receipt.json > receipt-retry.json
+```
+
+The launch line carries a real prompt: without one, the session never leaves idle and the command exits nonzero.
+
+Standard library only, so `python3` — not `uv run`.
+
+## Input-box receipt contract
+
+The launch receipt records the last composer inspection under `input_box`. Every line that enters
+a session — each setup slash command, the task, each resend, both picker keystrokes on OpenCode,
+and every later prompt Orchestrate sends — goes through one door, `PaneWriter.write`, which
+inspects the pane immediately before the write whenever the write could land behind staged text:
+before the first write into a session the launcher did not create, and before every later write
+into any session, owned or not, once the launcher has written into it. The only uninspected write
+is the first one into a tab the launcher created seconds earlier. A fresh owned launch with no
+setup lines whose first prompt was taken therefore made no inspection and its receipt carries no
+`input_box` key; any session written to more than once carries it. Its complete value set is
+`empty`, `staged`, `unclassifiable`, `not_found`, `unsupported_vendor`, `read_failed`, and
+`read_timeout`. Only `staged` also carries `input_box_text_chars`: the visible length of what the
+parser absorbed — visible characters after border stripping, rows joined without a separator, one
+character short at each wrapped-row boundary, and a lower bound of the draft's true length when a
+blank line inside the draft ends the absorption — never the text itself. Blank or indented rows
+that cannot be distinguished from vendor chrome are `unclassifiable`, never affirmative `empty`;
+the accepted asymmetry runs the other way too, where an unbordered indented row directly below the
+marker with no separator row between is read as input, because no capture shows chrome there.
+
+## Launch receipt keys
+
+The receipt `launch` prints, and `redeliver` and `close` read, carries these keys. `close` needs
+`tab_id` and `owned`; `redeliver` needs `unit_name`, `pane`, `tab_id`, `owned`, `agent_name`, and
+one of the two retryable markers (`input_box` equal to `staged`, or `prompt_delivered` equal to
+`false`). There is no `pane_id` key; `pane` is the only spelling.
+
+| Key | Meaning |
+|---|---|
+| `unit_name`, `vendor` | The task name and vendor the launch was asked for. |
+| `tab_id`, `pane`, `agent_name` | The Herdr identifiers the wrapper returned. |
+| `owned` | True only when `tab_id` was absent from the workspace tab set snapshotted before the wrapper ran. |
+| `reused` | The wrapper joined a workspace that already existed; not ownership. |
+| `permission`, `permission_resolved` | The posture asked for, and the launch tokens it was confirmed against. |
+| `provider`, `model`, `variant`, `account`, `account_evidence` | Requested values; `account_evidence` is `statusline`, `transcript`, or `none`. |
+| `variant_confirmed_from` | OpenCode only: `session` when the variant was read back from a non-menu row, `picker_menu_only` otherwise. |
+| `kind`, `working_directory`, `workspace`, `readiness` | What Herdr reported at preflight. |
+| `confirmed_against_herdr`, `requested_only` | Which fields Herdr confirmed, and which remain the request echoed back. |
+| `verified` | True once the preflight ran. |
+| `prompt_delivered` | `true` once the session was observed to take the task, `false` when it was not, `null` before any prompt. |
+| `input_box`, `input_box_text_chars` | The last composer inspection; see the section above. |
+
+## Boundaries
+
+- Preview with `--dry-run` before every creation. It confirms `cwd` and `herdr_workspace`; it does not confirm model, effort, or account. Stop if the working directory or Herdr workspace is wrong.
+- Launch is no-focus. Do not steal the operator's pane.
+- Do not silently substitute an unavailable vendor, model, effort, or topology.
+- Close only a session whose `tab_id` matches the launch receipt.
+- Do not invent a vendor/model roster. The launcher keeps no vendor or model registry. The live wrapper and Herdr remain authoritative.
+- Account verification applies only to `vendor claude` and reads that vendor's transcript roots and statusline evidence. The two directory overrides are the environment variables `claude_transcript_roots` reads; each default is under the home directory. Every other vendor passes through account verification untouched.
