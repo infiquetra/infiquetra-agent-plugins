@@ -1,0 +1,8 @@
+---
+# Install reusable Hermes team deployment roles from the shared collection.
+# Pin by tag or commit. Private-repository auth should come from SSH/netrc/Git
+# credential config, not credentials embedded in this URL.
+collections:
+  - name: git+https://github.com/infiquetra/infiquetra-ansible-collections.git#/ansible_collections/infiquetra/hermes_team/
+    type: git
+    version: v0.1.1

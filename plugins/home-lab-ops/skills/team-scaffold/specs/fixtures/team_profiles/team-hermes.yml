@@ -1,0 +1,114 @@
+---
+# hermes_team_profiles for this team — relocated from home-lab host_vars
+# (Phase 8 Stage A, 2026-06-01) so the harness is self-contained.
+# Loaded by deploy/<team>.yml vars_files; overrides home-lab host_vars.
+hermes_team_profiles:
+- name: hermes-orchestrator
+  persona: hermes
+  role: team_lead
+  model: gpt-5.5
+  provider: openai-codex
+  base_url: https://chatgpt.com/backend-api/codex
+  reasoning_effort: high
+  worker_pool: 1
+  skills:
+  - hermes-plan-phase
+  - kanban-orchestrator
+  - request-human-input
+  - vcs-state
+  - lsp-query
+  - github-issues
+  - github-repo-management
+  - writing-plans
+  - plan
+  - architecture-diagram
+- name: aethalides-planner
+  persona: aethalides
+  role: planner
+  model: gpt-5.5
+  provider: openai-codex
+  base_url: https://chatgpt.com/backend-api/codex
+  reasoning_effort: high
+  worker_pool: 1
+  discord_token_var: vault_discord_bot_token_aethalides  # variable name only
+  skills:
+  - kanban-worker
+  - lsp-query
+  - vcs-state
+  - writing-plans
+  - plan
+  - codebase-inspection
+  - request-human-input
+- name: autolycus-skeptic
+  persona: autolycus
+  role: stoic_skeptic
+  model: gpt-5.5
+  provider: openai-codex
+  base_url: https://chatgpt.com/backend-api/codex
+  reasoning_effort: high
+  worker_pool: 2
+  discord_token_var: vault_discord_bot_token_autolycus  # variable name only
+  skills:
+  - kanban-worker
+  - lsp-query
+  - writing-plans
+  - systematic-debugging
+  - request-human-input
+- name: pan-readiness
+  persona: pan
+  role: readiness_reviewer
+  model: gpt-5.5
+  provider: openai-codex
+  base_url: https://chatgpt.com/backend-api/codex
+  reasoning_effort: high
+  worker_pool: 2
+  discord_token_var: vault_discord_bot_token_pan  # variable name only
+  skills:
+  - kanban-worker
+  - lsp-query
+  - writing-plans
+  - request-human-input
+- name: tyche-fit
+  persona: tyche
+  role: fit_reviewer
+  model: gpt-5.5
+  provider: openai-codex
+  base_url: https://chatgpt.com/backend-api/codex
+  reasoning_effort: high
+  worker_pool: 2
+  discord_token_var: vault_discord_bot_token_tyche  # variable name only
+  skills:
+  - kanban-worker
+  - lsp-query
+  - writing-plans
+  - request-human-input
+- name: eudoros-security
+  persona: eudoros
+  role: security_reviewer
+  model: gpt-5.5
+  provider: openai-codex
+  base_url: https://chatgpt.com/backend-api/codex
+  reasoning_effort: high
+  worker_pool: 2
+  discord_token_var: vault_discord_bot_token_eudoros  # variable name only
+  skills:
+  - kanban-worker
+  - lsp-query
+  - code-review
+  - github-code-review
+  - request-human-input
+- name: echion-tests
+  persona: echion
+  role: test_reviewer
+  model: gpt-5.5
+  provider: openai-codex
+  base_url: https://chatgpt.com/backend-api/codex
+  reasoning_effort: high
+  worker_pool: 2
+  discord_token_var: vault_discord_bot_token_echion  # variable name only
+  skills:
+  - kanban-worker
+  - lsp-query
+  - coverage-summary
+  - test-driven-development
+  - request-human-input

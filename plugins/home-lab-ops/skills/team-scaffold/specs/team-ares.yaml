@@ -1,0 +1,21 @@
+team:
+  name: ares
+  display: Ares (legacy single agent)
+  host_group: agent_vms
+  limit_host: ares.infiquetra.com
+  pin_runtime: false
+  coresident: null
+  roles:
+  - role: ollama
+    tags: ollama,ares
+  - role: hermes
+    tags: hermes,ares
+  - role: hermes_dm_listener
+    tags: dm_listener,ares
+inventory:
+  ansible_host: 10.220.1.57
+  ansible_user: agent
+profiles:
+- name: ares
+  persona: ares
+  discord_token_var: vault_discord_bot_token_ares  # variable name only

@@ -1,0 +1,21 @@
+team:
+  name: hephaestus
+  display: Hephaestus (legacy single agent)
+  host_group: agent_vms
+  limit_host: hephaestus.infiquetra.com
+  pin_runtime: false
+  coresident: null
+  roles:
+  - role: ollama
+    tags: ollama,hephaestus
+  - role: hermes
+    tags: hermes,hephaestus
+  - role: hermes_dm_listener
+    tags: dm_listener,hephaestus
+inventory:
+  ansible_host: 10.220.1.54
+  ansible_user: agent
+profiles:
+- name: hephaestus
+  persona: hephaestus
+  discord_token_var: vault_discord_bot_token_hephaestus  # variable name only

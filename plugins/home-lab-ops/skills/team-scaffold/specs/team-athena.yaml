@@ -1,0 +1,21 @@
+team:
+  name: athena
+  display: Athena (legacy single agent)
+  host_group: agent_vms
+  limit_host: athena.infiquetra.com
+  pin_runtime: false
+  coresident: null
+  roles:
+  - role: ollama
+    tags: ollama,athena
+  - role: hermes
+    tags: hermes,athena
+  - role: hermes_dm_listener
+    tags: dm_listener,athena
+inventory:
+  ansible_host: 10.220.1.51
+  ansible_user: agent
+profiles:
+- name: athena
+  persona: athena
+  discord_token_var: vault_discord_bot_token_athena  # variable name only

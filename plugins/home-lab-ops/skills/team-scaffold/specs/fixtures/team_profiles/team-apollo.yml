@@ -1,0 +1,129 @@
+---
+# hermes_team_profiles for this team — relocated from home-lab host_vars
+# (Phase 8 Stage A, 2026-06-01) so the harness is self-contained.
+# Loaded by deploy/<team>.yml vars_files; overrides home-lab host_vars.
+hermes_team_profiles:
+- name: apollo-orchestrator
+  persona: apollo
+  role: team_lead
+  model: gpt-5.5
+  provider: openai-codex
+  base_url: https://chatgpt.com/backend-api/codex
+  fallback_providers: []
+  worker_pool: 1
+  skills:
+  - apollo-orchestration
+  - kanban-orchestrator
+  - request-human-input
+  - vcs-state
+  - lsp-query
+  - github-pr-workflow
+  - github-issues
+  - github-repo-management
+  - writing-plans
+  - plan
+  - architecture-diagram
+- name: asclepius-se
+  persona: asclepius
+  role: software_engineering_expert
+  model: deepseek-v4-flash:cloud
+  fallback_providers:
+  - provider: ollama
+    model: gemma3:4b-cloud
+  - provider: ollama
+    model: gemma3:12b-cloud
+  worker_pool: 2
+  discord_token_var: vault_discord_bot_token_asclepius  # variable name only
+  skills:
+  - kanban-worker
+  - lsp-query
+  - vcs-state
+  - pre-commit-check
+  - test-driven-development
+  - systematic-debugging
+  - code-review
+  - python-debugpy
+  - node-inspect-debugger
+  - spike
+  - codebase-inspection
+  - writing-plans
+  - request-human-input
+- name: aristaeus-test
+  persona: aristaeus
+  role: testing_expert
+  model: deepseek-v4-flash:cloud
+  fallback_providers:
+  - provider: ollama
+    model: gemma3:4b-cloud
+  - provider: ollama
+    model: gemma3:12b-cloud
+  worker_pool: 1
+  discord_token_var: vault_discord_bot_token_aristaeus  # variable name only
+  skills:
+  - kanban-worker
+  - lsp-query
+  - vcs-state
+  - coverage-summary
+  - test-driven-development
+  - systematic-debugging
+  - pre-commit-check
+  - request-human-input
+- name: iamus-security
+  persona: iamus
+  role: security_expert
+  model: deepseek-v4-flash:cloud
+  fallback_providers:
+  - provider: ollama
+    model: gemma3:4b-cloud
+  - provider: ollama
+    model: gemma3:12b-cloud
+  worker_pool: 2
+  discord_token_var: vault_discord_bot_token_iamus  # variable name only
+  skills:
+  - kanban-worker
+  - lsp-query
+  - vcs-state
+  - code-review
+  - github-code-review
+  - spike
+  - codebase-inspection
+  - request-human-input
+- name: idmon-skeptic
+  persona: idmon
+  role: stoic_skeptic
+  model: deepseek-v4-flash:cloud
+  fallback_providers:
+  - provider: ollama
+    model: gemma3:4b-cloud
+  - provider: ollama
+    model: gemma3:12b-cloud
+  worker_pool: 2
+  discord_token_var: vault_discord_bot_token_idmon  # variable name only
+  skills:
+  - kanban-worker
+  - lsp-query
+  - vcs-state
+  - code-review
+  - github-code-review
+  - requesting-code-review
+  - writing-plans
+  - systematic-debugging
+  - request-human-input
+- name: linus-polish
+  persona: linus
+  role: polish_expert
+  model: deepseek-v4-flash:cloud
+  fallback_providers:
+  - provider: ollama
+    model: gemma3:4b-cloud
+  - provider: ollama
+    model: gemma3:12b-cloud
+  worker_pool: 1
+  discord_token_var: vault_discord_bot_token_linus  # variable name only
+  skills:
+  - kanban-worker
+  - vcs-state
+  - lsp-query
+  - pre-commit-check
+  - architecture-diagram
+  - request-human-input

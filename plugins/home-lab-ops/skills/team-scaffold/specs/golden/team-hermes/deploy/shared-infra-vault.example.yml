@@ -1,0 +1,18 @@
+---
+# Example shape only. Store the real file as an encrypted Ansible Vault artifact
+# supplied by the operator at deploy time via INFIQUETRA_SHARED_INFRA_VAULT.
+
+vault_redis_password: "change-me"
+vault_langfuse_public_key: "change-me"
+vault_langfuse_secret_key: "change-me"
+vault_elevenlabs_api_key: "change-me"
+
+# Required by infiquetra.hermes_team.ollama when ollama_cloud_models is non-empty.
+# The operator supplies the key material in the encrypted vault. This example
+# names the fields and does not carry a key block.
+ollama_cloud_ssh_private_key: "change-me"
+ollama_cloud_ssh_public_key: "ssh-ed25519 change-me"
+
+# Required when deploying the Hermes orchestrator role.
+vault_hermes_conductor_token: "change-me"
+vault_github_webhook_secret: "change-me"

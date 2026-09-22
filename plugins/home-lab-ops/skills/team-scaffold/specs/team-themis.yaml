@@ -1,0 +1,21 @@
+team:
+  name: themis
+  display: Themis (legacy single agent)
+  host_group: agent_vms
+  limit_host: themis.infiquetra.com
+  pin_runtime: false
+  coresident: null
+  roles:
+  - role: ollama
+    tags: ollama,themis
+  - role: hermes
+    tags: hermes,themis
+  - role: hermes_dm_listener
+    tags: dm_listener,themis
+inventory:
+  ansible_host: 10.220.1.68
+  ansible_user: agent
+profiles:
+- name: themis
+  persona: themis
+  discord_token_var: vault_discord_bot_token_themis  # variable name only

@@ -1,0 +1,21 @@
+team:
+  name: prometheus
+  display: Prometheus (legacy single agent)
+  host_group: agent_vms
+  limit_host: prometheus.infiquetra.com
+  pin_runtime: false
+  coresident: null
+  roles:
+  - role: ollama
+    tags: ollama,prometheus
+  - role: hermes
+    tags: hermes,prometheus
+  - role: hermes_dm_listener
+    tags: dm_listener,prometheus
+inventory:
+  ansible_host: 10.220.1.56
+  ansible_user: agent
+profiles:
+- name: prometheus
+  persona: prometheus
+  discord_token_var: vault_discord_bot_token_prometheus  # variable name only

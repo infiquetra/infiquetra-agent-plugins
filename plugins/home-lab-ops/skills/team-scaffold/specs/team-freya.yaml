@@ -1,0 +1,43 @@
+team:
+  name: freya
+  display: Freya PA team
+  host_group: mac_minis
+  limit_host: jeffs-mac-mini.infiquetra.com
+  pin_runtime: true
+  coresident: Mimir
+  roles:
+  - role: hermes
+    tags: hermes,freya
+  - role: hermes_dm_listener
+    tags: dm_listener,freya
+inventory:
+  ansible_host: 10.220.1.196
+  ansible_user: jefcox
+profiles:
+- name: freya-pa
+  persona: freya
+  discord_token_var: vault_discord_bot_token_freya  # variable name only
+- name: saga-comms
+  persona: saga
+  discord_token_var: vault_discord_bot_token_saga  # variable name only
+- name: gersemi-time
+  persona: gersemi
+  discord_token_var: vault_discord_bot_token_gersemi  # variable name only
+- name: hnoss-books
+  persona: hnoss
+  discord_token_var: vault_discord_bot_token_hnoss  # variable name only
+- name: eir-wellness
+  persona: eir
+  discord_token_var: vault_discord_bot_token_eir  # variable name only
+- name: beyla-travel
+  persona: beyla
+  discord_token_var: vault_discord_bot_token_beyla  # variable name only
+- name: heid-research
+  persona: heid
+  discord_token_var: vault_discord_bot_token_heid  # variable name only
+- name: bygul-procurement
+  persona: bygul
+  discord_token_var: vault_discord_bot_token_bygul  # variable name only
+- name: trjegul-skeptic
+  persona: trjegul
+  discord_token_var: vault_discord_bot_token_trjegul  # variable name only

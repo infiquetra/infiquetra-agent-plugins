@@ -1,0 +1,13 @@
+---
+# hermes_team_profiles for this team — relocated from home-lab host_vars
+# (Phase 8 Stage A, 2026-06-01) so the harness is self-contained.
+# Loaded by deploy/<team>.yml vars_files; overrides home-lab host_vars.
+hermes_team_profiles:
+- name: perseus
+  persona: perseus
+  role: olympian_agent
+  model: deepseek-v4-pro:cloud
+  reasoning_effort: medium
+  max_turns: 90
+  worker_pool: 1
+  discord_token_var: vault_discord_bot_token_perseus  # variable name only
