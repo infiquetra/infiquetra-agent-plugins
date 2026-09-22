@@ -35,8 +35,7 @@ python3 scripts/install_client.py --client all --uninstall-legacy
 - `absent`
 
 The process exits 1 when any package is absent. A package installed from
-somewhere else is not an absence. Codex is the exception: it prints one
-`unsupported` line and does not invent an absence for every package.
+somewhere else is not an absence.
 
 `--uninstall-legacy` removes a placement only when the client's own record says
 the bytes came from `infiquetra/infiquetra-claude-plugins`. A directory with no
@@ -80,25 +79,42 @@ is not how this script installs.
 
 ## OpenAI Codex
 
-No command is run. The script prints `unsupported` and the reason.
+Codex CLI 0.155.1 installs this checkout with two commands. The marketplace
+name is the `name` in `.agents/plugins/marketplace.json`, which the generator
+writes as `infiquetra-agent-plugins`.
 
-Codex's own `plugin marketplace add` accepts a local path, a GitHub
-`owner/repo`, or a git URL. The marketplaces it already loads on this class of
-install are `.agents/plugins/marketplace.json`, and each plugin directory
-carries `.codex-plugin/plugin.json` (`skills`, and `interface.defaultPrompt`).
-The dedicated Codex repository's validator also rejects a plugin directory that
-contains `.claude-plugin`. This catalog has the Claude manifest and does not
-have the Codex manifest. `com.infiquetra.codex/marketplace.json` is not the
-path those marketplaces use. The file is not generated.
+```text
+codex plugin marketplace add <catalog>
+codex plugin add <name>@infiquetra-agent-plugins
+```
 
-`--check` prints the same unsupported line. `--uninstall-legacy` will remove a
-`[marketplaces.*]` table in `~/.codex/config.toml` whose `source` is the old
-repository, by running `codex plugin marketplace remove <name>`. It will not
-remove `infiquetra-codex-plugins`.
+`.agents/plugins/marketplace.json` sits at the catalog root, and each plugin
+directory carries `.codex-plugin/plugin.json`. `scripts/sync_codex_packaging.py`
+writes both. The CLI looks at those paths and not at a file under
+`com.infiquetra.codex/`.
 
-Known limitation, from the matrices: `codex plugin marketplace add <package>`
-refuses the package root because it has no supported manifest. Load and
-invocation stay blocked on that missing adapter.
+The marketplace add records `[marketplaces.infiquetra-agent-plugins]` in
+`~/.codex/config.toml` with `source_type = "local"` and `source` set to this
+checkout. It does not install plugins. The plugin add records
+`[plugins."<name>@infiquetra-agent-plugins"]` with `enabled = true`.
+
+The marketplace add is skipped when that name is already registered. The
+existing registration is not rewritten to point at a different checkout. When
+the name points somewhere else, the plugin add is skipped too: `codex plugin
+add` takes `name@marketplace` and installs whatever source that name currently
+has.
+
+`--check` reads `~/.codex/config.toml`. A package is from this catalog only
+when `<name>@infiquetra-agent-plugins` is `enabled = true` and the marketplace
+`source` resolves to this checkout. A disabled flag is reported as elsewhere.
+A package enabled under another marketplace, including
+`infiquetra-codex-plugins`, is elsewhere and is not an absence.
+
+`--uninstall-legacy` removes a `[marketplaces.*]` table whose `source` is the
+old repository, by running `codex plugin marketplace remove <name>`. It does
+not remove `infiquetra-codex-plugins`. The script runs those Codex commands
+only when `--execute` is passed. The dedicated Codex repository is not
+modified.
 
 ## Cursor Agent
 

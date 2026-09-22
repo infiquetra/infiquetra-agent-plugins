@@ -1,0 +1,9 @@
+{
+  "name": "fleet-core",
+  "version": "0.32.0",
+  "description": "Authored Fleet Core library: staffing (work shape, role, and lens to model and effort), the tier palette and resolver, shared retry and backoff, the run-start intent envelope, the TypeSafe judgment client, and the delegation audit. Consumers receive the modules they declare as build-time bundles.",
+  "interface": {
+    "displayName": "Fleet Core",
+    "shortDescription": "Authored Fleet Core library: staffing (work shape, role, and lens to model and effort), the tier palette and resolver, shared retry and backoff, the run-start intent envelope, the TypeSafe judgment client, and the delegation audit. Consumers receive the modules they declare as build-time bundles."
+  }
+}

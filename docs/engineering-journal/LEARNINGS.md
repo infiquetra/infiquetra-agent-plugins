@@ -2,6 +2,40 @@
 
 ## 2026-09-22
 
+### Codex accepts a Claude manifest beside its own, and marketplace add does not install a plugin
+
+**Author.** Grok (custody-move unit U5b, branch `mg/codex-pkg`)
+
+**Evidence.** Codex CLI 0.155.1 (`codex plugin marketplace add --help`,
+`codex plugin add --help`). A temporary `CODEX_HOME` (not `~/.codex`) was
+given a checkout that contained both `.claude-plugin/marketplace.json` and
+`.agents/plugins/marketplace.json`, and a plugin directory that contained
+both `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json`.
+`codex plugin marketplace add <checkout> --json` exited 0 and wrote
+`[marketplaces.infiquetra-agent-plugins]` with `source_type = "local"`.
+`codex plugin list --available --json` then listed the plugin, including one
+with no `skills` path and one with no `interface.defaultPrompt`.
+`codex plugin add sample@infiquetra-agent-plugins --json` wrote
+`[plugins."sample@infiquetra-agent-plugins"]` with `enabled = true`. The
+installed cache copy of `google-cloud-developer` also contains both
+`.claude-plugin/` and `.codex-plugin/`. The sha256 of
+`~/.codex/config.toml` was the same before and after. The narrative is
+`docs/engineering-journal/narratives/2026-09-22-codex-packaging.md`.
+
+**Mechanism.** The dedicated repository's validator refuses `.claude-plugin`
+inside a Codex plugin. That check is not what the CLI runs. The CLI selects
+`.codex-plugin/plugin.json` when it is present and still loads the
+marketplace when `.claude-plugin/` sits beside it. Marketplace add only
+records the source. A plugin stays uninstalled until `plugin add`, which is
+also the command that sets `enabled`.
+
+**Generalizable rule.** *A sibling product's validator is not the CLI. Read
+the config table the CLI writes, and treat marketplace registration and
+plugin enablement as two records.*
+
+**Refs.** `scripts/sync_codex_packaging.py`, `scripts/install_client.py`,
+`tests/test_codex_plugin_packaging.py`.
+
 ### Package test suites need pytest's importlib import mode once two packages share a test basename
 
 **Evidence.** CI run 35764030847 on PR #66 (redis-channel import): pytest
@@ -32,16 +66,18 @@ On this machine Agy's marketplace named `infiquetra-plugins` records
 same name records `https://github.com/infiquetra/infiquetra-claude-plugins.git`.
 Codex's working marketplaces (the OpenAI bundled marketplace and
 `infiquetra-codex-plugins`) are `.agents/plugins/marketplace.json` plus a
-`.codex-plugin/plugin.json` in each plugin directory, and that directory must
-not also contain `.claude-plugin`. This catalog has the Claude file and not
-the Codex file. The three compatibility matrices record `codex plugin
-marketplace add <package>` refusing the package root for the missing manifest.
+`.codex-plugin/plugin.json` in each plugin directory. The sentence that the
+directory must not also contain `.claude-plugin` was the dedicated
+repository's validator, and it is corrected by the later learning "Codex
+accepts a Claude manifest beside its own". The three compatibility matrices
+record `codex plugin marketplace add <package>` refusing the package root
+when that root had no Codex manifest.
 
 **Mechanism.** Removing or generating by the short name would either delete
-the Antigravity install or publish a Codex marketplace whose plugin
-directories are Claude packages. The installer treats a recorded git URL or
-directory path as the source, and it prints `unsupported` for Codex instead
-of writing either file.
+the Antigravity install or treat a marketplace name as a git URL. The
+installer treats a recorded git URL or directory path as the source. The
+Codex half of this entry, printing `unsupported` instead of writing a
+manifest, is superseded by the later learning in this dated section.
 
 **Generalizable rule.** *A placement is whatever the client's own record
 says the bytes came from. A shared marketplace name, and a manifest format

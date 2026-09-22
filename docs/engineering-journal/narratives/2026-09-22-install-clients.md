@@ -5,6 +5,7 @@ Author: Grok (custody-move unit U5, branch `mg/installer`)
 Related entries:
 
 - [Decision: the catalog installer](../DECISIONS.md)
+- Codex placement after this unit: [2026-09-22-codex-packaging](2026-09-22-codex-packaging.md)
 - [Learning: a marketplace name is not a source](../LEARNINGS.md)
 - [Runbook](../../runbooks/install-clients.md)
 - [Custody-move plan](../../plans/2026-09-22-custody-move-and-claude-plugins-retirement-plan.md)

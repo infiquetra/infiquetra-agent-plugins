@@ -1,0 +1,163 @@
+{
+  "name": "infiquetra-agent-plugins",
+  "interface": {
+    "displayName": "Infiquetra Agent Plugins",
+    "shortDescription": "Codex marketplace for the Infiquetra portable Agent Plugins catalog."
+  },
+  "plugins": [
+    {
+      "name": "agent-launcher",
+      "source": {
+        "source": "local",
+        "path": "./plugins/agent-launcher"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
+      "name": "agy",
+      "source": {
+        "source": "local",
+        "path": "./plugins/agy"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
+      "name": "codex",
+      "source": {
+        "source": "local",
+        "path": "./plugins/codex"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
+      "name": "deploy",
+      "source": {
+        "source": "local",
+        "path": "./plugins/deploy"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
+      "name": "fleet-core",
+      "source": {
+        "source": "local",
+        "path": "./plugins/fleet-core"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
+      "name": "hermes-profile-evolution",
+      "source": {
+        "source": "local",
+        "path": "./plugins/hermes-profile-evolution"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
+      "name": "home-lab-ops",
+      "source": {
+        "source": "local",
+        "path": "./plugins/home-lab-ops"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
+      "name": "house-style",
+      "source": {
+        "source": "local",
+        "path": "./plugins/house-style"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
+      "name": "mission-control",
+      "source": {
+        "source": "local",
+        "path": "./plugins/mission-control"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
+      "name": "orchestrate",
+      "source": {
+        "source": "local",
+        "path": "./plugins/orchestrate"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
+      "name": "redis-channel",
+      "source": {
+        "source": "local",
+        "path": "./plugins/redis-channel"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
+      "name": "saga",
+      "source": {
+        "source": "local",
+        "path": "./plugins/saga"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
+      "name": "unifi",
+      "source": {
+        "source": "local",
+        "path": "./plugins/unifi"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
+      "name": "voice",
+      "source": {
+        "source": "local",
+        "path": "./plugins/voice"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    }
+  ]
+}

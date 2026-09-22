@@ -1,0 +1,45 @@
+# Cycle-18 mutation proof - the Codex packaging wire in the repository gate
+# Digests are bound by MutationProofBindingTest: change a graded file
+# without re-running this proof and the suite fails. Paths are repository-relative.
+#
+# Supersedes 2026-09-22-cycle17-mutation-proof-custody-move-tooling.txt for
+# the binding test only. Cycle 17 is preserved unedited. Reason: unit U5b
+# added one call to scripts/check_repo.py, check_codex_packaging_manifest,
+# so the cycle-17 digest of that file no longer names the shipped bytes.
+#
+# The other four graded files were not edited and were not re-graded:
+#   plugins/unifi/scripts/site_profile.py
+#   scripts/assess_clients.py
+#   scripts/check_compatibility_matrix.py
+#   scripts/port_config.py
+# Their cycle-17 digests are carried below. Re-grading them would claim
+# coverage this run did not perform.
+#
+# The other guards inside scripts/check_repo.py were graded in cycle 17
+# against the previous bytes. This cycle did not re-apply those patches.
+# It graded the new wire only: the call was removed, the shipping test
+# tests.test_sync_codex_packaging.StalenessTests.test_the_repository_gate_runs_this_check
+# failed with AssertionError (no problem mentioned sync_codex_packaging.py),
+# and the call was restored. The restored file's digest is the one below.
+#
+# MutationProofBindingTest is excluded from grading. The proof cannot start
+# from a fully green suite because this run computes the digest that test
+# asserts, and because the two TemplateSyncAuditTests cases fail on this
+# machine for the reason cycle 17 already recorded.
+#
+## MUTATION: Codex packaging check dropped from the repository gate  [scripts/check_repo.py]
+   FAILED (failures=1)
+   FAIL: test_the_repository_gate_runs_this_check (tests.test_sync_codex_packaging.StalenessTests.test_the_repository_gate_runs_this_check)
+   AssertionError: False is not true
+
+## RESTORED
+# carried from cycle 17, not re-graded in this cycle:
+plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
+# carried from cycle 17, not re-graded in this cycle:
+scripts/assess_clients.py sha256: 2f8fafe988f791e53403d619ed61e4749930838435d001993e8cf581ca1ad9d8
+# carried from cycle 17, not re-graded in this cycle:
+scripts/check_compatibility_matrix.py sha256: fd8541e7ddf7c9add9552ded78ee342e474e5ee1c99471d68b8e2cabdbe488b4
+scripts/check_repo.py sha256: cfc75fbbca1f00d2a748fa620ba7ae6bf9dbc56673a97c842efd115c7cd3a50e
+# carried from cycle 17, not re-graded in this cycle:
+scripts/port_config.py sha256: 56216b7c8018b361d611356e21bc2383cb7d71ebf478f28436fee3c5c8e46b17
+byte-identical to pristine: YES

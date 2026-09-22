@@ -1,0 +1,10 @@
+{
+  "name": "agy",
+  "version": "0.6.2",
+  "description": "Antigravity-backed coder reviewer bridge agents that run in a disposable clone and return a patch, with guarded evidence bundles, output-attested receipts, and clone-scoped verification.",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Agy",
+    "shortDescription": "Antigravity-backed coder reviewer bridge agents that run in a disposable clone and return a patch, with guarded evidence bundles, output-attested receipts, and clone-scoped verification."
+  }
+}
