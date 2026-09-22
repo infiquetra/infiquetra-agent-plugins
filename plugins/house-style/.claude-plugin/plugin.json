@@ -1,0 +1,19 @@
+{
+  "name": "house-style",
+  "version": "0.1.1",
+  "description": "Output style enforcing Infiquetra's house presentation rules for Claude Code turns and subagent relays.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "keywords": [
+    "output-style",
+    "house-style",
+    "presentation",
+    "formatting",
+    "subagent-relay",
+    "infiquetra"
+  ],
+  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+  "outputStyles": "./com.infiquetra.claude/output-styles/"
+}

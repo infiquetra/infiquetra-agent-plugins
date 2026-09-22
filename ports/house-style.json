@@ -1,0 +1,25 @@
+{
+  "schema_version": "4",
+  "package": "house-style",
+  "package_root": "plugins/house-style",
+  "package_manifest": "plugin.json",
+  "assessment": {
+    "credential_prefixes": [],
+    "package_scripts": [],
+    "mutating_operations": [],
+    "entrypoints": [],
+    "skill_units": [],
+    "declared_none": [
+      "credential_prefixes",
+      "package_scripts",
+      "mutating_operations",
+      "entrypoints"
+    ]
+  },
+  "provenance": {
+    "notes": [
+      "Authored here from the one-shot import of infiquetra-claude-plugins at acc99fe71e25ad8a898eace7033051a7f1c3079e (upstream plugin version 0.1.0). source and custody are absent together: after this commit there is no upstream pin to synchronize and no provenance manifest.",
+      "The package ships an output style and two reference documents. It has no script, no skill, and no executable, and it reads no credential variable. Every safety field is empty on purpose and named in declared_none. An assessment invokes nothing because the package has nothing to run; the contract test under plugins/house-style/tests/ is what checks the style."
+    ]
+  }
+}
