@@ -7,6 +7,13 @@ tests do not exercise.
 
 from __future__ import annotations
 
+# The catalog runs pytest with --import-mode=importlib, which does not put
+# this directory on sys.path; sibling helpers are resolved by path.
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+
 import os
 from collections.abc import Iterator
 from pathlib import Path
