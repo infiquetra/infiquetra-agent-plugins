@@ -17,7 +17,9 @@
   ],
   "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
   "commands": "./com.infiquetra.claude/commands/",
-  "agents": "./com.infiquetra.claude/agents/",
+  "agents": [
+    "./com.infiquetra.claude/agents/redis-channel-coach.md"
+  ],
   "mcpServers": "./com.infiquetra.claude/mcp/servers.json",
   "skills": "./skills/"
 }

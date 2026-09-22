@@ -158,6 +158,10 @@ class AdapterSurface:
 #: `com.infiquetra.claude/hooks/hooks.json` and below, because the Claude
 #: manifest's `hooks` key names a file rather than a directory and the two
 #: upstream spellings are the same declaration.
+#: Manifest keys whose value the Claude CLI validator accepts only as a list of
+#: file paths, never as a directory (verified with `claude plugin validate`).
+MANIFEST_FIELDS_LISTING_FILES = frozenset({"agents"})
+
 ADAPTER_SURFACES = (
     AdapterSurface(
         "commands",
@@ -602,12 +606,25 @@ def plan_import(source: Path, commit: str, package: str) -> list[PlannedFile]:
             "reads the package's identity and version from it and will not invent them"
         )
 
-    declared: dict[str, str] = {}
+    declared: dict[str, str | list[str]] = {}
     for surface in ADAPTER_SURFACES:
         if surface.manifest_field is None:
             continue
-        if any(path == surface.destination or path.startswith(f"{surface.destination}/") for path in produced):
-            assert surface.manifest_value is not None
+        members = sorted(
+            path for path in produced
+            if path == surface.destination or path.startswith(f"{surface.destination}/")
+        )
+        if not members:
+            continue
+        assert surface.manifest_value is not None
+        if surface.manifest_field in MANIFEST_FIELDS_LISTING_FILES:
+            # The Claude CLI validator accepts a directory for `commands` but
+            # refuses one for `agents` ("agents: Invalid input", verified with
+            # `claude plugin validate` on 2026-09-22); it takes a list of files.
+            declared[surface.manifest_field] = [
+                f"./{path}" for path in members if path.endswith(".md")
+            ]
+        else:
             declared[surface.manifest_field] = surface.manifest_value
     if HOOKS_DECLARATION_PATH in produced:
         declared[HOOKS_MANIFEST_FIELD] = f"./{HOOKS_DECLARATION_PATH}"

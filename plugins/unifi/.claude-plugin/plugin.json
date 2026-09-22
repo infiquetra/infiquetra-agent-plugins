@@ -19,6 +19,8 @@
   ],
   "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
   "commands": "./com.infiquetra.claude/commands/",
-  "agents": "./com.infiquetra.claude/agents/",
+  "agents": [
+    "./com.infiquetra.claude/agents/unifi-network-ops.md"
+  ],
   "skills": "./skills/"
 }

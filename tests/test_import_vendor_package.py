@@ -388,9 +388,15 @@ class ManifestGenerationTests(ImportCase):
         self.assertEqual(len(declared), 6, declared)
         for key, value in declared.items():
             with self.subTest(component=key):
-                self.assertTrue(value.startswith("./"), value)
-                self.assertNotIn("..", Path(value).parts)
-                self.assertTrue((self.package_directory / value).exists(), value)
+                # `agents` is a list of files (the CLI validator refuses a
+                # directory there); every other surface is one path.
+                entries = value if isinstance(value, list) else [value]
+                self.assertEqual(key in ivp.MANIFEST_FIELDS_LISTING_FILES, isinstance(value, list), value)
+                for entry in entries:
+                    self.assertTrue(entry.startswith("./"), entry)
+                    self.assertNotIn("..", Path(entry).parts)
+                    self.assertTrue((self.package_directory / entry).exists(), entry)
+        self.assertEqual(declared["agents"], ["./com.infiquetra.claude/agents/helper.md"])
 
     def test_the_claude_manifest_carries_paths_and_no_behaviour(self) -> None:
         """AGENTS.md's condition for a vendor manifest outside its adapter."""

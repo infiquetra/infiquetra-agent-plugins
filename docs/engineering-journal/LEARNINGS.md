@@ -2,6 +2,26 @@
 
 ## 2026-09-22
 
+### The Claude CLI validator takes a directory for `commands` but a list of files for `agents`
+
+**Evidence.** `claude plugin install agy@infiquetra-agent-plugins` failed on
+2026-09-22 with `invalid manifest file ... agents: Invalid input`; `claude
+plugin validate` on a copy of the package passed once `agents` listed
+`./com.infiquetra.claude/agents/<file>.md` entries, and passed with
+`commands` left as a directory string. Seven imported packages carried the
+directory form.
+
+**Mechanism.** The CLI's manifest schema types `agents` as an array of file
+paths; the import generator had written every relocated surface the same way
+(a `./`-relative directory), and nothing in the repository ran the CLI's own
+validator before the first real install.
+
+**Generalizable rule.** A generated vendor manifest is checked with that
+vendor's validator before it ships (`tests/test_claude_plugin_packaging.py`
+now runs `claude plugin validate` per package when the CLI is present), and a
+field's accepted form is read from the validator, not inferred from a
+sibling field.
+
 ### Twelve branches that each regenerate one shared file serialize their merges
 
 **Evidence.** Every package import regenerated `.claude-plugin/marketplace.json`

@@ -15,6 +15,9 @@
   ],
   "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
   "commands": "./com.infiquetra.claude/commands/",
-  "agents": "./com.infiquetra.claude/agents/",
+  "agents": [
+    "./com.infiquetra.claude/agents/codex-coder.md",
+    "./com.infiquetra.claude/agents/codex-reviewer.md"
+  ],
   "skills": "./skills/"
 }
