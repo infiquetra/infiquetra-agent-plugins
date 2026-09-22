@@ -835,10 +835,13 @@ class CommittedDescriptorTest(unittest.TestCase):
 
     def test_the_marker_precondition_refuses_a_mismatched_client_extension_dir(self) -> None:
         """F60: the descriptor-level refusal the planner runs before dispatching
-        the marker rule. The real descriptor passes; a synthetic one whose
-        client_extension_dir does not name the marker directory refuses,
-        naming both values."""
-        svs._package_root_marker_precondition(port_config.load("unifi", ROOT))
+        the marker rule. A synthetic descriptor whose client extension directory
+        is the portable marker passes. One that names a different directory
+        refuses, naming both values. Mission-control and UniFi are authored
+        here, so neither live descriptor still selects the rule."""
+        passing = minimal()
+        passing["source"]["client_extension_dir"] = svs.PORTABLE_PACKAGE_ROOT_MARKER
+        svs._package_root_marker_precondition(parse(passing))
         document = minimal()
         document["source"]["client_extension_dir"] = "com.example.client"
         synthetic = parse(document)
