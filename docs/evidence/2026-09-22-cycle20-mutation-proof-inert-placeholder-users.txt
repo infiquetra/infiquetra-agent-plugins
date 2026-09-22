@@ -1,0 +1,79 @@
+# Cycle-20 mutation proof - inert placeholder usernames replace the file allowlist
+# Digests are bound by MutationProofBindingTest: change a graded file
+# without re-running this proof and the suite fails. Paths are repository-relative.
+#
+# Supersedes 2026-09-22-cycle19-mutation-proof-evidence-gate.txt for the
+# binding test only. Cycle 19 is preserved unedited. Reason: review found
+# that MACHINE_SPECIFIC_PATH_ALLOWLIST exempted a file by path, so a stale
+# entry (one whose real machine-specific path had since been scrubbed
+# elsewhere) would silently exempt that file forever -- the allowlist could
+# never reach empty by construction, only by someone remembering to prune it.
+# scripts/check_repo.py was edited to delete that allowlist and its skip
+# branch, and to add the three placeholder usernames the deleted allowlist's
+# entries actually used (``example``, ``op``, ``test``) to
+# INERT_HOME_DIRECTORY_USERS alongside the existing ``operator``. Three of
+# the original six allowlisted files were made moot by PR #84, which had
+# already scrubbed the two agy/saga fixture transcripts and one more path to
+# the /Users/operator/ placeholder before this cycle ran.
+#
+# The other four graded files were not edited and were not re-graded:
+#   plugins/unifi/scripts/site_profile.py
+#   scripts/assess_clients.py
+#   scripts/check_compatibility_matrix.py
+#   scripts/port_config.py
+# Their cycle-19 digests are carried below. Re-grading them would claim
+# coverage this run did not perform.
+#
+# This cycle graded ONLY the new guard: the three added inert usernames.
+# Every other guard inside scripts/check_repo.py (the nine graded in cycles
+# 18 and 19, including check_machine_specific_paths itself and its wire into
+# check_repo()) was not re-patched here; deleting the allowlist is a removal,
+# not a guard to invert, and is verified structurally instead (grep finds no
+# remaining reference to MACHINE_SPECIFIC_PATH_ALLOWLIST anywhere in the
+# repository, and the scanner reports zero hits against the rebased tree
+# with no allowlist in play).
+#
+# MutationProofBindingTest is excluded from grading. The proof cannot start
+# from a fully green suite because this run computes the digest that test
+# asserts, and because the two TemplateSyncAuditTests cases fail on this
+# machine for the reason cycle 17 already recorded.
+
+## scripts/check_repo.py -- one new guard
+
+## MUTATION 1: INERT_HOME_DIRECTORY_USERS reverted from
+## frozenset({"operator", "example", "op", "test"}) to frozenset({"operator"})
+   Killed by: tests.test_check_repo.MachineSpecificPathTests.test_the_documentation_placeholder_users_are_never_reported
+   FAILED (failures=1)
+   AssertionError: Lists differ: ["plugins/example/scripts/Users-test.py:
+   names the machine-specific path '/Users/test/'; use the inert placeholder
+   /Users/operator/ or /home/operator/ instead", "plugins/example/scripts/
+   home-example.py: names the machine-specific path '/home/example/'; use
+   the inert placeholder /Users/operator/ or /home/operator/ instead",
+   "plugins/example/scripts/home-op.py: names the machine-specific path
+   '/home/op/'; use the inert placeholder /Users/operator/ or
+   /home/operator/ instead"] != []
+
+   Also confirmed against the real committed tree, as a second signal (not a
+   separate mutation -- same code change, same guard):
+   Killed by: tests.test_check_repo.MachineSpecificPathTests.test_the_committed_repository_has_no_hits
+   FAILED (failures=1)
+   AssertionError: Lists differ: [3 real hits: plugins/agent-launcher/
+   skills/agent-launcher/scripts/launcher.py ('/home/example/'),
+   plugins/unifi/tests/test_unifi_site_profile_loader.py ('/home/op/'),
+   plugins/voice/tests/test_pre_tool_use_hook.py ('/Users/test/')] != []
+
+## RESTORED
+# carried from cycle 19, not re-graded in this cycle:
+plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
+# carried from cycle 19, not re-graded in this cycle:
+scripts/assess_clients.py sha256: 2f8fafe988f791e53403d619ed61e4749930838435d001993e8cf581ca1ad9d8
+# carried from cycle 19, not re-graded in this cycle:
+scripts/check_compatibility_matrix.py sha256: 6850094b2af1624f6c59a9ef5d898a3af8e14e097a2235065948ae5796309de5
+scripts/check_repo.py sha256: ab4e281824c88eff2809e5e7b3fc1c07e43c8ed5715e33505360f7c01f2b231c
+# carried from cycle 19, not re-graded in this cycle:
+scripts/port_config.py sha256: 56216b7c8018b361d611356e21bc2383cb7d71ebf478f28436fee3c5c8e46b17
+byte-identical to pristine: YES
+
+## SCANNER OUTPUT ON THE REBASED TREE (origin/main 9604be3, no allowlist)
+# python3 scripts/check_repo.py -> "Repository validation passed."
+# check_machine_specific_paths(ROOT) -> [] (zero hits)

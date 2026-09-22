@@ -1028,6 +1028,36 @@ class MachineSpecificPathTests(unittest.TestCase):
 
             self.assertEqual(check_repo.check_machine_specific_paths(root), [])
 
+    def test_the_documentation_placeholder_users_are_never_reported(self) -> None:
+        """``example``, ``op``, and ``test`` are inert, not real accounts.
+
+        These are the three placeholder usernames this repository's own
+        fixtures already used before this check existed, named individually
+        in ``INERT_HOME_DIRECTORY_USERS`` rather than allowlisted by file --
+        an inert *name* cannot go stale the way an allowlisted *file* can.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            for prefix, user in (("home", "example"), ("home", "op"), ("Users", "test")):
+                home = _fabricated_home(prefix, user, "share")
+                write(plugin / "scripts" / f"{prefix}-{user}.py", f'PATH = "{home}"\n')
+
+            self.assertEqual(check_repo.check_machine_specific_paths(root), [])
+
+    def test_a_different_invented_username_is_not_inert(self) -> None:
+        """Only the four named users are inert; a fifth invented one still trips."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            home = _fabricated_home("home", "example2", "share")
+            write(plugin / "README.md", f"Installs to {home}.\n")
+
+            errors = check_repo.check_machine_specific_paths(root)
+
+            self.assertEqual(len(errors), 1, errors)
+            self.assertIn(_fabricated_home("home", "example2"), errors[0])
+
     def test_docs_is_excluded_from_the_scan(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1053,19 +1083,6 @@ class MachineSpecificPathTests(unittest.TestCase):
                     for directory_name in check_repo.MACHINE_SPECIFIC_PATH_SCAN_DIRECTORIES
                 },
             )
-
-    def test_an_allowlisted_path_is_not_reported(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            relative = "scripts/allowlisted.py"
-            home = _fabricated_home("Users", "jsmith", "machine")
-            write(root / relative, f"# captured on {home}\n")
-            original = check_repo.MACHINE_SPECIFIC_PATH_ALLOWLIST
-            check_repo.MACHINE_SPECIFIC_PATH_ALLOWLIST = frozenset({relative})
-            try:
-                self.assertEqual(check_repo.check_machine_specific_paths(root), [])
-            finally:
-                check_repo.MACHINE_SPECIFIC_PATH_ALLOWLIST = original
 
     def test_a_repository_without_the_scanned_directories_passes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1094,8 +1111,8 @@ class MachineSpecificPathTests(unittest.TestCase):
                 )
             )
 
-    def test_the_committed_repository_has_no_unallowlisted_hits(self) -> None:
-        """The real gate, against the real tree: every hit today is allowlisted."""
+    def test_the_committed_repository_has_no_hits(self) -> None:
+        """The real gate, against the real tree: no machine-specific path ships."""
         self.assertEqual(check_repo.check_machine_specific_paths(ROOT), [])
 
 

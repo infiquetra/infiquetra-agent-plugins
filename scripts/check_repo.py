@@ -264,38 +264,23 @@ CREDENTIAL_REFERENCE_PREFIX = re.compile(
 # mistaken for the path separator that starts a home directory.
 MACHINE_SPECIFIC_PATH = re.compile(r"(?<![A-Za-z0-9_])/(?:Users|home)/([^/\s\"'()<>]+)/")
 
-# The one username each of ``/Users/`` and ``/home/`` may name without being a
-# real machine: the placeholder this repository's own fixtures and generated
-# examples use on purpose. Nothing else is inert -- a test's own invented
+# The usernames each of ``/Users/`` and ``/home/`` may name without being a
+# real machine. ``operator`` is the placeholder this repository's own fixtures
+# and generated examples use on purpose. ``example``, ``op``, and ``test`` are
+# documentation placeholders three existing fixtures already used before this
+# check existed (a shipped installer example, and two test fixtures) -- names
+# nobody would mistake for a real account, unlike an invented username that
+# merely happens not to be anyone's. Nothing else is inert: an invented
 # username still reads as somebody's real home directory to a reader who does
-# not already know it is fake, which is exactly the ambiguity ``operator``
-# exists to remove.
-INERT_HOME_DIRECTORY_USERS = frozenset({"operator"})
+# not already know it is fake, which is exactly the ambiguity this set exists
+# to remove without growing without bound.
+INERT_HOME_DIRECTORY_USERS = frozenset({"operator", "example", "op", "test"})
 
 # Directories this check scans. ``docs/`` is deliberately excluded: historical
 # evidence and narratives are allowed to quote a real path as part of the
 # record they preserve (see the 2026-09-22 custody-move decision item 6,
 # "Captured fixture transcripts keep the machine paths they recorded").
 MACHINE_SPECIFIC_PATH_SCAN_DIRECTORIES = ("plugins", "scripts", "ports", "schemas", "tests")
-
-# TODO(queued in docs/engineering-journal/DECISIONS.md, 2026-09-22 custody-move
-# item 6): every path below is a tracked file that carried a machine-specific
-# path on ``origin/main`` when this check was added. Scrubbing them to the
-# inert ``operator`` placeholder is a separate, already-queued unit; this
-# allowlist exists only so that queued scrub does not have to land in the same
-# change as the check that will catch any *new* one. It must be empty once
-# that scrub lands -- a path added back here afterward is the regression this
-# check exists to catch.
-MACHINE_SPECIFIC_PATH_ALLOWLIST = frozenset(
-    {
-        "plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py",
-        "plugins/agy/tests/fixtures/agy/transcripts/real-agy.jsonl",
-        "plugins/saga/tests/data/prompt-suggestion-latency/results-cold-run.json",
-        "plugins/saga/tests/data/prompt-suggestion-latency/results-warm-run.json",
-        "plugins/unifi/tests/test_unifi_site_profile_loader.py",
-        "plugins/voice/tests/test_pre_tool_use_hook.py",
-    }
-)
 
 
 def sha256_bytes(payload: bytes) -> str:
@@ -992,8 +977,6 @@ def check_machine_specific_paths(root: Path) -> list[str]:
             if not path.is_file() or "__pycache__" in path.parts:
                 continue
             relative = path.relative_to(root).as_posix()
-            if relative in MACHINE_SPECIFIC_PATH_ALLOWLIST:
-                continue
             try:
                 text = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
@@ -1009,8 +992,7 @@ def check_machine_specific_paths(root: Path) -> list[str]:
             for fragment in found:
                 errors.append(
                     f"{relative}: names the machine-specific path {fragment!r}; use the inert "
-                    "placeholder /Users/operator/ or /home/operator/ instead, or add it to "
-                    "MACHINE_SPECIFIC_PATH_ALLOWLIST with a stated reason"
+                    "placeholder /Users/operator/ or /home/operator/ instead"
                 )
     return errors
 

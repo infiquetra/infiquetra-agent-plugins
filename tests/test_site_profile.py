@@ -1101,24 +1101,26 @@ class MutationProofBindingTest(unittest.TestCase):
         changes a graded file's bytes. Counting that as a kill made every
         mutation a kill by construction -- see the cycle-12 proof's header.
 
-        The document is cycle 19. Cycle 18 remains the proof of the bytes
-        before the evidence-gate review fixes, and is preserved unedited.
-        Cycle 19 exists because two files gained new guards together: an
-        explicit ``notice`` document state in
-        ``scripts/check_compatibility_matrix.py`` (``check_notice_discipline``,
-        the notice exclusion in ``is_matrix_document``, the notice branch in
-        ``check_document_status``, notice as a valid supersession successor,
-        ``current_matrix_report``, and their two CLI wires in ``main``), and a
-        machine-specific path scanner wired into ``scripts/check_repo.py``
-        (``check_machine_specific_paths`` and its call from ``check_repo``).
-        The other three graded files are unchanged and their cycle-18 digests
-        are carried. The guards inside ``check_repo.py`` graded in cycle 18
-        were not re-patched here; the nine mutations this cycle graded are the
-        nine new guards listed above, one mutation per guard.
+        The document is cycle 20. Cycle 19 remains the proof of the bytes
+        before the allowlist was replaced, and is preserved unedited. Cycle
+        20 exists because ``scripts/check_repo.py`` gained one more guard: a
+        review found that ``MACHINE_SPECIFIC_PATH_ALLOWLIST`` exempted a file
+        by path, so a stale entry (its real path already scrubbed elsewhere)
+        would exempt that file forever rather than the allowlist ever
+        reaching empty. The allowlist and its skip branch were deleted, and
+        the three placeholder usernames its entries actually used
+        (``example``, ``op``, ``test``) were added to
+        ``INERT_HOME_DIRECTORY_USERS`` alongside ``operator``, so a *name*
+        rather than a *file* is what is inert -- a name cannot go stale the
+        way a path can. The other four graded files are unchanged and their
+        cycle-19 digests are carried. The eight guards inside
+        ``check_repo.py`` and ``check_compatibility_matrix.py`` graded in
+        cycles 18 and 19 were not re-patched here; the one mutation this
+        cycle graded is the three added usernames, reverted.
         """
         root = self.EVIDENCE.parent.parent
         recorded = self._recorded(
-            "2026-09-22-cycle19-mutation-proof-evidence-gate.txt"
+            "2026-09-22-cycle20-mutation-proof-inert-placeholder-users.txt"
         )
         self.assertEqual(set(recorded), set(self.GRADED), recorded)
         for relative in self.GRADED:
