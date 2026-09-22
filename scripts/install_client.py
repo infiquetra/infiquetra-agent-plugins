@@ -1573,8 +1573,16 @@ def plan_qwen_uninstall(
     return actions
 
 
-def grok_entries(home: Path) -> list[tuple[str, str, list[str]]]:
-    """``(repo id, source, plugin names)`` from the Grok install registry."""
+def grok_entries(home: Path) -> list[tuple[str, str, list[str], str]]:
+    """``(repo id, source, plugin names, marketplace name)`` from the Grok registry.
+
+    ``marketplace name`` is ``entry["marketplace"]["source_display_name"]`` when
+    present, else empty. A marketplace-backed entry is registered under this
+    name, and ``grok plugin marketplace remove <name>`` removes only that
+    marketplace's own plugins -- unlike ``grok plugin uninstall <name>``, which
+    resolves a bare plugin name to whichever registry entry for it Grok lists
+    first, and is not always the one this call means to remove.
+    """
     document = load_object(home / ".grok" / "installed-plugins" / "registry.json")
     if not document:
         return []
@@ -1587,19 +1595,48 @@ def grok_entries(home: Path) -> list[tuple[str, str, list[str]]]:
             continue
         marketplace = entry.get("marketplace") if isinstance(entry.get("marketplace"), dict) else {}
         source = marketplace.get("source_url_or_path")
+        marketplace_name = marketplace.get("source_display_name")
+        if not isinstance(marketplace_name, str):
+            marketplace_name = ""
         if not isinstance(source, str):
             kind = entry.get("kind") if isinstance(entry.get("kind"), dict) else {}
             source = kind.get("source_path") if isinstance(kind.get("source_path"), str) else ""
         plugins = entry.get("plugins") if isinstance(entry.get("plugins"), dict) else {}
         names = [name for name in plugins if isinstance(name, str)]
-        found.append((str(repo_id), source, names))
+        found.append((str(repo_id), source, names, marketplace_name))
     return found
 
 
-def plan_grok_uninstall(home: Path, overrides: dict[str, str], *, required: bool) -> list[Action]:
+def plan_grok_uninstall(
+    home: Path,
+    catalog: Path,
+    overrides: dict[str, str],
+    *,
+    required: bool,
+) -> list[Action]:
+    """Remove a legacy Grok placement without touching a same-named catalog one.
+
+    ``grok plugin uninstall <name>`` resolves a bare name to whichever
+    registry entry for it Grok lists first, which after cutover is not always
+    the legacy one -- a catalog install can share the same plugin name. A
+    marketplace-backed legacy entry is removed by removing its marketplace
+    instead (Grok's own help text: "Remove a marketplace source and uninstall
+    its plugins"), which only touches that marketplace's own plugins. A
+    legacy entry with no marketplace name to remove by is uninstalled by name
+    only when no catalog entry shares that name; otherwise the bare name is
+    ambiguous and the removal is skipped rather than risking the catalog copy.
+    """
     actions: list[Action] = []
-    removed: set[str] = set()
-    for _repo_id, source, names in grok_entries(home):
+    entries = grok_entries(home)
+    catalog_named = {
+        name
+        for _repo_id, source, names, _marketplace_name in entries
+        if is_catalog_source(source, catalog)
+        for name in names
+    }
+    removed_marketplaces: set[str] = set()
+    removed_names: set[str] = set()
+    for _repo_id, source, names, marketplace_name in entries:
         if is_dedicated_source(source):
             actions.append(
                 Action("skip", "grok", message=f"source {source} is a dedicated repository")
@@ -1607,10 +1644,36 @@ def plan_grok_uninstall(home: Path, overrides: dict[str, str], *, required: bool
             continue
         if not is_legacy_source(source):
             continue
-        for name in names:
-            if name in removed:
+        if marketplace_name:
+            if marketplace_name in removed_marketplaces:
                 continue
-            removed.add(name)
+            removed_marketplaces.add(marketplace_name)
+            actions.append(
+                command_action(
+                    "grok",
+                    ("plugin", "marketplace", "remove", marketplace_name),
+                    overrides,
+                    required=required,
+                )
+            )
+            continue
+        for name in names:
+            if name in removed_names:
+                continue
+            if name in catalog_named:
+                actions.append(
+                    Action(
+                        "skip",
+                        "grok",
+                        message=(
+                            f"{name} is ambiguous between a legacy install and a catalog "
+                            "install of that name, and grok plugin uninstall takes a bare "
+                            "name; remove the legacy copy by hand"
+                        ),
+                    )
+                )
+                continue
+            removed_names.add(name)
             actions.append(
                 command_action(
                     "grok",
@@ -1619,9 +1682,7 @@ def plan_grok_uninstall(home: Path, overrides: dict[str, str], *, required: bool
                     required=required,
                 )
             )
-    if not removed and not actions:
-        actions.append(Action("none", "grok"))
-    elif not removed:
+    if not removed_marketplaces and not removed_names:
         actions.append(Action("none", "grok"))
     return actions
 
@@ -1753,6 +1814,7 @@ def plan_skill_uninstall(
 def plan_uninstall(
     client: str,
     packages: list[Package],
+    catalog: Path,
     home: Path,
     overrides: dict[str, str],
     *,
@@ -1767,7 +1829,7 @@ def plan_uninstall(
     if client == "qwen":
         return plan_qwen_uninstall(packages, home, overrides, required=required)
     if client == "grok":
-        return plan_grok_uninstall(home, overrides, required=required)
+        return plan_grok_uninstall(home, catalog, overrides, required=required)
     if client == "agy":
         return plan_agy_uninstall(packages, home, overrides, required=required)
     if client == "opencode":
@@ -2225,7 +2287,7 @@ def run(argv: list[str] | None = None) -> int:
         actions: list[Action] = []
         for client in clients:
             if args.uninstall_legacy:
-                actions.extend(plan_uninstall(client, packages, home, overrides, required=required))
+                actions.extend(plan_uninstall(client, packages, catalog, home, overrides, required=required))
             else:
                 actions.extend(plan_install(client, packages, catalog, home, overrides, required=required))
         for action in actions:
@@ -2241,7 +2303,7 @@ def run(argv: list[str] | None = None) -> int:
     for client in clients:
         try:
             if args.uninstall_legacy:
-                client_actions = plan_uninstall(client, packages, home, overrides, required=required)
+                client_actions = plan_uninstall(client, packages, catalog, home, overrides, required=required)
             else:
                 client_actions = plan_install(client, packages, catalog, home, overrides, required=required)
         except InstallError as exc:

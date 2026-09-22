@@ -738,6 +738,103 @@ class GrokTest(InstallFixture):
         self.assertNotIn("uninstall voice", out)
         self.assertIn("dedicated repository", out)
 
+    def test_uninstall_removes_a_marketplace_backed_legacy_entry_by_marketplace(self) -> None:
+        # The real registry records a marketplace name for a legacy install
+        # (`source_display_name`), and a same-named catalog install shares no
+        # part of that marketplace-cache entry. Removing by marketplace name
+        # must not touch the catalog entry, and must run only once even
+        # though two plugins share the marketplace.
+        write_json(
+            self.home / ".grok/installed-plugins/registry.json",
+            {
+                "version": 1,
+                "repos": {
+                    "unifi-old": {
+                        "kind": {
+                            "type": "Local",
+                            "source_path": str(self.home / ".grok/marketplace-cache/abc/plugins/unifi"),
+                        },
+                        "marketplace": {
+                            "source_url_or_path": LEGACY_URL,
+                            "source_display_name": "infiquetra-plugins",
+                        },
+                        "plugins": {"unifi": {"version": "1"}},
+                    },
+                    "voice-old": {
+                        "kind": {
+                            "type": "Local",
+                            "source_path": str(self.home / ".grok/marketplace-cache/abc/plugins/voice"),
+                        },
+                        "marketplace": {
+                            "source_url_or_path": LEGACY_URL,
+                            "source_display_name": "infiquetra-plugins",
+                        },
+                        "plugins": {"voice": {"version": "1"}},
+                    },
+                    "unifi-catalog": {
+                        "kind": {
+                            "type": "Local",
+                            "source_path": str((self.catalog / "plugins/unifi").resolve()),
+                        },
+                        "plugins": {"unifi": {"version": "2"}},
+                    },
+                },
+            },
+        )
+        code, out, err = self.invoke("--client", "grok", "--uninstall-legacy", "--execute")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(
+            out.count(self.command("grok", "plugin", "marketplace", "remove", "infiquetra-plugins")),
+            1,
+        )
+        self.assertNotIn("uninstall unifi", out)
+        self.assertNotIn("uninstall voice", out)
+
+    def test_uninstall_removes_a_plain_legacy_entry_with_no_catalog_twin(self) -> None:
+        legacy_root = self.base / "infiquetra-claude-plugins" / "plugins" / "voice"
+        write_json(
+            self.home / ".grok/installed-plugins/registry.json",
+            {
+                "version": 1,
+                "repos": {
+                    "voice-old": {
+                        "kind": {"type": "Local", "source_path": str(legacy_root)},
+                        "plugins": {"voice": {"version": "1"}},
+                    },
+                },
+            },
+        )
+        code, out, err = self.invoke("--client", "grok", "--uninstall-legacy", "--execute")
+        self.assertEqual(code, 0, err)
+        self.assertIn(self.command("grok", "plugin", "uninstall", "voice", "--confirm"), out)
+
+    def test_uninstall_skips_a_plain_legacy_entry_ambiguous_with_a_catalog_entry(self) -> None:
+        legacy_root = self.base / "infiquetra-claude-plugins" / "plugins" / "voice"
+        write_json(
+            self.home / ".grok/installed-plugins/registry.json",
+            {
+                "version": 1,
+                "repos": {
+                    "voice-old": {
+                        "kind": {"type": "Local", "source_path": str(legacy_root)},
+                        "plugins": {"voice": {"version": "1"}},
+                    },
+                    "voice-catalog": {
+                        "kind": {
+                            "type": "Local",
+                            "source_path": str((self.catalog / "plugins/voice").resolve()),
+                        },
+                        "plugins": {"voice": {"version": "2"}},
+                    },
+                },
+            },
+        )
+        code, out, err = self.invoke("--client", "grok", "--uninstall-legacy", "--execute")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("uninstall voice", out)
+        self.assertIn("ambiguous", out)
+        self.assertEqual(self.logged(), "")
+
 
 class OpenCodeTest(InstallFixture):
     def test_dry_run_prints_symlinks_and_writes_nothing(self) -> None:
