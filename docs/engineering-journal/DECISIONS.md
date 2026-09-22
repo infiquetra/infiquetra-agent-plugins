@@ -2,6 +2,48 @@
 
 ## 2026-09-22
 
+### The custody-move run: decisions taken while it ran
+
+**Decision.** Six calls were made during the 2026-09-22 import run and are
+recorded here rather than in each package narrative, because each binds more
+than one package.
+
+1. *`home-lab-ops` keeps the lab topology it inherited.* Its skills and
+   team-scaffold specs name hosts by address exactly as the public upstream
+   did, so the import creates no new exposure; site-neutralizing them into an
+   operator site profile (as UniFi did) is queued, not done.
+2. *A documentation mutation proof is re-run at the release that changes the
+   docs, never re-bound.* The agent-launcher import first recomputed the
+   digests of its portable-docs proof; that was refused and the eleven classes
+   were re-run and published as a 2026-09-22 document superseding the
+   2026-08-27 one. Same rule as tooling proofs (cycle 17).
+3. *Compatibility records are never hand-rebound.* The fleet-core import first
+   rebound the UniFi and Mission Control fingerprints; the records were
+   restored to their assessed bytes once the version-bound check made a moved
+   tree a report rather than a failure.
+4. *Two packages whose tests resolve each other from the tree merge as one
+   pull request.* Mission Control's tests resolve the saga plugin by repo
+   walk-up and saga's validator test resolves Mission Control's root Claude
+   manifest; each import failed CI alone and passed locally only because
+   installed Claude plugins satisfied the ladder. PR #78 carried both.
+5. *Repository-level tests that only describe a derived package skip with a
+   stated reason rather than being deleted in the import.* Twenty-six such
+   skips exist after the run; deleting them or moving them onto a synthetic
+   derived fixture is queued.
+6. *Captured fixture transcripts keep the machine paths they recorded.* Two
+   packages (agy, saga) carry captured transcripts naming this machine's
+   paths; they are inert data, not defaults, and scrubbing them is queued.
+
+**Rejected alternatives.** Re-running a ten-client assessment inside each
+import (the fingerprint-bound regime; refused by the version-bound rule).
+Hand-editing evidence digests to keep CI green (refused twice, see 2 and 3).
+Merging Mission Control with an admin override to break the circular
+resolution (would have left main red between the two merges).
+
+**Revisit when.** The queued items in 1, 5, and 6 land; or a future import
+finds a third package in a resolution cycle, at which point the resolver's
+repo walk-up should accept a fixture root in tests instead of the live tree.
+
 ### Codex packaging sits at the repository root because the Codex CLI looks nowhere else
 
 **Author.** Grok (custody-move unit U5b, branch `mg/codex-pkg`)

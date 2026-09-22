@@ -2,6 +2,71 @@
 
 ## 2026-09-22
 
+### Twelve branches that each regenerate one shared file serialize their merges
+
+**Evidence.** Every package import regenerated `.claude-plugin/marketplace.json`
+and appended to `requirements-plugin-tests.txt`; after the first merge every
+other open pull request was `CONFLICTING` (PRs #64–#78, 2026-09-22), and the
+GitHub merge refused each until it was rebased and the file regenerated.
+
+**Mechanism.** A generated file is only conflict-free if it is regenerated
+after the rebase, and GitHub's squash merge does not regenerate anything. So
+the merge order is a queue: rebase, regenerate, re-run CI, merge, next.
+
+**Generalizable rule.** When a fan-out touches one generated file, run the
+merges through a serial pipeline that regenerates on rebase
+(`rebase_pr.sh` / `merge_pipeline.sh` in this run), and do not start the next
+rebase until the previous merge landed.
+
+### A plugin resolver that walks the repository tree makes two imports depend on each other at CI
+
+**Evidence.** PR #76 (mission-control) failed only on CI with
+`plugin-resolution: could not resolve a 'saga' root`; PR #72 (saga) failed
+only on CI with the same error for `mission-control`. Both passed locally.
+
+**Mechanism.** Fleet Core's `plugin_resolution` ladder tries the environment
+override, then a repository walk-up for `plugins/<name>` with required marker
+files, then `~/.claude/plugins/installed_plugins.json`, then a cache-sibling
+scan. Locally the third rung finds the installed Claude plugin; on CI only the
+walk-up can succeed, and it needs the sibling's *new* layout (the root Claude
+manifest) to be on the same branch.
+
+**Generalizable rule.** A test that resolves a sibling package should point
+the resolver at a fixture root, not at whatever the live tree or the machine
+happens to carry; until it does, imports that resolve each other merge as one.
+
+### A Herdr task name that already exists splits a pane inside that tab, and closing the tab closes both
+
+**Evidence.** Relaunching `agents --task mg-cdx` while a session of that name
+existed produced `mg-cdx-2` in the same tab (`w8A:tH`); `herdr tab close` on
+it ended both sessions, and the Codex packaging unit had to be relaunched.
+
+**Mechanism.** The `agents` wrapper reuses an existing tab label by splitting
+a pane; tab-level close is not pane-level close.
+
+**Generalizable rule.** Read `herdr agent list` before launching a name, and
+close a finished unit by its own tab only after confirming no other agent
+shares it.
+
+### Two packages that bundle the same Fleet Core module cannot both import it by bare name in one process
+
+**Evidence.** On the combined branch (PR #78) the full plugin suite failed one
+mission-control test with `partially initialized module 'intent_envelope' has
+no attribute 'SCHEMA_VERSION'`; each package's suite passed alone. Saga ships
+`scripts/intent_envelope.py`, a CLI wrapper with the same bare name as the
+Fleet Core module both packages bundle, and mission-control's
+`_load_intent_envelope` did `import intent_envelope` after a `sys.path`
+insert.
+
+**Mechanism.** A bare import answers with whatever `sys.modules` already holds
+under that name, so the first suite to import a module named
+`intent_envelope` decides what every later bare import in the process gets.
+
+**Generalizable rule.** A package loads its bundled Fleet Core modules by
+path under a package-unique module name (mission-control's `_load_bundled`,
+the same idea as Fleet Core's own `_load_sibling`), never by bare name; a
+test that needs to patch such a module patches the object the loader returns.
+
 ### Codex accepts a Claude manifest beside its own, and marketplace add does not install a plugin
 
 **Author.** Grok (custody-move unit U5b, branch `mg/codex-pkg`)

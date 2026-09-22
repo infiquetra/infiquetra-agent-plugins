@@ -1,5 +1,33 @@
 # Queued work - infiquetra-agent-plugins
 
+## Follow-ups from the 2026-09-22 custody-move run
+
+Activation trigger for all of these: the cutover (every harness on the Mac
+Studio reads back as installed from this repository) has completed.
+
+- **Ten-client assessments for the authored versions (U6).** Run
+  `scripts/assess_clients.py --execute` per package and commit the matrices
+  bound to the authored versions; until then the pre-import matrices are
+  superseded historical context and no package claims a current matrix.
+- **Site-neutralize `home-lab-ops`.** Move host addresses and team-scaffold
+  host specs into an operator site profile as UniFi did; the package today
+  carries what the public upstream carried.
+- **Retire or refit the derived-only repository tests.** Twenty-six
+  repository-level tests skip with "authored here, no provenance manifest";
+  delete them or move them onto a synthetic derived fixture so the skip count
+  returns to environment-dependent cases only.
+- **Scrub captured fixture transcripts** in `plugins/agy/tests/fixtures/` and
+  `plugins/saga/tests/fixtures/` of this machine's paths, with inert
+  replacements that keep the tests' assertions true.
+- **Fixture-rooted plugin resolution in tests.** Give Fleet Core's
+  `plugin_resolution` an explicit fixture root for tests so sibling imports
+  stop depending on each other at CI.
+- **`hermes-profile-evolution` retirement.** Carried as an adapter-only
+  package; the operator flagged it as a retirement candidate.
+- **Archive `infiquetra-claude-plugins`** on GitHub after cutover, and update
+  the home-lab repository's `scripts/vendor_blueprint_rubrics.sh` default and
+  the `hermes_orchestrator` watched-repo list, which still name it.
+
 ## Consume the eight open upstream mission-control filings via a deliberate repin + resync
 
 **Consumed by the 2.15.2 resynchronization (issue #50, landed 2026-08-30).**
