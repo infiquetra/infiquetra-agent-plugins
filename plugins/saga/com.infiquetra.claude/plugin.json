@@ -1,0 +1,22 @@
+{
+  "name": "saga",
+  "version": "1.2.1",
+  "description": "Infiquetra lifecycle plugin: one automatic run per issue \u2014 admission, plan, plan review, a build loop, a lensed code review, merge, release and retro capture.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+  "keywords": [
+    "lifecycle",
+    "sdlc-workflow",
+    "strategy",
+    "ideation",
+    "brainstorm",
+    "plan",
+    "doc-review",
+    "code-review",
+    "qa",
+    "retro"
+  ]
+}

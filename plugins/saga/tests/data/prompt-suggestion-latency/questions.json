@@ -1,0 +1,30 @@
+{
+  "schema": "prompt_suggestion_questions.v1",
+  "note": "The question set the measured shapes ask, following the vendor skill-suggestion cookbook: a wide pass that ranks the whole command roster and asks three orientation questions, then a verification pass over the top candidates. The roster itself is read from the installed saga plugin at run time and spliced into the wide pass, so this file carries the wording, not the roster.",
+  "thresholds": {
+    "gate": 0.3,
+    "fits": 0.3,
+    "note": "Both from the cookbook. The gate is the mean of the three orientation answers; the fits threshold applies to the best verification answer. Below either, suggest nothing."
+  },
+  "wide": {
+    "rank": {
+      "type": "choice",
+      "instructions": "The operator typed `prompt` to an agent that works on this repository. Which one of these saga lifecycle commands, if any, best matches what they are asking for? Choose the command whose stated purpose the request most directly names. Do not choose a command merely because it is adjacent to the topic."
+    },
+    "needs_command": {
+      "type": "noul",
+      "instructions": "Does `prompt` describe a unit of software lifecycle work — planning, building, investigating, reviewing, specifying, or coordinating — rather than a question, an acknowledgement, or a one-line mechanical edit?"
+    },
+    "is_substantial": {
+      "type": "noul",
+      "instructions": "Is the work `prompt` asks for substantial enough that a structured lifecycle command would save the operator effort, rather than being slower than simply doing it?"
+    },
+    "is_unambiguous": {
+      "type": "noul",
+      "instructions": "Does `prompt` name what the operator wants clearly enough that one specific lifecycle command is the obvious fit, rather than several being equally plausible?"
+    }
+  },
+  "verify": {
+    "instructions_template": "Does the command described under `candidates.{key}` do what the operator asked for in `prompt`? Answer yes only if the command's own stated purpose covers the request, not merely if the two are about related subjects."
+  }
+}

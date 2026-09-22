@@ -1,0 +1,62 @@
+{
+  "schema_version": "4",
+  "package": "saga",
+  "package_root": "plugins/saga",
+  "package_manifest": "plugin.json",
+  "assessment": {
+    "credential_prefixes": [
+      "GH_",
+      "GITHUB_",
+      "TYPESAFE_"
+    ],
+    "package_scripts": [
+      "admission.py",
+      "board_progression.py",
+      "issue_progress.py",
+      "merge_turn.py",
+      "reconcile_controller.py",
+      "release_step.py",
+      "review_result.py",
+      "run_record.py",
+      "saga.py"
+    ],
+    "mutating_operations": [
+      "comment",
+      "deploy",
+      "merge",
+      "publish",
+      "reconcile",
+      "save"
+    ],
+    "entrypoints": [
+      "scripts/admission.py",
+      "scripts/build_loop.py",
+      "scripts/intent_envelope.py",
+      "scripts/lifecycle_state.py",
+      "scripts/merge_turn.py",
+      "scripts/parse_issue.py",
+      "scripts/qa_strategies.py",
+      "scripts/release_step.py",
+      "scripts/review_roster.py",
+      "scripts/run_record.py",
+      "scripts/saga.py",
+      "scripts/shaping_judgments.py"
+    ],
+    "skill_units": [
+      "skills/brainstorm",
+      "skills/code-review",
+      "skills/doc-review",
+      "skills/founder-review",
+      "skills/ideate",
+      "skills/investigate",
+      "skills/office-hours",
+      "skills/plan",
+      "skills/qa",
+      "skills/retro",
+      "skills/spec",
+      "skills/strategy",
+      "skills/work"
+    ],
+    "declared_none": []
+  }
+}

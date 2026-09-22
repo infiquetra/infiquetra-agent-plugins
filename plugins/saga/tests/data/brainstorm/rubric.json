@@ -1,0 +1,40 @@
+{
+  "schema": "brainstorm-rubric.v1",
+  "dimensions": {
+    "consequence_calibration": {
+      "description": "Rigor follows concrete consequence factors (data sensitivity, authority, blast radius), not product size or domain label",
+      "bands": {
+        "pass": "Consequence factors named and weight follows those present in scope",
+        "fail": "Rigor keyed to product size or domain label, missing consequence factors"
+      }
+    },
+    "gap_coverage": {
+      "description": "Material rigor gaps identified in Phase 1.2 are probed one at a time",
+      "bands": {
+        "pass": "Found gaps each receive one open-ended probe; no found gap left un-probed",
+        "fail": "Found gap never probed or gap probe skipped"
+      }
+    },
+    "convergence_discipline": {
+      "description": "Does not prematurely converge on the first approach; explores alternatives before synthesis",
+      "bands": {
+        "pass": "Presents 2-3 approaches with trade-offs before recommending",
+        "fail": "Prematurely converges, anchors on first idea, skips alternatives"
+      }
+    },
+    "checklist_restraint": {
+      "description": "No visible checklist, fixed questionnaire, prescribed sequence, or live completeness gate during exploration",
+      "bands": {
+        "pass": "Creative conversation, probes interleaved, no checklist surfaced",
+        "fail": "Surfaces a checklist, questionnaire, fixed sequence, or live gate"
+      }
+    },
+    "helper_boundedness": {
+      "description": "Phase 1 helpers bounded by count and distinct evidence question, read-only",
+      "bands": {
+        "pass": "Lightweight 0, Standard/Deep at most one scout + one verifier each with distinct question, read-only",
+        "fail": "Exceeds ceiling, duplicates question, or helper writes/chooses/addresses operator"
+      }
+    }
+  }
+}

@@ -613,7 +613,16 @@ class PromptAlignmentAuditTests(unittest.TestCase):
         self.assertIn('ADAPTER = PACKAGE_ROOT / "com.infiquetra.claude"', carried)
 
     def test_structural_premises_are_honestly_evaluated(self) -> None:
-        """Verify the 6 structural reasons why prompt-alignment cannot run unmodified."""
+        """Verify why the prompt-alignment guard cannot run unmodified.
+
+        The first five premises are Mission Control's portable layout. The
+        sixth is the saga sibling the guard read
+        (``plugins/saga/skills/handoff/SKILL.md``). When that package is
+        absent, absence is the whole premise. When it is present, the premise
+        is whatever the tree actually carries: the handoff skill, or its
+        absence inside a package that is otherwise there. Both readings are
+        executed, so neither direction is a comment.
+        """
         # 1. The package root carries a Claude manifest of paths, and the
         #    adapter carries the relocated upstream manifest.
         self.assertTrue((PACKAGE / ".claude-plugin" / "plugin.json").is_file())
@@ -643,8 +652,52 @@ class PromptAlignmentAuditTests(unittest.TestCase):
         readme_text = (PACKAGE / "README.md").read_text(encoding="utf-8")
         self.assertIn("Portable Agent Plugins 1.0 package", readme_text)
 
-        # 6. Saga plugin is absent from repo root
-        self.assertFalse((ROOT / "plugins" / "saga").exists())
+        # 6. Saga, the sibling the prompt-alignment guard read.
+        #    Absent and present are both executed. The live tree selects
+        #    which present reading is current; a fixture carries the other.
+        with tempfile.TemporaryDirectory() as tmp:
+            absent = Path(tmp) / "absent"
+            absent.mkdir()
+            self._assert_saga_alignment_premise(absent)
+
+            present = Path(tmp) / "present"
+            handoff_dir = present / "plugins" / "saga" / "skills" / "handoff"
+            handoff_dir.mkdir(parents=True)
+            (present / "plugins" / "saga" / "plugin.json").write_text("{}\n", encoding="utf-8")
+            (handoff_dir / "SKILL.md").write_text(
+                "Do not copy SDLC issue templates into this skill.\n"
+                "/issue --prepare --from <source> --maturity <maturity>\n",
+                encoding="utf-8",
+            )
+            self._assert_saga_alignment_premise(present)
+        self._assert_saga_alignment_premise(ROOT)
+
+    def _assert_saga_alignment_premise(self, root: Path) -> None:
+        """Read the guard's saga premise from ``root`` and check that reading.
+
+        ``absent``: ``plugins/saga`` is not a directory. The guard cannot run
+        because the sibling it reads is not in the tree.
+
+        ``present``: the package is a directory. The guard read
+        ``skills/handoff/SKILL.md``. That file was removed upstream before
+        this import (issue 1030), so a present package is checked for the
+        file and, when the file is there, for the sentences the guard held.
+        """
+        saga = root / "plugins" / "saga"
+        handoff = saga / "skills" / "handoff" / "SKILL.md"
+        if not saga.is_dir():
+            self.assertFalse(saga.exists())
+            self.assertFalse(handoff.exists())
+            return
+        self.assertTrue((saga / "plugin.json").is_file())
+        if not handoff.is_file():
+            self.assertFalse(handoff.exists())
+            return
+        text = handoff.read_text(encoding="utf-8")
+        self.assertIn("Do not copy SDLC issue templates into this skill.", text)
+        self.assertIn("/issue --prepare --from <source> --maturity <maturity>", text)
+        self.assertNotIn("### Objective", text)
+        self.assertNotIn("### Acceptance criteria", text)
 
     def test_portable_prompts_and_references_carry_current_taxonomy(self) -> None:
         """Verify portable reference docs carry current template labels and taxonomy."""

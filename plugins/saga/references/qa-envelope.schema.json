@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://infiquetra.com/schemas/qa-envelope.schema.json",
+  "title": "One evidence envelope from one strategy run",
+  "description": "Exactly one envelope is appended to the run record per strategy run, in the shape the CAMPPS evidence-envelope schema already proves, with strategy_id in place of driver_family. Sixteen fields are required. Secrets are redacted INSIDE the driver, before the envelope exists, not at report time, so an envelope is safe to read wherever it is stored. This file is the single source: the runtime checker in qa_strategies.py reads this file's required list and declared types, and the tests validate the same envelopes with the real jsonschema library, so the checker cannot quietly diverge from the schema it claims to enforce.",
+  "type": "object",
+  "required": [
+    "envelope_id",
+    "schema",
+    "scenario_id",
+    "scenario_version",
+    "profile_revision",
+    "environment",
+    "strategy_id",
+    "proof_boundary",
+    "proof_mode",
+    "result",
+    "status_reason",
+    "started_at",
+    "completed_at",
+    "duration_seconds",
+    "privacy_attestation",
+    "artifact_pointers"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "envelope_id": { "type": "string", "minLength": 1 },
+    "schema": { "type": "string", "const": "qa_evidence_envelope.v1" },
+    "scenario_id": { "type": "string", "minLength": 1 },
+    "scenario_version": { "type": "string", "minLength": 1 },
+    "profile_revision": { "type": "string", "minLength": 1 },
+    "environment": { "type": "string" },
+    "strategy_id": { "type": "string", "minLength": 1 },
+    "proof_boundary": {
+      "type": "string",
+      "enum": ["hermetic", "branch-preview", "non-production"]
+    },
+    "proof_mode": {
+      "type": "string",
+      "enum": ["automated", "manual", "hybrid"]
+    },
+    "result": {
+      "type": "string",
+      "description": "Three values, and there is no fourth. A strategy the boundary excludes is recorded in the selection block as out-of-boundary, never here as a result.",
+      "enum": ["passed", "failed", "blocked"]
+    },
+    "status_reason": { "type": "string", "minLength": 1 },
+    "started_at": { "type": "string", "minLength": 1 },
+    "completed_at": { "type": "string", "minLength": 1 },
+    "duration_seconds": { "type": "number", "minimum": 0 },
+    "estimated_cost": { "type": "number", "minimum": 0 },
+    "observed_cost": { "type": "number", "minimum": 0 },
+    "privacy_attestation": {
+      "type": "string",
+      "description": "What the driver asserts about what it captured and what it redacted before this envelope existed."
+    },
+    "artifact_pointers": {
+      "type": "array",
+      "description": "Paths, never captured values. An artifact pointer that embedded a response body could carry the secret the redaction removed from the envelope.",
+      "items": { "type": "string" }
+    },
+    "evidence": {
+      "type": "object",
+      "description": "The strategy's required evidence fields, as the catalogue row names them. Redacted.",
+      "additionalProperties": true
+    }
+  }
+}

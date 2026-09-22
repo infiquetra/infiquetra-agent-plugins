@@ -1,0 +1,47 @@
+# Canonical Plan save examples; enum placeholders enumerate saga.py choices.
+# See plan-save-contract.md for editing, validation and generated-region ownership.
+# Identity flags are stored too; this list separates addressing from Plan payload.
+schema: plan_save_contract.v3
+identity:
+- name: kind
+  placeholder: <issue|task>
+- name: id
+  placeholder: <issue-number-or-task-slug>
+writes:
+- name: lifecycle_phase
+  value: plan
+  when: always
+- name: phase_status
+  value: complete
+  when: always
+- name: plan_path
+  placeholder: docs/plans/YYYY-MM-DD-<topic>-plan.md
+  when: always
+- name: destination
+  placeholder: <plan-only|pr|merge|nonprod-deploy>
+  when: always
+- name: deploy_autonomy
+  placeholder: <gate|auto>
+  when:
+    field: destination
+    equals: nonprod-deploy
+- name: adr_refs
+  placeholder: ADR-NNNN|ADR-MMMM
+  when: always
+- name: decisions
+  placeholder: 'KTD1: rationale. KTD2: rationale.'
+  when: always
+- name: orchestration_mode
+  placeholder: <inline>
+  when: always
+- name: orchestration_recommended
+  placeholder: <inline>
+  when: always
+templates:
+- id: default
+  fixed: {}
+effort_honoring:
+  spawn_kinds:
+    workflow: native
+    external-engine: native
+    agent: proxy

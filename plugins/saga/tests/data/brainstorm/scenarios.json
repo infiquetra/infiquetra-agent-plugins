@@ -1,0 +1,81 @@
+{
+  "schema": "brainstorm-scenarios.v1",
+  "grading_status": "authored design input; no grader reads the verdict values yet, so inverting one changes no test outcome",
+  "cases": [
+    {
+      "id": "premature-convergence-deep-low",
+      "idea_seed": "Add a shared helper for formatting dates across the app; operator proposes one approach early and wants to move to spec",
+      "product_size": "deep",
+      "consequence": "low",
+      "material_dimensions": ["convergence_discipline"],
+      "authored_verdicts": {
+        "convergence_discipline": "fail"
+      },
+      "transcript": "none",
+      "notes": "Tests that brainstorm does not anchor on first approach; would need to show 2-3 alternatives"
+    },
+    {
+      "id": "missed-material-gap-standard-medium",
+      "idea_seed": "Build a user feedback board where beneficiary is described abstractly; specificity and evidence gaps present but only one is probed",
+      "product_size": "standard",
+      "consequence": "medium",
+      "material_dimensions": ["gap_coverage"],
+      "authored_verdicts": {
+        "gap_coverage": "fail"
+      },
+      "transcript": "none",
+      "notes": "Missed-material-gap: a found gap left un-probed"
+    },
+    {
+      "id": "consequence-calibration-lightweight-high",
+      "idea_seed": "Small one-file change to handle webhook credential rotation for payment processor; touches granted authority and financial consequence",
+      "product_size": "lightweight",
+      "consequence": "high",
+      "material_dimensions": ["consequence_calibration"],
+      "authored_verdicts": {
+        "consequence_calibration": "pass"
+      },
+      "transcript": "none",
+      "notes": "Consequence calibration: technically small but high-consequence, rigor must rise"
+    },
+    {
+      "id": "checklist-overengineering-standard-low",
+      "idea_seed": "Simple bug fix asked as tight one-liner; brainstorm instead surfaces a multi-step questionnaire before asking first narrowing question",
+      "product_size": "standard",
+      "consequence": "low",
+      "material_dimensions": ["checklist_restraint"],
+      "authored_verdicts": {
+        "checklist_restraint": "fail"
+      },
+      "transcript": "none",
+      "notes": "Checklist overengineering: visible checklist / prescribed sequence surfaced"
+    },
+    {
+      "id": "balanced-standard-high",
+      "idea_seed": "Introduce org-scoped API keys with auditability obligations; needs Standard scope plus high-consequence safeguards per Phase 0.4",
+      "product_size": "standard",
+      "consequence": "high",
+      "material_dimensions": ["consequence_calibration", "gap_coverage", "helper_boundedness"],
+      "authored_verdicts": {
+        "consequence_calibration": "pass",
+        "gap_coverage": "pass",
+        "helper_boundedness": "pass"
+      },
+      "transcript": "none",
+      "notes": "Balanced: exercises independent variation and helper ceiling both"
+    },
+    {
+      "id": "lightweight-low-clean",
+      "idea_seed": "Fix a typo in README and clarify install step; Lightweight scope, low consequence, no helpers, brief alignment",
+      "product_size": "lightweight",
+      "consequence": "low",
+      "material_dimensions": ["checklist_restraint", "helper_boundedness"],
+      "authored_verdicts": {
+        "checklist_restraint": "pass",
+        "helper_boundedness": "pass"
+      },
+      "transcript": "none",
+      "notes": "Clean lightweight low — should not over-engineer"
+    }
+  ]
+}
