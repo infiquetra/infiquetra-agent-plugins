@@ -1,0 +1,2 @@
+{"type":"tool_use","tool_name":"Bash","arguments":{"command":"python3 plugins/agy/scripts/agy_delegate.py --launch-agy --agy-bin /Users/jefcox/.local/bin/agy --envelope /tmp/envelope.json"}}
+{"type":"tool_result","tool_name":"Bash","content":"Status: success\nBundle: /tmp/repo/.claude/agy/runs/live\n"}
