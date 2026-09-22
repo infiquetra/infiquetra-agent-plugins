@@ -1,0 +1,6 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "redis-channel",
+  "version": "0.5.3",
+  "description": "Portable Redis Streams bridge. The core is an MCP server and scripts that register one agent session and carry messages on Redis streams. Claude commands, the coach agent, and the MCP registration live under the com.infiquetra.claude client extension."
+}

@@ -1,0 +1,32 @@
+{
+  "schema_version": "4",
+  "package": "redis-channel",
+  "package_root": "plugins/redis-channel",
+  "package_manifest": "plugin.json",
+  "assessment": {
+    "credential_prefixes": [
+      "REDIS_CHANNEL_"
+    ],
+    "package_scripts": [
+      "mcp_server.py",
+      "integ_test.py",
+      "__main__.py"
+    ],
+    "mutating_operations": [
+      "redis_channel_configure",
+      "redis_channel_connect",
+      "redis_channel_disconnect",
+      "redis_channel_list",
+      "redis_channel_setup",
+      "reply"
+    ],
+    "entrypoints": [
+      "scripts/integ_test.py",
+      "scripts/mcp_server.py"
+    ],
+    "skill_units": [
+      "skills/redis-channel"
+    ],
+    "declared_none": []
+  }
+}

@@ -88,6 +88,26 @@
       ]
     },
     {
+      "name": "redis-channel",
+      "source": "./plugins/redis-channel",
+      "version": "0.5.3",
+      "description": "Claude Code channel that bridges sessions to external systems over Redis Streams. Router-agnostic: pair with any router implementation that speaks the protocol.",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "keywords": [
+        "claude-code-channel",
+        "mcp",
+        "redis",
+        "redis-streams",
+        "router-agnostic",
+        "voice",
+        "hands-free"
+      ]
+    },
+    {
       "name": "voice",
       "source": "./plugins/voice",
       "version": "0.4.0",
