@@ -55,8 +55,15 @@ jobs:
         with:
           python-version: '3.12'
 
+      # The dependency list lives in requirements-plugin-tests.txt rather than
+      # in this line. Twelve package-import branches are landing, each of which
+      # may need its own test-time package; every one of them editing this
+      # workflow is twelve conflicts on one line. A requirements file is
+      # appended to instead.
       - name: Install plugin test dependencies
-        run: python -m pip install --upgrade pip requests urllib3 pyyaml pytest
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-plugin-tests.txt
 
       - name: Run ported plugin tests
         run: python -m pytest plugins/*/tests -q
