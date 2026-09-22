@@ -133,7 +133,7 @@ read identity and assessment only, so all three validate an authored descriptor
 unchanged.
 
 A package is brought under this repository's custody once, by
-`scripts/import_vendor_package.py`, and
+[`scripts/import_vendor_package.py`](../scripts/import_vendor_package.py), and
 is edited in place afterwards. Version 3 is not accepted: the three committed
 descriptors migrated in the same commit that bumped the version.
 
