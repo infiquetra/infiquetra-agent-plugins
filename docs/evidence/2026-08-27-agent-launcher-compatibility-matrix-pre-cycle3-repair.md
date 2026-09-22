@@ -1,6 +1,6 @@
 <!-- matrix-status: superseded -->
 <!-- superseded-by: 2026-08-27-agent-launcher-compatibility-matrix.md -->
-<!-- superseded-reason: Code-review cycle-2 repairs (fix-eddba59df99e) changed the portable skill bytes; the assessment was re-run and the record re-bound to the repaired fingerprint. -->
+<!-- superseded-reason: Code-review cycle-2 repairs (fix-eddba59df99e) changed the portable skill bytes; the assessment was re-run and the record re-bound to the repaired fingerprint. The chain currently ends at a notice, not a fresh assessment; a ten-client assessment of the authored version is queued. -->
 
 
 # Ten-client compatibility matrix — portable agent-launcher package

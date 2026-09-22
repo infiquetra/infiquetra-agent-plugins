@@ -3,8 +3,7 @@
 Fleet Core is authored in this repository as of the import from
 `infiquetra-claude-plugins` at commit `acc99fe7` (upstream version 0.32.0).
 There is no provenance manifest and no upstream pin. This file names what is
-still absent on purpose, and the one file that remains here only because a
-consumer still declares it.
+still absent on purpose.
 
 ## Deliberately absent
 
@@ -19,14 +18,15 @@ commit does not contain (`concurrency_policy.py`, `delegation_audit.py`,
 `delegation_state.py`, `liveness_engine.py`, `tier_policy.json`) are not
 deferred. They are not in the imported revision.
 
-## Residual kept for a consumer
+## Residual cleared
 
-| Item | Why it is still here |
-|---|---|
-| `scripts/fleet_commons/models.json` | Absent from `acc99fe7`. The tier palette reads `staffing.json`. `plugins/mission-control/fleet-bundle.json` still declares `models.json`, so the file stays until that consumer's own import drops the declaration. |
+`scripts/fleet_commons/models.json` was kept for a time because
+`plugins/mission-control/fleet-bundle.json` still declared it after the tier
+palette moved to reading `staffing.json`. No `plugins/*/fleet-bundle.json`
+declares `models.json` any more and no shipped Python reads it. The residual
+was cleared on 2026-09-22: the file is deleted from this package.
 
 `staffing.json` is also copied into mission-control's bundle. The
 already-declared `tier_palette` module reads that file at import. The
 consumer's module list was not extended; the extra data entry is what makes
-the declared module loadable. That consumer's import unit owns any later
-change to the module list.
+the declared module loadable.

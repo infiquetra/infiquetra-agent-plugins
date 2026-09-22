@@ -303,28 +303,35 @@ runtimes. `SCALAR_EFFORTS` derives from `scalar_efforts` the same way `EFFORTS` 
 
 ## Wiring a new consumer
 
-Load the module through the fleet-commons shim, never by file path — a path import works in a
+Load the module through the build-time bundle, never by file path — a path import works in a
 checkout and breaks under the installed-plugin layout, where fleet-core lives in a versioned cache
-directory:
+directory. `scripts/bundle_fleet_module.py` writes each consumer's `scripts/_bundled/` directory
+at build time, and each consuming plugin carries a small `bundled_fleet.py` loader
+(`plugins/saga/scripts/bundled_fleet.py` is the worked example) that puts that directory on
+`sys.path` and imports the named module from it:
 
 ```python
 import sys
 from pathlib import Path
 
-# The shim is a per-plugin file, not an installed package: put your plugin's own scripts/
-# directory on the path first. Every real consumer does this; see
-# plugins/saga/scripts/tier_defaults.py.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# bundled_fleet.py is a per-plugin file, not an installed package: put your plugin's own
+# scripts/ directory on the path first, the way every real consumer does. See
+# plugins/saga/scripts/shaping_judgments.py for the worked example.
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
 
-import fleet_commons_shim  # noqa: E402  (after the sys.path insert, by design)
+import bundled_fleet  # noqa: E402  (after the sys.path insert, by design)
 
-staffing = fleet_commons_shim.load("staffing")
+staffing = bundled_fleet.load("staffing")
 decision = staffing.resolve_shape("judgment")
 ```
 
 Consuming this module means depending on the fleet-core version that introduced it. Say so in your
 plugin's changelog and fail with a message naming both versions if the module is absent;
-`plugins/saga/scripts/tier_defaults.py` is the worked example. This machine carries two installed
+`plugins/saga/scripts/bundled_fleet.py` and its callers (for example
+`plugins/saga/scripts/review_roster.py`, which treats an unreachable staffing module as "resolve it
+here instead" rather than an error) are the worked examples. This machine carries two installed
 plugin roots and a release has updated one and not the other before, so a consumer that assumes
 the newer fleet-core is present will fail in one root and not the other.
 
@@ -335,6 +342,6 @@ the newer fleet-core is present will fail in one root and not the other.
 - Vocabulary and ladder operations: `plugins/fleet-core/scripts/fleet_commons/tier_palette.py`
 - Work-shape and runtime resolution: `plugins/fleet-core/scripts/fleet_commons/tier_resolver.py`
 - The honoring seam: `plugins/fleet-core/scripts/fleet_commons/effort_rider.py`
-- The per-repository overlay shim: `plugins/saga/scripts/tier_defaults.py`
+- The per-plugin bundle loader: `plugins/saga/scripts/bundled_fleet.py`
 - Guards: `tests/test_staffing.py`, `tests/test_tier_vocab_single_source.py`,
   `tests/test_tier_resolver.py`, `tests/test_agent_tier_lint.py`

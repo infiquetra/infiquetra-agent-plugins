@@ -1,6 +1,6 @@
 <!-- matrix-status: superseded -->
 <!-- superseded-by: 2026-09-22-unifi-authored-cut.md -->
-<!-- superseded-reason: The forty stage results describe portable package 2.0.3 at tree digest 34915c40..., before unifi 2.0.4 replaced the credential value heuristic with a field-aware key policy. The retired rule graded the value and failed in both directions at once: it refused ordinary technical prose such as oauth2 and base64, and it accepted digit-free passwords such as rainbowtrout and sunshine. The shipped package is 2.0.4 and fingerprints to 81c0503c..., so this record no longer identifies the tree it claims to describe. Its client results and its Cursor correction stand and are carried forward unchanged. -->
+<!-- superseded-reason: The forty stage results describe portable package 2.0.3 at tree digest 34915c40..., before unifi 2.0.4 replaced the credential value heuristic with a field-aware key policy. The retired rule graded the value and failed in both directions at once: it refused ordinary technical prose such as oauth2 and base64, and it accepted digit-free passwords such as rainbowtrout and sunshine. The shipped package is 2.0.4 and fingerprints to 81c0503c..., so this record no longer identifies the tree it claims to describe. Its client results and its Cursor correction stand and are carried forward unchanged. The chain currently ends at a notice, not a fresh assessment; a ten-client assessment of the authored version is queued. -->
 
 # Ten-client compatibility matrix — portable UniFi package
 

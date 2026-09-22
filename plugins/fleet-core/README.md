@@ -47,9 +47,9 @@ declares it.
 | `jev_widen.py` | Widen-only union: a pattern floor a model may raise and may not lower. |
 
 Data files beside the modules: `staffing.json` (palette, work shapes, vendors,
-ratings, roles), `cost_weights.json`, and `models.json`. The last of those is
-the residual described in [`DEFERRED.md`](DEFERRED.md). The palette does not
-read it.
+ratings, roles) and `cost_weights.json`. `models.json`, an earlier data file
+the palette stopped reading, was removed 2026-09-22 once no bundle declared it
+any more; see [`DEFERRED.md`](DEFERRED.md).
 
 ## Requirements
 

@@ -1,6 +1,6 @@
 <!-- matrix-status: superseded -->
 <!-- superseded-by: 2026-09-22-mission-control-compatibility-notice.md -->
-<!-- superseded-reason: This readback binds the package at tree 659f91f6..., 71 files. When the portable README was corrected to state that an absent beads-config.json triggers a live gh api read before degrading to {}, the package moved to tree 5fc16652..., so the recorded readbacks describe installed copies that no longer exist. The successor was captured against the corrected package on 2026-08-31 and is current. -->
+<!-- superseded-reason: This readback binds the package at tree 659f91f6..., 71 files. When the portable README was corrected to state that an absent beads-config.json triggers a live gh api read before degrading to {}, the package moved to tree 5fc16652..., so the recorded readbacks describe installed copies that no longer exist. The successor was captured against the corrected package on 2026-08-31 and is current. The chain currently ends at a notice, not a fresh assessment; a ten-client assessment of the authored version is queued. -->
 
 > **Superseded - historical evidence. Do not read this as the current
 > post-activation readback.**
