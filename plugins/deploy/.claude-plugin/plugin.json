@@ -1,0 +1,21 @@
+{
+  "name": "deploy",
+  "version": "0.2.3",
+  "description": "tag-promotion deployment operations for Infiquetra repositories.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "keywords": [
+    "deploy",
+    "tag-promotion",
+    "rollback",
+    "hotfix",
+    "release-notes",
+    "infiquetra"
+  ],
+  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+  "commands": "./com.infiquetra.claude/commands/",
+  "agents": "./com.infiquetra.claude/agents/",
+  "skills": "./skills/"
+}
