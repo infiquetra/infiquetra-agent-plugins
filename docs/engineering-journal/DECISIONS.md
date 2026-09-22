@@ -2,6 +2,61 @@
 
 ## 2026-09-22
 
+### The catalog installer places each harness the way that harness already loads a package, and records Codex as unsupported
+
+**Decision.** `scripts/install_client.py` is the cutover placement for this
+catalog. It prints its plan unless `--execute` is passed. Per harness:
+
+- Claude installs `name@infiquetra-agent-plugins` from the root marketplace
+  file. An existing registration of that name is not duplicated and is not
+  retargeted at the checkout that happens to be running the script.
+- Cursor's client binary is `cursor-agent`. The marketplace add takes
+  `https://github.com/infiquetra/infiquetra-agent-plugins`. A second add is
+  skipped when that repository's cache already contains a marketplace file.
+- Qwen, Grok, and Agy install the package directory (`qwen` with the `y`
+  confirmation the assessment supplies, Grok with `--trust`). Qwen's install
+  record and an Agy sidecar manifest are set to that directory so a later
+  readback can tell this checkout from any other source. An Agy directory
+  that already exists without that sidecar is not replaced.
+- OpenCode and Hermes get a symlink per skill unit plus a manifest in the
+  shape already used at `~/.config/opencode/.infiquetra-plugins.json`.
+  OpenCode's destination is `~/.config/opencode/skills/`, which is where that
+  manifest already points. Hermes's `skills install` accepts a registry
+  identifier or an HTTP URL, and the live profile already loads a symlink, so
+  the installer symlinks instead of copying.
+- Gemini runs `skills link` with the same `y` on stdin the assessment used.
+  Muse runs `skills install --scope user`. Both write the same kind of
+  manifest. An existing destination that we did not record is left alone.
+- Codex is `unsupported`. The reason is the learning "A marketplace name is
+  not a source". `infiquetra-codex-plugins` is not modified.
+
+`--uninstall-legacy` removes a placement only when its recorded source is
+`infiquetra/infiquetra-claude-plugins`. A copy with no source record is
+refused. `infiquetra-codex-plugins`, `infiquetra-opencode-plugins`, and
+`infiquetra-antigravity-plugins` are never removed. `--check` prints
+`installed-from-catalog`, `installed-from-elsewhere (<source>)`, or `absent`,
+and exits 1 only when a package is absent. Codex's unsupported line is not an
+absence.
+
+**Rationale.** The compatibility matrices and `scripts/assess_clients.py`
+already say how each client places a package. Re-deriving that, or writing a
+Codex manifest the package directories cannot satisfy, would make cutover
+look done when the client's own files would disagree.
+
+**Rejected alternatives.** *Generate `.agents/plugins/marketplace.json` and
+`.codex-plugin/plugin.json` from the portable manifest* — those Codex plugins
+are required not to contain `.claude-plugin`, which every Claude-installable
+package here does. *Retarget the existing Claude directory registration at
+the worktree running the script* — the registration is already this
+repository's primary checkout; a worktree must not steal it. *Copy skills
+into `~/.agents/skills` for OpenCode* — that is the isolated-home assessment
+path. The machine's Infiquetra OpenCode install is the symlink manifest under
+`~/.config/opencode/`. *Treat the marketplace name `infiquetra-plugins` as
+the old repository* — on Agy that name is the Antigravity repository.
+
+**Revisit when.** A package in this catalog ships a real `.codex-plugin/`
+adapter, or a harness changes the placement the matrices recorded.
+
 ### Custody moves here: every package becomes authored, and infiquetra-claude-plugins retires
 
 **Decision.** The repository-level custody question that the 2026-08-21 pilot

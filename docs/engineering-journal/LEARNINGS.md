@@ -21,6 +21,34 @@ file under a unique synthetic name and never touches `sys.path`.
 **Generalizable rule.** A catalog whose packages each own a `tests/`
 directory runs pytest with `--import-mode=importlib`; a test that needs a
 sibling helper imports it by path, not by bare module name.
+### A marketplace name is not a source, and a manifest this tree does not have is not a placement
+
+**Author.** Grok (custody-move unit U5, branch `mg/installer`)
+
+**Evidence.** `scripts/install_client.py` and
+`docs/engineering-journal/narratives/2026-09-22-install-clients.md`.
+On this machine Agy's marketplace named `infiquetra-plugins` records
+`infiquetra/infiquetra-antigravity-plugins`, while Claude's marketplace of the
+same name records `https://github.com/infiquetra/infiquetra-claude-plugins.git`.
+Codex's working marketplaces (the OpenAI bundled marketplace and
+`infiquetra-codex-plugins`) are `.agents/plugins/marketplace.json` plus a
+`.codex-plugin/plugin.json` in each plugin directory, and that directory must
+not also contain `.claude-plugin`. This catalog has the Claude file and not
+the Codex file. The three compatibility matrices record `codex plugin
+marketplace add <package>` refusing the package root for the missing manifest.
+
+**Mechanism.** Removing or generating by the short name would either delete
+the Antigravity install or publish a Codex marketplace whose plugin
+directories are Claude packages. The installer treats a recorded git URL or
+directory path as the source, and it prints `unsupported` for Codex instead
+of writing either file.
+
+**Generalizable rule.** *A placement is whatever the client's own record
+says the bytes came from. A shared marketplace name, and a manifest format
+the tree does not contain, are not that record.*
+
+**Refs.** `scripts/install_client.py`, `tests/test_install_client.py`,
+`docs/runbooks/install-clients.md`.
 
 ### A guard that fires on your own change is the procedure, not an obstacle
 
