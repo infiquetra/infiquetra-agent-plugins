@@ -8,8 +8,12 @@ the operator into target-owned Hermes dialogue.
 
 ## Install and verify
 
-Install the repository using one of the methods in the
-[repository README](../../../README.md#installation), then restart Claude Code.
+Install this package from the catalog marketplace, then restart Claude Code:
+
+```bash
+claude plugin marketplace add /path/to/infiquetra-agent-plugins
+claude plugin install hermes-profile-evolution@infiquetra-agent-plugins
+```
 Inside an active plugin command, verify the loaded manifest version:
 
 ```bash
@@ -17,7 +21,7 @@ python3 -c 'import json, pathlib, sys; print(json.loads(pathlib.Path(sys.argv[1]
   "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json"
 ```
 
-The source version documented here is `0.1.4`. Team Mimir's dormant canary
+The source version documented here is `0.1.5`. Team Mimir's dormant canary
 remains pinned to the reviewed `0.1.1` runtime bytes until a separately
 approved installation updates that receipt.
 

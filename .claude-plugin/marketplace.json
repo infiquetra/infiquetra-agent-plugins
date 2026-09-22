@@ -29,6 +29,23 @@
       ]
     },
     {
+      "name": "hermes-profile-evolution",
+      "source": "./plugins/hermes-profile-evolution",
+      "version": "0.1.5",
+      "description": "Claude Code request surface for target-sovereign Hermes profile evolution.",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "keywords": [
+        "hermes",
+        "profiles",
+        "sovereignty",
+        "governance"
+      ]
+    },
+    {
       "name": "home-lab-ops",
       "source": "./plugins/home-lab-ops",
       "version": "1.2.2",

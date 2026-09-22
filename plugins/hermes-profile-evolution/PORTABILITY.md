@@ -1,7 +1,11 @@
 # Portability
 
-This plugin adapts Team Mimir classification and canonical Hermes dialogue to
-Claude Code. It is not a byte-for-byte copy of another harness plugin.
+The portable core is `scripts/profile_request.py` at the package root. Claude
+Code's command and PreToolUse hook live under `com.infiquetra.claude/`. Any
+other harness runs that same script from the package root. The hook is Claude's.
+
+This package adapts Team Mimir classification and canonical Hermes dialogue.
+It is not a byte-for-byte copy of another harness plugin.
 
 | Surface | Claude Code treatment |
 |---|---|
