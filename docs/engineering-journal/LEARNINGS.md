@@ -2,6 +2,91 @@
 
 ## 2026-09-22
 
+### OpenCode 2.0.13 dropped the subcommand the assessment harness reads its inventory from
+
+**Evidence.** Every package assessed on 2026-09-22 records the same OpenCode
+result. Placement — `cp -R <package>/skills/<unit> <client-home>/.agents/skills/`
+— exits 0, and both the discovery and the load stage then exit 1, because both
+read the client through `opencode debug skill` and the client answers `Unknown
+subcommand "skill" for "opencode debug"`. The same command is recorded at exit 0
+in `docs/evidence/2026-08-30-mission-control-compatibility-matrix.md`, against
+OpenCode 1.18.25; this machine now runs 2.0.13. The invocation stage still runs,
+so the rows read "engaged with the package and could not fully consume it".
+
+**Mechanism.** The harness's OpenCode plan reads that client's state through one
+of the client's own subcommands, chosen because it returns each skill's fully
+parsed body and so proves load rather than inferring it from a directory
+listing. The subcommand no longer exists. Placement is a copy into the
+auto-loaded external skill directory and is unaffected, so the unit is placed
+and then not observed. Nothing about any package changed between the two runs.
+
+**Generalizable rule.** A compatibility harness that reads a client's state
+through one of that client's subcommands inherits that subcommand's lifetime.
+When a client's result changes across runs and no package byte moved, check the
+client's version before the package's bytes — and record what the client
+actually said, because "this subcommand is unknown" and "the package did not
+load" are the same exit status.
+
+### The ten-client harness refuses two package shapes its own descriptor format allows
+
+**Evidence.** The 2026-09-22 run covered every package with a port descriptor.
+Two never produced a record. `python3 scripts/assess_clients.py --package
+house-style --execute --python "$(command -v python3)" --workspace <fresh dir>`
+exits 1 with `ERROR: house-style: declares no assessment.entrypoints, so there
+is nothing to invoke. A package with no executable entrypoint says so by naming
+'entrypoints' in assessment.declared_none, and then carries no invocation
+stage` — and `ports/house-style.json` already names `entrypoints` in
+`declared_none`, which is the exemption that message asks for. A descriptor
+written for `fleet-core`, which ships no skill unit, reached the sixth client
+and raised `IndexError: tuple index out of range` at
+`scripts/assess_clients.py:1167`, on `recorded = redact(" ".join(argvs[0]),
+values)`; the plan printer fails the same way at `scripts/assess_clients.py:1794`.
+Both outcomes are recorded in the run's pull request; neither package has a
+matrix, and the harness was not edited to produce one.
+
+**Mechanism.** Two separate gaps between what a descriptor may declare and what
+the harness reads. `entrypoint_paths` raises whenever `assessment.entrypoints`
+is empty, and its own message describes a behaviour — carrying no invocation
+stage — that `assess` does not implement, so naming the field in `declared_none`
+exempts the package from the validator and not from the harness. Separately,
+`stage_argvs` returns an empty tuple for a per-skill stage when
+`assessment.skill_units` is empty, and both `run_stage` and `describe_plan` then
+index `argvs[0]` without checking; the four skill-scoped clients each carry a
+per-skill placement stage, so a package with no skill unit crashes at the first
+of them.
+
+**Generalizable rule.** A declaration that a field is deliberately empty has to
+be honoured by the code that reads the field, not only by the validator that
+accepts it. And a function that fans one stage out over a declared list must
+handle the empty list explicitly, because "there is nothing to run here" and
+"the run crashed" are different results and only one of them can be recorded.
+
+### Grok's invocation stage is blocked for every package, and the id it needs is one stage away
+
+**Evidence.** Every package assessed on 2026-09-22 records Grok with placement,
+discovery, and load executed at exit 0, and invocation blocked with `The command
+still names <plugin-id>, which no earlier stage resolved.` Reading the run's
+private transcript for one package: Grok's placement stage printed 192
+characters and no install id; its discovery and load stages both printed the id
+the invocation path needs. The harness's capture rule for that client,
+`scripts/assess_clients.py:373`, reads the id out of the placement stage only.
+
+**Mechanism.** Grok installs a local plugin under a generated id and the
+invocation path is `<client-home>/.grok/installed-plugins/<plugin-id>/…`. The
+harness captures that id from the output of the stage declared with `capture=`,
+which is placement. This client no longer prints the id when it installs; it
+prints it when it lists and when it shows details. With the placeholder
+unresolved, `run_stage` blocks the stage rather than running a literal
+`<plugin-id>` path — which is the right call, because that path does not exist
+and the non-zero status would be charged to the package.
+
+**Generalizable rule.** When a harness reads one client's generated identifier
+out of one stage, that is a coupling to where the client chose to print it, and
+the client can move it without changing anything the harness would notice. A
+blocked row that repeats across every package is a property of the harness or
+the client, not of the packages; check whether the value exists in a later
+stage's output before reading the row as a package limit.
+
 ### A re-run of `install_client.py` failed on a package the previous run already placed
 
 **Evidence.** `scripts/install_client.py --client qwen --execute` on a real
