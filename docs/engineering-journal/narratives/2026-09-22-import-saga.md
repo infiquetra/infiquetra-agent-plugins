@@ -64,18 +64,18 @@ shows up at the first call rather than at `--help`.
 `scripts/check_repo.py`, and `python3 -m pytest plugins/saga/tests -q` pass
 (1414 passed, 9 skipped, after the frontmatter and fixture fixes).
 
-`python3 -m unittest discover -s tests` fails three tests this unit did not
-edit:
+`python3 -m unittest discover -s tests` still fails the two template-sync
+tests locally, because the sibling `infiquetra-sdlc` checkout has a Risk
+field the committed mission-control reference does not. They skip when that
+checkout is absent. They are not this package.
 
-- `test_structural_premises_are_honestly_evaluated` asserts
-  `plugins/saga` does not exist. That assertion is the premise this import
-  retires. The brief forbids editing files outside the package, the port
-  descriptor, this narrative, and a supersession note, so the assertion was
-  left for the lead.
-- The two template-sync tests fail locally because the sibling
-  `infiquetra-sdlc` checkout has a Risk field the committed mission-control
-  reference does not. They skip when that checkout is absent. They are not
-  this package.
+`test_structural_premises_are_honestly_evaluated` no longer asserts that
+`plugins/saga` is absent. The prompt-alignment guard read
+`plugins/saga/skills/handoff/SKILL.md`. The test now reads that premise in
+both directions: a tree with no saga package, and a tree that has one. The
+imported package is present and does not carry the handoff skill (removed
+upstream before `acc99fe7`). The other five premises in that test are
+unchanged.
 
 `python3 -m pytest plugins/*/tests -q` fails the same local template-sync
 pair under `plugins/mission-control/tests/test_template_sync.py`, for the
