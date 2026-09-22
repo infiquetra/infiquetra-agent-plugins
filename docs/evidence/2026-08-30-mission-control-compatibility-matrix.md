@@ -2,12 +2,6 @@
 
 # Ten-client compatibility matrix — portable mission-control package (2.15.2)
 
-The machine-readable fingerprint below was rebound on 2026-09-22. The package
-grew from 71 files to 72 when `scripts/_bundled/staffing.json` was added so
-the regenerated Fleet Core `tier_palette` module can import, and the bundled
-Fleet Core modules were copied from the authored 0.32.0 import. The client
-results were not re-run. They describe the 31 August 2026 assessment.
-
 This repository holds the portable source catalog for Infiquetra Agent Skills
 and Agent Plugins. `plugins/mission-control/` is a derived artifact of the
 upstream Claude Code plugin in `infiquetra/infiquetra-claude-plugins`, pinned at
@@ -133,8 +127,8 @@ client-specific remediation has been decided.
   "package": {
     "name": "mission-control",
     "version": "2.15.2",
-    "file_count": 72,
-    "tree_sha256": "a851c8f702322de4b0dfd4f19b9f8c782a2cebb4e15c88054e471673bd5a5713"
+    "file_count": 71,
+    "tree_sha256": "5fc1665252a0dc293b0a1e4e8328fb6ab6631dd669133e0eb54dd5ffd1611b13"
   },
   "method": {
     "stages": [

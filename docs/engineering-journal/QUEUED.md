@@ -325,7 +325,7 @@ convention is that shipped work is archived, not silently removed.
 
 **What it is.** [`tests/test_retry_backoff.py`](../../tests/test_retry_backoff.py) is a
 `guard-pytest-import` version 2 transform of the upstream test at `ed72f439`, the revision
-[`plugins/fleet-core/PROVENANCE.json`](../../plugins/fleet-core/CHANGELOG.md) pins. Its
+`plugins/fleet-core/PROVENANCE.json` (removed 2026-09-22; see [CHANGELOG.md](../../plugins/fleet-core/CHANGELOG.md)) pins. Its
 recorded source digest `7d80f735…` still matches the upstream bytes at that revision
 exactly, so the port is faithful and the suite passes.
 
@@ -346,7 +346,7 @@ did not change at `0d81dd9a`. So either the derived-test entry gets a pin of its
 separate from the package pin, or the test waits for the next Fleet Core release. Deciding
 that is the work; it should not be settled by whoever next touches the file.
 
-**Refs.** [`plugins/fleet-core/PROVENANCE.json`](../../plugins/fleet-core/CHANGELOG.md)
+**Refs.** `plugins/fleet-core/PROVENANCE.json` (removed 2026-09-22; see [CHANGELOG.md](../../plugins/fleet-core/CHANGELOG.md))
 `derived_files`, [learning](LEARNINGS.md#two-portable-slices-of-one-upstream-repository-can-legitimately-pin-two-revisions)
 
 ### Give the synchronization script a Fleet Core target
@@ -386,7 +386,7 @@ uses internally to read a source byte, so the copy was a mechanical extraction f
 pinned revision rather than a hand edit. `scripts/check_repo.py` then recomputed and matched
 every digest. That is sound but unshared: the next person has to know to do it the same way.
 
-**Refs.** [`plugins/fleet-core/PROVENANCE.json`](../../plugins/fleet-core/CHANGELOG.md),
+**Refs.** `plugins/fleet-core/PROVENANCE.json` (removed 2026-09-22; see [CHANGELOG.md](../../plugins/fleet-core/CHANGELOG.md)),
 [the pilot plan's requirement R32](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md)
 
 ### Make code-review lens selection an operator-approved planning contract

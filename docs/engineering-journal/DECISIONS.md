@@ -2752,7 +2752,7 @@ upstream reaches for another pytest feature at module scope.
 guard dead code, or upstream splits its suite so the ported half no longer needs
 pytest at all.
 
-**Refs.** [`plugins/fleet-core/PROVENANCE.json`](../../plugins/fleet-core/CHANGELOG.md),
+**Refs.** `plugins/fleet-core/PROVENANCE.json` (removed 2026-09-22; see [CHANGELOG.md](../../plugins/fleet-core/CHANGELOG.md)),
 [the 0.25.1 changelog entry](../../plugins/fleet-core/CHANGELOG.md)
 
 ### A re-synchronization does not renumber the evidence it invalidates

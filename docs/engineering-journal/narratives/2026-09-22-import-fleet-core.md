@@ -78,24 +78,23 @@ bytes in order to silence a link; retarget the link.
 
 ### Regenerated bundles move the compatibility fingerprint
 
-**Evidence.** `scripts/check_compatibility_matrix.py` fails when a current
-matrix's `tree_sha256` is not the hash of the package on disk. Regenerating
-the UniFi `retry_backoff` bundles and the mission-control Fleet Core bundles,
-and adding `staffing.json`, changes those hashes. The checker has no flag
-that rewrites a record, because refreshing the numbers without a new
-assessment is the failure the binding exists to catch.
+**Evidence.** Before tooling pull request #62, `scripts/check_compatibility_matrix.py` failed when a current matrix's `tree_sha256` was not the hash of the package on disk. Regenerating the UniFi `retry_backoff` bundles and the mission-control Fleet Core bundles, and adding `staffing.json`, changes those hashes.
 
-**Mechanism.** The current UniFi and mission-control matrix and readback
-records were updated to the new fingerprints, and each document says the
-client results were not re-run. Superseded records were left on their old
-hashes. The root `README.md` mission-control file count moved from 71 to 72
-because `tests/test_mission_control_rule_audit.py` recomputes that count from
-disk. The rest of that README still describes Fleet Core as a slice; the
-import brief left the root README for the lead to consolidate.
+**Mechanism, first pass.** The current UniFi and mission-control matrix and readback records were rewritten to the new fingerprints, with a note that the client results were not re-run. That was the wrong call. This repository's rule is that evidence is re-run, never re-bound. Pull request #62 changed the checker so a tree that moved under an unchanged package version is reported and the command still exits 0. The four evidence files were restored to their `origin/main` bytes after the rebase onto that pull request.
 
-**Generalizable rule.** A unit that is ordered to regenerate bundles will
-move every fingerprint that covers those bundles. Say so in the evidence, in
-the same commit, and do not pretend the old client run saw the new bytes.
+**Generalizable rule.** Do not rewrite an assessment record so a checker goes green. If the checker cannot tell "the bytes moved" from "the assessment is wrong", fix the checker. A later unit re-runs the clients.
+
+The live unit tests still required the recorded fingerprint to equal the tree. That would have forced the rebinding back. They now use the same partition as the checker: a wrong package version fails, and a fingerprint move under the same version must be reported. UniFi's skill-unit digests moved with the regenerated `retry_backoff` bundle and are held the same way.
+
+The root `README.md` mission-control file count moved from 71 to 72 because `tests/test_mission_control_rule_audit.py` recomputes that count from disk. The rest of that README still describes Fleet Core as a slice; the import brief left the root README for the lead to consolidate.
+
+### The provenance link text has to name the file the reader opens
+
+**Evidence.** The first pass retargeted journal links whose visible text was still `plugins/fleet-core/PROVENANCE.json` at `plugins/fleet-core/CHANGELOG.md`.
+
+**Mechanism.** The link text now says the provenance file was removed on 2026-09-22 and points a separate link, labeled `CHANGELOG.md`, at the changelog.
+
+**Generalizable rule.** When a file is deleted, a link that still wears the old name sends the reader to the wrong document. The visible text has to name the file that opens.
 
 ## Design choices
 

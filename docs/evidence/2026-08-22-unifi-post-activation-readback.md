@@ -1,12 +1,5 @@
 # Post-activation readback — portable UniFi package 2.0.6
 
-The release fingerprint in the machine-readable record was rebound on
-2026-09-22, when the Fleet Core `retry_backoff` bundles were regenerated from
-the authored 0.32.0 import. The readback entries were not re-captured from
-clients. They describe the 23 August 2026 readback. The recomputed digests
-were set equal to the regenerated tree so the binding still names the bytes
-that ship.
-
 The UniFi package in this repository, `plugins/unifi/`, is a derived copy of an
 upstream Claude Code plugin that was released as version 2.0.6 and activated
 upstream. The portability pilot plan requires two things after any activation,
@@ -206,16 +199,16 @@ support.
     "name": "unifi",
     "version": "2.0.6",
     "file_count": 23,
-    "tree_sha256": "17e0903c940d0c2d7325e7d318a2e6b7977f02953f4b3b2902410b805fe85933",
+    "tree_sha256": "22bfa56828fc7d0fb2246f190730082905bd71b82dee3e8d6e5afc4072498d37",
     "upstream_commit": "818fd6843e51a9126752061a834db9dead28f72b",
     "units": {
       "unifi-network": {
         "file_count": 4,
-        "tree_sha256": "5ff664956bdd9a3279998c53c0d6e7fb8ffe2aa9440ecb824efba80ea2601257"
+        "tree_sha256": "3650ae42ba21736a03f8f4766cba580c43df1dcb910ffe21acbb685dc504113b"
       },
       "unifi-protect": {
         "file_count": 4,
-        "tree_sha256": "4004e3dcfde8fd4cce54a70190791aa68238b914c2462172de56981f57d9eb75"
+        "tree_sha256": "ba06e585e34bd4ac8e7edae0da5115be458636aa44a0c1a6a37f5ce114395a4f"
       }
     }
   },
@@ -232,7 +225,7 @@ support.
       "reported_version": "2.0.6",
       "reported_digest": null,
       "recomputed_file_count": 23,
-      "recomputed_tree_sha256": "17e0903c940d0c2d7325e7d318a2e6b7977f02953f4b3b2902410b805fe85933",
+      "recomputed_tree_sha256": "22bfa56828fc7d0fb2246f190730082905bd71b82dee3e8d6e5afc4072498d37",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },
@@ -243,7 +236,7 @@ support.
       "reported_version": null,
       "reported_digest": null,
       "recomputed_file_count": 23,
-      "recomputed_tree_sha256": "17e0903c940d0c2d7325e7d318a2e6b7977f02953f4b3b2902410b805fe85933",
+      "recomputed_tree_sha256": "22bfa56828fc7d0fb2246f190730082905bd71b82dee3e8d6e5afc4072498d37",
       "matches_release": true,
       "entrypoints_exit_zero": true
     },
@@ -260,8 +253,8 @@ support.
       "recomputed_file_count": 8,
       "recomputed_tree_sha256": null,
       "recomputed_units": {
-        "unifi-network": "5ff664956bdd9a3279998c53c0d6e7fb8ffe2aa9440ecb824efba80ea2601257",
-        "unifi-protect": "4004e3dcfde8fd4cce54a70190791aa68238b914c2462172de56981f57d9eb75"
+        "unifi-network": "3650ae42ba21736a03f8f4766cba580c43df1dcb910ffe21acbb685dc504113b",
+        "unifi-protect": "ba06e585e34bd4ac8e7edae0da5115be458636aa44a0c1a6a37f5ce114395a4f"
       },
       "matches_release": true,
       "entrypoints_exit_zero": true
