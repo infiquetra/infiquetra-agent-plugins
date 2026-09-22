@@ -175,12 +175,13 @@ questions got answered — the trajectory of the work.
 for the thread or window via `gh` — read commands only (`gh pr view`, `gh issue view`, `gh pr checks`).
 Never `gh issue create`, never `gh pr merge`.
 
-**1.5 Session-transcript skeletons.** Reuse the transcript-forensics substrate — **file-mediated,
-context-safe**. Identify sessions from the saga / branch for a thread-scoped retro, or via
-`discover_sessions.py` for the windowed mode; extract each with `extract_session_skeleton.py` to a scratch
-dir; an **optional generic-sub-agent fan-out (one per session)** synthesizes them — offered per
-operator-choice, **never** via an `agents/` dir (this plugin has none; use generic `Explore` / `Task`).
-The orchestrator never reads a raw `.jsonl` or a skeleton file — paths only.
+**1.5 Session-transcript skeletons.** **Retired in the portable package:** this step described
+reusing a transcript-forensics substrate — file-mediated, context-safe — identifying sessions from
+the saga / branch for a thread-scoped retro, or via `discover_sessions.py` for the windowed mode,
+then extracting each with `extract_session_skeleton.py` to a scratch dir for an optional
+generic-sub-agent fan-out (one per session, never via an `agents/` dir, since this plugin has none;
+use generic `Explore` / `Task` instead). Both named scripts are gone from the imported source; see
+plugins/saga/CHANGELOG.md. Until a replacement lands, skip this pass.
 
 **1.6 R12 orchestration telemetry (read-only).** Run the override-rate reader to surface
 backend choice-vs-recommendation signals across all sagas:
@@ -227,10 +228,12 @@ the Phase-1 evidence block. A gate with a high rubber-stamp rate over enough int
 signal worth surfacing in Phase 2 interview as an auto-progression candidate — but this reader
 produces the evidence only; it never itself widens any allowlist (issue #399's own non-goal).
 
-**1.7 OutcomeOrchestrator realized economics (read-only, R24).** When the retro covers an **outcome**
-(a DAG of leaf sagas), read its per-outcome realized-cost rollup — the falsifiable proof of the
-cost-vs-operator-time thesis — from whatever cost record the run kept, or live
-via `scripts/outcome_costs.py` `rollup(spec, store)`. Surface, in the evidence block:
+**1.7 OutcomeOrchestrator realized economics (read-only, R24).** **Retired in the portable
+package:** this step described reading an outcome's per-outcome realized-cost rollup — the
+falsifiable proof of the cost-vs-operator-time thesis — from whatever cost record the run kept, or
+live via `scripts/outcome_costs.py` `rollup(spec, store)`. That script is gone from the imported
+source; see plugins/saga/CHANGELOG.md. Until a replacement lands, skip this pass; the evidence
+block it would have surfaced is:
 
 - **tokens / operator_touches / retries** (per outcome) + **by_executor** (which backends actually ran);
 - the **DAG-vs-one-thread** verdict — `wall_seconds_parallel` (critical path) vs `wall_seconds_serial`

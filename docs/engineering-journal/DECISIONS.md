@@ -451,6 +451,39 @@ than the derivation.
 `tests/test_agent_launcher_packaging.py` (the retired assertion),
 [`QUEUED.md`](QUEUED.md) (the P1 entry this consumes).
 
+---
+
+### house-style ships as a Claude-only package
+
+**Decision.** `plugins/house-style` carries no portable core: no scripts, no
+skills, no executable entrypoint. What it ships is one Claude Code output
+style (a harness feature that governs the shape of a Claude Code turn — which
+turns are full orientations and which are deltas, the closing block, when a
+visual is required) plus two reference documents other packages copy as text.
+The package's `plugin.json` and README both disclose, in plain terms, that
+this is a Claude-only package.
+
+**Rationale.** An output style has no vendor-neutral form; it is a Claude Code
+concept with no equivalent contract in another harness this catalog targets.
+The package is carried anyway, because Claude Code is one of the harnesses
+this catalog installs into and dropping the style would mean losing a style
+operators already use there. house-style is, as a result, the one package in
+this catalog that a skill-scoped harness — one that can install a skill or a
+script but has no notion of an output style — cannot use at all.
+
+**Rejected alternatives.** Drop the package rather than carry a Claude-only
+capability: rejected, because it deletes a style operators use today with no
+replacement. Invent a portable "style" format other harnesses could read:
+rejected, because nothing on the other side consumes such a format, so a
+portable shape would be speculative engineering with no second implementation
+to validate it against.
+
+**Revisit when.** A second harness this catalog targets gains an equivalent
+output-style capability, at which point a portable core for the style becomes
+worth designing against two real consumers instead of one.
+
+**Refs.** [`plugins/house-style/README.md`](../../plugins/house-style/README.md),
+[`plugins/house-style/plugin.json`](../../plugins/house-style/plugin.json).
 
 ## 2026-08-30
 

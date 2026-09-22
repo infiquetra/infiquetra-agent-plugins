@@ -30,6 +30,25 @@ the file requested the fixture, so nothing it asserts changed.
 - The gate-absence lint skips a `tests/` directory on a package scan. The red-path fixtures live under `plugins/saga/tests/fixtures/` and are judged only when named with `--fixture`. Upstream those fixtures sat outside the plugin, so the shipped scan never saw them.
 - `/ceo-review` stays an alias of `/founder-review`. No second skill was added. The capability already has `skills/founder-review/`.
 
+### Docs
+
+Four skill-instruction sentences named scripts that are not in this package at acc99fe7, marked
+"retired in the portable package" in place rather than deleted, because the step they describe is
+still the intended one once a replacement ships:
+
+- `skills/work/SKILL.md` §5.2 named `evidence_ledger.py`.
+- `skills/retro/SKILL.md` §1.5 named `discover_sessions.py` and `extract_session_skeleton.py`.
+- `skills/retro/SKILL.md` §1.7 named `scripts/outcome_costs.py`.
+
+All four existed upstream at one point (`plugins/saga/scripts/evidence_ledger.py` and
+`plugins/saga/scripts/outcome_costs.py`; `discover_sessions.py` and `extract_session_skeleton.py`
+under the pre-rename `infiquetra-lifecycle` plugin, later `plugins/saga/scripts/`), but upstream's
+own commit `296c1f0a` ("refactor: the removals, and saga 1.0.0", 2026-09-20 09:26 -0400) removed
+all four — along with the session-forensics and spend-reader script families they belonged to —
+roughly four hours before commit `acc99fe7` (2026-09-20 13:48 -0400), the commit this package
+imported from. None of the four scripts were dropped by this package's own import step; they were
+already gone from the upstream tree at the commit this package pinned to.
+
 ### Tests
 
 Upstream tests for this package now live under `plugins/saga/tests/` and load the package at its new paths.

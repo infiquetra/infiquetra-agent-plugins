@@ -344,7 +344,7 @@ class LivePackageTests(unittest.TestCase):
     The generator's synthetic cases above still prove the old set-difference
     inventory. These cases prove the live package no longer uses that inventory:
     no provenance manifest, the shim named as deliberately absent, and the
-    ``models.json`` residual still on disk because a consumer declares it.
+    ``models.json`` residual cleared once no consumer declared it any more.
     """
 
     def test_authored_package_has_no_provenance_manifest(self) -> None:
@@ -356,11 +356,13 @@ class LivePackageTests(unittest.TestCase):
         self.assertIn("build time", text)
         self.assertFalse((LIVE_PACKAGE / "scripts" / gdi.SHIM_FILENAME).is_file())
 
-    def test_models_json_is_recorded_as_a_consumer_residual(self) -> None:
+    def test_models_json_residual_is_recorded_as_cleared(self) -> None:
         text = (LIVE_PACKAGE / gdi.DEFERRED_FILENAME).read_text(encoding="utf-8")
         self.assertIn("models.json", text)
-        self.assertIn("mission-control", text)
-        self.assertTrue((LIVE_PACKAGE / "scripts" / "fleet_commons" / "models.json").is_file())
+        self.assertIn("cleared", text)
+        self.assertFalse(
+            (LIVE_PACKAGE / "scripts" / "fleet_commons" / "models.json").is_file()
+        )
 
 
 if __name__ == "__main__":

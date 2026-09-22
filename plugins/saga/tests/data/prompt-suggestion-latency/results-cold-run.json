@@ -382,14 +382,14 @@
   "resolution": [
     {
       "root": "",
-      "rung": "rung=3 (installed-plugins) root=/Users/jefcox/.claude/plugins/cache/infiquetra-plugins/fleet-core/0.25.3",
-      "tree": "/Users/jefcox/.claude/plugins/cache/infiquetra-plugins",
+      "rung": "rung=3 (installed-plugins) root=/Users/operator/.claude/plugins/cache/infiquetra-plugins/fleet-core/0.25.3",
+      "tree": "/Users/operator/.claude/plugins/cache/infiquetra-plugins",
       "version": "0.25.3"
     },
     {
       "root": "",
-      "rung": "rung=3 (installed-plugins) root=/Users/jefcox/.claude/plugins/cache/infiquetra-plugins/fleet-core/0.25.3",
-      "tree": "/Users/jefcox/.claude-company/plugins/cache/infiquetra-plugins",
+      "rung": "rung=3 (installed-plugins) root=/Users/operator/.claude/plugins/cache/infiquetra-plugins/fleet-core/0.25.3",
+      "tree": "/Users/operator/.claude-company/plugins/cache/infiquetra-plugins",
       "version": "0.25.3"
     }
   ],

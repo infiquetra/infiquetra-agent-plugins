@@ -3,9 +3,10 @@
 The 0.32.0 module derives its ladders at import from the sibling
 ``staffing.json`` registry. The 0.25.2 slice read ``models.json``. The model
 and effort names are the same; the file the module opens is not.
-``models.json`` remains in the package only because mission-control still
-declares it. Standard library only, unittest-shaped, so the repository's
-dependency-free baseline job runs these tests.
+``models.json`` was removed from the package on 2026-09-22 once no bundle
+declared it any more; see ``plugins/fleet-core/DEFERRED.md``. Standard
+library only, unittest-shaped, so the repository's dependency-free baseline
+job runs these tests.
 """
 
 from __future__ import annotations

@@ -38,14 +38,16 @@ The catalog requires `python>=3.12`.
   installed and no factory is injected, the call still goes through it.
 - Mission-control's bundle declaration gained a `staffing.json` data entry so
   the already-declared `tier_palette` module can import. The module list is
-  unchanged. `models.json` stays declared and stays in this package; see
-  [`DEFERRED.md`](DEFERRED.md).
+  unchanged. `models.json` stayed declared and stayed in this package for a
+  time; see the Residual entry below and [`DEFERRED.md`](DEFERRED.md).
 
 ### Residual
 
-- `scripts/fleet_commons/models.json` is absent from `acc99fe7` and is kept
-  because `plugins/mission-control/fleet-bundle.json` still declares it.
-  Clear it when that consumer's import drops the declaration.
+- `scripts/fleet_commons/models.json` was absent from `acc99fe7` and was kept
+  because `plugins/mission-control/fleet-bundle.json` still declared it.
+  Cleared 2026-09-22: no `plugins/*/fleet-bundle.json` declares it and no
+  shipped Python reads it; the file is deleted. See
+  [`DEFERRED.md`](DEFERRED.md).
 
 ### Dropped tests
 

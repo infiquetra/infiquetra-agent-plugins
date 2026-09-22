@@ -751,13 +751,12 @@ programmatic mode).
 Read `/code-review`'s serialized `review_result.v1`; any accompanying human rendering may group
 findings by `autofix_class`, but it adds no decision field. The result's `outcome` is the sole decision
 field and is the gate input. Record that outcome, the finding inventory as metadata, and `REVIEWED_SHA`
-in the Phase-4 work-session writeup; if you want a durable artifact, persist the result through the
-evidence ledger (#398) —
-`evidence_ledger.py write --check-id code-review --reviewed-sha "$REVIEWED_SHA" --producer work-gate
---verdict <the typed result's outcome> --artifact-file <result-json-file>` — rather than a bare file
-write, so this programmatic-mode persistence gets the same no-clobber/custody guarantee as
-`/code-review`'s own interactive-mode write (SKILL.md §5.3). `--verdict` is the evidence-ledger field
-name; it does not create a second decision field beside `outcome`.
+in the Phase-4 work-session writeup. **Retired in the portable package:** the evidence-ledger
+persistence step this paragraph used to describe (`evidence_ledger.py write --check-id code-review
+...`, giving this programmatic-mode write the same no-clobber/custody guarantee as `/code-review`'s
+own interactive-mode write, SKILL.md §5.3) named a script that plugins/saga/CHANGELOG.md records as
+gone from the imported source; until a replacement lands, persist the result as a bare file write
+instead.
 
 ### 5.3 Outcome-driven review gate (typed outcome or stale)
 

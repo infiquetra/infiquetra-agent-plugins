@@ -64,7 +64,7 @@ The record of the work, in the order a new reader should take it:
   (`2026-09-22-import-<package>.md`).
 - The earlier ports that proved the layout, each ten-client matrix now
   superseded and kept as historical context:
-  [agent-launcher matrix, superseded 2026-09-22](docs/evidence/2026-08-27-agent-launcher-compatibility-matrix.md),
+  [agent-launcher matrix, superseded 2026-09-22](docs/evidence/2026-08-27-agent-launcher-compatibility-matrix-pre-authored-import.md),
   [Mission Control matrix, superseded 2026-09-22](docs/evidence/2026-08-30-mission-control-compatibility-matrix.md),
   and [UniFi matrix, superseded 2026-09-22](docs/evidence/2026-08-22-unifi-compatibility-matrix.md).
 - [Cross-vendor plugin architecture brief](docs/cross-vendor-plugin-architecture-brief.md)

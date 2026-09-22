@@ -119,7 +119,9 @@ The harness reads either a list of records carrying `id`, `state`, `questions`, 
 House rule 3 says a pattern is a floor the model may raise and never lower. `jev_widen.py` is the one place that implements it, so no caller writes the rule twice.
 
 ```python
-jev_widen = fleet_commons_shim.load("jev_widen")
+# Loaded through the per-plugin bundle loader, the way plugins/saga/scripts/bundled_fleet.py
+# and its callers (plugins/saga/scripts/parse_issue.py is the worked example) load it.
+jev_widen = bundled_fleet.load("jev_widen")
 result = jev_widen.widen(state, "issue-flags", floors, decision_prefix="issue-flags")
 ```
 
