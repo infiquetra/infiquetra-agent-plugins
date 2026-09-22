@@ -2,6 +2,39 @@
 
 ## 2026-09-22
 
+### A re-run of `install_client.py` failed on a package the previous run already placed
+
+**Evidence.** `scripts/install_client.py --client qwen --execute` on a real
+cutover failed with `Extension "agent-launcher" is already installed. Please
+uninstall it first.`, and the failure aborted every later package for that
+client. `plan_qwen`, `plan_grok`, and `plan_claude` built their install
+command for every requested package with no check of whether that package was
+already placed; `plan_agy` read back an existing placement's source but only
+to decide when to refuse replacing someone else's copy, so a placement that
+already matched the catalog still reached the install command a second time.
+`tests/test_install_client.py` covered every client's `--check` reader and
+every client's fresh-install path, but nothing called the install path twice
+against a home a first run had already touched, so the gap had no failing
+test to surface it.
+
+**Mechanism.** Every placement command in this family (`qwen extensions
+install`, `grok plugin install`, `claude plugin install`, `agy plugin
+install`, `cursor-agent plugin marketplace add`) refuses to repeat a
+placement it already made; a multi-package, multi-client run has no
+transaction, so a single command failure partway through left every later
+package unplaced and undiagnosed until the operator reran the exact command
+that failed.
+
+**Generalizable rule.** A script that wraps someone else's non-idempotent
+CLI has to make the *wrapper* idempotent: read back that CLI's own state with
+the same reader `--check` uses before building the placement command, and
+skip with a message when the state already matches. Do this once, in the
+planning function that builds each client's actions, not once per command
+call site — `plan_agy`'s existing readback shows how easy it is to compute
+the right answer and use it for the wrong decision.
+
+---
+
 ### The Claude CLI validator takes a directory for `commands` but a list of files for `agents`
 
 **Evidence.** `claude plugin install agy@infiquetra-agent-plugins` failed on

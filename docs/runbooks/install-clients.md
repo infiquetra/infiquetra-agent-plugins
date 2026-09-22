@@ -1,6 +1,8 @@
 # Runbook: place this catalog on each harness
 
-**Version 1.0.0** · Adopted 2026-09-22
+**Version 1.1.0** · Adopted 2026-09-22 · Amended 2026-09-22 to make placement
+idempotent, add the `not-applicable` readback status, and make `--client all`
+continue past a failing client or package
 
 This is the operator checklist for
 [`scripts/install_client.py`](../../scripts/install_client.py). The calls behind
@@ -32,16 +34,42 @@ python3 scripts/install_client.py --client all --uninstall-legacy
 
 - `installed-from-catalog`
 - `installed-from-elsewhere (<source>)`
+- `not-applicable (<reason>)`
 - `absent`
 
 The process exits 1 when any package is absent. A package installed from
-somewhere else is not an absence.
+somewhere else is not an absence, and neither is a package a client cannot
+hold at all: a skill-scoped client (OpenCode, Gemini CLI, Muse, Hermes)
+reports `not-applicable (no skills)` for a package with no skill units, and
+every client reports `not-applicable (library)` for `fleet-core`, which has no
+per-package Claude packaging manifest and is bundled into other packages at
+build time rather than installed on its own.
+
+Placing a package is idempotent. Before running the client's own install
+command, the script reads back that client's own state the same way `--check`
+does. A package already `installed-from-catalog` is skipped with a message
+naming that; nothing is re-run, so a client whose install command refuses a
+duplicate (Claude Code, Qwen, Grok, Agy, Cursor) does not fail on a re-run
+after a partial install, and a symlink or copy client leaves an
+already-correct placement alone. A package `installed-from-elsewhere` is also
+skipped, naming the other source, and is not replaced in the same run; the
+message says to run `--uninstall-legacy --execute` first when that source is
+the old `infiquetra-claude-plugins` repository or marketplace.
+
+`--client all` does not stop at the first client or package that fails to
+plan or place. Every failure is recorded and printed at the end, execution
+continues with the next package and client, and the process exits 1 with a
+summary if anything failed. A single named `--client` keeps the original
+fail-fast behavior: a planning error such as a missing marketplace file
+stops that run immediately with the error's own exit code.
 
 `--uninstall-legacy` removes a placement only when the client's own record says
 the bytes came from `infiquetra/infiquetra-claude-plugins`. A directory with no
 source record is left in place. These three repositories are never removed:
 `infiquetra-codex-plugins`, `infiquetra-opencode-plugins`,
-`infiquetra-antigravity-plugins`.
+`infiquetra-antigravity-plugins`. It is a standalone removal run: pair it with
+a plain `--execute` afterward to place the package fresh from this catalog
+once the old placement is gone.
 
 `--binary <client>=<path>` replaces the executable on `PATH`. A path that is the
 same file as that launcher is refused. Pointing a wrapper at itself is how the
@@ -50,7 +78,8 @@ invoke the launcher by name, which is what works against a real home.
 
 A skill-scoped client installs one destination per skill directory name. Two
 packages that ship the same skill name are an error. A package with no skill
-units is skipped on install and reported `absent` on check.
+units is skipped on install and reported `not-applicable (no skills)` on
+check.
 
 ## Claude Code
 
