@@ -197,6 +197,7 @@ here afterwards:
 ```bash
 python3 scripts/import_vendor_package.py --package <package> --source PATH --commit SHA --dry-run
 python3 scripts/import_vendor_package.py --package <package> --source PATH --commit SHA
+python3 scripts/sync_marketplace.py           # the package is now Claude-installable
 $EDITOR ports/<package>.json                  # identity and assessment; no source, no custody
 python3 scripts/check_repo.py
 python3 scripts/assess_clients.py --package <package>

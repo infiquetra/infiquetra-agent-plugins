@@ -724,6 +724,11 @@ def next_steps(planned: list[PlannedFile], package: str) -> list[str]:
     steps: list[str] = []
     if any(entry.destination == check_repo.FLEET_BUNDLE_FILENAME for entry in planned):
         steps.append(f"python3 scripts/bundle_fleet_module.py --plugin {package}")
+    if any(entry.destination == CLAUDE_MANIFEST_PATH for entry in planned):
+        # The import just made this package Claude-installable, which makes the
+        # generated marketplace stale. `check_repo.py` refuses a stale one, so
+        # this has to run before it rather than after.
+        steps.append("python3 scripts/sync_marketplace.py")
     steps.append("python3 scripts/check_repo.py")
     steps.append("python3 -m unittest discover -s tests")
     steps.append(f"python3 -m pytest plugins/{package}/tests -q")
