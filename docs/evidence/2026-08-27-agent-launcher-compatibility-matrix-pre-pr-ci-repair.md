@@ -1,6 +1,6 @@
 <!-- matrix-status: superseded -->
 <!-- superseded-by: 2026-08-27-agent-launcher-compatibility-matrix.md -->
-<!-- superseded-reason: The CI repair removed plugins/agent-launcher/tests/__init__.py (its second tests package name collided in pytest's default import mode and broke the ported-plugin-tests CI job); the package tree moved, so the assessment was re-run and the record re-bound. The chain currently ends at a notice, not a fresh assessment; a ten-client assessment of the authored version is queued. -->
+<!-- superseded-reason: The CI repair removed plugins/agent-launcher/tests/__init__.py (its second tests package name collided in pytest's default import mode and broke the ported-plugin-tests CI job); the package tree moved, so the assessment was re-run and the record re-bound. The chain ends at a notice, which names the 2026-09-22 ten-client assessment of the authored version as the current matrix. -->
 
 
 # Ten-client compatibility matrix — portable agent-launcher package

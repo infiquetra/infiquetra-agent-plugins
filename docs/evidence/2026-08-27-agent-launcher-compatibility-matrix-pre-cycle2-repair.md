@@ -1,6 +1,6 @@
 <!-- matrix-status: superseded -->
 <!-- superseded-by: 2026-08-27-agent-launcher-compatibility-matrix.md -->
-<!-- superseded-reason: Code-review cycle-1 repairs (fix-2a9e5c55a826, fix-ea724133f0b8, fix-2a0799d391f8) changed the package tree; the assessment was re-run and the record re-bound to the repaired fingerprint. The chain currently ends at a notice, not a fresh assessment; a ten-client assessment of the authored version is queued. -->
+<!-- superseded-reason: Code-review cycle-1 repairs (fix-2a9e5c55a826, fix-ea724133f0b8, fix-2a0799d391f8) changed the package tree; the assessment was re-run and the record re-bound to the repaired fingerprint. The chain ends at a notice, which names the 2026-09-22 ten-client assessment of the authored version as the current matrix. -->
 
 
 # Ten-client compatibility matrix — portable agent-launcher package
