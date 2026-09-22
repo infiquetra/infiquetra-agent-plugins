@@ -2,6 +2,85 @@
 
 ## 2026-09-22
 
+### Two merge pipelines cannot run side by side under this repository's branch protection
+
+**Evidence.** PR #83 was rebased onto main at 8a5040f and its checks passed while
+PR #82 was merging ahead of it. Its squash merge was then refused with "the head
+branch is not up to date with the base branch" (2026-09-22, about 19:55 local),
+and `gh pr view` reported `mergeStateStatus: BEHIND`. Re-running the pipeline on
+its own landed the same commit as d710c29.
+
+**Mechanism.** The protection on main requires the head branch to contain the
+current base commit. Every merge moves the base, so any second pipeline that
+finished its rebase before the first merge landed is behind by construction,
+whatever files it touches. Regenerated `marketplace.json` conflicts were never
+the only reason merges had to be serial.
+
+**Generalizable rule.** Run `merge_pipeline.sh` for one pull request at a time,
+even when the pull requests touch disjoint files; the branch protection, not
+the diff, sets the constraint.
+
+### Grok's marketplace removal leaves its plugins registered, and a bare-name uninstall picks a random twin
+
+**Evidence.** After cutover Grok's registry held two entries per name for
+deploy, mission-control, orchestrate and saga: one under
+`~/.grok/marketplace-cache/...` tagged `infiquetra-plugins`, one under this
+repository's `plugins/` directory. `grok plugin marketplace remove
+infiquetra-plugins` (Grok 1.0.40) dropped the source from `marketplace list`
+and left all four cache-backed entries in `plugin list`. `grok plugin details
+<name>` and `grok plugin uninstall <name>` resolved the same bare name to
+different entries across calls, and the id that `plugin list` prints is not
+accepted as a name. The entries were cleaned by observation: uninstall once,
+read the registry to see which copy went, uninstall again only when the catalog
+copy went, then re-place from the catalog with `install_client.py --client grok
+--execute`. Final state on 2026-09-22: zero cache-backed entries, fourteen
+catalog entries.
+
+**Mechanism.** Grok keys registry entries by a generated id but resolves
+commands by plugin name over an unordered collection, so with two same-named
+entries the target is whichever the collection yields first. Marketplace
+removal edits only the source list.
+
+**Generalizable rule.** Never let a legacy and a catalog placement coexist under
+one Grok plugin name. If they do, remove by observation (uninstall, read back,
+repeat) and re-place from the catalog; never predict which twin a bare name
+resolves to. `install_client.py --uninstall-legacy` refuses the ambiguous case
+for this reason (PR #85).
+
+### A file-level allowlist on a scanner goes stale silently
+
+**Evidence.** The first revision of PR #86 allowlisted six files for the new
+machine-path scanner. By review time PR #84 had scrubbed three of them, and the
+allowlist still skipped those files whole, so a new real path in them would
+never have been reported. The merged version has no allowlist: the three
+remaining hits were documentation placeholder users (`example`, `op`, `test`),
+now listed in `INERT_HOME_DIRECTORY_USERS` in `scripts/check_repo.py`, and the
+committed tree reports zero hits.
+
+**Mechanism.** Exempting a path exempts every future content of that path;
+exempting a value exempts only that value.
+
+**Generalizable rule.** Scanners exempt values, not files. If a file must be
+exempt, the check has to fail when the exemption no longer matches anything.
+
+### A Grok Herdr session can exhaust its weekly limit mid-unit with its work apparently finished
+
+**Evidence.** The Grok session running the ten-client assessment showed "Task
+completed" for its background runs and then presented "You hit your weekly
+limit" (status bar: "Weekly limit left: 0%") with nothing committed and no pull
+request; Herdr reported the agent `blocked`. The unit was re-run from scratch by
+a Claude subagent (PR #87) instead of salvaging the untracked output the stopped
+session had left under `/private/tmp`.
+
+**Mechanism.** Background tasks inside the session keep running on local
+compute, but the agent needs a model turn to act on their results, and that
+turn is what the limit refuses.
+
+**Generalizable rule.** Check the weekly allowance before assigning a long Grok
+unit. When a Grok session goes `blocked` on a limit dialog, treat its
+uncommitted output as unverifiable and re-run the unit under a session that can
+still take turns.
+
 ### OpenCode 2.0.13 dropped the subcommand the assessment harness reads its inventory from
 
 **Evidence.** Every package assessed on 2026-09-22 records the same OpenCode
