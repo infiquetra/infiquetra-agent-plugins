@@ -72,10 +72,12 @@ is now a short current notice: 1.7.1 has no ten-client run. The notice carries
 a fenced JSON object that is neither a matrix nor a readback, because the
 discovery test calls `extract_record` on every evidence markdown file and
 raises when a file has no JSON fence. The readback filename stays
-non-superseded. Its release `file_count` and `tree_sha256` were rebound to
-the imported tree (33 files, `115944ac13a4b3300ee44ae5b7ea9db05ce8dee855c90af547eb74c75ce99157`).
-The recorded version stays 1.0.0, and the document says the client rows were
-not re-run.
+non-superseded. After rebase onto the Fleet Core import, the discovery test
+requires a non-superseded readback's `version` to be the version that ships,
+and treats a fingerprint move under that version as a report. The release
+record now says 1.7.1, 33 files,
+`115944ac13a4b3300ee44ae5b7ea9db05ce8dee855c90af547eb74c75ce99157`. The client
+rows were not re-run.
 
 **Generalizable rule.** Supersede a matrix by moving the record, not by
 changing the status of a filename other documents already cite, unless those
