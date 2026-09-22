@@ -1,0 +1,18 @@
+{
+  "$schema": "../../schemas/fleet-bundle.schema.json",
+  "schema_version": "1",
+  "modules": [
+    {
+      "name": "bridge_receipt",
+      "destinations": [
+        "scripts/_bundled/bridge_receipt.py"
+      ]
+    },
+    {
+      "name": "output_attestation",
+      "destinations": [
+        "scripts/_bundled/output_attestation.py"
+      ]
+    }
+  ]
+}

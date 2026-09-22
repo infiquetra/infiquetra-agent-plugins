@@ -1,0 +1,30 @@
+{
+  "schema_version": "4",
+  "package": "codex",
+  "package_root": "plugins/codex",
+  "package_manifest": "plugin.json",
+  "assessment": {
+    "credential_prefixes": [
+      "OPENAI_",
+      "CODEX_"
+    ],
+    "package_scripts": [
+      "codex_delegate.py"
+    ],
+    "mutating_operations": [
+      "task"
+    ],
+    "entrypoints": [
+      "scripts/codex_delegate.py"
+    ],
+    "skill_units": [
+      "skills/codex-delegate"
+    ],
+    "declared_none": []
+  },
+  "provenance": {
+    "notes": [
+      "Authored here from the import of infiquetra-claude-plugins@acc99fe7 (upstream 0.1.4). The wrapper reads no credential variable. OPENAI_ and CODEX_ are stripped because the supervised codex process inherits the environment, and a live assessment must not hand the operator's Codex login material to that process. The mutating operation is the task mode token: a command line that names codex_delegate.py and task is a write-capable delegation. --help names neither."
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "codex",
+  "version": "0.1.5",
+  "description": "Portable Codex delegation wrapper. It validates one codex.delegation.v1 envelope, supervises one codex exec, and writes an evidence bundle plus an output-attested bridge receipt. Claude commands and agents live under the com.infiquetra.claude client extension directory."
+}
