@@ -162,7 +162,7 @@ hypothetical, not an observed one.
 and
 [`plugins/unifi/skills/unifi-protect/SKILL.md`](../../plugins/unifi/skills/unifi-protect/SKILL.md)
 carry only `name` and `description`, and both are classified `upstream-byte-copy` in
-[`plugins/unifi/PROVENANCE.json`](../../plugins/unifi/PROVENANCE.json).
+`plugins/unifi/PROVENANCE.json` (removed 2026-09-22; see [CHANGELOG.md](../../plugins/unifi/CHANGELOG.md)).
 
 **Why it cannot be fixed downstream.** Two independent reasons, either one sufficient.
 Adding a field would break digest equality with the source, which is the byte-copy rule the
@@ -211,7 +211,7 @@ compatibility result, and it is covered by the separate distribution-gap entry b
 pilot, and no client-specific remediation has begun or may begin without a separate
 operator decision.
 
-**Refs.** [Compatibility matrix](../evidence/2026-08-22-unifi-compatibility-matrix.md),
+**Refs.** [Compatibility matrix (superseded)](../evidence/2026-08-22-unifi-compatibility-matrix.md),
 [operator pause decision](DECISIONS.md#pause-the-pilot-at-the-compatibility-matrix-and-take-no-client-specific-remediation),
 [pilot plan](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md)
 
@@ -267,7 +267,7 @@ not assessed.
 **Guardrail.** No manifest may be written and no distribution scope may be widened without a
 separate operator decision. This entry records a gap; it does not authorize closing it.
 
-**Refs.** [Compatibility matrix](../evidence/2026-08-22-unifi-compatibility-matrix.md),
+**Refs.** [Compatibility matrix (superseded)](../evidence/2026-08-22-unifi-compatibility-matrix.md),
 [per-client decision entry](#decide-per-client-what-follows-the-compatibility-matrix)
 
 ### The documented default site-profile runtime path is never read
@@ -456,12 +456,12 @@ the machine still could not enforce:
 - Plan unit U11, with requirements R22 and R43: the operator-run
   ten-client, forty-stage assessment (placement, discovery, load,
   invocation) recorded in
-  [`docs/evidence/2026-08-22-unifi-compatibility-matrix.md`](../evidence/2026-08-22-unifi-compatibility-matrix.md).
+  [`docs/evidence/2026-08-22-unifi-compatibility-matrix.md` (superseded)](../evidence/2026-08-22-unifi-compatibility-matrix.md).
 - Plan unit U9, requirement R40: post-activation installed-version and
   digest readback.
 - Plan unit U9, requirement R41: a fresh client session proving the
   three profile states, recorded in
-  [`docs/evidence/2026-08-22-unifi-post-activation-readback.md`](../evidence/2026-08-22-unifi-post-activation-readback.md).
+  [`docs/evidence/2026-08-22-unifi-post-activation-readback.md` (superseded)](../evidence/2026-08-22-unifi-post-activation-readback.md).
 
 **Guardrail.** Do not invent a broader new gate. Do not add a blocking
 check. Do not weaken `check_package_binding`.

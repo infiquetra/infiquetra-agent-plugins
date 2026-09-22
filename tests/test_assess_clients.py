@@ -45,6 +45,15 @@ import port_config  # noqa: E402
 CONFIG = port_config.load("unifi", ROOT)
 
 
+def declared_entrypoints(config: port_config.PortConfig) -> tuple[str, ...]:
+    """The paths the harness invokes.
+
+    An authored package states them on ``assessment``. A derived package's
+    custody table is not where executables are declared.
+    """
+    return config.assessment.entrypoints
+
+
 def write_executable(directory: Path, name: str, body: str) -> Path:
     """A real executable on disk, so the tests below run real processes."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -875,11 +884,6 @@ class InvalidEntrypointTest(unittest.TestCase):
                 "schema_version": port_config.SCHEMA_VERSION,
                 "package": CONFIG.name,
                 "package_root": CONFIG.package_root,
-                "source": {
-                    "repository": CONFIG.source.repository,
-                    "package_path": CONFIG.source.package_path,
-                },
-                "custody": {},
                 "assessment": {
                     "credential_prefixes": list(CONFIG.assessment.credential_prefixes),
                     "package_scripts": list(CONFIG.assessment.package_scripts),
@@ -1328,16 +1332,16 @@ class EntrypointPathTest(unittest.TestCase):
 
     def test_a_package_scoped_client_keeps_the_package_layout(self) -> None:
         paths = harness.entrypoint_paths(CONFIG, harness.plan_for("Claude Code"))
-        self.assertEqual(len(paths), len(CONFIG.custody.entrypoint_transforms))
-        for path, relative in zip(paths, CONFIG.custody.entrypoint_transforms):
+        self.assertEqual(len(paths), len(declared_entrypoints(CONFIG)))
+        for path, relative in zip(paths, declared_entrypoints(CONFIG)):
             self.assertEqual(path, f"{harness.PACKAGE}/{relative}")
 
     def test_a_skill_scoped_client_resolves_below_the_unit_directory(self) -> None:
         """The unit becomes the top level, so the package's own prefix disappears."""
         plan = harness.plan_for("OpenCode")
         paths = harness.entrypoint_paths(CONFIG, plan)
-        self.assertEqual(len(paths), len(CONFIG.custody.entrypoint_transforms))
-        for path, relative in zip(paths, CONFIG.custody.entrypoint_transforms):
+        self.assertEqual(len(paths), len(declared_entrypoints(CONFIG)))
+        for path, relative in zip(paths, declared_entrypoints(CONFIG)):
             unit = next(
                 unit
                 for unit in CONFIG.assessment.skill_units
@@ -1358,7 +1362,7 @@ class EntrypointPathTest(unittest.TestCase):
                 continue
             with self.subTest(client=plan.name):
                 argvs = harness.invocation_argv(CONFIG, plan, "/usr/bin/python3.12")
-                self.assertEqual(len(argvs), len(CONFIG.custody.entrypoint_transforms))
+                self.assertEqual(len(argvs), len(declared_entrypoints(CONFIG)))
 
     def test_every_stage_argv_is_fully_substituted_before_it_runs(self) -> None:
         """No stage may reach a process still carrying a placeholder.
@@ -1613,7 +1617,7 @@ class RedactionTest(unittest.TestCase):
             harness.PYTHON: "/usr/bin/python3.12",
             harness.PLUGIN_NAME: CONFIG.name,
         }
-        entrypoint = CONFIG.custody.entrypoint_transforms[0]
+        entrypoint = declared_entrypoints(CONFIG)[0]
         command = f"/usr/bin/python3.12 /scratch/package/{entrypoint} --help"
         self.assertEqual(
             harness.redact(command, values),
@@ -1897,12 +1901,12 @@ class RecordTest(unittest.TestCase):
         recorded_statuses = invocation["evidence"].split("exit status ")[1].split(".")[0]
         self.assertEqual(
             len(recorded_statuses.split(", ")),
-            len(CONFIG.custody.entrypoint_transforms),
+            len(declared_entrypoints(CONFIG)),
             invocation["evidence"],
         )
         # And the recorded command is the redacted form the matrices use.
         self.assertTrue(invocation["command"].startswith(f"{harness.PYTHON} {harness.PACKAGE}/"))
-        self.assertIn(CONFIG.custody.entrypoint_transforms[0], invocation["command"])
+        self.assertIn(declared_entrypoints(CONFIG)[0], invocation["command"])
         self.assertEqual(harness.unresolved_placeholders((invocation["command"],)), [
             harness.PACKAGE, harness.PYTHON
         ])

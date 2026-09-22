@@ -41,11 +41,20 @@ import port_config  # noqa: E402
 import sync_vendor_source as svs  # noqa: E402
 
 
-#: The committed UniFi port descriptor. Every package-specific value these
-#: tests need comes from it rather than from a constant restated here, so a
-#: descriptor that stopped describing the shipped package fails these tests
-#: rather than passing them against a stale copy of its own contents.
-CONFIG = svs.load_config("unifi", ROOT)
+def _synthetic_derived_unifi() -> port_config.PortConfig:
+    """A derived descriptor the synchronizer tests can load.
+
+    The shipped UniFi package is authored, and ``load_config`` refuses an
+    authored descriptor. These tests exercise synchronization, so they carry
+    the historical custody table themselves. The repository URL is inert.
+    ``tests/fixtures/unifi.json`` is that table.
+    """
+    fixture = ROOT / "tests" / "fixtures" / "unifi.json"
+    document = json.loads(fixture.read_text(encoding="utf-8"))
+    return port_config.parse(document, root=ROOT, path=fixture)
+
+
+CONFIG = _synthetic_derived_unifi()
 
 
 def variant_config(**custody_overrides: object) -> "port_config.PortConfig":
@@ -1571,8 +1580,26 @@ class ManifestPathSafetyTests(SyncFixture):
 def _skip_unless_shipped(test: unittest.TestCase) -> Path:
     package = ROOT / "plugins" / CONFIG.name
     if not (package / "PROVENANCE.json").is_file():
-        test.skipTest("the portable unifi package has not been synchronized yet")
+        test.skipTest(
+            "the shipped UniFi package is authored and has no provenance manifest"
+        )
     return package
+
+
+class AuthoredUnifiTests(unittest.TestCase):
+    """The package this repository ships is no longer a synchronization target."""
+
+    def test_the_shipped_descriptor_is_authored(self) -> None:
+        config = port_config.load("unifi", ROOT)
+        self.assertTrue(config.is_authored)
+        self.assertIsNone(config.source)
+        self.assertIsNone(config.custody)
+        self.assertFalse((ROOT / "plugins" / "unifi" / "PROVENANCE.json").is_file())
+
+    def test_sync_refuses_the_shipped_descriptor(self) -> None:
+        with self.assertRaises(svs.SyncError) as caught:
+            svs.load_config("unifi", ROOT)
+        self.assertIn("authored", str(caught.exception))
 
 
 class ShippedPackageTests(unittest.TestCase):

@@ -11,10 +11,10 @@ Standard library only, matching ``tests/test_client_entrypoints.py``.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -203,21 +203,22 @@ class PortableReadmeTests(unittest.TestCase):
 
 
 class ReadmeCustodyTests(unittest.TestCase):
-    def test_readme_is_target_owned_so_a_resync_cannot_restore_the_claude_lede(self) -> None:
-        """Plan: README is portable core, rewritten site-neutral — not a byte copy."""
-        manifest = README.parent / "PROVENANCE.json"
-        self.assertTrue(manifest.is_file())
-        payload = json.loads(manifest.read_text(encoding="utf-8"))
-        entries = [entry for entry in payload["files"] if entry.get("path") == "README.md"]
-        self.assertEqual(len(entries), 1, "README.md must appear once in PROVENANCE.json")
-        entry = entries[0]
-        self.assertEqual(
-            entry.get("classification"),
-            "target-owned",
-            "classifying README as an upstream byte copy is what shipped the "
-            "Claude-specific lede; a later synchronize() would restore it",
-        )
-        self.assertNotIn("sha256", entry)
+    def test_an_authored_package_cannot_be_resynchronized_over_the_readme(self) -> None:
+        """A derived resync is what restored a Claude-specific lede.
+
+        The shipped package is authored, so the synchronizer refuses it before
+        it can read an upstream README.
+        """
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import port_config  # noqa: E402
+        import sync_vendor_source as svs  # noqa: E402
+
+        config = port_config.load("unifi", ROOT)
+        self.assertTrue(config.is_authored)
+        self.assertFalse((README.parent / "PROVENANCE.json").is_file())
+        with self.assertRaises(svs.SyncError) as caught:
+            svs.load_config("unifi", ROOT)
+        self.assertIn("authored", str(caught.exception))
 
 
 if __name__ == "__main__":

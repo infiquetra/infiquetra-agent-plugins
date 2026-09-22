@@ -70,43 +70,28 @@ note.** `source` and `custody` are absent. The note names `_bundled/`, which
 is the directory the clients import and the name `tests/test_port_config.py`
 checks for in the shipped UniFi descriptor's notes.
 
-## What does not pass, and why it was left
+## Follow-up: the shared files this change breaks
 
-`python3 scripts/check_repo.py` fails on three markdown links to
-`plugins/unifi/PROVENANCE.json`, in the repository `README.md`,
-`docs/engineering-journal/LEARNINGS.md`, and `docs/engineering-journal/QUEUED.md`.
-This unit does not edit those files. Twelve import branches land together, and
-the lead consolidates the shared documents.
+The three markdown links to `plugins/unifi/PROVENANCE.json`, in the repository
+README, `LEARNINGS.md`, and `QUEUED.md`, now keep that filename as text and
+point at `plugins/unifi/CHANGELOG.md`, with the same parenthetical the
+Fleet Core import used.
 
-`python3 -m unittest discover -s tests` fails for the same links, and for
-tests that still treat UniFi as a derived package:
+`tests/test_sync_vendor_source.py` loads a synthetic derived descriptor from
+`tests/fixtures/unifi.json` (inert repository `https://example.com/unifi-upstream`,
+the historical custody paths). The shipped descriptor is asserted authored, and
+`load_config("unifi")` is asserted to refuse it. `tests/test_assess_clients.py`
+invokes `assessment.entrypoints`. `tests/test_check_compatibility_matrix.py`
+treats the 2026-08-22 matrix and readback as superseded history. Their
+successor, `docs/evidence/2026-09-22-unifi-authored-cut.md`, is current and is
+not a matrix. Citations of the retired matrix outside the evidence directory
+say so in the link text.
 
-- `tests/test_sync_vendor_source.py` calls `load_config("unifi")` at import.
-  That function refuses an authored descriptor, so the module does not load.
-- `tests/test_assess_clients.py` reads `custody.entrypoint_transforms` and
-  `source.repository` on the live UniFi descriptor. Both are `None`.
-- `tests/test_check_compatibility_matrix.py` still requires
-  `2026-08-22-unifi-compatibility-matrix.md` to be current and to fingerprint
-  the tree, and it still reads `PROVENANCE.json` for the readback pin. The
-  repository `README.md` also links that matrix without saying the link is
-  historical, which fails once the matrix is superseded.
-- `tests/test_unifi_readme.py` requires `PROVENANCE.json` to classify
-  `README.md` as target-owned, and its documented `python3 scripts/check_repo.py`
-  command fails on the three links above.
-- `tests/test_mission_control_readme.py` runs the same `check_repo.py` command,
-  so it fails on those links too.
-
-Editing those tests would be an edit outside `plugins/unifi/`, `ports/unifi.json`,
-`docs/evidence/`, and this narrative. The package tests do pass:
-`python3 -m pytest plugins/unifi/tests -q`.
-
-Two mission-control template-sync failures also showed up in the same unittest
-run. This branch does not touch those templates. They were not investigated
-past that.
+`tests/test_unifi_readme.py` asserts that a resynchronization cannot run,
+because that is what used to be able to replace the portable README.
 
 ## Rule
 
-An import that deletes `PROVENANCE.json` is not green in this repository until
-the shared tests stop loading that package through `sync_vendor_source.load_config`
-and stop binding the old matrix to the current tree. The package can be
-authored and tested on its own before that shared update lands.
+Deleting a provenance manifest means the synchronizer tests need their own
+derived descriptor, and the old matrix stays a superseded document. Do not
+invent a new matrix so a version binding stays green.
