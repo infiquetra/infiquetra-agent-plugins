@@ -47,9 +47,16 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
+    # 1.2.2 carries three upstream tests the 1.2.1 import had omitted --
+    # test_work_gate_integrity.py, test_work_prose_contracts.py and
+    # test_capability_degrade.py from infiquetra-claude-plugins@acc99fe7 -- all targeting files
+    # this package ships (saga.py, lifecycle_state.py, issue_progress.py, skills/work/SKILL.md).
+    # No production behavior changed; the bump exists because this suite pins the manifest and
+    # marketplace version literally, and every content change to the package re-reads it here.
+    #
     # 1.2.1 is the authored-here cut: same upstream behavior, patch bumped so the
     # catalog's version is not the upstream pin.
-    assert plugin_json["version"] == "1.2.1"  # 1.2.0: the three advisory review
+    assert plugin_json["version"] == "1.2.2"  # 1.2.0: the three advisory review
     # judgments of issue #1034 — the conditional-lens proposal at declaration time
     # (review_roster.py --propose, additive only), finding dedupe groups and the severity
     # flag over results (review_result.py, grouped and attached, never applied). Bumped over
