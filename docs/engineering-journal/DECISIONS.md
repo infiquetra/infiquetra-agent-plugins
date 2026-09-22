@@ -1,5 +1,57 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-09-22
+
+### Custody moves here: every package becomes authored, and infiquetra-claude-plugins retires
+
+**Decision.** The repository-level custody question that the 2026-08-21 pilot
+decision left "deliberately unanswered" (see the archived entry "Choose the
+first portability pilot and custody gate") is answered: source custody for
+every Infiquetra plugin moves to this repository. `infiquetra-claude-plugins`
+(13 live plugins at commit `acc99fe7`) is imported once, package by package,
+and then archived read-only on GitHub after every harness on the operator's
+Mac Studio has been read back as installing from here. The run plan is
+[`docs/plans/2026-09-22-custody-move-and-claude-plugins-retirement-plan.md`](../plans/2026-09-22-custody-move-and-claude-plugins-retirement-plan.md).
+
+Four rules change with it:
+
+1. A package with no `PROVENANCE.json` is authored here; after import every
+   package drops its manifest, and the import SHA lives in `CHANGELOG.md`.
+2. Port descriptors gain an authored mode (schema version 4, `source` and
+   `custody` optional; the `assessment` safety block stays mandatory).
+3. Every package is Claude-installable from this repository: a root
+   `.claude-plugin/plugin.json` per package and a marketplace that lists all
+   of them. This is the operator decision `QUEUED.md` P1 was waiting on, so
+   the agent-launcher test asserting "voice only" retires with it.
+4. Compatibility evidence binds to a released package version, not to every
+   tree; a version bump without a fresh ten-client run fails the check, a tree
+   that moved under an unchanged version is reported, not failed.
+
+**Rationale.** The derived-artifact model existed to keep one writable source
+while the portable layout was unproven. Three ports (UniFi, Mission Control,
+agent-launcher) and one authored package (voice) proved it across ten clients
+with zero failures. Keeping two writable sources after that is the thing the
+architecture brief warned against ("exactly one writable source for shared
+behavior"), and the old repository is the one Claude Code no longer needs now
+that it reads `AGENTS.md`. Fingerprint-bound evidence was right for a package
+whose bytes only change at a repin; for thirteen authored packages it would
+demand a ten-client run per commit, which is a rule that would be broken
+rather than kept.
+
+**Rejected alternatives.** *Repin the three ported packages and keep
+deriving* — leaves ten packages with no portable home and keeps the old
+repository alive indefinitely. *Retire the old repository first and import
+later* — violates the brief's "retire existing marketplaces before their
+replacements are proven" non-goal; the archive is the last step here, not the
+first. *Big-bang single import commit* — unreviewable; the plan imports one
+package per branch with the same fixed recipe.
+
+**Revisit when.** A second organization or machine needs to consume this
+catalog through a distribution path that a git checkout cannot serve (Cursor
+Agent's marketplace takes only a git URL; OpenAI Codex's marketplace needs a
+manifest this repository does not ship); or when a harness on the machine is
+found to have consumed the old repository through a path the cutover missed.
+
 ## 2026-08-30
 
 ### Mission Control 2.15.2 resync run plan: bind the identity surface, route around the graded files, freeze after the last package edit
