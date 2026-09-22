@@ -2,6 +2,34 @@
 
 ## 2026-09-22
 
+### A notice is corrected, never superseded, when its assessment finally lands
+
+**Decision.** The 2026-09-22 ten-client run produced a current matrix for three
+packages whose evidence chain ended at a notice. Each notice is corrected in
+place to name the new matrix and keeps `matrix-status: notice`. None is marked
+superseded, and no historical record is repointed at a new matrix.
+
+**Rationale.** The two rules that landed with the notice status decide this
+between them. `check_document_status` refuses a notice that carries
+supersession directives, because a notice is not a supersession and names no
+successor of its own. `check_notice_discipline` refuses an assessment-free
+document that resolves to `current`. So a notice has exactly one status
+available to it, and correcting its prose is the only way to keep it true once
+the assessment it anticipated exists. Nothing else has to move: a superseded
+document may name a notice as its successor, so every existing chain stays
+valid unedited.
+
+**Rejected alternatives.** Mark each notice superseded by its new matrix and
+repoint its dependents. The checker refuses the first half outright, and the
+second half would have rewritten the supersession reasons on fifteen records
+that are correct as published and edited five pinned assertions in
+`tests/test_check_compatibility_matrix.py` — the assertions that exist to make
+a moving chain visible to a reviewer rather than absorbed in a diff.
+
+**Revisit when.** A package that has a notice gets a second assessment. The
+correction is the same each time: update the notice's prose and its notice
+record to name the current matrix, and leave the chain alone.
+
 ### The custody-move run: decisions taken while it ran
 
 **Decision.** Six calls were made during the 2026-09-22 import run and are

@@ -1,0 +1,36 @@
+{
+  "schema_version": "4",
+  "package": "voice",
+  "package_root": "plugins/voice",
+  "package_manifest": "plugin.json",
+  "assessment": {
+    "credential_prefixes": [],
+    "package_scripts": [
+      "voice_cli.py"
+    ],
+    "mutating_operations": [
+      "bind",
+      "brief-next-turn",
+      "pane",
+      "stop",
+      "toggle"
+    ],
+    "entrypoints": [
+      "scripts/voice_cli.py"
+    ],
+    "skill_units": [
+      "skills/voice"
+    ],
+    "declared_none": [
+      "credential_prefixes"
+    ]
+  },
+  "provenance": {
+    "notes": [
+      "Authored in this repository. There is no upstream pin and no custody table.",
+      "skills/voice/SKILL.md names 'python3 scripts/voice_cli.py <command>' as the package's command surface, and voice_cli.py is the only script that answers --help with a help action. scripts/speak.py exits 0 without output for --help, because it reads its one argument as a payload path rather than as an option. scripts/mcp_server.py ignores its arguments entirely and serves JSON-RPC on stdio, exiting 0 at end of input. An invocation stage through either would record an exit status that says nothing about a command surface, so neither is an assessment entrypoint.",
+      "The package reads no credential variable: PATH is the only environment variable its scripts read, and scripts/settings.py states that no setting may carry a secret. credential_prefixes is therefore empty and named in declared_none.",
+      "The mutating operations are the voice_cli.py subcommands that write: bind binds a Herdr agent, pane runs the pane loop, toggle starts or stops a recording and delivers it, stop halts playback, and policy brief-next-turn arms an override. preflight and policy show only probe and report."
+    ]
+  }
+}

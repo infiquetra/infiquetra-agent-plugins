@@ -1425,17 +1425,22 @@ class NoticeStatusTest(unittest.TestCase):
 class CurrentMatrixReportTest(unittest.TestCase):
     """The per-package 'current matrix: yes/none' line the summary prints."""
 
-    def test_unifi_has_no_current_matrix_today(self) -> None:
-        # unifi's only non-superseded compatibility document is the notice
-        # explaining that 2.0.7 has no ten-client run yet.
+    def test_unifi_has_a_current_matrix(self) -> None:
+        # The 2026-09-22 ten-client run assessed 2.0.7, so the report must say
+        # so. This case asserted `none` while unifi's only non-superseded
+        # compatibility document was the authored-cut notice.
         lines = ccm.current_matrix_report(ROOT)
-        self.assertIn("unifi: current matrix: none", lines)
+        self.assertIn("unifi: current matrix: yes", lines)
 
     def test_a_package_with_no_current_matrix_reports_none(self) -> None:
-        # mission-control's only non-superseded compatibility document is the
-        # notice, which carries no record, so it must report none.
+        # house-style has no compatibility document at all. It declares no
+        # executable entrypoint, so `scripts/assess_clients.py` refuses the
+        # package rather than recording an assessment of nothing, and it stays
+        # the standing example of a package that reports none. This case named
+        # mission-control until the 2026-09-22 ten-client run gave that package
+        # a matrix.
         lines = ccm.current_matrix_report(ROOT)
-        self.assertIn("mission-control: current matrix: none", lines)
+        self.assertIn("house-style: current matrix: none", lines)
 
     def test_every_ported_package_gets_exactly_one_line(self) -> None:
         lines = ccm.current_matrix_report(ROOT)
@@ -1493,7 +1498,11 @@ class CLIWiringTest(unittest.TestCase):
             ccm.main([])
         printed = output.getvalue()
         self.assertIn("Current matrix by package:", printed)
-        self.assertIn("unifi: current matrix: none", printed)
+        # house-style is the standing "none" case: it declares no executable
+        # entrypoint, so the harness refuses the package and it can have no
+        # matrix. unifi filled this role until the 2026-09-22 run gave it one.
+        self.assertIn("house-style: current matrix: none", printed)
+        self.assertIn("unifi: current matrix: yes", printed)
 
 
 class MatrixDiscoveryTest(unittest.TestCase):

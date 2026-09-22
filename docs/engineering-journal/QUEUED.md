@@ -5,10 +5,29 @@
 Activation trigger for all of these: the cutover (every harness on the Mac
 Studio reads back as installed from this repository) has completed.
 
-- **Ten-client assessments for the authored versions (U6).** Run
-  `scripts/assess_clients.py --execute` per package and commit the matrices
-  bound to the authored versions; until then the pre-import matrices are
-  superseded historical context and no package claims a current matrix.
+- **Ten-client assessments for the authored versions (U6).** Done on
+  2026-09-22 for every package the harness could assess. Each carries
+  `docs/evidence/2026-09-22-<package>-compatibility-matrix.md`, bound to the
+  version it ships. Two packages are still outstanding and are blocked on the
+  harness rather than on themselves; the next three items are those blocks.
+- **Let the harness assess a package with no declared entrypoint.**
+  `scripts/assess_clients.py` refuses `house-style` although
+  `ports/house-style.json` already names `entrypoints` in `declared_none`,
+  which is the exemption the script's own error message asks for. Until that is
+  closed, house-style can carry no matrix.
+- **Let the harness assess a package with no declared skill unit.** The same
+  script raises `IndexError` in `run_stage` when a per-skill stage has no units
+  to fan out over, which is any package shipping no skill unit. This is why
+  `ports/fleet-core.json` was removed rather than committed.
+- **Read Grok's install id from a stage that prints it.** The capture rule is
+  declared on the placement stage. Grok 1.0.40 prints the generated id at
+  `plugin list` and at `plugin details`, not at install, so every package in
+  the 2026-09-22 run records Grok's invocation blocked on an unresolved
+  `<plugin-id>` placeholder.
+- **Repoint the OpenCode plan at a subcommand that exists.** `opencode debug
+  skill` is gone in OpenCode 2.0.13, so the discovery and load stages exit 1
+  for every package. The skill unit is still placed; it is no longer
+  observed.
 - **Site-neutralize `home-lab-ops`.** Move host addresses and team-scaffold
   host specs into an operator site profile as UniFi did; the package today
   carries what the public upstream carried.

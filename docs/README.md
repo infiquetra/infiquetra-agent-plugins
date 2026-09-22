@@ -41,7 +41,15 @@
 
 ## Evidence
 
-- [Agent Launcher ten-client compatibility matrix](evidence/2026-08-27-agent-launcher-compatibility-matrix.md)
+- The 2026-09-22 ten-client run recorded a current compatibility matrix for
+  twelve authored packages, one file each at
+  `evidence/2026-09-22-<package>-compatibility-matrix.md`. Every record binds
+  to the version its package ships, carries all four stage results for all ten
+  installed clients, and states each reason from what those stages recorded.
+  `house-style` has no matrix: it declares no executable entrypoint, and
+  [`scripts/assess_clients.py`](../scripts/assess_clients.py) refuses the
+  package rather than recording an assessment of nothing.
+- [Agent Launcher ten-client compatibility matrix](evidence/2026-09-22-agent-launcher-compatibility-matrix.md)
   records what every installed coding-agent client did with the portable
   agent-launcher package across four stages with fingerprint-bound
   verification, with post-activation readback in
