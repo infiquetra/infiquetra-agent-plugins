@@ -1,0 +1,92 @@
+team:
+  name: mimir
+  display: Mimir engineering team
+  host_group: mac_minis
+  limit_host: jeffs-mac-mini.infiquetra.com
+  pin_runtime: true
+  coresident: Freya
+  roles:
+  - role: hermes
+    tags: hermes,mimir
+  - role: hermes_dm_listener
+    tags: dm_listener,mimir
+  - role: hermes_mint_broker
+    tags: mint_broker,mimir
+inventory:
+  ansible_host: 10.220.1.196
+  ansible_user: jefcox
+profiles:
+- name: mimir-engineer
+  persona: mimir
+  discord_token_var: vault_discord_bot_token_mimir  # variable name only
+- name: brokkr
+  persona: brokkr
+  discord_token_var: vault_discord_bot_token_brokkr  # variable name only
+- name: eitri
+  persona: eitri
+  discord_token_var: vault_discord_bot_token_eitri  # variable name only
+- name: sons-of-ivaldi
+  persona: sons-of-ivaldi
+  discord_token_var: vault_discord_bot_token_sons  # variable name only
+- name: s-ivaldi-investigator
+  headless: true
+- name: s-ivaldi-card-planner
+  headless: true
+- name: s-ivaldi-developer
+  headless: true
+- name: s-ivaldi-integrator
+  headless: true
+- name: s-ivaldi-github
+  headless: true
+- name: s-ivaldi-ops
+  headless: true
+- name: s-ivaldi-review-skeptic
+  headless: true
+- name: s-ivaldi-review-security
+  headless: true
+- name: s-ivaldi-review-architecture
+  headless: true
+- name: s-ivaldi-review-code-quality
+  headless: true
+- name: s-ivaldi-review-infra
+  headless: true
+- name: s-ivaldi-review-api
+  headless: true
+- name: s-ivaldi-review-testing
+  headless: true
+- name: s-ivaldi-review-privacy
+  headless: true
+- name: s-ivaldi-review-clarity
+  headless: true
+- name: s-ivaldi-review-ai-usefulness
+  headless: true
+- name: s-ivaldi-scan-security
+  headless: true
+- name: s-ivaldi-scan-iac-cost
+  headless: true
+- name: s-ivaldi-scan-api-compat
+  headless: true
+- name: s-ivaldi-scan-dependency
+  headless: true
+- name: s-ivaldi-test-smoke
+  headless: true
+- name: s-ivaldi-test-scenario
+  headless: true
+- name: s-ivaldi-test-api-contract
+  headless: true
+- name: s-ivaldi-test-sdk-regression
+  headless: true
+- name: s-ivaldi-test-event-flow
+  headless: true
+- name: s-ivaldi-test-ui-regression
+  headless: true
+- name: s-ivaldi-test-performance
+  headless: true
+- name: s-ivaldi-test-concurrency
+  headless: true
+- name: s-ivaldi-monitor-github-actions
+  headless: true
+- name: s-ivaldi-monitor-runtime
+  headless: true
+- name: s-ivaldi-deploy-watcher
+  headless: true

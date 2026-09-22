@@ -1,0 +1,113 @@
+---
+# Deploy the Hermes delivery/plan-phase crew + orchestrator - and ONLY this team - from this repo.
+#
+# Uses the infiquetra.hermes_team collection via deploy/requirements.yml:
+#   hermes_team_profiles_filter : narrows the host's profiles to this team's
+#     (derived from this repo's profiles/ dir) so co-resident teams are untouched.
+#   hermes_souls_source         : SOULs sourced from this repo's profiles/<n>/SOUL.md.
+#
+# Usage (see deploy/README.md):
+#   export INFIQUETRA_SHARED_INFRA_VAULT=/path/to/shared-infra-vault.yml
+#   ansible-playbook -i <inventory> \
+#     --limit hermes.infiquetra.com hermes.yml --vault-password-file ~/.vault_pass.txt
+#
+# Native distribution packaging (`hermes profile install`) is DEFERRED.
+
+- name: Deploy Hermes delivery/plan-phase crew + orchestrator (profile-scoped)
+  hosts: orchestrator_vms
+  gather_facts: true
+  vars:
+    # realpath normalizes the .. so the control-node find() gets an absolute dir.
+    # NOTE: ansible's fileglob lookup does NOT expand '..' - use find() instead.
+    _team_repo_root: "{{ (playbook_dir + '/..') | realpath }}"
+    hermes_souls_source: "{{ _team_repo_root }}/profiles"
+    # profile-dir layout = source each SOUL from <repo>/profiles/<name>/SOUL.md.
+    hermes_souls_layout: profile-dir
+    # Explicit operator-provided shared runtime secrets (Redis, Langfuse, and
+    # optional voice-tooling credentials). Keep this outside the team repo unless
+    # the file is encrypted for this consumer.
+    shared_infra_vault_path: "{{ lookup('ansible.builtin.env', 'INFIQUETRA_SHARED_INFRA_VAULT') | default('', true) }}"
+  vars_files:
+    # This team's OWN secrets (post vault-split): Discord tokens etc.
+    - "{{ _team_repo_root }}/ansible/inventory/group_vars/all/vault.yml"
+    # This team's hermes_team_profiles. The team repo is authoritative.
+    - "{{ _team_repo_root }}/deploy/team_profiles.yml"
+  pre_tasks:
+    - name: Require explicit shared-infra vault input
+      ansible.builtin.assert:
+        that:
+          - shared_infra_vault_path | length > 0
+        fail_msg: >-
+          Set INFIQUETRA_SHARED_INFRA_VAULT to the encrypted shared runtime
+          secrets file before running this play.
+      tags: [always]
+
+    - name: Refuse legacy infrastructure checkout inputs
+      ansible.builtin.assert:
+        that:
+          - "'/home-lab/ansible/' not in shared_infra_vault_path"
+          - (ansible_inventory_sources | default([]) | select('search', '/home-lab/ansible/') | list | length) == 0
+        fail_msg: >-
+          Hermes delivery/plan-phase crew + orchestrator deploy inputs must be independent artifacts. Do not pass
+          the legacy infrastructure checkout inventory or shared-infra vault path.
+      tags: [always]
+
+    - name: Check shared-infra vault path on the control node
+      ansible.builtin.stat:
+        path: "{{ shared_infra_vault_path }}"
+      delegate_to: localhost
+      run_once: true
+      register: _shared_infra_vault_stat
+      tags: [always]
+
+    - name: Refuse missing shared-infra vault file
+      ansible.builtin.assert:
+        that:
+          - _shared_infra_vault_stat.stat.exists
+          - _shared_infra_vault_stat.stat.isreg
+        fail_msg: "Shared-infra vault file not found: {{ shared_infra_vault_path }}"
+      tags: [always]
+
+    - name: Load shared-infra runtime secrets
+      ansible.builtin.include_vars:
+        file: "{{ shared_infra_vault_path }}"
+      no_log: true
+      tags: [always]
+
+    - name: Enumerate this repo's profile dirs on the control node
+      ansible.builtin.find:
+        paths: "{{ _team_repo_root }}/profiles"
+        file_type: directory
+        recurse: false
+      delegate_to: localhost
+      run_once: true
+      register: _team_profile_dirs
+
+    - name: Derive the per-team filter from the profile dirs
+      ansible.builtin.set_fact:
+        hermes_team_profiles_filter: >-
+          {{ _team_profile_dirs.files | map(attribute='path') | map('basename') | list | sort }}
+
+    # HARD GATE: an empty filter would make the hermes role deploy ALL of the
+    # host's profiles (incl. co-resident teams). Refuse, loudly, before any role runs.
+    - name: Refuse to proceed on an empty filter (would deploy co-resident teams)
+      ansible.builtin.assert:
+        that:
+          - hermes_team_profiles_filter | length > 0
+        fail_msg: >-
+          Derived an EMPTY profile filter from {{ _team_repo_root }}/profiles -
+          refusing to deploy (an empty filter makes the hermes role deploy the
+          host's entire profile set, including co-resident teams). Check the
+          repo layout / playbook_dir.
+
+    - name: Show profile-scope (and what it won't touch)
+      ansible.builtin.debug:
+        msg: >-
+          Deploying {{ hermes_team_profiles_filter | length }} profiles
+          ({{ hermes_team_profiles_filter | join(', ') }}). Only this team's profiles are touched.
+  roles:
+    - { role: infiquetra.hermes_team.ollama, tags: ['ollama', 'hermes_crew'] }
+    - { role: infiquetra.hermes_team.hermes, tags: ['hermes', 'hermes_crew'] }
+    - { role: infiquetra.hermes_team.hermes_team_listener, tags: ['team_listener', 'hermes_crew'] }
+    - { role: infiquetra.hermes_team.hermes_dm_listener, tags: ['dm_listener', 'hermes_crew'] }
+    - { role: infiquetra.hermes_team.hermes_orchestrator, tags: ['orchestrator', 'hermes_crew'] }

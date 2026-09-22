@@ -1,0 +1,13 @@
+---
+# hermes_team_profiles for team-themis — self-contained (Phase 8 Stage A pattern).
+# Themis migrated host-level -> per-profile 2026-06-01 (peer of zeus; future
+# team purpose TBD). Model/reasoning from Themis's live config.yaml.
+hermes_team_profiles:
+  - name: themis
+    persona: themis
+    role: olympian_agent
+    model: gemini-3-flash-preview:cloud
+    reasoning_effort: medium
+    max_turns: 90
+    worker_pool: 1
+    discord_token_var: vault_discord_bot_token_themis  # variable name only

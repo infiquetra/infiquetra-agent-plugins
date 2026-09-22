@@ -1,0 +1,21 @@
+team:
+  name: perseus
+  display: Perseus (legacy single agent)
+  host_group: agent_vms
+  limit_host: perseus.infiquetra.com
+  pin_runtime: false
+  coresident: null
+  roles:
+  - role: ollama
+    tags: ollama,perseus
+  - role: hermes
+    tags: hermes,perseus
+  - role: hermes_dm_listener
+    tags: dm_listener,perseus
+inventory:
+  ansible_host: 10.220.1.55
+  ansible_user: agent
+profiles:
+- name: perseus
+  persona: perseus
+  discord_token_var: vault_discord_bot_token_perseus  # variable name only

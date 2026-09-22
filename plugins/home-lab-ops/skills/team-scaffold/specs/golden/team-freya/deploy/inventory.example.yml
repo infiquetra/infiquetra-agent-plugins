@@ -1,0 +1,8 @@
+---
+all:
+  children:
+    mac_minis:
+      hosts:
+        jeffs-mac-mini.infiquetra.com:
+          ansible_host: 10.220.1.196
+          ansible_user: jefcox

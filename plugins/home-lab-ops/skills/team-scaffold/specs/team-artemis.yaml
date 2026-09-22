@@ -1,0 +1,21 @@
+team:
+  name: artemis
+  display: Artemis (legacy single agent)
+  host_group: agent_vms
+  limit_host: artemis.infiquetra.com
+  pin_runtime: false
+  coresident: null
+  roles:
+  - role: ollama
+    tags: ollama,artemis
+  - role: hermes
+    tags: hermes,artemis
+  - role: hermes_dm_listener
+    tags: dm_listener,artemis
+inventory:
+  ansible_host: 10.220.1.53
+  ansible_user: agent
+profiles:
+- name: artemis
+  persona: artemis
+  discord_token_var: vault_discord_bot_token_artemis  # variable name only

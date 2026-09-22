@@ -1,0 +1,42 @@
+team:
+  name: hermes
+  display: Hermes delivery/plan-phase crew + orchestrator
+  host_group: orchestrator_vms
+  limit_host: hermes.infiquetra.com
+  pin_runtime: false
+  coresident: null
+  roles:
+  - role: ollama
+    tags: ollama,hermes_crew
+  - role: hermes
+    tags: hermes,hermes_crew
+  - role: hermes_team_listener
+    tags: team_listener,hermes_crew
+  - role: hermes_dm_listener
+    tags: dm_listener,hermes_crew
+  - role: hermes_orchestrator
+    tags: orchestrator,hermes_crew
+inventory:
+  ansible_host: 10.220.1.69
+  ansible_user: agent
+profiles:
+- name: hermes-orchestrator
+  persona: hermes
+- name: aethalides-planner
+  persona: aethalides
+  discord_token_var: vault_discord_bot_token_aethalides  # variable name only
+- name: autolycus-skeptic
+  persona: autolycus
+  discord_token_var: vault_discord_bot_token_autolycus  # variable name only
+- name: pan-readiness
+  persona: pan
+  discord_token_var: vault_discord_bot_token_pan  # variable name only
+- name: tyche-fit
+  persona: tyche
+  discord_token_var: vault_discord_bot_token_tyche  # variable name only
+- name: eudoros-security
+  persona: eudoros
+  discord_token_var: vault_discord_bot_token_eudoros  # variable name only
+- name: echion-tests
+  persona: echion
+  discord_token_var: vault_discord_bot_token_echion  # variable name only

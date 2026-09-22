@@ -1,0 +1,6 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "home-lab-ops",
+  "version": "1.2.2",
+  "description": "Proxmox VE cluster operations, Ansible pre-flight validation, Ceph management, monitoring guard, and vault helper for home lab infrastructure"
+}

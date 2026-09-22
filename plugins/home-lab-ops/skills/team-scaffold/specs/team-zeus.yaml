@@ -1,0 +1,21 @@
+team:
+  name: zeus
+  display: Zeus (legacy single agent)
+  host_group: agent_vms
+  limit_host: zeus.infiquetra.com
+  pin_runtime: false
+  coresident: null
+  roles:
+  - role: ollama
+    tags: ollama,zeus
+  - role: hermes
+    tags: hermes,zeus
+  - role: hermes_dm_listener
+    tags: dm_listener,zeus
+inventory:
+  ansible_host: 10.220.1.50
+  ansible_user: agent
+profiles:
+- name: zeus
+  persona: zeus
+  discord_token_var: vault_discord_bot_token_zeus  # variable name only

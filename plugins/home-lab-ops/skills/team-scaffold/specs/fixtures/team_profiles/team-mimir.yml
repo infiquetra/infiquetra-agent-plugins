@@ -1,0 +1,394 @@
+---
+# hermes_team_profiles for this team — relocated from home-lab host_vars
+# (Phase 8 Stage A, 2026-06-01). Loaded by deploy/<team>.yml vars_files.
+hermes_team_profiles:
+- name: mimir-engineer
+  persona: mimir
+  role: engineering_council
+  model: gpt-5.5
+  reasoning_effort: xhigh
+  max_turns: 180
+  worker_pool: 1
+  discord_token_var: vault_discord_bot_token_mimir  # variable name only
+  bot_user_id: '1486896133660868758'
+  voice_auto_join: true
+  voice_channel_id: '1508449251472969950'
+  voice_always_respond: false
+  elevenlabs_voice_id: PLACEHOLDER_DESIGN_LATER
+  tts_provider: edge
+  piper_voice: en_GB-alan-medium
+  edge_voice: en-GB-RyanNeural
+  skills:
+  - kanban-orchestrator
+  - mimir-orchestration
+  - request-human-input
+  - vcs-state
+  - github-issues
+  - writing-plans
+  - plan
+  - obsidian
+- name: brokkr
+  persona: brokkr
+  role: engineering_council
+  model: gpt-5.5
+  reasoning_effort: xhigh
+  max_turns: 180
+  worker_pool: 1
+  discord_token_var: vault_discord_bot_token_brokkr  # variable name only
+  bot_user_id: '1509676443972534403'
+  voice_auto_join: true
+  voice_channel_id: '1508449251472969950'
+  elevenlabs_voice_id: PLACEHOLDER_DESIGN_LATER
+  tts_provider: edge
+  edge_voice: en-GB-ThomasNeural
+  piper_voice: en_GB-alan-medium
+  skills:
+  - kanban-orchestrator
+  - request-human-input
+  - vcs-state
+  - github-issues
+  - systematic-debugging
+  - pre-commit-check
+  - obsidian
+- name: eitri
+  persona: eitri
+  role: engineering_council
+  model: gpt-5.5
+  reasoning_effort: xhigh
+  max_turns: 180
+  worker_pool: 1
+  discord_token_var: vault_discord_bot_token_eitri  # variable name only
+  bot_user_id: '1509677506976809100'
+  voice_auto_join: true
+  voice_channel_id: '1508449251472969950'
+  elevenlabs_voice_id: PLACEHOLDER_DESIGN_LATER
+  tts_provider: edge
+  edge_voice: en-US-BrianNeural
+  piper_voice: en_US-ryan-high
+  skills:
+  - kanban-orchestrator
+  - request-human-input
+  - vcs-state
+  - code-review
+  - lsp-query
+  - obsidian
+- name: sons-of-ivaldi
+  persona: sons-of-ivaldi
+  role: announcer
+  model: gpt-5.4-mini
+  discord_token_var: vault_discord_bot_token_sons  # variable name only
+  bot_user_id: '1510025830464622642'
+  skills:
+  - request-human-input
+- name: s-ivaldi-investigator
+  headless: true
+  role: worker
+  model: gpt-5.4
+  reasoning_effort: high
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - lsp-query
+  - systematic-debugging
+- name: s-ivaldi-card-planner
+  headless: true
+  role: worker
+  model: gpt-5.4
+  reasoning_effort: high
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - writing-plans
+  - plan
+  - lsp-query
+- name: s-ivaldi-developer
+  headless: true
+  role: worker
+  model: gpt-5.3-codex-spark
+  reasoning_effort: high
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - lsp-query
+  - test-driven-development
+  - pre-commit-check
+  - coverage-summary
+- name: s-ivaldi-integrator
+  headless: true
+  role: worker
+  model: gpt-5.4
+  reasoning_effort: high
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - lsp-query
+  - github-pr-workflow
+  - pre-commit-check
+- name: s-ivaldi-github
+  headless: true
+  role: worker
+  model: gpt-5.4-mini
+  reasoning_effort: medium
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - github-issues
+  - github-pr-workflow
+  - github-auth
+- name: s-ivaldi-ops
+  headless: true
+  role: worker
+  model: gpt-5.4
+  reasoning_effort: high
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - systematic-debugging
+- name: s-ivaldi-review-skeptic
+  headless: true
+  role: reviewer
+  model: gpt-5.4
+  reasoning_effort: high
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - code-review
+  - systematic-debugging
+- name: s-ivaldi-review-security
+  headless: true
+  role: reviewer
+  model: gpt-5.4
+  reasoning_effort: high
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - code-review
+- name: s-ivaldi-review-architecture
+  headless: true
+  role: reviewer
+  model: gpt-5.4
+  reasoning_effort: high
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - code-review
+  - lsp-query
+- name: s-ivaldi-review-code-quality
+  headless: true
+  role: reviewer
+  model: gpt-5.4
+  reasoning_effort: medium
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - code-review
+  - lsp-query
+- name: s-ivaldi-review-infra
+  headless: true
+  role: reviewer
+  model: gpt-5.4
+  reasoning_effort: high
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - code-review
+- name: s-ivaldi-review-api
+  headless: true
+  role: reviewer
+  model: gpt-5.4
+  reasoning_effort: medium
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - code-review
+- name: s-ivaldi-review-testing
+  headless: true
+  role: reviewer
+  model: gpt-5.4
+  reasoning_effort: medium
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - code-review
+  - coverage-summary
+- name: s-ivaldi-review-privacy
+  headless: true
+  role: reviewer
+  model: gpt-5.4
+  reasoning_effort: high
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - code-review
+- name: s-ivaldi-review-clarity
+  headless: true
+  role: reviewer
+  model: gpt-5.4-mini
+  reasoning_effort: medium
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - code-review
+- name: s-ivaldi-review-ai-usefulness
+  headless: true
+  role: reviewer
+  model: gpt-5.4
+  reasoning_effort: medium
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - code-review
+- name: s-ivaldi-scan-security
+  headless: true
+  role: validator
+  model: gpt-5.4-mini
+  reasoning_effort: medium
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+- name: s-ivaldi-scan-iac-cost
+  headless: true
+  role: validator
+  model: gpt-5.4-mini
+  reasoning_effort: medium
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+- name: s-ivaldi-scan-api-compat
+  headless: true
+  role: validator
+  model: gpt-5.4-mini
+  reasoning_effort: medium
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+- name: s-ivaldi-scan-dependency
+  headless: true
+  role: validator
+  model: gpt-5.4-mini
+  reasoning_effort: medium
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+- name: s-ivaldi-test-smoke
+  headless: true
+  role: validator
+  model: gpt-5.4-mini
+  reasoning_effort: low
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - coverage-summary
+- name: s-ivaldi-test-scenario
+  headless: true
+  role: validator
+  model: gpt-5.4
+  reasoning_effort: medium
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - coverage-summary
+- name: s-ivaldi-test-api-contract
+  headless: true
+  role: validator
+  model: gpt-5.4-mini
+  reasoning_effort: medium
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+- name: s-ivaldi-test-sdk-regression
+  headless: true
+  role: validator
+  model: gpt-5.4-mini
+  reasoning_effort: medium
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+- name: s-ivaldi-test-event-flow
+  headless: true
+  role: validator
+  model: gpt-5.4
+  reasoning_effort: high
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+- name: s-ivaldi-test-ui-regression
+  headless: true
+  role: validator
+  model: gpt-5.4
+  reasoning_effort: medium
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - native-mcp
+- name: s-ivaldi-test-performance
+  headless: true
+  role: validator
+  model: gpt-5.4
+  reasoning_effort: high
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+- name: s-ivaldi-test-concurrency
+  headless: true
+  role: validator
+  model: gpt-5.4
+  reasoning_effort: high
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+- name: s-ivaldi-monitor-github-actions
+  headless: true
+  role: validator
+  model: gpt-5.4-mini
+  reasoning_effort: low
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+- name: s-ivaldi-monitor-runtime
+  headless: true
+  role: validator
+  model: gpt-5.4-mini
+  reasoning_effort: medium
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+- name: s-ivaldi-deploy-watcher
+  headless: true
+  role: validator
+  model: gpt-5.4-mini
+  reasoning_effort: medium
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state

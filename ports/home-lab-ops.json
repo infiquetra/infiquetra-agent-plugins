@@ -1,0 +1,34 @@
+{
+  "schema_version": "4",
+  "package": "home-lab-ops",
+  "package_root": "plugins/home-lab-ops",
+  "package_manifest": "plugin.json",
+  "assessment": {
+    "credential_prefixes": [],
+    "package_scripts": [
+      "cli.py",
+      "materialize_specs.py",
+      "team-scaffold"
+    ],
+    "mutating_operations": [
+      "gen-harness",
+      "register-host",
+      "stamp",
+      "vault-wire"
+    ],
+    "entrypoints": [
+      "skills/team-scaffold/scripts/team-scaffold"
+    ],
+    "skill_units": [
+      "skills/ansible-preflight",
+      "skills/inventory-sync",
+      "skills/monitoring-guard",
+      "skills/proxmox-operations",
+      "skills/team-scaffold",
+      "skills/vault-helper"
+    ],
+    "declared_none": [
+      "credential_prefixes"
+    ]
+  }
+}

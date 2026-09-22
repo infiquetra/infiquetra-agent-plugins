@@ -1,0 +1,207 @@
+---
+# hermes_team_profiles for this team — relocated from home-lab host_vars
+# (Phase 8 Stage A, 2026-06-01). Loaded by deploy/<team>.yml vars_files.
+hermes_team_profiles:
+- name: freya-pa
+  persona: freya
+  role: team_lead
+  model: gpt-5.5
+  reasoning_effort: high
+  worker_pool: 1
+  discord_token_var: vault_discord_bot_token_freya  # variable name only
+  bot_user_id: '1466648500124123146'
+  voice_auto_join: true
+  elevenlabs_voice_id: CBEzlSXhnIFLk379R1mo
+  tts_provider: piper
+  piper_voice: en_GB-jenny_dioco-medium
+  edge_voice: en-GB-LibbyNeural
+  skills:
+  - freya-coordination
+  - kanban-orchestrator
+  - request-human-input
+  - vcs-state
+  - github-issues
+  - writing-plans
+  - plan
+  - google-workspace
+  - apple-reminders
+  - todoist
+  - obsidian
+  - findmy
+  - openhue
+  - apple-contacts
+- name: saga-comms
+  persona: saga
+  role: communications_steward
+  model: gpt-5.5
+  reasoning_effort: medium
+  worker_pool: 2
+  discord_token_var: vault_discord_bot_token_saga  # variable name only
+  bot_user_id: '1503058641014493215'
+  voice_auto_join: true
+  elevenlabs_voice_id: c7qAAWgc7aGYHCLDzd8Y
+  tts_provider: piper
+  piper_voice: en_GB-cori-medium
+  edge_voice: en-US-EmmaNeural
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - google-workspace
+  - imessage-bluebubbles
+  - apple-notes
+  - obsidian
+  - apple-contacts
+- name: gersemi-time
+  persona: gersemi
+  role: time_and_task_steward
+  model: gpt-5.5
+  reasoning_effort: medium
+  worker_pool: 2
+  discord_token_var: vault_discord_bot_token_gersemi  # variable name only
+  bot_user_id: '1503060142462341312'
+  voice_auto_join: false
+  elevenlabs_voice_id: c5cCekcvzGytkePZOZ6N
+  tts_provider: piper
+  piper_voice: en_GB-semaine-medium
+  edge_voice: en-US-AnaNeural
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - google-workspace
+  - apple-reminders
+  - todoist
+  - obsidian
+  - apple-calendar
+- name: hnoss-books
+  persona: hnoss
+  role: bookkeeping_steward
+  model: gpt-5.5
+  reasoning_effort: medium
+  worker_pool: 2
+  discord_token_var: vault_discord_bot_token_hnoss  # variable name only
+  bot_user_id: '1503061594677051523'
+  voice_auto_join: false
+  elevenlabs_voice_id: SBQpWHBAhM93TUSjeEaP
+  tts_provider: piper
+  piper_voice: en_US-kristin-medium
+  edge_voice: en-GB-SoniaNeural
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - google-workspace
+  - ocr-and-documents
+  - pdf-report-generation
+  - obsidian
+- name: eir-wellness
+  persona: eir
+  role: wellness_steward
+  model: gpt-5.5
+  reasoning_effort: medium
+  worker_pool: 2
+  discord_token_var: vault_discord_bot_token_eir  # variable name only
+  bot_user_id: '1503062489485807836'
+  voice_auto_join: false
+  elevenlabs_voice_id: rN6xy8k7k3H1TEnQ4MhO
+  tts_provider: piper
+  piper_voice: en_US-hfc_female-medium
+  edge_voice: en-US-JennyNeural
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - apple-reminders
+  - todoist
+  - apple-notes
+  - obsidian
+  - findmy
+  - openhue
+  - apple-health-export
+- name: beyla-travel
+  persona: beyla
+  role: travel_and_expenses_steward
+  model: gpt-5.5
+  reasoning_effort: medium
+  worker_pool: 2
+  discord_token_var: vault_discord_bot_token_beyla  # variable name only
+  bot_user_id: '1503063235719331933'
+  voice_auto_join: true
+  elevenlabs_voice_id: AwMikVy1hXGC7eU4jUXe
+  tts_provider: piper
+  piper_voice: en_GB-alba-medium
+  edge_voice: en-AU-NatashaNeural
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - google-workspace
+  - travel-lodging-research
+  - maps
+  - native-mcp
+  - obsidian
+  - findmy
+- name: heid-research
+  persona: heid
+  role: research_steward
+  model: gpt-5.5
+  reasoning_effort: medium
+  worker_pool: 2
+  discord_token_var: vault_discord_bot_token_heid  # variable name only
+  bot_user_id: '1503083531159605458'
+  voice_auto_join: false
+  elevenlabs_voice_id: P3uRVIoXhjdxL8jOgqcj
+  tts_provider: piper
+  piper_voice: en_GB-aru-medium
+  edge_voice: en-GB-OliviaNeural
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - arxiv
+  - blogwatcher
+  - llm-wiki
+  - notion
+  - obsidian
+  - research-paper-writing
+  - polymarket
+  - native-mcp
+- name: bygul-procurement
+  persona: bygul
+  role: procurement_steward
+  model: gpt-5.5
+  reasoning_effort: medium
+  worker_pool: 2
+  discord_token_var: vault_discord_bot_token_bygul  # variable name only
+  bot_user_id: '1503084427201483033'
+  voice_auto_join: false
+  elevenlabs_voice_id: PHBo40CC4d4IIRLn6dSK
+  tts_provider: piper
+  piper_voice: en_US-amy-medium
+  edge_voice: en-US-MichelleNeural
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - google-workspace
+  - native-mcp
+  - obsidian
+- name: trjegul-skeptic
+  persona: trjegul
+  role: skeptic_reviewer
+  model: gpt-5.5
+  reasoning_effort: high
+  worker_pool: 1
+  discord_token_var: vault_discord_bot_token_trjegul  # variable name only
+  bot_user_id: '1503085680476033084'
+  voice_auto_join: false
+  elevenlabs_voice_id: d7Ux01Od9l2vWgdCbORa
+  tts_provider: piper
+  piper_voice: en_US-lessac-high
+  edge_voice: en-IE-EmilyNeural
+  skills:
+  - kanban-worker
+  - request-human-input
+  - vcs-state
+  - obsidian

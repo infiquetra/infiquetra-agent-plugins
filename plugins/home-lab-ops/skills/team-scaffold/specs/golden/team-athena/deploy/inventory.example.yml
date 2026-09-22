@@ -1,0 +1,8 @@
+---
+all:
+  children:
+    agent_vms:
+      hosts:
+        athena.infiquetra.com:
+          ansible_host: 10.220.1.51
+          ansible_user: agent

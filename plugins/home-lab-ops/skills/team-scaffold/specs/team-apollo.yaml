@@ -1,0 +1,37 @@
+team:
+  name: apollo
+  display: Apollo dev team
+  host_group: agent_vms
+  limit_host: apollo.infiquetra.com
+  pin_runtime: false
+  coresident: null
+  roles:
+  - role: ollama
+    tags: ollama,apollo
+  - role: hermes
+    tags: hermes,apollo
+  - role: hermes_team_listener
+    tags: team_listener,apollo
+  - role: hermes_dm_listener
+    tags: dm_listener,apollo
+inventory:
+  ansible_host: 10.220.1.52
+  ansible_user: agent
+profiles:
+- name: apollo-orchestrator
+  persona: apollo
+- name: asclepius-se
+  persona: asclepius
+  discord_token_var: vault_discord_bot_token_asclepius  # variable name only
+- name: aristaeus-test
+  persona: aristaeus
+  discord_token_var: vault_discord_bot_token_aristaeus  # variable name only
+- name: iamus-security
+  persona: iamus
+  discord_token_var: vault_discord_bot_token_iamus  # variable name only
+- name: idmon-skeptic
+  persona: idmon
+  discord_token_var: vault_discord_bot_token_idmon  # variable name only
+- name: linus-polish
+  persona: linus
+  discord_token_var: vault_discord_bot_token_linus  # variable name only
