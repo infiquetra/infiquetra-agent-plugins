@@ -1,0 +1,6 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "deploy",
+  "version": "0.2.2",
+  "description": "tag-promotion deployment operations for Infiquetra repositories."
+}
