@@ -97,9 +97,9 @@ that variable.
 
 ## Outcome
 
-`python3 -m pytest plugins/codex/tests -q` passed 58 tests and skipped 1,
-the live smoke. `python3 -m pytest plugins/*/tests -q` then reported 1339
-passed, 1 skipped, and 2 failed, both in
+After rebasing onto `origin/main`, `python3 -m pytest plugins/codex/tests -q`
+passed 58 tests and skipped 1, the live smoke. `python3 -m pytest
+plugins/*/tests -q` reported 1450 passed, 4 skipped, and 2 failed, both in
 `plugins/mission-control/tests/test_template_sync.py`. `python3 -m unittest
 discover -s tests` reported 946 tests and the same two failures, in
 `tests/test_mission_control_rule_audit.py`. The sibling checkout
