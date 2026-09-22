@@ -27,7 +27,7 @@ coding-agent clients installed on the operator's machine:
    ([`docs/runbooks/portable-plugin-port.md`](docs/runbooks/portable-plugin-port.md) v1.0.0)
    and approved run plan
    ([`docs/plans/2026-08-24-mission-control-port-run-plan.md`](docs/plans/2026-08-24-mission-control-port-run-plan.md)),
-   delivering a 72-file portable package derived from upstream commit `3b2b7083`
+   delivering a 73-file portable package derived from upstream commit `3b2b7083`
    (version 2.15.2) in `infiquetra-claude-plugins`, with 391 ported tests in
    continuous integration, the validation rule audit, and a full ten-client
    compatibility assessment.
@@ -68,7 +68,7 @@ and committed evidence:
   built here. Cursor Agent works directly; the matrix records why its earlier
   failure reading was an artifact of the assessment's isolation rather than a
   result of the client.
-- **Mission Control ships 72 portable files and 391 CI tests.** Pinned to
+- **Mission Control ships 73 portable files and 391 CI tests.** Pinned to
   `3b2b7083` (v2.15.2), the package provides seven Agent Skills (`board`, `flow`,
   `issues`, `labels`, `metrics`, `milestones`, `rollout`), the shared CLI
   (`scripts/sdlc_manager.py`), board census, pagination, template sync, and

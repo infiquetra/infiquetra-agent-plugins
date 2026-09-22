@@ -95,6 +95,25 @@ class InstallFixture(unittest.TestCase):
         self._package("voice", ["voice"])
         self._package("unifi", ["unifi-network", "unifi-protect"])
         self._package("fleet-core", [])
+        write_json(
+            self.catalog / ".agents" / "plugins" / "marketplace.json",
+            {
+                "name": "infiquetra-agent-plugins",
+                "interface": {"displayName": "Infiquetra Agent Plugins"},
+                "plugins": [
+                    {
+                        "name": "unifi",
+                        "source": {"source": "local", "path": "./plugins/unifi"},
+                        "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+                    },
+                    {
+                        "name": "voice",
+                        "source": {"source": "local", "path": "./plugins/voice"},
+                        "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+                    },
+                ],
+            },
+        )
 
     def _package(self, name: str, skills: list[str]) -> None:
         root = self.catalog / "plugins" / name
@@ -287,20 +306,134 @@ class ClaudeInstallTest(InstallFixture):
 
 
 class CodexTest(InstallFixture):
-    def test_install_is_unsupported_and_writes_no_manifest(self) -> None:
+    def _write_config(self, *tables: str) -> None:
+        config = self.home / ".codex" / "config.toml"
+        config.parent.mkdir(parents=True)
+        config.write_text("\n".join(tables) + "\n", encoding="utf-8")
+
+    def test_dry_run_adds_the_marketplace_and_the_listed_plugins(self) -> None:
         code, out, err = self.invoke("--client", "codex", "--dry-run")
         self.assertEqual(code, 0, err)
-        self.assertIn("codex unsupported:", out)
-        self.assertIn(".codex-plugin/plugin.json", out)
-        self.assertNotIn("marketplace add", out)
-        self.assertFalse((self.catalog / ".agents").exists())
-        self.assertFalse((self.catalog / "com.infiquetra.codex").exists())
+        self.assertIn(
+            self.command("codex", "plugin", "marketplace", "add", str(self.catalog.resolve())),
+            out,
+        )
+        self.assertIn(self.command("codex", "plugin", "add", "voice@infiquetra-agent-plugins"), out)
+        self.assertIn(self.command("codex", "plugin", "add", "unifi@infiquetra-agent-plugins"), out)
+        self.assertIn("fleet-core is not listed in .agents/plugins/marketplace.json", out)
+        self.assertNotIn("codex unsupported:", out)
+        self.assertEqual(self.logged(), "")
 
-    def test_check_is_the_same_unsupported_line(self) -> None:
-        code, out, err = self.invoke("--client", "codex", "--check")
+    def test_a_missing_marketplace_file_is_an_error(self) -> None:
+        (self.catalog / ".agents" / "plugins" / "marketplace.json").unlink()
+        code, _out, err = self.invoke("--client", "codex", "--dry-run")
+        self.assertEqual(code, 2)
+        self.assertIn("marketplace.json", err)
+        self.assertIn("sync_codex_packaging.py", err)
+
+    def test_an_existing_registration_of_this_checkout_is_not_added_again(self) -> None:
+        catalog = str(self.catalog.resolve())
+        self._write_config(
+            "[marketplaces.infiquetra-agent-plugins]",
+            'source_type = "local"',
+            f'source = "{catalog}"',
+            "",
+            '[plugins."voice@infiquetra-agent-plugins"]',
+            "enabled = true",
+            "",
+            '[plugins."unifi@infiquetra-agent-plugins"]',
+            "enabled = true",
+            "",
+        )
+        code, out, err = self.invoke("--client", "codex", "--dry-run")
         self.assertEqual(code, 0, err)
-        self.assertIn("codex unsupported:", out)
-        self.assertNotIn("absent", out)
+        self.assertIn(f"marketplace infiquetra-agent-plugins already registered at {catalog}", out)
+        self.assertIn("voice@infiquetra-agent-plugins already enabled", out)
+        self.assertIn("unifi@infiquetra-agent-plugins already enabled", out)
+        self.assertNotIn("marketplace add", out)
+        self.assertNotIn("plugin add", out)
+
+    def test_a_registration_elsewhere_is_not_retargeted_and_installs_nothing(self) -> None:
+        self._write_config(
+            "[marketplaces.infiquetra-agent-plugins]",
+            'source_type = "local"',
+            'source = "/tmp/some-other-checkout"',
+            "",
+        )
+        code, out, err = self.invoke("--client", "codex", "--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertIn("not retargeting", out)
+        self.assertIn("points at /tmp/some-other-checkout", out)
+        self.assertNotIn("marketplace add", out)
+        self.assertNotIn("plugin add", out)
+
+    def test_check_reads_an_enabled_plugin_whose_marketplace_is_this_checkout(self) -> None:
+        catalog = str(self.catalog.resolve())
+        self._write_config(
+            "[marketplaces.infiquetra-agent-plugins]",
+            'source_type = "local"',
+            f'source = "{catalog}"',
+            "",
+            '[plugins."voice@infiquetra-agent-plugins"]',
+            "enabled = true",
+            "",
+        )
+        code, out, err = self.invoke("--client", "codex", "--check")
+        self.assertEqual(err, "")
+        self.assertEqual(code, 1)
+        self.assertIn("codex voice installed-from-catalog", out)
+        self.assertIn("codex unifi absent", out)
+        self.assertIn("codex fleet-core absent", out)
+
+    def test_check_treats_a_symlink_to_this_checkout_as_the_catalog(self) -> None:
+        link = self.base / "catalog-link"
+        link.symlink_to(self.catalog, target_is_directory=True)
+        self._write_config(
+            "[marketplaces.infiquetra-agent-plugins]",
+            'source_type = "local"',
+            f'source = "{link}"',
+            "",
+            '[plugins."voice@infiquetra-agent-plugins"]',
+            "enabled = true",
+            "",
+        )
+        code, out, err = self.invoke("--client", "codex", "--check")
+        self.assertEqual(err, "")
+        self.assertEqual(code, 1)
+        self.assertIn("codex voice installed-from-catalog", out)
+
+    def test_check_reports_a_disabled_plugin_as_elsewhere(self) -> None:
+        catalog = str(self.catalog.resolve())
+        self._write_config(
+            "[marketplaces.infiquetra-agent-plugins]",
+            'source_type = "local"',
+            f'source = "{catalog}"',
+            "",
+            '[plugins."voice@infiquetra-agent-plugins"]',
+            "enabled = false",
+            "",
+        )
+        code, out, err = self.invoke("--client", "codex", "--check")
+        self.assertEqual(code, 1, err)
+        self.assertIn(
+            "codex voice installed-from-elsewhere (voice@infiquetra-agent-plugins disabled)",
+            out,
+        )
+
+    def test_check_reports_the_dedicated_marketplace_as_elsewhere(self) -> None:
+        self._write_config(
+            "[marketplaces.infiquetra-codex-plugins]",
+            'source_type = "git"',
+            f'source = "{DEDICATED_CODEX}"',
+            "",
+            '[plugins."voice@infiquetra-codex-plugins"]',
+            "enabled = true",
+            "",
+        )
+        code, out, err = self.invoke("--client", "codex", "--check")
+        self.assertEqual(code, 1, err)
+        self.assertIn(f"codex voice installed-from-elsewhere ({DEDICATED_CODEX})", out)
+        self.assertIn("codex unifi absent", out)
 
     def test_uninstall_removes_a_legacy_marketplace_and_keeps_the_dedicated_one(self) -> None:
         config = self.home / ".codex" / "config.toml"
@@ -813,7 +946,8 @@ class InvocationTest(InstallFixture):
         self.assertEqual(code, 0, err)
         for client in installer.CLIENTS:
             self.assertIn(client, out)
-        self.assertIn("codex unsupported:", out)
+        self.assertIn("plugin marketplace add", out)
+        self.assertNotIn("codex unsupported:", out)
         self.assertEqual(self.logged(), "")
         self.assertFalse((self.home / ".qwen").exists())
         self.assertFalse((self.home / ".hermes").exists())
@@ -823,5 +957,5 @@ class InvocationTest(InstallFixture):
         self.assertEqual(err, "")
         self.assertEqual(code, 1)
         self.assertIn("claude voice absent", out)
-        self.assertIn("codex unsupported:", out)
-        self.assertNotIn("codex voice absent", out)
+        self.assertIn("codex voice absent", out)
+        self.assertNotIn("codex unsupported:", out)

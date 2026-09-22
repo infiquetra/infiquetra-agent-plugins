@@ -8,11 +8,11 @@ the default prints every command and file operation and stops.
 
 Two calls that are not obvious from the command list:
 
-* Codex stays ``unsupported``. The marketplaces Codex already loads are
-  ``.agents/plugins/marketplace.json`` plus a ``.codex-plugin/plugin.json`` in
-  every plugin directory, and that plugin directory must not also contain
-  ``.claude-plugin``. This catalog has the Claude manifest and no Codex
-  manifest. Writing either file would claim a layout the bytes do not have.
+* Codex installs from ``.agents/plugins/marketplace.json``.
+  ``codex plugin marketplace add <checkout>`` records the marketplace, and
+  ``codex plugin add <name>@<marketplace>`` enables each listed package.
+  An existing registration of that marketplace name is not retargeted.
+  ``infiquetra-codex-plugins`` is not modified.
 * A Claude marketplace name that is already registered is not registered
   again, and it is not retargeted at this checkout. ``infiquetra-plugins`` on
   Agy is the Antigravity repository; a marketplace name is not proof of the
@@ -84,17 +84,6 @@ GEMINI_SCHEMA = "infiquetra-gemini-install.v1"
 AGY_SCHEMA = "infiquetra-agy-install.v1"
 
 COMMAND_TIMEOUT = 120
-
-CODEX_UNSUPPORTED = (
-    "Codex loads a marketplace from .agents/plugins/marketplace.json whose plugin "
-    "directories each carry .codex-plugin/plugin.json (skills and interface.defaultPrompt) "
-    "and must not contain .claude-plugin. Working copies are the OpenAI bundled marketplace "
-    "and infiquetra-codex-plugins. This catalog's packages have a portable plugin.json and "
-    ".claude-plugin/plugin.json and no .codex-plugin/plugin.json. A file at "
-    "com.infiquetra.codex/marketplace.json is not the path those marketplaces use, and "
-    "pointing .agents/plugins/marketplace.json at these packages would claim a Codex plugin "
-    "layout the bytes do not have. infiquetra-codex-plugins is not modified."
-)
 
 
 class InstallError(Exception):
@@ -731,8 +720,207 @@ def plan_claude(
     return actions
 
 
-def plan_codex_install() -> list[Action]:
-    return [Action("unsupported", "codex", message=CODEX_UNSUPPORTED)]
+def _codex_table(header: str) -> tuple[str, str] | None:
+    """``(kind, name)`` for a ``[marketplaces.*]`` or ``[plugins.*]`` header."""
+    if header.startswith("marketplaces."):
+        return ("marketplace", header.split(".", 1)[1].strip().strip('"'))
+    if header.startswith("plugins."):
+        name = header.split(".", 1)[1].strip()
+        if len(name) >= 2 and name[0] == name[-1] == '"':
+            name = name[1:-1]
+        return ("plugin", name)
+    return None
+
+
+def _quoted_string(line: str) -> str | None:
+    _, _, value = line.partition("=")
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    return None
+
+
+def read_codex_config(path: Path) -> tuple[dict[str, str], dict[str, bool]]:
+    """Marketplace sources and plugin ``enabled`` flags from Codex's config.
+
+    ``codex plugin marketplace add`` writes ``[marketplaces.<name>]`` with a
+    string ``source``. ``codex plugin add`` writes
+    ``[plugins."<name>@<marketplace>"]`` with ``enabled = true``. This reads
+    those two tables and ignores the rest of the file. A value that is not a
+    quoted string, or an ``enabled`` flag that is not ``true`` or ``false``,
+    is skipped rather than half-parsed.
+    """
+    marketplaces: dict[str, str] = {}
+    enabled: dict[str, bool] = {}
+    if not path.is_file():
+        return marketplaces, enabled
+    kind: str | None = None
+    name: str | None = None
+    source: str | None = None
+    flag: bool | None = None
+
+    def flush() -> None:
+        nonlocal source, flag
+        if kind == "marketplace" and name is not None and source is not None:
+            marketplaces[name] = source
+        if kind == "plugin" and name is not None and flag is not None:
+            enabled[name] = flag
+        source = None
+        flag = None
+
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            flush()
+            parsed = _codex_table(line[1:-1].strip())
+            kind, name = parsed if parsed is not None else (None, None)
+            continue
+        if kind == "marketplace" and (line.startswith("source ") or line.startswith("source=")):
+            source = _quoted_string(line)
+            continue
+        if kind == "plugin" and (line.startswith("enabled ") or line.startswith("enabled=")):
+            value = line.partition("=")[2].strip().lower()
+            if value in {"true", "false"}:
+                flag = value == "true"
+    flush()
+    return marketplaces, enabled
+
+
+def codex_source_is_catalog(recorded: str, catalog: Path) -> bool:
+    """True when a marketplace ``source`` is this checkout.
+
+    Codex records the absolute path. On macOS that path has ``/tmp`` resolved
+    to ``/private/tmp``, so both sides are resolved before they are compared.
+    """
+    if not recorded.startswith("/"):
+        return False
+    try:
+        return Path(recorded).resolve() == catalog.resolve()
+    except OSError:
+        return False
+
+
+def _codex_marketplace(catalog: Path) -> tuple[Path, dict, str, set[str]]:
+    path = catalog / ".agents" / "plugins" / "marketplace.json"
+    document = load_json(path)
+    if not isinstance(document, dict):
+        raise InstallError(
+            f"{path} is missing; Codex installs from that marketplace file. "
+            "Run python3 scripts/sync_codex_packaging.py"
+        )
+    name = document.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise InstallError(f"{path} is missing a name")
+    entries = document.get("plugins")
+    if not isinstance(entries, list):
+        raise InstallError(f"{path} plugins is not a list")
+    listed = {
+        entry["name"]
+        for entry in entries
+        if isinstance(entry, dict) and isinstance(entry.get("name"), str)
+    }
+    return path, document, name, listed
+
+
+def _other_codex_source(
+    package: str,
+    marketplace: str,
+    marketplaces: dict[str, str],
+    enabled: dict[str, bool],
+) -> str:
+    for plugin_id, flag in enabled.items():
+        if flag is not True:
+            continue
+        plugin_name, separator, other = plugin_id.partition("@")
+        if separator and plugin_name == package and other != marketplace:
+            return marketplaces.get(other, other)
+    return ""
+
+
+def plan_codex_install(
+    packages: list[Package],
+    catalog: Path,
+    home: Path,
+    overrides: dict[str, str],
+    *,
+    required: bool,
+) -> list[Action]:
+    """Register this checkout, then enable each package the marketplace lists.
+
+    ``plugin add`` takes ``name@marketplace`` and no path. When that
+    marketplace name already points somewhere else, adding the plugin would
+    install that other checkout, so the plugin command is skipped.
+    """
+    _path, _document, name, listed = _codex_marketplace(catalog)
+    marketplaces, enabled = read_codex_config(home / ".codex" / "config.toml")
+    recorded = marketplaces.get(name)
+    registered_here = recorded is not None and codex_source_is_catalog(recorded, catalog)
+    actions: list[Action] = []
+    if recorded is None:
+        actions.append(
+            command_action(
+                "codex",
+                ("plugin", "marketplace", "add", str(catalog.resolve())),
+                overrides,
+                required=required,
+            )
+        )
+    elif registered_here:
+        actions.append(
+            Action(
+                "skip",
+                "codex",
+                message=f"marketplace {name} already registered at {recorded}",
+            )
+        )
+    else:
+        actions.append(
+            Action(
+                "note",
+                "codex",
+                message=(
+                    f"marketplace {name} already registered at {recorded}; "
+                    f"not adding a second entry and not retargeting it at {catalog.resolve()}"
+                ),
+            )
+        )
+    for package in packages:
+        if package.name not in listed:
+            actions.append(
+                Action(
+                    "skip",
+                    "codex",
+                    message=f"{package.name} is not listed in .agents/plugins/marketplace.json",
+                )
+            )
+            continue
+        if recorded is not None and not registered_here:
+            actions.append(
+                Action(
+                    "skip",
+                    "codex",
+                    message=(
+                        f"{package.name} is not installed from this checkout because "
+                        f"marketplace {name} points at {recorded}"
+                    ),
+                )
+            )
+            continue
+        plugin_id = f"{package.name}@{name}"
+        if registered_here and enabled.get(plugin_id) is True:
+            actions.append(Action("skip", "codex", message=f"{plugin_id} already enabled"))
+            continue
+        actions.append(
+            command_action(
+                "codex",
+                ("plugin", "add", plugin_id),
+                overrides,
+                required=required,
+            )
+        )
+    return actions
 
 
 def cursor_cache(home: Path, repo_dir: str) -> Path:
@@ -1060,7 +1248,7 @@ def plan_install(
     if client == "claude":
         return plan_claude(packages, catalog, home, overrides, required=required)
     if client == "codex":
-        return plan_codex_install()
+        return plan_codex_install(packages, catalog, home, overrides, required=required)
     if client == "cursor":
         return plan_cursor(home, overrides, required=required)
     if client == "qwen":
@@ -1696,10 +1884,51 @@ def check_agy(packages: list[Package], home: Path, catalog: Path) -> list[Readba
     return rows
 
 
+def check_codex(packages: list[Package], catalog: Path, home: Path) -> list[Readback]:
+    """Read ``~/.codex/config.toml``, which is the record both Codex commands write."""
+    _path, _document, name, _listed = _codex_marketplace(catalog)
+    marketplaces, enabled = read_codex_config(home / ".codex" / "config.toml")
+    recorded = marketplaces.get(name)
+    registered_here = recorded is not None and codex_source_is_catalog(recorded, catalog)
+    rows: list[Readback] = []
+    for package in packages:
+        plugin_id = f"{package.name}@{name}"
+        own = enabled.get(plugin_id)
+        if registered_here and own is True:
+            rows.append(Readback("codex", package.name, "installed-from-catalog"))
+            continue
+        if own is False:
+            rows.append(
+                Readback(
+                    "codex",
+                    package.name,
+                    "installed-from-elsewhere",
+                    f"{plugin_id} disabled",
+                )
+            )
+            continue
+        if own is True:
+            rows.append(
+                Readback(
+                    "codex",
+                    package.name,
+                    "installed-from-elsewhere",
+                    recorded or plugin_id,
+                )
+            )
+            continue
+        other = _other_codex_source(package.name, name, marketplaces, enabled)
+        if other:
+            rows.append(Readback("codex", package.name, "installed-from-elsewhere", other))
+            continue
+        rows.append(Readback("codex", package.name, "absent"))
+    return rows
+
+
 def check_client(client: str, packages: list[Package], catalog: Path, home: Path) -> list[str]:
     if client == "codex":
-        return [f"codex unsupported: {CODEX_UNSUPPORTED}"]
-    if client == "claude":
+        rows = check_codex(packages, catalog, home)
+    elif client == "claude":
         rows = check_claude(packages, catalog, home)
     elif client == "cursor":
         rows = check_cursor(packages, home)

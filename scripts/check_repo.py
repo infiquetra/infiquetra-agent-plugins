@@ -997,11 +997,28 @@ def check_marketplace_manifest(root: Path) -> list[str]:
     return check_marketplace(root)
 
 
+def check_codex_packaging_manifest(root: Path) -> list[str]:
+    """The Codex marketplace and plugin manifests must match the generator.
+
+    Codex looks for ``.agents/plugins/marketplace.json`` at the repository
+    root and ``.codex-plugin/plugin.json`` in each plugin directory. Both are
+    produced by ``scripts/sync_codex_packaging.py``. A stale copy is a package
+    the catalog ships and Codex cannot install.
+    """
+    scripts_dir = str(Path(__file__).resolve().parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    from sync_codex_packaging import check_codex_packaging  # noqa: PLC0415  (local by design)
+
+    return check_codex_packaging(root)
+
+
 def check_repo(root: Path) -> list[str]:
     return [
         *check_required_paths(root),
         *check_port_descriptors(root),
         *check_marketplace_manifest(root),
+        *check_codex_packaging_manifest(root),
         *check_markdown_links(root),
         *check_plugin_manifests(root),
         *check_provenance_manifests(root),

@@ -1101,16 +1101,18 @@ class MutationProofBindingTest(unittest.TestCase):
         changes a graded file's bytes. Counting that as a kill made every
         mutation a kill by construction -- see the cycle-12 proof's header.
 
-        The document is cycle 17, which supersedes cycle 16 because the
-        2026-09-22 custody-move tooling edited three of the five graded files.
-        The two it did not touch carry their cycle-16 digests forward, marked in
-        the document as carried rather than re-graded: their bytes have not
-        moved, so the digests are still true, and re-grading guards nothing
-        changed would have claimed coverage this run did not perform.
+        The document is cycle 18. Cycle 17 remains the proof of the bytes
+        before the Codex packaging wire, and is preserved unedited. Cycle 18
+        exists because ``scripts/check_repo.py`` gained one call,
+        ``check_codex_packaging_manifest``. The other four graded files are
+        unchanged and their cycle-17 digests are carried. The other guards
+        inside ``check_repo.py`` were graded in cycle 17 against the previous
+        bytes and were not re-patched here. The mutation this cycle graded is
+        the removal of that one call.
         """
         root = self.EVIDENCE.parent.parent
         recorded = self._recorded(
-            "2026-09-22-cycle17-mutation-proof-custody-move-tooling.txt"
+            "2026-09-22-cycle18-mutation-proof-codex-packaging.txt"
         )
         self.assertEqual(set(recorded), set(self.GRADED), recorded)
         for relative in self.GRADED:

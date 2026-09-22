@@ -1,0 +1,10 @@
+{
+  "name": "deploy",
+  "version": "0.2.3",
+  "description": "Tag-promotion deployment operations for Infiquetra repositories. The portable core is the deploy-state skill and the scripts that mint a policy tag, report environment drift, and preview release notes. Claude commands and the release orchestrator live under com.infiquetra.claude.",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Deploy",
+    "shortDescription": "Tag-promotion deployment operations for Infiquetra repositories. The portable core is the deploy-state skill and the scripts that mint a policy tag, report environment drift, and preview release notes. Claude commands and the release orchestrator live under com.infiquetra.claude."
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "agent-launcher",
+  "version": "1.7.1",
+  "description": "Create one verified coding-agent session through the agents wrapper and Herdr. Orchestrate consumes this shared launch surface.",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Agent Launcher",
+    "shortDescription": "Create one verified coding-agent session through the agents wrapper and Herdr. Orchestrate consumes this shared launch surface."
+  }
+}

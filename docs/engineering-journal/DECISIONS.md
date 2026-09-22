@@ -2,6 +2,64 @@
 
 ## 2026-09-22
 
+### Codex packaging sits at the repository root because the Codex CLI looks nowhere else
+
+**Author.** Grok (custody-move unit U5b, branch `mg/codex-pkg`)
+
+**Decision.** This catalog is installable by OpenAI Codex CLI 0.155.1.
+`scripts/sync_codex_packaging.py` writes two kinds of file, and
+`scripts/check_repo.py` refuses a stale copy:
+
+- `.agents/plugins/marketplace.json` at the repository root. Its `name` is
+  `infiquetra-agent-plugins`. Each entry's `source` is
+  `{source: local, path: ./plugins/<package>}`, and its `policy` is
+  `installation = AVAILABLE`, `authentication = ON_INSTALL`.
+- `plugins/<package>/.codex-plugin/plugin.json` for every package that has a
+  portable `plugin.json`. `name`, `version`, and `description` come from that
+  portable manifest. `skills` is `./skills/` when that directory exists.
+  `mcpServers` is a path to `com.infiquetra.codex/.mcp.json` only when that
+  adapter file exists. The manifest has no `hooks` and no
+  `interface.defaultPrompt`.
+
+`scripts/install_client.py` places the catalog with `codex plugin marketplace
+add <checkout>` and then `codex plugin add <name>@infiquetra-agent-plugins`.
+`--check` reads `[marketplaces.*]` and `[plugins."<name>@<marketplace>"]` in
+`~/.codex/config.toml`. An existing registration of the marketplace name is
+not retargeted. `infiquetra-codex-plugins` is not modified, and this unit
+does not write the operator's Codex config.
+
+**Rationale.** `codex plugin marketplace add --help` takes a local path.
+The marketplaces already configured on this machine, the OpenAI bundled
+marketplace, and `infiquetra-codex-plugins` all use
+`.agents/plugins/marketplace.json` plus `.codex-plugin/plugin.json`. A
+temporary `CODEX_HOME` accepted a checkout that also contains
+`.claude-plugin/`, listed a plugin with no `interface.defaultPrompt` and no
+`category`, and wrote the two config tables above. Marketplace add alone left
+`installed` empty; plugin add set `enabled = true`. The installed
+`google-cloud-developer` plugin contains both `.claude-plugin/` and
+`.codex-plugin/`, which is the same sibling layout. The hash of
+`~/.codex/config.toml` was unchanged across that probe.
+
+**Rejected alternatives.** *Leave Codex `unsupported` because
+`infiquetra-codex-plugins` rejects a plugin directory that also contains
+`.claude-plugin`.* That rule is the dedicated repository's validator. The
+CLI accepted the sibling. *Point `com.infiquetra.codex/marketplace.json` at
+the packages.* The CLI does not load a marketplace from that path. *Put
+`interface.defaultPrompt` or `hooks` in the generated manifest.* A prompt is
+behaviour, and the CLI's bundled scaffold says validation rejects `hooks`.
+The probe listed a plugin that had neither. *Reuse the marketplace name
+`infiquetra-codex-plugins`.* That name is already the dedicated git
+marketplace in the operator's config. A second checkout has to register
+under the catalog's own name. *Retarget a marketplace name that already
+points somewhere else, or run `plugin add` anyway.* `plugin add` takes
+`name@marketplace` and no path, so it would install the other source.
+
+**Revisit when.** A Codex release stops reading
+`.agents/plugins/marketplace.json` at the repository root, or starts
+requiring `interface.defaultPrompt` or `hooks` for a plugin to be listed.
+Also when a package in this catalog grows a real `com.infiquetra.codex/`
+adapter whose behaviour the manifest should point at by path.
+
 ### The catalog installer places each harness the way that harness already loads a package, and records Codex as unsupported
 
 **Decision.** `scripts/install_client.py` is the cutover placement for this
@@ -27,8 +85,10 @@ catalog. It prints its plan unless `--execute` is passed. Per harness:
 - Gemini runs `skills link` with the same `y` on stdin the assessment used.
   Muse runs `skills install --scope user`. Both write the same kind of
   manifest. An existing destination that we did not record is left alone.
-- Codex is `unsupported`. The reason is the learning "A marketplace name is
-  not a source". `infiquetra-codex-plugins` is not modified.
+- Codex was recorded `unsupported` in this entry. Placement is now the
+  decision "Codex packaging sits at the repository root because the Codex CLI
+  looks nowhere else", earlier in this dated section.
+  `infiquetra-codex-plugins` is still not modified.
 
 `--uninstall-legacy` removes a placement only when its recorded source is
 `infiquetra/infiquetra-claude-plugins`. A copy with no source record is
@@ -103,9 +163,11 @@ package per branch with the same fixed recipe.
 
 **Revisit when.** A second organization or machine needs to consume this
 catalog through a distribution path that a git checkout cannot serve (Cursor
-Agent's marketplace takes only a git URL; OpenAI Codex's marketplace needs a
-manifest this repository does not ship); or when a harness on the machine is
-found to have consumed the old repository through a path the cutover missed.
+Agent's marketplace takes only a git URL). The Codex half of this condition
+was met later on this date by "Codex packaging sits at the repository root
+because the Codex CLI looks nowhere else". Revisit also when a harness on
+the machine is found to have consumed the old repository through a path the
+cutover missed.
 ### The Claude marketplace is generated, not hand-edited
 
 **Author.** Claude for Jeff Cox (custody-move unit U1, branch `mg/tooling`)

@@ -1,0 +1,10 @@
+{
+  "name": "orchestrate",
+  "version": "6.0.1",
+  "description": "Run one piece of work across several herdr agent sessions, one git worktree per unit.",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Orchestrate",
+    "shortDescription": "Run one piece of work across several herdr agent sessions, one git worktree per unit."
+  }
+}
