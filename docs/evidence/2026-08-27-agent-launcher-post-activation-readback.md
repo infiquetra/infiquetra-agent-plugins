@@ -2,6 +2,16 @@
 
 # Post-activation readback — portable agent-launcher package
 
+The client rows below were captured on 27 August 2026 against agent-launcher
+1.0.0. They were not re-run for the 2026-09-22 authored import. The release
+`version`, `file_count`, and `tree_sha256` in the machine-readable record were
+rebound to the imported package (1.7.1, 33 files,
+`115944ac13a4b3300ee44ae5b7ea9db05ce8dee855c90af547eb74c75ce99157`) because a
+non-superseded readback has to name the version that ships. Marking this
+filename superseded would break citations this unit does not own. The
+ten-client matrix for 1.7.1 does not exist yet; the file of that name explains
+that and points at the preserved 1.0.0 record.
+
 This readback was taken from the frozen portable package in
 `plugins/agent-launcher/` after the ten-client compatibility matrix
 (`docs/evidence/2026-08-27-agent-launcher-compatibility-matrix.md`) and before
@@ -105,9 +115,9 @@ real session remains the operator's act under the contract.
   "captured_on": "2026-08-27",
   "release": {
     "name": "agent-launcher",
-    "version": "1.0.0",
-    "file_count": 10,
-    "tree_sha256": "fca8657f7cf65082d9ef20b40a1121eb00ba92eb94948d4f68c492045e725484",
+    "version": "1.7.1",
+    "file_count": 33,
+    "tree_sha256": "115944ac13a4b3300ee44ae5b7ea9db05ce8dee855c90af547eb74c75ce99157",
     "upstream_commit": "8269f84b01065ac96d162431ce00ebd42003dd5f",
     "units": {
       "agent-launcher": {

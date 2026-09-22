@@ -1,0 +1,144 @@
+{
+  "schema": "roles_index.v1",
+  "sdlc_revision": "5efc869f",
+  "roles": [
+    {
+      "role": "Architect",
+      "role_id": "orchestrator",
+      "file": "architect.md",
+      "emits": [
+        "technical-context"
+      ]
+    },
+    {
+      "role": "Delivery Manager",
+      "role_id": "controller",
+      "file": "delivery-manager.md",
+      "emits": [
+        "orchestrator-to-controller",
+        "dispatch",
+        "investigation-request",
+        "release-handoff",
+        "run-record"
+      ]
+    },
+    {
+      "role": "Expert Repair Implementer",
+      "role_id": "expert_repair_implementer",
+      "file": "expert-repair-implementer.md",
+      "emits": [
+        "implementation-result"
+      ]
+    },
+    {
+      "role": "Functional Tester",
+      "role_id": "functional_tester",
+      "file": "functional-tester.md",
+      "emits": [
+        "functional-qa-result"
+      ]
+    },
+    {
+      "role": "Initial Implementation Worker",
+      "role_id": "implementer",
+      "file": "implementer.md",
+      "emits": [
+        "implementation-result"
+      ]
+    },
+    {
+      "role": "Investigator",
+      "role_id": "investigator",
+      "file": "investigator.md",
+      "emits": [
+        "diagnosis"
+      ]
+    },
+    {
+      "role": "Issue Reviewer",
+      "role_id": "issue_reviewer",
+      "file": "issue-reviewer.md",
+      "emits": [
+        "issue-review-result"
+      ]
+    },
+    {
+      "role": "Lens Reviewer",
+      "role_id": "lens_reviewer",
+      "file": "lens-reviewer.md",
+      "emits": []
+    },
+    {
+      "role": "Plan Reviewer",
+      "role_id": "plan_reviewer",
+      "file": "plan-reviewer.md",
+      "emits": [
+        "plan-review-result"
+      ]
+    },
+    {
+      "role": "Planner",
+      "role_id": "planner",
+      "file": "planner.md",
+      "emits": [
+        "planner-to-orchestrator",
+        "repair-amendment"
+      ]
+    },
+    {
+      "role": "Product",
+      "role_id": "product",
+      "file": "product.md",
+      "emits": [
+        "product-ruling"
+      ]
+    },
+    {
+      "role": "Release Worker",
+      "role_id": "release_worker",
+      "file": "release-worker.md",
+      "emits": [
+        "release-result"
+      ]
+    },
+    {
+      "role": "Review Controller",
+      "role_id": "review_controller",
+      "file": "review-controller.md",
+      "emits": [
+        "code-review-result"
+      ]
+    },
+    {
+      "role": "Standard Repair Implementer",
+      "role_id": "standard_repair_implementer",
+      "file": "standard-repair-implementer.md",
+      "emits": [
+        "implementation-result"
+      ]
+    }
+  ],
+  "lens_reviewer": {
+    "file": "lens-reviewer.md",
+    "shared_half_ends_before": "# The lenses",
+    "section_heading_prefix": "#### ",
+    "section_terminator_pattern": "^#{1,4} ",
+    "lens_ids": [
+      "architecture-maintainability",
+      "correctness",
+      "security",
+      "testing",
+      "deployment-infrastructure",
+      "reliability",
+      "performance",
+      "api-contract",
+      "adversarial",
+      "privacy",
+      "documentation-clarity",
+      "agent-usability",
+      "previous-comments",
+      "accessibility-human-usability",
+      "experience"
+    ]
+  }
+}

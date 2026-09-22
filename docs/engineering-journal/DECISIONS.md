@@ -1210,7 +1210,7 @@ post-activation readback; evidence is content-bound, and an accepted repair
 that moves the fingerprint supersedes the record rather than renumbering it.
 
 **Refs.** [`ports/agent-launcher.json`](../../ports/agent-launcher.json),
-[`plugins/agent-launcher/PROVENANCE.json`](../../plugins/agent-launcher/PROVENANCE.json),
+[`plugins/agent-launcher/CHANGELOG.md`](../../plugins/agent-launcher/CHANGELOG.md),
 [the compatibility matrix](../evidence/2026-08-27-agent-launcher-compatibility-matrix.md),
 [the run plan](../plans/2026-08-27-agent-launcher-port-plan.md)
 

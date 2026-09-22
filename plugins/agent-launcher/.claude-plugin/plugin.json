@@ -6,12 +6,13 @@
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"
   },
-  "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
   "keywords": [
     "agent-launcher",
     "agents",
     "herdr",
     "launch",
     "sessions"
-  ]
+  ],
+  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+  "skills": "./skills/"
 }
