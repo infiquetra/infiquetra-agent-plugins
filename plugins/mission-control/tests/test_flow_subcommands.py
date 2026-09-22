@@ -1128,3 +1128,127 @@ def test_bulk_without_correction_is_unmarked_and_unrestricted() -> None:
     result = mock_out.call_args.args[0]
     assert "correction" not in result
     assert "identity" not in result
+
+
+# --- flow repair-window (CLI wiring; the verb's full contract lives in
+#     test_repair_window_label.py — T1000-06..T1000-08) -------------------------
+
+
+def test_cli_repair_window_dispatches_with_normalized_repo() -> None:
+    """`flow repair-window` parses --repo/--number/--action/--citation and
+    dispatches positionally, normalizing the owner prefix off the repo."""
+    with (
+        patch.object(
+            sys,
+            "argv",
+            [
+                "sdlc_manager.py",
+                "flow",
+                "repair-window",
+                "--repo",
+                "infiquetra/campps-mvp",
+                "--number",
+                "42",
+                "--action",
+                "open",
+                "--citation",
+                "pytest -q → 1 failed",
+            ],
+        ),
+        patch.object(sdlc_manager, "flow_repair_window") as repair_window,
+    ):
+        sdlc_manager.main()
+
+    repair_window.assert_called_once_with("campps-mvp", 42, "open", "pytest -q → 1 failed", "text")
+
+
+def test_cli_repair_window_requires_citation_flag() -> None:
+    """--citation is a required flag; omitting it is an argparse error, not a
+    network round-trip."""
+    with (
+        patch.object(
+            sys,
+            "argv",
+            [
+                "sdlc_manager.py",
+                "flow",
+                "repair-window",
+                "--repo",
+                "campps-mvp",
+                "--number",
+                "42",
+                "--action",
+                "open",
+            ],
+        ),
+        patch.object(sdlc_manager, "issue_label_add") as add,
+        pytest.raises(SystemExit),
+    ):
+        sdlc_manager.main()
+
+    add.assert_not_called()
+
+
+def test_cli_repair_window_rejects_unknown_action() -> None:
+    """--action is constrained to open|close at the parser; anything else is
+    refused before dispatch."""
+    with (
+        patch.object(
+            sys,
+            "argv",
+            [
+                "sdlc_manager.py",
+                "flow",
+                "repair-window",
+                "--repo",
+                "campps-mvp",
+                "--number",
+                "42",
+                "--action",
+                "toggle",
+                "--citation",
+                "pytest -q → 1 failed",
+            ],
+        ),
+        patch.object(sdlc_manager, "flow_repair_window") as repair_window,
+        pytest.raises(SystemExit),
+    ):
+        sdlc_manager.main()
+
+    repair_window.assert_not_called()
+
+
+def test_cli_repair_window_blank_citation_refuses_before_network() -> None:
+    """A blank --citation that survives the parser still refuses inside the
+    verb — through the REAL dispatch — before any REST call fires."""
+    with (
+        patch.object(
+            sys,
+            "argv",
+            [
+                "sdlc_manager.py",
+                "flow",
+                "repair-window",
+                "--repo",
+                "campps-mvp",
+                "--number",
+                "42",
+                "--action",
+                "open",
+                "--citation",
+                "   ",
+            ],
+        ),
+        patch.object(sdlc_manager, "_get_item_labels") as labels,
+        patch.object(sdlc_manager, "issue_label_add") as add,
+        patch.object(sdlc_manager, "issue_comment") as comment,
+        patch.object(sdlc_manager, "_rest_post") as rest_post,
+        # main() converts the verb's RuntimeError into exit 1.
+        pytest.raises(SystemExit),
+    ):
+        sdlc_manager.main()
+
+    labels.assert_not_called()
+    add.assert_not_called()
+    comment.assert_not_called()
+    rest_post.assert_not_called()

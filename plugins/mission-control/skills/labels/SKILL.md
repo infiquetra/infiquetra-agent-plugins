@@ -57,10 +57,10 @@ Manage Infiquetra issue labels and synchronize them with the GitHub Projects boa
 ## Script Location
 
 ```
-$INFIQUETRA_SDLC_PATH/../infiquetra-claude-plugins/plugins/mission-control/scripts/sdlc_manager.py
+python3 scripts/sdlc_manager.py
 ```
 
-> If `$INFIQUETRA_SDLC_PATH` is unset, use `~/workspace/infiquetra/infiquetra-sdlc` as the default base path.
+> Run that command from the mission-control package root (the directory that contains `scripts/` and `skills/`). `INFIQUETRA_SDLC_PATH` names the infiquetra-sdlc checkout the schema loader reads.
 
 ## Core Operations
 
@@ -110,6 +110,35 @@ See auto-label rules in `references/labels-reference.md`. Current GitHub issue t
 `needs-plan` to actionable cards. The older title-pattern auto-label rules in `labels.json` are
 legacy fallback behavior and may still add `needs-analysis` or `needs-triage`.
 Treat those as legacy fallback labels, not current template defaults.
+
+### Suggest Labels Without Applying Any
+
+`--suggest` turns the same command into a read-only advisory:
+
+```bash
+python3 sdlc_manager.py labels auto-label --repo infiquetra-core --number 42 --suggest
+```
+
+It prints the union of the labels the regular-expression rules matched and the labels a typed
+judgment considered applicable, each tagged with where it came from — `rule`, `model`, or `both`
+— and **applies nothing**. Without the flag the command posts its matches exactly as it always
+has; the flag is the only thing that changes, and it removes the write rather than adding one.
+
+Two properties worth knowing before you trust the output:
+
+- **The rules are a floor.** Every label the regular expressions matched appears in the union
+  whatever the model says. The model may widen the set; it can never narrow it.
+- **A rejection cannot add a label.** The threshold is the answer's probability that the label
+  applies, not its confidence. A confident "no" is a low probability and stays out.
+
+**Where the text goes.** The judgment sends the issue's title and body to TypeSafe, a third-party
+endpoint, and needs `TYPESAFE_API_KEY` in the environment. Credentials and high-entropy strings are
+redacted before anything leaves the machine, and the fleet's data rule
+(`plugins/fleet-core/references/typesafe.md`) governs what may be sent at all: issue text is
+permitted, transcripts and customer content are not.
+
+If the call fails for any reason, the command prints the rule-derived labels alone with a note
+naming the failure — it degrades to today's behavior, never to nothing.
 
 ### Create a New Field Option
 

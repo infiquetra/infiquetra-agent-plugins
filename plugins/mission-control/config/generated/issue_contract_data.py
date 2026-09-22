@@ -25,6 +25,7 @@ FIELD_HEADERS = {
     'notes': 'Notes / conventions',
     'acceptance_criteria': 'Acceptance criteria',
     'verification': 'Verification',
+    'risk': 'Risk',
     'lifecycle_origin': 'Lifecycle Origin',
 }
 
@@ -37,6 +38,7 @@ REQUIRED_FIELDS = (
     'context_library_links',
     'acceptance_criteria',
     'verification',
+    'risk',
 )
 
 # Validator-wide header parser (card_validator.py _HEADER_RE) as a source
@@ -112,6 +114,7 @@ REQUIRED_MATRIX = {   'axes': {   'field': [   'objective',
                              'notes',
                              'acceptance_criteria',
                              'verification',
+                             'risk',
                              'lifecycle_origin'],
                 'issue_type': ['capability', 'enhancement', 'defect'],
                 'risk': ['low', 'medium', 'high', 'very-high', '*']},
@@ -124,19 +127,25 @@ REQUIRED_MATRIX = {   'axes': {   'field': [   'objective',
                                    'tests_required',
                                    'acceptance_criteria',
                                    'verification',
-                                   'context_library_links'],
+                                   'context_library_links',
+                                   'risk'],
                      'issue_type': '*',
                      'risk': '*',
                      'required': True,
                      'rationale': 'Always-required core (context package R1/R3/R4): '
                                   'objective + intent + non_goals + files_expected + '
                                   'tests_required + acceptance_criteria + verification '
-                                  '+ context_library_links are required for every '
-                                  'hermes-task issue type at every Risk. '
-                                  'context_library_links is required-or-`_none_`.',
+                                  '+ context_library_links + risk are required for '
+                                  'every hermes-task issue type at every Risk. '
+                                  'context_library_links is required-or-`_none_`. risk '
+                                  'is the field that supplies the tier the '
+                                  'risk-conditional rules below key on (decision E1, '
+                                  '2026-09-06), so it is required at every tier and is '
+                                  'never itself risk-conditional.',
                      'source': 'issue-context-package-requirements.md R1 (Intent), R3 '
                                '(non-goals), R4 (context-links required-or-_none_); '
-                               'foundation REQUIRED_FIELDS'},
+                               'foundation REQUIRED_FIELDS; operator decision E1 '
+                               '(2026-09-06) for risk'},
                  {   'fields': [   'failure_modes',
                                    'inputs',
                                    'stop_conditions',

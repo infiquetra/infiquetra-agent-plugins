@@ -1,0 +1,129 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://infiquetra.com/schemas/qa-profile.schema.json",
+  "title": "The qa block of a repository profile",
+  "description": "The shape of the OPTIONAL 'qa' key inside a repository's tracked .saga-profile.json. It is an optional key rather than a separate file, following the precedent of branch_preview_command: an optional key leaves every existing profile valid and does not move the repository_profile.v1 token. A repository with no qa key produces a blocked run naming the file and the missing key, never an empty selection that reports a pass.",
+  "type": "object",
+  "required": ["schema", "strategies", "ceiling"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "qa_profile.v1"
+    },
+    "environment": {
+      "type": "object",
+      "description": "Where a non-production run points. Absent means the run reads the environment identity from the run record instead.",
+      "additionalProperties": false,
+      "properties": {
+        "base_url": { "type": "string" },
+        "version_marker_path": { "type": "string" },
+        "region": { "type": "string" }
+      }
+    },
+    "ceiling": {
+      "type": "object",
+      "description": "The per-run budget. A selection whose estimate exceeds either number refuses WHOLE: it never runs the affordable subset and reports a partial pass. A profile with no ceiling is refused, because an absent ceiling is not an unlimited one.",
+      "required": ["max_duration_seconds", "max_direct_cost"],
+      "additionalProperties": false,
+      "properties": {
+        "max_duration_seconds": { "type": "number", "exclusiveMinimum": 0 },
+        "max_direct_cost": { "type": "number", "minimum": 0 }
+      }
+    },
+    "strategies": {
+      "type": "object",
+      "description": "One entry per strategy this repository declares, keyed by the catalogue's strategy identifier. At least one entry must be required: a profile whose strategies are all optional would let a run report a pass having proved nothing.",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": ["required"],
+        "additionalProperties": false,
+        "properties": {
+          "required": {
+            "type": "boolean",
+            "description": "A required strategy that is blocked stops the run for the operator. An optional one that is blocked is proof debt."
+          },
+          "file_patterns": {
+            "type": "array",
+            "description": "Overrides the catalogue row's patterns for this repository. Absent means the catalogue's patterns apply.",
+            "items": { "type": "string" }
+          },
+          "environment_variables": {
+            "type": "array",
+            "description": "Names only. A driver whose named variable is unset returns blocked with the variable named, never passed.",
+            "items": { "type": "string" }
+          },
+          "secret_handles": {
+            "type": "array",
+            "description": "Names of operator-held credentials this strategy needs. A missing one refuses the WHOLE selection at preflight, because a credential is the operator's boundary.",
+            "items": { "type": "string" }
+          },
+          "commands": {
+            "type": "array",
+            "description": "The declared invocations, for the strategies whose driver runs commands.",
+            "items": {
+              "type": "object",
+              "required": ["name", "command"],
+              "additionalProperties": false,
+              "properties": {
+                "name": { "type": "string" },
+                "command": { "type": "string" },
+                "expect_version": { "type": "boolean" }
+              }
+            }
+          },
+          "scenarios": {
+            "type": "array",
+            "description": "The scenario identifiers the plan may name. A scenario the plan names that is absent here blocks and asks the planner; the functional test never writes its own scenarios.",
+            "items": { "type": "string" }
+          },
+          "mandatory_scenarios": {
+            "type": "array",
+            "description": "Scenarios that sit outside any ranking or budget subsetting.",
+            "items": { "type": "string" }
+          },
+          "entrypoint": {
+            "type": "string",
+            "description": "For a delegated strategy: the executor this repository hands the strategy to, such as the campps-e2e-canary entrypoint."
+          },
+          "targets": {
+            "type": "array",
+            "description": "The declared, installed target variants, for a strategy that has them.",
+            "items": { "type": "string" }
+          },
+          "permitted_changes": {
+            "type": "array",
+            "description": "Contract drift this repository accepts without failing.",
+            "items": { "type": "string" }
+          },
+          "plugins": {
+            "type": "array",
+            "description": "For installed-surface: which plugins must resolve in every installed root.",
+            "items": { "type": "string" }
+          },
+          "expected_surfaces": {
+            "description": "For installed-surface: paths that must exist under each resolved plugin root. A flat list applies to every declared plugin; a mapping keyed by plugin name applies per plugin, which is what a profile naming more than one plugin needs — a command belongs to exactly one of them, and demanding it of all of them reports a failure that is the profile's rather than the fleet's.",
+            "oneOf": [
+              { "type": "array", "items": { "type": "string" } },
+              {
+                "type": "object",
+                "additionalProperties": { "type": "array", "items": { "type": "string" } }
+              }
+            ]
+          },
+          "runbook_path": { "type": "string" },
+          "cost_estimate": {
+            "type": "object",
+            "description": "Overrides the catalogue row's estimate for this repository.",
+            "additionalProperties": false,
+            "properties": {
+              "duration_seconds": { "type": "number", "minimum": 0 },
+              "direct_cost": { "type": "number", "minimum": 0 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

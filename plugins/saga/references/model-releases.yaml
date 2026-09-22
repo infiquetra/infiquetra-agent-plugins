@@ -1,0 +1,15 @@
+# Known model release dates used to flag stale engine-registry rows.
+#
+# Dates are deliberately authored, not measured. Update this file when the known-current model
+# revision advances so CI can force a registry revalidation pass.
+
+model_releases:
+  gpt-5.6-sol: 2026-07-10
+  gpt-5.6-terra: 2026-07-10
+  gpt-5.6-luna: 2026-07-10
+  gpt-5.5: 2026-07-06
+  gemini-3.5-flash: 2026-06-27
+  gemini-3.1-pro: 2026-06-27
+  gpt-oss-120b: 2026-07-06
+  nomic-embed-text: 2026-07-09
+  deepseek-chat: 2026-07-06

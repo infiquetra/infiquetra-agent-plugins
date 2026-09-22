@@ -39,10 +39,10 @@ run gap analysis, and deploy labels and templates.
 ## Script Location
 
 ```
-$INFIQUETRA_SDLC_PATH/../infiquetra-claude-plugins/plugins/mission-control/scripts/sdlc_manager.py
+python3 scripts/sdlc_manager.py
 ```
 
-> If `$INFIQUETRA_SDLC_PATH` is unset, use `~/workspace/infiquetra/infiquetra-sdlc` as the default base path.
+> Run that command from the mission-control package root (the directory that contains `scripts/` and `skills/`). `INFIQUETRA_SDLC_PATH` names the infiquetra-sdlc checkout the schema loader reads.
 
 **IMPORTANT**: Always use `python3` (not `python`) to run the script.
 

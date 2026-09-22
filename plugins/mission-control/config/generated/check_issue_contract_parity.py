@@ -96,6 +96,29 @@ class LiveParityUnavailableError(RuntimeError):
     """Raised when the live leg cannot reach GitHub -- a SKIP, never a silent pass."""
 
 
+class _UnreachableDuplicateFieldNameError(ValueError):
+    """Stand-in used only when `board_census` cannot be imported.
+
+    Nothing ever raises it, so `except _UnreachableDuplicateFieldNameError` matches
+    nothing and the broad SKIP handler keeps its previous behaviour.
+    """
+
+
+def _duplicate_field_name_error() -> type[ValueError]:
+    """The census's duplicate-field-name type, or an unreachable stand-in.
+
+    Resolved lazily: an injected `fetch_fields_census` (the test path) never
+    imports `board_census`, so this must not be a module-level import.
+    """
+    sys.path.insert(0, str(MISSION_CONTROL_DIR / "scripts"))
+    try:
+        from board_census import DuplicateFieldNameError
+    except ImportError:
+        return _UnreachableDuplicateFieldNameError
+    resolved: type[ValueError] = DuplicateFieldNameError
+    return resolved
+
+
 def live_status_option_errors(
     schema_path: Path = SDLC_SCHEMA_PATH,
     *,
@@ -138,6 +161,8 @@ def live_status_option_errors(
         raise LiveParityUnavailableError(f"sdlc-schema.json not found at {schema_path}")
     schema = json.loads(schema_path.read_text())
 
+    duplicate_field_name_error = _duplicate_field_name_error()
+
     errors: list[str] = []
     for board_key, board_cfg in schema.get("boards", {}).items():
         proj = project_mappings.get(board_key)
@@ -150,12 +175,24 @@ def live_status_option_errors(
 
         try:
             census = fetch_fields_census(proj["number"])
+        except duplicate_field_name_error:
+            # Two board fields share a name, so the name-keyed census cannot
+            # represent the board (#1020). A real defect on the board, not an
+            # access failure: let it propagate, because folding it into
+            # LiveParityUnavailableError would report the very condition the
+            # raise exists to surface as a skipped check. Caught by its own
+            # type, never as a bare ValueError -- `json.JSONDecodeError` is
+            # also a ValueError, and a non-JSON body from a failing live call
+            # must still reach the SKIP branch below.
+            raise
         except Exception as exc:  # noqa: BLE001 - any live-access failure is a SKIP
             raise LiveParityUnavailableError(
                 f"could not fetch live fields for board '{board_key}': {exc}"
             ) from exc
 
-        status_field = next((f for f in census["fields"] if f["name"] == "Status"), None)
+        # `fields` is a mapping keyed by field name (#1020), so index it
+        # directly. Iterating it would yield field-name strings, not records.
+        status_field = census["fields"].get("Status")
         live_statuses = (
             {o["name"] for o in status_field.get("options", [])} if status_field else set()
         )

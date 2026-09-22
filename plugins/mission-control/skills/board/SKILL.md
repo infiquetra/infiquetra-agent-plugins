@@ -25,7 +25,7 @@ metadata:
     - Remove stale completed items from active board views
 
     WIP analysis and standup:
-    - Check WIP limits and bottlenecks
+    - Check WIP counts and bottlenecks
     - Generate a right-to-left standup or board-review summary
     - Identify blocked or aging work
 ---
@@ -37,28 +37,27 @@ requires an explicit `--project`.
 
 | Project key | Board | Workflow |
 |-------------|-------|----------|
-| `operations` | Operations | `Idea -> Shaping -> Ready -> Active -> Verify -> Done` |
-| `asgard` | Asgard | `Idea -> Shaping -> Ready -> Active -> Verify -> Done` |
+| `operations` | Operations | `Intake -> Shaping -> Planning -> Active -> Verify -> Retro` |
+| `asgard` | Asgard | `Intake -> Shaping -> Planning -> Active -> Verify -> Retro` |
 | `campps` | CAMPPS | `Intake -> Shaping -> Planning -> Active -> Verify -> Retro` |
 
-The former project #1 (Mount Olympus) is retired-historical and closed; it is not an active
+The former project #1 (Mount Olympus) is closed and archived history; it is not an active
 board and is not a routing target. Deployment state is not a workflow status; use deployment
 fields and GitHub Deployments/Environments for environment movement.
 
-The Operations and Asgard rows in the table above still show the retired `intent_flow` ladder
-names; correcting them is tracked as a separate change and is not done here. CAMPPS follows the
-`stage_flow` workflow recorded in `$INFIQUETRA_SDLC_PATH/config/sdlc-schema.json`: `Stage` is
-the board column and `Status` carries the in-stage condition (the cross-cutting `Blocked`
-status applies everywhere). No active board carries a pause column; a paused card is expressed
-through labels and issue state.
+All three boards follow the one shared `stage_flow` workflow recorded in
+`$INFIQUETRA_SDLC_PATH/config/sdlc-schema.json`: `Stage` is the board column and `Status`
+carries the in-stage condition (the cross-cutting `Blocked` status applies everywhere). No
+active board carries a pause column; a paused card is expressed through labels and issue
+state.
 
 ## Script Location
 
 ```bash
-$INFIQUETRA_SDLC_PATH/../infiquetra-claude-plugins/plugins/mission-control/scripts/sdlc_manager.py
+python3 scripts/sdlc_manager.py
 ```
 
-If `$INFIQUETRA_SDLC_PATH` is unset, use `~/workspace/infiquetra/infiquetra-sdlc` as the default base path.
+Run that command from the mission-control package root (the directory that contains `scripts/` and `skills/`). `INFIQUETRA_SDLC_PATH` names the infiquetra-sdlc checkout the schema loader reads.
 Always run the script with `python3`.
 
 ## Core Operations
@@ -72,7 +71,7 @@ python3 sdlc_manager.py board view --project asgard
 python3 sdlc_manager.py board view --project campps
 
 # Filter to a specific status
-python3 sdlc_manager.py board view --project asgard --status "Active"
+python3 sdlc_manager.py board view --project asgard --status "Implementing"
 python3 sdlc_manager.py board view --project campps --status "Implementing"
 ```
 
@@ -88,11 +87,11 @@ python3 sdlc_manager.py board add --project campps --repo athena-service --numbe
 ### Move Item
 
 ```bash
-# Intent-flow boards (Operations / Asgard)
-python3 sdlc_manager.py board move --project asgard --repo infiquetra-sdlc --number 42 --status "Active"
-python3 sdlc_manager.py board move --project operations --repo infiquetra-sdlc --number 42 --status "Shaping"
-
-# CAMPPS: board move writes Status (the in-stage condition), not the Stage column
+# board move writes Status (the in-stage condition), never the Stage column.
+# Every board shares the one stage_flow vocabulary, so the same Status names
+# are valid everywhere.
+python3 sdlc_manager.py board move --project asgard --repo infiquetra-sdlc --number 42 --status "Implementing"
+python3 sdlc_manager.py board move --project operations --repo infiquetra-sdlc --number 42 --status "Discovering"
 python3 sdlc_manager.py board move --project campps --repo athena-service --number 42 --status "Implementing"
 python3 sdlc_manager.py board move --project campps --repo athena-service --number 42 --status "Ready to merge"
 # Write the Stage column through flow set-field, not board move
@@ -120,8 +119,8 @@ python3 sdlc_manager.py board archive --project asgard --dry-run
 python3 sdlc_manager.py board archive --project campps
 ```
 
-The command archives terminal workflow items. For Operations and Asgard that means `Done`.
-For CAMPPS, whose workflow is `stage_flow`, that means `Ready to close`.
+The command archives terminal workflow items. All three boards share the `stage_flow`
+workflow, whose only terminal status is `Ready to close`.
 
 ### WIP And Standup
 
@@ -142,42 +141,36 @@ python3 sdlc_manager.py board discover-fields --project asgard
 python3 sdlc_manager.py board discover-fields --project operations
 ```
 
-## WIP Limits Reference
+## WIP Counts Reference
 
-| Board | Status | Limit |
-|-------|--------|-------|
-| Operations | Shaping | 10 |
-| Operations | Ready | 10 |
-| Operations | Active | 5 |
-| Operations | Verify | 5 |
-| Asgard | Shaping | 8 |
-| Asgard | Ready | 8 |
-| Asgard | Active | 5 |
-| Asgard | Verify | 5 |
+WIP limits are retired (#999): the SDLC schema defines no per-column limits, and the
+hard-coded historical numbers (Operations 10/5, Asgard 8/5) went with them. `board wip`
+reports a count per status and no limit; `board view` prints plain counts without limit
+decoration.
 
-CAMPPS is an initiative rollup board and does not enforce per-column WIP limits.
-When WIP is exceeded, stop pulling new work on that board and focus on finishing, swarming,
-or leaving cards in `Blocked`. No active board carries a pause column; a paused card is
-expressed through labels and issue state, not a workflow status.
+When a column's count grows past what can actually be finished, stop pulling new work on
+that board and focus on finishing, swarming, or leaving cards in `Blocked`. No active
+board carries a pause column; a paused card is expressed through labels and issue state,
+not a workflow status.
 
 ## Natural Language Examples
 
 **"Review the Asgard board"**
 -> `board view --project asgard`
 
-**"Move issue #42 in infiquetra-sdlc to Active on Asgard"**
--> `board move --project asgard --repo infiquetra-sdlc --number 42 --status "Active"`
+**"Move issue #42 in infiquetra-sdlc to Implementing on Asgard"**
+-> `board move --project asgard --repo infiquetra-sdlc --number 42 --status "Implementing"`
 
 **"Add this issue to Operations"**
 -> Confirm repo and issue number, then `board add --project operations --repo <repo> --number <N>`
 
-**"Are we over WIP limits?"**
--> Run `board wip` for the relevant board.
+**"How much WIP is on the board?"**
+-> Run `board wip` for the relevant board; it shows a count per status (no limits).
 
 **"Let's prep for standup"**
 -> `board standup --project <the requested active board>` (`--project` is required).
 
 ## Reference Documents
 
-- `references/kanban-workflow.md` - Board structure, status definitions, WIP limits, and standup format
+- `references/kanban-workflow.md` - Board structure, stage and status definitions, and standup format
 - `references/graphql-queries.md` - GraphQL queries used by the script

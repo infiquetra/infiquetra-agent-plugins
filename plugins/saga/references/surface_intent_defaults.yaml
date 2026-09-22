@@ -1,0 +1,21 @@
+# Data-authored defaults for lifecycle-stage capability intent (non-transport metadata).
+#
+# The `.saga/engine-prefs.json` seam is retired (#776). These values are not a session-launch
+# authority and cannot override the live Orchestrate/Herdr roster.
+version: 1
+defaults:
+  unknown:
+    intent: none
+  mechanical:
+    intent: offload
+    model: sonnet
+    effort: medium
+  judgment:
+    intent: second-opinion
+    model: opus
+    effort: high
+stage_shape_defaults:
+  ideate: judgment
+  brainstorm: judgment
+  doc-review: judgment
+  code-review: judgment

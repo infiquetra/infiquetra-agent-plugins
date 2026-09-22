@@ -24,7 +24,8 @@ Triage an existing issue by analyzing its content, recommending appropriate labe
 5. Applies auto-label rules
 6. Adds to project board if not already there
 7. Sets project fields when the target board exposes them
-8. Recommends initial board status (Ready if context complete, Backlog or Shaping if missing context)
+8. Recommends initial board status (`Ready for Planning` if context complete, `Backlog` or
+   `Discovering` if missing context)
 
 ## Examples
 
@@ -48,7 +49,7 @@ python3 $SCRIPT board add --project asgard --repo athena-service --number 42
 # Set project fields directly when needed
 python3 $SCRIPT flow set-field --project asgard \
   --repo athena-service --number 42 \
-  --field Status --option Ready
+  --field Status --option "Ready for Planning"
 ```
 
 ## Instructions
@@ -71,10 +72,16 @@ When the user invokes `/triage repo#number`:
    - `python3 $SCRIPT flow set-field --project <board> --repo <repo> --number <N> --field Initiative --option <name>`
    - `python3 $SCRIPT flow set-field --project <board> --repo <repo> --number <N> --field Objective --option <name>`
 8. Recommend status:
-   - Defect (critical/high): move to Active on Operations or Asgard (or In Progress on CAMPPS)
-   - Has complete context: Ready
+   All three boards share the one `stage_flow` vocabulary, so the same Status names apply
+   everywhere; there is no per-board split. `board move` writes **Status** only -- it never
+   touches the Stage column -- so when the recommended Status belongs to a different Stage
+   than the card currently sits in, write the Stage too, or the card is left out-of-Stage:
+   `flow set-field --field Stage --option <Stage>`. The Stage each Status belongs to is in
+   `skills/board/references/kanban-workflow.md`.
+   - Defect (critical/high): move to `Implementing`
+   - Has complete context: `Ready for Planning`
    - Needs more context: keep `needs-plan` on actionable cards, optionally add `needs-context`,
-     and leave in Backlog or Shaping
+     and leave in `Backlog` or `Discovering`
 9. Show summary of all actions taken
 
 If the issue is a defect with `critical` label, flag urgency: "This is a critical defect with a 4-hour SLA. Moving to active ownership now."

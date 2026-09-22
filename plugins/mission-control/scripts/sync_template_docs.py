@@ -17,10 +17,10 @@ import yaml
 def _find_package_root(start: Path | None = None) -> Path:
     current = start or Path(__file__)
     for parent in current.resolve().parents:
-        if (parent / "com.infiquetra.claude" / "plugin.json").is_file():
+        if (parent / ".claude-plugin" / "plugin.json").is_file():
             return parent
     raise RuntimeError(
-        f"package root containing com.infiquetra.claude/plugin.json not found from {current.resolve()}"
+        f"package root containing .claude-plugin/plugin.json not found from {current.resolve()}"
     )
 
 

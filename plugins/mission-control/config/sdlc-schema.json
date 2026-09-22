@@ -1,5 +1,5 @@
 {
-  "schema_version": "2026-08-29",
+  "schema_version": "2026-09-07.5",
   "migration_notes": [
     "2026-06-13: Added additive saga_lifecycle block derived from the vendored saga-docs-model.yaml snapshot (plugin 0.21.0). At that migration, this was strictly additive and existing consumers (for example, wip_limits.olympus) were unchanged; superseded for Olympus routing by the 2026-06-17 retirement.",
     "2026-06-13.2: Merged hand-authored config/saga-lifecycle-extras.yaml (combinations, reset_edges, gate_classification, phase_board_map, phase_command_map) into the saga_lifecycle block. Strictly additive; snapshot-derived keys and existing consumers unchanged.",
@@ -14,7 +14,19 @@
     "2026-08-28: W18 (issue #99) recorded the Saga Code Review review-artifact publication lane in review_model (interactive mode only; evidence-only commit naming the reviewed revision as a full SHA; no implementation-edit authority) and answered Q6 as implementation_route: skill_contract_change_alone, no new registered operation kind. The Proceed / Revise / Block verdict vocabulary is retired from live documentation in the same change; dated records keep it.",
     "2026-08-28: Added the hand-authored verify_entry block: the Verify entry condition (merge plus a succeeded non-production deployment; for work with no deployable software, the delivered artifact in its consumption context), the pre-merge-stays-Active rule, and the Active-versus-Verify test placement axis keyed on target and timing (R69/R70/R71). Strictly additive; existing keys unchanged.",
     "2026-08-29: W13 (issue #94) landed the board-stage vocabulary: a new workflows.stage_flow carries the six Stage columns (Intake, Shaping, Planning, Active, Verify, Retro), the six per-stage Status sets with cross-cutting Blocked (26 distinct options), and terminal semantics; all three active boards re-point to it and fields gain Stage alongside Status. workflows.intent_flow keeps its preserved statuses but is canonical_for [] and superseded_by stage_flow (its removal is W11's); campps_initiative is untouched. boards.operations.routing_required_at moved off the retired Ready, and pause_states.source_note no longer describes Blocked as retired. The wip_limits block is marked non-authoritative in the same change.",
-    "2026-08-29: Added the hand-authored gate_catalogue block (issue infiquetra/infiquetra-sdlc#85): one versioned machine-readable catalogue of 47 gates, each carrying the six R20 attributes (evidence, applicability, owner, classification, override policy, failure route) plus id, source, classification_basis, and x7_ref for verifiability. Membership is X7's 44-row working set (docs/reviews/2026-08-29-x7-findings.md) plus the three deploy-plugin rows. Classification is advisory (the default), blocking (only where the gate's contract names mandatory evidence or a safety boundary), or the explicit string unclassified - an unclassified gate pauses for an operator decision, never silently blocking or advancing. The executable projection lives at tools/docs/gate_catalogue.py; the generated rendering at docs/process/gate-catalogue.md. Strictly additive: saga_lifecycle (including gate_classification, W11's custody) and every other block are unchanged."
+    "2026-08-29: Added the hand-authored gate_catalogue block (issue infiquetra/infiquetra-sdlc#85): one versioned machine-readable catalogue of 47 gates, each carrying the six R20 attributes (evidence, applicability, owner, classification, override policy, failure route) plus id, source, classification_basis, and x7_ref for verifiability. Membership is X7's 44-row working set (docs/reviews/2026-08-29-x7-findings.md) plus the three deploy-plugin rows. Classification is advisory (the default), blocking (only where the gate's contract names mandatory evidence or a safety boundary), or the explicit string unclassified - an unclassified gate pauses for an operator decision, never silently blocking or advancing. The executable projection lives at tools/docs/gate_catalogue.py; the generated rendering at docs/process/gate-catalogue.md. Strictly additive: saga_lifecycle (including gate_classification, W11's custody) and every other block are unchanged.",
+    "2026-08-30: Added the hand-authored parent_stage_derivation sub-key inside work_hierarchy (issue infiquetra/infiquetra-sdlc#82): the single versioned expression of the parent-issue Stage derivation (R5), encoding X5's least-advanced-open-child algorithm (issue #79) as data - the stage ordering, the open-required-child input filter, and the three ordered fallback arms - plus the three GitHub-native child dispositions (completed/descoped-not_planned/incomplete) and a membership-checked pin of the instant-of-failure token 'Verification failed' against workflows.stage_flow.stage_statuses.Verify. The retro_triggered input's encoding is recorded as UNKNOWN, owned by W2 (issue #83). The one reference interpreter is tools/docs/parent_stage.py; a consumer evaluates this block, never reimplements it. Strictly additive: roles and component_slices are unchanged.",
+    "2026-08-30: Added the hand-authored retro_trigger top-level block (issue infiquetra/infiquetra-sdlc#83): the single versioned expression of the conditional Retro trigger (R7-R13). Three machine-detectable triggers (failed_verification, rollback, repeated_repair_loop) each bind to a named observable read-only GitHub-native signal with its probe evidence and an observed_to_date field kept separate from observability; two triggers (meaningful_surprise, significant_lesson) are operator-asserted with never_inferred true and no signal an evaluator may substitute. The block records evaluator.exists=false (X1 issue #75 gap 9 - no evaluator exists anywhere in the running system; nothing here observes anything), the R10 clean-run closure from Verify direct to Closed, the R11 per-merged-pull-request five-question capture ungated on the trigger, the R12 append-only journal with a manual operator-visible /promote, and the R13 Retro Status vocabulary closing to Closed, never to a Done column. It also resolves W1's retro_triggered encoding UNKNOWN (issue #82): the wire format is tools/docs/retro_trigger.py's resolver. The one reference interpreter is tools/docs/retro_trigger.py; it is pure and fetches nothing. Strictly additive: every other top-level block is unchanged.",
+    "2026-08-30: Added planning_to_active_readiness inside dispatch_gates (issue infiquetra/infiquetra-sdlc#84): the single organization-wide Planning-to-Active readiness rule (R14-R19) replacing both the asgard.Active and campps.Active UNKNOWN placeholders, which now reference this one rule object instead of carrying per-team checklists. Three conditions (C1 intended outcome and acceptance expectations understandable, C2 dependencies and ownership actionable, C3 design decisions settled) evaluate from always-required card-contract fields, so an ordinary item decides with no operator input; the rule records result_stage Planning and result_status 'Ready for Active' (W13's vocabulary, issue #94) and no bare Ready status exists in workflows.stage_flow. Two refusals ship as enabled:false with their missing inputs named, never defaulted (AE16): risk_scaling, because the card-contract risk field has no defined source (X4 issue #78 recommends one but it is unadopted), and the eight-domain applicability_scan, because no available source enumerates the domains - in both cases the recorded-reason/baseline-threshold behaviour is the encoded rule while the refusal names what is missing. The baseline threshold requires all of C1-C3 and asserts no risk tier. The one reference interpreter is tools/docs/planning_readiness.py; a consumer evaluates this block, never reimplements it.",
+    "2026-08-30.4: Added the hand-authored terminal_outcomes top-level block (issue infiquetra/infiquetra-sdlc#90): the versioned terminal-outcome contract (R72, R73). Five dispositions each map to one of GitHub's three live closure reasons (delivered to COMPLETED; the four non-delivery dispositions duplicate, superseded, declined, canceled to the non-completed set) with the disposition itself recorded separately in the durable closeout comment, because GitHub carries three reasons and the policy names five dispositions. The replacement link for a duplicate or superseded issue rides the one durable closeout comment posted strictly before the close - markIssueAsDuplicate no longer exists in GitHub's mutation set and closeIssue(duplicateIssueId:) links and closes in the SAME call, so it cannot carry the 'before' ordering (passed additively, never load-bearing). Work that may realistically resume is never closed under any reason; may_resume.status_values is the literal UNKNOWN because no Deferred or Parked Status option exists in workflows.stage_flow or cross_cutting_statuses (X1 Inventory C recorded the identical gap). One exactly-once closeout comment carries the seven EE6 contents (delivered revision, environment, acceptance results, residual risks and follow-ups, documentation status, cleanup confirmation, closure reason), links rather than duplicates the authoritative evidence, and never fabricates an environment, deployment record, or acceptance result. Parent closure defaults to auto_close when all required child outcomes are terminal, combined verification is complete, and Retro is complete or not required, with descoped children excluded and the operator asked only on one of three named ambiguities - ambiguity is the trigger, never the default posture (R73). The predicate wire formats (descoped marker, combined-verification signal) stay W1's (#82); their pointer is parent_closure.predicate_wire_formats_resolved_by. Prose authority: docs/process/terminal-outcomes.md; oracle: tools/docs/tests/test_terminal_outcome_contract.py. Strictly additive: every other top-level block is unchanged.",
+    "2026-08-30.5: W11 (issue infiquetra/infiquetra-sdlc#92) replaced the twelve-key snapshot-derived saga_lifecycle mirror with the hand-authored minimal Saga adapter (R58-R64, R68): the block keeps its key name and phase_board_map's exact key, nesting and list shape (the live cross-plugin consumer binds to that literal path and discards the values), phases/state_axes/maturity(from only)/combinations/gate_classification/phase_command_map survive, derived_from/extras_from/source_note/gates_raw/reset_edges and maturity.consumed_by are removed, phase_board_map values became the W13 Stage vocabulary (Intake/Shaping/Planning/Active/Verify/Retro), and phase_command_map.brainstorm gains /spec (R61). Two new sub-blocks carry the derivation inputs the schema previously lacked: command_classification (the cross-cutting list - empty by recorded choice, the register classifies none - and the three deliberately excluded commands /outcome, /engines, /delegation-audit, each with its exclusion reason, R68) and foreign_commands (/deploy of the deploy plugin 0.2.1, Stage Active with the Active/Verify condition delegated by reference to verify_entry, R61). workflows.intent_flow is retired and deleted (R58); workflows.campps_initiative keeps its historical superseded_by string. The generator path is retired: build_saga_lifecycle, the extras file (config/saga-lifecycle-extras.yaml, deleted) and the snapshot-to-schema parity gate (check_parity.py's saga_lifecycle artifact and the docs-gate snapshot-parity semantics) are removed in the same change that installs the focused replacement validation (tools/docs/check_adapter.py: structural validity, complete and valid adapter mappings, Saga interface compatibility, real consumer tests; R62/R63). The four reset_edges cases survive verbatim as hand-authored prose in docs/lifecycle/saga-crosswalk.md (non-exhaustive, R64) and as a passing regression fixture. The vendored snapshot stays the input to interface compatibility only: command-to-Stage mapping resolves from phase_command_map plus command_classification exclusively via tools/docs/saga_adapter.py (R59), enforced by an automated check with /code-review, /founder-review, /promote and /resume as named snapshot-blindness fixtures (R60).",
+    "2026-08-30.6: R2 wave repair (issues infiquetra/infiquetra-sdlc#90 and #92, code review cycle 1 at 9f5b49f): the operator's two AFK rulings plus the wave review's routed repairs, one consolidated pass. RULING F-1: all eleven formerly-unclassified routable commands (/fleet-doctor, /founder-review, /handoff, /investigate, /loop, /optimize, /promote, /pulse, /resume, /strategy, /tier) are classified cross_cutting in saga_lifecycle.command_classification, because none independently advances an issue lifecycle Stage - each observes, routes, investigates, controls orchestration, or records learning/direction while the command it dispatches owns Stage movement. Each entry carries its own durable reason grounded in that command's model purpose and ownership boundary; the three exclusions (/outcome, /engines, /delegation-audit) are unchanged with their R68 citations; the register document's R68 carries the same amendment; and KTD9's fail-loud completeness rule is RETAINED for any future unclassified command (verified against a synthetic command). RULING F-2: a CLOSED issue carrying the durable duplicate disposition TOGETHER with its required replacement link is terminal non-delivery and composes into W1's descoped category at the parent-derivation/closure boundary only - duplicate is preserved as the operator-facing closeout disposition and still mints GitHub's DUPLICATE reason; with both present the child is NOT terminal_disposition_ambiguous; a missing disposition or a missing replacement link still fails closed (terminal_outcomes.parent_closure.duplicate_composition); the one reference interpreter is tools/docs/parent_closure.py, and W1's tools/docs/parent_stage.py is unmodified. The review's routed repairs also landed: W11's AE6 mutation sweep now observes its fixture (an open/yaml.safe_load tripwire around resolve_command_stage plus an in-place rewrite of the real vendored snapshot in try/finally); the reachability real-tree smoke test no longer asserts skip-clean exit 0 with the unconditional static clause; the reason-quality rule (non-empty, non-placeholder) moved into check_adapter.structural_validity; the docs-gate-schema-parity catalogue row, two gate_catalogue source strings, retro_trigger's vocabulary_provenance, phase_board_map.retro's note, saga_adapter's CLI error handling, the crosswalk intro, and the atlas intro were all retargeted off the deleted mirror; the closeout comment's required_contents gains disposition (the five-way value) beside closure_reason (GitHub's enum); and the atlas regenerated by adapter resolution with all regions current.",
+    "2026-09-07.1: Schema bump A of the SDLC documentation update plan (docs/plans/2026-09-07-sdlc-documentation-update-plan.md, unit U3), landing five operator decisions recorded in docs/engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md. E4, recording a deliberate pause: the live top-level pause_states reason vocabulary gains Deferred - the operator deliberately paused work that may resume - and its source_note records that Parked is retired as a duplicate term and is not a live pause reason. Parked survives only in workflows.campps_initiative.pause_states, the retired CAMPPS ladder's historical record, which is left byte-identical so historical cards stay resolvable. No new Status value is added: a deliberate pause is the existing cross-cutting Status Blocked plus this reason, carried by the new config/labels.json label pause/operator-deferred, with the reason text and the resume condition in the comment that sets Blocked. E6, no work-in-progress limits ever: the non-authoritative wip_limits top-level block is REMOVED and tools/github-automation/check-wip-limits.py is retired in the same change, which is exactly the revisit condition the W13 decision wrote. No Stage and no board enforces a card-count limit; the Delivery Manager resolves run concurrency from the live staffing roster and the applicable per-vendor and per-account constraints, and no single global cap is stated anywhere. The removed block's per-board keys were the retired six-column Status vocabulary - Idea, Shaping, Ready, Active, Verify, Done - which the W13 Stage migration renamed out of existence; that vocabulary is recorded here so the historical fact survives the block's removal. E7, Component: work_hierarchy.component_slices is renamed and reframed as work_hierarchy.components, work_hierarchy.roles drops its component entry, and work_hierarchy.source_note stops calling Component a dispatch role. Component is an architectural and structural concept - a named part of a larger system, which need not be independently deployable - never a dispatch role and never an issue type; the graduation hypothesis is closed permanently, the 2026-06-17 role-plus-field decision is superseded, and the four watched measures (slice_rework_rate, dispatch_without_clarification_rate, service_test_pass_rate, cross_service_e2e_pass_rate) are withdrawn rather than collected. The five verification strategies, their validation policy, the Capability close rule and the deleted Test Strategy board field's record survive unchanged as verification doctrine and as history. E8, authority boundaries rather than seven automatic interruptions: gate_catalogue gains approval_boundaries, which reads the seven categories from human_approval_state.approval_required_for by name instead of copying them and records, per category, the scope a grant must name, the actions that always exceed it, and the evidence a boundary held; the three absolute invariants stay outside the authorization system, and an unscoped grant is a missing boundary a role reports as a blocker. The approval_boundary_safety floor note is rewritten and the W4 plan's UNKNOWN-2 - credentials and identity, material spending, recorded as two categories with no gate - retires on that reading; no gate is minted, and whether a secrets scanner joins the binding toolchain standard is a question for infiquetra-context-library. E10, three Saga commands: saga_lifecycle.command_classification moves /outcome and /delegation-audit out of excluded into cross_cutting with their own durable reasons, /outcome's recording its expected removal from Saga as expectation only and not as already implemented; /engines stays excluded with a final utility reason; and the block's description now forbids placeholder exclusion reasons outright, a rule enforced in production by tools/docs/check_adapter.py. E4 also resolves terminal_outcomes.may_resume: status_values moves off the literal UNKNOWN to Blocked, and status_values_note now records the resolution - the pause is the cross-cutting Status Blocked plus the pause reason Deferred from pause_states, carried by the label pause/operator-deferred, with the reason text and the resume condition in the comment that sets Blocked; a pause expected to outlast the current planning horizon routes to the External / Deferred destination rather than closing. The stays-open rule is unchanged. Not additive at the top level: wip_limits is removed and no top-level key is added.",
+    "2026-09-07.1: crosswalk deploy-Stage repair (fresh-eyes review finding 3, documentation-update plan question Q20). saga_lifecycle.phase_board_map.qa.note now states that Verify is entered when delivery succeeds and points at this schema's verify_entry block for the condition itself, so the crosswalk's qa row can no longer be composed with the run model's deploy step into the false reading that deployment happens in Verify. The board Stage and Status a card carries while that step runs (Active, Deploying to non-production) is rendered into docs/lifecycle/saga-crosswalk.md from board_mapping.parent_card in config/run-model.json by tools/docs/gen_lifecycle_docs.py, which also renders the phase_board_map notes as a column of the phase crosswalk. No Stage or Status vocabulary moved and no other schema value changed.",
+    "2026-09-07.2: unit U5 of the SDLC documentation update plan (docs/plans/2026-09-07-sdlc-documentation-update-plan.md), landing operator decisions A6 and A7 recorded in docs/engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md. gate_catalogue.gates.deploy-owner-check.owner moves off the placeholder value not stated and names the Release worker: the new run role that holds the deployment_owner delivery responsibility, executes the authorized non-production deployment, and is therefore the role accountable when this gate stops a deploy before any mutation. Nothing else in the row changes. Its classification stays unclassified, because the W4 KTD4 census note still applies and no P14 classification assessment was performed here; evidence, applicability, override_policy, failure_route and source are byte-identical. The role itself is defined in config/run-model.json, not in this schema, and no top-level key is added or removed.",
+    "2026-09-07.3: unit U6 of the SDLC documentation update plan (docs/plans/2026-09-07-sdlc-documentation-update-plan.md), landing operator decisions E1, E3, E5 and E9 and the gate rows of decision A3, all recorded in docs/engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md. Five changes, one bump. (1) E1: issue_fields grows from thirteen fields to fourteen with risk, header '### Risk', required, placed after verification and before the lifecycle_origin backpointer; risk joins the always-required rule of required_matrix because it SUPPLIES the tier the risk-conditional rules key on, and the risk-conditional rules themselves are unchanged - failure_modes, inputs and stop_conditions still flip required at high and very-high only. dispatch_gates.planning_to_active_readiness.risk_scaling.enabled becomes true, missing_input and recommended_source retire, and source names issue_fields.fields.risk; the block writes no tier name of its own, so issue_fields.required_matrix stays the single source of which tiers deepen which fields. baseline_threshold.asserts_no_risk_tier becomes false because the rule now does assert a tier, the one the card carries. (2) E3: dispatch_gates gains a generic rule binding Planning-to-Active readiness to every board that uses workflows.stage_flow and dispatches Active work, inherited by contract, with operations, asgard and campps bound; dispatch_gates.operations gains an Active entry referencing the same rule object, and its creation-time Ready gate is untouched. (3) A3's gate rows and E3's: gate_catalogue gains operations-active-gate and re-classifies asgard-active-gate, campps-active-gate, prepared-issue-readiness-checks and authorized-author-allowlist from unclassified to blocking with their six attributes read from real evidence, taking the catalogue from 47 rows to 48 and the classification counts from 6 advisory / 30 blocking / 11 unclassified to 6 / 35 / 7; the two Active rows' stale source paths, which named saga_lifecycle.dispatch_gates when dispatch_gates is a sibling top-level key, are corrected in the same touch; floor_gates.planning_to_active lists all three rows and the W4 plan's UNKNOWN-1, the Operations board's absent Active gate, retires. (4) E5: a NEW top-level block, status_definitions, placed before saga_lifecycle, carrying all 26 Stage-and-Status pairs with the event that enters each, the role whose reported outcome that event is, and the authorized writer, plus the cross-cutting Blocked row; Ready to close is deliberately carried under both Verify and Retro with different definitions, which is why the block nests under stages rather than keying on the flat status list. workflows.stage_flow is unchanged: it stays the single authority for which Statuses exist, and status_definitions is keyed by the same pairs. tools/docs/gen_lifecycle_docs.py renders it as the new generated region status-definitions in docs/process/kanban-workflow.md. (5) E9: work_hierarchy.parent_stage_derivation.parent_outcome_state.own_verification_failed.repair_window_encoding stops being an UNKNOWN string and becomes a mapping naming the marker (the repair-window label, added to config/labels.json), its writer (the Delivery Manager through the lifecycle integration), and its two events (set when recording Verification failed citing the failing result, cleared only after a later deployed version passes every prescribed scenario citing that result). The top-level key set gains exactly one key, status_definitions, and loses none.",
+    "2026-09-07.4: unit U7 of the SDLC documentation update plan (docs/plans/2026-09-07-sdlc-documentation-update-plan.md), landing operator decision E2 and the schema half of decisions C1a to C1g, all recorded in docs/engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md. One change, one bump. E2: dispatch_gates.planning_to_active_readiness.planning_evidence.applicability_scan stops shipping as a declared refusal. enabled becomes true; missing_input retires, because what it recorded as missing - the membership of the scan - now exists; and the block gains domain_source naming config/lens-catalogue.json, declared_by (the Planner), declared_when (during planning, once per work unit), the declaration itself, the rule that an always-on lens is never declared away, boundary (planning for review readiness, never staffing and never scoring), and consumed_by (the readiness evidence and tools/docs/gen_review_roster.py). The undefined fixed count of EIGHT domains is retired outright: the scan's domains ARE the catalogue's lens identifiers, because a second concern list beside the catalogue would be the rival vocabulary decision E2 forbids. The fixture domain list the refusing form was tested over retires with it - tools/docs/planning_readiness.py's applicability_scan_status now reports the enabled block and scan_domain is exercised over the catalogue's real lens identifiers. recorded_reason_rule is unchanged in substance: a non-applicable domain costs a brief recorded reason, never an empty section (R19). NOTHING about the lens catalogue itself is a schema block: the catalogue (config/lens-catalogue.json), the default quality profile (config/quality-profiles/default.json), and the executor verification ledger (config/executor-verifications.json) are separately versioned files with their own generators, per the plan's key technical decision KTD6. The top-level key set is unchanged: no key is added and none is removed.",
+    "2026-09-07.5: repair unit R1 of the SDLC documentation update plan (docs/plans/2026-09-07-sdlc-documentation-update-plan.md), landing plan decisions Q79 and Q84 against fresh-eyes round 7, findings 2 and 10 to 13. One change, one bump. Q79: lifecycle_field_mutation gains allowed_submissions, the SINGLE list of phase-boundary moves a caller may submit through the constrained Mission Control mutation, with allowed_submissions_note and allowed_submissions_ready_to_close_note beside it. Six rows, not five: Ready to close appears under BOTH Verify and Retro, because Stage plus Status is the key and retro_trigger.no_trigger_closure says a run with no fired trigger closes straight from Verify. Before this bump, docs/process/lifecycle-field-mutation.md carried a hand-authored five-row table and docs/process/saga-board-write-authority.md a hand-authored six-row one, and both claimed to be the single authority on board writes; both now render this list as a generated region, so the two chapters cannot state different rules. Q84: the classification_basis strings of asgard-active-gate, operations-active-gate, authorized-author-allowlist and the issue-readiness review stop citing a bare 'operator decision E3 / A3' and gloss each decision item in words with a link to its heading in docs/engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md. No enum, no gate verdict, and no top-level key changes: the top-level key set is unchanged, and no consumer that read this schema before the bump loses a field."
   ],
   "status": "active",
   "description": "Canonical Infiquetra SDLC board, team, routing, review, approval, and deployment-state schema. This file intentionally contains no live GitHub Projects field option IDs; tooling must resolve those from GitHub at runtime.",
@@ -119,13 +131,6 @@
     }
   },
   "workflows": {
-    "intent_flow": {
-      "statuses": ["Idea", "Shaping", "Ready", "Active", "Verify", "Done"],
-      "terminal_statuses": ["Done"],
-      "canonical_for": [],
-      "superseded_by": "stage_flow",
-      "no_pause_state": "No active board carries a pause column. CAMPPS's Parked was retired on 2026-08-16 and was not replaced; a paused card is represented by labels and issue state, not by a Status option."
-    },
     "stage_flow": {
       "status": "active",
       "stages": ["Intake", "Shaping", "Planning", "Active", "Verify", "Retro"],
@@ -165,7 +170,7 @@
     "campps": ["Stage", "Status", "Objective", "Priority"]
   },
   "work_hierarchy": {
-    "source_note": "Canonical machine-readable hierarchy for Objective, Outcome, Capability, and Component slice roles. Component is a dispatch role encoded by sub-issue position plus fields, not a separate issue type.",
+    "source_note": "Canonical machine-readable hierarchy for the Objective, Outcome and Capability roles, plus the structural meaning of Component in the components block below. Component is NOT one of these roles and never was a legitimate one: it is an architectural and structural concept - a named part of a larger system - that an issue may name as scope metadata, never a dispatch role and never an issue type (E7, operator decision 2026-09-06, which closed the graduation hypothesis permanently and superseded the 2026-06-17 role-plus-field decision).",
     "roles": {
       "objective": {
         "kind": "project_field_plus_scorecard",
@@ -190,16 +195,10 @@
         "allowed_parent_roles": ["outcome"],
         "parent_policy": "Top-level by default; use an Outcome parent only when the active board contract explicitly requires dated proof cards.",
         "purpose": "Coordinates the end-to-end result across services and names the verification slice that proves completion."
-      },
-      "component": {
-        "kind": "repo_bounded_dispatch_slice",
-        "issue_type": false,
-        "encoded_by": ["native GitHub sub-issue position under a Capability", "the slice's declared test strategy in the issue body (formerly the Test Strategy project field, deleted 2026-08-16)"],
-        "purpose": "Independently service-testable slice an agent can build inside one repository or bounded context."
       }
     },
-    "component_slices": {
-      "parent_role": "capability",
+    "components": {
+      "source_note": "Component is a structural concept, not a role and not an issue type (E7, operator decision 2026-09-06). A component is a named part of a larger system or product - a service, a repository, a module, a subsystem, or another bounded part - and it need not be independently deployable: CAMPPS identity and authorization are components, and Talaria and Auralis each contain components that are not separate AWS services. Issues keep the three-value issue-type axis and may name the component they affect as scope metadata (a \"Component: <name>\" line in the issue body), never as a type; an application's component list lives with that application's architecture decisions. This key was named component_slices and described Component as a repo-bounded dispatch slice under a Capability; that framing is retired, and so are the four measures the closed hypothesis watched (slice_rework_rate, dispatch_without_clarification_rate, service_test_pass_rate, cross_service_e2e_pass_rate), which are withdrawn rather than collected. What survives below is the verification doctrine - how work on a component proves itself - and the historical record of the deleted Test Strategy board field.",
       "test_strategy_field": "Test Strategy",
       "test_strategy_field_status": "retired_board_field",
       "retired_field_record": "Deleted from CAMPPS (Project #4) on 2026-08-16, destroying 284 field values. It had been verified live earlier the same day (single-select, options endpoint/event/schema/property/combine, 284 of 831 cards carrying a value; source tools/board/snapshot.py capture project-4-20260816T040238), and that capture is the snapshot of record at ~/.infiquetra/board-snapshots/. The five strategies below remain the verification doctrine for Component slices; only the board field that recorded the choice is gone. A slice now declares its strategy in the issue body.",
@@ -226,55 +225,222 @@
           "proof_expectation": "Cross-repository or cross-service seam proof that local green checks did not miss the end-to-end result."
         }
       },
-      "capability_close_rule": "Every Capability coordinator names one enforced end-to-end verification slice before close; use combine when a cross-repo seam exists or a dedicated closeout E2E slice otherwise.",
-      "experiment_metrics": ["slice_rework_rate", "dispatch_without_clarification_rate", "service_test_pass_rate", "cross_service_e2e_pass_rate"]
+      "capability_close_rule": "Every Capability coordinator names one enforced end-to-end verification slice before close; use combine when a cross-repo seam exists or a dedicated closeout E2E slice otherwise."
+    },
+    "parent_stage_derivation": {
+      "source_note": "Hand-authored (W1, issue infiquetra/infiquetra-sdlc#82). The single expression of the parent-issue Stage derivation (R5): consumers read this block and evaluate it, they never vendor or reimplement the algorithm. The one reference interpreter is tools/docs/parent_stage.py. The derivation returns exactly one Stage and never a Status: a parent's Status is derived independently of any child's (R4), and the derivation never returns the furthest Stage a child reached (R2).",
+      "algorithm": "least-advanced-open-child",
+      "chosen_by": "docs/reviews/2026-08-29-x5-findings.md section 10 (issue #79, CLOSED/COMPLETED); adopted verbatim, not re-derived",
+      "stage_order": {
+        "values": ["Intake", "Shaping", "Planning", "Active", "Verify", "Retro"],
+        "authority": "workflows.stage_flow.stages",
+        "note": "The six accepted Stages, least advanced first; pinned by membership against workflows.stage_flow.stages at load time, and a resolver raises if the two disagree."
+      },
+      "selection": {
+        "open_child_filter": {
+          "exclude_dispositions": ["descoped", "completed"],
+          "note": "A required child contributes its Stage only while it is open and not explicitly descoped (R3); a terminal disposition is not part of the remaining work the parent shows."
+        },
+        "non_empty_rule": "least-advanced-open-child: return the least advanced Stage in stage_order occupied by any open required child (a selection from stages actually occupied, never the furthest child reached)",
+        "fallback_arms": [
+          {
+            "order": 1,
+            "when": "own_verification_failed",
+            "return": "Active",
+            "reason": "The parent's own most recent combined-verification attempt failed and has not yet progressed back toward re-verification (R65/AE27 applied to the parent by its own 'the issue' wording; X5 section 3 arm 1). Checked ahead of the Retro arm: a failed verification is independently a Retro trigger (R8), so the two co-occur, and the parent is being repaired right now, not yet in Retro."
+          },
+          {
+            "order": 2,
+            "when": "retro_triggered and not retro_complete",
+            "return": "Retro",
+            "reason": "The parent's own Retro trigger fired and the Retro has not completed (R7-R13, evaluated at the parent; X5 section 3 arm 2)."
+          },
+          {
+            "order": 3,
+            "when": "otherwise",
+            "return": "Verify",
+            "reason": "No open required child, no failure, no Retro trigger outstanding: the parent's own combined-verification proof (P9) is pending or in progress. Closed is not a Stage (P2); whether the parent closes is decided separately (P12), never by this function."
+          }
+        ],
+        "purity_note": "All three fallback arms read only the parent's CURRENT recorded state, never a remembered prior Stage, so the function is pure and cross-consumer deterministic (R1); X5 section 5b rejects the stateful ratchet reading."
+      },
+      "required_children_roster": {
+        "input": "Each required child carries its Stage plus one of three dispositions, natively distinguished by GitHub issue state, adding no vocabulary anywhere.",
+        "dispositions": {
+          "incomplete": {
+            "graphql": { "state": "OPEN", "state_reason": null },
+            "rest": { "state": "open", "state_reason": null },
+            "note": "Open and still linked as a required sub-issue. Also matches state_reason reopened (closed once, reopened - still open work)."
+          },
+          "completed": {
+            "graphql": { "state": "CLOSED", "state_reason": "COMPLETED" },
+            "rest": { "state": "closed", "state_reason": "completed" },
+            "note": "Closed as done; not part of the remaining work the parent shows. Tokens are the GraphQL IssueStateReason values; REST carries the lowercase spellings, and disposition comparison is case-normalized so the two surfaces match."
+          },
+          "descoped": {
+            "graphql": { "state": "CLOSED", "state_reason": "NOT_PLANNED" },
+            "rest": { "state": "closed", "state_reason": "not_planned" },
+            "note": "Explicitly descoped (R3): closed as not planned while remaining linked as a sub-issue, so the descoping is a deliberate, authored, timestamped act that stays auditable. Severing the sub-issue link instead is the silent removal R39 rejects. Excluded from the derivation inputs and distinguishable from incomplete."
+          }
+        }
+      },
+      "parent_outcome_state": {
+        "own_verification_failed": {
+          "semantics": "The parent's own most recent combined-verification attempt failed and has not yet progressed back toward re-verification (X5 section 3 arm 1). All fallback arms read only the parent's current recorded state, never a remembered prior Stage.",
+          "instant_of_failure_token": {
+            "binding": "membership-checked pin",
+            "status_set_path": ["workflows", "stage_flow", "stage_statuses", "Verify"],
+            "token": "Verification failed",
+            "note": "The set itself is W13's authority (workflows.stage_flow.stage_statuses.Verify); the pin fails the moment 'Verification failed' leaves that set. A bare literal copy with no membership check would be a second copy of W13's vocabulary under this key. The token names the instant of failure only: R65/AE27 then move the Stage to Active, and Repairing must NOT be read as carrying this signal (R66 uses it generically for other Active-stage fixups, AE37)."
+          },
+          "repair_window_encoding": {
+        "resolved_by": "Operator decision E9 (2026-09-06), recorded in docs/engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md and landed by unit U6 of docs/plans/2026-09-07-sdlc-documentation-update-plan.md. This block no longer defers the encoding: the marker below IS the encoding, and it replaces the UNKNOWN X5 section 11 left.",
+        "marker_kind": "label",
+        "marker": "repair-window",
+        "marker_source": "config/labels.json",
+        "present_while": "The repair window is open - that is, from the moment the parent's own verification failed until a later deployed version passes every prescribed scenario.",
+        "writer": "The Delivery Manager, through the lifecycle integration. No acting role writes it, and no consumer sets it as a side effect of reading.",
+        "events": {
+          "set": "When the Delivery Manager records the parent's Status as Verification failed, citing the failing test result that caused it.",
+          "clear": "Only after a later deployed version passes every prescribed scenario, citing that passing result. Nothing else clears it."
+        },
+        "reader_rule": "own_verification_failed is true exactly while the marker is present. Consumers READ the marker; they never re-derive the boolean from a Status. Repairing in particular carries no signal (R66 uses it generically for other Active-stage fixups, AE37), which is precisely why a durable marker was needed: the instant-of-failure token above names the instant only, and R65/AE27 move the Stage on immediately after it.",
+        "why_a_label": "The window is a fact about the parent, so it belongs on the parent's own record. A label is the cheapest durable encoding the one interpreter can read with the inputs it already has: no fourth board field, no new Status, and no parsing of prose. It does not violate the rule that no label encodes a Stage or Status value (W13 AE24), because repair-window is neither a Stage name nor a Status name - tools/docs/check_label_vocabulary.py checks exactly that.",
+        "closing_version_rule": "The two events are D2's closing-version rule stated once: closure requires every prescribed scenario passed on the closing version, so the marker's truth and the closure rule cannot disagree.",
+        "interpreter": "tools/docs/parent_stage.py labels_signal_repair_window() is the one runtime reading of the marker name; no consumer copies the literal."
+      }
+        },
+        "retro_triggered": {
+          "semantics": "The parent's own Retro trigger has fired and the Retro has not completed (R7-R13, evaluated at the parent; X5 section 3 arm 2).",
+          "encoding": "Resolved by W2 (issue infiquetra/infiquetra-sdlc#83, which landed the retro_trigger contract): the wire input is the parent's own fired-trigger set, evaluated by tools/docs/retro_trigger.py's resolve() against signal records gathered from the parent issue's card timeline and the target repository's rollback tags, plus any operator assertion of meaningful_surprise or significant_lesson recorded at closeout. retro_triggered is true when any machine-detectable trigger fires or the operator asserts one of the two operator-asserted triggers. Tests still supply the boolean explicitly as a fixture-level input - no evaluator exists (retro_trigger.evaluator.exists is false), so no consumer derives the boolean automatically yet."
+        }
+      },
+      "unknown_or_absent_inputs": "raise, never default - an out-of-vocabulary Stage, an absent Stage, or an unrecognized disposition is a contract question a human answers (HALT over degrade, verify_entry.py posture). How a consumer surfaces the exception is the consumer's decision."
     }
   },
   "pause_states": {
-    "source_note": "Vocabulary of pause reasons, NOT a list of board columns. As of 2026-08-16 no active board carries a pause column at all: CAMPPS's Parked was the last one and was migrated into Idea. Needs Review and Needs Question are retired Mount Olympus column names kept as vocabulary. Blocked is NOT a pause state here: since the 2026-08-29 Stage migration it is a live cross-cutting Status, available in any Stage rather than belonging to one (R66). A paused card on an active board is expressed by labels and issue state.",
+    "source_note": "Vocabulary of pause reasons, NOT a list of board columns. As of 2026-08-16 no active board carries a pause column at all: CAMPPS's Parked was the last one and was migrated into Idea. Needs Review and Needs Question are retired Mount Olympus column names kept as vocabulary. Blocked is NOT a pause state here: since the 2026-08-29 Stage migration it is a live cross-cutting Status, available in any Stage rather than belonging to one (R66). A paused card on an active board is expressed by labels and issue state. Parked is retired as a duplicate term and is NOT a live pause reason: it survives only in workflows.campps_initiative.pause_states, the retired CAMPPS ladder's historical record, so historical cards naming that column stay resolvable (E4, operator decision 2026-09-06, corrected 2026-09-07).",
     "Plan-Approved": "Plan accepted but operator intentionally paused dispatch.",
     "Needs Review": "Operator or team review needed before work can continue.",
     "Needs Question": "Author or operator input needed; currently treated as a human-input state.",
+    "Deferred": "The operator deliberately paused work that may resume. A reason, never a Status: the item stays open carrying the cross-cutting Status Blocked plus the config/labels.json label pause/operator-deferred, and the reason text and the resume condition go in the comment that sets Blocked. A pause expected to outlast the current planning horizon routes to the External / Deferred destination with its Stage and reason intact; resuming clears the reason and routes back. Metrics count deferred time separately from ordinary blocked time, and a deliberate pause never trips a stalled-work alert (E4).",
     "Blocked": "Known external blocker prevents progress.",
     "Cancelled": "Work intentionally stopped before completion."
   },
-  "wip_limits": {
-    "source_note": "NOT a live limit source. Marked non-authoritative 2026-08-29 (W13 board-stage migration): these keys are the retired six-column Status vocabulary (Idea, Shaping, Ready, Active, Verify, Done), which the Stage migration renamed out of existence. The per-board sub-objects are preserved byte-identical as a historical record; re-deriving limits for the Stage vocabulary is deliberately deferred and must not happen as a side effect. Do not direct agents here as a limit source.",
-    "operations": {
-      "Idea": null,
-      "Shaping": 10,
-      "Ready": 10,
-      "Active": 5,
-      "Verify": 5,
-      "Done": null
-    },
-    "asgard": {
-      "Idea": null,
-      "Shaping": 8,
-      "Ready": 8,
-      "Active": 5,
-      "Verify": 5,
-      "Done": null
-    },
-    "campps": {
-      "Idea": null,
-      "Shaping": null,
-      "Ready": null,
-      "Active": null,
-      "Verify": null,
-      "Done": null
-    }
-  },
   "dispatch_gates": {
+    "rule": {
+      "applies_to": "every board that uses workflows.stage_flow and dispatches Active work",
+      "gate": "planning_to_active_readiness",
+      "bound": ["operations", "asgard", "campps"],
+      "inherited_by_contract": true,
+      "note": "adding a board binds it; no per-board policy"
+    },
     "operations": {
-      "Ready": ["Issue body satisfies the card contract (docs/process/card-schema.md), enforced by mission-control at creation"]
+      "Ready": ["Issue body satisfies the card contract (docs/process/card-schema.md), enforced by mission-control at creation"],
+      "Active": ["dispatch_gates.planning_to_active_readiness"]
     },
     "asgard": {
-      "Active": ["UNKNOWN: both prior gates were backed by project fields deleted on 2026-08-16 (Mode must be set; Jeff Needed must be set when work crosses an approval boundary). No replacement gate has been decided. Operator call required; do not infer one."]
+      "Active": ["dispatch_gates.planning_to_active_readiness"]
     },
     "campps": {
       "Ready": ["Outcome or Capability is admitted to the initiative portfolio", "Objective field is set"],
-      "Active": ["UNKNOWN: the prior In Progress gate required Component slices to identify their Test Strategy, and the Test Strategy field was deleted on 2026-08-16. No replacement gate has been decided. Operator call required; do not infer one."]
+      "Active": ["dispatch_gates.planning_to_active_readiness"]
+    },
+    "planning_to_active_readiness": {
+      "rule_version": "2026-08-30",
+      "source_note": "Hand-authored per the W3 plan (issue infiquetra/infiquetra-sdlc#84), generalized by operator decision E3 (2026-09-06), recorded in docs/engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md and landed by unit U6 of docs/plans/2026-09-07-sdlc-documentation-update-plan.md. The single organization-wide Planning-to-Active readiness rule (R14): operations.Active, asgard.Active and campps.Active all reference this one rule object rather than carrying per-team checklists, and no per-team checklist may be introduced to fill the gap. Which boards are bound is stated once in dispatch_gates.rule, not board by board: a board qualifies when it uses this schema's workflows.stage_flow vocabulary AND dispatches Active work, and inherited_by_contract means a future qualifying board is bound without a policy decision, a bespoke checklist, or any edit beyond joining that rule's bound list. Each board's creation-time Ready gate is a different gate at a different boundary and stays distinct. The one reference interpreter is tools/docs/planning_readiness.py; a consumer evaluates this block, never reimplements it.",
+      "requirements_owned": "R14, R15, R16, R17, R18, R19",
+      "description": "Evidence-sufficiency test for entry to Active from Planning (R15). The decision is computed from the card body alone - the projection reads the committed schema and the parsed card and nothing else: no board, no API, no environment - so an ordinary item always yields a decision with no operator input.",
+      "conditions": {
+        "C1": {
+          "condition": "intended_outcome_understandable",
+          "statement": "The intended outcome and acceptance expectations are understandable.",
+          "evidence_fields": ["objective", "intent", "acceptance_criteria", "verification"],
+          "note": "All four are always-required core fields (issue_fields.required_matrix rules[0]); every conforming card carries them, so C1 evaluates on an ordinary item with nothing to ask."
+        },
+        "C2": {
+          "condition": "dependencies_and_ownership_actionable",
+          "statement": "Important dependencies and ownership are actionable.",
+          "evidence_fields": ["context_library_links", "files_expected"],
+          "note": "context_library_links is required-or-the declared _none_ sentinel: the sentinel means knowingly none and satisfies C2, a card missing the field entirely does not. Ownership and dependency structure (assignee, parent/sub-issue links) come from the same issue fetch as the body."
+        },
+        "C3": {
+          "condition": "design_decisions_settled",
+          "statement": "Any genuinely required design decision is settled.",
+          "evidence_fields": ["lifecycle_origin"],
+          "note": "lifecycle_origin must name a /plan artifact; it is auto-populated, not author-required, so C3 still needs no operator input. A literal UNKNOWN token remaining in the body marks an unsettled decision: the repository's card-contract affordance makes UNKNOWN a first-class honest answer that routes to the operator, so a card carrying one is correctly not ready for Active."
+        },
+        "C4": {
+          "condition": "threshold_scales_with_context_and_risk",
+          "statement": "The threshold scales with context and risk.",
+          "evidence_fields": ["failure_modes", "inputs", "stop_conditions"],
+          "risk_conditional": true,
+          "note": "The only risk-conditional condition: the three fields it deepens are exactly the three issue_fields.required_matrix marks risk-conditional, and their requiredness depends on the card's own risk value. That value now has one defined source, the issue_fields.fields.risk card-contract field added by operator decision E1 (2026-09-06), so C4 is evaluated rather than refused (see risk_scaling.source). A card whose risk value is absent, or still reads the literal UNKNOWN token, fails C4 and routes to the operator; the rule never defaults to a tier (R17, AE16)."
+        }
+      },
+      "baseline_threshold": {
+        "requires": ["C1", "C2", "C3"],
+        "asserts_no_risk_tier": false,
+        "note": "The three conditions every card must satisfy whatever its risk tier. With risk scaling enabled (operator decision E1, 2026-09-06) the rule adds C4 on top of this baseline and does assert a risk tier - the one the card itself carries - so asserts_no_risk_tier is false. The baseline is still the whole demand at the lean tiers, because issue_fields.required_matrix leaves the risk-conditional trio optional at low and medium, and it is never relaxed: a higher tier only ever adds C4's evidence, it never removes a baseline condition."
+      },
+      "risk_scaling": {
+        "enabled": true,
+        "source": "issue_fields.fields.risk - the fourteenth card-contract field, added by operator decision E1 (2026-09-06). The tier is read from the card body and nowhere else: the risk: labels in config/labels.json stay a board projection written by the lifecycle integration, never a source, and no board field carries the value.",
+        "tier_vocabulary_source": "issue_fields.required_matrix.axes.risk",
+        "effect": "C4 is evaluated against the card's own risk value. Which tiers deepen the three fields below is resolved by reading issue_fields.required_matrix, so this block writes no tier name of its own and cannot drift from the matrix. An absent risk value, or one still reading the literal UNKNOWN token, fails C4 and routes to the operator; the rule never defaults to a tier (R17, AE16).",
+        "deepens": ["failure_modes", "inputs", "stop_conditions"],
+        "deepens_how": "The same three fields issue_fields.required_matrix marks risk-conditional. The matrix is the single source of which tiers require them: the reference interpreter tools/docs/planning_readiness.py resolves each field against the matrix for the card's tier rather than carrying a second copy of the policy.",
+        "schema_validity_rule": "risk_scaling.enabled true requires a risk supplier: issue_fields.fields must carry a field keyed risk and issue_fields.required_matrix.axes.field must list it. A schema that enables scaling without one is malformed, and tools/docs/planning_readiness.py fails its schema validation with a plain error naming the missing field rather than scaling against a value nothing supplies."
+      },
+      "planning_evidence": {
+        "design_record": {
+          "normal": "The /plan artifact is the normal design record (R18).",
+          "separate_design_doc_required": false,
+          "note": "A separate design document is produced only on a named trigger below, never by default. The trigger is scope/complexity-shaped, deliberately not a risk tier: no risk tier is available to key on, and R18's complexity trigger must not smuggle in the risk dependency R17 forbids."
+        },
+        "separate_design_doc_triggers": {
+          "triggers": [
+            {
+              "trigger": "multi_service_change",
+              "statement": "The change spans multiple services, so planning evidence must include a separate design document and a diagram.",
+              "example": "A change spanning four services produces both a separate design document and a diagram.",
+              "shape": "scope_complexity",
+              "requires_evidence": ["separate_design_document", "diagram"]
+            }
+          ],
+          "no_risk_tier_triggers": true,
+          "note": "The trigger list contains no risk-tier token by construction, so the separate-design-document decision cannot become a risk-scaled rule keyed to an input with no defined source."
+        },
+        "diagram_rule": {
+          "rule": "Include a diagram when the approach has shape prose alone does not carry; skip it when the approach is a one-paragraph pattern application.",
+          "implemented_by": "skills/plan/references/plan-sections.md (the Saga /plan skill's High-Level Technical Design section rule) - the policy is encoded here once and cited to its implementer."
+        },
+        "applicability_scan": {
+          "enabled": true,
+          "domain_source": "config/lens-catalogue.json - the lens identifiers of the universal lens catalogue. The scan's domains ARE the catalogue's lenses; there is no separate domain list (operator decision E2).",
+          "domain_source_note": "The undefined fixed count of eight domains is retired. A second list of concerns beside the catalogue would be a rival concern vocabulary, which is exactly what decision E2 forbids: 'the universal lens catalogue is the single concern vocabulary'. The fixture domain list the refusing form was tested over is retired with it - the rule is now tested over the catalogue's real lens identifiers.",
+          "declared_by": "planner",
+          "declared_when": "during planning, once per work unit",
+          "declaration": "For each work unit the Planner declares which catalogue lenses apply and which do not, with a reason for each non-applicable one, and decomposes the work, constraints, checks, and evidence to reach the quality the applicable lenses require.",
+          "always_on_lenses_are_not_declarable": "A lens the catalogue marks always_on is applicable by the catalogue and is never declared away; the declaration covers the conditional lenses only.",
+          "recorded_reason_rule": "Every domain in the scan either applies to the change under planning or carries a brief recorded reason why it does not apply - the recorded reason, never an empty section, is what satisfies the check for a non-applicable domain (R19).",
+          "boundary": "Planning for review readiness, not staffing and not scoring. The Planner chooses no vendor, model, executor, effort, score, or outcome; the Delivery Manager resolves staffing and freezes the run's roster afterwards, and Code Review judges independently (operator decision E2).",
+          "consumed_by": [
+            "the Planning-to-Active readiness evidence, as the planning half",
+            "tools/docs/gen_review_roster.py, as the run's applicability declaration when the roster is resolved"
+          ],
+          "effect": "Enabled. A work unit whose plan carries no declaration, or whose declaration names a lens identifier absent from the catalogue, or leaves a non-applicable lens without a recorded reason, does not satisfy the planning-evidence condition."
+        }
+      },
+      "bindings": {
+        "governed_by": "dispatch_gates.rule - the generic binding. The three entries below record where each current board's Active gate resolves; they are the rule's bound list made concrete, not three separate policies.",
+        "asgard_active": "dispatch_gates.asgard.Active -> this rule (was the UNKNOWN placeholder)",
+        "campps_active": "dispatch_gates.campps.Active -> this rule (was the UNKNOWN placeholder)",
+        "operations_active": "dispatch_gates.operations.Active -> this rule. Bound by operator decision E3 (2026-09-06), which generalized readiness to every board that uses the shared lifecycle and dispatches active work; the W3 plan's UNKNOWN-3 is closed by that decision. The Operations Ready gate above is unchanged: it is the creation-time card-contract check, a different gate at a different boundary."
+      },
+      "result_stage": "Planning",
+      "result_status": "Ready for Active",
+      "result_note": "Readiness is represented as the Ready for Active Status inside Planning (R16); the vocabulary was provisioned by W13 (issue #94) and is not re-provisioned here. No bare Ready status exists in workflows.stage_flow and no Ready column is reintroduced on any board."
     }
   },
   "team_routing": {
@@ -438,6 +604,40 @@
     "source": "docs/brainstorms/2026-08-27-reconciled-sdlc-implementation-requirements.md (R31, R40, R65, R67, R82)",
     "writable_fields": ["Stage", "Status"],
     "writable_fields_note": "The single constrained Mission Control lifecycle-field mutation may write only these two fields; any other field name is rejected before a board is touched. Authored contract, not read at runtime: the plugin enforces its own CORRECTION_FIELDS literal.",
+    "allowed_submissions_note": "The one list of phase-boundary moves a caller may submit through this mutation. It is the single authority: docs/process/lifecycle-field-mutation.md and docs/process/saga-board-write-authority.md both render this list as a generated region, so the two chapters cannot state different rules. Before plan decision Q79 (2026-09-07) each chapter carried its own hand-authored table, one with five rows and one with six, and both claimed to be the single authority on board writes (fresh-eyes round 7, finding 2). Every Stage and Status below is a value workflows.stage_flow already declares; tools/docs/gen_lifecycle_docs.py fails the render rather than printing a pair the flow does not carry.",
+    "allowed_submissions_ready_to_close_note": "**Six rows, not five.** `Ready to close` is carried under both Verify and Retro because Stage plus Status is the key. `retro_trigger.no_trigger_closure` in `config/sdlc-schema.json` says a run with no fired trigger closes directly from Verify and never enters Retro, so a delivered terminal reached without a trigger is submitted under Verify, and one reached after Retro is submitted under Retro. The two rows are the two ends of one branch, not a conflict.",
+    "allowed_submissions": [
+      {
+        "stage": "Planning",
+        "status": "Designing",
+        "when": "Planning starts"
+      },
+      {
+        "stage": "Planning",
+        "status": "Ready for Active",
+        "when": "The plan is ready"
+      },
+      {
+        "stage": "Active",
+        "status": "Implementing",
+        "when": "Work starts"
+      },
+      {
+        "stage": "Verify",
+        "status": "Awaiting verification",
+        "when": "After merge and the applicable delivery or artifact verification"
+      },
+      {
+        "stage": "Verify",
+        "status": "Ready to close",
+        "when": "At a delivered terminal where the closure conditions hold and no Retro trigger fired"
+      },
+      {
+        "stage": "Retro",
+        "status": "Ready to close",
+        "when": "At a delivered terminal after Retro, where a trigger did fire"
+      }
+    ],
     "board_discovery": "issue_project_items",
     "board_discovery_note": "Carrying boards are resolved from the issue's own projectItems, never from a repo-to-board mapping.",
     "atomicity": "all_carrying_boards_or_none",
@@ -464,10 +664,11 @@
       "source": "R26 (docs/brainstorms/2026-08-27-reconciled-sdlc-implementation-requirements.md, line 268): the five-gate floor.",
       "planning_to_active": {
         "gates": [
+          "operations-active-gate",
           "asgard-active-gate",
           "campps-active-gate"
         ],
-        "note": "Both are unclassified (self-declared UNKNOWN in dispatch_gates). The Operations board has no Active gate entry at all - an explicit absence recorded on docs/process/gate-catalogue.md, not an invented row. See the plan's UNKNOWN-1."
+        "note": "All three are blocking, classified from the evidence of the one rule they share, dispatch_gates.planning_to_active_readiness (operator decision E3, 2026-09-06). The list enumerates the boards bound TODAY; which boards qualify is stated once in dispatch_gates.rule, and a future qualifying board is bound by that rule and joins this list without a new policy decision. The W4 plan's UNKNOWN-1 - the Operations board having no Active gate entry at all - is retired by the same decision."
       },
       "document_review": {
         "gates": [
@@ -497,7 +698,64 @@
           "automation-eligibility-gate",
           "tier-escalation-confirmation"
         ],
-        "note": "P22 categories mapped: production changes (production-deployment-safety, deploy-autonomy-posture, deploy F1-F3), destructive actions and external commitments and changes to process authority (no-force-push, outward-github-mutation-confirmation, automation-eligibility-gate, tier-escalation-confirmation). Two of P22's six categories - credentials and identity, material spending - have an approval boundary in human_approval_state.approval_required_for but no pass/fail gate to catalogue; recorded as a known gap (the W4 plan's UNKNOWN-2). Minting gates for them would edit human_approval_state and invent contracts."
+        "note": "P22 categories mapped: production changes (production-deployment-safety, deploy-autonomy-posture, deploy F1-F3), destructive actions and external commitments and changes to process authority (no-force-push, outward-github-mutation-confirmation, automation-eligibility-gate, tier-escalation-confirmation). These nine gates are the enforcement points that already exist; they are not the whole boundary map. E8 (operator decision 2026-09-06, briefing 41a) settled the rest: all seven approval categories are minimal AUTHORITY BOUNDARIES, and each one is recorded - with the scope a grant must name, the actions that always exceed it, and the evidence that the boundary held - in gate_catalogue.approval_boundaries, which reads the category list from human_approval_state.approval_required_for by name rather than copying it. A category whose only test is whether the operator authorized this specific action is a boundary, and its evidence is the authorization record, not a six-attribute pass/fail gate; no gate is minted for credentials and identity or for material spending, and minting one would edit human_approval_state and invent contracts. The W4 plan's UNKNOWN-2, which recorded those two categories as a known gap, is RETIRED on that reading. The one remaining mechanical question - whether a secrets scanner joins the organization's binding toolchain standard - belongs to infiquetra-context-library as the standards owner; if that standard names one, a genuine mechanical gate joins this catalogue then, and not before."
+      }
+    },
+    "approval_boundaries": {
+      "source": "human_approval_state.approval_required_for",
+      "source_note": "The seven approval categories are minimal AUTHORITY BOUNDARIES on what a run may do, not seven automatic per-action interruptions (E8, operator decision 2026-09-06 on briefing 41a). The category list is NOT copied here: it is read from human_approval_state.approval_required_for, and every key of categories below is one of that list's exact strings. A run acts within the authority the operator recorded for that work item at orchestration setup, category by category and with named scope; an action inside the recorded scope proceeds with no further prompt, and only an action that would exceed it stops and returns to the operator with the specific decision. This block records what a grant must name, what always exceeds it, and the evidence a boundary held; it mints no gate and grants no authority.",
+      "absolute_invariants": {
+        "note": "Outside the authorization system entirely: no recorded grant can include them, no gate overrides them, and no role may act against one under any authority.",
+        "invariants": [
+          "never commit a secret",
+          "never force-push a protected or default branch",
+          "never delete a shared branch"
+        ]
+      },
+      "always_exceeds": [
+        "a production promotion not already named in an approved promotion record",
+        "an irreversible destructive action",
+        "a change in decision authority"
+      ],
+      "unscoped_grant_rule": "A grant without named scope is not a boundary but a missing one. A role that meets an unscoped grant reports a blocker under B2 rather than acting on it. The operator grants the scope; the Delivery Manager records it in the run setup record and allocates it to roles, and can never widen it.",
+      "evidence_rule": "A boundary held when the recorded grant covers the action and the action left its own durable record - a deployment record, a spend record, a merge - and, at the edge of the grant, the operator's decision on the issue. A reviewer treating an action as authorized cites the grant that covers it.",
+      "enforcement_points": "The nine gates listed under floor_gates.approval_boundary_safety are the pass/fail enforcement points that already exist; that block's note records which categories they serve. Categories without such a gate are enforced by the acting role stopping and the Delivery Manager escalating.",
+      "categories": {
+        "production changes": {
+          "grant_must_name": "the environments the run may deploy to, or none",
+          "always_exceeds": "a promotion to an environment the recorded grant does not name, and any production promotion not already named in an approved promotion record",
+          "evidence": "the recorded grant plus the deployment record"
+        },
+        "destructive operations": {
+          "grant_must_name": "the targets the run may destroy or overwrite, or none",
+          "always_exceeds": "an irreversible destructive action, whatever the grant says",
+          "evidence": "the recorded grant plus the action's own durable record"
+        },
+        "secrets or credential changes": {
+          "grant_must_name": "the credentials the run may use or rotate, or none",
+          "always_exceeds": "broader credential access than the grant names",
+          "evidence": "the recorded grant plus the credential change record; the never-commit-a-secret invariant applies regardless and is not grantable"
+        },
+        "IAM or permission changes": {
+          "grant_must_name": "the permission or identity scopes the run may change; none unless named",
+          "always_exceeds": "broader identity or permission access than the grant names",
+          "evidence": "the recorded grant plus the permission change record"
+        },
+        "billing or cost-impacting actions": {
+          "grant_must_name": "a spending ceiling, or none",
+          "always_exceeds": "new or increased spending beyond the recorded ceiling",
+          "evidence": "the recorded grant plus the spend record"
+        },
+        "external commitments": {
+          "grant_must_name": "the commitments the run may make on the organization's behalf; none unless named",
+          "always_exceeds": "a new external commitment the grant does not name",
+          "evidence": "the recorded grant plus the commitment's own durable record"
+        },
+        "major team or process authority changes": {
+          "grant_must_name": "always none - decision authority is never delegated by a run setup record",
+          "always_exceeds": "any change in decision authority",
+          "evidence": "the operator's decision on the issue"
+        }
       }
     },
     "gates": {
@@ -540,14 +798,14 @@
       "docs-gate-schema-parity": {
         "id": "docs-gate-schema-parity",
         "x7_ref": "A4",
-        "evidence": "config/sdlc-schema.json's generator-owned blocks (saga_lifecycle, issue_fields) match what regenerating from their vendored source would produce",
+        "evidence": "config/sdlc-schema.json's generator-owned block (issue_fields alone, since W11 retired the saga_lifecycle snapshot mirror and the adapter is hand-authored) matches what regenerating from the issue-contract seed would produce; the adapter itself is checked by tools/docs/check_adapter.py focusing on content (structural validity, mapping completeness, AE28 single-source) instead of any regeneration round-trip (R62/R63)",
         "applicability": "Any schema/config change",
         "owner": "not stated",
         "classification": "blocking",
         "override_policy": "not stated",
-        "failure_route": "CI job fails red; the check is schema-to-snapshot only and structurally cannot see snapshot-to-live-plugin drift (X7 A7)",
-        "source": "tools/docs/check_parity.py via .github/workflows/docs-gate.yml",
-        "classification_basis": "Mandatory evidence: the workflow's own header contracts the staged docs gate to \"FAILS (does not warn)\" on schema-to-snapshot drift."
+        "failure_route": "CI job fails red; the parity check is per-generator-block only and structurally cannot see snapshot-to-live-plugin drift (X7 A7); the Saga interface side runs in check_plugin_reachability.py's command-surface clause",
+        "source": "tools/docs/check_parity.py (issue_fields only) plus tools/docs/check_adapter.py, via .github/workflows/docs-gate.yml",
+        "classification_basis": "Mandatory evidence: the workflow's own header contracts the staged docs gate to \"FAILS (does not warn)\" on schema-to-generator drift."
       },
       "docs-gate-render-currency": {
         "id": "docs-gate-render-currency",
@@ -672,50 +930,62 @@
       "asgard-active-gate": {
         "id": "asgard-active-gate",
         "x7_ref": "B8",
-        "evidence": "UNKNOWN in the source itself: both prior gates were backed by project fields deleted on 2026-08-16 (Mode must be set; Jeff Needed must be set when work crosses an approval boundary)",
-        "applicability": "The Asgard Active status transition",
-        "owner": "not stated",
-        "classification": "unclassified",
-        "override_policy": "not stated",
-        "failure_route": "Not defined - the schema's own text records no replacement gate",
-        "source": "config/sdlc-schema.json saga_lifecycle.dispatch_gates.asgard.Active",
-        "classification_basis": "UNCLASSIFIED, self-declared in dispatch_gates.asgard.Active: \"No replacement gate has been decided. Operator call required; do not infer one.\" Corroborated by docs/process/asgard-operating-model.md (\"Whether reaching Active is still gated on these being present is undecided\")."
+        "evidence": "The four readiness conditions C1 to C4 of dispatch_gates.planning_to_active_readiness, read from the card body: the intended outcome and acceptance expectations are understandable (C1), dependencies and ownership are actionable (C2), required design decisions are settled (C3), and the threshold scales with the card's risk value (C4)",
+        "applicability": "A card leaving Planning for Active on the Asgard board",
+        "owner": "The reference interpreter tools/docs/planning_readiness.py, evaluated by the Delivery Manager before the card is recorded Ready for Active",
+        "classification": "blocking",
+        "override_policy": "none",
+        "failure_route": "Not ready: the card stays in Planning with the failed conditions and their missing evidence fields named, and the missing evidence is supplied before it is re-evaluated",
+        "source": "config/sdlc-schema.json dispatch_gates.asgard.Active -> dispatch_gates.planning_to_active_readiness",
+        "classification_basis": "Mandatory evidence: the four readiness conditions of dispatch_gates.planning_to_active_readiness are named, testable evidence a card must carry before it may enter Active, and a card that fails one does not move. Classified from the rule's own evidence per decision item [E3](../engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md#e3-the-operations-board-has-no-planning-to-active-gate-and-the-gate-catalogues-two-active-gate-rows-read-stale) (2026-09-06 \u2014 the ruling that Planning-to-Active readiness is one board-independent policy rather than a per-board rule). The prior UNCLASSIFIED reading was self-declared in dispatch_gates.asgard.Active while both replaced gates were backed by project fields deleted on 2026-08-16 (Mode must be set; Jeff Needed must be set when work crosses an approval boundary) and no replacement had been decided. The single organization-wide readiness rule is that replacement, so the row's six attributes are now read from the rule rather than recorded as undecided. The source path is also corrected here: dispatch_gates is a top-level key of this schema, never a member of saga_lifecycle, so the former saga_lifecycle.dispatch_gates.asgard.Active string resolved to nothing."
+      },
+      "operations-active-gate": {
+        "id": "operations-active-gate",
+        "x7_ref": "decision-E3",
+        "evidence": "The four readiness conditions C1 to C4 of dispatch_gates.planning_to_active_readiness, read from the card body: the intended outcome and acceptance expectations are understandable (C1), dependencies and ownership are actionable (C2), required design decisions are settled (C3), and the threshold scales with the card's risk value (C4)",
+        "applicability": "A card leaving Planning for Active on the Operations board",
+        "owner": "The reference interpreter tools/docs/planning_readiness.py, evaluated by the Delivery Manager before the card is recorded Ready for Active",
+        "classification": "blocking",
+        "override_policy": "none",
+        "failure_route": "Not ready: the card stays in Planning with the failed conditions and their missing evidence fields named, and the missing evidence is supplied before it is re-evaluated",
+        "source": "config/sdlc-schema.json dispatch_gates.operations.Active -> dispatch_gates.planning_to_active_readiness",
+        "classification_basis": "Mandatory evidence: the four readiness conditions of dispatch_gates.planning_to_active_readiness are named, testable evidence a card must carry before it may enter Active, and a card that fails one does not move. This row is NOT part of the X7 gate census, which is why its x7_ref reads decision-E3 rather than a census identifier: the Operations board carried no Planning-to-Active gate at all when that census was taken, an explicit absence the catalogue recorded as the W4 plan's UNKNOWN-1. Operator decision E3 (2026-09-06) generalized readiness to every board that uses the shared lifecycle and dispatches active work, which binds Operations, so the gate exists and UNKNOWN-1 retires. The Operations Ready gate is unchanged: it is the creation-time card-contract check at a different boundary."
       },
       "campps-active-gate": {
         "id": "campps-active-gate",
         "x7_ref": "B9",
-        "evidence": "UNKNOWN in the source itself: the prior In Progress gate required Component slices to identify their Test Strategy, and the Test Strategy field was deleted on 2026-08-16",
-        "applicability": "The CAMPPS Active status transition",
-        "owner": "not stated",
-        "classification": "unclassified",
-        "override_policy": "not stated",
-        "failure_route": "Not stated in the source (the gate's replacement is undecided)",
-        "source": "config/sdlc-schema.json saga_lifecycle.dispatch_gates.campps.Active",
-        "classification_basis": "UNCLASSIFIED, self-declared in dispatch_gates.campps.Active: \"No replacement gate has been decided. Operator call required; do not infer one.\" A different deleted-field story than asgard-active-gate (Test Strategy, not Mode / Jeff Needed)."
+        "evidence": "The four readiness conditions C1 to C4 of dispatch_gates.planning_to_active_readiness, read from the card body: the intended outcome and acceptance expectations are understandable (C1), dependencies and ownership are actionable (C2), required design decisions are settled (C3), and the threshold scales with the card's risk value (C4)",
+        "applicability": "A card leaving Planning for Active on the CAMPPS board",
+        "owner": "The reference interpreter tools/docs/planning_readiness.py, evaluated by the Delivery Manager before the card is recorded Ready for Active",
+        "classification": "blocking",
+        "override_policy": "none",
+        "failure_route": "Not ready: the card stays in Planning with the failed conditions and their missing evidence fields named, and the missing evidence is supplied before it is re-evaluated",
+        "source": "config/sdlc-schema.json dispatch_gates.campps.Active -> dispatch_gates.planning_to_active_readiness",
+        "classification_basis": "Mandatory evidence: the four readiness conditions of dispatch_gates.planning_to_active_readiness are named, testable evidence a card must carry before it may enter Active, and a card that fails one does not move. Classified from the rule's own evidence per decision item [E3](../engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md#e3-the-operations-board-has-no-planning-to-active-gate-and-the-gate-catalogues-two-active-gate-rows-read-stale) (2026-09-06 \u2014 the ruling that Planning-to-Active readiness is one board-independent policy rather than a per-board rule). The prior UNCLASSIFIED reading was self-declared in dispatch_gates.campps.Active while the replaced In Progress gate's Test Strategy field had been deleted on 2026-08-16 and no replacement had been decided - a different deleted-field story than asgard-active-gate, but the same single readiness rule replaces both. The source path is also corrected here: dispatch_gates is a top-level key of this schema, never a member of saga_lifecycle."
       },
       "authorized-author-allowlist": {
         "id": "authorized-author-allowlist",
         "x7_ref": "B12",
         "evidence": "Whether the author of an orchestrated card is on the authorized_humans allowlist",
         "applicability": "Card intake by the Hermes orchestrator's eligibility check (intake frozen 2026-07-18)",
-        "owner": "not stated",
-        "classification": "unclassified",
-        "override_policy": "not stated",
-        "failure_route": "Not stated in the source",
+        "owner": "The Hermes orchestrator's card-intake eligibility check",
+        "classification": "blocking",
+        "override_policy": "none - a card whose author is not on the allowlist is not orchestrated; the operator adds the author to config.github.authorized_humans rather than waving the check",
+        "failure_route": "The card is not picked up for orchestration and the ineligible author is reported; nothing is dispatched",
         "source": "docs/process/card-schema.md (authorized-author allowlist, config.github.authorized_humans default [namredips])",
-        "classification_basis": "UNCLASSIFIED by W4's transcription judgment, flagged in the plan's Open Questions: X7 records it \"dormant by inference, not explicitly retired\" - a lifecycle status, not a P14 classification verdict, because the source text does not use the word retired for this sub-gate. R24's pause is the honest handling of a row whose lifecycle status is unsettled."
+        "classification_basis": "Safety boundary: the check decides who may cause the orchestrator to act at all, so an unauthorized author is refused rather than warned. Classified by the gate rows of decision item [A3](../engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md#a3-issue-readiness-who-validates-that-a-github-issue-is-properly-formatted-carries-the-correct-information-and-has-its-claims-verified-and-whether-an-issue-readiness-reviewer-role-exists) (2026-09-06 \u2014 the ruling that created the independent Issue Reviewer and its six named readiness checks), unit U6. The check has a binary evidence test with a stated default value and it stops orchestration when it fails, which is exactly a blocking gate; the earlier UNCLASSIFIED reading recorded a LIFECYCLE question - X7 called the gate \"dormant by inference, not explicitly retired\" - and a dormant gate is still a blocking gate when it runs. Whether the intake path itself is live (frozen 2026-07-18) is a separate question from what the gate does, and is not re-decided here."
       },
       "wip-limits": {
         "id": "wip-limits",
         "x7_ref": "B14",
-        "evidence": "Card count per board-Status column against a configured numeric limit",
-        "applicability": "Every active-board Status column with a finite limit",
+        "evidence": "RETIRED 2026-09-07 - this row tests nothing. It formerly counted cards per board-Status column against a configured numeric limit.",
+        "applicability": "None. No Stage and no board enforces a card-count limit; decision E6 removed both the limit source and the checker.",
         "owner": "not stated",
         "classification": "advisory",
-        "override_policy": "Visible in-card exception for critical defects (\"Critical defects can temporarily override WIP\")",
-        "failure_route": "Convention: \"stop pulling new work into the constrained state; finish or unblock the oldest active item\" - no code path mechanically rejects a card move for a WIP breach",
-        "source": "docs/process/wip-limits.md; config/sdlc-schema.json wip_limits",
-        "classification_basis": "Advisory by contract: the parallel Mission Control kanban workflow defines an explicit override path for critical defects, and X7 found no code path that mechanically rejects a card move for a WIP breach, so no mandatory-evidence or safety-boundary trigger names it blocking."
+        "override_policy": "Not applicable - retired. The former convention allowed a visible in-card exception for critical defects (\"Critical defects can temporarily override WIP\").",
+        "failure_route": "Not applicable - retired; there is no limit left to breach. Run concurrency is a Delivery Manager boundary, resolved from the live staffing roster and the applicable per-vendor and per-account constraints.",
+        "source": "X7 census row B14 (docs/reviews/2026-08-29-x7-findings.md). Retired by decision E6 of docs/engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md; its two former sources, docs/process/wip-limits.md and this schema's wip_limits block, are both deleted.",
+        "classification_basis": "Advisory while it existed, and now retired: X7 found no code path that mechanically rejected a card move for a breach, and the parallel Mission Control kanban workflow defined an explicit override path, so no mandatory-evidence or safety-boundary trigger ever named it blocking. The row is kept only because it is X7 census row B14 and the census membership is a fixed oracle; it describes no live gate."
       },
       "component-slice-test-strategy-proof": {
         "id": "component-slice-test-strategy-proof",
@@ -822,7 +1092,7 @@
         "classification": "blocking",
         "override_policy": "not stated",
         "failure_route": "Modification cannot proceed without the explicit choice",
-        "source": "saga plugin /retro command gate one-liner (config/sdlc-schema.json saga_lifecycle.gates_raw.gates_by_command.retro)",
+        "source": "saga plugin /retro command gate one-liner (config/saga-docs-model.yaml commands.retro.gates; the former saga_lifecycle.gates_raw mirror was removed by W11, issue #92)",
         "classification_basis": "Safety boundary: self-named \"safety gate\" in its own contract."
       },
       "context-library-write-approval": {
@@ -834,7 +1104,7 @@
         "classification": "blocking",
         "override_policy": "not stated",
         "failure_route": "The write does not land until the proposal is approved",
-        "source": "saga plugin /promote command gate one-liner (saga_lifecycle.gates_raw.gates_by_command.promote)",
+        "source": "saga plugin /promote command gate one-liner (config/saga-docs-model.yaml commands.promote.gates; the former saga_lifecycle.gates_raw mirror was removed by W11, issue #92)",
         "classification_basis": "Mandatory evidence: propose-diff-and-wait names approval as the evidence the write requires before it lands."
       },
       "investigate-root-cause": {
@@ -936,14 +1206,14 @@
       "prepared-issue-readiness-checks": {
         "id": "prepared-issue-readiness-checks",
         "x7_ref": "D5",
-        "evidence": "Unspecified in the source: \"re-runs readiness checks\" before create-prepared proceeds",
-        "applicability": "Mission-control prepared-issue creation (create-prepared)",
-        "owner": "not stated",
-        "classification": "unclassified",
-        "override_policy": "not stated",
-        "failure_route": "Not stated in the source",
-        "source": "mission-control plugin skills/issues/SKILL.md create-prepared readiness checks",
-        "classification_basis": "UNCLASSIFIED per X7: a vague forward reference - the named checks are not enumerated in the file, and no pass/fail language is attached to them there."
+        "evidence": "The Issue Reviewer's six checks at the Shaping exit, enumerated: (1) the card validator passes; (2) product content is complete and testable; (3) technical claims are spot-checked against the repository and the context library links; (4) no UNKNOWN is outstanding; (5) approval boundaries are named per category; (6) a Risk value is present with its one-sentence justification",
+        "applicability": "Mission-control prepared-issue creation (create-prepared), and the same six checks at the Shaping exit before an issue is recorded Ready for Planning",
+        "owner": "The Issue Reviewer, the read-only intake role that holds independent_reviewer at the Shaping exit",
+        "classification": "blocking",
+        "override_policy": "none - a not-ready verdict is answered by supplying the missing evidence, never by waiving the review",
+        "failure_route": "The review result records the verdict not ready with its findings, the issue stays in Shaping, and the findings route by kind to the operator, Product, or the Architect",
+        "source": "mission-control plugin skills/issues/SKILL.md create-prepared readiness checks; the six checks are Appendix A item 3 of docs/plans/2026-09-07-sdlc-documentation-update-plan.md, landing operator decision A3",
+        "classification_basis": "Mandatory evidence: the Issue Reviewer's six named checks are the evidence, and the review returns a two-valued verdict - ready or not ready - that stops the issue when it fails. Classified by decision item [A3](../engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md#a3-issue-readiness-who-validates-that-a-github-issue-is-properly-formatted-carries-the-correct-information-and-has-its-claims-verified-and-whether-an-issue-readiness-reviewer-role-exists) (2026-09-06 \u2014 the ruling that created the independent Issue Reviewer and its six named readiness checks), unit U6. The earlier UNCLASSIFIED reading was correct about its own evidence - X7 found a vague forward reference with no enumerated checks and no pass/fail language - and decision A3 supplies exactly what was missing: the six checks by name and a two-valued verdict, ready or not ready, that stops the issue when it fails. Check six is the Risk value, which exists only because decision item [E1](../engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md#e1-the-risk-value-has-no-defined-source-the-readiness-rules-risk-scaling-ships-refusing) (2026-09-06 \u2014 the ruling that Risk becomes the fourteenth card-contract field, authored by the Architect) added the field in this same unit."
       },
       "scanner-validator-gate": {
         "id": "scanner-validator-gate",
@@ -1034,7 +1304,7 @@
         "x7_ref": "F1",
         "evidence": "The target repository resolves to github.com/infiquetra/*",
         "applicability": "deploy skill runs, before any mutation",
-        "owner": "not stated",
+        "owner": "The Release worker, the run role that holds deployment_owner and executes the authorized non-production deployment (decision items [A6](../engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md#a6-which-run-role-performs-the-post-merge-deployment-or-installation-and-which-is-accountable-for-it-oq-deployment-owner) and [A7](../engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md#a7-who-executes-the-merge-to-the-main-branch-and-the-recovery-details-when-a-merge-goes-wrong-oq-merge-executor), 2026-09-06 — A6: the Release worker performs the post-merge deployment or installation; A7: the same worker executes the merge to the main branch)",
         "classification": "unclassified",
         "override_policy": "not stated",
         "failure_route": "Stop before mutation",
@@ -1197,10 +1467,372 @@
       }
     }
   },
+  "retro_trigger": {
+    "description": "Single authority for the conditional Retro trigger: which triggers a machine may detect, which named observable signal each is bound to, which two only the operator may assert, and what closure and the routine per-pull-request capture do regardless. Prose documents link here and must not restate this contract (R7-R13).",
+    "defined_by": [
+      "R7",
+      "R8",
+      "R9",
+      "R10",
+      "R11",
+      "R12",
+      "R13"
+    ],
+    "resolver_note": "Projected by tools/docs/retro_trigger.py for reviewers and any automated consumer. The resolver is pure and read-only: it evaluates trigger ids against signal records supplied to it and never fetches, polls, or observes anything on its own.",
+    "evaluator": {
+      "exists": false,
+      "note": "No evaluator of these trigger conditions exists anywhere in the running system - not in the Saga plugin, not in any board write path. Recorded per X1 (docs/reviews/2026-08-29-x1-findings.md, transition T7, consolidated gap 9): no actor is named as the evaluator of Retro's machine-detectable trigger conditions. Each signal below is a definition a future evaluator would read, not evidence that detection happens. A consumer who needs a trigger decided must gather the signal records itself and resolve them with tools/docs/retro_trigger.py; nothing in this contract observes anything on its own (R7)."
+    },
+    "machine_detectable": {
+      "failed_verification": {
+        "signal": "ProjectV2ItemStatusChangedEvent on one issue's project card timeline with status == \"Verification failed\" (event on the boards' designated Status field, named explicitly so a future board re-designation surfaces as a contract mismatch rather than as silently wrong data)",
+        "source": "GitHub issue timeline - Projects v2 item status-change events on the issue's card",
+        "read_only_query": "GraphQL on the issue: timelineItems(first: 100, itemTypes: [PROJECT_V2_ITEM_STATUS_CHANGED_EVENT]) { ... on ProjectV2ItemStatusChangedEvent { previousStatus status createdAt actor wasAutomated } }; select events where status == \"Verification failed\"",
+        "observed_to_date": "none - zero instances with status == \"Verification failed\" as of 2026-08-30",
+        "evidence": "Probe 2026-08-30 (read-only): the event type exists in the live GraphQL schema and returns real data - four events on issue infiquetra/infiquetra-sdlc#94, the most recent \"Awaiting verification\" to \"Ready to close\" at 2026-08-30T04:06:41Z. \"Verification failed\" is a live Status option on all three boards (workflows.stage_flow.stage_statuses.Verify).",
+        "corroborating_secondary_signal": "Where a Saga run produced one, the committed evidence ledger's no-ship verdict (docs/evidence/<saga-id>/ledger.jsonl) corroborates failed verification. It is not the primary signal because it exists only where a Saga run produced it, while the board event exists for every issue on every board regardless of which tooling did the work."
+      },
+      "rollback": {
+        "signal": "Git tag matching rollback-<environment>-v* in the work's target repository - minted by the deploy plugin (scripts/mint_tag.py, plugin 0.2.1) at the moment a rollback is performed",
+        "source": "GitHub git refs (tags) in the repository the work deployed to",
+        "read_only_query": "GET /repos/{owner}/{repo}/git/matching-refs/tags/rollback - match returned ref names against rollback-<environment>-v*",
+        "observed_to_date": "none - zero rollback tags in any Infiquetra repository as of 2026-08-30",
+        "evidence": "Probe 2026-08-30 (read-only): the query is valid and returns a well-formed empty list. Seven Infiquetra repositories probed, including the five CAMPPS delivery repositories that carry 25-30 real deployments each; none carries a rollback-* tag. infiquetra-sdlc itself carries zero deployments and zero environments."
+      },
+      "repeated_repair_loop": {
+        "signal": "Count of ProjectV2ItemStatusChangedEvent on one issue's project card timeline with status == \"Repairing\" (event on the boards' designated Status field)",
+        "source": "GitHub issue timeline - Projects v2 item status-change events on the issue's card",
+        "read_only_query": "GraphQL on the issue: timelineItems(first: 100, itemTypes: [PROJECT_V2_ITEM_STATUS_CHANGED_EVENT]) { ... on ProjectV2ItemStatusChangedEvent { previousStatus status createdAt } }; count events where status == \"Repairing\"",
+        "threshold": 2,
+        "threshold_note": "Fires at a count of 2 or more Repairing entries on one issue (R8). One Repairing entry is an ordinary repair, not a loop.",
+        "observed_to_date": "none - zero instances with status == \"Repairing\" as of 2026-08-30",
+        "evidence": "Probe 2026-08-30 (read-only): same event shape as failed_verification. \"Repairing\" is a live Status option on all three boards. A status-change census across thirteen run issues found Shaping, Active, Verify, Done, and one post-migration \"Ready to close\" - no \"Verification failed\", no \"Repairing\"."
+      }
+    },
+    "operator_asserted": {
+      "meaningful_surprise": {
+        "prompt": "Was this run a meaningful surprise? If yes, say so at closeout and Retro runs on your assertion alone.",
+        "offered_at": "Verify / Closeout",
+        "never_inferred": true
+      },
+      "significant_lesson": {
+        "prompt": "Did this run produce a significant design or process lesson worth the larger retrospective? If yes, say so at closeout and Retro runs on your assertion alone.",
+        "offered_at": "Verify / Closeout",
+        "never_inferred": true
+      }
+    },
+    "no_trigger_closure": {
+      "description": "When no trigger fires, the run closes directly from Verify with no Retro stage entered (R10).",
+      "from": "Verify",
+      "to": "Closed",
+      "retro_entered": false
+    },
+    "routine_capture": {
+      "artifact": "the five-question capture entry in the engineering journal",
+      "trigger": "a merged pull request",
+      "gated_on": null,
+      "ungated_on_retro_trigger": true,
+      "note": "Runs routinely per merged pull request whether or not any Retro trigger fired (R11, P13). This capture and the engineering journal survive as cross-cutting practice; the trigger governs only the larger retrospective."
+    },
+    "journal": {
+      "append_only": true,
+      "append_only_note": "The engineering journal (docs/engineering-journal/) is the append-only collection point for both the routine capture and the larger retrospective (R12). Corrections update entries inline with the corrected-and-archived discipline; entries are never silently overwritten.",
+      "promote_is_automatic": false,
+      "promote_note": "The Saga /promote skill is manual, gated, and operator-visible: it is invoked explicitly, it proposes context-library writes as diffs that wait for approval, and no code path in any installed plugin invokes it automatically (R12). /retro's Transcendent marker waits in place for the next explicit promote run."
+    },
+    "closure": {
+      "description": "The larger retrospective uses Retro's accepted Status vocabulary and closes to Closed, never to a Done column (R13, P2).",
+      "status_vocabulary": [
+        "Gathering evidence",
+        "Awaiting operator input",
+        "Capturing learnings",
+        "Ready to close"
+      ],
+      "terminal_status": "Ready to close",
+      "closes_to": "Closed",
+      "never_closes_to": "Done",
+      "vocabulary_provenance": "Matches workflows.stage_flow.stage_statuses.Retro, provisioned by W13's board-stage migration and verified live on all three boards on 2026-08-30. Done no longer exists as a Status option on any active board. Sibling source: W11 (issue #92) has since landed and saga_lifecycle.phase_board_map.retro now maps the retro phase to the Retro Stage on all three boards, consistent with this block."
+    }
+  },
+  "terminal_outcomes": {
+    "status": "partial",
+    "status_note": "The contract is authored, versioned and tested here. It is Partial because the Mission Control operation that would honour it does not exist yet - issue_close carries no reason or disposition argument and no closeout-comment poster exists (X1, Inventory E). The second reason it used to carry - that may_resume.status_values was UNKNOWN - is gone: E4 resolved that landing value to Blocked plus a pause reason on 2026-09-06.",
+    "owner": "mission-control",
+    "source": "docs/brainstorms/2026-08-27-reconciled-sdlc-implementation-requirements.md (R72, R73, P10, P11, P12, EE6, EE8)",
+    "authored_contract_note": "Nothing reads this block at runtime. The plugin repository holds its own closure path; this block is the contract that work is built and reviewed against, and this repository's oracle is its only automated witness.",
+    "github_closed_state_reasons": ["COMPLETED", "NOT_PLANNED", "DUPLICATE"],
+    "non_completed_reasons": ["NOT_PLANNED", "DUPLICATE"],
+    "github_reason_note": "Verified live by GraphQL introspection of IssueClosedStateReason on 2026-08-30. GitHub carries three closure reasons; the policy names five dispositions, so a disposition is not a closure reason and is recorded separately.",
+    "dispositions": {
+      "delivered": {
+        "closure_reason": "COMPLETED",
+        "closes": true,
+        "links_replacement": false
+      },
+      "duplicate": {
+        "closure_reason": "DUPLICATE",
+        "closes": true,
+        "links_replacement": true
+      },
+      "superseded": {
+        "closure_reason": "NOT_PLANNED",
+        "closes": true,
+        "links_replacement": true
+      },
+      "declined": {
+        "closure_reason": "NOT_PLANNED",
+        "closes": true,
+        "links_replacement": false
+      },
+      "canceled": {
+        "closure_reason": "NOT_PLANNED",
+        "closes": true,
+        "links_replacement": false
+      }
+    },
+    "disposition_recorded_in": "closeout_comment",
+    "delivered_closes_after": "verify",
+    "replacement_link": {
+      "required_for": ["duplicate", "superseded"],
+      "carrier": "closeout_comment",
+      "ordering": "strictly_before_close",
+      "native_duplicate_argument": "closeIssue.duplicateIssueId",
+      "native_argument_note": "markIssueAsDuplicate no longer exists in GitHub's GraphQL mutation set (verified 2026-08-30; only unmarkIssueAsDuplicate survives). The one surviving way to mint MARKED_AS_DUPLICATE_EVENT is closeIssue(duplicateIssueId:), which links and closes in the SAME call and so cannot satisfy 'links its replacement before it closes'. The ordering obligation is discharged by the durable closeout comment, which P11 already requires posted before the close. Passing duplicateIssueId on the close is permitted and additive; it is never what makes the link 'before'."
+    },
+    "may_resume": {
+      "closes": false,
+      "rule": "Work that may realistically resume stays open. It is never closed, under any reason.",
+      "recorded_through": "status",
+      "status_values": "Blocked",
+      "status_values_note": "RESOLVED by E4 (operator decision 2026-09-06, corrected 2026-09-07), replacing the literal UNKNOWN X1's audit recorded rather than fabricate a landing value (docs/reviews/2026-08-29-x1-findings.md, Inventory C). R72 asked for deferred or parked to be recorded through Status; the answer is that no Deferred and no Parked Status is created. Deliberately paused work carries the existing cross-cutting Status Blocked plus a structured pause reason from pause_states - Deferred, meaning the operator deliberately paused work that may resume - expressed on the issue by the config/labels.json label pause/operator-deferred, with the reason text and the resume condition in the comment that sets Blocked. A pause expected to outlast the current planning horizon routes to the External / Deferred destination with its Stage and reason intact rather than closing; resuming clears the reason and routes it back. Metrics count deferred time separately from ordinary blocked time and a deliberate pause never trips a stalled-work alert. The stays-open rule above is unchanged and was never conditional on this resolution."
+    },
+    "closeout_comment": {
+      "cardinality": "exactly_one_before_close",
+      "links_rather_than_duplicates": true,
+      "required_contents": [
+        "delivered_revision",
+        "environment",
+        "acceptance_results",
+        "residual_risks_and_follow_ups",
+        "documentation_status",
+        "cleanup_confirmation",
+        "closure_reason",
+        "disposition"
+      ],
+      "closure_reason_is_github_enum": true,
+      "required_contents_note": "closure_reason is GitHub's three-valued IssueClosedStateReason enum (COMPLETED / NOT_PLANNED / DUPLICATE); disposition is this block's five-way terminal disposition recorded in the same closeout comment. Splitting the two is the block's load-bearing rule: a reason alone can never recover superseded vs declined vs canceled from NOT_PLANNED, nor duplicate from DUPLICATE.",
+      "never_fabricated": ["environment", "deployment_record", "acceptance_result"],
+      "absence_recorded_with_reason": true
+    },
+    "parent_closure": {
+      "default": "auto_close",
+      "conditions": [
+        "all_required_child_outcomes_terminal",
+        "combined_verification_complete",
+        "retro_complete_or_not_required"
+      ],
+      "descoped_children": "excluded",
+      "ask_operator_when": [
+        "required_dependencies_ambiguous",
+        "outcome_proof_ambiguous",
+        "terminal_disposition_ambiguous"
+      ],
+      "ask_operator_is_default": false,
+      "ask_operator_note": "Ambiguity is the trigger for asking, not a default posture (R73). A parent meeting all three conditions with no ambiguity closes without a prompt.",
+      "predicate_wire_formats_resolved_by": "work_hierarchy.parent_stage_derivation.required_children_roster.dispositions",
+      "predicate_wire_formats_note": "W1 (issue infiquetra/infiquetra-sdlc#82) LANDED the child-side encodings in this same schema (see work_hierarchy.parent_stage_derivation.required_children_roster): an explicitly descoped child is CLOSED with state_reason NOT_PLANNED (GraphQL; REST lowercase, comparison case-normalized), a delivered child is CLOSED with COMPLETED, and an open required child is OPEN with reason null or reopened - so no predicate here is UNKNOWN any more on the child side, and this block never restates those tokens. The parent's own combined-verification signal remains UNKNOWN and is W1's (#82) remaining deliverable. Composition with this block's five dispositions is SETTLED by the operator's AFK ruling of 2026-08-30 (recorded durably on issue infiquetra/infiquetra-sdlc#90, R2 wave repair F-2): see duplicate_composition below.",
+      "duplicate_composition": {
+        "ruling": "Operator AFK ruling, 2026-08-30, issue infiquetra/infiquetra-sdlc#90: a CLOSED issue carrying the durable disposition duplicate together with its required replacement link is terminal non-delivery, and composes into W1's existing descoped category at the parent-derivation/closure boundary - justified because GitHub represents it with the non-completed closure-reason family the dispositions mapping already carries (DUPLICATE for a duplicate, NOT_PLANNED for the rest).",
+        "collapse_boundary": "W1's three-value parent-derivation roster (incomplete / completed / descoped); duplicate is PRESERVED as this block's durable operator-facing closeout disposition - it is not renamed, merged away, or hidden anywhere else, and dispositions.duplicate keeps closing with GitHub's DUPLICATE reason.",
+        "not_ambiguous_when": "both the durable duplicate disposition AND the required replacement link are present: the child composes to descoped and is terminal non-delivery for the parent-close conditions.",
+        "fail_closed": "A missing durable disposition, or a missing required replacement link (replacement_link.required_for includes duplicate), still FAILS: the child is not counted terminal and the parent-close composition halts - terminal_disposition_ambiguous asks the operator. Fail-closed was never relaxed by the ruling.",
+        "reference_interpreter": "tools/docs/parent_closure.py (compose_duplicate_into_w1); W1's classifier tools/docs/parent_stage.py is unmodified - fed a raw CLOSED/DUPLICATE it still raises, because the composition runs before the derivation sees the child.",
+        "never_auto_close_on": ["duplicate without its replacement link", "missing durable disposition"]
+      }
+    }
+  },
+  "status_definitions": {
+    "source_note": "Hand-authored, landing operator decision E5 (2026-09-06) recorded in docs/engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md, through unit U6 of docs/plans/2026-09-07-sdlc-documentation-update-plan.md, whose Appendix B is the authored source of every row below. Every lifecycle Status is defined by three things and only three: the observable event that ENTERS it, the role whose reported outcome constitutes that event, and the role or integration AUTHORIZED to write it. Nothing here re-states the Status vocabulary: workflows.stage_flow.stage_statuses stays the single authority for which Statuses exist and which Stage each belongs to, and this block is keyed by that same Stage-and-Status pair. tools/docs/gen_lifecycle_docs.py renders it into docs/process/kanban-workflow.md as the generated region status-definitions.",
+    "requirements_owned": "E5; Q10 and Q13 of the 2026-09-07 documentation update plan",
+    "key_rule": "Stage plus Status is the key, never Status alone. Ready to close is deliberately carried under both Verify and Retro (plan decision Q13): the two are different conditions reached from different preceding stages, and a name-keyed map could not hold both definitions. That is why this block nests under stages rather than keying on the flat workflows.stage_flow.statuses list.",
+    "counting_note": "26 Stage-and-Status pairs over 25 distinct Status names, because Ready to close appears twice. The flat workflows.stage_flow.statuses list holds 26 distinct names: the same 25 plus the cross-cutting Blocked, which is not one of the 26 pairs and is recorded under cross_cutting below. A rendering that appends the Blocked row to the 26 pairs therefore shows 27 rows, which is correct and is explained on the chapter.",
+    "derivation": {
+      "Planning": "config/run-model.json board_mapping.parent_card",
+      "Active": "config/run-model.json board_mapping.parent_card",
+      "Verify": "config/run-model.json board_mapping.parent_card",
+      "Intake": "The adopted intake decisions (docs/process/human-intent-intake.md)",
+      "Shaping": "The adopted intake decisions (docs/process/human-intent-intake.md)",
+      "Retro": "The Retro trigger contract (retro_trigger in this schema; docs/process/learning-loop.md)"
+    },
+    "writer_rule": "Acting roles never write their own Status. The Delivery Manager records every run transition through the lifecycle integration, and the operator or the prepared Mission Control path writes the non-run Stages. The reporting_role of a row is therefore whose OUTCOME the event is, and the writer is who records it; the two differ on purpose wherever a run role reports.",
+    "retirement_candidates": "None. Deriving the rows found an observable entering event for every one of the 26 pairs, so no Status exists only as a name, and E5's rule that a Status without a real entering event returns to the operator as an explicit retirement candidate reports nothing here. The one naming collision, Ready to close, is reported and kept (Q13).",
+    "stages": {
+      "Intake": {
+        "Capturing": {
+          "entering_event": "An idea, request, or question is filed as an issue",
+          "reporting_role": "Operator",
+          "writer": "Mission Control prepared path"
+        },
+        "Needs clarification": {
+          "entering_event": "The operator or Product asks the requester a question the issue cannot proceed without",
+          "reporting_role": "Operator or Product",
+          "writer": "Operator"
+        },
+        "Triage": {
+          "entering_event": "The operator is deciding whether and where the work belongs",
+          "reporting_role": "Operator",
+          "writer": "Operator"
+        },
+        "Backlog": {
+          "entering_event": "Accepted for later shaping",
+          "reporting_role": "Operator",
+          "writer": "Operator"
+        }
+      },
+      "Shaping": {
+        "Discovering": {
+          "entering_event": "The operator and Product begin turning the idea into product content",
+          "reporting_role": "Operator",
+          "writer": "Operator"
+        },
+        "Defining requirements": {
+          "entering_event": "Product content and acceptance criteria are being written; the Architect's technical context is requested",
+          "reporting_role": "Product",
+          "writer": "Operator"
+        },
+        "Ready for Planning": {
+          "entering_event": "Issue Review returns `ready`",
+          "reporting_role": "Issue Reviewer",
+          "writer": "Operator or Mission Control"
+        }
+      },
+      "Planning": {
+        "Designing": {
+          "entering_event": "Steps 1 and 2 begin: the Planner is dispatched",
+          "reporting_role": "Delivery Manager",
+          "writer": "Delivery Manager"
+        },
+        "Design review": {
+          "entering_event": "The planner's handoff exists and plan review is dispatched",
+          "reporting_role": "Plan reviewer",
+          "writer": "Delivery Manager"
+        },
+        "Execution planning": {
+          "entering_event": "Plan review returns `ready` and orchestration setup begins",
+          "reporting_role": "Plan reviewer",
+          "writer": "Delivery Manager"
+        },
+        "Ready for Active": {
+          "entering_event": "The readiness rule passes and the run setup record is written",
+          "reporting_role": "Delivery Manager",
+          "writer": "Delivery Manager"
+        }
+      },
+      "Active": {
+        "Implementing": {
+          "entering_event": "Step 5 begins: a worker is dispatched to a work unit",
+          "reporting_role": "Delivery Manager",
+          "writer": "Delivery Manager"
+        },
+        "Integrating": {
+          "entering_event": "A work-unit branch enters its merge turn",
+          "reporting_role": "Implementation worker",
+          "writer": "Delivery Manager"
+        },
+        "Code review": {
+          "entering_event": "A review cycle is dispatched on a frozen revision",
+          "reporting_role": "Review controller",
+          "writer": "Delivery Manager"
+        },
+        "Repairing": {
+          "entering_event": "A review result below threshold is on the record and repair planning is dispatched",
+          "reporting_role": "Review controller",
+          "writer": "Delivery Manager"
+        },
+        "Ready to merge": {
+          "entering_event": "Every selected lens meets its threshold, or the exhausted path applies with no blocker",
+          "reporting_role": "Review controller",
+          "writer": "Delivery Manager"
+        },
+        "Deploying to non-production": {
+          "entering_event": "The Release Worker is dispatched for the merge and delivery",
+          "reporting_role": "Release Worker",
+          "writer": "Delivery Manager"
+        }
+      },
+      "Verify": {
+        "Awaiting verification": {
+          "entering_event": "Delivery succeeded and testing has not started",
+          "reporting_role": "Release Worker",
+          "writer": "Delivery Manager"
+        },
+        "Verifying": {
+          "entering_event": "Functional testing is dispatched",
+          "reporting_role": "Functional tester",
+          "writer": "Delivery Manager"
+        },
+        "Verification failed": {
+          "entering_event": "A testing result with at least one failed scenario is on the record; the repair-window marker is set",
+          "reporting_role": "Functional tester",
+          "writer": "Delivery Manager"
+        },
+        "Closeout": {
+          "entering_event": "Every prescribed scenario passed on the closing version; closure evaluation begins",
+          "reporting_role": "Functional tester",
+          "writer": "Delivery Manager"
+        },
+        "Ready to close": {
+          "entering_event": "Closure conditions hold and no Retro trigger fired",
+          "reporting_role": "Delivery Manager",
+          "writer": "Delivery Manager"
+        }
+      },
+      "Retro": {
+        "Gathering evidence": {
+          "entering_event": "A Retro trigger fired at closure",
+          "reporting_role": "Delivery Manager",
+          "writer": "Delivery Manager"
+        },
+        "Awaiting operator input": {
+          "entering_event": "An operator-asserted trigger prompt is open",
+          "reporting_role": "Operator",
+          "writer": "Delivery Manager"
+        },
+        "Capturing learnings": {
+          "entering_event": "Journal entries are being written",
+          "reporting_role": "Journal keeper (the closing session)",
+          "writer": "Delivery Manager"
+        },
+        "Ready to close": {
+          "entering_event": "Retro complete",
+          "reporting_role": "Delivery Manager",
+          "writer": "Delivery Manager"
+        }
+      }
+    },
+    "cross_cutting": {
+      "Blocked": {
+        "entering_event": "A role reports a blocker, with the reason recorded in the comment that sets the Status",
+        "reporting_role": "The role that reports the blocker",
+        "stage_scope": "Any Stage - the card keeps the Stage it is in and carries Blocked alongside it (workflows.stage_flow.cross_cutting_statuses)",
+        "writer": "The writer for the Stage the card is in: the Delivery Manager through the lifecycle integration on a run Stage, the operator or the prepared Mission Control path otherwise",
+        "pause_note": "A pause the operator chose is this Status plus a pause reason from pause_states, carried on the issue by the single label pause/operator-deferred (decision E4)"
+      }
+    }
+  },
   "saga_lifecycle": {
-    "derived_from": "config/saga-docs-model.yaml",
-    "extras_from": "config/saga-lifecycle-extras.yaml",
-    "source_note": "Generated by tools/docs/gen_saga_schema.py from the vendored saga snapshot (config/saga-docs-model.yaml) merged with the hand-authored config/saga-lifecycle-extras.yaml. Snapshot-derived: phases, state_axes, maturity derivation, gates_raw. Extras-authored: combinations, reset_edges, gate_classification, phase_board_map, phase_command_map.",
+    "description": "Hand-authored minimal Saga adapter (W11, issue infiquetra/infiquetra-sdlc#92): only what a confirmed consumer reads (X2 consumer audit, docs/reviews/2026-08-29-x2-findings.md section 5), plus the two versioned derivation inputs command_classification and foreign_commands (R59/R61/R68). Authored, not generated: command-to-Stage mapping is derived exclusively from phase_command_map plus command_classification, never from the vendored snapshot's commands[].phase field (R59).",
+    "defined_by": [
+      "R58",
+      "R59",
+      "R60",
+      "R61",
+      "R62",
+      "R63",
+      "R64",
+      "R68"
+    ],
+    "resolver_note": "Resolved by tools/docs/saga_adapter.py; validated by tools/docs/check_adapter.py. The block keeps the historical key name and phase_board_map's exact key, nesting and list shape because a live cross-plugin consumer (Mission Control's vendored schema copy read by outcome_board_sync.py) binds to that literal path and discards the values (KTD2; X2 section 4).",
     "phases": [
       "ideation",
       "brainstorm",
@@ -1234,161 +1866,34 @@
         "abandoned"
       ]
     },
+    "state_axes_preface": "These three axes are the saga command toolkit's own stored record of one thread, not the board's: the thread status below (including `paused`) is what the tool knows about the thread and is never a board Status, while the board's own two axes — its Stage and its Status — are the ones the phase table above maps each phase onto.",
     "maturity": {
-      "derived_not_stored": true,
-      "values": {
-        "idea-ready": {
-          "from": [
-            "docs/ideation/"
-          ],
-          "consumed_by": [
-            "/plan"
-          ]
-        },
-        "requirements-ready": {
-          "from": [
-            "docs/brainstorms/",
-            "docs/specs/"
-          ],
-          "consumed_by": [
-            "/plan"
-          ]
-        },
-        "plan-ready": {
-          "from": [
-            "docs/plans/",
-            "docs/reviews/"
-          ],
-          "consumed_by": [
-            "/work"
-          ]
-        },
-        "resume-ready": {
-          "from": [
-            "docs/work-sessions/",
-            "branch refs"
-          ],
-          "consumed_by": [
-            "/work"
-          ]
-        },
-        "deferred-context": {
-          "from": [
-            "explicit preserve/defer language"
-          ],
-          "consumed_by": [
-            "/handoff"
-          ]
-        }
-      }
-    },
-    "gates_raw": {
-      "gates_by_command": {
-        "office-hours": "Never implement, plan, scaffold, or file an SDLC issue.",
-        "ideate": "Preserve rejection reasons; do not treat operator seed ideas as exempt from critique.",
-        "brainstorm": "Keep WHAT and acceptance examples clear enough for /plan.",
-        "spec": "Do not produce a spec after message 1; interrogate first and read code before technical questions.",
-        "plan": "Does not implement or run the review gauntlet.",
-        "doc-review": "P0/P1 findings block /work without recorded override.",
-        "work": "Hard test gate by risk; hard review gate on P0/P1 or stale review; PR and merge require confirmation.",
-        "code-review": "P0/P1 findings block PR-ready unless overridden.",
-        "qa": "Verdict threshold determines ship, ship-with-deferred, or no-ship.",
-        "handoff": "Ask when source, maturity, target repo, team, or issue type is ambiguous.",
-        "retro": "Self-edit safety gate; modifications/deletions require explicit apply/skip/modify choice.",
-        "promote": "Every context-library write is propose-diff-and-wait; idempotent via the drift-stable source-key ledger.",
-        "resume": "Read-only on world; Tier 2 session forensics only when no saga and no resolvable issue exist.",
-        "investigate": "No fix without root-cause chain grounded in observed evidence.",
-        "optimize": "Hard degenerate gates before any LLM judge; keep only real measured improvement.",
-        "strategy": "Interview-driven update with pushback; do not implement or file issues.",
-        "founder-review": "Opt-in ceremony before scope expansion.",
-        "loop": "Enforces doc-review P0/P1 hard gate before /work; stub/off-chain routes are advisory.",
-        "tier": "An up-ladder mid-run escalation requires operator confirmation before re-emit; a ceiling only ever clamps down.",
-        "outcome": "Coordinator routes and dispatches but never runs leaf work; pages only at gates, unsatisfiable barriers, ambiguity, and parent-close.",
-        "fleet-doctor": "Absence, corruption, and incompleteness are distinct verdicts; any cap, corruption, unsafe path, or mid-scan change forces exit 2 and can never truncate to a clean report.",
-        "pulse": "Tri-state source honesty per panel (ok / no-data / unavailable, ledger adds chain-broken); a broken chain suppresses all aggregates; no thresholds, not a gate.",
-        "engines": "Pin targets must exist, declare the capability, and not be locally deprecated; route explain is read-only."
+      "idea-ready": {
+        "from": [
+          "docs/ideation/"
+        ]
       },
-      "routes": {
-        "main_chain": [
-          {
-            "from": "idea-ready",
-            "to": "/plan",
-            "reason": "Turn idea or requirements context into HOW."
-          },
-          {
-            "from": "/plan",
-            "to": "/doc-review",
-            "reason": "Check implementation readiness before work."
-          },
-          {
-            "from": "/doc-review",
-            "to": "/work",
-            "reason": "Execute only after no unresolved P0/P1 review findings or recorded override."
-          },
-          {
-            "from": "/work",
-            "to": "/code-review",
-            "reason": "Review code at PR boundary."
-          },
-          {
-            "from": "/work",
-            "to": "/qa",
-            "reason": "Run acceptance evidence after merge."
-          },
-          {
-            "from": "/qa",
-            "to": "/handoff",
-            "reason": "Route defects or follow-up work."
-          },
-          {
-            "from": "/qa",
-            "to": "/retro",
-            "reason": "Capture lifecycle learning when work is complete."
-          }
-        ],
-        "off_chain": [
-          {
-            "command": "/spec",
-            "state_behavior": "saga-untouched",
-            "routes_to": [
-              "/handoff",
-              "/plan",
-              "/doc-review"
-            ]
-          },
-          {
-            "command": "/investigate",
-            "state_behavior": "saga-read-only",
-            "routes_to": [
-              "/work",
-              "/handoff",
-              "/brainstorm",
-              "/code-review"
-            ]
-          },
-          {
-            "command": "/optimize",
-            "state_behavior": "saga-untouched",
-            "routes_to": [
-              "/work"
-            ]
-          },
-          {
-            "command": "/strategy",
-            "state_behavior": "saga-untouched",
-            "routes_to": [
-              "/ideate",
-              "/brainstorm",
-              "/plan"
-            ]
-          },
-          {
-            "command": "/retro",
-            "state_behavior": "saga-read-only",
-            "routes_to": [
-              "/handoff"
-            ]
-          }
+      "requirements-ready": {
+        "from": [
+          "docs/brainstorms/",
+          "docs/specs/"
+        ]
+      },
+      "plan-ready": {
+        "from": [
+          "docs/plans/",
+          "docs/reviews/"
+        ]
+      },
+      "resume-ready": {
+        "from": [
+          "docs/work-sessions/",
+          "branch refs"
+        ]
+      },
+      "deferred-context": {
+        "from": [
+          "explicit preserve/defer language"
         ]
       }
     },
@@ -1446,83 +1951,58 @@
         }
       ]
     },
-    "reset_edges": [
-      {
-        "from": "review",
-        "to": "plan",
-        "via": "/founder-review",
-        "grounded": true,
-        "reason": "Accepted scope change from founder-review routes back to /plan for a re-plan that re-runs /doc-review (model: founder-review.routes_out + doc-review.routes_out include /plan)."
-      },
-      {
-        "from": "work",
-        "to": "plan",
-        "via": "/plan",
-        "grounded": false,
-        "reason": "A stale base (the plan's assumptions diverged from a moved main) forces a re-plan before continuing work (saga-spec convention, not in the model)."
-      },
-      {
-        "from": "qa",
-        "to": "work",
-        "via": "/qa",
-        "grounded": true,
-        "reason": "A failed acceptance verdict keeps lifecycle_phase=work for repair routing (model: qa.saga_state_behavior 'on fail, keeps lifecycle_phase=work'; qa.routes_out includes /work)."
-      },
-      {
-        "from": "work",
-        "to": "work",
-        "via": "/code-review",
-        "grounded": true,
-        "reason": "Blocking code-review findings route back into the work loop before PR-ready (model: code-review.routes_out includes /work)."
-      }
-    ],
     "gate_classification": {
       "doc-review": {
+        "plain_name": "Plan document review",
         "blocking": true,
         "advances_phase": true,
         "overridable": true,
         "source": "saga-docs-model.yaml commands.doc-review.gates ('P0/P1 findings block /work without recorded override')",
-        "note": "Authoritative implementation-readiness gate; unresolved P0/P1 block /work; advances review -> work; overridable only with a recorded rationale."
+        "note": "The authoritative check that a plan is ready to implement. An unresolved P0 or P1 finding — the two highest finding severities — stops /work until it is fixed or waived with a written reason, and clearing this gate moves the thread from review → work."
       },
       "code-review": {
+        "plain_name": "Internal code review",
         "blocking": false,
         "advances_phase": false,
         "overridable": true,
         "source": "saga-docs-model.yaml commands.code-review (saga_state_behavior: 'does not advance lifecycle_phase')",
-        "note": "Internal quality lens at the work->PR boundary, NOT a substitute for team-owned PR review; advisory in the authority sense; does not advance the lifecycle spine."
+        "note": "Today this is the quality lens the work loop runs on itself at the boundary between building and opening a pull request. It raises findings, holds no merge authority, and moves the thread to no new phase; it does not stand in for the review the owning team runs on the pull request. The run model's multi-lens code review is the target design, not what runs today."
       },
       "qa": {
+        "plain_name": "Quality-assurance verdict",
         "blocking": false,
         "advances_phase": true,
         "overridable": true,
         "source": "saga-docs-model.yaml commands.qa (saga_state_behavior: 'on pass, advances qa-track'; gates: 'Verdict threshold determines ship, ship-with-deferred, or no-ship')",
-        "note": "Post-merge acceptance-evidence verdict; advisory to the team-owned gate; a passing verdict advances the thread qa->retro (the qa-track is recorded), a no-ship keeps lifecycle_phase=work; ship-with-deferred is the recorded-rationale path."
+        "note": "The acceptance verdict taken on the evidence after the merge. It advises the team-owned gate rather than blocking it: a passing verdict moves the thread qa → retro and records the quality-assurance track, a no-ship verdict keeps the thread in work, and ship-with-deferred is the path that ships with the reason written down."
       },
       "plan-review": {
+        "plain_name": "Plan readiness review",
         "blocking": true,
         "advances_phase": false,
         "overridable": true,
         "source": "config/sdlc-schema.json review_model.plan_review ('Hermes can coordinate plan review before dispatch')",
-        "note": "Hermes-coordinated plan readiness before dispatch; blocks dispatch; does not itself advance the stored lifecycle_phase (/plan completing does)."
+        "note": "Hermes coordinates this readiness check on a plan before the work is dispatched. It stops the dispatch, and it moves the thread to no new phase — finishing /plan is what does that."
       },
       "team-owned-pr-review": {
+        "plain_name": "Team-owned pull-request review",
         "blocking": true,
         "advances_phase": true,
         "overridable": false,
         "source": "config/sdlc-schema.json review_model.team_owned_review",
-        "note": "The authoritative PR review + merge-readiness gate; the team or initiative surface that owns the work owns it; clearing it (with merge) advances work->qa; not unilaterally overridable (the owner decides)."
+        "note": "The authoritative pull-request review and merge-readiness check, held by the team or initiative surface that owns the work. Clearing it and merging moves the thread work → qa. One person cannot override it: the owning team decides its own readiness."
       }
     },
     "phase_board_map": {
       "ideation": {
         "operations": [
-          "Idea"
+          "Intake"
         ],
         "asgard": [
-          "Idea"
+          "Intake"
         ],
         "campps": [
-          "Idea"
+          "Intake"
         ]
       },
       "brainstorm": {
@@ -1538,26 +2018,26 @@
       },
       "plan": {
         "operations": [
-          "Ready"
+          "Planning"
         ],
         "asgard": [
-          "Ready"
+          "Planning"
         ],
         "campps": [
-          "Ready"
+          "Planning"
         ]
       },
       "review": {
         "operations": [
-          "Ready"
+          "Planning"
         ],
         "asgard": [
-          "Ready"
+          "Planning"
         ],
         "campps": [
-          "Ready"
+          "Planning"
         ],
-        "note": "The doc-review gate is the Ready->Active gate on all three active boards (plan approved before work goes Active). CAMPPS joined this shared ladder on 2026-08-16; its former Committed column migrated to Ready."
+        "note": "The doc-review gate is the Planning->Active gate on all three active boards (plan approved before work goes Active)."
       },
       "work": {
         "operations": [
@@ -1581,19 +2061,19 @@
         "campps": [
           "Verify"
         ],
-        "note": "The qa verdict gates Verify -> Done on all three active boards. CAMPPS gained a separate Verify column on 2026-08-16; qa no longer shares a column with work on the initiative rollup."
+        "note": "Verify is entered when delivery succeeds, so a card whose stored phase is already qa can still be sitting in the Active column: the acceptance verdict is evaluated against the delivered outcome once the card is in Verify. The entry condition itself is defined once, in the verify_entry block of config/sdlc-schema.json, and is not restated here. CAMPPS gained a separate Verify column on 2026-08-16."
       },
       "retro": {
         "operations": [
-          "Done"
+          "Retro"
         ],
         "asgard": [
-          "Done"
+          "Retro"
         ],
         "campps": [
-          "Done"
+          "Retro"
         ],
-        "note": "Learn (/retro) runs post-Done; no dedicated board column."
+        "note": "Learn (/retro) runs in the Retro Stage after verification closes."
       }
     },
     "phase_command_map": {
@@ -1602,7 +2082,8 @@
         "/office-hours"
       ],
       "brainstorm": [
-        "/brainstorm"
+        "/brainstorm",
+        "/spec"
       ],
       "plan": [
         "/plan"
@@ -1620,6 +2101,44 @@
       "retro": [
         "/retro"
       ]
+    },
+    "command_classification": {
+      "description": "The in-repository cross-cutting command list and the explicit exclusions (R68): the machine-readable dispositions for routable Saga commands that phase_command_map does not map. Hand-authored; the vendored snapshot is never consulted for these dispositions (R59). REASONS IN THE excluded BLOCK MUST BE FINAL (E10, operator decision 2026-09-07): a placeholder reason - \"Excluded pending its own decision\" and every variant of it - is not a disposition, and it fails the reason-quality rule in tools/docs/check_adapter.py rather than sitting here unnoticed. A command whose disposition is genuinely undecided belongs in the open-question register, never parked in this block; that rule is what stops the adapter from becoming a second open-question register.",
+      "defined_by": [
+        "R59",
+        "R60",
+        "R68"
+      ],
+      "completeness_rule": "Every routable Saga command resolves into exactly one of three dispositions: mapped to a Stage by phase_command_map, listed in cross_cutting, or listed in excluded. A routable command in none of the three is unclassified and fails the adapter completeness check (tools/docs/check_adapter.py) loudly rather than silently defaulting to no movement. That fail-loud rule is RETAINED for every future command: a snapshot resync or plugin upgrade that adds a routable command must classify it here or the docs gate stays red until an operator ruling classifies it - the rule was never disabled, only satisfied. Amendments to this classification are deliberate register acts, never execution-time inference: the eleven cross-cutting entries were set by the operator's AFK ruling of 2026-08-30, recorded durably on issue infiquetra/infiquetra-sdlc#90, amending R68's landing-time state (issue #92, 2026-08-30) in which the list was empty by recorded choice; each reason below is grounded in that command's own model purpose and ownership boundary, never in the vendored snapshot's phase field (R59).",
+      "amended_by": "Operator AFK ruling, recorded 2026-08-30 on issue infiquetra/infiquetra-sdlc#90 (F-1/KTD9 of the R2 wave review): every currently unclassified routable command is cross-cutting because none independently advances an issue lifecycle Stage - each observes, routes, investigates, controls orchestration, or records learning/direction, while the command it dispatches owns Stage movement.",
+      "cross_cutting": {
+        "/delegation-audit": "Reconciles the delegation audit store and reports on delegated work: read-only, advisory, invoked on demand and never a gate - the same shape as /fleet-doctor, whose own reason already names it as an owner of recovery actions. It is a skill with no command file at Saga 0.148.0, so a routable-command sweep never finds it; it is named here so that omission is expected rather than a gap. It observes and repairs the delegation record, so no lifecycle Stage moves (E10, operator decision 2026-09-07).",
+        "/fleet-doctor": "Read-only fleet audit: correlates worktrees, outcome registries, broker leases, chain-verified run facts, dispatch events, and the delegation audit store into finding classes; it owns observation and classification only, while /outcome, the lease broker, teardown, and /delegation-audit own every recovery action - so no lifecycle Stage moves.",
+        "/founder-review": "Challenges scope, ambition, positioning, timing, and operator risk wherever the operator convenes it; it owns challenge and decision capture, never readiness review or issue movement, so the work it gates advances its own Stage.",
+        "/handoff": "Prepares a durable transfer envelope for SDLC issue handoff; saga owns the envelope and mission-control owns the issue body, sidecars, labels, board, and GitHub mutation, so the receiving command continues the Stage the sender already reached.",
+        "/investigate": "Diagnoses the root cause of a bug, failing test, or unexpected behavior before any fix proposal; it owns diagnosis, not shipping, so its findings feed whatever command then moves the Stage.",
+        "/loop": "Classifies input, finds in-flight work, and dispatches to the command that owns the next phase; it owns routing and the hand-off envelope, never phase work, backend choice, issue filing, deploy, or heavy forensics, so the dispatched command owns Stage movement.",
+        "/optimize": "Improves a measurable target through bounded one-variable experiments; it owns the experiment loop, not merge or deployment, so no issue leaves its Stage because of it.",
+        "/outcome": "Coordinates a whole outcome as a durable graph of leaf sagas across issues, above the per-issue run: it routes and dispatches to executors and never runs leaf work itself. Every board write it needs goes through mission-control's submission path - R34 removed its own write authority - and every run transition is the Delivery Manager's, so no lifecycle Stage moves. Recorded as expectation, not as implementation: /outcome is expected to be removed from Saga, that removal is NOT treated as already done, and this adapter describes what runs today; when it is removed the adapter drops it under the existing re-sync checklist (E10, operator decision 2026-09-07, amended).",
+        "/pulse": "Renders live board, run, run-fact-ledger, and outcome-economics state in one read-only snapshot; it owns rendering while mission-control owns board mutation and saga writers own ticks, so observation moves the record, never the Stage.",
+        "/promote": "Promotes the select few cross-repo transcendent learnings into infiquetra-context-library as distilled org standards; it owns only the cross-repo journal feed into the context library, not source-repo or SDLC mutation, so the learning outlives the issue without moving any Stage.",
+        "/resume": "Reconstructs an in-flight work thread in depth and routes it to the owning command; it owns reconstruction and routing, not build/test/PR, so the thread resumes in whichever Stage its owning command holds.",
+        "/strategy": "Creates or maintains the repository's STRATEGY.md as the durable direction anchor; it owns recording direction while /founder-review challenges it, and direction-setting is a portfolio-level practice that dispatches no issue's Stage movement.",
+        "/tier": "Sets a run-scoped model/effort tier ceiling or patches a not-yet-run unit's tier mid-run without aborting and re-planning; it writes the override and drives patch/validate/emit without running leaf work, merging, or deploying, so the unit's Stage stays wherever its work put it."
+      },
+      "excluded": {
+        "/engines": "Excluded: a utility that lists and inspects configured engines; it reads and writes no lifecycle state and has no Stage."
+      }
+    },
+    "foreign_commands": {
+      "description": "Commands owned by plugins other than Saga that carry an accepted Stage mapping (R61). Declared here, inside the one contract the R59 derivation reads, so the mapping resolves from the schema alone; each entry names its owning plugin and defers the Active/Verify boundary to the verify_entry block by reference rather than restating it (AE28's single-source rule).",
+      "/deploy": {
+        "owned_by": "the deploy plugin (plugin 0.2.1; scripts/mint_tag.py and the deployment verbs)",
+        "stage": "Active",
+        "stage_rationale": "A deployment action runs while the item is in the Active Stage: 'Deploying to non-production' is an Active Status in workflows.stage_flow.",
+        "verify_condition_authority": "verify_entry",
+        "note": "Verify entry after a promotion is governed by the verify_entry contract (merge plus a succeeded non-production deployment, or the no-deployable-software route) and is not restated here; on a later promotion the promoted environment's work truthfully returns to Active."
+      }
     }
   },
   "issue_fields": {
@@ -1789,6 +2308,16 @@
         }
       },
       {
+        "key": "risk",
+        "header": "Risk",
+        "required": true,
+        "template": {
+          "id": "risk",
+          "type": "textarea",
+          "description": "Blast-radius assessment. First line is exactly one of low, medium, high, very-high; the next line is one sentence saying why. Written by the Architect as part of the technical context; UNKNOWN until then, and the card is not ready while it reads UNKNOWN. high and very-high require the Failure modes / pre-mortem, Inputs inventory, and Stop conditions fields."
+        }
+      },
+      {
         "key": "lifecycle_origin",
         "header": "Lifecycle Origin",
         "required": false,
@@ -1831,6 +2360,7 @@
           "notes",
           "acceptance_criteria",
           "verification",
+          "risk",
           "lifecycle_origin"
         ],
         "issue_type": [
@@ -1860,13 +2390,14 @@
             "tests_required",
             "acceptance_criteria",
             "verification",
-            "context_library_links"
+            "context_library_links",
+            "risk"
           ],
           "issue_type": "*",
           "risk": "*",
           "required": true,
-          "rationale": "Always-required core (context package R1/R3/R4): objective + intent + non_goals + files_expected + tests_required + acceptance_criteria + verification + context_library_links are required for every hermes-task issue type at every Risk. context_library_links is required-or-`_none_`.",
-          "source": "issue-context-package-requirements.md R1 (Intent), R3 (non-goals), R4 (context-links required-or-_none_); foundation REQUIRED_FIELDS"
+          "rationale": "Always-required core (context package R1/R3/R4): objective + intent + non_goals + files_expected + tests_required + acceptance_criteria + verification + context_library_links + risk are required for every hermes-task issue type at every Risk. context_library_links is required-or-`_none_`. risk is the field that supplies the tier the risk-conditional rules below key on (decision E1, 2026-09-06), so it is required at every tier and is never itself risk-conditional.",
+          "source": "issue-context-package-requirements.md R1 (Intent), R3 (non-goals), R4 (context-links required-or-_none_); foundation REQUIRED_FIELDS; operator decision E1 (2026-09-06) for risk"
         },
         {
           "fields": [

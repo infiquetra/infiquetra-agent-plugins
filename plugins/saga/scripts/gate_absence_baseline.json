@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "pending": {
+    "plugins/saga/references/operator-choice.md": 4,
+    "plugins/saga/skills/founder-review/references/review-modes.md": 3,
+    "plugins/saga/skills/ideate/references/convergence-and-partnership.md": 2,
+    "plugins/saga/skills/office-hours/SKILL.md": 5,
+    "plugins/saga/skills/plan/SKILL.md": 5,
+    "plugins/saga/skills/retro/SKILL.md": 9,
+    "plugins/saga/skills/retro/references/retro-passes.md": 4,
+    "plugins/saga/skills/retro/references/self-edit-safety.md": 2,
+    "plugins/saga/skills/spec/SKILL.md": 3,
+    "plugins/saga/skills/strategy/SKILL.md": 5,
+    "plugins/saga/skills/work/SKILL.md": 3
+  }
+}

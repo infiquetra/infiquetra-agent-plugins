@@ -9,19 +9,43 @@
       ]
     },
     {
+      "name": "jev_log",
+      "destinations": [
+        "scripts/_bundled/jev_log.py"
+      ]
+    },
+    {
+      "name": "plugin_resolution",
+      "destinations": [
+        "scripts/_bundled/plugin_resolution.py"
+      ]
+    },
+    {
+      "name": "retry_backoff",
+      "destinations": [
+        "scripts/_bundled/retry_backoff.py"
+      ]
+    },
+    {
       "name": "tier_palette",
       "destinations": [
         "scripts/_bundled/tier_palette.py"
       ]
+    },
+    {
+      "name": "tier_resolver",
+      "destinations": [
+        "scripts/_bundled/tier_resolver.py"
+      ]
+    },
+    {
+      "name": "typesafe_client",
+      "destinations": [
+        "scripts/_bundled/typesafe_client.py"
+      ]
     }
   ],
   "data": [
-    {
-      "name": "models.json",
-      "destinations": [
-        "scripts/_bundled/models.json"
-      ]
-    },
     {
       "name": "staffing.json",
       "destinations": [

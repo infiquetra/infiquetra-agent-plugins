@@ -168,6 +168,13 @@ template labels, use `../issues/references/templates-reference.md`.
 | `mentions_performance` | `performance\|latency\|slow\|timeout` in title/body | `performance` |
 | `mentions_breaking` | `breaking change\|breaking\|backwards incompatible` in title/body | `breaking-change` |
 
+**A typed judgment may widen this table, never narrow it (issue #1035).** `labels auto-label
+--suggest` asks a model about each content label above and prints the union of the rule matches
+and the model's own, each tagged `rule`, `model` or `both` — and applies nothing. Every label a
+rule matched is in the union whatever the model answers, so these patterns stay the floor. A
+label is added only when the model's probability that it applies clears 0.6; a confident "no" is
+a low probability and stays out.
+
 ---
 
 ## Usage Rules Summary

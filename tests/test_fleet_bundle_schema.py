@@ -227,9 +227,20 @@ class LiveDeclarationTests(unittest.TestCase):
         payload = json.loads(mc_declaration.read_text(encoding="utf-8"))
         self.assertEqual(payload.get("schema_version"), "2")
         module_names = [entry["name"] for entry in payload.get("modules", [])]
-        self.assertEqual(module_names, ["intent_envelope", "tier_palette"])
+        self.assertEqual(
+            module_names,
+            [
+                "intent_envelope",
+                "jev_log",
+                "plugin_resolution",
+                "retry_backoff",
+                "tier_palette",
+                "tier_resolver",
+                "typesafe_client",
+            ],
+        )
         data_names = [entry["name"] for entry in payload.get("data", [])]
-        self.assertEqual(data_names, ["models.json", "staffing.json"])
+        self.assertEqual(data_names, ["staffing.json"])
 
 
 if __name__ == "__main__":

@@ -372,6 +372,10 @@ _none_
 ```bash
 uv run pytest plugins/mission-control/tests/ -q
 ```
+
+### Risk
+medium
+The change is confined to the interactive create-path gate.
 """
 
 
@@ -465,6 +469,10 @@ plugins/mission-control/tests/test_issue_create_interactive.py
 ```bash
 uv run pytest plugins/mission-control/tests/test_issue_create_interactive.py
 ```
+
+### Risk
+medium
+The change is confined to the Intake exit writer boundary.
 
 ### Context library links
 _none_

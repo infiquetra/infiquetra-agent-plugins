@@ -46,11 +46,11 @@
   agent-launcher package across four stages with fingerprint-bound
   verification, with post-activation readback in
   [evidence/2026-08-27-agent-launcher-post-activation-readback.md](evidence/2026-08-27-agent-launcher-post-activation-readback.md).
-- [Mission Control ten-client compatibility matrix](evidence/2026-08-30-mission-control-compatibility-matrix.md)
+- [Mission Control ten-client compatibility matrix, superseded](evidence/2026-08-30-mission-control-compatibility-matrix.md)
   records what every installed coding-agent client did with the resynchronized
   portable mission-control package across four stages with fingerprint-bound
   verification, with post-activation readback in
-  [evidence/2026-08-30-mission-control-post-activation-readback.md](evidence/2026-08-30-mission-control-post-activation-readback.md).
+  [superseded evidence/2026-08-30-mission-control-post-activation-readback.md](evidence/2026-08-30-mission-control-post-activation-readback.md).
   The plain filename always holds the current document; three retired
   generations are kept as history under descriptive suffixes — the
   2026-08-25 pair (tree `651ac28a…`), the `-pre-fingerprint-move` pair (tree

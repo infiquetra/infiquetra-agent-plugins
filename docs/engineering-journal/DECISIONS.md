@@ -1064,8 +1064,8 @@ second-run evidence to match the moved tree — the explicit anti-pattern.
 **Revisit when** the next resynchronization or repair round moves the
 fingerprint: the same batch-and-rerun path applies a third time.
 
-**Refs.** [`the current matrix`](../evidence/2026-08-30-mission-control-compatibility-matrix.md),
-[`the current readback`](../evidence/2026-08-30-mission-control-post-activation-readback.md),
+**Refs.** [`the superseded matrix`](../evidence/2026-08-30-mission-control-compatibility-matrix.md),
+[`the superseded readback`](../evidence/2026-08-30-mission-control-post-activation-readback.md),
 `tests/test_check_compatibility_matrix.py`, issue #56, operator ruling 3.
 
 

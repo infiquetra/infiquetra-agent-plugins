@@ -42,6 +42,10 @@ plugins/mission-control/tests/test_issue_create_prepared.py
 uv run pytest plugins/mission-control/tests/test_issue_create_prepared.py
 ```
 
+### Risk
+medium
+The change is confined to the prepared-issue draft pipeline.
+
 ### Context library links
 _none_
 """

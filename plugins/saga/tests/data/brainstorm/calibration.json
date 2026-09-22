@@ -1,0 +1,27 @@
+{
+  "schema": "brainstorm-calibration.v1",
+  "drift_floor": 0.8,
+  "cases": [
+    {
+      "id": "cal-01-consequence",
+      "idea_seed": "Credential rotation for billing webhook",
+      "expected": {
+        "consequence_calibration": "pass"
+      }
+    },
+    {
+      "id": "cal-02-gap",
+      "idea_seed": "Feedback board with abstract beneficiary",
+      "expected": {
+        "gap_coverage": "pass"
+      }
+    },
+    {
+      "id": "cal-03-checklist",
+      "idea_seed": "Tight one-liner bug fix",
+      "expected": {
+        "checklist_restraint": "pass"
+      }
+    }
+  ]
+}

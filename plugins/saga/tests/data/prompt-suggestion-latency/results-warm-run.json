@@ -1,0 +1,279 @@
+{
+  "accuracy": {
+    "s2": {
+      "misses": [
+        {
+          "expected": "work",
+          "got": "none",
+          "id": "p03"
+        },
+        {
+          "expected": "office-hours",
+          "got": "none",
+          "id": "p08"
+        }
+      ],
+      "negative": {
+        "bar": 0.8,
+        "hit": 5,
+        "rate": 1.0,
+        "total": 5
+      },
+      "positive": {
+        "bar": 0.7,
+        "hit": 13,
+        "rate": 0.867,
+        "total": 15
+      }
+    },
+    "s3": {
+      "misses": [
+        {
+          "expected": "office-hours",
+          "got": "none",
+          "id": "p08"
+        }
+      ],
+      "negative": {
+        "bar": 0.8,
+        "hit": 5,
+        "rate": 1.0,
+        "total": 5
+      },
+      "positive": {
+        "bar": 0.7,
+        "hit": 14,
+        "rate": 0.933,
+        "total": 15
+      }
+    },
+    "s4": {
+      "misses": [
+        {
+          "expected": "office-hours",
+          "got": "none",
+          "id": "p08"
+        }
+      ],
+      "negative": {
+        "bar": 0.8,
+        "hit": 5,
+        "rate": 1.0,
+        "total": 5
+      },
+      "positive": {
+        "bar": 0.7,
+        "hit": 14,
+        "rate": 0.933,
+        "total": 15
+      }
+    },
+    "s5": {
+      "misses": [
+        {
+          "expected": "plan",
+          "got": "investigate",
+          "id": "p02"
+        },
+        {
+          "expected": "work",
+          "got": "plan",
+          "id": "p03"
+        },
+        {
+          "expected": "code-review",
+          "got": "work",
+          "id": "p04"
+        },
+        {
+          "expected": "retro",
+          "got": "code-review",
+          "id": "p05"
+        },
+        {
+          "expected": "spec",
+          "got": "retro",
+          "id": "p06"
+        },
+        {
+          "expected": "ideate",
+          "got": "spec",
+          "id": "p07"
+        },
+        {
+          "expected": "office-hours",
+          "got": "ideate",
+          "id": "p08"
+        },
+        {
+          "expected": "brainstorm",
+          "got": "none",
+          "id": "p09"
+        },
+        {
+          "expected": "pulse",
+          "got": "brainstorm",
+          "id": "p10"
+        },
+        {
+          "expected": "doc-review",
+          "got": "pulse",
+          "id": "p11"
+        },
+        {
+          "expected": "handoff",
+          "got": "doc-review",
+          "id": "p12"
+        },
+        {
+          "expected": "tier",
+          "got": "handoff",
+          "id": "p13"
+        },
+        {
+          "expected": "qa",
+          "got": "tier",
+          "id": "p14"
+        },
+        {
+          "expected": "outcome",
+          "got": "qa",
+          "id": "p15"
+        },
+        {
+          "expected": "none",
+          "got": "outcome",
+          "id": "p16"
+        }
+      ],
+      "negative": {
+        "bar": 0.8,
+        "hit": 4,
+        "rate": 0.8,
+        "total": 5
+      },
+      "positive": {
+        "bar": 0.7,
+        "hit": 1,
+        "rate": 0.067,
+        "total": 15
+      }
+    }
+  },
+  "corpus_size": 20,
+  "daemon_pid": 31764,
+  "free_trials": 30,
+  "latency": {
+    "floor": {
+      "count": 50,
+      "failed": 0,
+      "max_ms": 50.8,
+      "min_ms": 42.6,
+      "notes": [],
+      "p50_ms": 46.9,
+      "p95_ms": 49.8,
+      "within": {
+        "400ms": 1.0,
+        "500ms": 1.0
+      }
+    },
+    "s2": {
+      "count": 20,
+      "failed": 0,
+      "max_ms": 801.8,
+      "min_ms": 371.2,
+      "notes": [],
+      "p50_ms": 694.5,
+      "p95_ms": 793.4,
+      "within": {
+        "400ms": 0.2,
+        "500ms": 0.3
+      }
+    },
+    "s3": {
+      "count": 20,
+      "failed": 0,
+      "max_ms": 449.1,
+      "min_ms": 374.0,
+      "notes": [],
+      "p50_ms": 398.9,
+      "p95_ms": 428.4,
+      "within": {
+        "400ms": 0.55,
+        "500ms": 1.0
+      }
+    },
+    "s4": {
+      "count": 50,
+      "failed": 0,
+      "max_ms": 55.3,
+      "min_ms": 46.5,
+      "notes": [],
+      "p50_ms": 49.2,
+      "p95_ms": 53.3,
+      "within": {
+        "400ms": 1.0,
+        "500ms": 1.0
+      }
+    },
+    "s5": {
+      "count": 20,
+      "failed": 0,
+      "max_ms": 52.5,
+      "min_ms": 46.4,
+      "notes": [],
+      "p50_ms": 48.6,
+      "p95_ms": 52.0,
+      "within": {
+        "400ms": 1.0,
+        "500ms": 1.0
+      }
+    }
+  },
+  "live_calls": 75,
+  "live_calls_cold": 0,
+  "live_calls_resident": 75,
+  "measured_at": "2026-09-19T18:06:14-0400",
+  "measurement_deadline_s": 15.0,
+  "operator_deadline_s": 0.5,
+  "resolution": [
+    {
+      "root": "",
+      "rung": "rung=3 (installed-plugins) root=/Users/jefcox/.claude/plugins/cache/infiquetra-plugins/fleet-core/0.25.3",
+      "tree": "/Users/jefcox/.claude/plugins/cache/infiquetra-plugins",
+      "version": "0.25.3"
+    },
+    {
+      "root": "",
+      "rung": "rung=3 (installed-plugins) root=/Users/jefcox/.claude/plugins/cache/infiquetra-plugins/fleet-core/0.25.3",
+      "tree": "/Users/jefcox/.claude-company/plugins/cache/infiquetra-plugins",
+      "version": "0.25.3"
+    }
+  ],
+  "roster_size": 24,
+  "schema": "prompt_suggestion_results.v1",
+  "shapes": [
+    "floor",
+    "s2",
+    "s3",
+    "s4",
+    "s5"
+  ],
+  "survival": {
+    "answered": 30,
+    "distinct_pids": [
+      31764
+    ],
+    "first_uptime_s": 28.817,
+    "invocations": 30,
+    "last_uptime_s": 28.867,
+    "survived": true,
+    "uptime_grew": true
+  },
+  "transport": "client default",
+  "trials": 20,
+  "usage": {
+    "input_tokens": 346503,
+    "output_tokens": 44257
+  }
+}

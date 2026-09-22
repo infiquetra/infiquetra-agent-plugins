@@ -63,10 +63,10 @@ Objective project-field value. It never admits a repository or creates the trigg
 ## Script Location
 
 ```
-$INFIQUETRA_SDLC_PATH/../infiquetra-claude-plugins/plugins/mission-control/scripts/sdlc_manager.py
+python3 scripts/sdlc_manager.py
 ```
 
-> If `$INFIQUETRA_SDLC_PATH` is unset, use `~/workspace/infiquetra/infiquetra-sdlc` as the default base path.
+> Run that command from the mission-control package root (the directory that contains `scripts/` and `skills/`). `INFIQUETRA_SDLC_PATH` names the infiquetra-sdlc checkout the schema loader reads.
 
 ## Issue Types
 
@@ -140,7 +140,12 @@ asks for an Asgard or CAMPPS issue that should be reviewed before mutation.
 `/issue` is the primary user-facing command for this path. `/issue` remains a
 compatibility alias. `--prepare` is the canonical non-mutating mode; `--draft` means the same
 thing. `--from` accepts a local path, GitHub issue/PR URL, branch ref, or natural search hint.
-`--maturity` overrides inferred handoff maturity.
+`--maturity` overrides the source's path-derived handoff maturity fallback; the
+owner classifies the value, so `pending-confirmation` and `deferred-context` are
+accepted alongside the four ready states. When the source itself carries a
+declaration (draft sidecar or Saga state) that differs from `--maturity`,
+prepare records a blocking gap naming both values instead of letting the flag
+win.
 
 ```bash
 python3 sdlc_manager.py issue prepare \
@@ -160,6 +165,43 @@ The prepared workflow writes a markdown draft and JSON sidecar under
 `docs/sdlc-issue-drafts/`. `issue create-prepared` re-runs readiness checks, renders the mutation
 plan, asks for confirmation, repairs missing labels/templates after confirmation, opens a mapping
 PR when needed, and only then creates the issue.
+
+### Advisory suggestions on a prepared draft
+
+`--suggest` records what a typed judgment thought about the draft, beside what you chose:
+
+```bash
+python3 sdlc_manager.py issue prepare \
+  --repo hermes-claude-code-router \
+  --type capability --team campps --project campps \
+  --title "Prepared issue workflow" \
+  --from docs/plans/example.md \
+  --suggest \
+  --objective-option improve-claude-plugins
+```
+
+The sidecar gains a suggested issue type with its full probability distribution over all five
+types, a suggested risk tier, and — when you pass candidates with the repeatable
+`--objective-option` — a suggested Objective, plus a suggested board Status. The distribution is
+shown rather than a single answer because the measured agreement against this repository's own
+labels is 19 of 30, and most of the misses are places where the label is the thing that is wrong.
+
+**Nothing is applied.** Your `--type`, `--risk` and `--status` remain the decision. A suggestion
+that differs from one of your flags is recorded as an override in the verdict log, which is what
+later makes it possible to ask whether the judgment is worth trusting. The suggestions never
+reach the issue body, and the risk suggestion never touches the card's Risk — the body still owns
+that.
+
+The flag is opt-in and off by default, so an ordinary prepare makes no model call at all.
+
+**Where the text goes.** With the flag, the draft body and this repository's own issue-types
+reference are sent to TypeSafe, a third-party endpoint, and `TYPESAFE_API_KEY` must be in the
+environment. Credentials and high-entropy strings are redacted before anything leaves the machine,
+and the fleet's data rule (`plugins/fleet-core/references/typesafe.md`) governs what may be sent at
+all: issue and plan text is permitted, transcripts and customer content are not.
+
+If the call fails, the draft is written exactly as it would have been and the sidecar carries a
+note saying why there are no suggestions; a prepare never fails because a suggestion did.
 
 ### Ship-policy intent envelope on the issue (#380)
 
@@ -183,13 +225,20 @@ interview. Do not author the envelope as prose or invent a second posture questi
 drift-guard test fails on one.
 
 Prepared handoff drafts include `handoff_maturity` in the sidecar and a body section with the
-suggested next action. Maturity values are:
+suggested next action. Readiness vocabulary and assessment are owned by the saga plugin's
+handoff envelope (`#942`) — mission-control delegates to it and keeps no local vocabulary.
+Maturity values are:
 
-- `idea-ready` -> suggest `/plan <issue>`.
-- `requirements-ready` -> suggest `/plan <issue>`.
-- `plan-ready` -> suggest `/work <issue>`.
-- `resume-ready` -> suggest `/work <issue>`.
-- `deferred-context` -> preserve context and clarify before execution.
+- `idea-ready` -> the owner suggests `/plan <published source>`.
+- `requirements-ready` -> the owner suggests `/plan <published source>`.
+- `plan-ready` -> the owner suggests `/work <published source>`.
+- `resume-ready` -> the owner suggests `/work <published source>`.
+- `deferred-context` -> creatable with clarification text; the owner never attaches a live command.
+- `pending-confirmation` -> creatable, proposed-only; the owner never attaches a live command until an operator confirms.
+
+Sources without an explicit declaration fail closed: an undeclared saved draft or Saga state
+file is refused at prepare time (the drafts folder or state path alone never makes it ready),
+and out-of-root sources are refused outright.
 
 Source artifact resolution:
 
@@ -224,7 +273,7 @@ Safe starting statuses (the declared Stage drives them):
 - Readiness accepts any `Status` configured for the declared `Stage`, plus the
   cross-cutting `Blocked`; retired (`Idea`, `Shaping`, `Done`), unknown, and
   out-of-Stage values are refused.
-- Never auto-move a prepared issue to `Ready`.
+- Never auto-move a prepared issue to `Ready for Planning`.
 
 ### Create Issue with Template
 
@@ -283,7 +332,7 @@ python3 sdlc_manager.py flow set-field \
   --number <N> \
   --project campps \
   --field Status \
-  --option Committed
+  --option Implementing
 ```
 
 Use live field discovery rather than cached field IDs.
