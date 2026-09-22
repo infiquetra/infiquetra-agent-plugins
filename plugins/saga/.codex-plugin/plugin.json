@@ -1,0 +1,10 @@
+{
+  "name": "saga",
+  "version": "1.2.1",
+  "description": "Infiquetra lifecycle plugin: one automatic run per issue — admission, plan, plan review, a build loop, a lensed code review, merge, release and retro capture.",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Saga",
+    "shortDescription": "Infiquetra lifecycle plugin: one automatic run per issue — admission, plan, plan review, a build loop, a lensed code review, merge, release and retro capture."
+  }
+}

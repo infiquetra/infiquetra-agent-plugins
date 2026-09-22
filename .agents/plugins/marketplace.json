@@ -127,6 +127,17 @@
       }
     },
     {
+      "name": "saga",
+      "source": {
+        "source": "local",
+        "path": "./plugins/saga"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
       "name": "unifi",
       "source": {
         "source": "local",
