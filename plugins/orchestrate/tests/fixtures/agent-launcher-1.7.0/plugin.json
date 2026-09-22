@@ -1,0 +1,5 @@
+{
+  "name": "agent-launcher",
+  "version": "1.7.0",
+  "description": "Test fixture. Upstream agent-launcher 1.7.0 from infiquetra-claude-plugins@acc99fe7, so this suite can ingest the companion Orchestrate was written against. Not a package."
+}

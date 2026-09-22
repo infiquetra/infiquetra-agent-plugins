@@ -1,0 +1,24 @@
+{
+  "name": "orchestrate",
+  "version": "6.0.1",
+  "description": "Run one piece of work across several herdr agent sessions, one git worktree per unit.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "keywords": [
+    "orchestration",
+    "register",
+    "herdr",
+    "multi-vendor",
+    "dispatch",
+    "state-model",
+    "events",
+    "verification",
+    "consensus",
+    "review"
+  ],
+  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+  "commands": "./com.infiquetra.claude/commands/",
+  "skills": "./skills/"
+}

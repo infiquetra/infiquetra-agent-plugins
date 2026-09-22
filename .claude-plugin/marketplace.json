@@ -142,6 +142,29 @@
       ]
     },
     {
+      "name": "orchestrate",
+      "source": "./plugins/orchestrate",
+      "version": "6.0.1",
+      "description": "Run one piece of work across several herdr agent sessions, one git worktree per unit.",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "keywords": [
+        "orchestration",
+        "register",
+        "herdr",
+        "multi-vendor",
+        "dispatch",
+        "state-model",
+        "events",
+        "verification",
+        "consensus",
+        "review"
+      ]
+    },
+    {
       "name": "redis-channel",
       "source": "./plugins/redis-channel",
       "version": "0.5.3",

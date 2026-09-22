@@ -1,0 +1,19 @@
+[
+  {
+    "event": "pane.output_matched",
+    "data": {
+      "matched_line": "    463 +def test_agent_wrapper_adapter_crosses_subprocess_and_parses_returned_ids(tmp_path: Path) -> None:",
+      "pane_id": "w2C:p0",
+      "read": {
+        "format": "text",
+        "pane_id": "w2C:p0",
+        "revision": 0,
+        "source": "recent_unwrapped",
+        "tab_id": "w2C:tZ",
+        "text": "captured pane output\nmatched substring\n",
+        "truncated": true,
+        "workspace_id": "w2C"
+      }
+    }
+  }
+]
