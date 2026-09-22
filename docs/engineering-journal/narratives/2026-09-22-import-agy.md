@@ -74,7 +74,7 @@ directory, including the bundle the script imports at startup.
 **Evidence.** The upstream `--audit-store` help interpolated
 `audit_store.DEFAULT_AUDIT_STORE_ROOT`, which is `Path.home() /
 ".claude" / "delegation-audit"`. On this machine that string is an absolute
-`/Users/...` path. `plugins/agy/tests/test_entrypoint.py` runs `--help` with
+`/Users/...` path. `plugins/agy/tests/test_agy_entrypoint.py` runs `--help` with
 credential-shaped variables removed and rejects `/Users/` in the output.
 
 **Mechanism.** The help text now says `~/.claude/delegation-audit`. The
