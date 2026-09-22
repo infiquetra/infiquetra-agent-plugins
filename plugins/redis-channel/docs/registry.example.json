@@ -1,0 +1,19 @@
+{
+  "endpoints": {
+    "default": {
+      "redis_url": "redis://redis-host.example.com:6379/0",
+      "redis_password_env": "MY_REDIS_PASSWORD",
+      "display_name": "Default router endpoint"
+    }
+  },
+  "defaults": {
+    "session_name_override_env": "CLAUDE_SESSION_NAME",
+    "heartbeat_seconds": 10,
+    "registry_ttl_seconds": 60,
+    "destructive_confirm_seconds": 3,
+    "permission_window_seconds": 30,
+    "consumer_block_ms": 1000,
+    "default_endpoint": "default",
+    "auto_connect_endpoint": null
+  }
+}
