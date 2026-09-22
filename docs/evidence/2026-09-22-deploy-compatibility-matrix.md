@@ -388,7 +388,7 @@ committed, and is not quoted here.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command(s); exit status 0. The client's output named 0 of 1 declared skill unit(s)."
+          "evidence": "Ran 1 command(s); exit status 0. The command produced no output, so its exit status is the whole result."
         },
         "discovery": {
           "result": "executed",
@@ -628,7 +628,7 @@ committed, and is not quoted here.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command(s); exit status 0. The client's output named 0 of 1 declared skill unit(s)."
+          "evidence": "Ran 1 command(s); exit status 0. The command produced no output, so its exit status is the whole result."
         },
         "discovery": {
           "result": "executed",
