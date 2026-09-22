@@ -15,7 +15,7 @@ Placement follows
 compatibility matrices
 ([UniFi, superseded 2026-09-22 and kept as historical context](../evidence/2026-08-22-unifi-compatibility-matrix.md),
 [Mission Control, superseded](../evidence/2026-08-30-mission-control-compatibility-matrix.md),
-[agent-launcher](../evidence/2026-08-27-agent-launcher-compatibility-matrix.md)).
+[agent-launcher](../evidence/2026-09-22-agent-launcher-compatibility-matrix.md)).
 The script does not invent a second way to put a package where a client looks.
 
 The catalog root is the checkout that contains the script. `--catalog` overrides

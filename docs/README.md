@@ -41,7 +41,7 @@
 
 ## Evidence
 
-- [Agent Launcher ten-client compatibility matrix](evidence/2026-08-27-agent-launcher-compatibility-matrix.md)
+- [Agent Launcher ten-client compatibility matrix](evidence/2026-09-22-agent-launcher-compatibility-matrix.md)
   records what every installed coding-agent client did with the portable
   agent-launcher package across four stages with fingerprint-bound
   verification, with post-activation readback in
