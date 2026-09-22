@@ -319,6 +319,98 @@ the actual change is.
 `docs/plans/2026-09-22-custody-move-and-claude-plugins-retirement-plan.md`
 (rule 4).
 
+### A "current" matrix document and an assessment-free notice were indistinguishable to the checker
+
+**Evidence.** `docs/evidence/2026-08-27-agent-launcher-compatibility-matrix.md`,
+`2026-09-22-unifi-authored-cut.md`, and `2026-09-22-mission-control-compatibility-notice.md`
+each explained that no ten-client run exists yet for the package's current
+version, and each carried `<!-- matrix-status: current -->`. `python3
+scripts/check_compatibility_matrix.py` printed `Compatibility matrix
+validation passed.` regardless, because `is_matrix_document` -- the function
+that decides which documents the run even looks at -- requires a
+`$.package`/`$.clients` record and silently excludes anything without one.
+Three documents that perform no assessment were marked current and nothing
+ever checked that claim.
+
+**Mechanism.** `matrix_documents()` filters by record *shape*, not by the
+`matrix-status` directive, so a document could say "current" in its directive
+and "no run happened" in its prose at the same time with no code path that
+would ever notice the contradiction. Adding `STATUS_NOTICE` fixes the state
+space (a document can now say "I am not an assessment" explicitly), but that
+alone does not close the gap -- a fourth document could still be typo'd or
+left with no directive at all (which defaults to `current`) and pass the same
+way. The actual fix is `check_notice_discipline`, a second scan that is not
+shape-filtered: it walks every evidence document and fails any whose resolved
+status is `current` but whose record fails the shape test that
+`is_matrix_document` uses to decide "is this even a matrix."
+
+**Generalizable rule.** When a validator selects *which* documents to check
+by testing their shape, a document that fails the shape test is invisible to
+every rule that follows -- including a rule about what the document is
+allowed to claim about itself. Closing that gap needs a second pass over the
+documents the selector *rejected*, not just a stricter selector.
+
+**Refs.** `scripts/check_compatibility_matrix.py` (`is_matrix_document`,
+`check_notice_discipline`, `STATUS_NOTICE`), `tests/test_check_compatibility_matrix.py`
+(`NoticeStatusTest`).
+
+### A file that scans its own directory tree for a pattern can match its own explanatory comment
+
+**Evidence.** `scripts/check_repo.py`'s new `check_machine_specific_paths`
+scans `scripts/` (among other directories) for an absolute path under a real
+user's home directory. The first version of its own docstring illustrated the
+rule with the literal example `/Users/test/`, inside `scripts/check_repo.py`
+itself -- which the function then flagged as a violation of the rule it
+was defining, failing `python3 scripts/check_repo.py` on a file that had
+never shipped a real path.
+
+**Mechanism.** The scanner does not know the difference between a path that
+documents the rule and a path that violates it; both are the same bytes on
+disk. Any check whose scanned scope includes its own source file has to treat
+its own comments and docstrings as untrusted input to itself.
+
+**Generalizable rule.** When writing a pattern-matching validator, grep the
+validator's own source (or just read it once with the finished regex in mind)
+for anything that would self-trigger before considering the change done --
+an illustrative example in a docstring is exactly the kind of text that
+reads as a natural violation of the rule it is illustrating. The fix here was
+to describe the pattern in prose rather than give a literal matching example.
+
+**Refs.** `scripts/check_repo.py` (`check_machine_specific_paths`,
+`MACHINE_SPECIFIC_PATH`).
+
+### A function's default parameter is bound once at import, so patching the module attribute after import does not reach it
+
+**Evidence.** Writing a CLI-level test for `check_compatibility_matrix.py`'s
+`main()` calling `check_notice_discipline()` with no arguments, the natural
+instinct was to `unittest.mock.patch` the module's `EVIDENCE_DIRECTORY`
+constant and point it at a scratch directory. That has no effect on
+`check_notice_discipline`, because its signature is
+`def check_notice_discipline(directory: Path = EVIDENCE_DIRECTORY)` --
+Python evaluates that default once, at function-definition time (module
+import), and stores the resulting `Path` object in the function's
+`__defaults__`. Reassigning the module-level name afterward changes what the
+name refers to, not what the function's already-bound default is.
+
+**Mechanism.** This is ordinary Python default-argument binding, but it is
+easy to miss specifically in a validator module that exposes both a
+default-parameter function (`check_notice_discipline(directory=...)`) and a
+function that re-reads the module global inside its body
+(`current_matrix_report`, which does `EVIDENCE_DIRECTORY if root is None else
+...` at call time). The two look identical from the call site (`f()`) but
+respond completely differently to patching the module attribute.
+
+**Generalizable rule.** To test a function's behavior against a scratch
+directory when it defaults to a module-level constant, pass the directory
+explicitly rather than patching the module attribute -- and if the code under
+test is only reachable with no arguments (as `main()` calling
+`check_notice_discipline()` is), the only faithful test writes into (and
+removes from, in `finally`) the real default location.
+
+**Refs.** `scripts/check_compatibility_matrix.py` (`check_notice_discipline`,
+`current_matrix_report`), `tests/test_check_compatibility_matrix.py`
+(`CLIWiringTest`).
+
 
 ## 2026-08-31
 

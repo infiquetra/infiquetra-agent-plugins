@@ -56,6 +56,17 @@ its record::
 ``matrix-status`` defaults to ``current`` when absent, so the binding is
 fail-closed: a document has to say something to be let off it.
 
+A third status, ``notice``, is for a document that explains *why* no live
+matrix exists yet -- a package whose version moved with no fresh ten-client
+run -- without itself performing an assessment. A notice document carries no
+``$.package``/``$.clients`` record, is a valid target for another document's
+``superseded-by``, is never counted as a current matrix, and is never treated
+as a matrix document at all. Declaring a document ``notice`` is the only way
+an assessment-free document may exist in the evidence directory: one that says
+nothing and defaults to (or is hand-marked) ``current`` fails, because a
+reader has no way to tell "nothing has been assessed yet" from "the matrix
+below is current" except by reading every line of prose.
+
 On the public evidence schema: the plan's unit assigns
 ``schemas/public-evidence.schema.json`` to a different unit, which has not
 landed in this repository. Rather than create a file this unit does not declare,
@@ -261,7 +272,14 @@ SUPERSEDED_BY_DIRECTIVE = "superseded-by"
 SUPERSEDED_REASON_DIRECTIVE = "superseded-reason"
 STATUS_CURRENT = "current"
 STATUS_SUPERSEDED = "superseded"
-DOCUMENT_STATUSES = (STATUS_CURRENT, STATUS_SUPERSEDED)
+#: A document that performs no assessment and says so. It carries no
+#: `$.package`/`$.clients` record, is never counted as a current matrix, is
+#: never treated as a matrix document, and is a valid `superseded-by` target
+#: for a document that once assessed the package this notice now stands in
+#: for. See the "explicit notice state for compatibility evidence" decision,
+#: 2026-09-22.
+STATUS_NOTICE = "notice"
+DOCUMENT_STATUSES = (STATUS_CURRENT, STATUS_SUPERSEDED, STATUS_NOTICE)
 SUPERSESSION_DIRECTIVES = (SUPERSEDED_BY_DIRECTIVE, SUPERSEDED_REASON_DIRECTIVE)
 
 
@@ -543,11 +561,23 @@ def check_document_status(
     status = directives.get(STATUS_DIRECTIVE, STATUS_CURRENT)
     if status not in DOCUMENT_STATUSES:
         return [
-            f"{document.name}: {STATUS_DIRECTIVE} is {status!r}, which is neither "
-            f"{STATUS_CURRENT!r} nor {STATUS_SUPERSEDED!r}"
+            f"{document.name}: {STATUS_DIRECTIVE} is {status!r}, which is none of "
+            f"{STATUS_CURRENT!r}, {STATUS_SUPERSEDED!r}, {STATUS_NOTICE!r}"
         ]
 
     problems: list[str] = []
+    if status == STATUS_NOTICE:
+        # A notice performs no assessment, so neither the binding nor the
+        # supersession obligations apply to it -- it is not the current matrix
+        # and it is not itself superseding anything.
+        for directive in SUPERSESSION_DIRECTIVES:
+            if directive in directives:
+                problems.append(
+                    f"{document.name}: carries {directive!r} while its {STATUS_DIRECTIVE} is "
+                    f"{STATUS_NOTICE!r}; a notice is not a supersession, so it names no "
+                    "successor and no reason of its own"
+                )
+        return problems
     if status == STATUS_CURRENT:
         for directive in SUPERSESSION_DIRECTIVES:
             if directive in directives:
@@ -604,11 +634,11 @@ def check_document_status(
             successor_status = read_directives(target.read_text(encoding="utf-8")).get(
                 STATUS_DIRECTIVE, STATUS_CURRENT
             )
-            if successor_status != STATUS_CURRENT:
+            if successor_status not in (STATUS_CURRENT, STATUS_NOTICE):
                 problems.append(
                     f"{document.name}: {SUPERSEDED_BY_DIRECTIVE} names {successor!r}, which is "
                     f"itself {successor_status!r}; a supersession chain has to end at a current "
-                    "matrix"
+                    "matrix or a notice"
                 )
 
     if not directives.get(SUPERSEDED_REASON_DIRECTIVE, "").strip():
@@ -1112,13 +1142,18 @@ def is_matrix_document(text: str) -> bool:
 
     Other evidence documents live in the same directory and embed records of
     their own, so membership is decided by the record's shape rather than by
-    the file's name.
+    the file's name. A document marked ``notice`` is never a matrix, even if
+    its fenced block happened to be shaped like one: a notice's entire point is
+    that it performed no assessment, and a shape check alone cannot see that.
     """
     try:
         record = extract_record(text)
     except MatrixError:
         return False
-    return isinstance(record.get("package"), dict) and isinstance(record.get("clients"), list)
+    if not (isinstance(record.get("package"), dict) and isinstance(record.get("clients"), list)):
+        return False
+    status = read_directives(text).get(STATUS_DIRECTIVE, STATUS_CURRENT)
+    return status != STATUS_NOTICE
 
 
 def matrix_documents(directory: Path = EVIDENCE_DIRECTORY) -> list[Path]:
@@ -1139,6 +1174,71 @@ def matrix_documents(directory: Path = EVIDENCE_DIRECTORY) -> list[Path]:
         if is_matrix_document(text):
             found.append(path)
     return found
+
+
+def check_notice_discipline(directory: Path = EVIDENCE_DIRECTORY) -> list[str]:
+    """Refuse an assessment-free document that claims (or defaults to) current.
+
+    Before ``STATUS_NOTICE`` existed, a document that performed no assessment
+    still had to say *something* to be read as current, and "say something"
+    included saying nothing: ``matrix-status`` defaults to ``current``. Three
+    documents exploited exactly that gap -- they explained why no live matrix
+    exists yet, carried no ``$.package``/``$.clients`` record, and were marked
+    (or would have defaulted to) ``current`` all the same. ``is_matrix_document``
+    silently excludes them from validation because they are not shaped like a
+    matrix, so the checker printed success while implying a current matrix
+    existed for a package that has none.
+
+    This closes that gap directly: any evidence document whose resolved status
+    is ``current`` must actually embed a machine-readable record. A document
+    that has nothing to check is a ``notice``, not a current matrix.
+    """
+    problems: list[str] = []
+    if not directory.is_dir():
+        return problems
+    for path in sorted(directory.glob("*.md")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        status = read_directives(text).get(STATUS_DIRECTIVE, STATUS_CURRENT)
+        if status != STATUS_CURRENT:
+            continue
+        if is_matrix_document(text):
+            continue
+        problems.append(
+            f"{path.name}: declares (or defaults to) {STATUS_CURRENT!r} but embeds no "
+            f"machine-readable $.package/$.clients record; mark it {STATUS_NOTICE!r} or "
+            "publish the assessment it claims to be"
+        )
+    return problems
+
+
+def current_matrix_report(root: Path | None = None) -> list[str]:
+    """One ``<package>: current matrix: yes/none`` line per ported package.
+
+    A package with no live matrix is not itself a failure -- the 2026-09-22
+    version-bound rule allows that state until a fresh ten-client run lands.
+    This report is what makes the state visible instead of silent; nothing
+    here fails the run by itself.
+    """
+    evidence_directory = EVIDENCE_DIRECTORY if root is None else root / "docs" / "evidence"
+    current_names: set[str] = set()
+    for document in matrix_documents(evidence_directory):
+        text = document.read_text(encoding="utf-8")
+        if read_directives(text).get(STATUS_DIRECTIVE, STATUS_CURRENT) != STATUS_CURRENT:
+            continue
+        try:
+            record = extract_record(text)
+        except MatrixError:
+            continue
+        package = record.get("package")
+        if isinstance(package, dict) and isinstance(package.get("name"), str):
+            current_names.add(package["name"])
+    return [
+        f"{name}: current matrix: {'yes' if name in current_names else 'none'}"
+        for name in port_config.available(root)
+    ]
 
 
 def summarize(record: dict[str, Any]) -> str:
@@ -1200,7 +1300,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"tree_sha256: {tree_sha256}")
         return 0
 
-    documents = [Path(argument) for argument in arguments] or matrix_documents()
+    explicit_documents = [Path(argument) for argument in arguments]
+    documents = explicit_documents or matrix_documents()
     if not documents:
         print(f"{EVIDENCE_DIRECTORY}: no compatibility matrix document found")
         return 1
@@ -1222,6 +1323,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{document.name} ({status}):")
         print(summarize(extract_record(document.read_text(encoding="utf-8"))))
         print()
+
+    # The notice-discipline scan covers the whole evidence directory, not just
+    # the documents named on the command line: a document masquerading as a
+    # current matrix is a problem whether or not the caller happened to name
+    # it explicitly.
+    if not explicit_documents:
+        notice_problems = check_notice_discipline()
+        if notice_problems:
+            failed += len(notice_problems)
+            print("Notice discipline:")
+            for problem in notice_problems:
+                print(f"  {problem}")
+            print()
+
     if reports:
         # Printed whether the run passed or failed. A report that only appeared
         # on a green run would be invisible exactly when a package is being
@@ -1230,6 +1345,17 @@ def main(argv: list[str] | None = None) -> int:
         for report in reports:
             print(f"  {report}")
         print()
+
+    # Printed whether the run passed or failed, and regardless of "no current
+    # matrix" being allowed: a package with none is not a failure by itself,
+    # but the state has to be visible rather than only inferable from absence.
+    report_lines = current_matrix_report()
+    if report_lines:
+        print("Current matrix by package:")
+        for line in report_lines:
+            print(f"  {line}")
+        print()
+
     if failed:
         return 1
     print("Compatibility matrix validation passed.")

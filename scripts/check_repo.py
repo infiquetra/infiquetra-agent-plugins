@@ -255,6 +255,33 @@ CREDENTIAL_REFERENCE_PREFIX = re.compile(
     r"(?i)^(?:env|vault|op|aws|gcp|azure|secretref|ref)[:/]"
 )
 
+# A machine-specific home directory baked into a portable path. This repository
+# ships to any operator's machine, not just the one a package was authored or
+# captured on, so an absolute path naming a *real* user's home directory is a
+# defect wherever it appears: at best it is a broken path on every other
+# machine, at worst it names the author by their account name. Matched with a
+# lookbehind so a substring inside a longer word (``SubUsers/``) is never
+# mistaken for the path separator that starts a home directory.
+MACHINE_SPECIFIC_PATH = re.compile(r"(?<![A-Za-z0-9_])/(?:Users|home)/([^/\s\"'()<>]+)/")
+
+# The usernames each of ``/Users/`` and ``/home/`` may name without being a
+# real machine. ``operator`` is the placeholder this repository's own fixtures
+# and generated examples use on purpose. ``example``, ``op``, and ``test`` are
+# documentation placeholders three existing fixtures already used before this
+# check existed (a shipped installer example, and two test fixtures) -- names
+# nobody would mistake for a real account, unlike an invented username that
+# merely happens not to be anyone's. Nothing else is inert: an invented
+# username still reads as somebody's real home directory to a reader who does
+# not already know it is fake, which is exactly the ambiguity this set exists
+# to remove without growing without bound.
+INERT_HOME_DIRECTORY_USERS = frozenset({"operator", "example", "op", "test"})
+
+# Directories this check scans. ``docs/`` is deliberately excluded: historical
+# evidence and narratives are allowed to quote a real path as part of the
+# record they preserve (see the 2026-09-22 custody-move decision item 6,
+# "Captured fixture transcripts keep the machine paths they recorded").
+MACHINE_SPECIFIC_PATH_SCAN_DIRECTORIES = ("plugins", "scripts", "ports", "schemas", "tests")
+
 
 def sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
@@ -927,6 +954,49 @@ def check_secret_free_values(root: Path) -> list[str]:
     return errors
 
 
+def check_machine_specific_paths(root: Path) -> list[str]:
+    """Refuse a real home directory baked into a shipping-scoped text file.
+
+    Scoped to ``plugins/``, ``scripts/``, ``ports/``, ``schemas/``, and
+    ``tests/`` -- the trees a package or its tooling actually ships or is
+    validated by. ``docs/`` is excluded: it carries historical evidence and
+    narratives that are allowed to quote a real path as part of the record they
+    preserve, and scrubbing those would falsify the history rather than protect
+    an operator.
+
+    Walked the same way ``check_secret_free_values`` walks ``plugins/``: every
+    regular file under the scanned directories, skipping interpreter cache
+    directories, which are never committed and never ship.
+    """
+    errors: list[str] = []
+    for directory_name in MACHINE_SPECIFIC_PATH_SCAN_DIRECTORIES:
+        directory = root / directory_name
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.rglob("*")):
+            if not path.is_file() or "__pycache__" in path.parts:
+                continue
+            relative = path.relative_to(root).as_posix()
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                # Not text, so there is no path literal to read.
+                continue
+            found = sorted(
+                {
+                    match.group(0)
+                    for match in MACHINE_SPECIFIC_PATH.finditer(text)
+                    if match.group(1) not in INERT_HOME_DIRECTORY_USERS
+                }
+            )
+            for fragment in found:
+                errors.append(
+                    f"{relative}: names the machine-specific path {fragment!r}; use the inert "
+                    "placeholder /Users/operator/ or /home/operator/ instead"
+                )
+    return errors
+
+
 def check_port_descriptors(root: Path) -> list[str]:
     """Every port descriptor loads, and names a package tree that exists.
 
@@ -1027,6 +1097,7 @@ def check_repo(root: Path) -> list[str]:
         *check_fleet_bundle_outputs(root),
         *check_skill_frontmatter(root),
         *check_secret_free_values(root),
+        *check_machine_specific_paths(root),
     ]
 
 
