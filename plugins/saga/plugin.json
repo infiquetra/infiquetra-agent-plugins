@@ -1,0 +1,6 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "saga",
+  "version": "1.2.1",
+  "description": "Infiquetra lifecycle plugin: one automatic run per issue \u2014 admission, plan, plan review, a build loop, a lensed code review, merge, release and retro capture."
+}

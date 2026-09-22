@@ -1,0 +1,80 @@
+{
+  "$schema": "../../schemas/fleet-bundle.schema.json",
+  "schema_version": "2",
+  "modules": [
+    {
+      "name": "intent_envelope",
+      "destinations": [
+        "scripts/_bundled/intent_envelope.py"
+      ]
+    },
+    {
+      "name": "jev_log",
+      "destinations": [
+        "scripts/_bundled/jev_log.py"
+      ]
+    },
+    {
+      "name": "jev_verbs",
+      "destinations": [
+        "scripts/_bundled/jev_verbs.py"
+      ]
+    },
+    {
+      "name": "jev_widen",
+      "destinations": [
+        "scripts/_bundled/jev_widen.py"
+      ]
+    },
+    {
+      "name": "merge_guard",
+      "destinations": [
+        "scripts/_bundled/merge_guard.py"
+      ]
+    },
+    {
+      "name": "plugin_resolution",
+      "destinations": [
+        "scripts/_bundled/plugin_resolution.py"
+      ]
+    },
+    {
+      "name": "retry_backoff",
+      "destinations": [
+        "scripts/_bundled/retry_backoff.py"
+      ]
+    },
+    {
+      "name": "staffing",
+      "destinations": [
+        "scripts/_bundled/staffing.py"
+      ]
+    },
+    {
+      "name": "tier_palette",
+      "destinations": [
+        "scripts/_bundled/tier_palette.py"
+      ]
+    },
+    {
+      "name": "tier_resolver",
+      "destinations": [
+        "scripts/_bundled/tier_resolver.py"
+      ]
+    },
+    {
+      "name": "typesafe_client",
+      "destinations": [
+        "scripts/_bundled/typesafe_client.py"
+      ]
+    }
+  ],
+  "data": [
+    {
+      "name": "staffing.json",
+      "destinations": [
+        "scripts/_bundled/staffing.json"
+      ]
+    }
+  ]
+}

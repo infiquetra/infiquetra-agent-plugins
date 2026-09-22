@@ -1,0 +1,126 @@
+{
+  "schema": "prompt_suggestion_corpus.v1",
+  "note": "Synthetic operator prompts written for issue 1038. No real operator prompt, no session transcript, no issue body, no customer content (plan R3, fleet-core data rule section 1). 'expected' is the saga command a competent operator would say the prompt warrants, or the literal 'none' when it warrants no command at all.",
+  "prompts": [
+    {
+      "id": "p01",
+      "text": "The login test started failing right after yesterday's merge and I have no idea why",
+      "expected": "investigate",
+      "why": "A failure whose cause is unknown is the root-cause command's stated job."
+    },
+    {
+      "id": "p02",
+      "text": "Write up how we should build the new rate limiter before anyone touches code",
+      "expected": "plan",
+      "why": "Asks for the HOW as a durable artifact ahead of implementation."
+    },
+    {
+      "id": "p03",
+      "text": "Go build the caching layer we settled on last week",
+      "expected": "work",
+      "why": "A settled decision plus an instruction to execute it."
+    },
+    {
+      "id": "p04",
+      "text": "Read through the diff on my branch and tell me whether it is safe to merge",
+      "expected": "code-review",
+      "why": "Names a diff and a merge-safety question."
+    },
+    {
+      "id": "p05",
+      "text": "We finished the migration campaign, capture what we learned from it",
+      "expected": "retro",
+      "why": "Finished work plus a request to turn it into durable knowledge."
+    },
+    {
+      "id": "p06",
+      "text": "Turn this vague ask into something precise enough to put on the backlog",
+      "expected": "spec",
+      "why": "Interrogating a vague ask into a backlog-ready WHAT."
+    },
+    {
+      "id": "p07",
+      "text": "Give me a spread of ideas for what to do about the flaky test suite",
+      "expected": "ideate",
+      "why": "Asks for divergent idea generation, not one answer."
+    },
+    {
+      "id": "p08",
+      "text": "I am not even sure this is the right problem to be solving",
+      "expected": "office-hours",
+      "why": "The frame itself is in question, which is the front door's job."
+    },
+    {
+      "id": "p09",
+      "text": "Take this one idea and work it up into a proper requirements document",
+      "expected": "brainstorm",
+      "why": "One chosen idea deepened into a requirements doc."
+    },
+    {
+      "id": "p10",
+      "text": "Where should this repository be heading over the next quarter",
+      "expected": "strategy",
+      "why": "Sets the durable direction anchor; /strategy owns STRATEGY.md."
+    },
+    {
+      "id": "p11",
+      "text": "Check that this plan document is actually ready to hand to an implementer",
+      "expected": "doc-review",
+      "why": "Implementation-readiness of a plan document."
+    },
+    {
+      "id": "p12",
+      "text": "Is the scope of this ambitious enough, or are we playing it too safe",
+      "expected": "founder-review",
+      "why": "Strategy, ambition and positioning judged from a founder's seat."
+    },
+    {
+      "id": "p13",
+      "text": "Cap the model tier for the rest of this run without re-planning it",
+      "expected": "none",
+      "why": "There is no command for this any more. Issue 1030 removed /tier; the run record's staffing answers, set once at admission, are where a run's tiers live."
+    },
+    {
+      "id": "p14",
+      "text": "Run the acceptance checks against the deployed build",
+      "expected": "qa",
+      "why": "Quality and acceptance checks on a shipped thing."
+    },
+    {
+      "id": "p15",
+      "text": "Coordinate this whole multi-card outcome as one dependency graph",
+      "expected": "none",
+      "why": "There is no command for this any more. Issue 1030 removed /outcome; a parent issue with children gets a parent branch, and the children merge onto it by merge turn."
+    },
+    {
+      "id": "p16",
+      "text": "What time is it in Tokyo right now?",
+      "expected": "none",
+      "why": "An ordinary question with no lifecycle work behind it."
+    },
+    {
+      "id": "p17",
+      "text": "Rename the variable tmp to buffer in this one file",
+      "expected": "none",
+      "why": "A one-line mechanical edit; no lifecycle command earns its overhead."
+    },
+    {
+      "id": "p18",
+      "text": "Thanks, that worked",
+      "expected": "none",
+      "why": "An acknowledgement carrying no request at all."
+    },
+    {
+      "id": "p19",
+      "text": "What does the acronym TLS stand for?",
+      "expected": "none",
+      "why": "A definition lookup."
+    },
+    {
+      "id": "p20",
+      "text": "Add a trailing newline to the end of this config file",
+      "expected": "none",
+      "why": "A trivial file edit."
+    }
+  ]
+}

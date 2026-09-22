@@ -1,0 +1,300 @@
+# The /qa strategy catalogue — ten prescribed testing strategies as data (issue 1039).
+#
+# A new strategy is a row here plus a driver in qa_strategies.py, never a rewrite of the skill.
+# Every row is read by code; nothing in this file is prose for a model to interpret.
+#
+# proof_boundary is one rung of a ladder, widest last:
+#     hermetic  <  branch-preview  <  non-production
+# A run at boundary B selects every strategy whose boundary is B or NARROWER, and records every
+# strategy whose boundary is wider than B as out-of-boundary — which is a selection fact, never a
+# result and never proof debt.
+#
+# threshold is the mechanical rule code evaluates. It is never a judgment and never a score.
+#
+# driver names the function in qa_strategies.py that runs the strategy. A row whose driver is null
+# is DECLARED but not implemented: selecting it yields `blocked` carrying no_driver_reason, which
+# is honest, where a driver that cannot be exercised would be the graceful no-op this design
+# exists to remove.
+
+schema: qa_catalogue.v1
+
+# The advisory widening judgment's act band, declared here as data so a test reads the same number
+# the code does and the operator can change it without touching code. It ships in suggest mode;
+# the evaluation harness of issue 1032 sets the operating band from recorded real uses. It is
+# never a verdict input: the judgment may only ADD a strategy the profile's patterns did not
+# select, and can never remove one.
+judgment:
+  verb: qa-strategies
+  act_band: 0.6
+  mode: suggest
+  decision_prefix: qa-strategies
+  timeout_seconds: 20
+  note: >-
+    Provisional. Replace from the evaluation harness once roughly thirty real uses are recorded,
+    per the house rule that thresholds come from the harness and never from a cookbook.
+
+strategies:
+  - id: api-workflow
+    situation: A change to a deployed HTTP surface, handler, route, or authorization rule.
+    tool: campps-e2e-canary
+    invocation: "{entrypoint} run-scenario --scenario {scenario} --environment {environment}"
+    file_patterns:
+      - "**/handlers/**"
+      - "**/routes/**"
+      - "**/api/**"
+      - "**/*_handler.py"
+    required_evidence:
+      - environment
+      - scenario_id
+      - observed_status
+      - response_markers
+    proof_boundary: non-production
+    threshold: >-
+      The observed status or redirect class matches the declared expectation and every declared
+      response marker is present.
+    may_be_optional: true
+    driver: delegated_canary
+    no_driver_reason: null
+    revisit_when: null
+    cost_estimate:
+      duration_seconds: 180
+      direct_cost: 0.0
+      runner_class: delegated
+
+  - id: contract-check
+    situation: A change to an OpenAPI document, event schema, generated client, or pinned contract package.
+    tool: oasdiff
+    invocation: "{command}"
+    file_patterns:
+      - "**/openapi.yaml"
+      - "**/openapi.json"
+      - "**/contracts/**"
+      - "**/*.proto"
+    required_evidence:
+      - baseline_reference
+      - drift_entries
+      - permitted_changes
+    proof_boundary: hermetic
+    threshold: >-
+      The drift result is empty, or holds only changes the profile marks permitted.
+    may_be_optional: true
+    driver: contract_check
+    no_driver_reason: null
+    revisit_when: null
+    cost_estimate:
+      duration_seconds: 60
+      direct_cost: 0.0
+      runner_class: local
+
+  - id: app-ui
+    situation: A change to Flutter widget or screen behaviour.
+    tool: flutter
+    invocation: "flutter test integration_test --device-id {target}"
+    file_patterns:
+      - "lib/**/*.dart"
+      - "integration_test/**"
+    required_evidence:
+      - repository
+      - test_path
+      - target
+      - result
+    proof_boundary: branch-preview
+    threshold: >-
+      Every named integration test reports success on the declared target.
+    may_be_optional: true
+    driver: null
+    no_driver_reason: >-
+      No Flutter toolchain, surface, or target exists in the repository that declares this
+      catalogue, so a driver shipped here could not be exercised before release. The
+      specification excludes simulator and emulator targets; this row additionally ships no
+      driver for the macos and web targets rather than shipping an unexercised one.
+    revisit_when: >-
+      The first repository with a Flutter surface takes a qa profile declaring this strategy.
+    cost_estimate:
+      duration_seconds: 600
+      direct_cost: 0.0
+      runner_class: local
+
+  - id: hosted-surface
+    situation: A change touching a non-Flutter hosted page — identity provider, payment, marketing.
+    tool: playwright
+    invocation: "{command}"
+    file_patterns:
+      - "**/templates/**"
+      - "**/static/**"
+      - "**/*.html"
+    required_evidence:
+      - url
+      - selector_assertions
+      - console_errors
+    proof_boundary: non-production
+    threshold: >-
+      Every declared selector assertion holds and no console error of the declared severity
+      appears.
+    may_be_optional: true
+    driver: null
+    no_driver_reason: >-
+      No hosted page and no browser target exist in the repository that declares this catalogue,
+      so a driver shipped here could not be exercised before release.
+    revisit_when: >-
+      The first repository with a hosted surface takes a qa profile declaring this strategy.
+    cost_estimate:
+      duration_seconds: 300
+      direct_cost: 0.0
+      runner_class: local
+
+  - id: cli-smoke
+    situation: A change to a command-line entry point, console script, or plugin script.
+    tool: repository-runner
+    invocation: "{command}"
+    file_patterns:
+      - "plugins/*/scripts/**"
+      - "scripts/**"
+      - "tools/**"
+    required_evidence:
+      - invocations
+      - exit_codes
+      - reported_version
+    proof_boundary: hermetic
+    threshold: >-
+      Each declared invocation exits zero, and where the profile declares a version probe the
+      reported version matches the deployed version marker.
+    may_be_optional: false
+    driver: cli_smoke
+    no_driver_reason: null
+    revisit_when: null
+    cost_estimate:
+      duration_seconds: 120
+      direct_cost: 0.0
+      runner_class: local
+
+  - id: deploy-boundary
+    situation: Any change that reaches a deployed environment.
+    tool: reachability-probe
+    invocation: "{command}"
+    file_patterns:
+      - "**/*"
+    required_evidence:
+      - base_url
+      - served_marker
+      - recorded_revision
+    proof_boundary: non-production
+    threshold: >-
+      The deployment marker served at the edge equals the revision the release step recorded.
+    may_be_optional: true
+    driver: deploy_boundary
+    no_driver_reason: null
+    revisit_when: null
+    cost_estimate:
+      duration_seconds: 60
+      direct_cost: 0.0
+      runner_class: local
+
+  - id: data-check
+    situation: A change to a schema, migration, write path, or idempotency key.
+    tool: read-only-query
+    invocation: "{command}"
+    file_patterns:
+      - "**/migrations/**"
+      - "**/models/**"
+      - "**/schema.sql"
+    required_evidence:
+      - store
+      - query
+      - row_assertions
+    proof_boundary: non-production
+    threshold: >-
+      Every declared row assertion holds against the non-production store.
+    may_be_optional: true
+    driver: null
+    no_driver_reason: >-
+      Which store this reads, and with which credential, is a credential decision the operator
+      owns and the first release does not need to make.
+    revisit_when: >-
+      The operator decides between a read-only role in the non-production account and the
+      service's own read endpoint.
+    cost_estimate:
+      duration_seconds: 120
+      direct_cost: 0.0
+      runner_class: local
+
+  - id: infrastructure-read-back
+    situation: A change to Ansible roles, cluster configuration, or network configuration.
+    tool: ansible
+    invocation: "ansible-playbook {playbook} --check --diff"
+    file_patterns:
+      - "ansible/**"
+      - "**/inventory/**"
+      - "**/group_vars/**"
+      - "**/host_vars/**"
+    required_evidence:
+      - playbook
+      - changed_tasks
+      - read_back_assertions
+    proof_boundary: non-production
+    threshold: >-
+      The check run reports no unexpected changed task and every declared read-back assertion
+      holds.
+    may_be_optional: true
+    driver: null
+    no_driver_reason: >-
+      Reaching the cluster needs an environment and a credential the operator owns, and the
+      first release does not make that decision.
+    revisit_when: >-
+      The operator grants a non-production cluster credential for this step.
+    cost_estimate:
+      duration_seconds: 300
+      direct_cost: 0.0
+      runner_class: local
+
+  - id: installed-surface
+    situation: A change to a Claude plugin's skills, commands, agents, or metadata.
+    tool: plugin-registry
+    invocation: "resolve {plugin} in every installed plugin root"
+    file_patterns:
+      - "plugins/*/skills/**"
+      - "plugins/*/commands/**"
+      - "plugins/*/agents/**"
+      - "plugins/*/.claude-plugin/plugin.json"
+      - ".claude-plugin/marketplace.json"
+    required_evidence:
+      - roots
+      - resolved_versions
+      - expected_version
+      - missing_surfaces
+    proof_boundary: hermetic
+    threshold: >-
+      Every installed plugin root resolves the expected version and carries every expected
+      command and skill. One root updating while another does not is a failure, not a warning.
+    may_be_optional: false
+    driver: installed_surface
+    no_driver_reason: null
+    revisit_when: null
+    cost_estimate:
+      duration_seconds: 30
+      direct_cost: 0.0
+      runner_class: local
+
+  - id: manual-runbook
+    situation: Automation is unavailable, unsafe, or needs operator-held credentials.
+    tool: runbook
+    invocation: "{runbook_path}"
+    file_patterns: []
+    required_evidence:
+      - runbook_path
+      - operator
+      - completed_steps
+    proof_boundary: non-production
+    threshold: >-
+      Every step of the named runbook is recorded complete by the person who ran it.
+    may_be_optional: true
+    driver: null
+    no_driver_reason: >-
+      A runbook is run by a person, so there is nothing for a driver to execute; the evidence is
+      recorded by the operator who ran it.
+    revisit_when: >-
+      Never for this strategy: the escape hatch is a person by definition.
+    cost_estimate:
+      duration_seconds: 900
+      direct_cost: 0.0
+      runner_class: manual
