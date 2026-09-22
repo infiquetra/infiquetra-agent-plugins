@@ -1,5 +1,5 @@
 <!-- matrix-status: superseded -->
-<!-- superseded-by: 2026-08-22-unifi-compatibility-matrix.md -->
+<!-- superseded-by: 2026-09-22-unifi-authored-cut.md -->
 <!-- superseded-reason: The forty stage results describe portable package 2.0.1 at tree digest cafe8836..., before three repairs a fourth review cycle produced: Fleet Core 0.25.2 refusing a non-finite Retry-After, UniFi 2.0.2 bringing the Claude-path site-profile loader onto the 1.1 contract the package documents, and the credential-value rule grading the token behind an auth scheme word. The shipped package is 2.0.2 and fingerprints to 4c256bb2..., so this record no longer identifies the tree it claims to describe. Separately, its Cursor Agent row records that client as failed on a credential gate; that run exported an empty scratch home for isolation, which stripped the client's existing authentication and measured an unauthenticated client rather than a first-run one, so the finding was an artifact of the harness and the successor reassesses that client against the operator's real home. -->
 
 # Ten-client compatibility matrix — portable UniFi package

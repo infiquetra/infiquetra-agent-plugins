@@ -1353,14 +1353,28 @@ class LiveDocumentTest(unittest.TestCase):
             document.unlink()
         self.assertIn("mostly-works", output.getvalue())
 
-    def test_the_committed_matrix_is_current(self) -> None:
+    def test_the_committed_matrix_is_superseded(self) -> None:
+        """2.0.7 has no ten-client matrix. The 2026-08-22 record is history."""
         directives = ccm.read_directives(LIVE_DOCUMENT.read_text(encoding="utf-8"))
-        self.assertEqual(directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_CURRENT)
-
-    def test_the_committed_matrix_identifies_the_shipped_package(self) -> None:
-        assert_version_binds_and_a_moved_tree_is_only_reported(
-            self, self.record["package"], REAL_CONFIG
+        self.assertEqual(directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_SUPERSEDED)
+        successor = directives.get(ccm.SUPERSEDED_BY_DIRECTIVE)
+        self.assertEqual(successor, "2026-09-22-unifi-authored-cut.md")
+        assert successor is not None
+        target = LIVE_DOCUMENT.parent / successor
+        self.assertTrue(target.is_file())
+        self.assertFalse(
+            ccm.is_matrix_document(target.read_text(encoding="utf-8")),
+            "the successor must not be an invented matrix",
         )
+        self.assertEqual(
+            ccm.read_directives(target.read_text(encoding="utf-8")).get(ccm.STATUS_DIRECTIVE),
+            ccm.STATUS_CURRENT,
+        )
+        self.assertNotEqual(ccm.check_package_binding(self.record, REAL_CONFIG), [])
+
+    def test_the_committed_matrix_does_not_identify_the_shipped_package(self) -> None:
+        """Supersession is illegal when the record still describes this tree."""
+        self.assertNotEqual(ccm.check_package_binding(self.record, REAL_CONFIG), [])
 
     def test_the_committed_matrix_records_the_repaired_invocation_stage(self) -> None:
         # The defect this document was re-run to fix: it reported every
@@ -1387,8 +1401,9 @@ class LiveDocumentTest(unittest.TestCase):
         with redirect_stdout(io.StringIO()) as output:
             self.assertEqual(ccm.main([]), 0)
         printed = output.getvalue()
-        self.assertIn(f"{LIVE_DOCUMENT.name} ({ccm.STATUS_CURRENT})", printed)
+        self.assertIn(f"{LIVE_DOCUMENT.name} ({ccm.STATUS_SUPERSEDED})", printed)
         self.assertIn(f"{SUPERSEDED_DOCUMENT.name} ({ccm.STATUS_SUPERSEDED})", printed)
+        self.assertNotIn("2026-09-22-unifi-authored-cut.md", printed)
 
 
 class SupersededDocumentTest(unittest.TestCase):
@@ -1402,10 +1417,20 @@ class SupersededDocumentTest(unittest.TestCase):
         self.assertTrue(SUPERSEDED_DOCUMENT.is_file())
         self.assertEqual(ccm.check_matrix(SUPERSEDED_DOCUMENT), [])
 
-    def test_it_declares_itself_superseded_and_names_the_current_matrix(self) -> None:
+    def test_it_declares_itself_superseded_and_names_the_successor(self) -> None:
+        """The chain ends at the authored-cut note, which is not a matrix."""
         self.assertEqual(self.directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_SUPERSEDED)
+        successor = self.directives.get(ccm.SUPERSEDED_BY_DIRECTIVE)
+        self.assertEqual(successor, "2026-09-22-unifi-authored-cut.md")
+        assert successor is not None
+        target = SUPERSEDED_DOCUMENT.parent / successor
+        self.assertTrue(target.is_file())
+        self.assertFalse(ccm.is_matrix_document(target.read_text(encoding="utf-8")))
         self.assertEqual(
-            self.directives.get(ccm.SUPERSEDED_BY_DIRECTIVE), LIVE_DOCUMENT.name
+            ccm.read_directives(target.read_text(encoding="utf-8")).get(
+                ccm.STATUS_DIRECTIVE, ccm.STATUS_CURRENT
+            ),
+            ccm.STATUS_CURRENT,
         )
         self.assertTrue(self.directives.get(ccm.SUPERSEDED_REASON_DIRECTIVE, "").strip())
 
@@ -1439,35 +1464,35 @@ class ReadbackEvidenceTest(unittest.TestCase):
     def test_the_document_exists(self) -> None:
         self.assertTrue(READBACK_DOCUMENT.is_file())
 
-    def test_the_recorded_release_fingerprint_identifies_the_shipped_package(self) -> None:
-        release = self.record["release"]
-        assert_version_binds_and_a_moved_tree_is_only_reported(self, release, REAL_CONFIG)
-
-    def test_the_recorded_unit_fingerprints_identify_the_shipped_skill_units(self) -> None:
+    def test_the_readback_is_superseded_history(self) -> None:
+        """The readback describes derived 2.0.6. It is not a claim about 2.0.7."""
+        directives = ccm.read_directives(self.text)
+        self.assertEqual(directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_SUPERSEDED)
+        self.assertEqual(
+            directives.get(ccm.SUPERSEDED_BY_DIRECTIVE), "2026-09-22-unifi-authored-cut.md"
+        )
         _, version = ccm.package_identity(
             REAL_CONFIG.package_directory, REAL_CONFIG.package_manifest
         )
-        self.assertEqual(self.record["release"]["version"], version)
+        self.assertNotEqual(self.record["release"]["version"], version)
+        self.assertEqual(self.record["release"]["version"], "2.0.6")
+        self.assertFalse((PACKAGE_ROOT / "PROVENANCE.json").is_file())
+
+    def test_the_recorded_unit_fingerprints_stay_well_formed_history(self) -> None:
         for unit, recorded in self.record["release"]["units"].items():
             with self.subTest(unit=unit):
-                file_count, tree_sha256 = ccm.package_fingerprint(
-                    PACKAGE_ROOT / "skills" / unit
-                )
-                if recorded["file_count"] == file_count and recorded["tree_sha256"] == tree_sha256:
-                    continue
-                # The skill directory moved with the regenerated Fleet Core
-                # bundle. The package version did not, so the readback stays.
                 self.assertRegex(recorded["tree_sha256"], r"^[0-9a-f]{64}$")
                 self.assertIsInstance(recorded["file_count"], int)
+                self.assertGreater(recorded["file_count"], 0)
 
-    def test_the_recorded_upstream_commit_matches_the_synchronization_pin(self) -> None:
-        provenance = json.loads(
-            (PACKAGE_ROOT / "PROVENANCE.json").read_text(encoding="utf-8")
-        )
+    def test_the_recorded_upstream_commit_is_history_not_a_live_pin(self) -> None:
         self.assertEqual(
-            self.record["release"]["upstream_commit"], provenance["source_commit"]
+            self.record["release"]["upstream_commit"],
+            "818fd6843e51a9126752061a834db9dead28f72b",
         )
-        self.assertEqual(self.record["release"]["version"], provenance["source_version"])
+        self.assertEqual(self.record["release"]["version"], "2.0.6")
+        changelog = (PACKAGE_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn("acc99fe7", changelog)
 
     def test_every_readback_reports_bytes_equal_to_the_release(self) -> None:
         readbacks = self.record["readbacks"]
@@ -1880,7 +1905,10 @@ class EvidenceDiscoveryTest(unittest.TestCase):
 
     @staticmethod
     def _is_readback(text: str) -> bool:
-        record = ccm.extract_record(text)
+        try:
+            record = ccm.extract_record(text)
+        except ccm.MatrixError:
+            return False
         return isinstance(record, dict) and "release" in record and "readbacks" in record
 
     @staticmethod

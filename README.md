@@ -52,7 +52,7 @@ Key facts about the current state are verified by the repository's own tests
 and committed evidence:
 
 - **Both UniFi client entrypoints run.** Each client script is classified in
-  [`plugins/unifi/PROVENANCE.json`](plugins/unifi/PROVENANCE.json) as a
+  `plugins/unifi/PROVENANCE.json` (removed 2026-09-22; see [CHANGELOG.md](plugins/unifi/CHANGELOG.md)) as a
   `deterministic-transform` output of the versioned
   `resolve-bundled-fleet-module` rule, with a stamped build-time Fleet Core
   bundle in the `_bundled/` directory beside it.
@@ -60,7 +60,7 @@ and committed evidence:
   both shipped scripts with no credentials and no network, asserts each answers
   `--help`, and fails when the bundle is removed.
 - **UniFi ten-client assessment: none failed.** The
-  [UniFi ten-client compatibility matrix](docs/evidence/2026-08-22-unifi-compatibility-matrix.md)
+  [UniFi ten-client compatibility matrix (superseded)](docs/evidence/2026-08-22-unifi-compatibility-matrix.md)
   records nine clients working directly and one, OpenAI Codex, working through
   an adapter: zero failed, zero unsupported. The adapter status is current fact
   — Codex's marketplace is its only placement path and holds no supported
@@ -147,7 +147,7 @@ The record of the work, in the order a new reader should take it:
 
 - [Agent launcher ten-client compatibility matrix](docs/evidence/2026-08-27-agent-launcher-compatibility-matrix.md),
   [Mission Control ten-client compatibility matrix](docs/evidence/2026-08-30-mission-control-compatibility-matrix.md)
-  and [UniFi ten-client compatibility matrix](docs/evidence/2026-08-22-unifi-compatibility-matrix.md)
+  and [UniFi ten-client compatibility matrix (superseded)](docs/evidence/2026-08-22-unifi-compatibility-matrix.md)
   — what each client did with each package, stage by stage, with evidence.
 - [Agent launcher port run plan](docs/plans/2026-08-27-agent-launcher-port-plan.md),
   [Mission Control port run plan](docs/plans/2026-08-24-mission-control-port-run-plan.md)

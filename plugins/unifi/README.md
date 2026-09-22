@@ -7,16 +7,16 @@ files live under the client extension directory
 [`com.infiquetra.claude/`](com.infiquetra.claude/plugin.json); they are an
 adapter, not the identity of this package.
 
-This tree is a derived artifact of `infiquetra-claude-plugins` at the commit
-recorded in [`PROVENANCE.json`](PROVENANCE.json). Custody has not moved.
-Existing vendor repositories remain the runtime sources of truth.
+This package is authored in this repository. It was imported once from
+`infiquetra-claude-plugins` at commit `acc99fe7` (upstream 2.0.6) and is
+maintained here from 2.0.7 on. There is no provenance manifest.
 
 ## What is in the package
 
 | Path | What it is |
 |---|---|
 | [`plugin.json`](plugin.json) | Agent Plugins 1.0 manifest |
-| [`PROVENANCE.json`](PROVENANCE.json) | Source repository, pinned commit, and per-path custody |
+| [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json) | Claude Code packaging manifest. Paths only: it points at the adapter and at `skills/` |
 | [`CHANGELOG.md`](CHANGELOG.md) | Version history |
 | [`fleet-bundle.json`](fleet-bundle.json) | Build declaration: which Fleet Core modules this package consumes |
 | [`skills/unifi-network/`](skills/unifi-network/SKILL.md) | Network skill, API reference, and client |
@@ -113,6 +113,30 @@ and discovery-only. Discovery is read-only and does not accept `--confirm`.
 Drift compares an inventory to a profile; with no profile it reports
 discovery-only and no findings.
 
+## How a harness reaches it
+
+Claude Code installs this package from the repository marketplace. The root
+[`.claude-plugin/plugin.json`](.claude-plugin/plugin.json) declares the command
+directory, the agent directory, and `skills/`. Behaviour for that client lives
+under [`com.infiquetra.claude/`](com.infiquetra.claude/plugin.json): the slash
+command, the agent definition, and the adapter's site-profile loader. The
+portable manifest beside it is the Agent Plugins manifest, not a second copy
+of the Claude one.
+
+OpenCode, Gemini CLI, Muse, and Hermes install a skill directory rather than
+the package. Each skill documents its client and the environment variables
+that client reads (`UNIFI_API_KEY`, `UNIFI_HOST`, and `UNIFI_SITE` for
+Network). Run the client from the skill directory the harness installed:
+
+```text
+python3 scripts/unifi_network_client.py --help
+python3 scripts/unifi_protect_client.py --help
+```
+
+The site-profile, discovery, and drift scripts live at the package root, under
+[`scripts/`](scripts/site_profile.py). A checkout of this repository runs them
+as the commands below. A skill-scoped install does not include that directory.
+
 ## Running the clients
 
 `UNIFI_API_KEY` and `UNIFI_HOST` are required; there is no default host.
@@ -144,7 +168,8 @@ python3 plugins/unifi/scripts/site_profile.py --help
 python3 plugins/unifi/scripts/site_profile_setup.py --list
 python3 plugins/unifi/scripts/discover.py --help
 python3 plugins/unifi/scripts/drift.py --help
-python3 -m unittest tests.test_client_entrypoints tests.test_site_profile tests.test_site_profile_setup tests.test_unifi_readme -v
+python3 -m unittest tests.test_client_entrypoints tests.test_site_profile tests.test_site_profile_setup -v
+python3 -m pytest plugins/unifi/tests -q
 ```
 
 `python3 -m unittest discover -s tests -v` runs the full suite, including the

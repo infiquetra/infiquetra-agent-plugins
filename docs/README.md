@@ -56,7 +56,7 @@
   2026-08-25 pair (tree `651ac28a…`), the `-pre-fingerprint-move` pair (tree
   `1f49322e…`), and the `-pre-beads-config-ladder` pair (tree `659f91f6…`) —
   while the current pair binds tree `5fc16652…`.
-- [UniFi ten-client compatibility matrix](evidence/2026-08-22-unifi-compatibility-matrix.md)
+- [UniFi ten-client compatibility matrix (superseded)](evidence/2026-08-22-unifi-compatibility-matrix.md)
   records what every installed coding-agent client did with the portable UniFi
   package, across four stages each, with the command and evidence behind every
   result. Coverage was mandatory and passing was not: a client that could not

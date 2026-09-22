@@ -1207,7 +1207,7 @@ look like a different bug entirely.
 **Author.** Jeff Cox and Claude
 
 **Context.** After the UniFi `2.0.1` re-synchronization,
-[`plugins/unifi/PROVENANCE.json`](../../plugins/unifi/PROVENANCE.json) pins
+`plugins/unifi/PROVENANCE.json` (removed 2026-09-22; see [CHANGELOG.md](../../plugins/unifi/CHANGELOG.md)) pins
 `0d81dd9a` while
 `plugins/fleet-core/PROVENANCE.json` (removed 2026-09-22; see [CHANGELOG.md](../../plugins/fleet-core/CHANGELOG.md))
 still pins `ed72f439`. The Fleet Core slice's own notes previously asserted that
@@ -1325,9 +1325,9 @@ the new Fleet Core stamp, and it re-pinned
 tree digest moved from `6e6b57c1…` to `da46ca77…`. Eight tests in
 [`tests/test_check_compatibility_matrix.py`](../../tests/test_check_compatibility_matrix.py)
 went red at once: four holding the ten-client matrix at
-[`docs/evidence/2026-08-22-unifi-compatibility-matrix.md`](../evidence/2026-08-22-unifi-compatibility-matrix.md)
+[`docs/evidence/2026-08-22-unifi-compatibility-matrix.md` (superseded)](../evidence/2026-08-22-unifi-compatibility-matrix.md)
 to the tree it assessed, and four holding the post-activation readback at
-[`docs/evidence/2026-08-22-unifi-post-activation-readback.md`](../evidence/2026-08-22-unifi-post-activation-readback.md)
+[`docs/evidence/2026-08-22-unifi-post-activation-readback.md` (superseded)](../evidence/2026-08-22-unifi-post-activation-readback.md)
 to the release it read back. The file count did not change; only the digest did.
 
 **Mechanism.** A Fleet Core release and a UniFi assessment look unrelated, and
@@ -1397,12 +1397,12 @@ record does not replace them with a broader gate.
    ten-client assessment. Each of the ten clients has four stages —
    placement, discovery, load, and invocation — which is the forty
    stages. Continuous integration does not run that assessment. Record:
-   [`docs/evidence/2026-08-22-unifi-compatibility-matrix.md`](../evidence/2026-08-22-unifi-compatibility-matrix.md).
+   [`docs/evidence/2026-08-22-unifi-compatibility-matrix.md` (superseded)](../evidence/2026-08-22-unifi-compatibility-matrix.md).
 
 2. Plan unit U9, requirement R40: after upstream release activation, an
    installed-version and digest readback confirms the running client is
    those bytes. Record:
-   [`docs/evidence/2026-08-22-unifi-post-activation-readback.md`](../evidence/2026-08-22-unifi-post-activation-readback.md).
+   [`docs/evidence/2026-08-22-unifi-post-activation-readback.md` (superseded)](../evidence/2026-08-22-unifi-post-activation-readback.md).
 
 3. Plan unit U9, requirement R41: a fresh client session proves all
    three profile states (present, absent, unreadable). Source-tree
@@ -1547,7 +1547,7 @@ both `unifi_network_client.py` and `unifi_protect_client.py` abort during module
 with `ModuleNotFoundError` for `fleet_commons_shim`, before any argument is parsed. The
 import is at `plugins/unifi/skills/unifi-network/scripts/unifi_network_client.py:49`, and
 no file of that name exists anywhere in the assembled package. The full record is in the
-[ten-client compatibility matrix](../evidence/2026-08-22-unifi-compatibility-matrix.md).
+[ten-client compatibility matrix (superseded)](../evidence/2026-08-22-unifi-compatibility-matrix.md).
 
 **Mechanism.** Synchronization deliberately drops both copies of `fleet_commons_shim.py`,
 because build-time bundling is meant to replace them, and
@@ -1608,7 +1608,7 @@ client, while every validator in the repository reported success.
 exited 1 with `ModuleNotFoundError: No module named 'fleet_commons_shim'`, raised at
 module scope before argparse ran; `unifi_protect_client.py` failed identically. The
 ten-client compatibility matrix in
-[`docs/evidence/2026-08-22-unifi-compatibility-matrix.md`](../evidence/2026-08-22-unifi-compatibility-matrix.md)
+[`docs/evidence/2026-08-22-unifi-compatibility-matrix.md` (superseded)](../evidence/2026-08-22-unifi-compatibility-matrix.md)
 recorded the same abort for every client that reached the execution stage. Fixed by
 `scripts/sync_vendor_source.py` transform `resolve-bundled-fleet-module`, the
 per-client destinations in `plugins/unifi/fleet-bundle.json`, and
@@ -1751,9 +1751,9 @@ shape, it is decoration, not evidence.
 `scripts/check_compatibility_matrix.py` (`package_fingerprint`, `check_package_binding`,
 `check_document_status`), `tests/test_check_compatibility_matrix.py`
 (`PackageBindingTest`, `DocumentStatusTest`, `FingerprintTest`),
-[`docs/evidence/2026-08-22-unifi-compatibility-matrix.md`](../evidence/2026-08-22-unifi-compatibility-matrix.md),
+[`docs/evidence/2026-08-22-unifi-compatibility-matrix.md` (superseded)](../evidence/2026-08-22-unifi-compatibility-matrix.md),
 [the superseded pre-repair matrix](../evidence/2026-08-22-unifi-compatibility-matrix-pre-repair.md),
-[`docs/evidence/2026-08-22-unifi-post-activation-readback.md`](../evidence/2026-08-22-unifi-post-activation-readback.md).
+[`docs/evidence/2026-08-22-unifi-post-activation-readback.md` (superseded)](../evidence/2026-08-22-unifi-post-activation-readback.md).
 
 ## 2026-08-21
 

@@ -135,7 +135,7 @@ into the package. Every repository check passes anyway, because the bundle check
 correctness-when-present rather than presence. The fix has two halves that must ship
 together: emit the bundle, and make an unemitted declared module a validation failure.
 
-**Refs.** [Compatibility matrix](../evidence/2026-08-22-unifi-compatibility-matrix.md),
+**Refs.** [Compatibility matrix (superseded)](../evidence/2026-08-22-unifi-compatibility-matrix.md),
 [learning](LEARNINGS.md#a-package-can-satisfy-every-structural-check-and-still-have-no-working-entrypoint)
 
 ### SHIPPED - Drop README.md from the UniFi byte-copy table so a resync keeps the portable docs
@@ -190,8 +190,8 @@ through an adapter, Cursor Agent failed, 34 executed and 6 blocked stage results
 times. What changed was digests, one manifest version, and — in the second re-run — the
 interpreter, which is now the catalog's declared floor rather than whatever was default.
 
-**Refs.** [Compatibility matrix](../evidence/2026-08-22-unifi-compatibility-matrix.md),
-[post-activation readback](../evidence/2026-08-22-unifi-post-activation-readback.md),
+**Refs.** [Compatibility matrix (superseded)](../evidence/2026-08-22-unifi-compatibility-matrix.md),
+[post-activation readback (superseded)](../evidence/2026-08-22-unifi-post-activation-readback.md),
 [the matrix superseded before the 2.0.1 re-run](../evidence/2026-08-22-unifi-compatibility-matrix-pre-unifi-201.md)
 
 ### Decide the Python floor the Fleet Core resync raised
@@ -296,7 +296,7 @@ custody-transfer question remains deliberately unanswered. Closing this item rec
 the pilot ran, not that everything it deferred was settled.
 
 **Refs.** [Pilot plan](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md),
-[compatibility matrix](../evidence/2026-08-22-unifi-compatibility-matrix.md),
+[compatibility matrix (superseded)](../evidence/2026-08-22-unifi-compatibility-matrix.md),
 [operator pause decision](DECISIONS.md#pause-the-pilot-at-the-compatibility-matrix-and-take-no-client-specific-remediation),
 [pilot decision](DECISIONS.md#choose-unifi-plus-a-portable-fleet-core-slice-as-the-first-portability-pilot),
 [architecture brief](../cross-vendor-plugin-architecture-brief.md)

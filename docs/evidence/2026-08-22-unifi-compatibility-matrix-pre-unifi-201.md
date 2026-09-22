@@ -1,5 +1,5 @@
 <!-- matrix-status: superseded -->
-<!-- superseded-by: 2026-08-22-unifi-compatibility-matrix.md -->
+<!-- superseded-by: 2026-09-22-unifi-authored-cut.md -->
 <!-- superseded-reason: The forty stage results describe portable package 2.0.0 at tree digest da46ca77..., before the re-synchronization from UniFi 2.0.1 replaced both client entrypoints and the upstream changelog. The shipped package is 2.0.1 and fingerprints to cafe8836..., so this record no longer identifies the tree it claims to describe. -->
 
 # Ten-client compatibility matrix — portable UniFi package

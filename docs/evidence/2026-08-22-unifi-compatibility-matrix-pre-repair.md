@@ -1,5 +1,5 @@
 <!-- matrix-status: superseded -->
-<!-- superseded-by: 2026-08-22-unifi-compatibility-matrix.md -->
+<!-- superseded-by: 2026-09-22-unifi-authored-cut.md -->
 <!-- superseded-reason: The forty stage results describe the 21-file pre-repair package, whose entrypoints aborted at import. The shipped package is 23 files and both entrypoints exit zero, so every invocation-stage result and the matrix-wide finding below are historical. -->
 
 > **Superseded — historical evidence. Do not read this as the current

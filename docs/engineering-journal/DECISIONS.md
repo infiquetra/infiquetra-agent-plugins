@@ -2815,9 +2815,9 @@ pytest at all.
 **Author.** Jeff Cox and Claude
 
 **Decision.** The Fleet Core 0.25.1 re-synchronization left
-[`docs/evidence/2026-08-22-unifi-compatibility-matrix.md`](../evidence/2026-08-22-unifi-compatibility-matrix.md)
+[`docs/evidence/2026-08-22-unifi-compatibility-matrix.md` (superseded)](../evidence/2026-08-22-unifi-compatibility-matrix.md)
 and
-[`docs/evidence/2026-08-22-unifi-post-activation-readback.md`](../evidence/2026-08-22-unifi-post-activation-readback.md)
+[`docs/evidence/2026-08-22-unifi-post-activation-readback.md` (superseded)](../evidence/2026-08-22-unifi-post-activation-readback.md)
 untouched, and shipped with the eight binding tests over them failing. The
 recorded fingerprints still name the tree those assessments actually ran
 against.
@@ -2918,7 +2918,7 @@ a pause rather than in a repair.
 **Revisit when.** The operator has taken the per-client decisions, or the package
 entrypoint defect is separately authorized for repair.
 
-**Refs.** [Compatibility matrix](../evidence/2026-08-22-unifi-compatibility-matrix.md),
+**Refs.** [Compatibility matrix (superseded)](../evidence/2026-08-22-unifi-compatibility-matrix.md),
 [pilot plan](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md),
 [per-client queued decision](QUEUED.md#decide-per-client-what-follows-the-compatibility-matrix),
 [queued entrypoint repair](QUEUED.md#emit-the-declared-fleet-core-bundle-so-the-package-has-a-working-entrypoint)

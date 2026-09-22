@@ -1,4 +1,11 @@
+<!-- matrix-status: superseded -->
+<!-- superseded-by: 2026-09-22-unifi-authored-cut.md -->
+<!-- superseded-reason: This readback describes derived package 2.0.6. UniFi 2.0.7 is authored in this repository and has no new readback. The successor names that gap and records no client rows. -->
+
 # Post-activation readback — portable UniFi package 2.0.6
+
+> Historical readback for derived package 2.0.6. It does not describe authored package 2.0.7. No new readback was captured with this import. See [2026-09-22-unifi-authored-cut.md](2026-09-22-unifi-authored-cut.md).
+
 
 The UniFi package in this repository, `plugins/unifi/`, is a derived copy of an
 upstream Claude Code plugin that was released as version 2.0.6 and activated

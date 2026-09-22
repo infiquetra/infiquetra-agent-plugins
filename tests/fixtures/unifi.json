@@ -1,0 +1,84 @@
+{
+  "schema_version": "4",
+  "package": "unifi",
+  "package_root": "plugins/unifi",
+  "package_manifest": "plugin.json",
+  "source": {
+    "repository": "https://example.com/unifi-upstream",
+    "package_path": "plugins/unifi",
+    "manifest_path": ".claude-plugin/plugin.json",
+    "client_extension_dir": "com.infiquetra.claude"
+  },
+  "custody": {
+    "byte_copies": [
+      "CHANGELOG.md",
+      "skills/unifi-network/SKILL.md",
+      "skills/unifi-network/references/udm-api-endpoints.md",
+      "skills/unifi-protect/SKILL.md",
+      "skills/unifi-protect/references/protect-api-endpoints.md"
+    ],
+    "entrypoint_transforms": [
+      {
+        "path": "skills/unifi-network/scripts/unifi_network_client.py",
+        "rule": "resolve-bundled-fleet-module"
+      },
+      {
+        "path": "skills/unifi-protect/scripts/unifi_protect_client.py",
+        "rule": "resolve-bundled-fleet-module"
+      }
+    ],
+    "client_byte_copies": [
+      "commands/unifi.md",
+      "agents/unifi-network-ops.md",
+      "skills/unifi-network/scripts/site_profile_loader.py"
+    ],
+    "superseded_by_target_owned": [
+      "README.md"
+    ],
+    "dropped_from_source": [
+      "skills/unifi-network/scripts/fleet_commons_shim.py",
+      "skills/unifi-protect/scripts/fleet_commons_shim.py"
+    ]
+  },
+  "assessment": {
+    "credential_prefixes": [
+      "UNIFI_"
+    ],
+    "package_scripts": [
+      "unifi_network_client.py",
+      "unifi_protect_client.py",
+      "discover.py",
+      "drift.py"
+    ],
+    "mutating_operations": [
+      "adopt",
+      "block",
+      "create",
+      "delete",
+      "forget",
+      "kick",
+      "locate",
+      "reboot",
+      "restart",
+      "snapshot",
+      "unblock",
+      "update",
+      "upgrade"
+    ],
+    "entrypoints": [
+      "skills/unifi-network/scripts/unifi_network_client.py",
+      "skills/unifi-protect/scripts/unifi_protect_client.py"
+    ],
+    "skill_units": [
+      "skills/unifi-network",
+      "skills/unifi-protect"
+    ],
+    "declared_none": []
+  },
+  "provenance": {
+    "notes": [
+      "Synthetic derived descriptor for the synchronizer tests. The shipped UniFi package is authored and has no provenance manifest."
+    ],
+    "dropped_reason": "Replaced by the build-time Fleet Core bundle; its resolution ladder is Claude-specific runtime discovery, which the portable package must not retain."
+  }
+}

@@ -1,5 +1,5 @@
 <!-- matrix-status: superseded -->
-<!-- superseded-by: 2026-08-22-unifi-compatibility-matrix.md -->
+<!-- superseded-by: 2026-09-22-unifi-authored-cut.md -->
 <!-- superseded-reason: The forty stage results describe the package at tree digest 6e6b57c1..., before the Fleet Core 0.25.1 re-synchronization regenerated both bundles and re-pinned the provenance manifest. The shipped package fingerprints to da46ca77..., so this record no longer identifies the tree it claims to describe. -->
 
 > **Superseded - historical evidence. Do not read this as the current

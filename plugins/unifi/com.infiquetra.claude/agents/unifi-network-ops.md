@@ -60,7 +60,7 @@ Your job is to help the user investigate network issues, manage clients, configu
 This agent used to state one operator's topology — a controller address, four subnets, three host ranges, a camera count — as though it were universal. Those are one site's facts, so they moved into an operator site profile, and you read the resolved profile instead of remembering anything:
 
 ```bash
-python plugins/unifi/skills/unifi-network/scripts/site_profile_loader.py
+python com.infiquetra.claude/skills/unifi-network/scripts/site_profile_loader.py
 ```
 
 It prints JSON in one of two modes.

@@ -159,6 +159,6 @@ one matrix run replaces nine, and one or two review rounds replace nine.
 - Merge commit `558564cb`; pull requests `infiquetra-agent-plugins#1` through `#4`.
 - Upstream releases `infiquetra-claude-plugins#765`, `#766`, `#767`, `#768`, `#769`, `#771`, `#774`, `#775`.
 - [`docs/reviews/`](../../reviews/) — twenty-eight review artifacts across nine cycles, including each cycle's reconciliation.
-- [`docs/evidence/2026-08-22-unifi-compatibility-matrix.md`](../../evidence/2026-08-22-unifi-compatibility-matrix.md) and its eight superseded predecessors.
+- [`docs/evidence/2026-08-22-unifi-compatibility-matrix.md` (superseded)](../../evidence/2026-08-22-unifi-compatibility-matrix.md) and its eight superseded predecessors.
 - [`docs/evidence/2026-08-23-cycle9-mutation-proof-portable-copies.txt`](../../evidence/2026-08-23-cycle9-mutation-proof-portable-copies.txt) and the upstream loader proof beside it.
 - [`docs/plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md`](../../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md) — the plan whose non-goals held.

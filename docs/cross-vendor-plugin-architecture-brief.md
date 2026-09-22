@@ -149,7 +149,7 @@ A release pipeline should:
 
 1. Port `home-lab-ops` to prove shared Agent Skill discovery.
 2. Port `mission-control` or `unifi` to prove bundled scripts and native aliases
-   (UniFi pilot completed 2026-08-23, [`evidence/2026-08-22-unifi-compatibility-matrix.md`](evidence/2026-08-22-unifi-compatibility-matrix.md);
+   (UniFi pilot completed 2026-08-23, [`evidence/2026-08-22-unifi-compatibility-matrix.md` (superseded)](evidence/2026-08-22-unifi-compatibility-matrix.md);
    mission-control port completed 2026-08-25, re-assessed after the 2.15.2
    resynchronization in
    [`evidence/2026-08-30-mission-control-compatibility-matrix.md`](evidence/2026-08-30-mission-control-compatibility-matrix.md)).
