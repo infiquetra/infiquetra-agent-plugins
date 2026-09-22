@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.0.7] - 2026-09-22
+
+2.0.7 — imported from infiquetra-claude-plugins@acc99fe7 (upstream 2.0.6); authored here from this commit; no provenance manifest from now on.
+
+### Changed
+
+- The package is maintained in this repository. `ports/unifi.json` is an authored descriptor: identity and assessment only, no upstream pin and no custody table. `PROVENANCE.json` is gone.
+- Version 2.0.7 is stated by the portable manifest, the root `.claude-plugin/plugin.json`, and `com.infiquetra.claude/plugin.json`.
+- The import replaces the tree wholesale. These target-owned files were restored afterwards because the import does not know they exist only here: `README.md`, `references/site-profile.md`, `schemas/site-profile.schema.json`, `scripts/discover.py`, `scripts/drift.py`, `scripts/site_profile.py`, and `scripts/site_profile_setup.py`. The site-neutral README stays; the upstream README's lab topology was not copied back.
+- `site_profile_loader.py` is the Claude adapter's reader for the site-profile contract. The import placed it in the portable skill, because that script only moves `commands/`, `agents/`, `hooks/`, and `.mcp.json`. It now lives at `com.infiquetra.claude/skills/unifi-network/scripts/site_profile_loader.py`, next to the portable loader at `scripts/site_profile.py`. The agent reads it from that adapter path instead of `plugins/unifi/skills/...`, which was the upstream repository layout.
+- The adapter manifest's `repository` names this repository. The relocate rule keeps the upstream manifest bytes, including the old repository URL.
+- `fleet-bundle.json` still declares `retry_backoff` beside both clients. The bundles were regenerated with `scripts/bundle_fleet_module.py`.
+- The network client's DNS help example uses `192.0.2.10`, a documentation address, in place of `192.168.1.10`.
+
+### Testing
+
+- Upstream's four UniFi test modules now live under `plugins/unifi/tests/`. Import bootstraps point at this package. `commands/` and `agents/` are read from `com.infiquetra.claude/`.
+- Dropped from `tests/test_unifi_site_profile_loader.py`, because their premise is one operator's lab topology and this public package must not carry it: `test_every_prior_agent_fact_survives_in_the_relocated_profile` and `test_no_prior_agent_fact_is_left_behind_in_the_agent`, and the `PRIOR_AGENT_FACTS` table those two parametrize. The loader contract tests remain and use an inert documentation profile. The guard that the package contains no lab-prefix literal remains, and it skips `tests/` so the guard's own search string is not a hit.
+- `test_the_invocation_extractor_actually_finds_invocations` no longer requires the portable README to contain sixty client invocations. That floor described the upstream README. This README is target-owned and does not duplicate the command catalog; the skills and the agent still have floors.
+- `plugins/unifi/tests/test_client_entrypoints.py` runs both clients with `--help`, credentials stripped, and transport stubbed. The repository-level `tests/test_client_entrypoints.py` skips a package that has no `PROVENANCE.json`, which is every authored package.
+
 ## [Unreleased]
 
 ## [2.0.6] - 2026-08-23

@@ -1,4 +1,6 @@
-<!-- matrix-status: current -->
+<!-- matrix-status: superseded -->
+<!-- superseded-by: 2026-09-22-unifi-authored-cut.md -->
+<!-- superseded-reason: UniFi 2.0.7 is the authored cut imported from infiquetra-claude-plugins at acc99fe7. This record describes a derived package at 2.0.6 or earlier. A version bump without a fresh ten-client run must not stay the current matrix, and this import does not invent that run. The successor names the gap; it records no client rows. -->
 
 # Ten-client compatibility matrix — portable UniFi package
 

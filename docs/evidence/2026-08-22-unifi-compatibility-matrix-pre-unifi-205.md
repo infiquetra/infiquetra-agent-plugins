@@ -1,5 +1,5 @@
 <!-- matrix-status: superseded -->
-<!-- superseded-by: 2026-08-22-unifi-compatibility-matrix.md -->
+<!-- superseded-by: 2026-09-22-unifi-authored-cut.md -->
 <!-- superseded-reason: The forty stage results describe portable package 2.0.4 at tree digest 81c0503c..., before unifi 2.0.5 line-scoped the credential assignment. In 2.0.4 the whitespace around the delimiter spanned a newline, so an innocent key at the end of a line consumed the break and hid a strict assignment on the next one: both loaders accepted a credential the repository gate refused, and a documented guarantee about split assignments described the weaker of the two copies. The shipped package is 2.0.5 and fingerprints to a8fd46a7..., so this record no longer identifies the tree it claims to describe. Its client results and its Cursor correction stand and are carried forward unchanged. -->
 
 # Ten-client compatibility matrix — portable UniFi package

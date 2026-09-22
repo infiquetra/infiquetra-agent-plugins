@@ -1108,7 +1108,7 @@ def main():
         "--json",
         required=True,
         dest="json_data",
-        help='Static DNS entry JSON (e.g. \'{"key":"host.local","record_type":"A","value":"192.168.1.10"}\')',
+        help='Static DNS entry JSON (e.g. \'{"key":"host.local","record_type":"A","value":"192.0.2.10"}\')',
     )
 
     dns_update_parser = dns_subparsers.add_parser("update", help="Update a static DNS entry")

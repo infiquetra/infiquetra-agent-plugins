@@ -1,5 +1,5 @@
 <!-- matrix-status: superseded -->
-<!-- superseded-by: 2026-08-22-unifi-compatibility-matrix.md -->
+<!-- superseded-by: 2026-09-22-unifi-authored-cut.md -->
 <!-- superseded-reason: The forty stage results describe portable package 2.0.5 at tree digest a8fd46a7..., before unifi 2.0.6 named the whole line-break set. 2.0.5 scoped the credential assignment to the newline alone, while the repository gate reads a line with str.splitlines(), so nine other boundaries still diverged and eight were fail-open in the loaders. The shipped package is 2.0.6 and fingerprints to 22bfa568..., so this record no longer identifies the tree it claims to describe. Its client results and its Cursor correction stand and are carried forward unchanged. -->
 
 # Ten-client compatibility matrix — portable UniFi package

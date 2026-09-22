@@ -6,7 +6,6 @@
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"
   },
-  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
   "keywords": [
     "unifi",
     "ubiquiti",
@@ -17,5 +16,9 @@
     "udm",
     "firewall",
     "vlan"
-  ]
+  ],
+  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+  "commands": "./com.infiquetra.claude/commands/",
+  "agents": "./com.infiquetra.claude/agents/",
+  "skills": "./skills/"
 }
