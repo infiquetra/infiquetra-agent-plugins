@@ -176,9 +176,35 @@ def load_config(package: str, root: Path | None = None) -> PortConfig:
     raised in this module's own terms.
     """
     try:
-        return port_config.load(package, root or repository_root())
+        config = port_config.load(package, root or repository_root())
     except PortConfigError as error:
         raise SyncError(str(error)) from error
+    require_derived(config)
+    return config
+
+
+def require_derived(config: PortConfig) -> None:
+    """Refuse a descriptor that names no upstream to synchronize from.
+
+    Schema version 4 lets a descriptor state neither `source` nor `custody`,
+    which says the package is authored in this repository. Every function in
+    this module reads one or the other, so an authored descriptor has nothing
+    for a synchronization to act on.
+
+    The refusal is explicit rather than an empty run. An authored package's tree
+    is the only copy of itself; a synchronization that read a missing custody
+    table as "nothing is classified" would plan the deletion of every managed
+    path in it, and one that read a missing source as "nothing to copy" would
+    report success having done nothing. Both are worse than a stop.
+    """
+    if config.is_authored:
+        raise SyncError(
+            f"{config.name} is authored in this repository: its port descriptor states neither "
+            "source nor custody, so there is no upstream revision to synchronize from and no "
+            "custody table to classify against. Authored packages are edited in place; "
+            "scripts/import_vendor_package.py is what brings a package under this repository's "
+            "custody in the first place"
+        )
 
 
 def package_directory(config: PortConfig, root: Path | None = None) -> Path:
@@ -1198,6 +1224,8 @@ def classify_source_tree(config: PortConfig, present: list[str]) -> None:
     `relocate-claude-manifest` transform, and a descriptor that had to list it
     could also forget to.
     """
+    require_derived(config)
+    assert config.custody is not None and config.source is not None
     declared = list(config.custody.declared())
     if config.source.manifest_path is not None:
         declared.append(config.source.manifest_path)

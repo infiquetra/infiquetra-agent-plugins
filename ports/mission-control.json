@@ -1,5 +1,5 @@
 {
-  "schema_version": "3",
+  "schema_version": "4",
   "package": "mission-control",
   "package_root": "plugins/mission-control",
   "package_manifest": "plugin.json",

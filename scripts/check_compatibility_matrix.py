@@ -212,16 +212,34 @@ def non_host_dotted_tokens(root: Path | None = None) -> frozenset[str]:
     redaction rule stricter rather than looser: an unlisted directory is
     reported as a hostname. `scripts/check_repo.py` fails on a descriptor that
     does not load, so the strictness is never how the problem is discovered.
+
+    An authored descriptor (schema version 4, stating no `source`) names no
+    client extension directory, because that name is a property of the upstream
+    layout a port lands under and an authored package was never laid out from
+    one. The shipped package trees are read as well, so the directory keeps
+    being recognized as a directory once custody moves here and the descriptors
+    stop naming it. Without that, a catalog of authored packages would report
+    every mention of `com.infiquetra.claude` in its own evidence as an
+    unredacted hostname.
     """
+    declared: set[str] = set()
     try:
         configs = port_config.load_all(root)
     except PortConfigError:
-        return frozenset()
-    return frozenset(
-        config.source.client_extension_dir
-        for config in configs
-        if config.source.client_extension_dir
-    )
+        configs = []
+    for config in configs:
+        if config.source is not None and config.source.client_extension_dir:
+            declared.add(config.source.client_extension_dir)
+
+    packages = (root or port_config.repository_root()) / port_config.PACKAGE_PARENT
+    if packages.is_dir():
+        for package in sorted(path for path in packages.iterdir() if path.is_dir()):
+            declared.update(
+                child.name
+                for child in package.iterdir()
+                if child.is_dir() and "." in child.name.strip(".")
+            )
+    return frozenset(declared)
 
 CREDENTIAL_ASSIGNMENT = re.compile(
     r"(?i)\b(?:password|passwd|secret|api[_-]?key|token|auth[_-]?token|bearer)\b"

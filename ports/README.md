@@ -25,11 +25,14 @@ that is still perfectly true.
 
 ```jsonc
 {
-  "schema_version": "3",              // refused rather than read with assumed defaults
+  "schema_version": "4",              // refused rather than read with assumed defaults
   "package": "unifi",                 // must equal the file name
   "package_root": "plugins/unifi",    // must be plugins/<package>
   "package_manifest": "plugin.json",  // optional; this is the default
 
+  // `source` and `custody` are optional *together* (schema version 4). Both
+  // present: the package is derived from an upstream pin. Both absent: the
+  // package is authored in this repository. Either one alone is refused.
   "source": {
     "repository": "https://github.com/...",   // required
     "package_path": "plugins/unifi",          // required; path inside the upstream repo
@@ -93,6 +96,47 @@ package failure — charging a descriptor typo to the package.
 Each must be stated. A package for which one is genuinely empty names it in
 `declared_none` — a decision a reader can see, and one a typo cannot produce.
 
+## Derived and authored packages (schema version 4)
+
+A descriptor describes a package in one of two modes, and says which by what it
+states:
+
+| Mode | `source` | `custody` | What the package is |
+|---|---|---|---|
+| derived | present | present | Every byte comes from one upstream pin, classified exactly once |
+| authored | absent | absent | The package is written and maintained in this repository |
+
+The two fields are optional as a pair and never singly. `source` without
+`custody` is a synchronization with no classification table; `custody` without
+`source` classifies paths in a repository nobody named. Either one alone is
+refused rather than half-read.
+
+`assessment` stays mandatory in both modes, with every safety field still
+stated. Custody moving into this repository changes where a package's bytes
+come from; it does not change what an assessment must strip, scope, or invoke,
+and a safety field that fails open fails open just as hard for source authored
+here. `provenance` is optional in both modes and carries nothing an authored
+package needs: there is no upstream tree for a path to be left behind in, so
+`dropped_reason` is not required of one.
+
+`port_config.PortConfig.is_authored` is the question a tool asks. In authored
+mode `source` and `custody` are `None` rather than empty objects, deliberately:
+[`scripts/sync_vendor_source.py`](../scripts/sync_vendor_source.py) refuses an
+authored descriptor outright, and a tool that reaches for a custody table
+without asking first fails loudly instead of reading the emptiness as "nothing
+to classify" and planning the deletion of every managed path in the only copy
+of the package that exists.
+[`scripts/check_repo.py`](../scripts/check_repo.py),
+[`scripts/assess_clients.py`](../scripts/assess_clients.py), and
+[`scripts/check_compatibility_matrix.py`](../scripts/check_compatibility_matrix.py)
+read identity and assessment only, so all three validate an authored descriptor
+unchanged.
+
+A package is brought under this repository's custody once, by
+`scripts/import_vendor_package.py`, and
+is edited in place afterwards. Version 3 is not accepted: the three committed
+descriptors migrated in the same commit that bumped the version.
+
 ## Transform-rule selection is explicit (schema version 3)
 
 Schema version 2 carried `custody.entrypoint_transforms` as bare path strings:
@@ -138,9 +182,25 @@ layout.
 
 ## Adding a package
 
+A derived package, which keeps its upstream pin:
+
 ```bash
 $EDITOR ports/<package>.json
 python3 scripts/check_repo.py                 # validates every descriptor
 python3 scripts/sync_vendor_source.py --package <package> --source PATH --commit SHA --check
 python3 scripts/assess_clients.py --package <package>          # prints the plan, runs nothing
 ```
+
+An authored package, which is imported from an upstream once and maintained
+here afterwards:
+
+```bash
+python3 scripts/import_vendor_package.py --package <package> --source PATH --commit SHA --dry-run
+python3 scripts/import_vendor_package.py --package <package> --source PATH --commit SHA
+$EDITOR ports/<package>.json                  # identity and assessment; no source, no custody
+python3 scripts/check_repo.py
+python3 scripts/assess_clients.py --package <package>
+```
+
+`sync_vendor_source.py` refuses an authored descriptor: there is no upstream
+revision to synchronize from and no custody table to classify against.
