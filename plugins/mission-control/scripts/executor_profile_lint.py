@@ -30,12 +30,21 @@ import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "_bundled"))
 # The build-time Fleet Core bundle replaces the upstream fleet_commons_shim, whose
 # resolution ladder is Claude-specific runtime discovery this package must not
 # retain. scripts/bundle_fleet_module.py writes the bundle, so the module is on
-# disk at install time and Fleet Core is never installed separately.
-import tier_palette  # noqa: E402  (after the sys.path shim, by design)
+# disk at install time and Fleet Core is never installed separately. It is
+# loaded by path under a unique name so another package's module of the same
+# bare name, already imported in this process, can never answer instead.
+import importlib.util as _importlib_util  # noqa: E402
+
+_BUNDLED_TIER_PALETTE = Path(__file__).resolve().parent / "_bundled" / "tier_palette.py"
+_spec = _importlib_util.spec_from_file_location(
+    f"_mission_control_bundled_tier_palette@{_BUNDLED_TIER_PALETTE.parent}", _BUNDLED_TIER_PALETTE
+)
+tier_palette = _importlib_util.module_from_spec(_spec)  # type: ignore[arg-type]
+sys.modules[_spec.name] = tier_palette  # type: ignore[union-attr]
+_spec.loader.exec_module(tier_palette)  # type: ignore[union-attr]
 
 _HEADING = re.compile(r"^#{2,6}\s*Recommended Executor Profile\s*$", re.IGNORECASE)
 # Field names are whitelisted and matched ANCHORED at the start of a sentence segment, so prose

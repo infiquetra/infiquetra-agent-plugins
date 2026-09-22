@@ -4835,10 +4835,7 @@ def _load_saga_readiness_owner() -> Any:
     error — the caller never falls back to local inference (#942).
     """
     try:
-        bundled = str(Path(__file__).resolve().parent / "_bundled")
-        if bundled not in sys.path:
-            sys.path.insert(0, bundled)
-        import plugin_resolution
+        plugin_resolution = _load_bundled("plugin_resolution")
     except ImportError as e:
         raise RuntimeError(
             "Saga readiness owner dependency problem: the bundled plugin_resolution "
@@ -5666,22 +5663,45 @@ def _read_prepared_issue(draft_path: Path) -> PreparedIssue:
     return issue
 
 
+def _load_bundled(name: str):
+    """Load ``<this file's directory>/_bundled/<name>.py`` under a unique module name.
+
+    A bare ``import <name>`` answers with whatever ``sys.modules`` already holds
+    under that name; in one process that ran another package's tests first it
+    can be a different module of the same name (saga ships a CLI wrapper called
+    ``intent_envelope``). Loading by path removes the dependency on import order.
+    """
+    import importlib.util
+
+    module_path = Path(__file__).resolve().parent / "_bundled" / f"{name}.py"
+    key = f"_mission_control_bundled_{name}@{module_path.parent}"
+    cached = sys.modules.get(key)
+    if cached is not None:
+        return cached
+    spec = importlib.util.spec_from_file_location(key, module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"bundled module {name!r} not found at {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[key] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(key, None)
+        raise
+    return module
+
+
 def _load_intent_envelope() -> Any:
     """Load the canonical fleet intent-envelope module (#380) through the vendored shim.
 
     Lazy on purpose: only the issue-capture surfaces that touch an envelope pay the
     fleet-core resolution cost; every other verb imports nothing new.
     """
-    scripts_dir = str(Path(__file__).resolve().parent / "_bundled")
-    if scripts_dir not in sys.path:
-        sys.path.insert(0, scripts_dir)
     # The build-time Fleet Core bundle replaces the upstream fleet_commons_shim, whose
     # resolution ladder is Claude-specific runtime discovery this package must not
     # retain. scripts/bundle_fleet_module.py writes the bundle, so the module is on
     # disk at install time and Fleet Core is never installed separately.
-    import intent_envelope  # noqa: PLC0415
-
-    return intent_envelope
+    return _load_bundled("intent_envelope")
 
 
 def _intent_envelope_readiness_error(body: str) -> str | None:

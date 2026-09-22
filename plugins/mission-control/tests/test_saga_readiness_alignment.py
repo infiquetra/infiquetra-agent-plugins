@@ -396,10 +396,9 @@ def test_t942_07_missing_saga_is_a_dependency_diagnostic(
     tmp_path: Path, isolate_schema: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _brainstorm_pending(tmp_path)
-    bundled = Path(__file__).resolve().parent.parent / "scripts" / "_bundled"
-    if str(bundled) not in sys.path:
-        sys.path.insert(0, str(bundled))
-    import plugin_resolution
+    # The script loads its bundled module by path under a unique name, so the
+    # patch has to land on that very module object, not on a bare-name import.
+    plugin_resolution = sdlc_manager._load_bundled("plugin_resolution")
 
     def _missing_saga(*_args: object, **_kwargs: object) -> tuple[Path, int]:
         raise FileNotFoundError("saga plugin not installed")
