@@ -11,7 +11,7 @@ and the
 Placement follows
 [`scripts/assess_clients.py`](../../scripts/assess_clients.py) and the three
 compatibility matrices
-([UniFi](../evidence/2026-08-22-unifi-compatibility-matrix.md),
+([UniFi, superseded 2026-09-22 and kept as historical context](../evidence/2026-08-22-unifi-compatibility-matrix.md),
 [Mission Control](../evidence/2026-08-30-mission-control-compatibility-matrix.md),
 [agent-launcher](../evidence/2026-08-27-agent-launcher-compatibility-matrix.md)).
 The script does not invent a second way to put a package where a client looks.
