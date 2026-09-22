@@ -46,7 +46,7 @@ def _computed_delay(attempt: int, base_delay: float, max_delay: float, rng: rand
 
 
 def _usable_delay(seconds: float) -> float | None:
-    """``seconds`` when it is a real number of seconds, otherwise ``None``.
+    """``seconds`` clamped to a non-negative delay, or ``None`` when it is not a real number.
 
     ``float()`` accepts ``inf``, ``-inf``, ``nan``, and any overlarge literal such
     as ``1e400``, so a header carrying one of those parsed to a non-finite "delay"
@@ -56,8 +56,14 @@ def _usable_delay(seconds: float) -> float | None:
     the operator saw a generic error instead of how long to wait. A non-finite
     value is exactly the "no usable hint" case this function already documents, so
     it answers ``None`` and the caller falls back to computed backoff.
+
+    The ``max(0.0, ...)`` floor is the same one the HTTP-date path applies to an
+    already-past deadline, so both entry points reduce "the wait is already over"
+    to one answer. Without it a negative delta-seconds header travelled on
+    unchanged and a caller that reduced the hint to whole seconds to advise an
+    operator printed a negative wait time (issue #770).
     """
-    return seconds if math.isfinite(seconds) else None
+    return max(0.0, seconds) if math.isfinite(seconds) else None
 
 
 def parse_retry_after(
@@ -69,18 +75,21 @@ def parse_retry_after(
 
     Both forms the specification allows are accepted:
 
-    * **delta-seconds** — a count of seconds (``Retry-After: 120``). An already-numeric hint is
-      accepted unchanged, so a caller that pre-parses the header keeps its current behaviour.
+    * **delta-seconds** — a count of seconds (``Retry-After: 120``). A non-negative count, including
+      an already-numeric hint a caller pre-parsed, is accepted unchanged, so a caller that pre-parses
+      the header keeps its current behaviour. A negative count is clamped to ``0.0``, exactly as an
+      already-past date is.
     * **HTTP-date** — an absolute instant (``Retry-After: Fri, 31 Dec 2100 23:59:59 GMT``), converted
       to the seconds remaining until it. Real controllers send this form; a caller that ran the raw
       header through ``int()`` raised ``ValueError`` instead of backing off, and the raised
       ``ValueError`` carries no 429 status, so the rate-limit retry was skipped entirely.
 
-    A date already in the past yields ``0.0`` — retry now, never a negative delay. An absent, empty,
-    or unparseable value yields ``None``, which the caller reads as "the server gave no usable hint"
-    and answers with computed jittered backoff. A non-finite value — ``inf``, ``nan``, or an overlarge
-    literal like ``1e400``, all of which ``float()`` accepts — is unusable in the same way and also
-    yields ``None``, so it can never reach a caller's ``math.ceil`` and cost it its typed 429 surface.
+    A date already in the past — or a negative delta-seconds count — yields ``0.0``: retry now, never
+    a negative delay. An absent, empty, or unparseable value yields ``None``, which the caller reads
+    as "the server gave no usable hint" and answers with computed jittered backoff. A non-finite
+    value — ``inf``, ``nan``, or an overlarge literal like ``1e400``, all of which ``float()``
+    accepts — is unusable in the same way and also yields ``None``, so it can never reach a caller's
+    ``math.ceil`` and cost it its typed 429 surface.
 
     Clamping to ``max_delay`` stays with the caller (``_retry_delay``), so a numeric hint and a date
     hint are bounded identically.

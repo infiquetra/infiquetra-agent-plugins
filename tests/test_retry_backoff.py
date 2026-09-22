@@ -3,12 +3,12 @@
 Deterministic: injected ``sleep``/``rng``/``clock``/``now`` seams — no real time passes, no real
 randomness.
 
-Ported into this repository from ``infiquetra-claude-plugins`` at commit
-``3b5faa6c`` (Fleet Core 0.25.2). The test
-functions below are byte-identical to their upstream originals. The one
-deviation is the guarded ``pytest`` import directly beneath this docstring, and
-it is recorded in ``plugins/fleet-core/PROVENANCE.json`` as deterministic
-transform ``guard-pytest-import`` version 2.
+The module under test is the authored Fleet Core 0.32.0 copy. These functions
+began as the 0.25.2 suite and still describe the retry loop. The 0.32.0 clamp
+of a negative delta-seconds hint to ``0.0`` lives in ``parse_retry_after`` and
+is covered by the package tests under ``plugins/fleet-core/tests/``. The
+guarded ``pytest`` import directly beneath this docstring is what lets the
+dependency-free baseline import the module.
 
 The guard exists because this repository runs two test jobs over the same
 directory. The hermetic baseline job runs ``python3 -m unittest discover -s

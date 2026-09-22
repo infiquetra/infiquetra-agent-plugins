@@ -1161,7 +1161,7 @@ look like a different bug entirely.
 **Context.** After the UniFi `2.0.1` re-synchronization,
 [`plugins/unifi/PROVENANCE.json`](../../plugins/unifi/PROVENANCE.json) pins
 `0d81dd9a` while
-[`plugins/fleet-core/PROVENANCE.json`](../../plugins/fleet-core/PROVENANCE.json)
+[`plugins/fleet-core/PROVENANCE.json`](../../plugins/fleet-core/CHANGELOG.md)
 still pins `ed72f439`. The Fleet Core slice's own notes previously asserted that
 the UniFi package pinned "this same revision", which stopped being true.
 

@@ -557,27 +557,28 @@ class CheckRepoIntegrationTests(unittest.TestCase):
             self.assertEqual(check_repo.check_fleet_bundle_declarations(root), [])
 
     def test_live_retry_backoff_round_trip_preserves_source_digest(self) -> None:
-        live_source = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "retry_backoff.py"
+        """An authored Fleet Core package stamps plugin.json's version.
+
+        The live package has no provenance manifest. The digest still binds the
+        bundled bytes to the module. The commit field is the authored marker.
+        """
+        live_fleet = ROOT / "plugins" / "fleet-core"
+        self.assertFalse((live_fleet / check_repo.PROVENANCE_FILENAME).is_file())
+        live_pin = bfm.read_pin(live_fleet)
+        live_source = live_fleet / "scripts" / "fleet_commons" / "retry_backoff.py"
         live_body = live_source.read_text(encoding="utf-8")
+        self.assertEqual(live_pin["source_commit"], bfm.AUTHORED_SOURCE_COMMIT)
+        self.assertEqual(
+            live_pin["source_version"],
+            json.loads((live_fleet / "plugin.json").read_text(encoding="utf-8"))["version"],
+        )
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(Path(tmp), modules={"retry_backoff": live_body})
-            live_pin = json.loads(
-                (ROOT / "plugins" / "fleet-core" / check_repo.PROVENANCE_FILENAME).read_text(
-                    encoding="utf-8"
-                )
-            )
-            write(
-                root / "plugins" / "fleet-core" / check_repo.PROVENANCE_FILENAME,
-                json.dumps(
-                    {
-                        "source_repository": live_pin["source_repository"],
-                        "source_commit": live_pin["source_commit"],
-                        "source_version": live_pin["source_version"],
-                    },
-                    indent=2,
-                )
-                + "\n",
-            )
+            (root / "plugins" / "fleet-core" / check_repo.PROVENANCE_FILENAME).unlink()
+            plugin_path = root / "plugins" / "fleet-core" / "plugin.json"
+            plugin = json.loads(plugin_path.read_text(encoding="utf-8"))
+            plugin["version"] = live_pin["source_version"]
+            plugin_path.write_text(json.dumps(plugin) + "\n", encoding="utf-8")
             bfm.generate_consumer(root, root / "plugins" / "unifi")
             bundled = bundled_path(root)
             stamp_lines, payload = check_repo.split_bundle_stamp(bundled.read_text(encoding="utf-8"))
@@ -683,14 +684,13 @@ class LiveTreeTests(unittest.TestCase):
         planned = bfm.plan_copies(ROOT, consumer)
         self.assertEqual(
             {copy.name for copy in planned},
-            {"intent_envelope", "tier_palette", "models.json"},
+            {"intent_envelope", "tier_palette", "models.json", "staffing.json"},
         )
         for copy in planned:
             self.assertTrue(copy.source.is_file())
             self.assertTrue(copy.destination.is_file())
         data_copies = [copy for copy in planned if copy.is_data]
-        self.assertEqual(len(data_copies), 1)
-        self.assertEqual(data_copies[0].name, "models.json")
+        self.assertEqual({copy.name for copy in data_copies}, {"models.json", "staffing.json"})
 
     def test_live_mission_control_bundled_files_are_fresh(self) -> None:
         consumer = ROOT / "plugins" / "mission-control"

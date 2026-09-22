@@ -1,14 +1,81 @@
 # Changelog
 
-All notable changes to the portable Fleet Core package are documented in this
-file.
+All notable changes to Fleet Core are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
-The version is not an independent number: it tracks the upstream Fleet Core
-version this package is derived from, because custody of the ported module stays
-in `infiquetra-claude-plugins` and a parallel numbering would imply a second
-writable source. When upstream releases a Fleet Core version that changes a
-ported module, this package is re-synchronized and takes that version.
+From 0.32.0 this package is authored here. The version is this package's
+version. The import below kept the upstream version number. Older entries
+describe the derived slice and are left as the record of those releases.
+
+The catalog requires `python>=3.12`.
+
+## [0.32.0] - 2026-09-22
+
+0.32.0 — imported in full from infiquetra-claude-plugins@acc99fe7 (upstream
+0.32.0); authored here from this commit; no provenance manifest from now on.
+
+### Added
+
+- The full `scripts/fleet_commons/` module set at that commit, plus
+  `scripts/jev.py` and `references/`. Package tests live under
+  `plugins/fleet-core/tests/` and import those modules directly.
+- A module that needs a sibling loads `<this directory>/<name>.py` instead of
+  `fleet_commons_shim`. The same file works in this package and in a generated
+  `_bundled/` copy. `scripts/fleet_commons_shim.py` is not imported.
+
+### Changed
+
+- `plugin.json` version is `0.32.0`. `PROVENANCE.json` is gone. Bundle stamps
+  for an authored package record that version and `source-commit: authored`.
+  The source digest still proves the bundled bytes match the module.
+- `tier_palette.py` reads `staffing.json` at import. The 0.25.2 slice read
+  `models.json`. The model and effort ladders are the same four names.
+- `retry_backoff.parse_retry_after` clamps a negative delta-seconds hint to
+  `0.0`, the same answer an already-past HTTP-date already produced.
+- `typesafe_client._sdk_call` refuses an unprepared body before it imports
+  `typesafe-sdk`, and it uses an injected client factory without requiring
+  that package. This catalog does not install the SDK. When the SDK is
+  installed and no factory is injected, the call still goes through it.
+- Mission-control's bundle declaration gained a `staffing.json` data entry so
+  the already-declared `tier_palette` module can import. The module list is
+  unchanged. `models.json` stays declared and stays in this package; see
+  [`DEFERRED.md`](DEFERRED.md).
+
+### Residual
+
+- `scripts/fleet_commons/models.json` is absent from `acc99fe7` and is kept
+  because `plugins/mission-control/fleet-bundle.json` still declares it.
+  Clear it when that consumer's import drops the declaration.
+
+### Dropped tests
+
+Upstream tests whose premise is the upstream repository layout were not
+ported. The catalog's own `tests/test_intent_envelope.py`,
+`tests/test_retry_backoff.py`, and `tests/test_tier_palette.py` stay.
+
+Whole files:
+
+- `tests/test_agent_tier_lint.py` — globs every upstream `plugins/*/agents/*.md`.
+- `tests/test_agent_tiering.py` — pins agent frontmatter in plugins this catalog does not carry.
+- `tests/test_delegation_fleet_monitor.py` — reads `scripts/check_delegation_proof.py` and `marketplace/bridge_plugins.json`.
+- `tests/test_fleet_commons_resolution.py` — the discovery shim and byte-identical vendored copies across upstream plugins.
+- `tests/test_intent_envelope.py` — saga's re-export, a repo-wide drift guard, and saga's intent-envelope reference.
+- `tests/test_mission_control_suggest.py` — mission-control triage scripts this package does not carry.
+- `tests/test_parse_issue_flags.py` — saga's `parse_issue.py`.
+- `tests/test_saga_spec_consumer_row.py` — saga's plan-save contract.
+- `tests/test_typesafe_sdk_pin.py` — the upstream repository's `pyproject.toml` pin of `typesafe-sdk`.
+- `tests/test_work_build_unit_tier.py` — saga's work skill and `lifecycle_state.py`.
+
+Cases removed from files that were otherwise ported:
+
+- `test_tier_resolver.py`: `test_skill_md_has_generated_tier_table_markers`, `test_skill_registry_sync`, `test_skill_registry_sync_catches_seeded_divergence`, `test_effort_emitted_into_plan_tier_table` (saga's plan skill and team-execution).
+- `test_tier_vocab_single_source.py`: `test_plan_table_render_synced` (saga's plan skill).
+- `test_staffing_suggest.py`: `test_admission_embeds_one_suggestion_per_role`, `test_admission_without_suggest_is_unchanged`, `test_admission_suggest_degrades_without_consult`, `test_admission_suggest_falls_open_on_client_error`, `test_admit_threads_suggest_to_one_verdict_per_role` (saga's `admission.py`).
+- `test_merge_guard.py`: `TestOrchestrateAgreesWithTheSharedGuard` (orchestrate is not in this catalog).
+- `test_jev_eval.py`: `test_the_seeded_benchmark_file_exists_and_is_well_formed`, `test_the_benchmark_reproduces_ten_of_ten`, `test_the_benchmark_run_touches_no_transport` (upstream `docs/analysis` research inputs).
+- `test_jev_cli.py`: `test_the_seeded_benchmark_reproduces_ten_of_ten`, `test_eval_json_mode_reports_bands`, `test_eval_makes_no_transport_call` (the same research inputs).
+- `test_effort_rider.py`: `test_loadable_via_fleet_commons_shim` (the shim is not shipped; `test_loadable_from_its_own_directory` covers the module).
+- `test_typesafe_client.py`: `test_sdk_transport_returns_the_same_shape_as_urllib`, `test_sdk_transport_receives_the_key_explicitly`, `test_sdk_exception_text_is_composed_here_not_by_the_vendor` (they require the `typesafe-sdk` package), and `test_a_real_lock_file_hunk_is_not_shredded` (it reads the upstream repository's `uv.lock`).
 
 ## Unreleased
 

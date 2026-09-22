@@ -1,10 +1,10 @@
 # --- generated bundle stamp: do not edit ---
 # generated-by: scripts/bundle_fleet_module.py
-# source-version: 0.25.2
-# source-commit: 3b5faa6c1044a888e03cb7b8bbf2f71c6749489c
+# source-version: 0.32.0
+# source-commit: authored
 # source-path: scripts/fleet_commons/intent_envelope.py
-# source-sha256: c4e9b522c73e23a875ae85baa5e45687f4bfaae84fa3ead11af1d4c730d50b98
-# output-sha256: c4e9b522c73e23a875ae85baa5e45687f4bfaae84fa3ead11af1d4c730d50b98
+# source-sha256: d2bee6e0aeff2df810dc958a541043986f3c980c23f4845a6ab3306fb17f221c
+# output-sha256: d2bee6e0aeff2df810dc958a541043986f3c980c23f4845a6ab3306fb17f221c
 # --- end generated bundle stamp ---
 #!/usr/bin/env python3
 """Canonical fleet IntentEnvelope — the one committed run-start posture schema (#380).
@@ -69,16 +69,15 @@ Threat model (read before trusting a field):
   defense against a lying leaf.
 
 No I/O at import; the only file the module reads is via the sibling tier registry
-(``tier_resolver`` -> ``tier_policy.json``), loaded lazily on first tier lookup.
+(``tier_resolver`` -> the ``work_shapes`` block of ``staffing.json``), loaded lazily
+on first tier lookup.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import math
 import re
-import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -86,22 +85,19 @@ from types import ModuleType
 from typing import Any
 
 
-def _load_sibling(name: str) -> ModuleType:
-    """Load ``<this directory>/<name>.py`` — portable fleet-commons resolution.
+def _load_sibling(name: str):
+    """Load ``<this file's directory>/<name>.py``.
 
-    Installed by transform ``resolve-fleet-commons-sibling`` v1 in place of the
-    upstream fleet-commons discovery shim, whose resolution ladder is specific to
-    Claude Code plugin installs. Sibling resolution is placement-independent by
-    construction: the identical file works in ``plugins/fleet-core/scripts/
-    fleet_commons/`` and in any generated ``_bundled/`` copy a consuming plugin
-    carries, because the module is always read from this file's own directory.
-
-    Lazy and cached, mirroring the shim's load contract: repeated loads return the
-    same module object, keyed by ``(name, directory)`` in ``sys.modules`` so a
-    relocated copy never serves a stale module. A name with no sibling file (a
-    deferred module such as ``tier_resolver``) raises at CALL time naming the
-    missing sibling path, never at import.
+    Portable stand-in for ``fleet_commons_shim.load``. The shim's resolution
+    ladder is specific to a Claude Code plugin install. This catalog bundles
+    modules at build time, and a module is always read from the directory that
+    holds this file, so the same source works in ``fleet_commons/`` and in any
+    generated ``_bundled/`` copy.
     """
+    import importlib.util
+    import sys
+    from pathlib import Path
+
     sibling_dir = Path(__file__).resolve().parent
     cache_key = f"_fleet_commons_{name}@{sibling_dir}"
     cached = sys.modules.get(cache_key)
@@ -109,11 +105,7 @@ def _load_sibling(name: str) -> ModuleType:
         return cached
     module_path = sibling_dir / f"{name}.py"
     if not module_path.is_file():
-        raise RuntimeError(
-            f"fleet-commons: module {name!r} not found at {module_path} "
-            "(absent from this portable Fleet Core slice; the deferred modules are "
-            "named in the fleet-core package's DEFERRED.md)."
-        )
+        raise RuntimeError(f"fleet-commons: module {name!r} not found at {module_path}")
     spec = importlib.util.spec_from_file_location(cache_key, module_path)
     if spec is None or spec.loader is None:  # pragma: no cover - importlib internal failure
         raise RuntimeError(f"fleet-commons: importlib could not load {module_path}")

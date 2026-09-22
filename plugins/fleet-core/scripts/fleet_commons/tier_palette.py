@@ -4,7 +4,7 @@
 Moved verbatim from ``plugins/saga/scripts/execution_spec.py`` (fleet-commons first
 mover, issue #463 / DECISIONS ``{#fleet-commons-mechanism-463}``), then made
 registry-backed in #370: the ordered ``MODELS`` / ``EFFORTS`` tuples are **derived at
-import** from the explicit ``rank`` / ``rung`` indices in ``models.json`` rather than
+import** from the explicit ``rank`` / ``rung`` indices in ``staffing.json`` rather than
 hand-ordered here. saga re-exports these names through its vendored
 ``fleet_commons_shim``; other consumers load this module the same way. Content changes
 here are additive-only within fleet-core 0.x (KTD5): a consumer never breaks because
@@ -14,8 +14,8 @@ ORDERING IS LOAD-BEARING (``{#tier-vocab-ordering}``): consumers merge tiers
 upgrade-only via ``min(MODELS.index)`` / ``max(EFFORTS.index)``, so MODELS is
 strongest-first and EFFORTS is weakest-first. Use ``model_rank()`` / ``effort_rank()``
 (or the ``escalate`` / ``downgrade`` / ``clamp`` ladder ops) instead of re-deriving
-index arithmetic. To add a model/effort, edit ``models.json`` — never a second bare
-literal. See ``plugins/fleet-core/references/tier-palette.md``.
+index arithmetic. To add a model/effort, edit ``staffing.json`` — never a second bare
+literal. See ``plugins/fleet-core/references/staffing.md``.
 """
 
 from __future__ import annotations
@@ -23,11 +23,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-MODELS_REGISTRY_PATH = Path(__file__).resolve().parent / "models.json"
+MODELS_REGISTRY_PATH = Path(__file__).resolve().parent / "staffing.json"
 
 
 class TierPaletteError(ValueError):
-    """Raised when ``models.json`` is malformed (bad rank/rung/ceiling)."""
+    """Raised when ``staffing.json`` is malformed (bad rank/rung/ceiling)."""
 
 
 def _load_registry(path: Path = MODELS_REGISTRY_PATH) -> dict:
@@ -45,12 +45,12 @@ def _derive_ordered(rows: dict, index_key: str, kind: str) -> tuple[str, ...]:
     seen: set[int] = set()
     for name, row in rows.items():
         if index_key not in row:
-            raise TierPaletteError(f"{kind} {name!r} missing {index_key!r} in models.json")
+            raise TierPaletteError(f"{kind} {name!r} missing {index_key!r} in staffing.json")
         idx = row[index_key]
         if not isinstance(idx, int) or isinstance(idx, bool):
             raise TierPaletteError(f"{kind} {name!r} {index_key} must be an int, got {idx!r}")
         if idx in seen:
-            raise TierPaletteError(f"{kind} {index_key} {idx} is duplicated in models.json")
+            raise TierPaletteError(f"{kind} {index_key} {idx} is duplicated in staffing.json")
         seen.add(idx)
         indexed.append((idx, name))
     if seen != set(range(len(indexed))):
@@ -66,7 +66,7 @@ def _derive_effort_ceilings(registry: dict, efforts: tuple[str, ...]) -> dict[st
     for name, row in registry["models"].items():
         ceiling = row.get("effort_ceiling")
         if ceiling is None:
-            raise TierPaletteError(f"model {name!r} missing 'effort_ceiling' in models.json")
+            raise TierPaletteError(f"model {name!r} missing 'effort_ceiling' in staffing.json")
         if ceiling not in efforts:
             raise TierPaletteError(
                 f"model {name!r} effort_ceiling {ceiling!r} is not a known effort {efforts}"
@@ -77,12 +77,12 @@ def _derive_effort_ceilings(registry: dict, efforts: tuple[str, ...]) -> dict[st
 
 _REGISTRY = _load_registry()
 
-# Closed model vocabulary, strongest-first — derived from models.json ``rank``.
+# Closed model vocabulary, strongest-first — derived from staffing.json ``rank``.
 # Consumers validate authored tiers against this set so a typo ("opus-high") fails
 # loudly instead of silently producing an un-runnable dispatch.
 MODELS = _derive_ordered(_REGISTRY["models"], "rank", "model")
 
-# Closed effort vocabulary, weakest-first — derived from models.json ``rung``.
+# Closed effort vocabulary, weakest-first — derived from staffing.json ``rung``.
 EFFORTS = _derive_ordered(_REGISTRY["efforts"], "rung", "effort")
 
 # Portable scalar ladder from the version-2 subset. Includes ``max``; does not

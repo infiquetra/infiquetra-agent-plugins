@@ -1,11 +1,11 @@
-"""Target-owned minimal tests for the ported ``tier_palette`` module.
+"""Target-owned tests for the authored ``tier_palette`` module.
 
-Upstream ships no standalone palette test; the AGENTS.md
-changed-packaging-carries-tests rule wants the smallest proof that the ported
-module loads — which here means its import-time read of the sibling
-``models.json`` registry succeeds — and that the palette contract it publishes
-holds. Standard library only, unittest-shaped, so the repository's
-dependency-free baseline job runs them.
+The 0.32.0 module derives its ladders at import from the sibling
+``staffing.json`` registry. The 0.25.2 slice read ``models.json``. The model
+and effort names are the same; the file the module opens is not.
+``models.json`` remains in the package only because mission-control still
+declares it. Standard library only, unittest-shaped, so the repository's
+dependency-free baseline job runs these tests.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from types import ModuleType
 ROOT = Path(__file__).resolve().parent.parent
 FLEET_COMMONS_DIR = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons"
 MOD_PATH = FLEET_COMMONS_DIR / "tier_palette.py"
-REGISTRY_PATH = FLEET_COMMONS_DIR / "models.json"
+REGISTRY_PATH = FLEET_COMMONS_DIR / "staffing.json"
 
 _LOADED: ModuleType | None = None
 
@@ -52,7 +52,7 @@ def registry() -> dict:
 class PaletteLoadTests(unittest.TestCase):
     def test_module_loads_by_reading_its_sibling_registry(self) -> None:
         # Import IS the proof of the read: the ordered vocabularies are derived
-        # at import time from models.json in the module's own directory.
+        # at import time from staffing.json in the module's own directory.
         mod = palette()
         data = registry()
 
