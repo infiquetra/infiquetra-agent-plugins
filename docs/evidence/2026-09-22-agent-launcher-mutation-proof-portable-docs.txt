@@ -1,0 +1,113 @@
+# Mutation proof — agent-launcher portable documentation guards
+# Run: 2026-09-22, branch mg/agent-launcher, repository infiquetra-agent-plugins.
+#
+# Supersedes 2026-08-27-agent-launcher-mutation-proof-portable-docs.txt, which is
+# preserved unedited at its origin/main bytes. Reason: the authored import
+# replaced SKILL.md and README.md, so the 2026-08-27 digests no longer name
+# the shipped bytes. Those digests were not rewritten in place.
+#
+# Bound by content: the digests below name the bytes this run graded, never a
+# commit id. The binding test is
+# tests/test_agent_launcher_rule_audit.py MutationProofBindingTest. The guard
+# under proof is plugins/agent-launcher/tests/test_portable_docs.py, whose
+# corpus constants the audit derives at test time (ast) rather than restating.
+# The audit predicate is _skill_guard_problems / _readme_guard_problems in
+# tests/test_agent_launcher_rule_audit.py. The mutation classes are
+# skill_mutations and readme_mutations in that same module, which is also
+# what DocGuardMutationCorpusTest grades.
+#
+# Method: each class was written onto the graded file. Then, in order:
+#   1. the audit predicate
+#   2. unittest DocGuardMutationCorpusTest.test_the_committed_blobs_pass_every_guard
+#   3. pytest plugins/agent-launcher/tests/test_portable_docs.py
+#   4. unittest MutationProofBindingTest
+# The graded file was then restored and its sha256 checked against the
+# pre-campaign digest before the next class. Both files matched after every
+# restore, and they match the footer below.
+#
+# MutationProofBindingTest failed on every class (exit 1). It is recorded and
+# not counted as the kill. It compares the graded file to this document's
+# footer, so it fails whenever those bytes move, which is true of every class
+# by construction. Counting that failure as the kill would make the campaign
+# vacuous. A survivor is a class that the audit predicate, the committed-blob
+# test, and test_portable_docs.py all let through.
+#
+# The 2026-08-27 proof listed eleven classes. The shipping audit has those
+# eleven, with the launch-prompt and keep-list patches updated to the wording
+# that ships, plus one class the pane-id sentence added. All twelve were run.
+#
+# Skill mutations (plugins/agent-launcher/skills/agent-launcher/SKILL.md):
+#   M1 claude cache ladder re-inserted -> killed.
+#      predicate: forbidden:~/.claude/plugins/cache, forbidden:.claude/plugins/cache
+#      committed-blob test: FAIL
+#      test_portable_docs.py: FAIL test_skill_never_names_claude_runtime_discovery
+#        (both cache paths). 2 failed, 12 passed.
+#   M2 a stop condition removed -> killed.
+#      predicate: missing:Stop before launch if the wrapper dry run does not resolve the requested working
+#      committed-blob test: FAIL
+#      test_portable_docs.py: FAIL test_skill_carries_every_stop_condition for that marker.
+#        1 failed, 13 passed.
+#   M3 receipt redirect removed (first "> receipt.json" -> "> /dev/null") -> killed.
+#      The first occurrence sits inside the launch example, so the string
+#      "--prompt <text> > receipt.json" is what disappeared. Later
+#      "> receipt.json" occurrences remained, and the predicate therefore
+#      reported missing:launch prompt example rather than missing:receipt redirect.
+#      committed-blob test: FAIL
+#      test_portable_docs.py: FAIL test_skill_launch_example_delivers_a_prompt.
+#        1 failed, 13 passed.
+#   M4 forbidden close form re-inserted -> killed.
+#      predicate: forbidden:tab-id close form
+#      committed-blob test: FAIL
+#      test_portable_docs.py: FAIL test_skill_cleanup_example_redirects_the_receipt.
+#        1 failed, 13 passed.
+#   M5 herdr dependency declaration removed -> killed.
+#      predicate: missing:herdr dependency declaration
+#      committed-blob test: FAIL
+#      test_portable_docs.py: FAIL test_skill_declares_the_herdr_dependency_without_a_duplicate.
+#        1 failed, 13 passed.
+#   M6 launch prompt flag removed -> killed.
+#      predicate: missing:launch prompt example
+#      committed-blob test: FAIL
+#      test_portable_docs.py: FAIL test_skill_launch_example_delivers_a_prompt.
+#        1 failed, 13 passed.
+#   M7 receipt keep-list mangled -> killed by the audit, not by the portable-docs suite.
+#      predicate: missing:receipt keep-list
+#      committed-blob test: FAIL
+#      test_portable_docs.py: 14 passed. That suite does not assert the keep-list.
+#      Not a survivor: the committed-blob test failed.
+#   M12 pane-id sentence removed (shipping audit; not in the 2026-08-27 eleven) -> killed.
+#      predicate: missing:no pane_id sentence
+#      committed-blob test: FAIL
+#      test_portable_docs.py: FAIL test_skill_states_the_launcher_receipt_has_no_pane_id.
+#        1 failed, 13 passed.
+#
+# README mutations (plugins/agent-launcher/README.md):
+#   M8 portable framing removed -> killed.
+#      predicate: missing:portable framing
+#      committed-blob test: FAIL
+#      test_portable_docs.py: FAIL test_readme_opens_as_a_portable_package_document.
+#        1 failed, 13 passed.
+#   M9 claude-only account limitation inverted -> killed.
+#      predicate: missing:claude-only account limitation
+#      committed-blob test: FAIL
+#      test_portable_docs.py: FAIL test_readme_states_the_adapter_limitations.
+#        1 failed, 13 passed.
+#   M10 no-registry limitation inverted -> killed.
+#      predicate: missing:no-registry limitation
+#      committed-blob test: FAIL
+#      test_portable_docs.py: FAIL test_readme_states_the_adapter_limitations.
+#        1 failed, 13 passed.
+#   M11 wrapper-and-Herdr requirement removed -> killed.
+#      predicate: missing:wrapper-and-herdr requirement
+#      committed-blob test: FAIL
+#      test_portable_docs.py: FAIL test_readme_states_the_adapter_limitations.
+#        1 failed, 13 passed.
+#
+# Survivors: none. Twelve classes run, twelve killed by the audit predicate
+# and by test_the_committed_blobs_pass_every_guard. Eleven of the twelve were
+# also killed by test_portable_docs.py. M7 was not.
+#
+# Committed-blob control, measured on the restored bytes after the campaign:
+# both graded files pass every guard (zero problems).
+plugins/agent-launcher/skills/agent-launcher/SKILL.md sha256:6a6fd82a44657a1a7dca291ccb663f6bd487855acdb905bab6b54ad7ed6db5c7
+plugins/agent-launcher/README.md sha256:2946e0318cb25fa46f024fc9788c5b38b73788ace24ea2ffde454dc0e460b21e

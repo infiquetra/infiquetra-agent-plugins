@@ -106,8 +106,12 @@ dangling link legal.
   `tests/test_agent_launcher_rule_audit.py` were updated. They pin this
   package, the gate runs them, and no other import branch should touch them.
   Custody assertions skip now that the descriptor is authored. The doc-guard
-  predicates were updated for the 1.7.0 skill wording, and the mutation-proof
-  digests were recomputed.
+  predicates were updated for the 1.7.0 skill wording. The 2026-08-27 mutation
+  proof is preserved unedited, and the proof was re-run: each shipping
+  mutation class was written onto the graded file, the rule-audit and
+  portable-docs tests were run, and the file was restored byte-identical
+  before the next class. The results are
+  `docs/evidence/2026-09-22-agent-launcher-mutation-proof-portable-docs.txt`.
 - `roster.py` and `launcher.py` are both assessment entrypoints. `up` and
   `down` joined `launch` and `close` as mutating operations. `roster.py --help`
   exits before it looks for saga.

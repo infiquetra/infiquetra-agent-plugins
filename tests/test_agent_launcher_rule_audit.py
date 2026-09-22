@@ -30,7 +30,7 @@ PACKAGE = ROOT / "plugins" / "agent-launcher"
 SKILL = PACKAGE / "skills" / "agent-launcher" / "SKILL.md"
 README = PACKAGE / "README.md"
 GUARD_SOURCE = PACKAGE / "tests" / "test_portable_docs.py"
-PROOF_DOCUMENT = ROOT / "docs" / "evidence" / "2026-08-27-agent-launcher-mutation-proof-portable-docs.txt"
+PROOF_DOCUMENT = ROOT / "docs" / "evidence" / "2026-09-22-agent-launcher-mutation-proof-portable-docs.txt"
 
 #: The launcher receipt must still name tab_id and then reused. The wrapper's
 #: own JSON keep-list is a different list and may name pane_id.
@@ -152,6 +152,55 @@ def _readme_guard_problems(text: str) -> list[str]:
     return problems
 
 
+def skill_mutations(skill: str, constants: dict[str, tuple[str, ...]]) -> dict[str, str]:
+    """The skill mutation classes, in the order the proof records them.
+
+    The on-disk campaign imports this table, so a class the proof runs and a
+    class this audit grades cannot drift apart.
+    """
+    ladder = "~/.claude/plugins/cache/*/agent-launcher/*/skills/agent-launcher/scripts/launcher.py"
+    return {
+        "claude cache ladder re-inserted": skill.replace(
+            "Resolve the script from this package",
+            f"Resolve the script from this package or fall back to {ladder}",
+        ),
+        "a stop condition removed": skill.replace(constants["STOP_CONDITION_MARKERS"][0], "", 1),
+        "receipt redirect removed": skill.replace("> receipt.json", "> /dev/null", 1),
+        "forbidden close form re-inserted": skill
+        + "\nclose --tab-id <tab_id> --receipt-json <receipt.json>\n",
+        "herdr dependency declaration removed": skill.replace(
+            "canonical `herdr` skill", "herdr skill"
+        ),
+        "launch prompt flag removed": skill.replace(
+            "--prompt <text> > receipt.json", "> receipt.json", 1
+        ),
+        "receipt keep-list mangled": KEEP_LIST_PATTERN.sub(
+            "receipt `agent` and `session`", skill, count=1
+        ),
+        "pane-id sentence removed": skill.replace(NO_PANE_ID_SENTENCE, "pane id", 1),
+    }
+
+
+def readme_mutations(readme: str) -> dict[str, str]:
+    """The README mutation classes, in the order the proof records them."""
+    return {
+        "portable framing removed": readme.replace(
+            "Portable Agent Plugins 1.0 package", "A package", 1
+        ),
+        "claude-only limitation removed": readme.replace(
+            "Account verification applies only to `vendor claude`",
+            "Account verification applies to every vendor",
+            1,
+        ),
+        "registry limitation removed": readme.replace(
+            "no vendor or model registry", "a vendor and model registry", 1
+        ),
+        "wrapper requirement removed": readme.replace(
+            "installed `agents` wrapper and Herdr", "installed tooling", 1
+        ),
+    }
+
+
 class DocGuardMutationCorpusTest(unittest.TestCase):
     """Every mutation class flips the guard verdict; the committed bytes pass."""
 
@@ -165,30 +214,7 @@ class DocGuardMutationCorpusTest(unittest.TestCase):
         self.assertEqual(_readme_guard_problems(self.readme), [])
 
     def test_every_skill_mutation_class_flips_the_verdict(self) -> None:
-        ladder = "~/.claude/plugins/cache/*/agent-launcher/*/skills/agent-launcher/scripts/launcher.py"
-        mutations = {
-            "claude cache ladder re-inserted": self.skill.replace(
-                "Resolve the script from this package",
-                f"Resolve the script from this package or fall back to {ladder}",
-            ),
-            "a stop condition removed": self.skill.replace(
-                self.constants["STOP_CONDITION_MARKERS"][0], "", 1
-            ),
-            "receipt redirect removed": self.skill.replace("> receipt.json", "> /dev/null", 1),
-            "forbidden close form re-inserted": self.skill
-            + "\nclose --tab-id <tab_id> --receipt-json <receipt.json>\n",
-            "herdr dependency declaration removed": self.skill.replace(
-                "canonical `herdr` skill", "herdr skill"
-            ),
-            "launch prompt flag removed": self.skill.replace(
-                "--prompt <text> > receipt.json", "> receipt.json", 1
-            ),
-            "receipt keep-list mangled": KEEP_LIST_PATTERN.sub(
-                "receipt `agent` and `session`", self.skill, count=1
-            ),
-            "pane-id sentence removed": self.skill.replace(NO_PANE_ID_SENTENCE, "pane id", 1),
-        }
-        for name, mutated in mutations.items():
+        for name, mutated in skill_mutations(self.skill, self.constants).items():
             with self.subTest(mutation=name):
                 self.assertNotEqual(mutated, self.skill)
                 self.assertTrue(
@@ -197,23 +223,7 @@ class DocGuardMutationCorpusTest(unittest.TestCase):
                 )
 
     def test_every_readme_mutation_class_flips_the_verdict(self) -> None:
-        mutations = {
-            "portable framing removed": self.readme.replace(
-                "Portable Agent Plugins 1.0 package", "A package", 1
-            ),
-            "claude-only limitation removed": self.readme.replace(
-                "Account verification applies only to `vendor claude`",
-                "Account verification applies to every vendor",
-                1,
-            ),
-            "registry limitation removed": self.readme.replace(
-                "no vendor or model registry", "a vendor and model registry", 1
-            ),
-            "wrapper requirement removed": self.readme.replace(
-                "installed `agents` wrapper and Herdr", "installed tooling", 1
-            ),
-        }
-        for name, mutated in mutations.items():
+        for name, mutated in readme_mutations(self.readme).items():
             with self.subTest(mutation=name):
                 self.assertNotEqual(mutated, self.readme)
                 self.assertTrue(
