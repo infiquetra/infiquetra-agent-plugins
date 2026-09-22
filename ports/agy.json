@@ -1,0 +1,30 @@
+{
+  "schema_version": "4",
+  "package": "agy",
+  "package_root": "plugins/agy",
+  "package_manifest": "plugin.json",
+  "assessment": {
+    "credential_prefixes": [],
+    "package_scripts": [
+      "agy_delegate.py",
+      "audit_harness_transcript.py"
+    ],
+    "mutating_operations": [
+      "--launch-agy"
+    ],
+    "entrypoints": [
+      "skills/agy-delegate/scripts/agy_delegate.py"
+    ],
+    "skill_units": [
+      "skills/agy-delegate"
+    ],
+    "declared_none": [
+      "credential_prefixes"
+    ]
+  },
+  "provenance": {
+    "notes": [
+      "Imported once from infiquetra-claude-plugins@acc99fe7 (upstream plugin 0.6.1) and authored here from 0.6.2. There is no provenance manifest and no upstream pin to synchronize."
+    ]
+  }
+}

@@ -1,0 +1,2 @@
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"target.txt"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"target.txt","old_string":"todo","new_string":"done"}}]}}

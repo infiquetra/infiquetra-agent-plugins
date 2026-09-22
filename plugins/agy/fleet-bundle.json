@@ -1,0 +1,24 @@
+{
+  "$schema": "../../schemas/fleet-bundle.schema.json",
+  "schema_version": "1",
+  "modules": [
+    {
+      "name": "audit_store",
+      "destinations": [
+        "skills/agy-delegate/scripts/_bundled/audit_store.py"
+      ]
+    },
+    {
+      "name": "bridge_receipt",
+      "destinations": [
+        "skills/agy-delegate/scripts/_bundled/bridge_receipt.py"
+      ]
+    },
+    {
+      "name": "output_attestation",
+      "destinations": [
+        "skills/agy-delegate/scripts/_bundled/output_attestation.py"
+      ]
+    }
+  ]
+}

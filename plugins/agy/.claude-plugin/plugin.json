@@ -1,0 +1,20 @@
+{
+  "name": "agy",
+  "version": "0.6.2",
+  "description": "Antigravity-backed coder reviewer bridge agents that run in a disposable clone and return a patch, with guarded evidence bundles, output-attested receipts, and clone-scoped verification.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "keywords": [
+    "agy",
+    "antigravity",
+    "delegation",
+    "teammate",
+    "evidence"
+  ],
+  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+  "commands": "./com.infiquetra.claude/commands/",
+  "agents": "./com.infiquetra.claude/agents/",
+  "skills": "./skills/"
+}
