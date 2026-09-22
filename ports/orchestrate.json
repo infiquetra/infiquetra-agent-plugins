@@ -1,0 +1,42 @@
+{
+  "schema_version": "4",
+  "package": "orchestrate",
+  "package_root": "plugins/orchestrate",
+  "package_manifest": "plugin.json",
+  "assessment": {
+    "credential_prefixes": [],
+    "package_scripts": [
+      "herdr_events.py",
+      "orchestrate.py"
+    ],
+    "mutating_operations": [
+      "adopt",
+      "clean",
+      "expand",
+      "go",
+      "merge",
+      "park",
+      "resume",
+      "review-result",
+      "settle",
+      "start"
+    ],
+    "entrypoints": [
+      "skills/orchestrate/scripts/orchestrate.py"
+    ],
+    "skill_units": [
+      "skills/orchestrate"
+    ],
+    "declared_none": [
+      "credential_prefixes"
+    ]
+  },
+  "provenance": {
+    "notes": [
+      "Authored here from the one-shot import of infiquetra-claude-plugins@acc99fe71e25ad8a898eace7033051a7f1c3079e (upstream plugin 6.0.0). There is no PROVENANCE.json and no upstream pin after this commit.",
+      "The driver does not load Fleet Core. A comment names fleet_commons_shim to explain why the saga-install resolver is hand-rolled; the import script matched that comment and copied the file unchanged.",
+      "The companion launcher defaults to the sibling plugins/agent-launcher. AGENT_LAUNCHER_ROOT overrides that root. Saga's run record defaults to the sibling plugins/saga/scripts/run_record.py, with ORCHESTRATE_RUN_RECORD as the override."
+    ],
+    "dropped_reason": ""
+  }
+}
