@@ -51,6 +51,71 @@ catalog through a distribution path that a git checkout cannot serve (Cursor
 Agent's marketplace takes only a git URL; OpenAI Codex's marketplace needs a
 manifest this repository does not ship); or when a harness on the machine is
 found to have consumed the old repository through a path the cutover missed.
+### The Claude marketplace is generated, not hand-edited
+
+**Author.** Claude for Jeff Cox (custody-move unit U1, branch `mg/tooling`)
+
+**Decision.** `.claude-plugin/marketplace.json` is produced by
+`scripts/sync_marketplace.py` from the packages that carry
+`.claude-plugin/plugin.json`. Entries are sorted by package name; every field an
+entry states about a package is read from that package's own manifests; the
+catalog-level `name`, `owner`, and `metadata` block is preserved from the
+existing file, as is each entry's `category`. `--check` compares the committed
+file to the generated one, `check_repo.py` calls the same function, and
+`tests/test_claude_plugin_packaging.py` asserts committed equals generated
+rather than restating the listing rule.
+
+**Rationale.** Twelve import units each add one entry to one array. Hand-edited,
+that is twelve merge conflicts on one file, each resolved against a diff in
+which nobody can see whether the result is correct. Generated, a conflict is
+resolved by re-running the script. Deriving each field from the package's own
+manifests also makes the agreement `claude plugin tag` requires -- entry and
+manifest stating the same name and version -- true by construction rather than
+by a test that catches it afterwards.
+
+**Rejected alternatives.** Keep it hand-edited and rely on the packaging test to
+catch mistakes (the test catches a wrong file; it does not resolve twelve
+conflicts). Derive `category` from a manifest (neither manifest has a home for
+it, and inventing a field in the Agent Plugins schema, which this repository
+does not own, is a worse cost than preserving one string). Derive the whole file
+including the catalog block (nothing under `plugins/` describes the catalog, so
+it would have to be invented in the script instead).
+
+**Revisit when.** The Claude marketplace format gains a field that is neither
+derivable from a package manifest nor stable across regeneration.
+
+**Refs.** `scripts/sync_marketplace.py`, `scripts/check_repo.py`
+(`check_marketplace_manifest`), `tests/test_sync_marketplace.py`,
+`tests/test_claude_plugin_packaging.py`
+(`test_the_committed_file_is_the_generated_one`).
+
+### CI's plugin-test dependencies move into a requirements file
+
+**Author.** Claude for Jeff Cox (custody-move unit U1, branch `mg/tooling`)
+
+**Decision.** `requirements-plugin-tests.txt` at the repository root lists what
+the `plugin-tests` job installs, and the job installs that file. The `validate`
+job stays dependency-free.
+
+**Rationale.** Same shape as the marketplace: twelve import units may each need
+a test-time package, and twelve branches editing one `pip install` line is
+twelve conflicts on one line. Appending a line to a sorted file is a conflict
+git can usually resolve, and one a human can always read. The `validate` job is
+deliberately left alone: it is the repository's hermetic baseline, and giving it
+a requirements file would invite exactly the dependency the baseline exists to
+refuse.
+
+**Rejected alternatives.** One requirements file for both jobs (would let a
+dependency reach the hermetic job). Per-package requirements files (nothing
+installs them; the job would have to glob, which is a second rule).
+
+**Revisit when.** The plugin suites need per-package dependency isolation, at
+which point a single flat list stops being the right shape.
+
+**Refs.** `requirements-plugin-tests.txt`, `.github/workflows/ci.yml`,
+`tests/test_sync_vendor_source.py`
+(`test_the_ci_dependency_list_keeps_pyyaml`).
+
 ### Authored mode states nothing rather than stating emptiness, and the sync refuses it
 
 **Author.** Claude for Jeff Cox (custody-move unit U1, branch `mg/tooling`)

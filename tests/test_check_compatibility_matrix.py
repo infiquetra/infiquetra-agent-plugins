@@ -40,6 +40,11 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import check_compatibility_matrix as ccm  # noqa: E402
 import port_config  # noqa: E402
+import sync_vendor_source as svs  # noqa: E402
+
+#: The client extension directory, read from the module that owns the name
+#: rather than spelled again here.
+EXTENSION_DIRECTORY = svs.PORTABLE_PACKAGE_ROOT_MARKER
 
 
 EVIDENCE = ROOT / "docs" / "evidence"
@@ -960,6 +965,53 @@ class PackageResolutionTest(unittest.TestCase):
         source = Path(ccm.__file__).read_text(encoding="utf-8")
         for forbidden in ("--update", "--fix", "--write", "--refresh"):
             self.assertNotIn(f'"{forbidden}"', source)
+
+
+class ClientExtensionRedactionTest(unittest.TestCase):
+    """The client extension directory must stay a directory, not read as a host.
+
+    The redaction rule reports dotted tokens in evidence as hostnames. The
+    client extension directory is spelled in reverse-domain form
+    (`com.infiquetra.claude`), so it has to be collected as a known
+    non-host token or every matrix that mentions it fails redaction.
+
+    It used to be collected from the port descriptors alone. Under the
+    2026-09-22 custody decision every descriptor becomes authored and states no
+    `source`, so that reading returns nothing and the directory reads as a
+    hostname again -- in a catalog whose own evidence is full of it. The
+    package trees are therefore read as well.
+
+    The cycle-17 mutation campaign found this guard untested: deleting the tree
+    scan survived. These tests are that gap closed.
+    """
+
+    def setUp(self) -> None:
+        self.directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.directory, True)
+
+    def package_with_extension(self, name: str = "example") -> None:
+        extension = self.directory / "plugins" / name / EXTENSION_DIRECTORY
+        extension.mkdir(parents=True)
+        (extension / "plugin.json").write_text("{}", encoding="utf-8")
+
+    def test_the_directory_is_collected_from_the_package_trees(self) -> None:
+        self.package_with_extension()
+        self.assertIn(EXTENSION_DIRECTORY, ccm.non_host_dotted_tokens(self.directory))
+
+    def test_it_is_collected_even_when_no_descriptor_names_it(self) -> None:
+        """Which is every package's state once custody has moved here."""
+        self.package_with_extension()
+        self.assertEqual(port_config.available(self.directory), [])
+        self.assertIn(EXTENSION_DIRECTORY, ccm.non_host_dotted_tokens(self.directory))
+
+    def test_an_ordinary_package_directory_is_not_collected(self) -> None:
+        """Only reverse-domain names are directories; the rest stay hostnames."""
+        package = self.directory / "plugins" / "example" / "scripts"
+        package.mkdir(parents=True)
+        self.assertEqual(ccm.non_host_dotted_tokens(self.directory), frozenset())
+
+    def test_the_committed_catalog_still_declares_the_directory(self) -> None:
+        self.assertIn(EXTENSION_DIRECTORY, ccm.non_host_dotted_tokens(ROOT))
 
 
 class VersionBoundEvidenceTest(unittest.TestCase):

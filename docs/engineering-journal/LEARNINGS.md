@@ -2,6 +2,43 @@
 
 ## 2026-09-22
 
+### A guard that fires on your own change is the procedure, not an obstacle
+
+**Author.** Claude for Jeff Cox (custody-move unit U1, branch `mg/tooling`)
+
+**Evidence.** `MutationProofBindingTest` in `tests/test_site_profile.py` records
+a SHA-256 digest for each of five graded source files and fails when one is
+edited without its mutation campaign being re-run. Unit U1 was required by its
+own brief to change three of those five: `scripts/port_config.py` (schema
+version 4), `scripts/check_compatibility_matrix.py` (version-bound evidence),
+and `scripts/check_repo.py` (the marketplace staleness check). The brief also
+said not to run a new mutation proof. Those two instructions cannot both be
+satisfied, and the three ways out are not equal: editing the recorded digests
+would make the evidence document claim a campaign exercised bytes it never saw,
+which is the exact defect the binding test was added to prevent after a cycle-7
+review found a proof recording a digest matching no committed state. Reported as
+a blocker, the answer was to run the campaign scoped to the changed files. It
+graded 33 anchors -- 21 re-covering cycle 16's anchors in those three files, 12
+for the guards U1 added -- and is published as cycle 17.
+
+**Mechanism.** An instruction to skip ceremony is written before anyone knows
+which guards the work will trip. When a guard fires on the change that is
+supposed to be routine, that is the guard doing its job: it has found a place
+where the work is not routine. The cost of the procedure is bounded and known;
+the cost of suppressing it is an evidence artifact that is confidently wrong,
+which is worse than no evidence because it will be believed. The instruction to
+avoid ceremony governs the cases where nothing fires.
+
+**Generalizable rule.** *When a guard fires on your own change, run its
+procedure or stop and ask; never edit the guard's record to match your bytes.* A
+blanket "skip the ceremony" instruction cannot anticipate which guard will fire,
+so a fired guard is new information the instruction did not account for.
+
+**Refs.** `tests/test_site_profile.py` (`MutationProofBindingTest`),
+`docs/evidence/2026-09-22-cycle17-mutation-proof-custody-move-tooling.txt`,
+`docs/evidence/2026-08-25-cycle16-mutation-proof-portable-copies.txt` (the
+superseded predecessor and the cycle-7 identification failure it records).
+
 ### A generated build declaration has to follow the client, not the package root
 
 **Author.** Claude for Jeff Cox (custody-move unit U1, branch `mg/tooling`)
