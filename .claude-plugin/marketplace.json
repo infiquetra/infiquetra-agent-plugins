@@ -10,6 +10,25 @@
   },
   "plugins": [
     {
+      "name": "deploy",
+      "source": "./plugins/deploy",
+      "version": "0.2.3",
+      "description": "tag-promotion deployment operations for Infiquetra repositories.",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "keywords": [
+        "deploy",
+        "tag-promotion",
+        "rollback",
+        "hotfix",
+        "release-notes",
+        "infiquetra"
+      ]
+    },
+    {
       "name": "voice",
       "source": "./plugins/voice",
       "version": "0.4.0",

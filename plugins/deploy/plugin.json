@@ -1,6 +1,6 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "deploy",
-  "version": "0.2.2",
-  "description": "tag-promotion deployment operations for Infiquetra repositories."
+  "version": "0.2.3",
+  "description": "Tag-promotion deployment operations for Infiquetra repositories. The portable core is the deploy-state skill and the scripts that mint a policy tag, report environment drift, and preview release notes. Claude commands and the release orchestrator live under com.infiquetra.claude."
 }

@@ -8,9 +8,9 @@ Preview deployment notes before promotion.
 
 ## Instructions
 
-1. Load `deploy/skills/deploy-state/SKILL.md`.
-2. Use `plugins/deploy/scripts/preview_release_notes.py` to inspect the commit
-   range and produce a concise operator-facing summary.
+1. Load the deploy-state skill at `${CLAUDE_PLUGIN_ROOT}/skills/deploy-state/SKILL.md`.
+2. Use `${CLAUDE_PLUGIN_ROOT}/skills/deploy-state/scripts/preview_release_notes.py` to inspect the
+   commit range and produce a concise operator-facing summary.
 3. Include issue links, PR links, deployment tags, checks, and risk notes when available.
 4. Do not create GitHub releases unless the user explicitly asks for that mutation.
 

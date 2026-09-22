@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.3] - 2026-09-22
+
+0.2.3 — imported from infiquetra-claude-plugins@acc99fe7 (upstream 0.2.2); authored here from this commit; no provenance manifest from now on.
+
+### Changed
+
+- Commands and the `release-orchestrator` agent now live under `com.infiquetra.claude/`. The root `.claude-plugin/plugin.json` only points at those paths and at `skills/`. Claude installs the package root, so the portable skill and scripts travel with the adapter.
+- The three scripts moved from `scripts/` at the package root into `skills/deploy-state/scripts/`. OpenCode, Gemini CLI, Muse, and Hermes install the skill directory and not the package, so a script left at the package root is absent when those harnesses run. The script behaviour is unchanged.
+- Command and skill paths that assumed the upstream checkout (`plugins/deploy/scripts/...`, `deploy/skills/deploy-state/SKILL.md`) now use the installed package root (`${CLAUDE_PLUGIN_ROOT}/skills/deploy-state/...`) or the skill directory itself. The saga handoff script stays a reference to the saga package (`plugins/saga/scripts/deploy_handoff.py`); deploy does not contain it.
+- The deploy-state skill is the one portable capability for all four command behaviors. Upstream already shipped that skill. A second skill named `deploy` would be the same capability under a second name, so none was added. Its frontmatter description is a single line, and it now states how to run each script, the flags, and the credential variables `GH_TOKEN` and `GITHUB_TOKEN` by name only.
+- `preview_release_notes.py` still does not check that the repository owner is `infiquetra`. That check lives in `mint_tag.py` and `query_deployments.py`. Changing the notes script would be a behaviour change, and this import does not make one.
+
+### Tests
+
+- Carried upstream `tests/test_deploy_plugin.py` into `plugins/deploy/tests/test_deploy_plugin.py`. The import bootstrap now starts at this package instead of the upstream repository root. Command and agent paths point into `com.infiquetra.claude/`. Version expectation is 0.2.3, agreed across the portable manifest, the Claude manifest, the adapter manifest, and the marketplace entry.
+- Added a credential-free `--help` run of each script, the way a user invokes it.
+- Dropped tests: none. Repo-wide upstream files that mention deploy (`tests/test_agent_preamble_identity.py`, `tests/test_check_ownership_lanes.py`, and the ownership-lane script) are catalog checks, not this package's contract, and stay with the repo-wide import.
+
 ## [0.2.2] - 2026-09-20
 
 ### Changed

@@ -1,0 +1,35 @@
+{
+  "schema_version": "4",
+  "package": "deploy",
+  "package_root": "plugins/deploy",
+  "package_manifest": "plugin.json",
+  "assessment": {
+    "credential_prefixes": [
+      "GH_",
+      "GITHUB_"
+    ],
+    "package_scripts": [
+      "mint_tag.py",
+      "preview_release_notes.py",
+      "query_deployments.py"
+    ],
+    "mutating_operations": [
+      "--force-unhealthy",
+      "push"
+    ],
+    "entrypoints": [
+      "skills/deploy-state/scripts/mint_tag.py",
+      "skills/deploy-state/scripts/preview_release_notes.py",
+      "skills/deploy-state/scripts/query_deployments.py"
+    ],
+    "skill_units": [
+      "skills/deploy-state"
+    ],
+    "declared_none": []
+  },
+  "provenance": {
+    "notes": [
+      "Authored in this repository from the one-shot import of infiquetra-claude-plugins at acc99fe7 (upstream 0.2.2). There is no provenance manifest and no upstream pin to synchronize."
+    ]
+  }
+}

@@ -1,14 +1,81 @@
 ---
 name: deploy-state
-description: |
-  Infiquetra deployment state and tag-promotion guidance. Use for /deploy, /deploy-status,
-  /deploy-notes, /deploy-hotfix, rollback planning, hotfix promotion, and deployment evidence.
+description: Infiquetra tag-promotion deployment. Mint a policy tag, report environment drift, preview release notes, or prepare a hotfix. Use for deploy, deploy-status, deploy-notes, and deploy-hotfix.
+compatibility: python>=3.12
 ---
 
 # Deploy State
 
 Use this skill for Infiquetra repository deployment work. It is intentionally separate from
 `saga` because deployment mutation deserves a hard boundary.
+
+The capability name is `deploy-state`. The four command behaviors (promote, status, release
+notes, hotfix) are this one skill. Claude Code also exposes them as slash commands under the
+client extension; other harnesses run the scripts below.
+
+## Running the scripts
+
+The three scripts are standard-library Python. They live in this skill directory so a harness
+that installs the skill, rather than the whole package, still has them.
+
+From this skill directory (the installed skill root, or `skills/deploy-state/` in the package):
+
+```bash
+python3 scripts/mint_tag.py --help
+python3 scripts/query_deployments.py --help
+python3 scripts/preview_release_notes.py --help
+```
+
+Claude Code installs the package root. From that root the same files are
+`${CLAUDE_PLUGIN_ROOT}/skills/deploy-state/scripts/`.
+
+### mint_tag.py
+
+Builds an Infiquetra deployment tag. Without `--dry-run` it creates the tag and pushes it.
+
+| Flag | Required | Meaning |
+|---|---|---|
+| `--env` | yes | `nonprod`, `staging`, or `production` |
+| `--version` | no | `1.2.3`, or hotfix form `1.2.3.1`. When omitted, nonprod uses the latest snapshot tag, staging uses the current nonprod deployment, and production uses the current staging deployment |
+| `--repo` | no | Repository name or `owner/name`. When omitted, the `origin` remote of the current git checkout, which must be `github.com/infiquetra/*` |
+| `--ref` | no | Commit-ish to tag. Default `HEAD`. A value other than `HEAD` is a hotfix and requires `--version` |
+| `--rollback` | no | Mint `rollback-<env>-v<version>` instead of a forward tag |
+| `--dry-run` | no | Print the tag, the ref, and the git commands. Do not create or push a tag |
+| `--force-unhealthy` | no | Promote even when `unhealthy-v<version>` exists, after the operator has verified the snapshot by hand |
+
+`--dry-run` still resolves the repository and may call `git` and `gh` to infer a version. It does not push.
+
+### query_deployments.py
+
+Prints the latest tag-promotion deployment in `nonprod`, `staging`, and `production`, and whether those versions drift.
+
+| Flag | Required | Meaning |
+|---|---|---|
+| `--repo` | no | Repository name or `owner/name`. Same default as `mint_tag.py` |
+
+### preview_release_notes.py
+
+Prints a short summary of the commits and files between two refs. It does not create a GitHub release.
+
+| Flag | Required | Meaning |
+|---|---|---|
+| `--repo` | yes | `owner/name` |
+| `--base` | yes | Base ref or tag |
+| `--head` | yes | Head ref or tag |
+
+### Credentials
+
+The scripts do not read a credential variable. `mint_tag.py` and `query_deployments.py` call `git` and the GitHub CLI (`gh`). `preview_release_notes.py` calls `gh`. When `GH_TOKEN` or `GITHUB_TOKEN` is set, `gh` uses that variable. This skill never asks for the value and never writes it down. A run with neither variable set and no existing `gh` login fails at the CLI.
+
+Pushing a tag uses the git credentials already configured for that checkout. `--dry-run` does not push.
+
+### Which harness runs what
+
+- Claude Code installs this package from the catalog marketplace. The slash commands `/deploy`, `/deploy-status`, `/deploy-notes`, and `/deploy-hotfix`, and the `release-orchestrator` agent, live under `com.infiquetra.claude/`. They call the scripts above.
+- OpenCode, Gemini CLI, Muse, and Hermes install this skill directory. Run the scripts from that directory.
+- A harness that installs the package root finds the same scripts at `skills/deploy-state/scripts/`.
+
+This package has no Model Context Protocol (MCP) server.
 
 ## Source Of Truth
 
@@ -58,9 +125,11 @@ deployment-specific cache. Do not commit raw API responses or validator JSON.
 ## Accepting a saga handoff
 
 When promoting on behalf of a saga-tracked item, `saga`'s `/work` mints an **offer** (an ack
-token + a gate-or-auto payload) at or after merge via `plugins/saga/scripts/deploy_handoff.py
-offer`. Ownership is not considered transferred until `deploy` explicitly **acknowledges (ack)**
-it — an offer alone is never read as "done".
+token + a gate-or-auto payload) at or after merge via the saga package's
+`scripts/deploy_handoff.py offer`. In this catalog that file is
+`plugins/saga/scripts/deploy_handoff.py`. It is not part of deploy. Ownership is not considered
+transferred until `deploy` explicitly **acknowledges (ack)** it — an offer alone is never read
+as "done".
 
 1. Read the offer before promoting:
 
@@ -80,8 +149,9 @@ it — an offer alone is never read as "done".
 
 3. **Apply the gate-or-auto rule before promoting** — do not decide gate-vs-auto by convention.
    Read the payload from the offer (`deploy_handoff.py read`); the rule below is implemented
-   mechanically as `authorize_promotion` in `plugins/saga/scripts/deploy_handoff.py`. The payload
-   is `gate` or `auto`, captured once at saga intent time and carried unmodified with the offer:
+   mechanically as `authorize_promotion` in the saga package's `scripts/deploy_handoff.py`. The
+   payload is `gate` or `auto`, captured once at saga intent time and carried unmodified with the
+   offer:
    - `gate` **always** blocks pending explicit operator confirmation. A `gate` payload is never
      silently overridden to auto-fire, regardless of environment.
    - `auto` authorizes unattended promotion for `nonprod` only; `staging` and `production` always
@@ -92,12 +162,3 @@ it — an offer alone is never read as "done".
 
 This ack contract is scoped to the saga -> deploy edge and does not change tag-promotion
 mechanics, environment model, or the confirmation requirements in "Deployment Workflow" above.
-
-## Script Helpers
-
-- `plugins/deploy/scripts/mint_tag.py`: build and optionally push policy tags.
-- `plugins/deploy/scripts/query_deployments.py`: show status and drift.
-- `plugins/deploy/scripts/preview_release_notes.py`: summarize candidate changes.
-- `plugins/saga/scripts/deploy_handoff.py`: read/accept a saga's deploy-handoff offer via its
-  `read`/`accept`/`reconcile` CLI verbs; its `authorize_promotion` function implements the
-  gate-or-auto rule (see "Accepting a saga handoff" above).
