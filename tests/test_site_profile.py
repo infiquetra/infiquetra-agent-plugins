@@ -1101,18 +1101,24 @@ class MutationProofBindingTest(unittest.TestCase):
         changes a graded file's bytes. Counting that as a kill made every
         mutation a kill by construction -- see the cycle-12 proof's header.
 
-        The document is cycle 18. Cycle 17 remains the proof of the bytes
-        before the Codex packaging wire, and is preserved unedited. Cycle 18
-        exists because ``scripts/check_repo.py`` gained one call,
-        ``check_codex_packaging_manifest``. The other four graded files are
-        unchanged and their cycle-17 digests are carried. The other guards
-        inside ``check_repo.py`` were graded in cycle 17 against the previous
-        bytes and were not re-patched here. The mutation this cycle graded is
-        the removal of that one call.
+        The document is cycle 19. Cycle 18 remains the proof of the bytes
+        before the evidence-gate review fixes, and is preserved unedited.
+        Cycle 19 exists because two files gained new guards together: an
+        explicit ``notice`` document state in
+        ``scripts/check_compatibility_matrix.py`` (``check_notice_discipline``,
+        the notice exclusion in ``is_matrix_document``, the notice branch in
+        ``check_document_status``, notice as a valid supersession successor,
+        ``current_matrix_report``, and their two CLI wires in ``main``), and a
+        machine-specific path scanner wired into ``scripts/check_repo.py``
+        (``check_machine_specific_paths`` and its call from ``check_repo``).
+        The other three graded files are unchanged and their cycle-18 digests
+        are carried. The guards inside ``check_repo.py`` graded in cycle 18
+        were not re-patched here; the nine mutations this cycle graded are the
+        nine new guards listed above, one mutation per guard.
         """
         root = self.EVIDENCE.parent.parent
         recorded = self._recorded(
-            "2026-09-22-cycle18-mutation-proof-codex-packaging.txt"
+            "2026-09-22-cycle19-mutation-proof-evidence-gate.txt"
         )
         self.assertEqual(set(recorded), set(self.GRADED), recorded)
         for relative in self.GRADED:

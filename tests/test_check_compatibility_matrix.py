@@ -1249,7 +1249,9 @@ class DocumentStatusTest(unittest.TestCase):
         preamble = f"<!-- {ccm.STATUS_DIRECTIVE}: retired -->\n\n# Matrix\n\n"
         path = self.write("odd.md", valid_record(), preamble)
         problems = ccm.check_matrix(path, FAKE_CONFIG)
-        self.assertTrue(any("neither 'current' nor 'superseded'" in p for p in problems))
+        self.assertTrue(
+            any("none of 'current', 'superseded', 'notice'" in p for p in problems)
+        )
 
     def test_a_directive_inside_a_code_fence_is_an_example_not_a_declaration(self) -> None:
         # A matrix has to be able to document the directive format without the
@@ -1273,6 +1275,225 @@ class DocumentStatusTest(unittest.TestCase):
             f"<!-- {ccm.STATUS_DIRECTIVE}: {ccm.STATUS_SUPERSEDED} -->\n"
         )
         self.assertEqual(ccm.read_directives(text)[ccm.STATUS_DIRECTIVE], ccm.STATUS_SUPERSEDED)
+
+
+def notice_preamble() -> str:
+    return f"<!-- {ccm.STATUS_DIRECTIVE}: {ccm.STATUS_NOTICE} -->\n\n# Notice\n\n"
+
+
+NOTICE_RECORD = {"notice": "no ten-client run yet"}
+
+
+class NoticeStatusTest(unittest.TestCase):
+    """A notice performs no assessment, and the checker has to treat it that way.
+
+    Added with the 2026-09-22 "explicit notice state for compatibility
+    evidence" decision: three documents under `docs/evidence/` explained why no
+    live matrix exists yet without embedding a `$.package`/`$.clients` record,
+    and were marked (or would have defaulted to) `current` all the same. A
+    notice closes that gap: it is a valid `superseded-by` target, it is never
+    treated as a matrix, and it is never counted as a current matrix.
+    """
+
+    def setUp(self) -> None:
+        self.directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.directory, True)
+
+    def write(self, name: str, text: str) -> Path:
+        path = self.directory / name
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_a_well_formed_notice_has_no_document_status_problems(self) -> None:
+        """The notice branch itself: no binding, no supersession obligations."""
+        text = notice_preamble() + "```json\n" + json.dumps(NOTICE_RECORD) + "\n```\n"
+        path = self.write("notice.md", text)
+        record = ccm.extract_record(text)
+        problems = ccm.check_document_status(text, record, path, FAKE_CONFIG)
+        self.assertEqual(problems, [])
+
+    def test_a_notice_is_never_treated_as_a_matrix(self) -> None:
+        text = notice_preamble() + "```json\n" + json.dumps(NOTICE_RECORD) + "\n```\n"
+        self.write("notice.md", text)
+        self.assertFalse(ccm.is_matrix_document(text))
+        self.assertEqual(ccm.matrix_documents(self.directory), [])
+
+    def test_a_notice_shaped_like_a_matrix_is_still_never_a_matrix(self) -> None:
+        """Even a fenced block with `package`/`clients` does not make a notice
+        a matrix: the status directive controls, not the shape alone."""
+        record = valid_record()
+        text = notice_preamble() + "```json\n" + json.dumps(record) + "\n```\n"
+        self.assertFalse(ccm.is_matrix_document(text))
+
+    def test_a_notice_is_a_valid_supersession_target(self) -> None:
+        notice_path = self.write(
+            "notice.md", notice_preamble() + "```json\n" + json.dumps(NOTICE_RECORD) + "\n```\n"
+        )
+        # A stale record -- a different version and a moved tree -- the way a
+        # real retired matrix actually is; a live-tree record here would trip
+        # the separate "marking the live matrix superseded" refusal instead of
+        # exercising the successor check this test targets.
+        stale = valid_record()
+        stale["package"]["version"] = "1.9.0"
+        stale["package"]["file_count"] = FAKE_FILE_COUNT + 5
+        stale["package"]["tree_sha256"] = "1" * 64
+        old = self.write("old.md", superseded_preamble(notice_path.name) + as_document(stale))
+        record = ccm.extract_record(old.read_text(encoding="utf-8"))
+        problems = ccm.check_document_status(
+            old.read_text(encoding="utf-8"), record, old, FAKE_CONFIG
+        )
+        self.assertEqual(problems, [])
+
+    def test_a_notice_may_not_also_declare_supersession_directives(self) -> None:
+        text = (
+            f"<!-- {ccm.STATUS_DIRECTIVE}: {ccm.STATUS_NOTICE} -->\n"
+            f"<!-- {ccm.SUPERSEDED_BY_DIRECTIVE}: elsewhere.md -->\n\n# Notice\n\n"
+            "```json\n" + json.dumps(NOTICE_RECORD) + "\n```\n"
+        )
+        path = self.write("notice.md", text)
+        record = ccm.extract_record(text)
+        problems = ccm.check_document_status(text, record, path, FAKE_CONFIG)
+        self.assertTrue(any("notice is not a supersession" in p for p in problems))
+
+    def test_an_assessment_free_document_marked_current_fails(self) -> None:
+        self.write(
+            "stale-current.md",
+            f"<!-- {ccm.STATUS_DIRECTIVE}: {ccm.STATUS_CURRENT} -->\n\n# Notice\n\n"
+            "```json\n" + json.dumps(NOTICE_RECORD) + "\n```\n",
+        )
+        problems = ccm.check_notice_discipline(self.directory)
+        self.assertTrue(
+            any(
+                "stale-current.md" in p and "embeds no machine-readable" in p
+                for p in problems
+            )
+        )
+
+    def test_an_assessment_free_document_with_no_directive_also_fails(self) -> None:
+        """`matrix-status` defaults to `current`, so silence is not an escape."""
+        self.write(
+            "no-directive.md",
+            "# Notice\n\n```json\n" + json.dumps(NOTICE_RECORD) + "\n```\n",
+        )
+        problems = ccm.check_notice_discipline(self.directory)
+        self.assertTrue(
+            any(
+                "no-directive.md" in p and "embeds no machine-readable" in p
+                for p in problems
+            )
+        )
+
+    def test_a_document_marked_notice_is_never_flagged(self) -> None:
+        self.write(
+            "notice.md", notice_preamble() + "```json\n" + json.dumps(NOTICE_RECORD) + "\n```\n"
+        )
+        self.assertEqual(ccm.check_notice_discipline(self.directory), [])
+
+    def test_a_real_matrix_marked_current_is_never_flagged(self) -> None:
+        self.write("matrix.md", as_document(valid_record()))
+        self.assertEqual(ccm.check_notice_discipline(self.directory), [])
+
+    def test_a_superseded_document_with_no_record_is_not_this_rules_concern(self) -> None:
+        """Out of scope for this rule: only an explicit or defaulted `current`
+        claim over an assessment-free document is refused here."""
+        self.write(
+            "old-notice.md",
+            superseded_preamble("target.md") + "```json\n" + json.dumps(NOTICE_RECORD) + "\n```\n",
+        )
+        problems = ccm.check_notice_discipline(self.directory)
+        self.assertEqual(problems, [])
+
+    def test_the_three_committed_notices_declare_themselves_notices(self) -> None:
+        for name in (
+            "2026-08-27-agent-launcher-compatibility-matrix.md",
+            "2026-09-22-unifi-authored-cut.md",
+            "2026-09-22-mission-control-compatibility-notice.md",
+        ):
+            with self.subTest(document=name):
+                path = EVIDENCE / name
+                self.assertTrue(path.is_file())
+                text = path.read_text(encoding="utf-8")
+                self.assertEqual(
+                    ccm.read_directives(text).get(ccm.STATUS_DIRECTIVE), ccm.STATUS_NOTICE
+                )
+                self.assertFalse(ccm.is_matrix_document(text))
+
+    def test_the_committed_evidence_directory_has_no_notice_discipline_problems(self) -> None:
+        self.assertEqual(ccm.check_notice_discipline(EVIDENCE), [])
+
+
+class CurrentMatrixReportTest(unittest.TestCase):
+    """The per-package 'current matrix: yes/none' line the summary prints."""
+
+    def test_unifi_has_no_current_matrix_today(self) -> None:
+        # unifi's only non-superseded compatibility document is the notice
+        # explaining that 2.0.7 has no ten-client run yet.
+        lines = ccm.current_matrix_report(ROOT)
+        self.assertIn("unifi: current matrix: none", lines)
+
+    def test_a_package_with_no_current_matrix_reports_none(self) -> None:
+        # mission-control's only non-superseded compatibility document is the
+        # notice, which carries no record, so it must report none.
+        lines = ccm.current_matrix_report(ROOT)
+        self.assertIn("mission-control: current matrix: none", lines)
+
+    def test_every_ported_package_gets_exactly_one_line(self) -> None:
+        lines = ccm.current_matrix_report(ROOT)
+        names = [line.split(":", 1)[0] for line in lines]
+        self.assertEqual(names, port_config.available(ROOT))
+
+    def test_a_document_that_is_current_and_has_a_record_reports_yes(self) -> None:
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, directory, True)
+        evidence = directory / "docs" / "evidence"
+        evidence.mkdir(parents=True)
+        ports_dir = directory / "ports"
+        ports_dir.mkdir()
+        (ports_dir / "unifi.json").write_text(
+            (ROOT / "ports" / "unifi.json").read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        (evidence / "matrix.md").write_text(as_document(valid_record()), encoding="utf-8")
+        lines = ccm.current_matrix_report(directory)
+        self.assertIn("unifi: current matrix: yes", lines)
+
+
+class CLIWiringTest(unittest.TestCase):
+    """The command-line entrypoint actually runs the new checks, not just the
+    library functions the other tests exercise directly.
+
+    These write a throwaway file into the real evidence directory rather than
+    a scratch one, because `check_notice_discipline` and `current_matrix_report`
+    default to `EVIDENCE_DIRECTORY` as a bound parameter default: patching the
+    module attribute after import does not change a default already captured
+    at function-definition time, and `ccm.main` calls both with no arguments.
+    Every write is removed in `finally`, whatever the test result.
+    """
+
+    def test_the_cli_fails_on_an_assessment_free_current_document(self) -> None:
+        path = EVIDENCE / "zzz-test-only-cli-wiring-notice-discipline.md"
+        self.assertFalse(path.exists(), "stray fixture from a previous run")
+        path.write_text(
+            f"<!-- {ccm.STATUS_DIRECTIVE}: {ccm.STATUS_CURRENT} -->\n\n# Not a matrix\n\n"
+            "```json\n" + json.dumps({"notice": "no run yet"}) + "\n```\n",
+            encoding="utf-8",
+        )
+        try:
+            with redirect_stdout(io.StringIO()) as output:
+                exit_code = ccm.main([])
+        finally:
+            path.unlink()
+        self.assertEqual(exit_code, 1)
+        printed = output.getvalue()
+        self.assertIn("Notice discipline:", printed)
+        self.assertIn(path.name, printed)
+        self.assertIn("embeds no machine-readable", printed)
+
+    def test_the_cli_prints_the_current_matrix_report(self) -> None:
+        with redirect_stdout(io.StringIO()) as output:
+            ccm.main([])
+        printed = output.getvalue()
+        self.assertIn("Current matrix by package:", printed)
+        self.assertIn("unifi: current matrix: none", printed)
 
 
 class MatrixDiscoveryTest(unittest.TestCase):
@@ -1368,7 +1589,7 @@ class LiveDocumentTest(unittest.TestCase):
         )
         self.assertEqual(
             ccm.read_directives(target.read_text(encoding="utf-8")).get(ccm.STATUS_DIRECTIVE),
-            ccm.STATUS_CURRENT,
+            ccm.STATUS_NOTICE,
         )
         self.assertNotEqual(ccm.check_package_binding(self.record, REAL_CONFIG), [])
 
@@ -1430,7 +1651,7 @@ class SupersededDocumentTest(unittest.TestCase):
             ccm.read_directives(target.read_text(encoding="utf-8")).get(
                 ccm.STATUS_DIRECTIVE, ccm.STATUS_CURRENT
             ),
-            ccm.STATUS_CURRENT,
+            ccm.STATUS_NOTICE,
         )
         self.assertTrue(self.directives.get(ccm.SUPERSEDED_REASON_DIRECTIVE, "").strip())
 
@@ -1803,8 +2024,15 @@ class MissionControlSupersededDocumentTest(unittest.TestCase):
                     directives.get(ccm.STATUS_DIRECTIVE),
                     ccm.STATUS_SUPERSEDED,
                 )
+        # The successor both chains name is a notice, not an invented matrix:
+        # no ten-client run has been made against mission-control 2.21.1. A
+        # notice is a valid supersession target -- see the 2026-09-22 "explicit
+        # notice state for compatibility evidence" decision.
         notice = ccm.read_directives(MISSION_CONTROL_NOTICE.read_text(encoding="utf-8"))
-        self.assertEqual(notice.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_CURRENT)
+        self.assertEqual(notice.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_NOTICE)
+        self.assertFalse(
+            ccm.is_matrix_document(MISSION_CONTROL_NOTICE.read_text(encoding="utf-8"))
+        )
 
     def test_the_old_records_preserve_the_fingerprints_they_were_published_with(self) -> None:
         record = ccm.extract_record(

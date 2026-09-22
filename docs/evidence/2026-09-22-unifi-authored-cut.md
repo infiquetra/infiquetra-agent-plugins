@@ -1,4 +1,4 @@
-<!-- matrix-status: current -->
+<!-- matrix-status: notice -->
 
 # UniFi compatibility evidence is not current for 2.0.7
 

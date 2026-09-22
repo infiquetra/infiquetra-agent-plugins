@@ -1,0 +1,98 @@
+# Cycle-19 mutation proof - the notice status and the machine-path scanner
+# Digests are bound by MutationProofBindingTest: change a graded file
+# without re-running this proof and the suite fails. Paths are repository-relative.
+#
+# Supersedes 2026-09-22-cycle18-mutation-proof-codex-packaging.txt for the
+# binding test only. Cycle 18 is preserved unedited. Reason: two review
+# fixes landed together -- an explicit STATUS_NOTICE document state in
+# scripts/check_compatibility_matrix.py, and a machine-specific path scanner
+# wired into scripts/check_repo.py -- and both files gained new guards.
+#
+# The other three graded files were not edited and were not re-graded:
+#   plugins/unifi/scripts/site_profile.py
+#   scripts/assess_clients.py
+#   scripts/port_config.py
+# Their cycle-18 digests are carried below. Re-grading them would claim
+# coverage this run did not perform.
+#
+# This cycle graded ONLY the new wires added by this change, one mutation per
+# wire: for each, the guard was removed or inverted, the shipping test that
+# must kill it was run, its failure recorded verbatim below, the file
+# restored to its pre-mutation bytes, and the digest re-checked before the
+# next mutation began. No guard already graded in an earlier cycle was
+# re-patched here.
+#
+# MutationProofBindingTest is excluded from grading. The proof cannot start
+# from a fully green suite because this run computes the digest that test
+# asserts, and because the two TemplateSyncAuditTests cases fail on this
+# machine for the reason cycle 17 already recorded.
+
+## scripts/check_compatibility_matrix.py -- seven new guards
+
+## MUTATION 1: check_notice_discipline disabled (returns [] unconditionally)
+   Killed by: tests.test_check_compatibility_matrix.NoticeStatusTest.test_an_assessment_free_document_marked_current_fails
+   FAILED (failures=1)
+   AssertionError: False is not true
+
+## MUTATION 2: is_matrix_document's notice exclusion dropped (shape alone decides)
+   Killed by: tests.test_check_compatibility_matrix.NoticeStatusTest.test_a_notice_shaped_like_a_matrix_is_still_never_a_matrix
+   FAILED (failures=1)
+   AssertionError: True is not false
+
+## MUTATION 3: check_document_status's notice branch removed (falls through to
+## the superseded-obligations branch instead of returning early)
+   Killed by: tests.test_check_compatibility_matrix.NoticeStatusTest.test_a_well_formed_notice_has_no_document_status_problems
+   FAILED (failures=1)
+   AssertionError: Lists differ: ['notice.md: declares itself superseded but
+   names no superseded-by; superseded evidence that does not say what
+   replaced it is a dead end', 'notice.md: declares itself superseded but
+   records no superseded-reason'] != []
+
+## MUTATION 4: successor-status acceptance reverted from
+## "not in (STATUS_CURRENT, STATUS_NOTICE)" to "!= STATUS_CURRENT"
+   Killed by: tests.test_check_compatibility_matrix.NoticeStatusTest.test_a_notice_is_a_valid_supersession_target
+   FAILED (failures=1)
+   AssertionError: Lists differ: ["old.md: superseded-by names 'notice.md',
+   which is itself 'notice'; a supersession chain has to end at a current
+   matrix or a notice"] != []
+
+## MUTATION 5: current_matrix_report disabled (returns [] unconditionally)
+   Killed by: tests.test_check_compatibility_matrix.CurrentMatrixReportTest.test_a_package_with_no_current_matrix_reports_none
+   FAILED (failures=1)
+   AssertionError: 'mission-control: current matrix: none' not found in []
+
+## MUTATION 6: main()'s notice-discipline CLI wiring disabled (block gated
+## behind `if False:` in place of `if not explicit_documents:`)
+   Killed by: tests.test_check_compatibility_matrix.CLIWiringTest.test_the_cli_fails_on_an_assessment_free_current_document
+   FAILED (failures=1)
+   AssertionError: 0 != 1
+
+## MUTATION 7: main()'s current-matrix-report CLI printing disabled (block
+## gated behind `if False:` in place of `if report_lines:`)
+   Killed by: tests.test_check_compatibility_matrix.CLIWiringTest.test_the_cli_prints_the_current_matrix_report
+   FAILED (failures=1)
+   AssertionError: 'Current matrix by package:' not found in '...'
+   (full committed-matrix summary printed instead; report section absent)
+
+## scripts/check_repo.py -- two new guards
+
+## MUTATION 8: check_machine_specific_paths disabled (returns [] unconditionally)
+   Killed by: tests.test_check_repo.MachineSpecificPathTests.test_a_real_home_directory_is_reported
+   FAILED (failures=1)
+   AssertionError: 0 != 1 : []
+
+## MUTATION 9: the check_repo() wire to check_machine_specific_paths commented out
+   Killed by: tests.test_check_repo.MachineSpecificPathTests.test_the_gate_wires_this_check_in
+   FAILED (failures=1)
+   AssertionError: False is not true
+
+## RESTORED
+# carried from cycle 18, not re-graded in this cycle:
+plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
+# carried from cycle 18, not re-graded in this cycle:
+scripts/assess_clients.py sha256: 2f8fafe988f791e53403d619ed61e4749930838435d001993e8cf581ca1ad9d8
+scripts/check_compatibility_matrix.py sha256: 6850094b2af1624f6c59a9ef5d898a3af8e14e097a2235065948ae5796309de5
+scripts/check_repo.py sha256: 516826c5d286afee4d4a4868083c9b31d1b7ac4d9e2079cf46e23388fb4cdb8a
+# carried from cycle 18, not re-graded in this cycle:
+scripts/port_config.py sha256: 56216b7c8018b361d611356e21bc2383cb7d71ebf478f28436fee3c5c8e46b17
+byte-identical to pristine: YES

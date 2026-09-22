@@ -1,4 +1,4 @@
-<!-- matrix-status: current -->
+<!-- matrix-status: notice -->
 
 # Mission Control compatibility evidence — no current run
 

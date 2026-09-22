@@ -976,6 +976,129 @@ class SecretFreeValueTests(unittest.TestCase):
         )
 
 
+def _fabricated_home(prefix: str, user: str, tail: str = "") -> str:
+    """Build a ``/<prefix>/<user>/<tail>`` path from separate tokens.
+
+    This test file is itself under ``tests/``, one of the directories the
+    check under test scans. Writing the path as one contiguous string literal
+    here would make this file trip its own rule; joining pieces with ``+`` at
+    runtime keeps no single unbroken match sitting in the committed source.
+    """
+    pieces = ["/", prefix, "/", user, "/"]
+    if tail:
+        pieces.append(tail)
+    return "".join(pieces)
+
+
+class MachineSpecificPathTests(unittest.TestCase):
+    """A real operator's home directory must never ship inside a package or its tooling."""
+
+    def test_a_real_home_directory_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            home = _fabricated_home("Users", "jsmith", ".config/example")
+            write(plugin / "scripts" / "discover.py", f'DEFAULT_HOME = "{home}"\n')
+
+            errors = check_repo.check_machine_specific_paths(root)
+
+            self.assertEqual(len(errors), 1, errors)
+            self.assertIn("plugins/example/scripts/discover.py", errors[0])
+            self.assertIn(_fabricated_home("Users", "jsmith"), errors[0])
+
+    def test_a_real_linux_home_directory_is_also_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            home = _fabricated_home("home", "jsmith", ".local/share/example")
+            write(plugin / "README.md", f"Installs to {home}.\n")
+
+            errors = check_repo.check_machine_specific_paths(root)
+
+            self.assertEqual(len(errors), 1, errors)
+            self.assertIn(_fabricated_home("home", "jsmith"), errors[0])
+
+    def test_the_operator_placeholder_is_never_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            users_operator = _fabricated_home("Users", "operator", ".example")
+            home_operator = _fabricated_home("home", "operator", ".example")
+            write(plugin / "README.md", f"Installs to {users_operator} and {home_operator}.\n")
+
+            self.assertEqual(check_repo.check_machine_specific_paths(root), [])
+
+    def test_docs_is_excluded_from_the_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = _fabricated_home("Users", "jsmith", "repo")
+            write(root / "docs" / "evidence" / "capture.md", f"Captured at {home}.\n")
+
+            self.assertEqual(check_repo.check_machine_specific_paths(root), [])
+
+    def test_every_scanned_directory_is_covered(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for directory_name in check_repo.MACHINE_SPECIFIC_PATH_SCAN_DIRECTORIES:
+                home = _fabricated_home("Users", "jsmith", directory_name)
+                write(root / directory_name / "hit.txt", f"{home}\n")
+
+            errors = check_repo.check_machine_specific_paths(root)
+
+            found = {error.split(":", 1)[0] for error in errors}
+            self.assertEqual(
+                found,
+                {
+                    f"{directory_name}/hit.txt"
+                    for directory_name in check_repo.MACHINE_SPECIFIC_PATH_SCAN_DIRECTORIES
+                },
+            )
+
+    def test_an_allowlisted_path_is_not_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            relative = "scripts/allowlisted.py"
+            home = _fabricated_home("Users", "jsmith", "machine")
+            write(root / relative, f"# captured on {home}\n")
+            original = check_repo.MACHINE_SPECIFIC_PATH_ALLOWLIST
+            check_repo.MACHINE_SPECIFIC_PATH_ALLOWLIST = frozenset({relative})
+            try:
+                self.assertEqual(check_repo.check_machine_specific_paths(root), [])
+            finally:
+                check_repo.MACHINE_SPECIFIC_PATH_ALLOWLIST = original
+
+    def test_a_repository_without_the_scanned_directories_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(check_repo.check_machine_specific_paths(Path(directory)), [])
+
+    def test_a_word_that_merely_contains_users_is_not_mistaken_for_the_path(self) -> None:
+        """A path segment ending in ``Users`` must not be read as the separator."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            write(plugin / "README.md", "See vendor/SubUsers/registry for the schema.\n")
+
+            self.assertEqual(check_repo.check_machine_specific_paths(root), [])
+
+    def test_the_gate_wires_this_check_in(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            home = _fabricated_home("Users", "jsmith", "example")
+            write(plugin / "README.md", f"Captured on {home}.\n")
+
+            self.assertTrue(
+                any(
+                    _fabricated_home("Users", "jsmith") in problem
+                    for problem in check_repo.check_repo(root)
+                )
+            )
+
+    def test_the_committed_repository_has_no_unallowlisted_hits(self) -> None:
+        """The real gate, against the real tree: every hit today is allowlisted."""
+        self.assertEqual(check_repo.check_machine_specific_paths(ROOT), [])
+
+
 class ContinuousIntegrationTests(unittest.TestCase):
     """The CI workflow's test paths must match the repository's on-disk plugin test directories."""
 

@@ -1,4 +1,4 @@
-<!-- matrix-status: current -->
+<!-- matrix-status: notice -->
 
 # Ten-client compatibility matrix — agent-launcher
 
