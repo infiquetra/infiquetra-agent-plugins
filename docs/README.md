@@ -45,7 +45,7 @@
   records what every installed coding-agent client did with the portable
   agent-launcher package across four stages with fingerprint-bound
   verification, with post-activation readback in
-  [evidence/2026-08-27-agent-launcher-post-activation-readback.md](evidence/2026-08-27-agent-launcher-post-activation-readback.md).
+  [evidence/2026-08-27-agent-launcher-post-activation-readback.md, superseded 2026-09-22 and kept as historical context](evidence/2026-08-27-agent-launcher-post-activation-readback.md).
 - [Mission Control ten-client compatibility matrix, superseded](evidence/2026-08-30-mission-control-compatibility-matrix.md)
   records what every installed coding-agent client did with the resynchronized
   portable mission-control package across four stages with fingerprint-bound
