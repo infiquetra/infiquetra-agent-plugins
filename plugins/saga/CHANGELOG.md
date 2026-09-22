@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.2] - 2026-09-22
+
+Carried three upstream tests the 1.2.1 import had omitted. A review of the import found that
+`tests/test_work_gate_integrity.py`, `tests/test_work_prose_contracts.py` and
+`tests/test_capability_degrade.py` from infiquetra-claude-plugins@acc99fe7 all target files that
+do ship in this package (`plugins/saga/scripts/saga.py`, `plugins/saga/scripts/lifecycle_state.py`,
+`plugins/saga/scripts/issue_progress.py`, `plugins/saga/skills/work/SKILL.md`) but were dropped
+from the 1.2.1 import without being recorded. All three now live under `plugins/saga/tests/` with
+the same names, their module bootstrap rewritten to this package's `plugins/saga/tests/` depth
+(the shared `ROOT`/`REPO_ROOT` walk gained two more `.parent` steps), and are otherwise the
+upstream assertions unchanged.
+
+`tests/test_capability_degrade.py` dropped its unused `es` fixture, which loaded
+`scripts/execution_spec.py`. That module does not exist in this package: it shipped the
+`cc-workflows-ultracode` dynamic-workflow orchestration tier, and the 1.0.0 removal (recorded
+above) archived it along with `concurrency_governor.py` and `dispatch_settlement.py`. No test in
+the file requested the fixture, so nothing it asserts changed.
+
 ## [1.2.1] - 2026-09-22
 
 1.2.1 — imported from infiquetra-claude-plugins@acc99fe7 (upstream 1.2.0); authored here from this commit; no provenance manifest from now on.
