@@ -40,7 +40,10 @@ def test_codex_manifests_agree_on_version_and_repository() -> None:
     assert claude["repository"] == adapter["repository"] == REPOSITORY
     assert {"codex", "delegation"} <= set(claude["keywords"])
     assert claude["commands"] == "./com.infiquetra.claude/commands/"
-    assert claude["agents"] == "./com.infiquetra.claude/agents/"
+    assert claude["agents"] == [
+        "./com.infiquetra.claude/agents/codex-coder.md",
+        "./com.infiquetra.claude/agents/codex-reviewer.md",
+    ]
     assert claude["skills"] == "./skills/"
 
 
