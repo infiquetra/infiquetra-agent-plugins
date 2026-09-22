@@ -401,6 +401,51 @@ def is_catalog_source(value: str, catalog: Path) -> bool:
     return is_catalog_url(value) or is_within_catalog(value, catalog)
 
 
+def readback_is_legacy(source: str) -> bool:
+    """True when a ``--check``-style source string names the old repository.
+
+    ``is_legacy_source`` reads a raw URL or path. A per-package readback
+    sometimes carries a display string instead, such as a Claude or Codex
+    plugin id (``<name>@infiquetra-plugins``); that id names the legacy
+    marketplace even though it is not a URL or a path.
+    """
+    if not source:
+        return False
+    if is_legacy_source(source):
+        return True
+    return f"@{LEGACY_MARKETPLACE}" in source
+
+
+def elsewhere_skip_message(name: str, source: str) -> str:
+    """The install-time skip line for a package already placed from elsewhere."""
+    text = f"{name} already installed from {source or 'elsewhere'}; not replacing"
+    if readback_is_legacy(source):
+        text += " (run --uninstall-legacy --execute first to replace it)"
+    return text
+
+
+def is_library_package(package: Package) -> bool:
+    """True for a package with no per-package Claude packaging manifest.
+
+    ``AGENTS.md`` requires a Claude packaging manifest at
+    ``<installed root>/.claude-plugin/plugin.json`` for anything meant to be
+    installed by a vendor client. A package with no ``.claude-plugin``
+    directory and no skill units, such as ``fleet-core``, is bundled into
+    other packages at build time and is not a standalone install target for
+    any client.
+    """
+    return not (package.root / ".claude-plugin").is_dir() and not package.skills
+
+
+def package_applicability(client: str, package: Package) -> str | None:
+    """A not-applicable reason, or None when the package should be checked normally."""
+    if is_library_package(package):
+        return "library"
+    if client in SKILL_CLIENTS and not package.skills:
+        return "no skills"
+    return None
+
+
 def resolve_executable(client: str, overrides: dict[str, str], *, required: bool) -> str:
     """The executable argv0.
 
@@ -699,6 +744,12 @@ def plan_claude(
                     ),
                 )
             )
+    listed_packages = [package for package in packages if package.name in listed]
+    readbacks = (
+        {row.package: row for row in check_claude(listed_packages, catalog, home)}
+        if listed_packages
+        else {}
+    )
     for package in packages:
         if package.name not in listed:
             actions.append(
@@ -707,6 +758,17 @@ def plan_claude(
                     "claude",
                     message=f"{package.name} is not listed in .claude-plugin/marketplace.json",
                 )
+            )
+            continue
+        row = readbacks[package.name]
+        if row.status == "installed-from-catalog":
+            actions.append(
+                Action("skip", "claude", message=f"{package.name} already installed from this catalog")
+            )
+            continue
+        if row.status == "installed-from-elsewhere":
+            actions.append(
+                Action("skip", "claude", message=elsewhere_skip_message(package.name, row.source))
             )
             continue
         actions.append(
@@ -965,14 +1027,32 @@ def plan_cursor(
 
 def plan_qwen(
     packages: list[Package],
+    catalog: Path,
     home: Path,
     overrides: dict[str, str],
     *,
     required: bool,
 ) -> list[Action]:
-    """``extensions install`` asks on stdin and, with no answer, exits without installing."""
+    """``extensions install`` refuses a name that is already installed.
+
+    Before running it, the same readback ``--check`` uses says whether this
+    package is already placed. ``extensions install`` asks on stdin and, with
+    no answer, exits without installing.
+    """
     actions: list[Action] = []
+    readbacks = {row.package: row for row in check_qwen(packages, home, catalog)} if packages else {}
     for package in packages:
+        row = readbacks[package.name]
+        if row.status == "installed-from-catalog":
+            actions.append(
+                Action("skip", "qwen", message=f"{package.name} already installed from this catalog")
+            )
+            continue
+        if row.status == "installed-from-elsewhere":
+            actions.append(
+                Action("skip", "qwen", message=elsewhere_skip_message(package.name, row.source))
+            )
+            continue
         actions.append(
             command_action(
                 "qwen",
@@ -991,19 +1071,36 @@ def plan_qwen(
 
 def plan_grok(
     packages: list[Package],
+    catalog: Path,
+    home: Path,
     overrides: dict[str, str],
     *,
     required: bool,
 ) -> list[Action]:
-    return [
-        command_action(
-            "grok",
-            ("plugin", "install", str(package.root), "--trust"),
-            overrides,
-            required=required,
+    """``plugin install`` refuses a name that is already installed."""
+    actions: list[Action] = []
+    readbacks = {row.package: row for row in check_grok(packages, home, catalog)} if packages else {}
+    for package in packages:
+        row = readbacks[package.name]
+        if row.status == "installed-from-catalog":
+            actions.append(
+                Action("skip", "grok", message=f"{package.name} already installed from this catalog")
+            )
+            continue
+        if row.status == "installed-from-elsewhere":
+            actions.append(
+                Action("skip", "grok", message=elsewhere_skip_message(package.name, row.source))
+            )
+            continue
+        actions.append(
+            command_action(
+                "grok",
+                ("plugin", "install", str(package.root), "--trust"),
+                overrides,
+                required=required,
+            )
         )
-        for package in packages
-    ]
+    return actions
 
 
 def plan_agy(
@@ -1032,6 +1129,11 @@ def plan_agy(
         if not isinstance(source, str):
             source = ""
         directory = plugins_root / package.name
+        if directory.exists() and is_catalog_source(source, catalog):
+            actions.append(
+                Action("skip", "agy", message=f"{package.name} already installed from this catalog")
+            )
+            continue
         if directory.exists() and not is_catalog_source(source, catalog):
             if is_dedicated_source(source):
                 message = f"{directory} records {source}, a dedicated repository"
@@ -1108,6 +1210,14 @@ def plan_symlink_client(client: str, packages: list[Package], home: Path) -> lis
             blocked = existing_link_blocks(dest, target)
             if blocked:
                 actions.append(Action("skip", client, message=blocked))
+                continue
+            already_recorded = find_link(document, str(dest))
+            if _resolves_to(dest, target) and (
+                already_recorded is not None and already_recorded.get("target") == str(target)
+            ):
+                actions.append(
+                    Action("skip", client, message=f"{skill.name} already installed from this catalog")
+                )
                 continue
             if not _resolves_to(dest, target):
                 actions.append(Action("symlink", client, path=str(dest), target=str(target)))
@@ -1252,9 +1362,9 @@ def plan_install(
     if client == "cursor":
         return plan_cursor(home, overrides, required=required)
     if client == "qwen":
-        return plan_qwen(packages, home, overrides, required=required)
+        return plan_qwen(packages, catalog, home, overrides, required=required)
     if client == "grok":
-        return plan_grok(packages, overrides, required=required)
+        return plan_grok(packages, catalog, home, overrides, required=required)
     if client == "opencode":
         return plan_symlink_client("opencode", packages, home)
     if client == "hermes":
@@ -1695,6 +1805,8 @@ def plan_uninstall(
 def format_readback(row: Readback) -> str:
     if row.status == "installed-from-elsewhere":
         return f"{row.client} {row.package} installed-from-elsewhere ({row.source})"
+    if row.status == "not-applicable":
+        return f"{row.client} {row.package} not-applicable ({row.source})"
     return f"{row.client} {row.package} {row.status}"
 
 
@@ -1926,23 +2038,42 @@ def check_codex(packages: list[Package], catalog: Path, home: Path) -> list[Read
 
 
 def check_client(client: str, packages: list[Package], catalog: Path, home: Path) -> list[str]:
-    if client == "codex":
-        rows = check_codex(packages, catalog, home)
-    elif client == "claude":
-        rows = check_claude(packages, catalog, home)
-    elif client == "cursor":
-        rows = check_cursor(packages, home)
-    elif client == "qwen":
-        rows = check_qwen(packages, home, catalog)
-    elif client == "grok":
-        rows = check_grok(packages, home, catalog)
-    elif client == "agy":
-        rows = check_agy(packages, home, catalog)
-    elif client in SKILL_CLIENTS:
-        rows = check_skill_client(client, packages, home, catalog)
-    else:
-        raise InstallError(f"unknown client {client}")  # pragma: no cover
-    return [format_readback(row) for row in rows]
+    """Readback lines, one per package, in the order ``packages`` was given.
+
+    A package a client cannot hold at all -- a library with no skills and no
+    Claude packaging manifest, or, for a skill-scoped client, any package with
+    no skill units -- is reported ``not-applicable`` instead of being handed to
+    the client-specific reader, which has nothing to read for it and would
+    otherwise report a false ``absent``.
+    """
+    rows_by_name: dict[str, Readback] = {}
+    applicable: list[Package] = []
+    for package in packages:
+        reason = package_applicability(client, package)
+        if reason is not None:
+            rows_by_name[package.name] = Readback(client, package.name, "not-applicable", reason)
+        else:
+            applicable.append(package)
+    if applicable:
+        if client == "codex":
+            checked = check_codex(applicable, catalog, home)
+        elif client == "claude":
+            checked = check_claude(applicable, catalog, home)
+        elif client == "cursor":
+            checked = check_cursor(applicable, home)
+        elif client == "qwen":
+            checked = check_qwen(applicable, home, catalog)
+        elif client == "grok":
+            checked = check_grok(applicable, home, catalog)
+        elif client == "agy":
+            checked = check_agy(applicable, home, catalog)
+        elif client in SKILL_CLIENTS:
+            checked = check_skill_client(client, applicable, home, catalog)
+        else:
+            raise InstallError(f"unknown client {client}")  # pragma: no cover
+        for row in checked:
+            rows_by_name[row.package] = row
+    return [format_readback(rows_by_name[package.name]) for package in packages]
 
 
 def absent_in(lines: list[str]) -> bool:
@@ -2049,6 +2180,12 @@ def perform(action: Action) -> None:
     raise InstallError(f"unknown action {action.kind}", code=1)  # pragma: no cover
 
 
+def _print_failures(failures: list[str]) -> None:
+    print("install_client: failures:", file=sys.stderr)
+    for failure in failures:
+        print(f"  {failure}", file=sys.stderr)
+
+
 def run(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     catalog = (args.catalog or default_catalog()).resolve()
@@ -2061,26 +2198,65 @@ def run(argv: list[str] | None = None) -> int:
     overrides = parse_binaries(args.binary)
     home = Path.home()
     required = bool(args.execute) and not args.check
-    lines: list[str] = []
-    actions: list[Action] = []
+    is_all = args.client == "all"
+
     if args.check:
+        lines: list[str] = []
+        if not is_all:
+            for client in clients:
+                lines.extend(check_client(client, packages, catalog, home))
+            print("\n".join(lines))
+            return 1 if absent_in(lines) else 0
+        # --client all: one client's unreadable state does not hide every
+        # other client's readback, and is reported alongside it.
+        failures: list[str] = []
         for client in clients:
-            lines.extend(check_client(client, packages, catalog, home))
+            try:
+                lines.extend(check_client(client, packages, catalog, home))
+            except InstallError as exc:
+                failures.append(f"{client}: {exc}")
         print("\n".join(lines))
+        if failures:
+            _print_failures(failures)
+            return 1
         return 1 if absent_in(lines) else 0
+
+    if not is_all:
+        actions: list[Action] = []
+        for client in clients:
+            if args.uninstall_legacy:
+                actions.extend(plan_uninstall(client, packages, home, overrides, required=required))
+            else:
+                actions.extend(plan_install(client, packages, catalog, home, overrides, required=required))
+        for action in actions:
+            print(format_action(action))
+            if args.execute:
+                perform(action)
+        return 0
+
+    # --client all: a failure planning or performing one client's placement,
+    # or one package within it, is recorded and does not stop the rest of
+    # that client's packages or the clients that follow.
+    failures = []
     for client in clients:
-        if args.uninstall_legacy:
-            actions.extend(
-                plan_uninstall(client, packages, home, overrides, required=required)
-            )
-        else:
-            actions.extend(
-                plan_install(client, packages, catalog, home, overrides, required=required)
-            )
-    for action in actions:
-        print(format_action(action))
-        if args.execute:
-            perform(action)
+        try:
+            if args.uninstall_legacy:
+                client_actions = plan_uninstall(client, packages, home, overrides, required=required)
+            else:
+                client_actions = plan_install(client, packages, catalog, home, overrides, required=required)
+        except InstallError as exc:
+            failures.append(f"{client}: plan: {exc}")
+            continue
+        for action in client_actions:
+            print(format_action(action))
+            if args.execute:
+                try:
+                    perform(action)
+                except InstallError as exc:
+                    failures.append(f"{client}: {format_action(action)}: {exc}")
+    if failures:
+        _print_failures(failures)
+        return 1
     return 0
 
 

@@ -205,6 +205,48 @@ class ClaudeInstallTest(InstallFixture):
         self.assertIn("plugin install voice@infiquetra-agent-plugins", log)
         self.assertFalse((self.home / ".claude").exists())
 
+    def test_execute_is_idempotent_when_already_installed_from_this_catalog(self) -> None:
+        write_json(
+            self.home / ".claude/plugins/known_marketplaces.json",
+            {
+                "infiquetra-agent-plugins": {
+                    "source": {"source": "directory", "path": str(self.catalog.resolve())}
+                }
+            },
+        )
+        write_json(
+            self.home / ".claude/plugins/installed_plugins.json",
+            {"version": 2, "plugins": {"voice@infiquetra-agent-plugins": [{"scope": "user"}]}},
+        )
+        write_json(
+            self.home / ".claude/settings.json",
+            {"enabledPlugins": {"voice@infiquetra-agent-plugins": True}},
+        )
+        code, out, err = self.invoke("--client", "claude", "--package", "voice", "--execute")
+        self.assertEqual(code, 0, err)
+        self.assertIn("voice already installed from this catalog", out)
+        self.assertNotIn("plugin install", self.logged())
+
+    def test_execute_skips_a_legacy_installed_package_without_the_uninstall_flag(self) -> None:
+        write_json(
+            self.home / ".claude/plugins/known_marketplaces.json",
+            {
+                "infiquetra-agent-plugins": {
+                    "source": {"source": "directory", "path": str(self.catalog.resolve())}
+                },
+                "infiquetra-plugins": {"source": {"source": "git", "url": LEGACY_URL}},
+            },
+        )
+        write_json(
+            self.home / ".claude/plugins/installed_plugins.json",
+            {"version": 2, "plugins": {"voice@infiquetra-plugins": [{"scope": "user"}]}},
+        )
+        code, out, err = self.invoke("--client", "claude", "--package", "voice", "--execute")
+        self.assertEqual(code, 0, err)
+        self.assertIn("voice already installed from voice@infiquetra-plugins; not replacing", out)
+        self.assertIn("--uninstall-legacy --execute", out)
+        self.assertNotIn("plugin install", self.logged())
+
     def test_check_classifies_catalog_elsewhere_and_absent(self) -> None:
         write_json(
             self.home / ".claude/plugins/known_marketplaces.json",
@@ -235,8 +277,8 @@ class ClaudeInstallTest(InstallFixture):
         self.assertEqual(err, "")
         self.assertIn("claude voice installed-from-catalog", out)
         self.assertIn("claude unifi installed-from-elsewhere (unifi@infiquetra-plugins)", out)
-        self.assertIn("claude fleet-core absent", out)
-        self.assertEqual(code, 1)
+        self.assertIn("claude fleet-core not-applicable (library)", out)
+        self.assertEqual(code, 0)
 
     def test_disabled_catalog_install_is_not_counted_as_catalog(self) -> None:
         write_json(
@@ -383,7 +425,7 @@ class CodexTest(InstallFixture):
         self.assertEqual(code, 1)
         self.assertIn("codex voice installed-from-catalog", out)
         self.assertIn("codex unifi absent", out)
-        self.assertIn("codex fleet-core absent", out)
+        self.assertIn("codex fleet-core not-applicable (library)", out)
 
     def test_check_treats_a_symlink_to_this_checkout_as_the_catalog(self) -> None:
         link = self.base / "catalog-link"
@@ -496,8 +538,8 @@ class CursorTest(InstallFixture):
             f"cursor unifi installed-from-elsewhere ({installer.LEGACY_GIT_URL})",
             out,
         )
-        self.assertIn("cursor fleet-core absent", out)
-        self.assertEqual(code, 1)
+        self.assertIn("cursor fleet-core not-applicable (library)", out)
+        self.assertEqual(code, 0)
 
     def test_cached_catalog_is_not_added_again(self) -> None:
         write_json(
@@ -538,15 +580,36 @@ class QwenTest(InstallFixture):
         self.assertEqual(payload["type"], "local")
         self.assertEqual(payload["pluginName"], "voice")
 
-    def test_install_preserves_keys_the_client_already_wrote(self) -> None:
+    def test_merge_preserves_keys_the_client_already_wrote(self) -> None:
         record = self.home / ".qwen/extensions/voice/.qwen-extension-install.json"
         write_json(record, {"source": LEGACY_URL, "type": "git", "marketplaceConfig": {"name": "kept"}})
-        code, _out, err = self.invoke("--client", "qwen", "--package", "voice", "--execute")
-        self.assertEqual(code, 0, err)
+        target = self.catalog / "plugins" / "voice"
+        installer.merge_qwen(
+            installer.Action("merge-qwen", "qwen", path=str(record), target=str(target), message="voice")
+        )
         payload = json.loads(record.read_text(encoding="utf-8"))
         self.assertEqual(payload["marketplaceConfig"], {"name": "kept"})
         self.assertEqual(payload["type"], "local")
-        self.assertTrue(payload["source"].endswith("/plugins/voice"))
+        self.assertEqual(payload["source"], str(target))
+
+    def test_execute_is_idempotent_after_a_partial_run(self) -> None:
+        record = self.home / ".qwen/extensions/voice/.qwen-extension-install.json"
+        write_json(record, {"source": str((self.catalog / "plugins" / "voice").resolve()), "type": "local"})
+        code, out, err = self.invoke("--client", "qwen", "--package", "voice", "--execute")
+        self.assertEqual(code, 0, err)
+        self.assertIn("voice already installed from this catalog", out)
+        self.assertEqual(self.logged(), "")
+
+    def test_execute_skips_a_legacy_installed_package_without_the_uninstall_flag(self) -> None:
+        record = self.home / ".qwen/extensions/voice/.qwen-extension-install.json"
+        write_json(record, {"source": LEGACY_URL, "type": "git"})
+        code, out, err = self.invoke("--client", "qwen", "--package", "voice", "--execute")
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"voice already installed from {LEGACY_URL}; not replacing", out)
+        self.assertIn("--uninstall-legacy --execute", out)
+        self.assertEqual(self.logged(), "")
+        payload = json.loads(record.read_text(encoding="utf-8"))
+        self.assertEqual(payload["source"], LEGACY_URL)
 
     def test_check_classifies_the_install_record(self) -> None:
         write_json(
@@ -562,7 +625,7 @@ class QwenTest(InstallFixture):
         self.assertEqual(err, "")
         self.assertIn("qwen voice installed-from-catalog", out)
         self.assertIn(f"qwen unifi installed-from-elsewhere ({LEGACY_URL})", out)
-        self.assertIn("qwen fleet-core installed-from-elsewhere (unsourced)", out)
+        self.assertIn("qwen fleet-core not-applicable (library)", out)
         self.assertEqual(code, 0)
 
     def test_uninstall_calls_the_client_for_a_legacy_record_and_refuses_an_unsourced_directory(self) -> None:
@@ -591,6 +654,43 @@ class GrokTest(InstallFixture):
             out,
         )
 
+    def test_execute_is_idempotent_when_already_installed_from_this_catalog(self) -> None:
+        write_json(
+            self.home / ".grok/installed-plugins/registry.json",
+            {
+                "version": 1,
+                "repos": {
+                    "voice-local": {
+                        "kind": {"type": "Local", "source_path": str((self.catalog / "plugins" / "voice").resolve())},
+                        "plugins": {"voice": {"version": "0.0.1"}},
+                    },
+                },
+            },
+        )
+        code, out, err = self.invoke("--client", "grok", "--package", "voice", "--execute")
+        self.assertEqual(code, 0, err)
+        self.assertIn("voice already installed from this catalog", out)
+        self.assertEqual(self.logged(), "")
+
+    def test_execute_skips_a_legacy_installed_package_without_the_uninstall_flag(self) -> None:
+        write_json(
+            self.home / ".grok/installed-plugins/registry.json",
+            {
+                "version": 1,
+                "repos": {
+                    "unifi-old": {
+                        "marketplace": {"source_url_or_path": LEGACY_URL},
+                        "plugins": {"voice": {"version": "1"}},
+                    },
+                },
+            },
+        )
+        code, out, err = self.invoke("--client", "grok", "--package", "voice", "--execute")
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"voice already installed from {LEGACY_URL}; not replacing", out)
+        self.assertIn("--uninstall-legacy --execute", out)
+        self.assertEqual(self.logged(), "")
+
     def test_check_reads_the_registry_source(self) -> None:
         write_json(
             self.home / ".grok/installed-plugins/registry.json",
@@ -612,8 +712,8 @@ class GrokTest(InstallFixture):
         self.assertEqual(err, "")
         self.assertIn("grok voice installed-from-catalog", out)
         self.assertIn(f"grok unifi installed-from-elsewhere ({LEGACY_URL})", out)
-        self.assertIn("grok fleet-core absent", out)
-        self.assertEqual(code, 1)
+        self.assertIn("grok fleet-core not-applicable (library)", out)
+        self.assertEqual(code, 0)
 
     def test_uninstall_removes_legacy_plugins_and_skips_a_dedicated_source(self) -> None:
         write_json(
@@ -835,6 +935,18 @@ class AgyTest(InstallFixture):
         )
         self.assertEqual(document["packages"]["voice"]["source"], root)
 
+    def test_execute_is_idempotent_when_already_installed_from_this_catalog(self) -> None:
+        root = str((self.catalog / "plugins/voice").resolve())
+        (self.home / ".gemini/config/plugins/voice").mkdir(parents=True)
+        write_json(
+            self.home / ".gemini/config/plugins/.infiquetra-install.json",
+            {"schema": installer.AGY_SCHEMA, "packages": {"voice": {"source": root}}},
+        )
+        code, out, err = self.invoke("--client", "agy", "--package", "voice", "--execute")
+        self.assertEqual(code, 0, err)
+        self.assertIn("voice already installed from this catalog", out)
+        self.assertEqual(self.logged(), "")
+
     def test_install_does_not_replace_an_unsourced_directory(self) -> None:
         plugins = self.home / ".gemini/config/plugins"
         (plugins / "voice").mkdir(parents=True)
@@ -858,8 +970,8 @@ class AgyTest(InstallFixture):
         self.assertEqual(err, "")
         self.assertIn("agy voice installed-from-catalog", out)
         self.assertIn("agy unifi installed-from-elsewhere (unsourced)", out)
-        self.assertIn("agy fleet-core absent", out)
-        self.assertEqual(code, 1)
+        self.assertIn("agy fleet-core not-applicable (library)", out)
+        self.assertEqual(code, 0)
 
     def test_uninstall_skips_the_antigravity_marketplace_and_refuses_an_unsourced_copy(self) -> None:
         plugins = self.home / ".gemini/config/plugins"
@@ -959,3 +1071,74 @@ class InvocationTest(InstallFixture):
         self.assertIn("claude voice absent", out)
         self.assertIn("codex voice absent", out)
         self.assertNotIn("codex unsupported:", out)
+
+    def test_check_all_does_not_exit_nonzero_for_not_applicable_packages_alone(self) -> None:
+        # Every package here is either installed from this catalog or not applicable
+        # to the client reading it, so no package is genuinely absent.
+        write_json(
+            self.home / ".claude/plugins/known_marketplaces.json",
+            {
+                "infiquetra-agent-plugins": {
+                    "source": {"source": "directory", "path": str(self.catalog.resolve())}
+                }
+            },
+        )
+        write_json(
+            self.home / ".claude/plugins/installed_plugins.json",
+            {
+                "version": 2,
+                "plugins": {
+                    "unifi@infiquetra-agent-plugins": [{"scope": "user"}],
+                    "voice@infiquetra-agent-plugins": [{"scope": "user"}],
+                },
+            },
+        )
+        write_json(
+            self.home / ".claude/settings.json",
+            {
+                "enabledPlugins": {
+                    "unifi@infiquetra-agent-plugins": True,
+                    "voice@infiquetra-agent-plugins": True,
+                }
+            },
+        )
+        code, out, err = self.invoke("--client", "claude", "--check")
+        self.assertEqual(err, "")
+        self.assertEqual(code, 0, out)
+        self.assertIn("claude fleet-core not-applicable (library)", out)
+
+    def test_client_all_execute_continues_past_a_failing_client_and_exits_nonzero(self) -> None:
+        write_executable(
+            self.bin,
+            "grok",
+            (
+                '{\n'
+                '  printf "CMD"\n'
+                '  printf " %s" "$0" "$@"\n'
+                '  printf "\\nSTDIN:"\n'
+                "  cat\n"
+                '  printf "\\nEND\\n"\n'
+                '} >> "$ARGV_LOG"\n'
+                'case "$*" in\n'
+                '  *voice*) exit 7 ;;\n'
+                '  *) exit 0 ;;\n'
+                "esac\n"
+            ),
+        )
+        code, out, err = self.invoke("--client", "all", "--package", "voice", "--execute")
+        self.assertEqual(code, 1)
+        self.assertIn("failures", err)
+        self.assertIn("grok", err)
+        log = self.logged()
+        self.assertIn("plugin install voice@infiquetra-agent-plugins", log)
+        self.assertIn("extensions install", log)
+
+    def test_client_all_execute_continues_past_a_planning_failure(self) -> None:
+        (self.catalog / ".agents" / "plugins" / "marketplace.json").unlink()
+        code, out, err = self.invoke("--client", "all", "--package", "voice", "--execute")
+        self.assertEqual(code, 1)
+        self.assertIn("failures", err)
+        self.assertIn("codex", err)
+        log = self.logged()
+        self.assertIn("plugin install voice@infiquetra-agent-plugins", log)
+        self.assertIn("extensions install", log)
