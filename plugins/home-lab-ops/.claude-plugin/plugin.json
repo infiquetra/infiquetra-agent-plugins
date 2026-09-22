@@ -19,6 +19,8 @@
     "team-scaffold"
   ],
   "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
-  "agents": "./com.infiquetra.claude/agents/",
+  "agents": [
+    "./com.infiquetra.claude/agents/homelab-sre.md"
+  ],
   "skills": "./skills/"
 }
