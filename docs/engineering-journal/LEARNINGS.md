@@ -2,6 +2,26 @@
 
 ## 2026-09-22
 
+### Package test suites need pytest's importlib import mode once two packages share a test basename
+
+**Evidence.** CI run 35764030847 on PR #66 (redis-channel import): pytest
+aborted collection with "import file mismatch" because
+`plugins/home-lab-ops/tests/test_entrypoint.py` and
+`plugins/redis-channel/tests/test_entrypoint.py` share a basename. Locally on
+`main` at 7471527, `python3 -m pytest --import-mode=importlib plugins/*/tests -q`
+collected all 1357 tests with the same two environment-dependent failures as
+before.
+
+**Mechanism.** Pytest's default `prepend` import mode registers each test
+module under its bare basename in `sys.modules`, so two files named
+`test_entrypoint.py` in different directories without `__init__.py` collide,
+and the second one is refused at collection. The importlib mode imports each
+file under a unique synthetic name and never touches `sys.path`.
+
+**Generalizable rule.** A catalog whose packages each own a `tests/`
+directory runs pytest with `--import-mode=importlib`; a test that needs a
+sibling helper imports it by path, not by bare module name.
+
 ### A guard that fires on your own change is the procedure, not an obstacle
 
 **Author.** Claude for Jeff Cox (custody-move unit U1, branch `mg/tooling`)

@@ -66,4 +66,4 @@ jobs:
           python -m pip install -r requirements-plugin-tests.txt
 
       - name: Run ported plugin tests
-        run: python -m pytest plugins/*/tests -q
+        run: python -m pytest plugins/*/tests -q --import-mode=importlib
