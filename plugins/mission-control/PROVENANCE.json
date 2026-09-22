@@ -488,6 +488,10 @@
       "classification": "target-owned"
     },
     {
+      "path": "scripts/_bundled/staffing.json",
+      "classification": "target-owned"
+    },
+    {
       "path": "scripts/_bundled/tier_palette.py",
       "classification": "target-owned"
     }

@@ -8,14 +8,13 @@ shim surfaces during execution, exercises saga-only APIs, and carries a
 repo-tree drift guard. The upstream suite stays upstream; this file proves the
 transformed portable module instead, minimally:
 
-* the transformed module imports cleanly;
+* the module imports cleanly;
 * an envelope round-trips through the issue-carried block surface;
-* ``tier_ceiling`` validation resolves through the sibling ``tier_palette``
-  and its ``models.json`` registry;
-* the deferred-name call path (``tier_resolver``) fails at call time naming
-  the missing sibling path, never at import;
-* the identical file works relocated (the ``_bundled/`` placement claim of
-  transform ``resolve-fleet-commons-sibling`` v1).
+* ``tier_ceiling`` validation resolves through the sibling ``tier_palette``,
+  which reads ``staffing.json`` (the 0.25.2 slice read ``models.json``);
+* ``tier_resolver`` loads from the same directory and ``recommend_tier``
+  returns a palette member (the resolver was absent from the 0.25.2 slice);
+* the identical file works relocated, which is the ``_bundled/`` placement.
 
 Standard library only, unittest-shaped, so the repository's dependency-free
 baseline job (``python3 -m unittest discover -s tests``) runs them.
@@ -107,7 +106,7 @@ class TierCeilingValidationTests(unittest.TestCase):
             FLEET_COMMONS_DIR,
             "the palette must load from the envelope module's own directory",
         )
-        self.assertTrue(palette.MODELS, "models.json must yield a non-empty ladder")
+        self.assertTrue(palette.MODELS, "staffing.json must yield a non-empty ladder")
 
         envelope = mod.IntentEnvelope.from_dict(
             {
@@ -130,23 +129,15 @@ class TierCeilingValidationTests(unittest.TestCase):
         self.assertIn("not-a-model", str(caught.exception))
 
 
-class DeferredNameTests(unittest.TestCase):
-    def test_deferred_leg_fails_at_call_time_naming_the_sibling_path(self) -> None:
+class ResolverSiblingTests(unittest.TestCase):
+    def test_resolver_loads_from_the_envelope_directory(self) -> None:
         mod = envelope_module()
-        missing = MOD_PATH.parent / "tier_resolver.py"
-        self.assertFalse(missing.is_file(), "tier_resolver stays deferred in this slice")
-        with self.assertRaises(RuntimeError) as caught:
-            mod._tier_resolver()
-        message = str(caught.exception)
-        self.assertIn("tier_resolver", message)
-        self.assertIn(str(missing), message)
-
-    def test_dormant_api_surfaces_the_same_failure(self) -> None:
-        # ``recommend_tier``'s only dependency on the deferred leg is the
-        # resolver load, so the public dormant API fails with the same shape.
-        mod = envelope_module()
-        with self.assertRaises(RuntimeError):
-            mod.recommend_tier("work-shape", "attended")
+        resolver = mod._tier_resolver()
+        self.assertEqual(Path(resolver.__file__).resolve().parent, FLEET_COMMONS_DIR)
+        recommendation = mod.recommend_tier("judgment", "attended")
+        palette = mod._tier_palette()
+        self.assertIn(recommendation.model, palette.MODELS)
+        self.assertIn(recommendation.effort, palette.EFFORTS)
 
 
 class RelocatedCopyTests(unittest.TestCase):
@@ -156,7 +147,12 @@ class RelocatedCopyTests(unittest.TestCase):
             # and on macOS tempfile sits behind the /var -> /private/var link.
             dest = (Path(tmp) / "_bundled").resolve()
             dest.mkdir()
-            for name in ("intent_envelope.py", "tier_palette.py", "models.json"):
+            for name in (
+                "intent_envelope.py",
+                "tier_palette.py",
+                "tier_resolver.py",
+                "staffing.json",
+            ):
                 shutil.copy(FLEET_COMMONS_DIR / name, dest / name)
 
             mod = _load(dest / "intent_envelope.py", name="relocated_intent_envelope")
@@ -167,9 +163,10 @@ class RelocatedCopyTests(unittest.TestCase):
             self.assertTrue(palette.MODELS)
             self.assertEqual(Path(palette.__file__).resolve().parent, dest)
 
-            with self.assertRaises(RuntimeError) as caught:
-                mod._tier_resolver()
-            self.assertIn(str(dest / "tier_resolver.py"), str(caught.exception))
+            resolver = mod._tier_resolver()
+            self.assertEqual(Path(resolver.__file__).resolve().parent, dest)
+            recommendation = mod.recommend_tier("judgment", "attended")
+            self.assertIn(recommendation.model, palette.MODELS)
 
 
 if __name__ == "__main__":

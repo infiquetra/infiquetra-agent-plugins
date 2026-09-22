@@ -1,0 +1,800 @@
+{
+  "schema_version": 3,
+  "_comment": "Canonical Fleet Core staffing data \u2014 the ONE authoring source for the model palette, the effort vocabulary, the work-shape tier policy, the per-vendor palette, the capability ratings and trust tiers, and the per-role staffing defaults (issue #1021). It absorbs the former models.json and tier_policy.json, which are deleted. models/efforts are the live Claude vocabulary for existing consumers (tier_palette.MODELS/EFFORTS, tier_resolver.resolve()). Do not treat them as the multi-vendor router. scalar_efforts, execution_classes, and root_orchestration_profiles are the portable subset shared with the Codex plugin repository, whose own copy stays at its schema_version 2 (KTD7); the subset is shared by content, not by version number; they are the authoritative execution-class policy. lineage_models/lineage_efforts are Codex compatibility data and are deliberately not ported. work_shapes is the work-shape -> tier registry that tier_resolver.load_policy() reads. vendors is the per-vendor palette that tier_resolver derives SUPPORTED_RUNTIMES, _RUNTIME_MODELS, _RUNTIME_ACCEPTED_EFFORTS, _EFFORT_COLLAPSE and _EFFORT_APPLICATION_MODE from. ORDERING IS LOAD-BEARING for models/efforts: rank 0 is the strongest model, rung 0 is the weakest effort. Grow the Claude vocabulary under models/efforts, never with a second bare literal elsewhere \u2014 see plugins/fleet-core/references/staffing.md.",
+  "models": {
+    "fable": {
+      "rank": 0,
+      "effort_ceiling": "xhigh"
+    },
+    "opus": {
+      "rank": 1,
+      "effort_ceiling": "xhigh"
+    },
+    "sonnet": {
+      "rank": 2,
+      "effort_ceiling": "xhigh"
+    },
+    "haiku": {
+      "rank": 3,
+      "effort_ceiling": "high"
+    }
+  },
+  "efforts": {
+    "low": {
+      "rung": 0
+    },
+    "medium": {
+      "rung": 1
+    },
+    "high": {
+      "rung": 2
+    },
+    "xhigh": {
+      "rung": 3
+    }
+  },
+  "scalar_efforts": {
+    "low": {
+      "rung": 0
+    },
+    "medium": {
+      "rung": 1
+    },
+    "high": {
+      "rung": 2
+    },
+    "xhigh": {
+      "rung": 3
+    },
+    "max": {
+      "rung": 4
+    }
+  },
+  "work_shapes": {
+    "judgment": {
+      "default_model": "opus",
+      "default_effort": "high",
+      "rationale": "Judgment, design, adversarial review, architectural decisions \u2014 deep reasoning needed; cost-justified."
+    },
+    "mechanical": {
+      "default_model": "sonnet",
+      "default_effort": "medium",
+      "rationale": "Mechanical, deterministic, scripted transforms, scaffolding \u2014 bounded output, predictable steps."
+    },
+    "purely-mechanical": {
+      "default_model": "haiku",
+      "default_effort": "low",
+      "rationale": "Purely mechanical work within the mechanical work-shape \u2014 cheapest tier still safe for bounded, predictable steps."
+    },
+    "read-only-survey": {
+      "default_model": "sonnet",
+      "default_effort": "low",
+      "rationale": "Read-only survey, search, grep, sampling, census \u2014 low-effort read, no write risk."
+    },
+    "offload-test-gated": {
+      "default_model": "haiku",
+      "default_effort": "low",
+      "rationale": "External-engine delegation, intent=offload, verifiability=test-gated \u2014 chaperone ratifies the declared test oracle and provenance; keep the chaperone cheap unless evidence size escalates."
+    },
+    "offload": {
+      "default_model": "sonnet",
+      "default_effort": "medium",
+      "rationale": "External-engine delegation, intent=offload, verifiability=unverifiable or absent \u2014 chaperone performs full review; a heavier default would erase the token savings that motivated delegation (KTD2)."
+    },
+    "second-opinion": {
+      "default_model": "opus",
+      "default_effort": "high",
+      "rationale": "External-engine delegation, intent=second-opinion \u2014 adversarial verification IS the product; extra spend assumed; fable/xhigh available as a per-unit override, never a default (KTD2)."
+    },
+    "divergence": {
+      "default_model": "opus",
+      "default_effort": "high",
+      "rationale": "External-engine delegation, intent=divergence \u2014 agreement and disagreement are both explicit adversarial-review outcomes; use the high-tier chaperone posture."
+    }
+  },
+  "_vendors_comment": "hermes is the eighth agent kind the agent-launcher skill names in prose, and it is deliberately absent from this palette: the topology table describes it as reconciling a profile workspace and owning its own routing, so there is no model or effort for this component to choose. The vendor keys here are compared as a set against the launcher's VENDOR_FLAGS table, so adding a kind there reds tests/test_staffing.py rather than passing silently.",
+  "vendors": {
+    "claude": {
+      "runtime_supported": true,
+      "models": {
+        "gpt-5.6-sol": "fable",
+        "gpt-5.6-terra": "opus",
+        "gpt-5.5": "sonnet"
+      },
+      "accepted_efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "effort_collapse": {},
+      "effort_application": "argv"
+    },
+    "codex": {
+      "runtime_supported": true,
+      "models": {
+        "gpt-5.6-sol": "gpt-5.6-sol",
+        "gpt-5.6-terra": "gpt-5.6-terra",
+        "gpt-5.5": "gpt-5.5"
+      },
+      "accepted_efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "effort_collapse": {},
+      "effort_application": "argv"
+    },
+    "grok": {
+      "runtime_supported": true,
+      "models": {
+        "gpt-5.6-sol": "grok-4.6",
+        "gpt-5.6-terra": "grok-4.5",
+        "gpt-5.5": "grok-4.5"
+      },
+      "accepted_efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "effort_collapse": {
+        "max": "xhigh"
+      },
+      "effort_application": "argv"
+    },
+    "muse": {
+      "runtime_supported": true,
+      "models": {
+        "gpt-5.6-sol": "muse-spark-1.2-contributor",
+        "gpt-5.6-terra": "muse-spark-1.2-contributor",
+        "gpt-5.5": "muse-spark-1.2-contributor"
+      },
+      "accepted_efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "effort_collapse": {
+        "max": "xhigh"
+      },
+      "effort_application": "argv"
+    },
+    "qwen": {
+      "runtime_supported": true,
+      "models": {
+        "gpt-5.6-sol": "qwen3.8-max-preview",
+        "gpt-5.6-terra": "qwen3.7-plus",
+        "gpt-5.5": "qwen3.6-plus"
+      },
+      "accepted_efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "effort_collapse": {},
+      "effort_application": "in_session",
+      "effort_command": "/effort {effort}"
+    },
+    "agy": {
+      "runtime_supported": true,
+      "models": {
+        "gpt-5.6-sol": "gemini-3.1-pro-high",
+        "gpt-5.6-terra": "gemini-3.6-flash-high",
+        "gpt-5.5": "gemini-3.5-flash-high"
+      },
+      "accepted_efforts": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "effort_collapse": {
+        "max": "high",
+        "xhigh": "high"
+      },
+      "effort_application": "argv"
+    },
+    "opencode": {
+      "runtime_supported": false,
+      "unsupported_reason": "The launcher can start opencode, but nobody has verified its launch-time effort and model arguments, and its model identifier must be in provider/model form, which no other vendor requires. Promoting it means verifying those arguments on a live host first, then flipping runtime_supported and filling accepted_efforts.",
+      "models": {},
+      "accepted_efforts": [],
+      "effort_collapse": {},
+      "effort_application": "unverified"
+    }
+  },
+  "_capability_ratings_comment": "Capability ratings and trust tiers, copied from plugins/saga/references/engine-registry.yaml (issue #1021, KTD6). Copied rather than moved: the YAML stays on disk until issue #1030 deletes it, and tests/test_staffing.py holds the two together while both exist. model_families is the coarse per-model profile; engines is the per-variant one, each row carrying its trust_tier, its cost_speed_rank (the tie-break key \u2014 lower is cheaper and faster, and it only breaks ties between variants rated equally) and its last_validated date so staleness stays visible.",
+  "capability_ratings": {
+    "capabilities": [
+      "code-generation",
+      "adversarial-review",
+      "second-opinion",
+      "debug",
+      "refactor",
+      "scaffold",
+      "long-form-writing",
+      "bulk-classification",
+      "structured-extraction",
+      "embedding"
+    ],
+    "model_families": {
+      "gpt-5.6-sol": {
+        "capability_profile": {
+          "adversarial-review": {
+            "rating": "STRONG",
+            "note": "flagship complex coding and security reviewer"
+          },
+          "refactor": {
+            "rating": "MODERATE",
+            "note": "multi-file terminal-oriented"
+          }
+        }
+      },
+      "gpt-5.6-terra": {
+        "capability_profile": {
+          "adversarial-review": {
+            "rating": "MODERATE",
+            "note": "everyday reviewer; below Sol for complex judgment"
+          },
+          "refactor": {
+            "rating": "WEAK",
+            "note": "conservative until multi-file evidence accumulates"
+          }
+        }
+      },
+      "gpt-5.6-luna": {
+        "capability_profile": {
+          "adversarial-review": {
+            "rating": "WEAK",
+            "note": "clear repeatable review only; not a complex reviewer"
+          },
+          "refactor": {
+            "rating": "WEAK",
+            "note": "structured transformations preferred over open-ended refactors"
+          }
+        }
+      },
+      "gpt-5.5": {
+        "capability_profile": {
+          "adversarial-review": {
+            "rating": "STRONG",
+            "note": "top composite reasoning; repo-access verification"
+          },
+          "refactor": {
+            "rating": "MODERATE",
+            "note": "multi-file terminal-oriented"
+          }
+        }
+      }
+    },
+    "engines": {
+      "codex/gpt-5.6-sol-high": {
+        "engine_id": "codex",
+        "variant": "gpt-5.6-sol-high",
+        "model_identity": "gpt-5.6-sol",
+        "trust_tier": "advisory",
+        "cost_speed_rank": 2,
+        "last_validated": "2026-07-10",
+        "capability_profile": {
+          "code-generation": {
+            "rating": "MODERATE",
+            "note": "multi-file refactor, structured-output fidelity"
+          },
+          "second-opinion": {
+            "rating": "MODERATE",
+            "note": "cross-family; refuter behavior still unmapped"
+          },
+          "debug": {
+            "rating": "MODERATE",
+            "note": "tool-orchestrated; give it tools to iterate"
+          },
+          "scaffold": {
+            "rating": "WEAK",
+            "note": "greenfield architecture is a caution area"
+          },
+          "long-form-writing": {
+            "rating": "WEAK",
+            "note": "route expert prose to Claude"
+          }
+        }
+      },
+      "codex/gpt-5.6-sol-xhigh": {
+        "engine_id": "codex",
+        "variant": "gpt-5.6-sol-xhigh",
+        "model_identity": "gpt-5.6-sol",
+        "trust_tier": "advisory",
+        "cost_speed_rank": 3,
+        "last_validated": "2026-07-10",
+        "capability_profile": {
+          "code-generation": {
+            "rating": "STRONG",
+            "note": "hardest bounded implementation; reserve for tough units"
+          },
+          "debug": {
+            "rating": "STRONG",
+            "note": "tool-orchestrated root-cause"
+          }
+        }
+      },
+      "codex/gpt-5.6-terra-high": {
+        "engine_id": "codex",
+        "variant": "gpt-5.6-terra-high",
+        "model_identity": "gpt-5.6-terra",
+        "trust_tier": "advisory",
+        "cost_speed_rank": 4,
+        "last_validated": "2026-07-10",
+        "capability_profile": {
+          "code-generation": {
+            "rating": "MODERATE",
+            "note": "everyday implementation workhorse"
+          },
+          "second-opinion": {
+            "rating": "MODERATE",
+            "note": "useful everyday cross-check"
+          },
+          "debug": {
+            "rating": "MODERATE",
+            "note": "bounded tool-assisted debugging"
+          },
+          "scaffold": {
+            "rating": "MODERATE",
+            "note": "routine scaffolding"
+          },
+          "long-form-writing": {
+            "rating": "WEAK",
+            "note": "route expert prose to Claude"
+          }
+        }
+      },
+      "codex/gpt-5.6-terra-xhigh": {
+        "engine_id": "codex",
+        "variant": "gpt-5.6-terra-xhigh",
+        "model_identity": "gpt-5.6-terra",
+        "trust_tier": "advisory",
+        "cost_speed_rank": 5,
+        "last_validated": "2026-07-10",
+        "capability_profile": {
+          "code-generation": {
+            "rating": "STRONG",
+            "note": "harder everyday implementation with extra checking"
+          },
+          "debug": {
+            "rating": "STRONG",
+            "note": "bounded tool-assisted root-cause work"
+          }
+        }
+      },
+      "codex/gpt-5.6-luna-high": {
+        "engine_id": "codex",
+        "variant": "gpt-5.6-luna-high",
+        "model_identity": "gpt-5.6-luna",
+        "trust_tier": "advisory",
+        "cost_speed_rank": 6,
+        "last_validated": "2026-07-10",
+        "capability_profile": {
+          "code-generation": {
+            "rating": "MODERATE",
+            "note": "clear, repeatable transformations"
+          },
+          "second-opinion": {
+            "rating": "MODERATE",
+            "note": "structured sanity checks"
+          },
+          "debug": {
+            "rating": "WEAK",
+            "note": "avoid open-ended root-cause work"
+          },
+          "scaffold": {
+            "rating": "MODERATE",
+            "note": "routine repeatable scaffolding"
+          },
+          "bulk-classification": {
+            "rating": "STRONG",
+            "note": "high-volume classification lane"
+          },
+          "structured-extraction": {
+            "rating": "STRONG",
+            "note": "structured data extraction lane"
+          },
+          "long-form-writing": {
+            "rating": "WEAK",
+            "note": "route expert prose to Claude"
+          }
+        }
+      },
+      "codex/gpt-5.6-luna-xhigh": {
+        "engine_id": "codex",
+        "variant": "gpt-5.6-luna-xhigh",
+        "model_identity": "gpt-5.6-luna",
+        "trust_tier": "advisory",
+        "cost_speed_rank": 7,
+        "last_validated": "2026-07-10",
+        "capability_profile": {
+          "code-generation": {
+            "rating": "MODERATE",
+            "note": "repeatable transformation with extra checking"
+          },
+          "second-opinion": {
+            "rating": "MODERATE",
+            "note": "structured sanity checks"
+          },
+          "debug": {
+            "rating": "MODERATE",
+            "note": "bounded debug with explicit completion criteria"
+          },
+          "scaffold": {
+            "rating": "MODERATE",
+            "note": "routine repeatable scaffolding"
+          },
+          "bulk-classification": {
+            "rating": "STRONG",
+            "note": "high-volume classification lane"
+          },
+          "structured-extraction": {
+            "rating": "STRONG",
+            "note": "structured data extraction lane"
+          }
+        }
+      },
+      "codex/gpt-5.5-high": {
+        "engine_id": "codex",
+        "variant": "gpt-5.5-high",
+        "model_identity": "gpt-5.5",
+        "trust_tier": "advisory",
+        "cost_speed_rank": 8,
+        "last_validated": "2026-07-06",
+        "capability_profile": {
+          "code-generation": {
+            "rating": "MODERATE",
+            "note": "multi-file refactor, structured-output fidelity"
+          },
+          "second-opinion": {
+            "rating": "MODERATE",
+            "note": "cross-family; refuter behavior still unmapped"
+          },
+          "debug": {
+            "rating": "MODERATE",
+            "note": "tool-orchestrated; give it tools to iterate"
+          },
+          "scaffold": {
+            "rating": "WEAK",
+            "note": "greenfield architecture is a caution area"
+          },
+          "long-form-writing": {
+            "rating": "WEAK",
+            "note": "route expert prose to Claude"
+          }
+        }
+      },
+      "codex/gpt-5.5-xhigh": {
+        "engine_id": "codex",
+        "variant": "gpt-5.5-xhigh",
+        "model_identity": "gpt-5.5",
+        "trust_tier": "advisory",
+        "cost_speed_rank": 9,
+        "last_validated": "2026-07-06",
+        "capability_profile": {
+          "code-generation": {
+            "rating": "STRONG",
+            "note": "hardest bounded implementation; reserve for the tough unit"
+          },
+          "debug": {
+            "rating": "STRONG",
+            "note": "tool-orchestrated root-cause"
+          }
+        }
+      },
+      "agy/gemini-3.5-flash-high": {
+        "engine_id": "agy",
+        "variant": "gemini-3.5-flash-high",
+        "model_identity": "gemini-3.5-flash",
+        "trust_tier": "advisory",
+        "cost_speed_rank": 1,
+        "last_validated": "2026-06-27",
+        "capability_profile": {
+          "scaffold": {
+            "rating": "STRONG",
+            "note": "greenfield scaffolding, one-shot coding"
+          },
+          "code-generation": {
+            "rating": "MODERATE",
+            "note": "one-shot; structured output"
+          },
+          "second-opinion": {
+            "rating": "MODERATE",
+            "note": "cheap cross-family sanity pass"
+          },
+          "debug": {
+            "rating": "WEAK",
+            "note": "iterative repair adds rather than fixes; over-enriches"
+          },
+          "refactor": {
+            "rating": "WEAK",
+            "note": "ignores completion criteria on long-horizon edits"
+          }
+        }
+      },
+      "agy/gemini-3.1-pro-high": {
+        "engine_id": "agy",
+        "variant": "gemini-3.1-pro-high",
+        "model_identity": "gemini-3.1-pro",
+        "trust_tier": "advisory",
+        "cost_speed_rank": 4,
+        "last_validated": "2026-06-27",
+        "capability_profile": {
+          "adversarial-review": {
+            "rating": "STRONG",
+            "note": "strong cross-family reviewer; converges with Codex on real findings"
+          },
+          "second-opinion": {
+            "rating": "STRONG",
+            "note": "different model family = best sycophancy mitigation"
+          },
+          "code-generation": {
+            "rating": "MODERATE",
+            "note": "capable; not the first pick over Codex"
+          },
+          "debug": {
+            "rating": "MODERATE",
+            "note": "useful second opinion"
+          },
+          "long-form-writing": {
+            "rating": "WEAK",
+            "note": "NOT the expert-writing engine -- route prose to Claude"
+          }
+        }
+      },
+      "ollama-cloud/gpt-oss-120b": {
+        "engine_id": "ollama-cloud",
+        "variant": "gpt-oss-120b",
+        "model_identity": "gpt-oss-120b",
+        "trust_tier": "advisory",
+        "cost_speed_rank": 5,
+        "last_validated": "2026-07-06",
+        "capability_profile": {
+          "code-generation": {
+            "rating": "MODERATE",
+            "note": "$0-marginal subscription offload; seed rating, availability-gated smoke only"
+          },
+          "debug": {
+            "rating": "MODERATE",
+            "note": "seed rating pending live-dispatch corroboration"
+          },
+          "second-opinion": {
+            "rating": "WEAK",
+            "note": "seed rating; cheap cross-family sanity pass at most"
+          },
+          "bulk-classification": {
+            "rating": "STRONG",
+            "note": "local/Ollama-class batch classification lane"
+          },
+          "structured-extraction": {
+            "rating": "STRONG",
+            "note": "local/Ollama-class JSON/data extraction lane"
+          }
+        }
+      },
+      "ollama-cloud/nomic-embed-text": {
+        "engine_id": "ollama-cloud",
+        "variant": "nomic-embed-text",
+        "model_identity": "nomic-embed-text",
+        "trust_tier": "advisory",
+        "cost_speed_rank": 1,
+        "last_validated": "2026-07-09",
+        "capability_profile": {
+          "embedding": {
+            "rating": "STRONG",
+            "note": "Ollama model library identifies this as embeddings-only"
+          }
+        }
+      },
+      "deepseek/deepseek-chat": {
+        "engine_id": "deepseek",
+        "variant": "deepseek-chat",
+        "model_identity": "deepseek-chat",
+        "trust_tier": "advisory",
+        "cost_speed_rank": 6,
+        "last_validated": "2026-07-06",
+        "capability_profile": {
+          "code-generation": {
+            "rating": "MODERATE",
+            "note": "seed rating; API-key routing, never hardcoded (R4)"
+          },
+          "adversarial-review": {
+            "rating": "WEAK",
+            "note": "seed rating; advisory-tagged, never a gate verdict"
+          },
+          "second-opinion": {
+            "rating": "WEAK",
+            "note": "seed rating; cheap cross-family sanity pass at most"
+          }
+        }
+      }
+    }
+  },
+  "_roles_comment": "Per-role staffing defaults (issue #1021, KTD10). Each role names the work shape its tier comes from and the rated capability its candidate executors are ranked by. The role vocabulary itself is the software-development-lifecycle repository's (issue #1022): this block holds staffing defaults for the roles the run chain uses, and an unknown role name fails loud rather than falling back to a work shape. functional-tester maps onto the debug capability because the registry rates no capability called testing, and functional testing against a real environment is iterative tool-driven diagnosis.",
+  "roles": {
+    "planner": {
+      "work_shape": "judgment",
+      "capability": "long-form-writing"
+    },
+    "plan-reviewer": {
+      "work_shape": "judgment",
+      "capability": "long-form-writing"
+    },
+    "worker": {
+      "work_shape": "mechanical",
+      "capability": "code-generation"
+    },
+    "lens-reviewer": {
+      "work_shape": "judgment",
+      "capability": "adversarial-review"
+    },
+    "functional-tester": {
+      "work_shape": "judgment",
+      "capability": "debug"
+    },
+    "release-worker": {
+      "work_shape": "mechanical",
+      "capability": "code-generation"
+    },
+    "merging-worker": {
+      "work_shape": "mechanical",
+      "capability": "code-generation"
+    }
+  },
+  "execution_classes": {
+    "review-max": {
+      "order": 0,
+      "description": "Explicit escalation for unusually ambiguous or high-risk review.",
+      "workspace_boundary": "read-only",
+      "external_boundary": "none",
+      "preferred": {
+        "model": "gpt-5.6-sol",
+        "effort": "max"
+      },
+      "fallbacks": [
+        {
+          "model": "gpt-5.6-terra",
+          "effort": "max"
+        },
+        {
+          "model": "gpt-5.5",
+          "effort": "strongest-supported"
+        }
+      ]
+    },
+    "review-high": {
+      "order": 1,
+      "description": "Architecture, security, adversarial, API, privacy, and quality review.",
+      "workspace_boundary": "read-only",
+      "external_boundary": "none",
+      "preferred": {
+        "model": "gpt-5.6-sol",
+        "effort": "high"
+      },
+      "fallbacks": [
+        {
+          "model": "gpt-5.6-terra",
+          "effort": "high"
+        },
+        {
+          "model": "gpt-5.5",
+          "effort": "high"
+        }
+      ]
+    },
+    "test-medium": {
+      "order": 2,
+      "description": "General workers, testers, and interpretation of ambiguous validator output.",
+      "workspace_boundary": "declared-write",
+      "external_boundary": "none",
+      "preferred": {
+        "model": "gpt-5.6-terra",
+        "effort": "medium"
+      },
+      "fallbacks": [
+        {
+          "model": "gpt-5.6-sol",
+          "effort": "medium"
+        },
+        {
+          "model": "gpt-5.5",
+          "effort": "medium"
+        }
+      ]
+    },
+    "scan-low": {
+      "order": 3,
+      "description": "Bounded extraction and scanner-result reduction.",
+      "workspace_boundary": "read-only",
+      "external_boundary": "none",
+      "preferred": {
+        "model": "gpt-5.6-terra",
+        "effort": "low"
+      },
+      "fallbacks": [
+        {
+          "model": "gpt-5.6-sol",
+          "effort": "low"
+        }
+      ]
+    },
+    "monitor-low": {
+      "order": 4,
+      "description": "Network-aware CI, deploy, and runtime observation.",
+      "workspace_boundary": "read-only",
+      "external_boundary": "allowlisted-read",
+      "preferred": {
+        "model": "gpt-5.6-terra",
+        "effort": "low"
+      },
+      "fallbacks": [
+        {
+          "model": "gpt-5.6-sol",
+          "effort": "low"
+        }
+      ]
+    },
+    "work-high": {
+      "order": 5,
+      "description": "Complex bounded implementation with declared workspace writes.",
+      "workspace_boundary": "declared-write",
+      "external_boundary": "none",
+      "preferred": {
+        "model": "gpt-5.6-sol",
+        "effort": "high"
+      },
+      "fallbacks": [
+        {
+          "model": "gpt-5.6-terra",
+          "effort": "high"
+        },
+        {
+          "model": "gpt-5.5",
+          "effort": "high"
+        }
+      ]
+    },
+    "work-medium": {
+      "order": 6,
+      "description": "Ordinary implementation, remediation, and Git integration.",
+      "workspace_boundary": "declared-write",
+      "external_boundary": "none",
+      "preferred": {
+        "model": "gpt-5.6-terra",
+        "effort": "medium"
+      },
+      "fallbacks": [
+        {
+          "model": "gpt-5.6-sol",
+          "effort": "medium"
+        },
+        {
+          "model": "gpt-5.5",
+          "effort": "medium"
+        }
+      ]
+    }
+  },
+  "root_orchestration_profiles": {
+    "root": {
+      "preferred_model": "gpt-5.6-sol",
+      "fallback_models": [
+        "gpt-5.6-terra"
+      ],
+      "default_effort": "max",
+      "ultra": {
+        "requires_explicit_selection": true,
+        "requires_independent_fanout": true,
+        "leaf_allowed": false
+      }
+    }
+  }
+}

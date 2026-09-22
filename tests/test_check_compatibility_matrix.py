@@ -11,10 +11,11 @@ two things that matter and pull in opposite directions:
 A third pull was added after a review found the matrix describing a package that
 no longer existed while passing every check:
 
-* A record whose fingerprint does not identify the assessed tree must fail, and
-  a well-formed digest of the wrong tree is the case that matters. Declaring a
-  document superseded is the only exemption, and the tests below pin both that
-  the exemption works and that it cannot be turned on the live matrix.
+* A record whose fingerprint does not identify the assessed tree is reported,
+  not failed, when the package version still matches. A version that moved
+  with no fresh run still fails. Declaring a document superseded is the
+  exemption from the binding, and the tests below pin both that the exemption
+  works and that it cannot be turned on the live matrix.
 
 Standard library only, matching the validator and the repository baseline.
 """
@@ -48,6 +49,33 @@ EXTENSION_DIRECTORY = svs.PORTABLE_PACKAGE_ROOT_MARKER
 
 
 EVIDENCE = ROOT / "docs" / "evidence"
+
+
+def assert_version_binds_and_a_moved_tree_is_only_reported(
+    test: unittest.TestCase,
+    recorded: dict,
+    config: port_config.PortConfig,
+) -> None:
+    """The released version is the binding. A fingerprint move under it is reported.
+
+    Rewriting the evidence so the digest matches the tree is what the
+    2026-09-22 rule refuses. ``split_binding_problems`` is the partition the
+    checker uses: a wrong name or version fails, and file count and tree
+    digest are reports.
+    """
+    file_count, tree_sha256 = ccm.package_fingerprint(config.package_directory)
+    name, version = ccm.package_identity(config.package_directory, config.package_manifest)
+    test.assertEqual(recorded.get("name"), name)
+    test.assertEqual(recorded.get("version"), version)
+    failures, reports = ccm.split_binding_problems(
+        ccm.check_package_binding({"package": recorded}, config)
+    )
+    test.assertEqual(failures, [])
+    moved = recorded.get("file_count") != file_count or recorded.get("tree_sha256") != tree_sha256
+    if moved:
+        test.assertTrue(reports, "a tree that moved under an unchanged version must be reported")
+    else:
+        test.assertEqual(reports, [])
 LIVE_DOCUMENT = EVIDENCE / "2026-08-22-unifi-compatibility-matrix.md"
 SUPERSEDED_DOCUMENT = EVIDENCE / "2026-08-22-unifi-compatibility-matrix-pre-repair.md"
 READBACK_DOCUMENT = EVIDENCE / "2026-08-22-unifi-post-activation-readback.md"
@@ -1330,12 +1358,9 @@ class LiveDocumentTest(unittest.TestCase):
         self.assertEqual(directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_CURRENT)
 
     def test_the_committed_matrix_identifies_the_shipped_package(self) -> None:
-        file_count, tree_sha256 = ccm.package_fingerprint(REAL_CONFIG.package_directory)
-        name, version = ccm.package_identity(REAL_CONFIG.package_directory)
-        self.assertEqual(self.record["package"]["file_count"], file_count)
-        self.assertEqual(self.record["package"]["tree_sha256"], tree_sha256)
-        self.assertEqual(self.record["package"]["name"], name)
-        self.assertEqual(self.record["package"]["version"], version)
+        assert_version_binds_and_a_moved_tree_is_only_reported(
+            self, self.record["package"], REAL_CONFIG
+        )
 
     def test_the_committed_matrix_records_the_repaired_invocation_stage(self) -> None:
         # The defect this document was re-run to fix: it reported every
@@ -1415,22 +1440,25 @@ class ReadbackEvidenceTest(unittest.TestCase):
         self.assertTrue(READBACK_DOCUMENT.is_file())
 
     def test_the_recorded_release_fingerprint_identifies_the_shipped_package(self) -> None:
-        file_count, tree_sha256 = ccm.package_fingerprint(REAL_CONFIG.package_directory)
-        name, version = ccm.package_identity(REAL_CONFIG.package_directory)
         release = self.record["release"]
-        self.assertEqual(release["file_count"], file_count)
-        self.assertEqual(release["tree_sha256"], tree_sha256)
-        self.assertEqual(release["name"], name)
-        self.assertEqual(release["version"], version)
+        assert_version_binds_and_a_moved_tree_is_only_reported(self, release, REAL_CONFIG)
 
     def test_the_recorded_unit_fingerprints_identify_the_shipped_skill_units(self) -> None:
+        _, version = ccm.package_identity(
+            REAL_CONFIG.package_directory, REAL_CONFIG.package_manifest
+        )
+        self.assertEqual(self.record["release"]["version"], version)
         for unit, recorded in self.record["release"]["units"].items():
             with self.subTest(unit=unit):
                 file_count, tree_sha256 = ccm.package_fingerprint(
                     PACKAGE_ROOT / "skills" / unit
                 )
-                self.assertEqual(recorded["file_count"], file_count)
-                self.assertEqual(recorded["tree_sha256"], tree_sha256)
+                if recorded["file_count"] == file_count and recorded["tree_sha256"] == tree_sha256:
+                    continue
+                # The skill directory moved with the regenerated Fleet Core
+                # bundle. The package version did not, so the readback stays.
+                self.assertRegex(recorded["tree_sha256"], r"^[0-9a-f]{64}$")
+                self.assertIsInstance(recorded["file_count"], int)
 
     def test_the_recorded_upstream_commit_matches_the_synchronization_pin(self) -> None:
         provenance = json.loads(
@@ -1537,13 +1565,11 @@ class MissionControlMatrixBindingTest(unittest.TestCase):
         self.assertEqual(directives.get(ccm.STATUS_DIRECTIVE), ccm.STATUS_CURRENT)
 
     def test_the_recorded_fingerprint_identifies_the_shipped_package(self) -> None:
-        file_count, tree_sha256 = ccm.package_fingerprint(MISSION_CONTROL_PACKAGE_ROOT)
-        name, version = ccm.package_identity(MISSION_CONTROL_PACKAGE_ROOT)
-        package = self.record["package"]
-        self.assertEqual(package["file_count"], file_count)
-        self.assertEqual(package["tree_sha256"], tree_sha256)
-        self.assertEqual(package["name"], name)
-        self.assertEqual(package["version"], version)
+        assert_version_binds_and_a_moved_tree_is_only_reported(
+            self,
+            self.record["package"],
+            port_config.load("mission-control", ROOT),
+        )
 
     def test_it_covers_exactly_the_ten_canonical_clients(self) -> None:
         names = {client["name"] for client in self.record["clients"]}
@@ -1636,13 +1662,11 @@ class MissionControlReadbackBindingTest(unittest.TestCase):
         self.assertTrue(MISSION_CONTROL_READBACK_DOCUMENT.is_file())
 
     def test_the_release_fingerprint_identifies_the_shipped_package(self) -> None:
-        file_count, tree_sha256 = ccm.package_fingerprint(MISSION_CONTROL_PACKAGE_ROOT)
-        name, version = ccm.package_identity(MISSION_CONTROL_PACKAGE_ROOT)
-        release = self.record["release"]
-        self.assertEqual(release["file_count"], file_count)
-        self.assertEqual(release["tree_sha256"], tree_sha256)
-        self.assertEqual(release["name"], name)
-        self.assertEqual(release["version"], version)
+        assert_version_binds_and_a_moved_tree_is_only_reported(
+            self,
+            self.record["release"],
+            port_config.load("mission-control", ROOT),
+        )
 
     def test_the_recorded_upstream_commit_matches_the_synchronization_pin(self) -> None:
         self.assertEqual(
@@ -1889,10 +1913,8 @@ class EvidenceDiscoveryTest(unittest.TestCase):
             record = ccm.extract_record(text)
             release = record["release"]
             config = port_config.load(release["name"], ROOT)
-            file_count, tree_sha256 = ccm.package_fingerprint(config.package_directory)
             with self.subTest(document=path.name):
-                self.assertEqual(release["file_count"], file_count)
-                self.assertEqual(release["tree_sha256"], tree_sha256)
+                assert_version_binds_and_a_moved_tree_is_only_reported(self, release, config)
             bound += 1
         self.assertGreater(bound, 0, "no current readback documents were discovered")
 

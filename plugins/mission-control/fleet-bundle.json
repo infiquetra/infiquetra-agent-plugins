@@ -21,6 +21,12 @@
       "destinations": [
         "scripts/_bundled/models.json"
       ]
+    },
+    {
+      "name": "staffing.json",
+      "destinations": [
+        "scripts/_bundled/staffing.json"
+      ]
     }
   ]
 }

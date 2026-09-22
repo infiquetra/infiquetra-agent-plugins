@@ -229,7 +229,7 @@ class LiveDeclarationTests(unittest.TestCase):
         module_names = [entry["name"] for entry in payload.get("modules", [])]
         self.assertEqual(module_names, ["intent_envelope", "tier_palette"])
         data_names = [entry["name"] for entry in payload.get("data", [])]
-        self.assertEqual(data_names, ["models.json"])
+        self.assertEqual(data_names, ["models.json", "staffing.json"])
 
 
 if __name__ == "__main__":

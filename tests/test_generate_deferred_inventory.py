@@ -339,64 +339,28 @@ class CommandLineTests(unittest.TestCase):
 
 
 class LivePackageTests(unittest.TestCase):
-    """Checks against the real portable Fleet Core package in this repository.
+    """The live Fleet Core package is authored here, not a derived slice.
 
-    These close a gap no other file in this unit can close. ``check_repo.py``
-    verifies digests for paths inside a package, but the ported test suite lives
-    at the repository root and the recorded inventory is a generated document,
-    so neither is covered there.
+    The generator's synthetic cases above still prove the old set-difference
+    inventory. These cases prove the live package no longer uses that inventory:
+    no provenance manifest, the shim named as deliberately absent, and the
+    ``models.json`` residual still on disk because a consumer declares it.
     """
 
-    def test_live_inventory_is_self_consistent(self) -> None:
-        self.assertEqual(gdi.self_check(LIVE_PACKAGE, LIVE_PACKAGE / gdi.DEFERRED_FILENAME), [])
+    def test_authored_package_has_no_provenance_manifest(self) -> None:
+        self.assertFalse((LIVE_PACKAGE / gdi.PROVENANCE_FILENAME).is_file())
 
-    def test_live_inventory_records_the_pinned_source(self) -> None:
-        pin = gdi.read_pin(LIVE_PACKAGE)
+    def test_deferred_names_the_shim_and_says_why(self) -> None:
         text = (LIVE_PACKAGE / gdi.DEFERRED_FILENAME).read_text(encoding="utf-8")
-        for value in pin.values():
-            self.assertIn(value, text)
+        self.assertIn(gdi.SHIM_FILENAME, text)
+        self.assertIn("build time", text)
+        self.assertFalse((LIVE_PACKAGE / "scripts" / gdi.SHIM_FILENAME).is_file())
 
-    def test_live_inventory_does_not_name_the_ported_module_as_deferred(self) -> None:
+    def test_models_json_is_recorded_as_a_consumer_residual(self) -> None:
         text = (LIVE_PACKAGE / gdi.DEFERRED_FILENAME).read_text(encoding="utf-8")
-        deferred = {item.name for item in gdi.parse_rendered_items(text, gdi.DEFERRED_HEADING)}
-        ported = {item.name for item in gdi.parse_rendered_items(text, gdi.PORTED_HEADING)}
-
-        self.assertEqual(
-            ported,
-            {
-                "fleet_commons/intent_envelope.py",
-                "fleet_commons/models.json",
-                "fleet_commons/retry_backoff.py",
-                "fleet_commons/tier_palette.py",
-            },
-        )
-        self.assertEqual(deferred & ported, set())
-        self.assertIn(gdi.SHIM_FILENAME, deferred)
-
-    def test_recorded_derived_file_digests_match_the_tree(self) -> None:
-        import hashlib
-
-        payload = json.loads((LIVE_PACKAGE / gdi.PROVENANCE_FILENAME).read_text(encoding="utf-8"))
-        derived = payload["derived_files"]
-        self.assertTrue(derived, "expected at least one recorded derived file")
-
-        for entry in derived:
-            path = ROOT / entry["path"]
-            with self.subTest(path=entry["path"]):
-                self.assertTrue(path.is_file(), f"recorded derived file is missing: {path}")
-                digest = hashlib.sha256(path.read_bytes()).hexdigest()
-                self.assertEqual(
-                    digest,
-                    entry["sha256"],
-                    f"{entry['path']} no longer matches the digest recorded in "
-                    f"{gdi.PROVENANCE_FILENAME}; regenerate the transform or update the record",
-                )
-
-    def test_release_surface_paths_all_exist(self) -> None:
-        payload = json.loads((LIVE_PACKAGE / gdi.PROVENANCE_FILENAME).read_text(encoding="utf-8"))
-        for path in payload["release_surface"]["items"]:
-            with self.subTest(path=path):
-                self.assertTrue((ROOT / path).is_file(), f"release surface path is missing: {path}")
+        self.assertIn("models.json", text)
+        self.assertIn("mission-control", text)
+        self.assertTrue((LIVE_PACKAGE / "scripts" / "fleet_commons" / "models.json").is_file())
 
 
 if __name__ == "__main__":

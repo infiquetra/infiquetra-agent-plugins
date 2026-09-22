@@ -1,0 +1,9 @@
+{
+  "_comment": "Ordinal cost-weight table (#366). cost_weights.py loads this at import and validates it against tier_palette's MODELS/EFFORTS ordering: every 4x4 cell present, strictly monotonic along BOTH axes (stronger model => higher weight, higher effort => higher weight), no off-palette key. Weights are ORDINAL/RELATIVE, not dollar prices — hand-authored non-linear so premium tiers (opus/fable, xhigh) cost disproportionately more (multiplicative shape). haiku/xhigh is present for grid completeness but is never a runnable tier (Tier.validate rejects it via effort_ceiling). To retune, keep every single step up either axis strictly increasing or the load-time guard fails loudly — see plugins/fleet-core/references/staffing.md and DECISIONS {#run-scoped-spend-budgets-366}.",
+  "weights": {
+    "fable": { "low": 13, "medium": 26, "high": 52, "xhigh": 91 },
+    "opus": { "low": 8, "medium": 16, "high": 32, "xhigh": 56 },
+    "sonnet": { "low": 3, "medium": 6, "high": 12, "xhigh": 21 },
+    "haiku": { "low": 1, "medium": 2, "high": 4, "xhigh": 7 }
+  }
+}

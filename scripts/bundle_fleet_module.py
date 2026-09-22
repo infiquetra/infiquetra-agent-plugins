@@ -20,9 +20,12 @@ Two digest domains, because a stamp cannot hash the bytes that contain it:
 * generated-output (``output-sha256``) covers the generated file with its stamp
   block excluded and answers "has this bundle been hand-edited?"
 
-The Fleet Core version and source commit come from that package's provenance
-manifest, so there is one version source rather than a second hand-maintained
-one.
+The stamp's version and commit come from the Fleet Core package. A derived
+package still reads them from its provenance manifest. An authored package has
+no provenance manifest: the version is the package's own ``plugin.json``
+version, and the commit field is the marker ``authored`` because there is no
+upstream revision to pin. The source digest, not that marker, is what proves
+the bundle matches the bytes.
 
 Standard library only, and no network access.
 """
@@ -50,6 +53,7 @@ FLEET_CORE_PLUGIN = check_repo.FLEET_CORE_PLUGIN_NAME
 FLEET_COMMONS_DIR = Path("scripts") / "fleet_commons"
 DEFAULT_BUNDLE_DIR = Path("scripts") / check_repo.BUNDLE_DIRECTORY_NAME
 PROVENANCE_FILENAME = check_repo.PROVENANCE_FILENAME
+AUTHORED_SOURCE_COMMIT = "authored"
 
 GENERATED_BY = "scripts/bundle_fleet_module.py"
 
@@ -230,23 +234,46 @@ def validate_declaration_file(path: Path, *, origin: str | None = None, root: Pa
 
 
 def read_pin(fleet_core: Path) -> dict[str, str]:
-    """Read version and commit from the portable Fleet Core provenance manifest."""
+    """Read the version and commit a generated bundle stamp records.
+
+    A derived package records both in ``PROVENANCE.json``. An authored package
+    has no provenance manifest. Its stamp records the ``version`` in
+    ``plugin.json`` and ``source-commit: authored``. The source digest is the
+    check that the bundled bytes still match the module; the commit field no
+    longer names an upstream revision.
+    """
     manifest = fleet_core / PROVENANCE_FILENAME
-    if not manifest.is_file():
-        raise BundleError(f"missing provenance manifest: {manifest}")
+    if manifest.is_file():
+        try:
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise BundleError(f"invalid provenance manifest {manifest}: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise BundleError(f"invalid provenance manifest {manifest}: expected an object")
+        pin: dict[str, str] = {}
+        for field in ("source_commit", "source_version"):
+            value = payload.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise BundleError(f"missing non-empty {field} in {manifest}")
+            pin[field] = value.strip()
+        return pin
+
+    plugin_path = fleet_core / "plugin.json"
+    if not plugin_path.is_file():
+        raise BundleError(
+            f"missing provenance manifest: {manifest} "
+            f"(an authored package records its version in {plugin_path})"
+        )
     try:
-        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        payload = json.loads(plugin_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise BundleError(f"invalid provenance manifest {manifest}: {exc}") from exc
+        raise BundleError(f"invalid plugin manifest {plugin_path}: {exc}") from exc
     if not isinstance(payload, dict):
-        raise BundleError(f"invalid provenance manifest {manifest}: expected an object")
-    pin: dict[str, str] = {}
-    for field in ("source_commit", "source_version"):
-        value = payload.get(field)
-        if not isinstance(value, str) or not value.strip():
-            raise BundleError(f"missing non-empty {field} in {manifest}")
-        pin[field] = value.strip()
-    return pin
+        raise BundleError(f"invalid plugin manifest {plugin_path}: expected an object")
+    version = payload.get("version")
+    if not isinstance(version, str) or not version.strip():
+        raise BundleError(f"missing non-empty version in {plugin_path}")
+    return {"source_commit": AUTHORED_SOURCE_COMMIT, "source_version": version.strip()}
 
 
 def source_path_for(name: str) -> Path:
