@@ -1,0 +1,6 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "hermes-profile-evolution",
+  "version": "0.1.4",
+  "description": "Claude Code request surface for target-sovereign Hermes profile evolution."
+}
