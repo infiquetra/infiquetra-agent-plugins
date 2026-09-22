@@ -199,6 +199,7 @@ for the contract itself.
 | [`ports/`](ports/README.md) | One port descriptor per package: identity, custody, and assessment settings |
 | [`schemas/`](schemas/) | JSON Schemas for the contracts this repository validates |
 | [`scripts/`](scripts/) | Validation, synchronization, bundling, and inventory tools |
+| [`docs/runbooks/install-clients.md`](docs/runbooks/install-clients.md) | Place this catalog on each harness, read the placement back, and remove the old marketplace |
 | [`docs/`](docs/README.md) | Architecture, public guidance, and durable repository knowledge |
 | [`docs/plans/`](docs/plans/2026-08-24-mission-control-port-run-plan.md) | Approved implementation plans |
 | [`docs/evidence/`](docs/evidence/2026-08-30-mission-control-compatibility-matrix.md) | Assessment records, written under the public evidence rules |
