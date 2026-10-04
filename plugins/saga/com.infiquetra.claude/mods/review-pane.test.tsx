@@ -118,6 +118,11 @@ function fake(on: On): Fake {
   on('tool.register', async ($, e) => ({ value: { tool: e.name } }))
   on('session.cwd', async () => ({ value: CWD }))
   on('process.run', async ($, e) => {
+    // The token-capture mod asks at session start which unit this directory works: none here.
+    if (e.argv.includes('unit-for')) {
+      const none = JSON.stringify({ schema: 'run_status.v1', repo_root: CWD, branch: '', match: null })
+      return { value: { exitCode: 0, stdout: none, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     state.runs.push([...e.argv])
     return { value: { ...state.review, isStdoutTruncated: false, isStderrTruncated: false } }
   })

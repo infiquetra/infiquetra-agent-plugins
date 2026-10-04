@@ -22,6 +22,11 @@ its findings. Whether a lens met its bar comes from ``review_consensus.lens_outc
 the rule the verdict itself applies, so a display never re-derives it. A lens that did not run is
 never shown with a score.
 
+``unit-for`` answers which unit row a session started in a directory is working (issue #107): the
+row whose ``worktree`` (or ``merge_worktree``) is that directory's checkout, else the row whose
+``branch`` is the branch checked out there, across every record in the store. The Claude Code
+token-capture mod asks it once per session and records nothing when the answer is ``null``.
+
 Exit codes mirror ``run_record.py``: 0 with a (possibly empty) list, 2 for a refusal (the store
 root cannot be resolved, a record is not valid JSON), 3 for a record version this saga does not
 write. Each refusal is one line on standard error, never a traceback.
@@ -168,6 +173,142 @@ def active_issues(store_root: Path) -> list[int]:
             found.append((record.updated_at, record.issue))
     found.sort(reverse=True)
     return [issue for _, issue in found]
+
+
+def current_branch(repo_root: Path, *, runner: Callable[..., Any] | None = None) -> str:
+    """The branch checked out at *repo_root*, or the empty string (detached, or not a checkout)."""
+    run = runner if runner is not None else subprocess.run
+    try:
+        result = run(  # nosec B603 - fixed argv, no shell
+            ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return (result.stdout or "").strip() if result.returncode == 0 else ""
+
+
+def _is_path(value: Any, target: Path) -> bool:
+    """Whether *value* is an absolute path naming *target*; a relative or missing one never is."""
+    if not isinstance(value, str) or not value.strip() or not Path(value).is_absolute():
+        return False
+    try:
+        return Path(value).resolve() == target
+    except OSError:
+        return False
+
+
+#: How a unit row matched, strongest first: its own worktree outranks a shared branch name.
+MATCHED_BY: tuple[str, ...] = ("worktree", "branch")
+
+#: The role a matched session records when its row names no staffing role: orchestrate's rows
+#: carry ``role`` only for review-loop units, and the session in a unit's worktree is its worker.
+DEFAULT_ROLE = "worker"
+
+#: Orchestrate's review-loop roles (``Unit.role``) are a different vocabulary from the staffing
+#: roles ``usage add --role`` records and ``cost_report.py`` groups spend by, so each is mapped
+#: to the staffing role whose work it does: a fixer or resolver edits code like a worker, and a
+#: review controller or external reviewer reviews like a lens reviewer.
+REVIEW_LOOP_ROLES: dict[str, str] = {
+    "review-fixer": "worker",
+    "downstream-resolver": "worker",
+    "review-controller": "lens-reviewer",
+    "external-reviewer": "lens-reviewer",
+}
+
+
+def staffing_roles() -> frozenset[str]:
+    """The staffing role names ``staffing.json`` lists; empty when the registry is unreadable."""
+    import bundled_fleet  # noqa: PLC0415  (loaded on use: nothing does I/O at import)
+
+    staffing = bundled_fleet.load("staffing")
+    try:
+        return frozenset(staffing.roles())
+    except staffing.StaffingError as exc:
+        print(f"run_status: staffing roles unreadable: {exc}", file=sys.stderr)
+        return frozenset()
+
+
+def staffing_role(named: Any, known: frozenset[str]) -> str:
+    """The staffing role a row's ``role`` key records as: mapped from a review-loop role, kept
+    when *known* lists it, and otherwise ``worker``."""
+    if not isinstance(named, str):
+        return DEFAULT_ROLE
+    role = REVIEW_LOOP_ROLES.get(named, named)
+    return role if role in known else DEFAULT_ROLE
+
+
+#: The role of a session in a unit's merge-turn worktree (``merge_worktree``, issue 1025).
+MERGE_ROLE = "merging-worker"
+
+
+def unit_for(store_root: Path, repo_root: Path, branch: str) -> dict[str, Any] | None:
+    """The unit row a session at *repo_root* on *branch* is working, or ``None``.
+
+    Every record in *store_root* is read; one this saga cannot read is skipped with one line on
+    standard error, so a stale or foreign record never hides the unit. A row matches when its
+    ``worktree`` is *repo_root* (role: the row's ``role`` as a staffing role, see
+    ``staffing_role``, else ``worker``), when its
+    ``merge_worktree`` is (role ``merging-worker``), or, failing both, when its ``branch`` is
+    *branch*. Of several matches the strongest kind wins, then an active record (a non-empty
+    ``next_step``), then the newest ``updated_at``; ``ambiguous`` says there was more than one.
+    """
+    root = Path(store_root)
+    if not root.is_dir():
+        return None
+    target = Path(repo_root).resolve()
+    known = staffing_roles()
+    found: list[tuple[int, bool, str, dict[str, Any]]] = []
+    for path in sorted(root.glob("issue-*.json")):
+        number = path.stem.removeprefix("issue-")
+        if not number.isdigit():
+            continue
+        try:
+            record = run_record.load(root, int(number), warn=None)
+        except run_record.RunRecordError as exc:
+            print(f"run_status: skipped {path.name}: {exc}", file=sys.stderr)
+            continue
+        if record is None:
+            continue
+        for row in record.units:
+            if not isinstance(row, dict):
+                continue
+            unit = run_record.unit_key(row)
+            if not unit:
+                continue
+            role = staffing_role(row.get("role"), known)
+            if _is_path(row.get("worktree"), target):
+                how = "worktree"
+            elif _is_path(row.get("merge_worktree"), target):
+                how, role = "worktree", MERGE_ROLE
+            elif branch and row.get("branch") == branch:
+                how = "branch"
+            else:
+                continue
+            found.append(
+                (
+                    MATCHED_BY.index(how),
+                    not record.next_step.strip(),
+                    record.updated_at,
+                    {
+                        "issue": record.issue,
+                        "unit": unit,
+                        "role": role,
+                        "matched_by": how,
+                        "record_path": str(run_record.record_path(root, record.issue)),
+                        "store_root": str(root),
+                    },
+                )
+            )
+    if not found:
+        return None
+    # Strongest kind first, then active before finished, then newest: sort the time descending.
+    found.sort(key=lambda item: item[2], reverse=True)
+    found.sort(key=lambda item: (item[0], item[1]))
+    return {**found[0][3], "ambiguous": len(found) > 1}
 
 
 def summary(
@@ -424,7 +565,42 @@ def build_parser() -> argparse.ArgumentParser:
         help="Which repair loop's history to read (default: code_review).",
     )
     rev.add_argument("--json", action="store_true", help=f"Print the {REVIEW_SCHEMA} document.")
+    which = sub.add_parser(
+        "unit-for",
+        help="The unit row a session in --repo-root is working: by worktree, then by branch.",
+    )
+    which.add_argument("--json", action="store_true", help=f"Print the {SCHEMA} document.")
     return parser
+
+
+def _cmd_unit_for(
+    args: argparse.Namespace, repo_root: Path, runner: Callable[..., Any] | None
+) -> int:
+    """Print the matched unit, or ``null``. Outside a git checkout there is no unit: exit 0."""
+    branch = current_branch(repo_root, runner=runner)
+    try:
+        store_root = (
+            Path(args.store_root).resolve()
+            if args.store_root
+            else run_record.resolve_store_root(repo_root, runner=runner)
+        )
+    except run_record.StoreRootError:
+        match = None
+    else:
+        match = unit_for(store_root, repo_root, branch)
+    if args.json:
+        view = {
+            "schema": SCHEMA,
+            "repo_root": str(repo_root),
+            "branch": branch,
+            "match": match,
+        }
+        print(json.dumps(view, indent=2, ensure_ascii=False))
+    elif match is not None:
+        print(f"#{match['issue']} unit {match['unit']} ({match['role']}, by {match['matched_by']})")
+    else:
+        print("run_status: no saga unit for this checkout")
+    return 0
 
 
 def main(argv: list[str] | None = None, *, runner: Callable[..., Any] | None = None) -> int:
@@ -434,6 +610,8 @@ def main(argv: list[str] | None = None, *, runner: Callable[..., Any] | None = N
         repo_root = repo_toplevel(
             Path(args.repo_root) if args.repo_root else Path.cwd(), runner=runner
         )
+        if args.command == "unit-for":
+            return _cmd_unit_for(args, repo_root, runner)
         store_root = (
             Path(args.store_root).resolve()
             if args.store_root

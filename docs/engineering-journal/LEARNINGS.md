@@ -21,6 +21,26 @@ for `run_record.save` misses the aliases saga already uses (`import run_record a
 **Generalizable rule.** Before building a card filed from follow-ups, diff its claims against
 `origin/main`; when the code has already moved, turn the card's goal into a guard test that fails on
 a regression.
+### Read a Claude Code session's cost per request, not per turn
+
+**Evidence.** Issue #107, `plugins/saga/com.infiquetra.claude/mods/usage-capture.ts`. Claude Code
+2.1.289's declarations: `TurnUsage` (what `turn.complete` carries) is the four `ModelUsage` counts
+plus the answering model, with no effort and no cache-write TTL split. `TurnStepInput` carries
+`effort` (a level, a number, or absent) and `agentId` (absent on the main thread), and
+`TurnStepResult.usage` is that one request's usage, null when no response arrived.
+`usage-capture.test.ts` drives `turn.step` on the main thread and in a subagent loop and checks
+the `usage add` argv each produces.
+
+**Mechanism.** The effort is a property of the request, so the run record's entry identity
+(session, role, vendor, model, effort) can only be filled where the request is made. A turn can
+also mix models (a fallback) and a subagent's turns complete inside the parent's. Neither turn
+events nor request events split cache writes by TTL; only the Agent tool's own result record
+does, so the mod records them at the one-hour rate as an upper bound. The mod resolves its unit
+once at session start through `run_status.py unit-for`, because orchestrate's unit branches are
+`orch/<run>-<unit>`, not `issue/N`, so the issue cannot be read from the branch.
+
+**Generalizable rule.** Capture cost at the event that names every attribute the ledger keys on,
+and record an unsplittable count at its most expensive rate rather than guess a split.
 
 ### Preserving unknown keys on load is not enough when the save writes back the copy it loaded
 
