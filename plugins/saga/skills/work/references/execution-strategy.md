@@ -209,9 +209,18 @@ python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier --explai
 `staffing.resolve_shape` in `plugins/fleet-core/scripts/fleet_commons/staffing.py`, which owns the
 order in which the operator's answer, the repository overlay, a recorded raise and the registry
 default apply. This file does not restate that order. A recorded raise reaches it only through
-`--jev-raise '<json>'` (the plan unit's `jev_raise`, written by `/plan`'s `tier_judgment.py plan`
-under the run record's `tier_judgments` map and printed by `tier_judgment.py raise`, issue #96), and
-`--root <checkout>` names where the overlay is read. An explicit `{model, effort}` on the plan unit
+`--jev-raise -`, which reads the plan unit's `jev_raise` from stdin: `/plan`'s `tier_judgment.py
+plan` writes it under the run record's `tier_judgments` map (issue #96), and `tier_judgment.py raise`
+prints it, or `null`, into the pipe:
+
+```bash
+python3 plugins/saga/scripts/tier_judgment.py raise --issue <N> --unit <id> \
+  | python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier --explain \
+      --work-shape <shape> --jev-raise -
+```
+
+The printed JSON is never spliced into a quoted shell argument: its `reason` is built from a
+TypeSafe answer (issue #133). `--root <checkout>` names where the overlay is read. An explicit `{model, effort}` on the plan unit
 is passed as the operator's answer and validated against the same vocabulary as every other layer,
 so a model or effort the registry does not carry is refused rather than passed through to a spawn.
 The command prints exactly `{"model", "effort"}`; with `--explain` it adds `source`, the layer that

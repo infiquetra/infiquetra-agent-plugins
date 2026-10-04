@@ -81,6 +81,14 @@ The catalog requires `python>=3.12`.
   `opus/medium` at 2.67 times `sonnet/medium`, about double the measured gap, and nothing outside
   its own test read it.
 
+### Security
+
+- The tier judgment's recorded reason carries only the direction question's own choices (issue
+  #133). `staffing._probabilities_text` used to copy every probability key from the TypeSafe answer
+  into the reason, and that reason reaches `jev_raise`, which `/work` hands to a shell command. It
+  now renders `below`, `same` and `above` (the new `staffing.DIRECTION_CHOICES`), in that order,
+  and drops any other key. The bundled copies in saga and mission-control are regenerated.
+
 ## [0.32.0] - 2026-09-22
 
 0.32.0 — imported in full from infiquetra-claude-plugins@acc99fe7 (upstream

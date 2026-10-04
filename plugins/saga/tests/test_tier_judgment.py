@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shlex
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -349,3 +351,92 @@ def test_the_plan_command_runs_end_to_end_with_the_judgment_off(
         {"model": "sonnet", "effort": "low"},
     ]
     assert "tier_judgments" not in rr.load(store, 96, warn=None).extra
+
+
+# ---------------------------------------------------------------------------
+# Issue #133: /work pipes the recorded raise into --jev-raise - instead of quoting it.
+# ---------------------------------------------------------------------------
+
+WORK_DOCS = [
+    REPO_ROOT / "plugins" / "saga" / "skills" / "work" / "SKILL.md",
+    REPO_ROOT / "plugins" / "saga" / "skills" / "work" / "references" / "execution-strategy.md",
+]
+
+
+def _resolve_tier(cwd: Path, *args: str, stdin: str | None = None) -> Any:
+    return subprocess.run(
+        [sys.executable, str(SCRIPTS / "lifecycle_state.py"), "resolve-build-unit-tier", *args],
+        cwd=cwd,
+        input=stdin,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_work_pipes_a_raise_whose_reason_holds_a_single_quote_into_the_resolver(
+    tj: ModuleType, rr: ModuleType, staffing: Any, store: Path, repo_root: Path
+) -> None:
+    """The command the skill names, as a shell runs it: ``tier_judgment.py raise | ... -``."""
+    _seed(rr, store)
+    _plan(tj, staffing, store, repo_root, {"U1": ("above", 0.85)}, [])
+    record = rr.load(store, 96, warn=None)
+    record.extra["tier_judgments"]["U1"]["jev_raise"]["reason"] = "it's '; echo pwned; '"
+    rr.save(store, record)
+
+    pipeline = (
+        f"{shlex.quote(sys.executable)} {shlex.quote(str(SCRIPTS / 'tier_judgment.py'))} raise "
+        f"--issue 96 --unit {{unit}} --store-root {shlex.quote(str(store))} | "
+        f"{shlex.quote(sys.executable)} {shlex.quote(str(SCRIPTS / 'lifecycle_state.py'))} "
+        "resolve-build-unit-tier --explain --jev-raise -"
+    )
+    raised = subprocess.run(
+        pipeline.format(unit="U1"),
+        shell=True,  # the point is the shell pipeline the skill names
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert raised.returncode == 0, raised.stderr
+    assert "pwned" not in raised.stdout
+    assert json.loads(raised.stdout) == {"model": "opus", "effort": "high", "source": "jev-raise"}
+
+    none = subprocess.run(
+        pipeline.format(unit="U2"),
+        shell=True,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert none.returncode == 0, none.stderr
+    assert json.loads(none.stdout)["source"] != "jev-raise"
+
+
+def test_the_jev_raise_argument_form_still_reads_trusted_json(repo_root: Path) -> None:
+    raise_ = json.dumps({"model": "opus", "effort": "high"})
+    done = _resolve_tier(repo_root, "--explain", "--jev-raise", raise_)
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout)["source"] == "jev-raise"
+
+
+@pytest.mark.parametrize(
+    ("stdin", "message"),
+    [("", "read nothing from stdin"), ("  \n", "read nothing from stdin"), ("[1]", "list")],
+    ids=["empty", "blank", "not-an-object"],
+)
+def test_jev_raise_from_stdin_refuses_empty_or_non_object_input(
+    repo_root: Path, stdin: str, message: str
+) -> None:
+    done = _resolve_tier(repo_root, "--jev-raise", "-", stdin=stdin)
+    assert done.returncode == 2
+    assert message in json.loads(done.stderr)["error"]
+
+
+@pytest.mark.parametrize("doc", WORK_DOCS, ids=lambda path: path.name)
+def test_work_never_splices_the_raise_into_a_quoted_argument(doc: Path) -> None:
+    text = doc.read_text(encoding="utf-8")
+    assert "--jev-raise '" not in text
+    assert "--jev-raise -" in text
+    assert "tier_judgment.py raise" in text

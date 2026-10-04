@@ -655,3 +655,45 @@ def test_cli_suggest_value_still_records_a_parameter(
     )
     payload = json.loads(capsys.readouterr().out)
     assert payload["suggestion"] == {"model": "opus", "effort": "high"}
+
+
+# ---------------------------------------------------------------------------
+# Issue #133: vendor-supplied probability keys never reach the recorded reason.
+# ---------------------------------------------------------------------------
+
+
+def test_a_probability_key_outside_the_choices_never_reaches_the_reason() -> None:
+    hostile = "above'; touch /tmp/pwned; echo '"
+    answers = {
+        "worker__direction": {
+            "type": "choice",
+            "choice": "above",
+            "confidence": 0.85,
+            "probabilities": {hostile: 0.5, "above": 0.85, "same": 0.1, "below": 0.05},
+        }
+    }
+    outcome = _consult({"worker": _unit()}, _fake_ask(_ok(answers)))
+    block = outcome["judgments"]["worker"]
+
+    assert block["band"] == staffing.BAND_AUTO_RAISE
+    assert hostile not in block["reason"]
+    assert "'" not in block["reason"].split("(probabilities:")[1]
+    assert "(probabilities: below 0.05, same 0.10, above 0.85)" in block["reason"]
+    raised = staffing.jev_raise_from(block)
+    assert raised is not None
+    assert hostile not in raised["reason"]
+    assert "touch" not in json.dumps(raised)
+
+
+def test_probabilities_with_no_known_choice_add_no_text() -> None:
+    answers = {
+        "worker__direction": {
+            "type": "choice",
+            "choice": "above",
+            "confidence": 0.85,
+            "probabilities": {"it's": 0.85},
+        }
+    }
+    block = _consult({"worker": _unit()}, _fake_ask(_ok(answers)))["judgments"]["worker"]
+    assert "probabilities" not in block["reason"]
+    assert "it's" not in block["reason"]

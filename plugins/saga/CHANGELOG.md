@@ -311,6 +311,15 @@ roughly four hours before commit `acc99fe7` (2026-09-20 13:48 -0400), the commit
 imported from. None of the four scripts were dropped by this package's own import step; they were
 already gone from the upstream tree at the commit this package pinned to.
 
+### Security
+
+- `lifecycle_state.py resolve-build-unit-tier --jev-raise -` reads the recorded raise from stdin
+  (issue #133). `/work`'s skill text and execution-strategy reference, and `/plan`'s pointer to
+  them, now pipe `tier_judgment.py raise` into it instead of telling the agent to splice the JSON
+  into a single-quoted `--jev-raise '<json>'` argument, which a single quote in the raise's reason
+  would end early. Empty stdin and a value that is neither an object nor `null` exit 2. Passing
+  the JSON itself as the argument still works for a caller that holds trusted JSON.
+
 ## [1.2.2] - 2026-09-22
 
 Carried three upstream tests the 1.2.1 import had omitted. A review of the import found that
