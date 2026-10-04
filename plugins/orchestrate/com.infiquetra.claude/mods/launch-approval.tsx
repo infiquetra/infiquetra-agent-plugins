@@ -28,6 +28,7 @@ export const APPROVAL_QUESTION = 'Approve this launch table?'
 export const APPROVAL_OPTIONS = ['Change', 'Cancel', 'Approve'] as const
 const LAUNCH_TABLE_SCHEMA = 'orchestrate.launch_table.v1'
 const LAUNCH_TABLE_TIMEOUT_MS = 60_000
+export const UNSEEN_TABLE = 'the launch table could not be shown, so nothing was asked or approved'
 export const AFK_REFUSAL = 'the dialog resolved itself while the operator was away; nothing was approved'
 
 const launchTable = atom({ plugin: 'orchestrate', key: 'launchTable' } as const, null)
@@ -77,7 +78,20 @@ export function registerLaunchApproval(on: On): void {
       return { result: refused }
     }
     await update($, launchTable, () => table.value.text)
-    await $.ui.open({ id: APPROVAL_PANE, title: `Launch table: ${table.value.run_id}` })
+    const opened = await $.ui.open({ id: APPROVAL_PANE, title: `Launch table: ${table.value.run_id}` })
+    if (!opened.isPlaced) {
+      // A tool call opens the pane unasked, and an unasked pane waits undrawn
+      // below 144 columns or where no surface places panes. Never ask the
+      // operator to approve a table they cannot see: hand the text back instead.
+      await $.ui.close({ id: APPROVAL_PANE })
+      await update($, launchTable, () => null)
+      const unseen: OrchestrateDecision = {
+        decision: 'dismissed',
+        reason: `${UNSEEN_TABLE} (${opened.reason}); print \`text\` verbatim and ask the operator in plain text`,
+        text: table.value.text,
+      }
+      return { result: unseen }
+    }
     let decision: OrchestrateDecision
     try {
       const answer = await $.ui.ask(APPROVAL_QUESTION, { options: APPROVAL_OPTIONS, header: 'Launch' })

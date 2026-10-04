@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { AFK_REFUSAL, APPROVAL_PANE, APPROVAL_QUESTION, decisionFor } from './launch-approval.tsx'
+import { AFK_REFUSAL, APPROVAL_PANE, APPROVAL_QUESTION, UNSEEN_TABLE, decisionFor } from './launch-approval.tsx'
 
 const SURFACES = ['terminal', 'desktop'] as const
 const TOOL = 'mcp__orchestrate__review_launch_table'
@@ -37,7 +37,12 @@ type Asked = { result?: Record<string, unknown>; deny?: string }
  * The engine beneath the plugin. `asked` answers the AskUserQuestion dialog the
  * way the engine would: `{ result: { answers } }`, or `{ deny }` for a dismissal.
  */
-function world(on: any, asked: () => Asked | Promise<Asked>, ran: () => Ran = () => ({ exitCode: 0, stdout: JSON.stringify(TABLE), stderr: '' })) {
+function world(
+  on: any,
+  asked: () => Asked | Promise<Asked>,
+  ran: () => Ran = () => ({ exitCode: 0, stdout: JSON.stringify(TABLE), stderr: '' }),
+  placed: () => Record<string, unknown> = () => ({ isPlaced: true }),
+) {
   const runs: string[][] = []
   const questions: unknown[] = []
   const panes: string[] = []
@@ -46,7 +51,7 @@ function world(on: any, asked: () => Asked | Promise<Asked>, ran: () => Ran = ()
   on('tool.register', (_$: any, e: any) => ({ value: { tool: `mcp__orchestrate__${e.name}` } }))
   on('ui.open', (_$: any, e: any) => {
     panes.push(`open ${e.id}`)
-    return { value: { isPlaced: true } }
+    return { value: placed() }
   })
   on('ui.close', (_$: any, e: any) => {
     panes.push(`close ${e.id}`)
@@ -149,6 +154,20 @@ describe('the operator answer reaches the model as the tool result', () => {
     expect(r.result).toEqual({ decision: 'refused', reason: "unit 'u1' waits on 'ghost', which is in no run" })
     expect(questions).toEqual([])
     expect(panes).toEqual([])
+  })
+
+  test('a pane that waits undrawn asks nothing, approves nothing, and hands the table back', async ($, on) => {
+    const reason = 'opened unasked below the 144-column floor; the terminal is 120 columns'
+    const { runs, questions, panes } = world(on, answering('Approve'), undefined, () => ({ isPlaced: false, reason }))
+    await start($)
+    const r: any = await $.tool.call({ tool: TOOL, plan: '/tmp/plan.json' } as any)
+    expect(r.result.decision).toBe('dismissed')
+    expect(r.result.reason).toContain(UNSEEN_TABLE)
+    expect(r.result.reason).toContain(reason)
+    expect(r.result.text).toBe(TEXT)
+    expect(questions).toEqual([])
+    expect(panes).toEqual([`open ${APPROVAL_PANE}`, `close ${APPROVAL_PANE}`])
+    expectNoLaunch(runs)
   })
 
   test('an expansion passes the issue to launch-table', async ($, on) => {

@@ -254,7 +254,8 @@ Then ask to approve, edit, or cancel. **Nothing launches before the operator say
   → run `start` with that same plan file. `change` → apply `request` (null means ask what to
   change), rewrite the plan file, and call the tool again. `cancelled` → stop. `refused` → the plan
   does not validate; fix it from `reason`. `dismissed` → nobody answered (the dialog was closed,
-  or resolved itself while the operator was away): ask in plain text below, never treat it as yes.
+  or resolved itself while the operator was away, or the pane could not be drawn and `text`
+  carries the table): print the table verbatim and ask in plain text below, never treat it as yes.
 - **Otherwise**, print `launch-table`'s output verbatim in a fenced block and ask in plain text.
 
 **Editing is plain language, not a form.** "Make plan-codex grok", "swap the two document

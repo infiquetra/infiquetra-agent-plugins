@@ -114,7 +114,7 @@ export type OrchestrateDecision =
   | { decision: 'approved'; plan: string; plan_sha256: string }
   | { decision: 'change'; request: string | null }
   | { decision: 'cancelled' }
-  | { decision: 'dismissed'; reason: string }
+  | { decision: 'dismissed'; reason: string; /** The script's table, when the pane could not draw it. */ text?: string }
   | { decision: 'refused'; reason: string }
 
 declare module 'claude-code' {
