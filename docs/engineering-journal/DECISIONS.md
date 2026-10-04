@@ -24,6 +24,74 @@ example taught the opposite.
 
 **Revisit when.** A `/work` lane needs to build several plan units in one session and one worktree
 often enough that one row per unit becomes a cost.
+### A shared non-production environment is leased through a compare-and-swap push to the git remote
+
+**Decision.** The combined-branch pass (issue #99, pre-review testing U4) holds a shared
+environment through the git reference `refs/saga/leases/<name>` on the remote the declaration
+names, default `origin` and `shared-nonprod`. `plugins/saga/scripts/environment_lease.py` acquires
+it by pushing a commit on the empty tree, whose message is the holder, with
+`--force-with-lease=<ref>:` (an empty expected value: only if the reference does not exist) and
+`--no-verify`, and releases it by deleting it with `--force-with-lease=<ref>:<oid it acquired>`.
+The holder names the repository, issue, revision, a short host label, start time and bound. The
+same run re-acquires its own lease after a crash; a stale lease is reported with the exact release
+command and never broken automatically. The record and the merge turn stay lock-free, as issue 1018
+required; this is the one scoped exception, required by issue #91's operator ruling 3.
+
+**Rationale.** The card's stop condition is a lease every deploying host can see. Every such host
+already pushes to the repository's remote with the credentials it has, and the push carries the
+expected old value, which the server's reference transaction compares, so a create is atomic
+across hosts. A local experiment had exactly one winner in 20 of 20 concurrent creates. It needs
+no new infrastructure, works with any git host, and the tests drive real git against a bare
+repository with no network.
+
+**Rejected alternatives.** A lock file in one checkout (one host only). A GitHub label or issue (no
+compare-and-swap). The Deployments API or environments (no atomic acquire outside Actions). Actions
+concurrency groups (they serialise workflow runs only). The GitHub refs REST API (atomic, but
+GitHub-only and three API calls where one push serves every remote). A DynamoDB or S3 lock (new
+infrastructure). A field in the run record (one host's file, and issue 1018's rule for the record
+still holds).
+
+**Revisit when.** A deploying host lacks push rights to the remote, a remote rejects the
+`refs/saga/` namespace, or the step-10 delivery to a shared stack (the run model's "the hold covers
+every deployment to that environment") is built and needs the same lease from `release_step.py`.
+
+### The merge turn moves before code review
+
+**Decision.** `/work` brings the units together in Phase 3.2 and runs the combined-branch loop in
+Phase 3.3, before Phase 5's review. §5.4 keeps the release, the deploy, the functional test and the
+close. §5.1 reviews the revision in `combined_branch.handed_to_code_review`. Every entry into review,
+a repair batch from review or from the post-merge `/qa` loop included, passes the combined loop
+first. `merge_turn.integration_state` says when integration is complete.
+
+**Rationale.** The lifecycle's run model at infiquetra-sdlc `e5a2be10` brings work together (step
+6) before it reviews it (step 7), and issue #91's rulings 3 and 4 require review of a combined
+branch that passed its functional run. Before this, the merge turn ran after review, so review saw
+one unit's branch and the integrated branch was never reviewed or functionally tested before
+release.
+
+**Rejected alternatives.** Running the combined pass after review (review would judge code nobody
+had seen run). Running the deployed check per unit (a shared stack would receive unit branches).
+
+**Revisit when.** Orchestrate-driven runs, whose merge turn lives in orchestrate's own driver, need
+the same combined loop.
+
+### Exit 5 is an environment stop, distinct from a refusal and from "not green yet"
+
+**Decision.** `build_loop.py --combined` exits 5 on the third consecutive `could-not-execute`
+combined pass and prints the passes' environment problems. A deploy or teardown that exits
+non-zero is `could-not-execute` with its exit code kept; a test that exits non-zero is `fail`.
+Waiting out a held lease counts toward the streak. The next invocation still runs.
+
+**Rationale.** The card asks for the loop to stop after three environment failures and name the
+problem for the operator. Exit 4 means "fix the code and run again", and exit 2 means "bad input";
+a caller must be able to tell "the operator has to fix the environment" from both.
+
+**Rejected alternatives.** Reusing exit 2 (a refusal implies the input was wrong). Counting a
+failed deploy as a code defect (the card says it is never one; the cost is that a change that
+breaks its own deploy reaches the environment stop after three passes, and the baseline that runs
+first catches most such breakage).
+
+**Revisit when.** The run model gives environment failures a numeric allowance of its own.
 
 ### A plan proves its acceptance criteria in fenced YAML blocks, copied onto the run record by their own script
 

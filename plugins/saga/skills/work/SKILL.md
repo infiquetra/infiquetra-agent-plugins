@@ -1,6 +1,6 @@
 ---
 name: work
-description: Run the build loop for a settled Infiquetra plan. One worktree and branch per unit, implement, then run the written exit criterion from the run record — the mechanical baseline, the plan's functional checks, the branch preview where the repository declares one, and the scenario smoke — repeating until green, and hand the exact revision to /code-review. Restores and writes the work-thread saga (the primary writer). Triggers on "build it", "work this plan", "execute the plan", "resume work on #N", or a plan-ready / resume-ready handoff issue.
+description: Run the build loop for a settled Infiquetra plan. One worktree and branch per unit, implement, then run the written exit criterion from the run record — the mechanical baseline, the plan's functional checks, the branch preview where the repository declares one, and the scenario smoke — repeating until green; bring the units together, then build, deploy or start, test and tear down the combined branch through the repository's declared environment until green, and hand that exact revision to /code-review. Restores and writes the work-thread saga (the primary writer). Triggers on "build it", "work this plan", "execute the plan", "resume work on #N", or a plan-ready / resume-ready handoff issue.
 ---
 
 # Work
@@ -20,10 +20,16 @@ deployment where the repository declares one, and the plan's scenario smoke. `/w
 check map, the three statuses, the record block and the exit codes — is in
 `plugins/saga/references/mechanical-baseline.md`.
 
+**Review sees only working code.** After each unit is green, the merge turn brings the units
+together, and the combined branch is then built, deployed or started through the environment the
+repository declared, tested and torn down, until it is green (`build_loop.py --combined`). Code
+review starts only on a revision that passed that run, or under a recorded waiver.
+
 **A failing check is a loop iteration, not a refusal.** Nothing in the loop blocks, stops, or asks
 the operator. `build_loop.py` exits 4 to say "not green yet"; the answer is to implement again and
 run it again. There is no risk-gated test judgment any more, and there is no ship ceremony: the
-worker checks a fact rather than concluding one, and the merge turn belongs to the integrate step.
+worker checks a fact rather than concluding one, and the merge turn belongs to the integrate step,
+which now runs before code review (Phase 3.2).
 
 `/work` is the saga's **primary writer**: it `restore`s on resume, mints/advances the work-thread saga
 to `lifecycle_phase=work`, writes a tick per phase, and — crucially — **mints the *findable* work-thread
@@ -450,11 +456,18 @@ hook (#677/U5). Direct `Agent`/`Task` spawns carry no lease admission.
 
 ---
 
-## Phase 3 — The build loop: run the written exit criterion until it is green
+## Phase 3 — The build loop: each unit, then the combined branch, until green
 
-The criterion was written before the work started. Read it, run it, and repeat — that is the whole
-of this phase. Its contract, the check map with every divergence this repository has, the three
-statuses and the exit codes are in `plugins/saga/references/mechanical-baseline.md`.
+The criterion was written before the work started. Read it, run it, and repeat. Its contract, the
+check map with every divergence this repository has, the three statuses and the exit codes are in
+`plugins/saga/references/mechanical-baseline.md`.
+
+Three parts, in this order, and code review (Phase 5) starts only after the third is green: **3.1**
+each unit's own loop, **3.2** bringing the units together, **3.3** the combined-branch loop. This is
+the lifecycle's order: bring work together (run-model step 6), prove the combined branch works,
+then review it (step 7).
+
+### 3.1 The unit loop
 
 **Write the plan's checks onto the record first.** `/plan` already did this in a run it drove
 itself; in an orchestrate-driven run the `/work` rows did not exist then (`orchestrate expand`
@@ -493,7 +506,8 @@ unit's `build_loop` block in the run record, and prints what passed and what did
 **Read the exit code, and nothing else:**
 
 - **0 — green.** Every check passed and the preview is either green or undeclared. The block now
-  carries `handed_to_code_review` with the full forty-character revision. Go to Phase 5.
+  carries `handed_to_code_review` with the full forty-character revision. When every unit is green,
+  go to 3.2; a single-lane run goes straight to 3.3.
 - **4 — not green yet.** At least one entry is `fail` or `could-not-execute`. **This is a loop
   iteration, not a refusal and not a gate.** Fix what the results name, commit, and run it again.
   Do not ask the operator, do not record an override, and do not proceed to code review: there is
@@ -511,6 +525,88 @@ catalogue's own rule. Fix the environment for the second; fix the code for the f
 
 **The repository's own pre-push gate stays.** It is the repository's rule, not saga's, and the loop
 neither replaces nor suppresses it.
+
+### 3.2 Bring the units together
+
+A run with more than one lane merges each green unit onto the parent branch before review, one
+merge at a time. A single-lane run has nothing to integrate: skip to 3.3, which runs on its one
+branch.
+
+**Take the merge turn.** Exactly one worker merges at a time, and the turn is a field on the run
+record's `units` rows, not a lock. A row left at `merging` by a turn that died is released after
+being checked against git, never trusted:
+
+```bash
+uv run python plugins/saga/scripts/merge_turn.py \
+  --record <run record path> --repo-root <repo> --parent-branch <parent branch> \
+  merge --unit <unit name>
+```
+
+The turn merges onto the parent issue branch or the default branch according to
+`admission.destination`, in a detached worktree created and removed inside the turn. It refuses,
+by name, a merge that would take any file backwards relative to a freshly fetched default branch —
+and it refuses when that fetch fails, because a guard read against a stale remote-tracking
+reference passes silently. After a merge it re-integrates twice and reports both: the advanced
+destination branch into every surviving unit branch, and the fetched default branch into the
+parent branch. A branch that needs a real merge is reported `pending` for the worker who owns it,
+never forced.
+
+An ordinary conflict is the merging worker's own work. A conflict that is not mechanical is routed
+by kind and decided by nobody at the merge: a behaviour question that is technical under the
+recorded intent goes to the Architect, a product question the recorded intent already answers goes
+to Product, and a conflict that needs the plan changed returns to planning as that problem.
+
+**Integration is complete when the merge turn says so.** Each merge reports
+`integration_complete`, and `merge_turn.py ... status` prints the `integration` object: the lanes,
+whether the run is single-lane, and which units are still to merge. When it is complete, go to 3.3.
+
+### 3.3 The combined-branch loop
+
+The combined branch is built, deployed or started through the environment the repository declared,
+tested with the functional suite, and torn down — repeated until it is green. Run it in a checkout
+of the combined branch (the parent branch after the last merge, or the one unit's branch):
+
+```bash
+uv run python plugins/saga/scripts/build_loop.py --record <run record path> \
+  --repo-root <combined branch checkout> --dry-run --combined
+uv run python plugins/saga/scripts/build_loop.py --record <run record path> \
+  --repo-root <combined branch checkout> --combined
+```
+
+The dry run prints what would run, the lease, and whether integration is complete, and changes
+nothing. One real invocation is one pass: the mechanical baseline on the combined revision, then,
+for a shared environment, the lease; then the deploy-or-start command, the test command and every
+plan check bound for the environment; then the teardown. **Teardown runs on every exit path** once
+the deploy step was reached, a failed deploy or test included, and every pass is recorded on the
+run record under `combined_branch.passes` with its deploy, test and teardown results.
+
+**Read the exit code, and nothing else:**
+
+- **0 — green.** The pass passed, or the repository's waiver applies. `combined_branch` now carries
+  `handed_to_code_review` with the full forty-character revision. Go to Phase 5.
+- **4 — not green yet.** A test failed, or the environment could not execute fewer than three
+  passes in a row. A failing test is fixed on the combined branch as ordinary implementation work,
+  committed, and the pass run again; it is never a review finding. A pass consumes no review cycle.
+- **5 — environment stop.** Three passes in a row could not execute: a deploy that did not
+  succeed, a timeout, a missing tool, or a shared environment another run held for the whole wait.
+  The loop prints the environment problems. This is the environment, not the code: report them to
+  the operator and stop until the environment is fixed. It is not a defect and not a refusal.
+- **2 or 3 — a refusal.** No declaration and no waiver, a declaration that names production, a
+  unit still to merge, a shared lease whose remote this checkout lacks, or an unreadable record.
+  Say which and stop.
+
+**A shared environment takes one run at a time.** Before deploying, the pass takes the lease
+`refs/saga/leases/<name>` on the declared git remote, which every deploying host sees, and releases
+it after teardown. A second run waits up to `--lease-wait` seconds and prints who holds the
+environment, then records a could-not-execute pass naming the holder. A lease past its bound is
+reported `STALE` with the command that releases it: releasing another run's lease is the
+operator's decision, never the worker's.
+
+**Every entry into code review comes through here.** After review requests repairs, and after a
+post-merge `/qa` failure re-enters the build loop, the repaired combined branch passes 3.3 again
+before the next review. A test that keeps failing for a reason the implementers cannot fix within
+their assignment, such as an ambiguous acceptance criterion, is an implementation blocker for the
+Architect, not a reason to review anyway. No path here deploys to production.
 
 ---
 
@@ -777,20 +873,20 @@ Call `/code-review` in `programmatic` / `report-only` mode. In that mode `/code-
 structured findings envelope to the caller and writes nothing durable — **the caller owns persistence**
 (its own contract).
 
-**The reviewed revision is the one the loop went green at, read from the record — not a fresh
-`git rev-parse`.** The build loop wrote it into the unit's `build_loop.handed_to_code_review` on the
-green iteration, and that is the whole point of recording it: the revision the review covers must be
-the revision the criterion passed at, and re-reading `HEAD` here would silently hand over a later
-commit that nothing has checked.
+**The reviewed revision is the one the combined-branch loop went green at, read from the record —
+not a fresh `git rev-parse`.** The build loop wrote it into `combined_branch.handed_to_code_review`
+on the green pass (3.3), and that is the whole point of recording it: the revision the review
+covers must be the revision the functional run passed at, and re-reading `HEAD` here would silently
+hand over a later commit that nothing has checked.
 
 ```bash
 REVIEWED_SHA=$(uv run python plugins/saga/scripts/run_record.py show <N> \
-  | python3 -c 'import json,sys; r=json.load(sys.stdin); print(r["units"][0]["build_loop"]["handed_to_code_review"]["revision"])')
+  | python3 -c 'import json,sys; r=json.load(sys.stdin); print(r["combined_branch"]["handed_to_code_review"]["revision"])')
 ```
 
 It is a full forty-character commit identifier, which is the only shape `/code-review` accepts. If
-the block carries no `handed_to_code_review`, the loop never went green: go back to Phase 3 rather
-than reviewing unchecked work.
+the record carries no `combined_branch.handed_to_code_review`, the combined branch never went
+green: go back to Phase 3 rather than reviewing unchecked work.
 
 The findable saga `/work` minted in Phase 1.4 (`issue_ref` / `plan_path` / branch) is what a *standalone*
 `/code-review` would later append `review_paths` to. For this in-loop gate, `/work` reads the envelope
@@ -843,7 +939,7 @@ via `--review-gate-override` for the review gate and `--doc-review-override` for
 each rendered through `issue_progress.py:_override_line` under its own gate's label, plus the
 work-session). Never a silent skip.
 
-### 5.4 The merge turn, the release, the functional test, and the close
+### 5.4 The release, the functional test, and the close
 
 Review acceptance is not a board move. The lifecycle repository's allowed-submission list carries no
 row for it, so saga submits nothing at that boundary and records it in the run record only:
@@ -863,31 +959,8 @@ That prints the honest absence rather than a move. What follows it are four step
    work-session notes, the review findings and the test output stay as drill-down detail below the
    card; they are what the cells reference, not what the card replaces.
 
-2. **Take the merge turn.** Exactly one worker merges at a time, and the turn is a field on the run
-   record's `units` rows, not a lock. A row left at `merging` by a turn that died is released after
-   being checked against git, never trusted:
-
-   ```bash
-   uv run python plugins/saga/scripts/merge_turn.py \
-     --record <run record path> --repo-root <repo> --parent-branch <parent branch> \
-     merge --unit <unit name>
-   ```
-
-   The turn merges onto the parent issue branch or the default branch according to
-   `admission.destination`, in a detached worktree created and removed inside the turn. It refuses,
-   by name, a merge that would take any file backwards relative to a freshly fetched default branch
-   — and it refuses when that fetch fails, because a guard read against a stale remote-tracking
-   reference passes silently. After a merge it re-integrates twice and reports both: the advanced
-   destination branch into every surviving unit branch, and the fetched default branch into the
-   parent branch. A branch that needs a real merge is reported `pending` for the worker who owns it,
-   never forced.
-
-   An ordinary conflict is the merging worker's own work. A conflict that is not mechanical is
-   routed by kind and decided by nobody at the merge: a behaviour question that is technical under
-   the recorded intent goes to the Architect, a product question the recorded intent already answers
-   goes to Product, and a conflict that needs the plan changed returns to planning as that problem.
-
-3. **Release, then submit the one move the boundary allows.** The Release Worker merges the parent
+2. **Release.** The units were brought together before review (Phase 3.2), so the reviewed
+   combined branch is what lands. The Release Worker merges the parent
    pull request through the repository's configured merge method, bound to the exact head the
    required checks ran against:
 
@@ -898,7 +971,9 @@ That prints the honest absence rather than a move. What follows it are four step
 
    It waits by reading GitHub's own verdict, never a watch command's exit status, and it records the
    reviewed head and the landed commit separately because a squash or a rebase produces a different
-   commit. Then the destination:
+   commit.
+
+3. **Deploy to the destination, then submit the one move the boundary allows.**
 
    ```bash
    uv run python plugins/saga/scripts/release_step.py --record <run record path> deploy
@@ -962,19 +1037,20 @@ branch. Then record `pr_refs` on the saga, set `next_step="await review on PR #N
 pull request's status to the issue via the extended `issue_progress.py` CLI (`--pr-url`,
 `--review-status`).
 
-The merge turn in step 2 is parent-branch integration — how a lane's work reaches a shared branch —
-and it is this step's, which is where issue #1027's hand-over to "the integrate step" points.
+The merge turn is parent-branch integration — how a lane's work reaches a shared branch — and it
+runs in Phase 3.2, before code review, which is where issue #1027's hand-over to "the integrate
+step" points. Issue #99 moved it there from this section so review sees the combined branch.
 
-When the run stops before the merge — a refused turn, an unapproved or stale pull request, a release
-still waiting on a check — report where it stopped and what would move it, and leave the run
-record's `next_step` naming that. Do not run `/qa` on an unmerged thread.
+When the run stops before the merge — an unapproved or stale pull request, a release still waiting
+on a check — report where it stopped and what would move it, and leave the run record's
+`next_step` naming that. Do not run `/qa` on an unmerged thread.
 
 At thread completion set `status=done`.
 
 ### 5.5 Hard boundary
 
-`/work` builds, runs the written criterion until it is green, records, takes the merge turn,
-releases, runs the functional test, and closes.
+`/work` builds, runs the written criterion until it is green, takes the merge turn, runs the
+combined-branch loop until it is green, records, releases, runs the functional test, and closes.
 
 It does **NOT** silently mutate GitHub:
 PR-open, review-request, and merge are each explicitly confirmed, and merge is a git op `/work`
@@ -988,7 +1064,8 @@ It does **NOT** compose or execute a board write: every move above stops at miss
 constrained lifecycle-field mutation, and this skill names the boundary and nothing else. It submits
 **no status the lifecycle repository's allowed list does not carry**, so `Ready to merge` and
 `Closeout` are never submitted even where a board offers them. It does **NOT** deploy to production,
-and no argument on this path produces a production deployment. It does **NOT** own deploy or canary
+and no argument on this path produces a production deployment. It does **NOT** deploy to a shared
+environment without holding its lease, and it does **NOT** release another run's lease. It does **NOT** own deploy or canary
 (`deploy` owns deployment mutation and production-health revert). It does **NOT** file SDLC issues
 (`mission-control` owns issue creation).
 
@@ -999,7 +1076,8 @@ after a merge (§5.4) and still does not make the advance that `/qa` alone can m
 and deciding its verdict are different authorities, and only the first moved (issue #1029). (This is
 not a deferral awaiting a rebuild: the `/qa` skill exists at `plugins/saga/skills/qa/`.)
 
-Build, run the criterion, record, merge, release, test again, close — then stop.
+Build, run the criterion, merge, prove the combined branch, review, release, test again, close —
+then stop.
 
 ---
 

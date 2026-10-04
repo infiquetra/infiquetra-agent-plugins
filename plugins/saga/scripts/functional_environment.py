@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,17 @@ KINDS: tuple[str, ...] = ("local", "emulator", "ephemeral-stack", "shared-nonpro
 
 #: Whether the environment is private to the branch or shared with other runs.
 SCOPES: tuple[str, ...] = ("private", "shared")
+
+#: The optional lease block on a shared environment (issue #99): where the one-run-at-a-time lease
+#: lives. ``remote`` is a git remote name or URL every deploying host can push to, ``name`` the
+#: lease's name under ``refs/saga/leases/``. Both default, so the block is only needed to change them.
+LEASE_FIELD = "lease"
+LEASE_KEYS: tuple[str, ...] = ("remote", "name")
+DEFAULT_LEASE = {"remote": "origin", "name": "shared-nonprod"}
+
+#: A lease name is one reference path component. ``environment_lease.NAME_RE`` holds the same
+#: pattern; a test keeps the two equal.
+LEASE_NAME_PATTERN = r"^[a-z0-9][a-z0-9._-]{0,62}$"
 
 #: The one kind whose deploy-or-start command may be omitted.
 LOCAL_KIND = "local"
@@ -109,11 +121,12 @@ def normalise_environment(block: Any) -> dict[str, Any]:
             f"{PROFILE_KEY} must be an object of {', '.join(FIELDS)}, or answer with "
             f'{WAIVER_KEY}: {{"reason": "..."}}'
         )
-    unexpected = sorted(set(block) - set(FIELDS))
+    unexpected = sorted(set(block) - set(FIELDS) - {LEASE_FIELD})
     if unexpected:
         raise DeclarationError(
             f"{PROFILE_KEY} has unexpected keys ({', '.join(unexpected)}); it carries "
             + ", ".join(FIELDS)
+            + f", and optionally {LEASE_FIELD}"
         )
     kind = block.get("kind")
     if kind not in KINDS:
@@ -142,13 +155,47 @@ def normalise_environment(block: Any) -> dict[str, Any]:
         raise DeclarationError(
             f"{PROFILE_KEY}.scope must be one of {', '.join(SCOPES)} for kind {kind}, not {scope!r}"
         )
-    return {
+    environment: dict[str, Any] = {
         "kind": kind,
         "deploy_command": deploy,
         "test_command": test,
         "teardown_command": teardown,
         "scope": scope,
     }
+    if block.get(LEASE_FIELD) is not None:
+        if scope != "shared":
+            raise DeclarationError(
+                f"{PROFILE_KEY}.{LEASE_FIELD} applies only to a shared environment; "
+                f"this one is {scope}"
+            )
+        environment[LEASE_FIELD] = normalise_lease(block[LEASE_FIELD])
+    return environment
+
+
+def normalise_lease(block: Any) -> dict[str, str]:
+    """Check the optional lease block and return it with its defaults filled in."""
+    if not isinstance(block, dict) or set(block) - set(LEASE_KEYS):
+        raise DeclarationError(
+            f"{PROFILE_KEY}.{LEASE_FIELD} must be an object of {', '.join(LEASE_KEYS)}"
+        )
+    remote = _text(block.get("remote")) or DEFAULT_LEASE["remote"]
+    name = _text(block.get("name")) or DEFAULT_LEASE["name"]
+    if not re.match(LEASE_NAME_PATTERN, name):
+        raise DeclarationError(
+            f"{PROFILE_KEY}.{LEASE_FIELD}.name {name!r} must be lowercase letters, digits, '.', "
+            "'_' or '-', starting with a letter or digit, at most 63 characters"
+        )
+    return {"remote": remote, "name": name}
+
+
+def lease_of(resolved: dict[str, Any] | None) -> dict[str, str] | None:
+    """Where a resolved environment's lease lives, or ``None`` when it needs none (not shared)."""
+    if resolved is None or resolved.get("scope") != "shared":
+        return None
+    declared_lease = resolved.get(LEASE_FIELD)
+    if isinstance(declared_lease, dict):
+        return {**DEFAULT_LEASE, **{k: str(v) for k, v in declared_lease.items() if v}}
+    return dict(DEFAULT_LEASE)
 
 
 def normalise_waiver(block: Any) -> dict[str, Any]:
@@ -249,9 +296,10 @@ def from_answers(answers: dict[str, Any]) -> dict[str, Any] | None:
 def profile_entry(resolved: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """The profile key and value that record *resolved*: the declaration or the waiver."""
     if resolved.get("mode") == MODE_DECLARED:
-        return PROFILE_KEY, {
-            field: resolved[field] for field in FIELDS if resolved.get(field) is not None
-        }
+        entry = {field: resolved[field] for field in FIELDS if resolved.get(field) is not None}
+        if resolved.get(LEASE_FIELD) is not None:
+            entry[LEASE_FIELD] = dict(resolved[LEASE_FIELD])
+        return PROFILE_KEY, entry
     if resolved.get("mode") == MODE_WAIVED:
         return WAIVER_KEY, {"reason": resolved["reason"]}
     raise DeclarationError(f"only a declared or waived environment is written, not {resolved!r}")
@@ -310,6 +358,11 @@ def describe(resolved: dict[str, Any] | None) -> list[str]:
         lines.append("deploy or start: none")
     lines.append(f"test: {resolved.get('test_command') or 'none'}")
     lines.append(f"teardown: {resolved.get('teardown_command') or 'none'}")
+    lease = lease_of(resolved)
+    if lease is not None:
+        lines.append(
+            f"lease: refs/saga/leases/{lease['name']} on {lease['remote']} (one run at a time)"
+        )
     if mode == MODE_INCOMPLETE:
         lines.append(
             "incomplete: migrated from the legacy branch_preview keys; missing "

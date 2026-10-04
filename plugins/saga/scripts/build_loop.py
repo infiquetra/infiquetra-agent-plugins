@@ -38,6 +38,23 @@ Five decisions here are contract for every later reader.
   cross-consumer contract; issue 1025 added three keys under that rule. This module adds one,
   ``build_loop``, documented in ``references/mechanical-baseline.md``.
 
+The combined-branch mode (issue #99, pre-review testing U4) adds three more decisions.
+
+* **After integration and before code review, the combined branch is built, deployed or started,
+  tested and torn down** through the commands the repository declared (``--combined``). Teardown
+  runs on every exit path once the deploy step was reached, including a failed deploy, a failed
+  test and an interrupt. A failing test is a loop pass (exit 4); a deploy that does not succeed, a
+  timeout or a missing tool is ``could-not-execute``, never a pass and never a code defect.
+* **Three consecutive could-not-execute passes are an environment stop, exit 5.** It names the
+  environment problems for the operator. It is an exit code, not a refusal to run: the next
+  invocation still runs, so a fixed environment resets the streak.
+* **A shared environment is held by one run at a time** through the lease in
+  ``environment_lease.py``, a reference on the git remote every deploying host pushes to. A second
+  run waits a bounded time, saying what it waits on, then records a could-not-execute pass naming
+  the holder. The run record itself still takes only its file lock; the combined passes live under
+  the run-level top-level key ``combined_branch``, which ``run_record.py`` preserves as an unknown
+  field.
+
 House testability pattern, mirroring ``run_record.py`` and ``saga.py``: every filesystem function
 takes its root as an explicit argument, ``runner``, ``now`` and ``clock`` are injectable, and
 nothing does I/O at import.
@@ -49,11 +66,15 @@ import argparse
 import glob as globlib
 import json
 import os
+import re
 import shlex
+import signal
 import subprocess  # nosec B404  (the checks ARE subprocesses; never through a shell)
 import sys
+import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -61,7 +82,9 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import environment_lease  # noqa: E402  (after the sys.path shim, by design)
 import functional_environment  # noqa: E402  (after the sys.path shim, by design)
+import merge_turn  # noqa: E402  (after the sys.path shim, by design)
 import run_record  # noqa: E402  (after the sys.path shim, by design)
 
 #: The key this module owns on a unit's row. One key, documented in
@@ -138,6 +161,28 @@ EXIT_REFUSED = 2
 EXIT_UNKNOWN_VERSION = 3
 #: Not a refusal: the iteration ran and something is not green yet (plan R2).
 EXIT_NOT_GREEN = 4
+#: Not a refusal either: the third consecutive combined pass that could not execute. The
+#: environment, not the code, needs the operator (issue #99).
+EXIT_ENVIRONMENT_STOP = 5
+
+#: The run-level top-level key the combined-branch mode owns. Not one of ``run_record``'s twelve
+#: top-level keys: it round-trips as an unknown field, the extension point orchestrate's top-level
+#: ``orchestrate`` block also uses, documented in ``references/run-record.md``.
+COMBINED_KEY = "combined_branch"
+
+#: Top-level keys another saga writer owns, which loading a record should not warn about.
+KNOWN_EXTENSION_KEYS: tuple[str, ...] = (COMBINED_KEY, "orchestrate", "tier_judgments")
+
+#: How many consecutive could-not-execute combined passes stop the loop for the operator.
+COULD_NOT_EXECUTE_STOP = 3
+
+#: How long a combined pass waits on a held shared lease, and how often it looks again.
+DEFAULT_LEASE_WAIT_SECONDS = 1800
+LEASE_POLL_SECONDS = 30
+
+#: A combined pass's step statuses beyond the three check statuses.
+STEP_NOT_DECLARED = "not-declared"
+LEASE_NOT_REQUIRED = "not-required"
 
 #: How long one check may run before it is recorded ``could-not-execute``.
 DEFAULT_TIMEOUT_SECONDS = 1800
@@ -652,7 +697,14 @@ def load_record_file(path: Path) -> run_record.RunRecord:
         raise BuildLoopError(f"{path} is not valid JSON: {exc}") from exc
     if not isinstance(raw, dict):
         raise BuildLoopError(f"{path} does not hold a JSON object")
-    return run_record.from_dict(raw, path=path)
+    return run_record.from_dict(raw, path=path, warn=_warn_unknown_field)
+
+
+def _warn_unknown_field(message: str) -> None:
+    """``run_record``'s unknown-field warning, minus the run-level keys saga's own writers own."""
+    if any(f"field {key!r}" in message for key in KNOWN_EXTENSION_KEYS):
+        return
+    print(message, file=sys.stderr)
 
 
 def save_record_file(path: Path, record: run_record.RunRecord) -> Path:
@@ -808,6 +860,797 @@ def format_iteration(iteration: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# The combined-branch pass (issue #99, pre-review testing U4).
+# ---------------------------------------------------------------------------
+
+
+class CombinedPassInterrupted(BaseException):
+    """An interrupt arrived mid-pass. Teardown and the lease release already ran; *entry* is the
+    pass as far as it got, marked ``interrupted``, for the caller to record before re-raising."""
+
+    def __init__(self, entry: dict[str, Any]) -> None:
+        super().__init__("the combined-branch pass was interrupted")
+        self.entry = entry
+
+
+class _Terminated(BaseException):
+    """SIGTERM, raised as an exception so every ``finally`` (teardown, release) still runs."""
+
+
+def require_answered(environment: dict[str, Any] | None) -> dict[str, Any]:
+    """The declared environment or waiver, or a refusal naming what is missing."""
+    if environment is None:
+        raise BuildLoopError(
+            "the repository declares no functional-test environment and no waiver; admission asks "
+            "for it once and writes it to .saga-profile.json (references/repository-profile.md)"
+        )
+    if environment.get("mode") not in functional_environment.ANSWERED_MODES:
+        missing = ", ".join(environment.get("missing") or []) or "fields"
+        raise BuildLoopError(
+            f"the functional-test environment is incomplete (missing {missing}); answer the "
+            "admission question before the combined-branch pass can run"
+        )
+    return environment
+
+
+#: ``prod`` or ``production`` as its own word. Whether ``non``/``pre`` precedes it is checked in
+#: code, because ``non-prod`` and ``pre_prod`` name non-production stacks.
+_PRODUCTION_WORD = re.compile(r"prod(?:uction)?(?![a-z0-9])", re.IGNORECASE)
+
+
+def production_tripwire(environment: dict[str, Any]) -> str | None:
+    """Why the declaration looks like production, or ``None``. A tripwire, not a guarantee.
+
+    No production deployment happens on any path of this loop (the card's non-goal and stop
+    condition). The declaration is the authority on where a command deploys; this check only
+    refuses a declaration that says production in its kind, its lease or a command.
+    """
+    lease = functional_environment.lease_of(environment) or {}
+    fields = {
+        "kind": environment.get("kind"),
+        "deploy_command": environment.get("deploy_command"),
+        "test_command": environment.get("test_command"),
+        "teardown_command": environment.get("teardown_command"),
+        "lease.name": lease.get("name"),
+        "lease.remote": lease.get("remote"),
+    }
+    for label, value in fields.items():
+        text = str(value or "")
+        for match in _PRODUCTION_WORD.finditer(text):
+            before = text[: match.start()].lower()
+            if before and (before[-1].isalnum() or before.endswith(_NON_PRODUCTION_PREFIXES)):
+                continue
+            return (
+                f"the functional-test environment's {label} ({text!r}) names production; the "
+                "combined-branch pass never deploys to production. Fix the declaration or stop"
+            )
+    return None
+
+
+_NON_PRODUCTION_PREFIXES = ("non-", "non_", "pre-", "pre_")
+
+
+def environment_checks(record: run_record.RunRecord) -> list[dict[str, Any]]:
+    """Every check the plan bound for the declared environment, from every unit row, once each.
+
+    ``/plan`` marks such checks ``runs: environment`` (issue #98), and the scenario smoke is always
+    one of them. A unit iteration defers them; the combined pass runs them after the declared test
+    command. The same check copied onto several rows (the smoke is) runs once.
+    """
+    seen: set[tuple[str, str]] = set()
+    out: list[dict[str, Any]] = []
+    for row in record.units:
+        if not isinstance(row, dict):
+            continue
+        for key in ("functional_checks", "scenario_smoke"):
+            for entry in _normalise_checks(row.get(key)):
+                if runs_in_unit(entry):
+                    continue
+                identity = (entry["name"], entry["command"])
+                if identity not in seen:
+                    seen.add(identity)
+                    out.append(entry)
+    return out
+
+
+def integration_problem(
+    record: run_record.RunRecord, revision: str, repo_root: Path, *, runner: Runner
+) -> str | None:
+    """Why the revision under test is not yet the combined branch, or ``None`` when it is.
+
+    A run with one lane has nothing to integrate. Otherwise every lane must be merged, and every
+    recorded merge must be contained in the revision under test: a pass on a checkout that misses
+    a merge would hand review a branch that is not the combined one.
+    """
+    state = merge_turn.integration_state(record)
+    if state["single_lane"]:
+        return None
+    if not state["complete"]:
+        return (
+            "the units are not brought together yet; still to merge: "
+            + ", ".join(state["pending"])
+            + ". Take the merge turn for each (merge_turn.py merge --unit <name>) first"
+        )
+    for name, tip in state["merged_tips"].items():
+        try:
+            code, _ = runner(
+                ["git", "-C", str(repo_root), "merge-base", "--is-ancestor", tip, revision], 60, None
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            return f"whether {revision[:12]} contains unit {name}'s merge could not be read: {exc}"
+        if code != 0:
+            return (
+                f"the revision under test ({revision[:12]}) does not contain unit {name}'s merge "
+                f"({tip[:12]}); run the pass on the combined branch, after the last merge"
+            )
+    return None
+
+
+def current_branch(repo_root: Path, *, runner: Runner) -> str | None:
+    """The checked-out branch's name, for the record. ``None`` when it cannot be read."""
+    try:
+        code, detail = runner(
+            ["git", "-C", str(repo_root), "rev-parse", "--abbrev-ref", "HEAD"], 60, None
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if code != 0:
+        return None
+    return detail.strip() or None
+
+
+def _not_declared(name: str, detail: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "command": None,
+        "catalogue_check": None,
+        "status": STEP_NOT_DECLARED,
+        "exit_code": None,
+        "duration_seconds": 0.0,
+        "detail": detail,
+    }
+
+
+def _run_step(
+    name: str,
+    command: str,
+    *,
+    runner: Runner,
+    timeout: int,
+    cwd: Path | None,
+    clock: Callable[[], float],
+    environment_step: bool,
+) -> dict[str, Any]:
+    """Run one step. An environment step (deploy, teardown) that exits non-zero could not execute.
+
+    A test that exits non-zero is a ``fail``: the code under test said no. A deploy or a teardown
+    that exits non-zero is the environment saying no, so it is recorded ``could-not-execute`` with
+    its exit code kept, and is never reported as a defect in the code.
+    """
+    try:
+        entry = run_check(name, command, runner=runner, timeout=timeout, cwd=cwd, clock=clock)
+    except OSError as exc:
+        entry = {
+            "name": name,
+            "command": command,
+            "catalogue_check": None,
+            "status": STATUS_COULD_NOT_EXECUTE,
+            "exit_code": None,
+            "duration_seconds": 0.0,
+            "detail": f"the program could not be started: {exc}",
+        }
+    if environment_step and entry["status"] == STATUS_FAIL:
+        entry["status"] = STATUS_COULD_NOT_EXECUTE
+        entry["detail"] = f"the {name} exited {entry['exit_code']}: {entry['detail']}".rstrip(": ")
+    return entry
+
+
+def acquire_lease(
+    backend: environment_lease.LeaseBackend,
+    name: str,
+    holder: environment_lease.LeaseHolder,
+    *,
+    lease_wait: int,
+    remote: str,
+    repo_root: Path,
+    clock: Callable[[], float],
+    sleep: Callable[[float], None],
+    wall_now: Callable[[], datetime],
+    report: Callable[[str], None],
+) -> tuple[environment_lease.AcquireResult, float]:
+    """Take the lease, waiting up to *lease_wait* seconds on a holder and saying what it waits on."""
+    started = clock()
+    while True:
+        try:
+            result = backend.acquire(name, holder)
+        except environment_lease.LeaseError as exc:
+            return (
+                environment_lease.AcquireResult(environment_lease.COULD_NOT_EXECUTE, detail=str(exc)),
+                round(clock() - started, 3),
+            )
+        waited = clock() - started
+        if result.acquired or result.status != environment_lease.HELD:
+            return result, round(waited, 3)
+        state = environment_lease.LeaseState(
+            name=name, held=True, token=result.token, holder=result.holder
+        )
+        report(
+            "Waiting on the shared environment: "
+            + environment_lease.describe(
+                state, wall_now(), remote=remote, repo_root=str(repo_root)
+            )
+        )
+        if waited >= lease_wait:
+            return result, round(waited, 3)
+        sleep(max(0.0, min(LEASE_POLL_SECONDS, lease_wait - waited)))
+
+
+def _lease_block(lease: dict[str, str] | None) -> dict[str, Any]:
+    if lease is None:
+        return {"required": False, "status": LEASE_NOT_REQUIRED}
+    return {
+        "required": True,
+        "status": None,
+        "remote": lease["remote"],
+        "ref": environment_lease.REF_PREFIX + lease["name"],
+        "token": None,
+        "holder": None,
+        "waited_seconds": 0.0,
+        "release_status": None,
+        "detail": "",
+    }
+
+
+def _holder_record(holder: Any) -> Any:
+    if isinstance(holder, environment_lease.LeaseHolder):
+        return {
+            "repo": holder.repo,
+            "issue": holder.issue,
+            "revision": holder.revision,
+            "host": holder.host,
+            "started_at": holder.started_at,
+            "bound_seconds": holder.bound_seconds,
+        }
+    return holder
+
+
+def _pass_status(entry: dict[str, Any]) -> str:
+    """A pass's status: ``fail`` when the code said no, else ``could-not-execute`` when the
+    environment did, else ``pass``. A failing test outranks an environment problem, because the
+    fix is in the code either way and the code is the worker's to change."""
+    results = [*entry["baseline"], *entry.get("environment_checks", [])]
+    for step in ("deploy", "test", "teardown"):
+        if isinstance(entry.get(step), dict):
+            results.append(entry[step])
+    statuses = {result["status"] for result in results}
+    if STATUS_FAIL in statuses:
+        return STATUS_FAIL
+    lease_status = entry["lease"].get("status")
+    lease_ok = lease_status in (
+        LEASE_NOT_REQUIRED,
+        environment_lease.ACQUIRED,
+        environment_lease.REACQUIRED,
+    )
+    release_ok = entry["lease"].get("release_status") in (None, environment_lease.RELEASED)
+    if (
+        STATUS_COULD_NOT_EXECUTE in statuses
+        or entry.get("environment_problems")
+        or not lease_ok
+        or not release_ok
+        or entry.get("interrupted")
+    ):
+        return STATUS_COULD_NOT_EXECUTE
+    return STATUS_PASS
+
+
+def run_combined_pass(
+    record: run_record.RunRecord,
+    environment: dict[str, Any],
+    baseline: Sequence[str],
+    revision: str,
+    *,
+    runner: Runner,
+    lease_backend: environment_lease.LeaseBackend | None = None,
+    pass_number: int = 1,
+    branch: str | None = None,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    lease_wait: int = DEFAULT_LEASE_WAIT_SECONDS,
+    cwd: Path | None = None,
+    clock: Callable[[], float] = time.monotonic,
+    now: Callable[[], str] = _utc_now,
+    wall_now: Callable[[], datetime] = environment_lease.utc_now,
+    sleep: Callable[[float], None] = time.sleep,
+    report: Callable[[str], None] = print,
+    host: str | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """Run one combined-branch pass and return ``(entry, green)``, writing nothing.
+
+    Order: the mechanical baseline on the combined revision; the lease, on a shared environment;
+    the deploy-or-start command; the declared test command and every environment-bound plan check;
+    the teardown. Teardown runs on every exit path once the deploy step was reached, and the lease
+    is released after it. A waived repository runs the baseline only and records the waiver.
+    """
+    waived = environment.get("mode") == functional_environment.MODE_WAIVED
+    lease = None if waived else functional_environment.lease_of(environment)
+    if lease is not None and lease_backend is None:
+        raise BuildLoopError("a shared environment needs a lease backend; none was given")
+    checks = [] if waived else environment_checks(record)
+    entry: dict[str, Any] = {
+        "pass": pass_number,
+        "revision": revision,
+        "branch": branch,
+        "started_at": now(),
+        "finished_at": None,
+        "status": None,
+        "green": False,
+        "baseline": [],
+        "lease": _lease_block(lease),
+        "deploy": None,
+        "test": None,
+        "environment_checks": [],
+        "teardown": None,
+        "environment_problems": [],
+    }
+    problems: list[str] = entry["environment_problems"]
+    mapping = check_map(baseline)
+    by_command = {item["command"]: item["catalogue_check"] for item in mapping["commands"]}
+
+    def step(name: str, command: str, *, environment_step: bool = False) -> dict[str, Any]:
+        result = _run_step(
+            name,
+            command,
+            runner=runner,
+            timeout=timeout,
+            cwd=cwd,
+            clock=clock,
+            environment_step=environment_step,
+        )
+        if result["status"] == STATUS_COULD_NOT_EXECUTE:
+            problems.append(f"{name}: {result['detail']}")
+        return result
+
+    try:
+        for command in baseline:
+            result = run_check(
+                command,
+                command,
+                runner=runner,
+                timeout=timeout,
+                catalogue_check=by_command.get(command),
+                cwd=cwd,
+                clock=clock,
+            )
+            entry["baseline"].append(result)
+            if result["status"] == STATUS_COULD_NOT_EXECUTE:
+                problems.append(f"baseline {command}: {result['detail']}")
+
+        if waived:
+            entry["waiver"] = {
+                "level": environment.get("level", functional_environment.WAIVER_LEVEL),
+                "reason": environment.get("reason"),
+            }
+        elif any(result["status"] != STATUS_PASS for result in entry["baseline"]):
+            entry["skipped_reason"] = (
+                "the mechanical baseline is not green on the combined branch, so nothing was "
+                "deployed"
+            )
+        else:
+            _deploy_test_teardown(
+                entry,
+                environment,
+                lease,
+                checks,
+                step=step,
+                lease_backend=lease_backend,
+                record=record,
+                revision=revision,
+                pass_number=pass_number,
+                timeout=timeout,
+                lease_wait=lease_wait,
+                cwd=cwd,
+                clock=clock,
+                wall_now=wall_now,
+                sleep=sleep,
+                report=report,
+                host=host,
+            )
+    except BaseException as exc:
+        entry["interrupted"] = True
+        problems.append(f"the pass was interrupted: {type(exc).__name__}")
+        entry["finished_at"] = now()
+        entry["status"] = _pass_status(entry)
+        raise CombinedPassInterrupted(entry) from exc
+
+    entry["finished_at"] = now()
+    entry["status"] = _pass_status(entry)
+    entry["green"] = entry["status"] == STATUS_PASS
+    return entry, entry["green"]
+
+
+def _deploy_test_teardown(
+    entry: dict[str, Any],
+    environment: dict[str, Any],
+    lease: dict[str, str] | None,
+    checks: Sequence[dict[str, Any]],
+    *,
+    step: Callable[..., dict[str, Any]],
+    lease_backend: environment_lease.LeaseBackend | None,
+    record: run_record.RunRecord,
+    revision: str,
+    pass_number: int,
+    timeout: int,
+    lease_wait: int,
+    cwd: Path | None,
+    clock: Callable[[], float],
+    wall_now: Callable[[], datetime],
+    sleep: Callable[[float], None],
+    report: Callable[[str], None],
+    host: str | None,
+) -> None:
+    """The lease, then deploy, test and teardown, with teardown and release on every exit path."""
+    problems: list[str] = entry["environment_problems"]
+    lease_block = entry["lease"]
+    token: str | None = None
+    if lease is not None and lease_backend is not None:
+        holder = environment_lease.LeaseHolder(
+            repo=record.repo,
+            issue=record.issue,
+            revision=revision,
+            host=host or environment_lease.host_label(),
+            started_at=environment_lease.iso_utc(wall_now()),
+            bound_seconds=timeout * (3 + len(checks)),
+            pass_number=pass_number,
+        )
+        result, waited = acquire_lease(
+            lease_backend,
+            lease["name"],
+            holder,
+            lease_wait=lease_wait,
+            remote=lease["remote"],
+            repo_root=cwd or Path("."),
+            clock=clock,
+            sleep=sleep,
+            wall_now=wall_now,
+            report=report,
+        )
+        lease_block.update(
+            {
+                "status": result.status,
+                "token": result.token if result.acquired else None,
+                "holder": _holder_record(result.holder),
+                "waited_seconds": waited,
+                "detail": result.detail,
+            }
+        )
+        if not result.acquired:
+            if result.status == environment_lease.HELD:
+                described = environment_lease.describe(
+                    environment_lease.LeaseState(
+                        name=lease["name"], held=True, token=result.token, holder=result.holder
+                    ),
+                    wall_now(),
+                    remote=lease["remote"],
+                    repo_root=str(cwd or "."),
+                )
+                lease_block["detail"] = described
+                problems.append(f"lease: still held after {waited:.0f}s: {described}")
+            else:
+                problems.append(f"lease: could not be taken: {result.detail}")
+            entry["skipped_reason"] = (
+                "the shared environment's lease was not acquired, so nothing was deployed"
+            )
+            return
+        token = result.token
+
+    try:
+        deploy_command = environment.get("deploy_command")
+        if deploy_command:
+            entry["deploy"] = step("deploy", deploy_command, environment_step=True)
+        else:
+            entry["deploy"] = _not_declared("deploy", "the local kind declares no deploy command")
+        if entry["deploy"]["status"] in (STATUS_PASS, STEP_NOT_DECLARED):
+            entry["test"] = step("test", str(environment.get("test_command") or ""))
+            entry["environment_checks"] = [
+                step(check["name"], check["command"]) for check in checks
+            ]
+        else:
+            entry["skipped_reason"] = "the deploy did not succeed, so no test ran"
+    finally:
+        # The deploy step was reached, so the environment may hold something: tear it down
+        # whatever happened above, a failed deploy, a failed test or an interrupt included.
+        teardown_command = environment.get("teardown_command")
+        if teardown_command:
+            entry["teardown"] = step("teardown", teardown_command, environment_step=True)
+        else:
+            entry["teardown"] = _not_declared(
+                "teardown", "the repository declares no teardown command"
+            )
+        if lease is not None and token is not None and lease_backend is not None:
+            try:
+                released = lease_backend.release(lease["name"], token)
+                lease_block["release_status"] = released.status
+                if released.status != environment_lease.RELEASED:
+                    problems.append(f"lease release: {released.status}: {released.detail}")
+            except environment_lease.LeaseError as exc:
+                lease_block["release_status"] = environment_lease.COULD_NOT_EXECUTE
+                problems.append(f"lease release: {exc}")
+
+
+def could_not_execute_streak(passes: Sequence[dict[str, Any]]) -> int:
+    """How many of the latest passes in a row could not execute."""
+    streak = 0
+    for entry in reversed(passes):
+        if not isinstance(entry, dict) or entry.get("status") != STATUS_COULD_NOT_EXECUTE:
+            break
+        streak += 1
+    return streak
+
+
+def apply_combined_pass(
+    record: run_record.RunRecord,
+    environment: dict[str, Any],
+    entry: dict[str, Any],
+    green: bool,
+) -> dict[str, Any]:
+    """Land one finished pass on *record*, read under the record's lock. Added to, never replaced.
+
+    The pass is numbered against the fresh block. A green pass writes ``handed_to_code_review``
+    with the full revision, the pass number and whether the repository's waiver applied.
+    """
+    block = record.extra.setdefault(COMBINED_KEY, {})
+    if not isinstance(block, dict):
+        raise BuildLoopError(f"the record's {COMBINED_KEY!r} key is not an object")
+    block["environment"] = dict(environment)
+    passes = block.setdefault("passes", [])
+    if not isinstance(passes, list):
+        raise BuildLoopError(f"the record's {COMBINED_KEY}.passes key is not a list")
+    landed = {**entry, "pass": len(passes) + 1}
+    passes.append(landed)
+    if green:
+        block["handed_to_code_review"] = {
+            "revision": landed["revision"],
+            "at": landed["finished_at"],
+            "pass": landed["pass"],
+            "waived": "waiver" in landed,
+        }
+    return landed
+
+
+def functional_evidence(record: Any, revision: str) -> dict[str, Any]:
+    """Whether *record* carries a passing combined-branch functional run at *revision*.
+
+    The question code review's gate asks (pre-review testing U5). *record* is a ``RunRecord`` or
+    the record's raw JSON object. ``admits`` is true for a green pass at exactly *revision*,
+    including a waived one; a green pass at another revision is stale and admits nothing.
+    """
+    extra = getattr(record, "extra", None)
+    source = extra if isinstance(extra, dict) else record if isinstance(record, dict) else {}
+    block = source.get(COMBINED_KEY) if isinstance(source, dict) else None
+    passes = block.get("passes") if isinstance(block, dict) else None
+    at_revision = [
+        entry
+        for entry in (passes if isinstance(passes, list) else [])
+        if isinstance(entry, dict) and entry.get("revision") == revision
+    ]
+    environment = block.get("environment") if isinstance(block, dict) else None
+    evidence: dict[str, Any] = {
+        "admits": False,
+        "status": "missing",
+        "pass": None,
+        "revision": revision,
+        "environment": {
+            "kind": (environment or {}).get("kind"),
+            "scope": (environment or {}).get("scope"),
+        },
+        "deploy": None,
+        "test": None,
+        "teardown": None,
+        "waiver_reason": None,
+    }
+    if not at_revision:
+        return evidence
+    latest = at_revision[-1]
+    green = [entry for entry in at_revision if entry.get("green")]
+    chosen = green[-1] if green else latest
+    for step in ("deploy", "test", "teardown"):
+        result = chosen.get(step)
+        evidence[step] = result.get("status") if isinstance(result, dict) else None
+    evidence["pass"] = chosen.get("pass")
+    if not green:
+        evidence["status"] = "failed"
+        return evidence
+    waiver = chosen.get("waiver")
+    evidence["admits"] = True
+    evidence["status"] = "waived" if isinstance(waiver, dict) else "passed"
+    evidence["waiver_reason"] = waiver.get("reason") if isinstance(waiver, dict) else None
+    return evidence
+
+
+def format_combined_pass(entry: dict[str, Any]) -> str:
+    """One combined pass's results, for a worker reading the terminal."""
+    verdict = {
+        STATUS_PASS: "green",
+        STATUS_FAIL: "not green yet (a test or check failed)",
+        STATUS_COULD_NOT_EXECUTE: "could not execute (an environment problem)",
+    }.get(entry["status"], entry["status"])
+    lines = [f"Combined-branch pass {entry['pass']} at {entry['revision']}: {verdict}", ""]
+    for result in entry["baseline"]:
+        lines.append(f"  [{result['status']}] baseline: {result['command']}")
+    if "waiver" in entry:
+        lines.append(f"  [waived] functional testing: {entry['waiver']['reason']}")
+    lease = entry["lease"]
+    if lease.get("required"):
+        lines.append(f"  [{lease.get('status') or 'not reached'}] lease {lease.get('ref')}")
+    for name in ("deploy", "test"):
+        result = entry.get(name)
+        if isinstance(result, dict):
+            lines.append(f"  [{result['status']}] {name}: {result.get('command') or ''}".rstrip())
+    for result in entry.get("environment_checks", []):
+        lines.append(f"  [{result['status']}] environment check: {result['name']}")
+    teardown = entry.get("teardown")
+    if isinstance(teardown, dict):
+        lines.append(f"  [{teardown['status']}] teardown: {teardown.get('command') or ''}".rstrip())
+    if lease.get("required") and lease.get("release_status"):
+        lines.append(f"  [{lease['release_status']}] lease release")
+    if entry.get("skipped_reason"):
+        lines.append(f"  {entry['skipped_reason']}")
+    for problem in entry.get("environment_problems", []):
+        lines.append(f"  environment problem: {problem}")
+    return "\n".join(lines)
+
+
+def format_combined_dry_run(
+    environment: dict[str, Any], integration: dict[str, Any], baseline: Sequence[str],
+    checks: Sequence[dict[str, Any]],
+) -> str:
+    """The combined pass as a reader sees it: what would run, where, and under which lease."""
+    lines = ["The combined-branch pass for this run, before code review.", ""]
+    lines.append("Mechanical baseline, on the combined branch:")
+    lines.extend(f"  {command}" for command in baseline)
+    if not baseline:
+        lines.append("  none declared in the run record")
+    lines.append("")
+    if environment.get("mode") == functional_environment.MODE_WAIVED:
+        lines.append(
+            f"Functional testing is waived ({environment.get('level')} level): "
+            f"{environment.get('reason')}. Only the baseline runs."
+        )
+    else:
+        lines.append(f"Functional-test environment, from {environment.get('source')}:")
+        lines.extend(f"  {line}" for line in functional_environment.describe(environment))
+        lines.append("")
+        lines.append("Environment-bound plan checks, after the test command:")
+        lines.extend(f"  {format_check(check)}" for check in checks)
+        if not checks:
+            lines.append("  none prescribed")
+        lease = functional_environment.lease_of(environment)
+        lines.append("")
+        if lease is None:
+            lines.append("Lease: not required, the environment is private to this run")
+        else:
+            lines.append(
+                f"Lease: {environment_lease.REF_PREFIX}{lease['name']} on remote "
+                f"{lease['remote']}, one run at a time"
+            )
+    lines.append("")
+    if integration["single_lane"]:
+        lines.append("Integration: one lane, so the pass runs on that branch")
+    elif integration["complete"]:
+        lines.append(f"Integration: all {integration['lanes']} lanes merged")
+    else:
+        lines.append("Integration: not complete; still to merge: " + ", ".join(integration["pending"]))
+    return "\n".join(lines)
+
+
+@contextmanager
+def _sigterm_raises() -> Iterator[None]:
+    """While a pass runs, SIGTERM raises, so teardown and the lease release still run."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def handler(signum: int, frame: Any) -> None:
+        raise _Terminated(f"signal {signum}")
+
+    previous = signal.signal(signal.SIGTERM, handler)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def run_combined(
+    args: argparse.Namespace,
+    path: Path,
+    record: run_record.RunRecord,
+    repo_root: Path,
+    profile: dict[str, Any],
+    *,
+    runner: Runner,
+    lease_backend: environment_lease.LeaseBackend | None,
+    sleep: Callable[[float], None],
+) -> int:
+    """The ``--combined`` command line: one pass, landed under the record's lock."""
+    environment = require_answered(read_environment(record, profile))
+    tripped = production_tripwire(environment)
+    if tripped is not None:
+        raise BuildLoopError(tripped)
+    baseline = read_criterion(record, None, profile).baseline
+    checks = environment_checks(record)
+    if args.dry_run:
+        integration = merge_turn.integration_state(record)
+        print(format_combined_dry_run(environment, integration, baseline, checks))
+        return EXIT_GREEN
+
+    revision = head_revision(repo_root, runner=runner)
+    problem = integration_problem(record, revision, repo_root, runner=runner)
+    if problem is not None:
+        raise BuildLoopError(problem)
+    lease = functional_environment.lease_of(environment)
+    if environment.get("mode") == functional_environment.MODE_WAIVED:
+        lease = None
+    if lease is not None and lease_backend is None:
+        backend = environment_lease.GitRefLeaseBackend(repo_root, remote=lease["remote"])
+        unusable = backend.check_remote()
+        if unusable is not None:
+            raise BuildLoopError(unusable)
+        lease_backend = backend
+    block = record.extra.get(COMBINED_KEY)
+    previous = block.get("passes") if isinstance(block, dict) else None
+    pass_number = (len(previous) if isinstance(previous, list) else 0) + 1
+
+    def land(entry: dict[str, Any], green: bool) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        with run_record.file_lock(path):
+            fresh = load_record_file(path)
+            landed = apply_combined_pass(fresh, environment, entry, green)
+            save_record_file(path, fresh)
+        passes: list[dict[str, Any]] = fresh.extra[COMBINED_KEY]["passes"]
+        return landed, passes
+
+    # The pass runs with no record lock held: a deploy can take many minutes (issue 95).
+    try:
+        with _sigterm_raises():
+            entry, green = run_combined_pass(
+                record,
+                environment,
+                baseline,
+                revision,
+                runner=runner,
+                lease_backend=lease_backend,
+                pass_number=pass_number,
+                branch=current_branch(repo_root, runner=runner),
+                timeout=args.timeout,
+                lease_wait=args.lease_wait,
+                cwd=repo_root,
+                sleep=sleep,
+                report=lambda line: print(line, flush=True),
+            )
+    except CombinedPassInterrupted as stopped:
+        landed, _ = land(stopped.entry, False)
+        print(format_combined_pass(landed), file=sys.stderr)
+        raise stopped.__cause__ or stopped from None
+
+    landed, passes = land(entry, green)
+    streak = could_not_execute_streak(passes)
+    print(format_combined_pass(landed))
+    print("")
+    if green:
+        print(f"Handing the combined branch to code review at {revision}.")
+        return EXIT_GREEN
+    if streak >= COULD_NOT_EXECUTE_STOP:
+        print(
+            f"Environment stop: {streak} consecutive combined passes could not execute. This is "
+            "the environment, not the code; the operator needs to fix it:"
+        )
+        for past in passes[-streak:]:
+            for problem_line in past.get("environment_problems") or ["(no detail recorded)"]:
+                print(f"  pass {past['pass']}: {problem_line}")
+        return EXIT_ENVIRONMENT_STOP
+    print("Not green yet. Fix what the pass names and run it again — this is a loop pass.")
+    return EXIT_NOT_GREEN
+
+
+# ---------------------------------------------------------------------------
 # Command line.
 # ---------------------------------------------------------------------------
 
@@ -833,9 +1676,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=f"Read the profile from this file instead of {PROFILE_FILENAME} under --repo-root.",
     )
-    parser.add_argument("--unit", default=None, help="Which unit row to run against.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--unit", default=None, help="Which unit row to run against.")
+    mode.add_argument(
+        "--combined",
+        action="store_true",
+        help=(
+            "Run one combined-branch pass before code review: baseline, then deploy or start, "
+            "test and teardown through the declared environment, one run at a time when shared."
+        ),
+    )
     parser.add_argument(
         "--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS, help="Seconds per check."
+    )
+    parser.add_argument(
+        "--lease-wait",
+        type=int,
+        default=DEFAULT_LEASE_WAIT_SECONDS,
+        help="With --combined: seconds to wait on a shared environment another run holds.",
     )
     parser.add_argument(
         "--dry-run",
@@ -860,7 +1718,13 @@ def _resolve_record_path(args: argparse.Namespace) -> Path:
     return run_record.record_path(root, args.issue)
 
 
-def main(argv: list[str] | None = None, *, runner: Runner = subprocess_runner) -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    runner: Runner = subprocess_runner,
+    lease_backend: environment_lease.LeaseBackend | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> int:
     """Run the command line. Every loader call sits inside this one catch, as ``run_record.py`` does."""
     args = build_parser().parse_args(argv)
     try:
@@ -870,6 +1734,17 @@ def main(argv: list[str] | None = None, *, runner: Runner = subprocess_runner) -
         profile = load_profile(
             repo_root, profile_path=Path(args.profile).resolve() if args.profile else None
         )
+        if args.combined:
+            return run_combined(
+                args,
+                path,
+                record,
+                repo_root,
+                profile,
+                runner=runner,
+                lease_backend=lease_backend,
+                sleep=sleep,
+            )
         unit = find_unit(record, args.unit)
         criterion = read_criterion(record, unit, profile)
 

@@ -24,12 +24,14 @@ SCRIPTS = PACKAGE / "scripts"
 INTERNAL = frozenset(
     {
         "bundled_fleet",
+        "environment_lease",
         "fleet_commons_shim",
         "intent_envelope",
         "jev_log",
         "jev_verbs",
         "jev_widen",
         "merge_guard",
+        "merge_turn",
         "plugin_resolution",
         "retry_backoff",
         "run_record",
