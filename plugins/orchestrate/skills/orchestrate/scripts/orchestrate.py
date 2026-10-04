@@ -454,7 +454,9 @@ DOCUMENTED_FOREIGN_ROW_KEYS = frozenset({"build_loop", "usage"})
 
 They are carried across a save like any key this Orchestrate does not own, but ``read_unit`` does
 not print a notice for them: they are expected on every row, and repeating the notice on every
-load would bury the one that matters, a key nothing documents (issue #113)."""
+load would bury the one that matters, a key nothing documents (issue #113). The test
+``test_documented_foreign_row_keys_match_the_run_record_contract`` holds this set to the row-key
+tables in run-record.md, so a key a later issue documents there fails until it is added here."""
 
 
 class RecordError(RuntimeError):

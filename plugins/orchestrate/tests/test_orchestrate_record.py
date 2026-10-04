@@ -489,6 +489,76 @@ class TestKeysOrchestrateDoesNotOwn:
         assert "'usage'" not in err
         assert "'vibrance'" in err, "an undocumented key still gets its notice"
 
+    def test_a_save_refuses_a_record_that_became_unreadable_after_load(
+        self, orch, tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The re-read under the lock refuses rather than clobbering a record it cannot read."""
+        repo = make_repo(tmp_path)
+        monkeypatch.chdir(repo)
+        path = write_record(store, 32, units=[unit_row("u1")], branch="issue/32")
+        r = orch.Run.load(32, store)
+        path.write_text("{ this is not json", encoding="utf-8")
+        before = path.read_bytes()
+        r.unit("u1").status = "running"
+        with pytest.raises(orch.RecordError):
+            r.save()
+        assert path.read_bytes() == before, "a refused save leaves the record untouched"
+
+    def test_a_save_refuses_a_record_moved_to_an_unknown_version_after_load(
+        self, orch, tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = make_repo(tmp_path)
+        monkeypatch.chdir(repo)
+        path = write_record(store, 33, units=[unit_row("u1")], branch="issue/33")
+        r = orch.Run.load(33, store)
+
+        def bump_schema(payload: dict) -> None:
+            payload["schema"] = "run_record.v2"
+
+        _rewrite_on_disk(store, 33, bump_schema)
+        before = path.read_bytes()
+        r.unit("u1").status = "running"
+        with pytest.raises(orch.UnknownRecordVersionError):
+            r.save()
+        assert path.read_bytes() == before, "a refused save leaves the record untouched"
+
+
+RUN_RECORD_REFERENCE = (
+    Path(__file__).resolve().parents[3] / "plugins" / "saga" / "references" / "run-record.md"
+)
+
+#: Row keys orchestrate quiets before the contract on this branch documents them. ``usage`` is
+#: documented in run-record.md by issue 95; drop it from here when that lands.
+_FOREIGN_ROW_KEYS_PENDING_DOCUMENTATION = frozenset({"usage"})
+
+
+def _documented_row_keys() -> set[str]:
+    """Every key named in the unit-row tables of saga's run-record contract."""
+    import re
+
+    text = RUN_RECORD_REFERENCE.read_text(encoding="utf-8")
+    section = text.split("## `units` — the keys a unit row carries", 1)[1].split("\n## ", 1)[0]
+    return set(re.findall(r"^\| `([a-z_]+)` \|", section, re.MULTILINE))
+
+
+def test_documented_foreign_row_keys_match_the_run_record_contract(orch) -> None:
+    """The contract is the source of the quiet list: a documented row key orchestrate does not own
+    must be in ``DOCUMENTED_FOREIGN_ROW_KEYS``, and nothing else may be (issue #113)."""
+    import dataclasses
+
+    owned = {field.name for field in dataclasses.fields(orch.Unit)}
+    documented = _documented_row_keys()
+    assert documented, "the run-record contract's unit-row tables were not found"
+    foreign = documented - owned
+    assert foreign <= orch.DOCUMENTED_FOREIGN_ROW_KEYS, (
+        f"run-record.md documents row keys orchestrate does not quiet: "
+        f"{sorted(foreign - orch.DOCUMENTED_FOREIGN_ROW_KEYS)}"
+    )
+    undocumented = orch.DOCUMENTED_FOREIGN_ROW_KEYS - foreign
+    assert undocumented <= _FOREIGN_ROW_KEYS_PENDING_DOCUMENTATION, (
+        f"DOCUMENTED_FOREIGN_ROW_KEYS names keys run-record.md does not: {sorted(undocumented)}"
+    )
+
 
 class TestStartRequiresTheRecord:
     def test_start_with_no_record_refuses_and_names_the_admission_command(
