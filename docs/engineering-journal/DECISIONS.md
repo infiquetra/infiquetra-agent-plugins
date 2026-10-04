@@ -112,14 +112,17 @@ headings as table titles: they break the gate-record lint as described above.
 coordinator ruling 7 (operator answer > repository overlay > a recorded Jev raise > work-shape
 default, refusing a raise that is not exactly one step up or that names fable or max) in one
 display-only function, `_proposed_and_why`, because the resolver issue #93 builds does not exist
-yet. Likewise the tier-judgment band names (issue #96) and the 0.8 / 0.6 lens bands (issue #110)
+yet. (Issue #93's review replaced that copy: `_proposed_and_why` now hands a recorded raise to
+the resolver through `_resolve_one_role` and words the decision's `source` and the resolver's own
+refusal message, after the copy was found showing a model-rung raise the resolver had applied as
+refused.) Likewise the tier-judgment band names (issue #96) and the 0.8 / 0.6 lens bands (issue #110)
 are copied, not imported. The JSON carries a `status` field (`unreachable`,
 `catalogue-unreadable`) instead of placeholder rows, so a pane never has to match display text.
 The keys the tables read are listed in `plugins/saga/references/run-record.md`.
 
 **Revisit when.** A harness needs a different format than Markdown tables, or the Jev data the
 tables read (the per-role tier judgment from issue #96, the lens proposal from issue #110) lands in
-a different place in the run record. Replace the interim copies when #93's resolver, #96's band
+a different place in the run record. Replace the remaining interim copies when #96's band
 constants and #110's thresholds land: call or import them and delete the copies here. When issue
 #96 merges a `staffing_overrides` answer per role, remove the plan skill's "complete role map"
 answer rule (SKILL.md §0.1b) and the matching caveat in `references/run-record.md`; the admission

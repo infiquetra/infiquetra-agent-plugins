@@ -905,19 +905,33 @@ def _table_staffing(
 
     *sources* sets a role's decision ``source`` (``overlay`` for ``.saga/tier-defaults.json``);
     a role in *failing* raises from ``resolve_role``; *worker* sets the worker's default tier.
+    A ``jev_raise`` is checked by the real resolver's own raise validator against that default,
+    so these tests restate none of the raise rules; an overlay ``source`` outranks the raise.
     """
+    real = _load_bundled_staffing()
     tiers = {"planner": ("opus", "high"), "worker": worker}
+    shapes = {"planner": "judgment", "worker": "mechanical"}
 
     def roles() -> dict[str, Any]:
-        return {"planner": {"work_shape": "judgment"}, "worker": {"work_shape": "mechanical"}}
+        return {role: {"work_shape": shape} for role, shape in shapes.items()}
 
-    def resolve_role(role: str, **_kwargs: Any) -> SimpleNamespace:
+    def resolve_role(role: str, *, jev_raise: Any = None, **_kwargs: Any) -> SimpleNamespace:
         if role in failing:
             raise RuntimeError(f"cannot resolve {role}")
         model, effort = tiers[role]
         decision = SimpleNamespace(vendor="claude", model=model, effort=effort)
         if sources and role in sources:
             decision.source = sources[role]
+        if jev_raise is not None:
+            raised = real._validate_jev_raise(
+                shapes[role],
+                {"model": jev_raise.get("model"), "effort": jev_raise.get("effort")},
+                base={"model": model, "effort": effort},
+                registry=real.work_shapes(),
+            )
+            if getattr(decision, "source", None) != "overlay":
+                decision.model, decision.effort = raised["model"], raised["effort"]
+                decision.source = "jev-raise"
         return decision
 
     def lens_catalogue(**_kwargs: Any) -> tuple[dict[str, Any], str]:
@@ -932,8 +946,21 @@ def _table_staffing(
         return None
 
     return SimpleNamespace(
-        roles=roles, resolve_role=resolve_role, lens_catalogue=lens_catalogue, sdlc_root=sdlc_root
+        roles=roles,
+        resolve_role=resolve_role,
+        lens_catalogue=lens_catalogue,
+        sdlc_root=sdlc_root,
+        StaffingError=real.StaffingError,
     )
+
+
+def _load_bundled_staffing() -> ModuleType:
+    """The staffing resolver saga ships, loaded the way admission loads it."""
+    if str(SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(SCRIPTS))
+    import bundled_fleet  # noqa: PLC0415
+
+    return bundled_fleet.load("staffing")
 
 
 def _table_record(adm: ModuleType, staffing: Any) -> Any:
@@ -1325,10 +1352,10 @@ def test_a_repository_overlay_tier_is_named_in_the_why_column(adm: ModuleType) -
 @pytest.mark.parametrize(
     ("raise_", "reason"),
     [
-        ({"model": "fable", "effort": "max"}, "it names fable"),
-        ({"model": "opus", "effort": "max"}, "it names max"),
-        ({"model": "opus", "effort": "high"}, "it is not exactly one step above the default"),
-        ({"model": "sonnet", "effort": "xhigh"}, "it is not exactly one step above the default"),
+        ({"model": "fable", "effort": "max"}, "effort 'max' not in"),
+        ({"model": "opus", "effort": "max"}, "effort 'max' not in"),
+        ({"model": "opus", "effort": "high"}, "is not exactly one step above the default"),
+        ({"model": "sonnet", "effort": "xhigh"}, "is not exactly one step above the default"),
     ],
 )
 def test_an_out_of_policy_jev_raise_is_never_shown_as_proposed(
@@ -1342,10 +1369,12 @@ def test_an_out_of_policy_jev_raise_is_never_shown_as_proposed(
     }
     rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
     assert rows["worker"][3] == "claude sonnet/medium"
-    assert rows["worker"][4] == (
+    why = rows["worker"][4]
+    assert why.startswith(
         "staffing default (work shape mechanical); recorded Jev raise to "
-        f"{raise_['model']}/{raise_['effort']} refused: {reason}"
+        f"{raise_['model']}/{raise_['effort']} refused: jev raise for 'mechanical': "
     )
+    assert reason in why
 
 
 def test_a_jev_raise_from_a_default_at_the_ceiling_is_refused(adm: ModuleType) -> None:
@@ -1359,10 +1388,10 @@ def test_a_jev_raise_from_a_default_at_the_ceiling_is_refused(adm: ModuleType) -
     }
     rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
     assert rows["worker"][3] == "claude opus/xhigh"
-    assert rows["worker"][4] == (
+    assert rows["worker"][4].startswith(
         "staffing default (work shape mechanical); recorded Jev raise to opus/high refused: "
-        "it is not exactly one step above the default"
     )
+    assert "is not exactly one step above the default opus/xhigh" in rows["worker"][4]
 
 
 def test_a_one_step_model_raise_is_shown_as_proposed(adm: ModuleType) -> None:
@@ -1379,24 +1408,49 @@ def test_a_one_step_model_raise_is_shown_as_proposed(adm: ModuleType) -> None:
     assert rows["worker"][4] == "Jev raise: the change crosses a trust boundary"
 
 
-def test_a_jev_raise_is_refused_when_the_palette_cannot_be_read(
-    adm: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    staffing = _table_staffing()
-    record = _table_record(adm, staffing)
-    record.run_configuration["staffing_models_and_efforts"]["value"]["worker"]["jev_raise"] = {
-        "model": "sonnet",
-        "effort": "high",
-        "reason": "the change touches a gate",
+def test_the_table_shows_a_model_rung_raise_the_resolver_applied(adm: ModuleType) -> None:
+    """Review finding on #93: the table must word the resolver's answer, not a copy of its rules.
+
+    The real resolver accepts one model rung with the effort unchanged (sonnet/medium to
+    opus/medium for the merging worker); the Why cell must say the raise applied.
+    """
+    staffing = _load_bundled_staffing()
+    raise_ = {"model": "opus", "effort": "medium", "reason": "the merge crosses a gate"}
+    decision = staffing.resolve_role("merging-worker", jev_raise=raise_)
+    assert (decision.model, decision.effort, decision.source) == ("opus", "medium", "jev-raise")
+    record = _table_record(adm, _table_staffing())
+    record.run_configuration["staffing_models_and_efforts"]["value"] = {
+        "merging-worker": {
+            "vendor": "claude",
+            "model": "opus",
+            "effort": "medium",
+            "source": "jev-raise",
+            "jev_raise": raise_,
+        }
     }
+    (row,) = adm._staffing_rows(record, staffing)["rows"]
+    assert row["proposed"] == {"vendor": "claude", "model": "opus", "effort": "medium"}
+    assert row["why"] == "Jev raise: the merge crosses a gate"
 
-    def broken_load(_name: str) -> Any:
-        raise RuntimeError("palette unreadable")
 
-    monkeypatch.setitem(sys.modules, "bundled_fleet", SimpleNamespace(load=broken_load))
-    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
-    assert rows["worker"][3] == "claude sonnet/medium"
-    assert rows["worker"][4].endswith("refused: the tier palette could not be read to check it")
+def test_the_recorded_resolver_outcome_stands_in_when_staffing_is_unreachable(
+    adm: ModuleType,
+) -> None:
+    """Without a resolver, the row's recorded refusal is shown, never a re-derived one."""
+    row = {
+        "vendor": "claude",
+        "model": "sonnet",
+        "effort": "medium",
+        "source": "policy",
+        "jev_raise": {"model": "opus", "effort": "high", "reason": "r"},
+        "jev_raise_refused": "jev raise for 'mechanical': recorded refusal",
+    }
+    proposed, why = adm._proposed_and_why(row, "mechanical", None, operator=False)
+    assert proposed == {"vendor": "claude", "model": "sonnet", "effort": "medium"}
+    assert why == (
+        "staffing default (work shape mechanical); recorded Jev raise to opus/high refused: "
+        "jev raise for 'mechanical': recorded refusal"
+    )
 
 
 def test_a_one_step_jev_raise_is_shown_as_proposed(adm: ModuleType) -> None:

@@ -35,6 +35,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 _SCRIPTS = Path(__file__).resolve().parent
@@ -1087,9 +1088,6 @@ _BAND_NOTES: dict[str, str] = {
 }
 _AT_CEILING = "raise-at-ceiling"
 
-#: The strongest model an automatic Jev raise may name (coordinator ruling 7): never fable.
-_RAISE_MODEL_CEILING = "opus"
-
 #: The staffing-table and lens-table states a pane branches on instead of matching display text.
 STAFFING_UNREACHABLE = "unreachable"
 LENS_CATALOGUE_UNREADABLE = "catalogue-unreadable"
@@ -1138,82 +1136,78 @@ def _default_tier(staffing: Any, role: str) -> tuple[dict[str, Any] | None, str 
     return tier, shape, source if isinstance(source, str) else None
 
 
-def _one_step_raise(base: dict[str, Any]) -> dict[str, Any] | None:
-    """The tier exactly one step above *base*, or ``None`` at the ceiling.
+def _raise_outcome(
+    staffing: Any, role: str, row: dict[str, Any], raise_: dict[str, Any]
+) -> tuple[Any, str | None]:
+    """What the staffing resolver makes of a recorded Jev raise for *role*.
 
-    An interim copy of fleet-core's ``one_step_raise`` as issue #96 designs it: effort first, up
-    to the model's own ceiling; then the model, never past opus. ``max`` is not a palette rung, so
-    it is excluded by construction. Raises when the palette cannot be loaded or *base* is unknown.
+    Returns ``(decision, refused)`` from :func:`_resolve_one_role`, the same call admission staffs
+    with, so the table reads the precedence and the raise rules from the resolver and restates
+    neither. ``decision.source`` names the rung that won (``jev-raise`` when the raise applied);
+    ``refused`` is the resolver's own message when it refused the raise. With the resolver
+    unreachable, the row's recorded ``source`` and ``jev_raise_refused`` (written by
+    :func:`_resolve_staffing` from the same resolver) stand in.
     """
-    import bundled_fleet  # noqa: PLC0415
-
-    palette = bundled_fleet.load("tier_palette")
-    model, effort = str(base["model"]), str(base.get("effort") or "")
-    ceiling = palette.effort_ceiling(model)
-    if palette.effort_rank(effort) < palette.effort_rank(ceiling):
-        return {"model": model, "effort": palette.escalate("effort", effort, 1, ceiling=ceiling)}
-    if palette.model_rank(model) > palette.model_rank(_RAISE_MODEL_CEILING):
-        raised = palette.escalate("model", model, 1, ceiling=_RAISE_MODEL_CEILING)
-        return {"model": raised, "effort": palette.clamp_effort_to_model(raised, effort)[0]}
-    return None
-
-
-def _raise_refusal(raise_: dict[str, Any], base: dict[str, Any] | None) -> str | None:
-    """Why the staffing resolver would refuse a recorded Jev raise, or ``None`` when it passes."""
-    model, effort = raise_.get("model"), raise_.get("effort")
-    if model == "fable":
-        return "it names fable"
-    if effort == "max":
-        return "it names max"
-    if base is None:
-        return "there is no default to raise from"
-    try:
-        step = _one_step_raise(base)
-    except Exception:
-        return "the tier palette could not be read to check it"
-    if step is None or (step["model"], step["effort"]) != (model, effort):
-        return "it is not exactly one step above the default"
-    return None
+    if staffing is not None:
+        try:
+            decision, refused = _resolve_one_role(staffing, role, root=None, jev_raise=raise_)
+        except AdmissionError:
+            decision, refused = None, None
+        if decision is not None or refused is not None:
+            return decision, refused
+    refused = row.get("jev_raise_refused")
+    if isinstance(refused, str) and refused:
+        return None, refused
+    source = row.get("source")
+    if isinstance(source, str):
+        recorded = {key: row.get(key) for key in ("vendor", "model", "effort")}
+        return SimpleNamespace(source=source, **recorded), None
+    return None, None
 
 
 def _proposed_and_why(
     row: dict[str, Any],
-    default: dict[str, Any] | None,
     shape: str | None,
     default_source: str | None,
     *,
     operator: bool,
+    staffing: Any = None,
+    role: str = "",
 ) -> tuple[dict[str, Any] | None, str]:
     """Which tier wins for one role, and the Why cell that names where it came from.
 
-    DISPLAY-ONLY INTERIM COPY of the staffing precedence. Coordinator ruling 7 writes the
-    precedence once, in the resolver issue #93 builds: operator's admission answer > repository
-    overlay (``.saga/tier-defaults.json``) > a recorded Jev raise > work-shape default, refusing a
-    raise that is not exactly one step above its base or that names fable or max. This function
-    mirrors that order and those refusals so the table never shows a tier the run would not
-    staff; once #93's resolver exists, call it here instead and delete the copy.
+    The precedence and the raise rules are the staffing resolver's (issue #93); this function
+    only words its answer. An operator answer is shown as recorded. Otherwise a recorded Jev raise
+    is handed to the resolver: the decision's ``source`` says whether the raise applied
+    (``jev-raise``) or a higher rung outranked it (``overlay``), and a refused raise is shown with
+    the resolver's own message beside the default it fell back to.
     """
     recorded = _tier(row.get("vendor"), row.get("model"), row.get("effort"))
     shape_note = f"work shape {shape}" if shape else None
     if operator:
         return recorded, "operator answer"
-    raise_ = row.get("jev_raise") if isinstance(row.get("jev_raise"), dict) else {}
-    has_raise = bool(raise_.get("model"))
-    if default_source == "overlay":
-        why = "repository overlay (.saga/tier-defaults.json" + (
-            f", {shape_note})" if shape_note else ")"
-        )
-        if has_raise:
-            why += "; the overlay outranks the recorded Jev raise"
-        return recorded, why
+    overlay_why = "repository overlay (.saga/tier-defaults.json" + (
+        f", {shape_note})" if shape_note else ")"
+    )
     base_why = f"staffing default ({shape_note})" if shape_note else "staffing default"
-    if has_raise:
-        refusal = _raise_refusal(raise_, default or recorded)
-        if refusal is None:
-            proposed = _tier(row.get("vendor"), raise_.get("model"), raise_.get("effort"))
-            return proposed, f"Jev raise: {raise_.get('reason') or 'no reason recorded'}"
-        refused = _tier_text(raise_, with_vendor=False)
-        return recorded, f"{base_why}; recorded Jev raise to {refused} refused: {refusal}"
+    raise_ = row.get("jev_raise") if isinstance(row.get("jev_raise"), dict) else {}
+    if not raise_.get("model"):
+        return recorded, overlay_why if default_source == "overlay" else base_why
+    decision, refused = _raise_outcome(staffing, role, row, raise_)
+    source = getattr(decision, "source", None) if decision is not None else default_source
+    layer_why = overlay_why if source == "overlay" else base_why
+    if refused is not None:
+        shown = _tier_text(raise_, with_vendor=False)
+        return recorded, f"{layer_why}; recorded Jev raise to {shown} refused: {refused}"
+    if source == "jev-raise":
+        proposed = _tier(
+            row.get("vendor") or getattr(decision, "vendor", None),
+            getattr(decision, "model", None),
+            getattr(decision, "effort", None),
+        )
+        return proposed, f"Jev raise: {raise_.get('reason') or 'no reason recorded'}"
+    if source == "overlay":
+        return recorded, f"{overlay_why}; the overlay outranks the recorded Jev raise"
     return recorded, base_why
 
 
@@ -1326,7 +1320,9 @@ def _staffing_rows(record: run_record.RunRecord, staffing: Any) -> dict[str, Any
         if default is None and source == "staffing":
             default = _tier(row.get("vendor"), row.get("model"), row.get("effort"))
         operator = row.get("operator_override") is True or (source == "operator" and not merged)
-        proposed, why = _proposed_and_why(row, default, shape, default_source, operator=operator)
+        proposed, why = _proposed_and_why(
+            row, shape, default_source, operator=operator, staffing=staffing, role=role
+        )
         rows.append(
             {
                 "role": role,

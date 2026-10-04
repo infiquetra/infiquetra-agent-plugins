@@ -125,6 +125,22 @@ the Select does not list never reaches the chain or `onSelect` and resolves `und
 
 **Generalizable rule.** Hold a mod's dispatch open with a loop of short `$` calls, capped, and
 prove it with a test that waits past ten real seconds.
+### A display copy of a rule drifts the moment the rule's real home lands
+
+**Evidence.** Issue #93 built the one staffing resolver but left admission's display copy of the
+tier precedence (`_one_step_raise` and `_raise_refusal` in `plugins/saga/scripts/admission.py`).
+The copy stepped effort first; the resolver's `_validate_jev_raise` also accepts one model rung.
+For the merging worker with a recorded raise to opus/medium, the resolver staffed opus/medium
+while the admission table's Why cell said the raise was refused.
+`test_the_table_shows_a_model_rung_raise_the_resolver_applied` in
+`plugins/saga/tests/test_admission.py` now pins the resolver's answer.
+
+**Mechanism.** The copy's own tests checked the copy, not the resolver, so they stayed green while
+the two rules diverged. The repair has the table call `_resolve_one_role` (the call admission
+staffs with) and word the decision's `source` and the resolver's refusal message.
+
+**Generalizable rule.** When the change that builds a rule's real home lands, delete every interim
+copy in the same change, and test the display against the real component, not a fake of the rule.
 
 ### `$.ui.ask` hides a dialog that answered itself, and a plugin gets one unmatched `session.start`
 

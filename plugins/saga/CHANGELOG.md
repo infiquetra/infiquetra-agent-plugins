@@ -118,6 +118,10 @@
 - Admission names a recorded raise in a role refusal only when the resolver refused the raise for
   its own reason; a refusal the raise did not cause (a Claude-only shape on a role pinned to
   another vendor) is reported once, without blaming the raise.
+- Admission's staffing table no longer carries its own copy of the tier precedence. The Proposed
+  and Why columns ask the staffing resolver about a recorded Jev raise and show its answer, so a
+  one-model-rung raise the resolver applies (sonnet/medium to opus/medium) is no longer labelled
+  refused, and a refused raise shows the resolver's own message.
 - `intent-envelope.md` describes `recommend_tier` as it now works: its base is the staffing
   resolver's answer, and the unattended step-down is skipped for the `implementation` shape.
 - `/plan`'s tier section no longer names `parse_tier_band`, `resolve_tier_for_plan` or
