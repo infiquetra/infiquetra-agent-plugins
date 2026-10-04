@@ -218,6 +218,28 @@ have each mod export its command and tool specs as data. In `claude plugin test`
 element's `key` is not reported (find it by `text`), and the test's `$` has no `ui.close`; press
 the pane's own Close button instead.
 
+### A Claude Code subagent's effort can only be set by its agent type, and the call's model overrides the type's
+
+**Evidence.** Claude Code 2.1.289, read from the build and its mod declarations while building
+issue #106 (`plugins/saga/com.infiquetra.claude/mods/agent-types.ts`). The Agent tool's own
+description says each agent type's model, reasoning effort and tool access are set in its
+definition, and "the `model` parameter here overrides the definition for this one call". The
+plugin agent loader reads `effort:` from a plugin agent file and warns on an invalid value, while it
+warns that `permissionMode`, `hooks` and `mcpServers` are ignored for plugin agents. `TurnStepInput`
+in `plugin-authoring/types/claude-code.d.ts` carries the request's resolved model id (such as
+`claude-opus-5-5`), its effort and the subagent's `agentId`, but no agent type. In the test kit
+(`claude plugin test`), a test hook on `session.append` is not reached, and a plugin's
+`$.session.append` rejects with "no implementation for session.append".
+
+**Mechanism.** Effort is part of an agent definition, not a dispatch argument, so a role that needs
+a resolved effort needs a type of its own, and a dispatch that also passes `model` silently replaces
+the type's model. A request names a full model id while a type names an alias, so a comparison has
+to match the alias inside the id. The drift check finds the subagent's type through `$.agent.list()`
+by `agentId`. The transcript line is written with `$.ui.log`, which draws a notice the model never
+reads and which the test kit can stub.
+
+**Generalizable rule.** To run a Claude subagent at a resolved effort, dispatch a registered type and
+leave out `model`; check the outcome on `turn.step`, never assume it.
 ### A test suite that reads live configuration spends the operator's API budget, not CI's
 
 **Evidence.** On 2026-10-04 the GitHub REST budget for the operator's account reached 0 of 5,000

@@ -252,26 +252,49 @@ root=…, answer=…)` as the operator's answer, which wins over every other tie
 default and the agent frontmatter apply only to a teammate with no plan-authored tier; no code
 passes either one to `resolve_shape`.
 
-Any `plugins/*/agents/*.md` file may carry an `effort:` frontmatter field, and its value must be one
-of `EFFORTS`. A required lint (`tests/test_agent_tier_lint.py`, reused by
-`scripts/lint_agent_tiers.py`) globs every agent file and fails the build on an out-of-vocabulary
-`effort:` or `model:` value. A file opts out with `tiering_exempt: true`.
+A Claude agent file (`plugins/*/com.infiquetra.claude/agents/*.md`, inside the plugin's Claude
+adapter) may carry an `effort:` frontmatter field, and its value must be one of `EFFORTS`. No lint in
+this repository checks that field yet: the `tests/test_agent_tier_lint.py` and
+`scripts/lint_agent_tiers.py` an earlier version of this page named are not here, so an
+out-of-vocabulary value is caught only by review and by the harness's own warning.
 
-## Effort: honoring, one seam and three spawn kinds
+## Effort: honoring, one seam and four spawn kinds
 
 `fleet_commons.effort_rider.inject_effort(prompt, effort, spawn_kind)` is the single seam that
-decides *how* a resolved effort is honored. It understands three `spawn_kind` values:
+decides *how* a resolved effort is honored. It understands four `spawn_kind` values:
 
 | `spawn_kind` | Mechanism | Real knob? |
 |---|---|---|
 | `workflow` | Pass-through — effort already rides in `agent(prompt, {effort})` | Yes |
 | `external-engine` | Pass-through — effort already passed as `effort=resolution.effort` | Yes |
+| `claude-agent-type` | Pass-through — the subagent is dispatched as a registered agent type whose definition carries the role's model and effort | Yes |
 | `agent` | An `EFFORT_RIDER[effort]` directive prepended to the prompt | No — a labeled proxy |
 
-The `agent` branch exists because the native Agent-tool teammate path has no harness-level
-reasoning-effort parameter today. When the harness ships one, only that branch changes — from
-"prepend rider" to "pass real knob" — and nothing upstream needs to change. Calling
-`inject_effort()` with an unknown effort or spawn kind raises rather than silently doing nothing.
+**The registered-type route (`claude-agent-type`).** Claude Code's Agent tool takes a model per
+call but no effort. A plugin can, though, register an agent type whose definition carries both. In
+Claude Code, saga's mod registers one type per role of the active run, named `saga:<role>`
+(`saga:worker`, `saga:planner`, `saga:plan-reviewer`, `saga:functional-tester`,
+`saga:release-worker`). Each type carries the role's roles-library prompt and the model and effort
+the run is staffed at. Saga's `scripts/role_agent_types.py` decides what to register: the run
+record's staffing first, then the resolver for any role the record does not staff. `/work`
+dispatches a build unit as `saga:worker` when the type's tier is the unit's resolved tier, and
+passes no `model` parameter, because the Agent call's model overrides the type's for that call.
+Nothing is registered in a session with no active saga run. The lens reviewer and the merging
+worker have no type: the first's prompt is sliced per lens, and the second has no prompt.
+
+**The rider stays the fallback.** The `agent` branch still serves every Agent-tool spawn that names
+no registered type: a harness without the mod, a role with no type, or a unit whose resolved tier
+differs from its role's type. Other vendors' sessions are launched with real effort flags by the
+roster and the launcher and are not on this seam. Calling `inject_effort()` with an unknown effort
+or spawn kind raises rather than silently doing nothing.
+
+**A second route: a static agent file.** Claude Code 2.1.289 honors `effort:` in a plugin agent
+file too. Its loader reads the field into the agent's definition and warns on a value outside the
+vocabulary. It ignores `permissionMode`, `hooks` and `mcpServers` in a plugin agent file. This was
+read from the build's loader, not observed on a live request. A static file suits an agent whose
+tier is fixed, such as `agy-coder` (`sonnet/medium`). Saga does not use it for run roles: a file
+cannot carry a per-run resolved tier, and it would hold a copy of the roles-library prompt that
+can drift from the library.
 
 Effort collapse for a vendor that cannot represent `max` is an **explicit table in the data**, not a
 silent clamp (`{#effort-collapse-max}`). Do not read another program's configuration files to guess
@@ -290,11 +313,18 @@ mismatch returns a named `tiering-drift[<spawn_kind>]` line; a match returns `No
 nothing.
 
 The comparison is honest per path, which is the whole point. On a real-knob path (`workflow`,
-`external-engine`) pass `manifest_effort`: the manifest's value is what was actually handed to the
-call, so a mismatch names both efforts. On the `agent` path pass `spawn_prompt` instead —
+`external-engine`, `claude-agent-type`) pass `manifest_effort`: the manifest's value is what was
+actually handed to the call, so a mismatch names both efforts. On the `agent` path pass `spawn_prompt` instead —
 reconciliation can only confirm that the rider text for the resolved effort reached the constructed
 prompt, so a mismatch names the compared quantity as `rider-text` and never as reasoning spend,
 because that seam cannot observe reasoning spend at all.
+
+On the registered-type route the check also runs live. Saga's mod watches every request a
+`saga:<role>` subagent makes and compares the model and effort actually sent with the type's
+resolved tier. A mismatch shows a toast and writes one
+`tiering-drift[claude-agent-type]: saga:<role> resolved <model>/<effort>, request sent ...` line
+into the transcript, once per subagent. The model never reads that line. The mod never rewrites
+the request: it reports, and the run's policy stays in the scripts.
 
 ## Review lenses and the qualification ledger
 

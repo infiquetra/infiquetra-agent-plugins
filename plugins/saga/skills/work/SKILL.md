@@ -393,6 +393,23 @@ hook (#677/U5). Direct `Agent`/`Task` spawns carry no lease admission.
   resolver takes no host or session input at all**, so the dispatch never consults the host
   session's tier — it cannot read one it is never given. Record the resolved tier in the Phase-4
   work-session execution evidence.
+- **How the tier reaches the spawn** — two routes, one rule (stated once in
+  `references/execution-strategy.md` § Subagent dispatch):
+  - **Registered type (Claude Code).** When the agent listing offers `saga:worker` and its
+    description states the same `<model>/<effort>` the resolver printed for the unit, dispatch with
+    `subagent_type: saga:worker` and **no `model` parameter**: the Agent call's model overrides the
+    type's for that call. The type carries the real effort, so prepend no rider.
+  - **Rider fallback (every other case).** Another harness, no `saga:worker` offered, or a unit
+    whose resolved tier differs from the type's: dispatch a generic agent with `model` set to the
+    resolved model and the effort rider prepended
+    (`fleet_commons.effort_rider.inject_effort(prompt, effort, "agent")`), the labeled proxy
+    described in fleet-core's `references/staffing.md`.
+
+  Record which route was used beside the tier in the Phase-4 evidence. A `saga:worker` subagent
+  whose requests do not carry its resolved tier shows a `tiering-drift[claude-agent-type]` toast and
+  transcript line; the mod reports and never rewrites the request. The type's prompt tells the
+  subagent to return its handoff as its final message and post nothing on the issue, so `/work`'s
+  comment boundary holds.
 - **Follow existing patterns** — read the plan's referenced code first; match naming and conventions;
   grep for similar implementations before inventing.
 - **Already shipped → verify, don't reimplement.** If a unit's `Verification` is already satisfied by the
