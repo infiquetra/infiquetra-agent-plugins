@@ -38,7 +38,7 @@ ORCHESTRATE_VERSION = "6.0.1"
 ORCHESTRATE_PREDECESSOR = "6.0.0"
 
 REMOVED_SUBCOMMANDS = ("redrive", "collect", "land")
-KEPT_SUBCOMMANDS = ("plan-check", "start", "go", "merge", "clean")
+KEPT_SUBCOMMANDS = ("plan-check", "launch-table", "start", "go", "merge", "clean")
 
 
 @pytest.fixture(scope="module")
