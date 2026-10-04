@@ -5364,118 +5364,22 @@ def _contract_scaffold_body(
     return "\n\n".join(sections)
 
 
-# Issue-carried recommended tier band (#368 AC5): a coarse issue-time seed for
-# /plan's per-unit tier table (saga's tier_defaults.resolve_tier_for_plan reads
-# it; precedence there is repo overlay > this band > shared registry). The map
-# mirrors the work_shapes block of fleet-core's staffing.json: judgment→opus/high,
-# mechanical→sonnet/medium, read-only-survey→sonnet/low.
-_TIER_BAND_HEADER = "Recommended Tier Band"
-_ISSUE_TYPE_TIER_BANDS: dict[str, tuple[str, str] | None] = {
-    "capability": ("opus", "high"),
-    "enhancement": ("sonnet", "medium"),
-    "defect": ("opus", "high"),
-    "exploration": ("sonnet", "low"),
-    "context-update": ("sonnet", "medium"),
-}
-
-
-def derive_tier_band(issue_type: str) -> dict[str, str] | None:
-    """Type→band mapping for the stamped `### Recommended Tier Band` field (AC5).
-
-    Returns ``{"model", "effort"}`` or None for an unknown type.
-    """
-    band = _ISSUE_TYPE_TIER_BANDS.get(issue_type)
-    if band is None:
-        return None
-    return {"model": band[0], "effort": band[1]}
-
-
-def _has_tier_band_section(body: str) -> bool:
-    """True when a real H3 tier-band header exists outside fenced code blocks.
-
-    The idempotence guard must be fence-aware, not a substring test: a prose or
-    code-block *mention* of the header text (e.g. a Verification section showing
-    example output) must not silently suppress the stamp. Mirrored by saga's
-    ``tier_defaults._unfenced_lines`` on the parse side of the format contract.
-    """
-    header_re = re.compile(rf"###\s+{re.escape(_TIER_BAND_HEADER)}\s*")
-    in_fence = False
-    for line in body.splitlines():
-        if line.lstrip().startswith(("```", "~~~")):
-            in_fence = not in_fence
-            continue
-        if not in_fence and header_re.fullmatch(line):
-            return True
-    return False
-
-
-def _open_fence_closer(body: str) -> str | None:
-    """The marker that closes a fence still open at end-of-body, or None.
-
-    An unclosed fence runs to end-of-document (CommonMark), so a section
-    appended after it would render — and parse — as code text. Returns the
-    opening marker's own prefix (``` or ~~~) so the closer matches the flavor.
-    """
-    open_marker: str | None = None
-    for line in body.splitlines():
-        stripped = line.lstrip()
-        if stripped.startswith(("```", "~~~")):
-            open_marker = None if open_marker else stripped[:3]
-    return open_marker
-
-
-def _append_tier_band(body: str, issue_type: str) -> str:
-    """Stamp the derived band as an auto-populated H3 section (idempotent).
-
-    Mirrors the Lifecycle Origin discipline: auto-populated at compile time,
-    never author-required. The card validator only checks *required* sections,
-    so the extra section is accepted as-is. A fence left open at end-of-body is
-    closed first — render-neutral for the author's content (the fence ran to
-    end-of-document anyway), and it keeps the stamped band a real section
-    instead of code text the saga-side parser can never see.
-    """
-    band = derive_tier_band(issue_type)
-    if band is None or _has_tier_band_section(body):
-        return body
-    base = body.rstrip()
-    closer = _open_fence_closer(base)
-    if closer is not None:
-        base += f"\n{closer}"
-    return base + f"\n\n### {_TIER_BAND_HEADER}\n{band['model']}/{band['effort']}\n"
-
-
-def _source_to_issue_body(
-    source: str,
-    issue_type: str,
-    team: str,
-    repo: str,
-    risk: str | None,
-    mode: str | None,
-    handoff_maturity: str | None = None,
-    source_artifact: SourceArtifact | None = None,
-    next_action: str | None = None,
-) -> str:
-    """Assemble the issue body, then stamp the recommended tier band (AC5).
-
-    The stamp lives on this wrapper (not the single current call site) so every
-    body the compile path emits carries the band — a future call site cannot
-    silently miss it.
-    """
-    body = _source_to_issue_body_unstamped(
-        source, issue_type, team, repo, risk, mode, handoff_maturity, source_artifact, next_action
-    )
-    return _append_tier_band(body, issue_type)
-
+# Retired by issue #94: prepare no longer stamps an issue-type tier band, but
+# every draft prepared before #94 still ends with this section. It stays in the
+# strip list so a --from revision of such a draft drops it; otherwise the strip
+# loop stops at it and the older handoff sections above it are duplicated.
+_RETIRED_TIER_BAND_SECTION = "### Recommended Tier Band"
 
 # Machine-rendered handoff sections (review-finding #5 cascade): a prepare
 # owns these the way it owns the sidecar mirror — they are re-rendered from
 # the current maturity/artifact on every compile, never carried from a prior
-# generation.
+# generation. The list also holds the retired tier band, which is stripped but
+# never re-rendered (see _RETIRED_TIER_BAND_SECTION).
 _HANDOFF_CONTEXT_SECTIONS = (
     "### Handoff maturity",
     "### Suggested next action",
     "### Source context",
-    f"### {_TIER_BAND_HEADER}",
+    _RETIRED_TIER_BAND_SECTION,
 )
 
 
@@ -5488,7 +5392,8 @@ def _strip_trailing_handoff_context(body: str) -> str:
     new one. Stripping the trailing machine sections lets the caller re-render
     them from the current maturity/artifact, keeping read, draft, sidecar, and
     published handoff in agreement (R9). Only unfenced trailing headings are
-    touched, and the tier band is re-stamped idempotently by the wrapper.
+    touched. The retired tier band section of a pre-#94 draft is stripped too
+    and is not re-rendered.
     """
     lines = body.splitlines()
     while lines:
@@ -5508,7 +5413,7 @@ def _strip_trailing_handoff_context(body: str) -> str:
     return "\n".join(lines).rstrip()
 
 
-def _source_to_issue_body_unstamped(
+def _source_to_issue_body(
     source: str,
     issue_type: str,
     team: str,

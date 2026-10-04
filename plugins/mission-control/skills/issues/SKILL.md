@@ -114,11 +114,6 @@ Hermes validation expects these semantics:
 - High and very-high risk cards also require `Inputs inventory`, `Failure modes / pre-mortem`,
   and `Stop conditions`.
 - `Lifecycle Origin` is auto-populated by prepared handoff flows, not author supplied.
-- `### Recommended Tier Band` is auto-stamped at issue creation from the issue type
-  (defect/capability→`opus/high`, enhancement/context-update→`sonnet/medium`,
-  exploration→`sonnet/low`) — a coarse seed saga's `/plan` pre-fills its tier
-  table from (repo `.saga/tier-defaults.json` overrides win). Auto-populated, not author supplied;
-  never double-stamped on recompile.
 - Empty placeholder sections such as `_No response_` are invalid.
 
 Optional actionable sections include `Notes / conventions`. Capability cards also include optional
