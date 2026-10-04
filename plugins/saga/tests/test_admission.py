@@ -2901,3 +2901,387 @@ def test_the_profile_reference_documents_the_block_the_waiver_and_the_migration(
         "teardown_command",
     ):
         assert term in text, f"repository-profile.md does not name {term}"
+
+
+# ---------------------------------------------------------------------------
+# Issue #96: the tier judgment at admission, from the real issue
+# ---------------------------------------------------------------------------
+#
+# Every consult below runs saga's real bundled staffing component with an injected ``ask``, so the
+# state, the bands and the resolver are the shipped ones and nothing reaches the network. The
+# saga conftest switches the judgment off for every test; these pass an explicit ``getenv`` that
+# leaves it on.
+
+_JUDGE_BODY = "Rotate the IAM signing key behind the token endpoint.\n\n" + _good_card()
+
+
+def _judging_ask(
+    answers: dict[str, tuple[str, float]], calls: list[dict[str, Any]] | None = None
+) -> Any:
+    """An ``ask`` that answers each role's direction question from *answers* (default: same)."""
+
+    def _ask(state: Any, questions: Any, **options: Any) -> Any:
+        if calls is not None:
+            calls.append({"state": state, "questions": questions, "options": options})
+        out: dict[str, Any] = {}
+        for key in questions:
+            role = key.split("__")[0]
+            choice, confidence = answers.get(role, ("same", 0.9))
+            out[key] = {
+                "type": "choice",
+                "choice": choice,
+                "confidence": confidence,
+                "probabilities": {choice: confidence},
+            }
+        return SimpleNamespace(status="ok", answers=out, model="jev-1.13.0", note="")
+
+    return _ask
+
+
+def _judged(
+    adm: ModuleType,
+    store: Path,
+    repo_root: Path,
+    answers: dict[str, tuple[str, float]],
+    *,
+    calls: list[dict[str, Any]] | None = None,
+    operator: dict[str, Any] | None = None,
+    log_dir: Path | None = None,
+    getenv: Any = None,
+) -> tuple[Any, list[Any]]:
+    return adm.admit(
+        96,
+        "infiquetra/infiquetra-agent-plugins",
+        store_root=store,
+        repo_root=repo_root,
+        body=_JUDGE_BODY,
+        title="Jev decides tier raises",
+        validator=_passing_validator,
+        staffing=_bundled_staffing(adm),
+        answers=operator,
+        judge_tiers=True,
+        judgment_ask=_judging_ask(answers, calls),
+        judgment_getenv=getenv or (lambda _name: None),
+        judgment_log_dir=log_dir,
+        log_labels=log_dir is not None,
+    )
+
+
+def _staffing_value(record: Any) -> dict[str, Any]:
+    value: dict[str, Any] = record.run_configuration["staffing_models_and_efforts"]["value"]
+    return value
+
+
+def _logged(log_dir: Path) -> dict[str, dict[str, Any]]:
+    path = log_dir / "verdicts.jsonl"
+    if not path.is_file():
+        return {}
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+    return {row["decision_id"]: row for row in rows if row.get("kind") == "verdict"}
+
+
+def test_the_state_sent_includes_the_issue_title_body_and_flags(
+    adm: ModuleType, store: Path, repo_root: Path
+) -> None:
+    calls: list[dict[str, Any]] = []
+    _judged(adm, store, repo_root, {}, calls=calls)
+
+    assert len(calls) == 1, "every role is judged in one request"
+    issue = calls[0]["state"]["issue"]
+    assert issue["title"] == "Jev decides tier raises"
+    assert issue["body"] == _JUDGE_BODY
+    assert issue["flags"] == {
+        "has_security": True,
+        "has_api": True,
+        "has_infra": False,
+        "has_privacy": False,
+    }
+    worker = calls[0]["state"]["tasks"]["worker"]
+    assert worker["default_tier"] == "opus/medium"
+    assert worker["work_shape"] == "implementation"
+    assert "worker__direction" in calls[0]["questions"]
+    assert calls[0]["options"]["total_deadline"] == 20.0
+    assert calls[0]["options"]["max_attempts"] == 2
+
+
+def test_an_auto_raise_is_recorded_in_the_run_record_with_its_reason(
+    adm: ModuleType, store: Path, repo_root: Path
+) -> None:
+    record, _ = _judged(adm, store, repo_root, {"worker": ("above", 0.85)})
+
+    worker = _staffing_value(record)["worker"]
+    assert (worker["model"], worker["effort"], worker["source"]) == ("opus", "high", "jev-raise")
+    raise_ = worker["jev_raise"]
+    assert (raise_["model"], raise_["effort"], raise_["confidence"]) == ("opus", "high", 0.85)
+    assert "one effort step" in raise_["reason"] and "0.85" in raise_["reason"]
+    assert raise_["decision_id"] == (
+        "staffing/tier-direction:infiquetra/infiquetra-agent-plugins#96:role:worker"
+    )
+    assert worker["tier_judgment"]["band"] == "auto-raise"
+    assert _staffing_value(record)["_tier_judgment"] == {"status": "ok", "note": ""}
+
+
+def test_a_confirm_band_raise_prefills_question_4(
+    adm: ModuleType, store: Path, repo_root: Path
+) -> None:
+    record, outstanding = _judged(adm, store, repo_root, {"worker": ("above", 0.7)})
+
+    worker = _staffing_value(record)["worker"]
+    assert "jev_raise" not in worker
+    assert (worker["model"], worker["effort"]) == ("opus", "medium")
+    question = next(q for q in outstanding if q.key == "staffing_overrides")
+    assert question.default == {"worker": {"vendor": "claude", "model": "opus", "effort": "high"}}
+    assert "raise to confirm, worker: opus/medium -> opus/high (confidence 0.70)" in question.prompt
+
+
+def test_a_lower_suggestion_is_advisory_only(
+    adm: ModuleType, store: Path, repo_root: Path
+) -> None:
+    record, outstanding = _judged(adm, store, repo_root, {"merging-worker": ("below", 0.95)})
+
+    merging = _staffing_value(record)["merging-worker"]
+    assert (merging["model"], merging["effort"], merging["source"]) == (
+        "sonnet",
+        "medium",
+        "policy",
+    )
+    assert "jev_raise" not in merging
+    question = next(q for q in outstanding if q.key == "staffing_overrides")
+    assert question.default is None
+    assert "advisory lower, never applied, merging-worker" in question.prompt
+    rendered = adm.render(record, outstanding, None)
+    assert "merging-worker: advisory lower, never applied, sonnet/medium -> sonnet/low" in rendered
+
+
+def test_the_operator_answer_is_logged_as_the_label(
+    adm: ModuleType, store: Path, repo_root: Path, tmp_path: Path
+) -> None:
+    log_dir = tmp_path / "typesafe"
+    override = {"planner": {"vendor": "claude", "model": "opus", "effort": "xhigh"}}
+    record, _ = _judged(
+        adm,
+        store,
+        repo_root,
+        {"worker": ("above", 0.85), "planner": ("above", 0.7), "merging-worker": ("below", 0.9)},
+        operator={"staffing_overrides": override},
+        log_dir=log_dir,
+    )
+
+    prefix = "staffing/tier-direction:infiquetra/infiquetra-agent-plugins#96:role:"
+    logged = _logged(log_dir)
+    # The operator confirmed the planner's raise, took the worker's automatic raise, and kept the
+    # merging worker's default over Jev's advisory lower.
+    assert logged[prefix + "planner"]["label"] == "above"
+    assert logged[prefix + "worker"]["label"] == "above"
+    assert logged[prefix + "merging-worker"]["label"] == "same"
+    assert logged[prefix + "release-worker"]["label"] == "same"
+    assert logged[prefix + "worker"]["answer"]["choice"] == "above"
+    worker_block = _staffing_value(record)["worker"]["tier_judgment"]
+    assert logged[prefix + "worker"]["state_hash"] == worker_block["state_hash"]
+    assert worker_block["labeled"] == "above"
+
+
+def test_a_none_answer_labels_from_the_default_or_the_applied_raise(
+    adm: ModuleType, store: Path, repo_root: Path, tmp_path: Path
+) -> None:
+    log_dir = tmp_path / "typesafe"
+    _judged(
+        adm,
+        store,
+        repo_root,
+        {"worker": ("above", 0.85), "planner": ("above", 0.7)},
+        operator={"staffing_overrides": "none"},
+        log_dir=log_dir,
+    )
+
+    prefix = "staffing/tier-direction:infiquetra/infiquetra-agent-plugins#96:role:"
+    logged = _logged(log_dir)
+    assert logged[prefix + "worker"]["label"] == "above", "the applied raise stood"
+    assert logged[prefix + "planner"]["label"] == "same", "'none' declined the pending raise"
+
+
+def test_labels_are_logged_once(
+    adm: ModuleType, store: Path, repo_root: Path, tmp_path: Path
+) -> None:
+    log_dir = tmp_path / "typesafe"
+    record, _ = _judged(
+        adm,
+        store,
+        repo_root,
+        {"worker": ("above", 0.85)},
+        operator={"staffing_overrides": "none"},
+        log_dir=log_dir,
+    )
+    adm.save_admission(store, record)
+    lines = (log_dir / "verdicts.jsonl").read_text(encoding="utf-8").splitlines()
+
+    calls: list[dict[str, Any]] = []
+    _judged(
+        adm,
+        store,
+        repo_root,
+        {"worker": ("above", 0.85)},
+        operator={"staffing_overrides": "none"},
+        log_dir=log_dir,
+        calls=calls,
+    )
+    assert (log_dir / "verdicts.jsonl").read_text(encoding="utf-8").splitlines() == lines
+    assert calls == [], "an already-judged run is not asked again"
+
+
+def test_off_switch_makes_no_request_at_admission(
+    adm: ModuleType, store: Path, repo_root: Path
+) -> None:
+    calls: list[dict[str, Any]] = []
+    record, outstanding = _judged(
+        adm,
+        store,
+        repo_root,
+        {"worker": ("above", 0.95)},
+        calls=calls,
+        getenv=lambda name: "off" if name == "INFIQUETRA_TYPESAFE_TIERING" else None,
+    )
+
+    assert calls == []
+    value = _staffing_value(record)
+    assert value["_tier_judgment"]["status"] == "off"
+    assert (value["worker"]["model"], value["worker"]["effort"]) == ("opus", "medium")
+    assert "tier_judgment" not in value["worker"]
+    assert "Tier judgment: switched off" in adm.render(record, outstanding, None)
+
+
+def test_a_failed_consult_keeps_an_earlier_raise(
+    adm: ModuleType, store: Path, repo_root: Path
+) -> None:
+    record, _ = _judged(adm, store, repo_root, {"worker": ("above", 0.85)})
+    adm.save_admission(store, record)
+    # Make the earlier consult look unfinished so the next run asks again, and let it fail.
+    run_record = _load("run_record")
+    saved = run_record.load(store, 96, warn=None)
+    _staffing_value(saved)["_tier_judgment"] = {"status": "error", "note": "down"}
+    run_record.save(store, saved)
+
+    def failing(*_args: Any, **_kwargs: Any) -> Any:
+        return SimpleNamespace(status="timeout", answers={}, model="", note="the deadline passed")
+
+    again, _ = adm.admit(
+        96,
+        "infiquetra/infiquetra-agent-plugins",
+        store_root=store,
+        repo_root=repo_root,
+        body=_JUDGE_BODY,
+        validator=_passing_validator,
+        staffing=_bundled_staffing(adm),
+        judge_tiers=True,
+        judgment_ask=failing,
+        judgment_getenv=lambda _name: None,
+    )
+    worker = _staffing_value(again)["worker"]
+    assert worker["jev_raise"]["effort"] == "high"
+    assert (worker["model"], worker["effort"], worker["source"]) == ("opus", "high", "jev-raise")
+    assert _staffing_value(again)["_tier_judgment"] == {
+        "status": "timeout",
+        "note": "the deadline passed",
+    }
+
+
+def test_an_overlay_tier_is_never_auto_raised(
+    adm: ModuleType, store: Path, repo_root: Path
+) -> None:
+    _overlay(repo_root, "opus", "medium")
+    record, outstanding = _judged(adm, store, repo_root, {"worker": ("above", 0.95)})
+
+    worker = _staffing_value(record)["worker"]
+    assert worker["source"] == "overlay"
+    assert "jev_raise" not in worker
+    assert worker["tier_judgment"]["band"] == "confirm-raise"
+    question = next(q for q in outstanding if q.key == "staffing_overrides")
+    assert question.default == {"worker": {"vendor": "claude", "model": "opus", "effort": "high"}}
+
+
+def test_the_library_default_makes_no_request(
+    adm: ModuleType, store: Path, repo_root: Path
+) -> None:
+    calls: list[dict[str, Any]] = []
+    adm.admit(
+        96,
+        "infiquetra/infiquetra-agent-plugins",
+        store_root=store,
+        repo_root=repo_root,
+        body=_JUDGE_BODY,
+        validator=_passing_validator,
+        staffing=_bundled_staffing(adm),
+        judgment_ask=_judging_ask({}, calls),
+        judgment_getenv=lambda _name: None,
+    )
+    assert calls == []
+
+
+def test_dry_run_logs_no_verdict_and_the_command_line_judges_by_default(
+    adm: ModuleType,
+    store: Path,
+    repo_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    log_dir = tmp_path / "typesafe"
+    monkeypatch.setenv("INFIQUETRA_TYPESAFE_LOG_DIR", str(log_dir))
+    monkeypatch.delenv("INFIQUETRA_TYPESAFE_TIERING")
+    staffing = _bundled_staffing(adm)
+    calls: list[dict[str, Any]] = []
+    consult = staffing.consult_tier_suggestions
+
+    def injected(units: Any, **kwargs: Any) -> Any:
+        kwargs["ask"] = _judging_ask({"worker": ("above", 0.85)}, calls)
+        return consult(units, **kwargs)
+
+    monkeypatch.setattr(staffing, "consult_tier_suggestions", injected)
+    monkeypatch.setattr(adm, "load_card_validator", lambda: _passing_validator)
+    monkeypatch.setattr(adm, "load_staffing", lambda: staffing)
+    monkeypatch.setattr(
+        adm, "fetch_issue", lambda *_a, **_k: {"number": 96, "title": "T", "body": _JUDGE_BODY}
+    )
+    answers = tmp_path / "answers.json"
+    answers.write_text(json.dumps({"staffing_overrides": "none"}), encoding="utf-8")
+    argv = [
+        "--issue",
+        "96",
+        "--repo",
+        "o/r",
+        "--store-root",
+        str(store),
+        "--repo-root",
+        str(repo_root),
+        "--answers",
+        str(answers),
+    ]
+
+    assert adm.main([*argv, "--dry-run"]) == 0
+    assert len(calls) == 1, "the command line judges without being asked to"
+    assert calls[0]["options"]["cache_dir"] == log_dir
+    assert "worker: raise applied, opus/medium -> opus/high" in capsys.readouterr().out
+    assert _logged(log_dir) == {}, "a dry run logs nothing"
+
+    assert adm.main(argv) == 0
+    logged = _logged(log_dir)
+    assert logged["staffing/tier-direction:o/r#96:role:worker"]["label"] == "above"
+
+
+def test_the_plan_skill_names_the_tier_judgment_and_the_off_switch() -> None:
+    text = (SAGA_SKILLS / "plan" / "SKILL.md").read_text(encoding="utf-8")
+    assert "INFIQUETRA_TYPESAFE_TIERING=off" in text
+    assert "tier_judgment.py plan --issue" in text
+    assert "tier_judgment.py label --issue" in text
+    assert "parse_tier_band" not in text
+
+
+def test_the_tables_band_names_are_the_staffing_components(adm: ModuleType) -> None:
+    staffing = _bundled_staffing(adm)
+    assert set(adm._BAND_NOTES) == {
+        staffing.BAND_AGREES,
+        staffing.BAND_AUTO_RAISE,
+        staffing.BAND_CONFIRM_RAISE,
+        staffing.BAND_ADVISORY_LOWER,
+    }
+    assert adm._AT_CEILING == staffing.BAND_RAISE_AT_CEILING

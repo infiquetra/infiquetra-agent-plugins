@@ -209,7 +209,7 @@ python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier --explai
 `staffing.resolve_shape` in `plugins/fleet-core/scripts/fleet_commons/staffing.py`, which owns the
 order in which the operator's answer, the repository overlay, a recorded raise and the registry
 default apply. This file does not restate that order. A recorded raise reaches it only through
-`--jev-raise '<json>'` (the unit row's `jev_raise`, written by staffing U4, issue #96), and
+`--jev-raise '<json>'` (the unit row's `jev_raise`, written by `/plan`'s `tier_judgment.py plan`, issue #96), and
 `--root <checkout>` names where the overlay is read. An explicit `{model, effort}` on the plan unit
 is passed as the operator's answer and validated against the same vocabulary as every other layer,
 so a model or effort the registry does not carry is refused rather than passed through to a spawn.

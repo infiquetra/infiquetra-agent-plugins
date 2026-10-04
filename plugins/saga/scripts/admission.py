@@ -37,7 +37,7 @@ import json
 import re
 import subprocess  # nosec B404
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -48,6 +48,7 @@ sys.path.insert(0, str(_SCRIPTS))
 
 import functional_environment  # noqa: E402  (after the sys.path shim, by design)
 import run_record  # noqa: E402  (after the sys.path shim, by design)
+import tier_judgment  # noqa: E402
 
 #: The tracked per-repository profile. Tracked, at the repository root, because `.saga/` is
 #: git-ignored here and a profile a fresh worktree cannot see would make admission re-ask questions
@@ -298,9 +299,11 @@ def fill_defaults(
     profile: dict[str, Any],
     staffing: Any = None,
     *,
-    suggest: bool = False,
-    suggest_ask: Callable[..., Any] | None = None,
-    suggest_log_dir: Path | None = None,
+    judge_tiers: bool = False,
+    issue: Mapping[str, Any] | None = None,
+    judgment_ask: Callable[..., Any] | None = None,
+    judgment_getenv: Callable[[str], str | None] | None = None,
+    judgment_cache: bool = False,
     repo_root: Path | None = None,
 ) -> run_record.RunRecord:
     """Fill every defaultable parameter, recording where each value came from (plan R7).
@@ -309,10 +312,14 @@ def fill_defaults(
     outranks any default, and re-deriving it would be the re-asking this whole module exists to
     stop.
 
-    ``suggest`` asks the staffing component for one batched tier suggestion per role and records
-    each beside its default. Advisory and fail-open: a suggestion never changes a value, and a
-    component without a consult entry point — or a failed request — leaves the defaults exactly
-    as they would have been.
+    ``judge_tiers`` asks the staffing component's tier judgment (issue #96) once for every
+    role, given ``issue`` (``tier_judgment.issue_state``), and records each role's judgment block
+    beside its tier. A raise at the automatic floor is recorded as the role's ``jev_raise`` and
+    resolved through the staffing resolver, so the role's tier is the raised one; a raise below
+    that floor waits for the operator in question 4; a lower tier is never applied. Fail-open: a
+    switched-off judgment, a missing entry point or a failed request leaves every default as it
+    was and records why under ``_tier_judgment``. The command line turns it on; a library caller
+    (and every test) gets no request unless it asks.
 
     ``repo_root`` is the checkout whose repository tier overlay staffing reads; ``None`` reads it
     from the working directory.
@@ -360,9 +367,12 @@ def fill_defaults(
             staffing,
             root=repo_root,
             recorded=configuration["staffing_models_and_efforts"].get("value"),
-            suggest=suggest,
-            suggest_ask=suggest_ask,
-            suggest_log_dir=suggest_log_dir,
+            judge=judge_tiers,
+            issue=issue,
+            prefix=tier_judgment_prefix(staffing, record),
+            ask=judgment_ask,
+            getenv=judgment_getenv,
+            cache=judgment_cache,
         )
         if resolved is not None:
             _fill(configuration, "staffing_models_and_efforts", resolved, "staffing")
@@ -392,9 +402,12 @@ def _resolve_staffing(
     *,
     root: Path | None = None,
     recorded: Any = None,
-    suggest: bool = False,
-    suggest_ask: Callable[..., Any] | None = None,
-    suggest_log_dir: Path | None = None,
+    judge: bool = False,
+    issue: Mapping[str, Any] | None = None,
+    prefix: str = "",
+    ask: Callable[..., Any] | None = None,
+    getenv: Callable[[str], str | None] | None = None,
+    cache: bool = False,
 ) -> dict[str, Any] | None:
     """Ask the staffing component for each role's vendor, model and effort.
 
@@ -405,16 +418,16 @@ def _resolve_staffing(
     kept too, beside a ``jev_raise_refused`` message, and the role falls back to its default; any
     other refusal stops admission (see :func:`_resolve_one_role`).
 
-    With ``suggest``, one batched tier consult covers every resolved role, and each role's
-    suggestion is recorded beside its default. The consult is best-effort: a component without
-    the consult entry point, or a request that fails, leaves the defaults untouched.
+    A role's recorded ``tier_judgment`` block, and the run-wide ``_tier_judgment`` note, are
+    carried forward too. With ``judge``, the tier judgment runs once for every resolved role
+    unless an earlier consult already judged them all (see :func:`_attach_tier_judgments`).
     """
     try:
         roles = staffing.roles()
     except Exception:
         return None
     resolved: dict[str, Any] = {}
-    operator_set: dict[str, bool] = {}
+    decisions: dict[str, Any] = {}
     previous = recorded if isinstance(recorded, dict) else {}
     for role in sorted(roles):
         entry = previous.get(role)
@@ -422,20 +435,46 @@ def _resolve_staffing(
         decision, refused = _resolve_one_role(staffing, role, root=root, jev_raise=jev_raise)
         if decision is None:
             continue
-        resolved[role] = {
-            "vendor": getattr(decision, "vendor", None),
-            "model": getattr(decision, "model", None),
-            "effort": getattr(decision, "effort", None),
-            "source": getattr(decision, "source", None),
-        }
+        resolved[role] = _staffed_row(decision)
         if jev_raise is not None:
             resolved[role]["jev_raise"] = jev_raise
         if refused is not None:
             resolved[role]["jev_raise_refused"] = refused
-        operator_set[role] = getattr(decision, "source", "policy") == "overlay"
-    if suggest and resolved:
-        _attach_suggestions(staffing, resolved, operator_set, suggest_ask, suggest_log_dir)
+        if isinstance(entry, dict) and isinstance(entry.get("tier_judgment"), dict):
+            resolved[role]["tier_judgment"] = entry["tier_judgment"]
+        decisions[role] = decision
+    if resolved and isinstance(previous.get(tier_judgment.RUN_WIDE_KEY), dict):
+        resolved[tier_judgment.RUN_WIDE_KEY] = previous[tier_judgment.RUN_WIDE_KEY]
+    if judge and resolved:
+        _attach_tier_judgments(
+            staffing,
+            resolved,
+            decisions,
+            root=root,
+            issue=issue,
+            prefix=prefix,
+            ask=ask,
+            getenv=getenv,
+            cache=cache,
+        )
     return resolved or None
+
+
+def _staffed_row(decision: Any) -> dict[str, Any]:
+    return {
+        "vendor": getattr(decision, "vendor", None),
+        "model": getattr(decision, "model", None),
+        "effort": getattr(decision, "effort", None),
+        "source": getattr(decision, "source", None),
+    }
+
+
+def tier_judgment_prefix(staffing: Any, record: run_record.RunRecord) -> str:
+    """The decision-id prefix for this run's role judgments, or ``""`` without a component."""
+    try:
+        return tier_judgment.decision_prefix(staffing, record.repo, record.issue, "role")
+    except Exception:
+        return ""
 
 
 def _is_refusal(staffing: Any, exc: Exception) -> bool:
@@ -490,53 +529,99 @@ def _resolve_one_role(
     return None, None
 
 
-def _attach_suggestions(
+def _attach_tier_judgments(
     staffing: Any,
     resolved: dict[str, Any],
-    operator_set: dict[str, bool],
-    suggest_ask: Callable[..., Any] | None,
-    suggest_log_dir: Path | None,
+    decisions: dict[str, Any],
+    *,
+    root: Path | None,
+    issue: Mapping[str, Any] | None,
+    prefix: str,
+    ask: Callable[..., Any] | None,
+    getenv: Callable[[str], str | None] | None,
+    cache: bool,
 ) -> None:
-    """Consult the tier judgment once for every role and record each suggestion beside its
-    default. Never raises and never alters a default: anything unexpected leaves ``resolved``
-    exactly as it was."""
-    consult = getattr(staffing, "consult_tier_suggestions", None)
-    if not callable(consult):
+    """Judge every staffed role in one request and record each block beside the role's tier.
+
+    Skipped when an earlier consult in this run already judged every role (its ``_tier_judgment``
+    status is ``ok``): the answers are on the record and re-asking would only spend a request.
+    Each role is judged against its default without any earlier raise, the tier the resolver
+    validates a raise against. An ``auto-raise`` block becomes the role's ``jev_raise`` and the
+    role is resolved again with it, so ``model``, ``effort`` and ``source`` (``jev-raise``) are
+    the resolver's answer.
+
+    A consult that is switched off or fails records only the run-wide ``_tier_judgment`` note and
+    leaves every role, including a raise an earlier consult recorded, exactly as it was. A
+    staffing component with no tier-judgment entry point records nothing at all. Never raises.
+    """
+    if not callable(getattr(staffing, "consult_tier_suggestions", None)):
         return
-    units = {
-        role: {
-            "task": (f"role '{role}' (staffing default {tier.get('model')}/{tier.get('effort')})"),
-            "default": {"model": tier.get("model"), "effort": tier.get("effort")},
-            "operator_set": operator_set.get(role, False),
+    roles = [role for role in resolved if not role.startswith("_")]
+    run_wide = resolved.get(tier_judgment.RUN_WIDE_KEY)
+    if (
+        isinstance(run_wide, dict)
+        and run_wide.get("status") == "ok"
+        and all(isinstance(resolved[role].get("tier_judgment"), dict) for role in roles)
+    ):
+        return
+    units: dict[str, Any] = {}
+    bases: dict[str, Any] = {}
+    for role in roles:
+        base = decisions[role]
+        if resolved[role].get("jev_raise") is not None:
+            base, _refused = _resolve_one_role(staffing, role, root=root, jev_raise=None)
+            if base is None:
+                continue
+        bases[role] = base
+        try:
+            description = staffing.describe_unit(role, base)
+        except Exception:
+            description = f"role '{role}'"
+        units[role] = {
+            "task": {
+                "description": description,
+                "role": role,
+                "work_shape": getattr(base, "work_shape", None),
+            },
+            "default": {
+                "model": getattr(base, "model", None),
+                "effort": getattr(base, "effort", None),
+            },
+            "operator_set": getattr(base, "source", "policy") in ("operator", "overlay"),
         }
-        for role, tier in resolved.items()
+    outcome = tier_judgment.consult(
+        staffing, units, issue=issue or {}, prefix=prefix, ask=ask, getenv=getenv, cache=cache
+    )
+    resolved[tier_judgment.RUN_WIDE_KEY] = {
+        "status": outcome.get("status", "error"),
+        "note": outcome.get("note", ""),
     }
-    try:
-        outcome = consult(units, ask=suggest_ask, log_dir=suggest_log_dir)
-    except Exception:
+    judgments = outcome.get("judgments")
+    if outcome.get("status") != "ok" or not isinstance(judgments, dict):
         return
-    if not isinstance(outcome, dict):
-        return
-    entries = outcome.get("suggestions") or {}
-    if not isinstance(entries, dict):
-        return
-    for role, entry in entries.items():
-        if role not in resolved or not isinstance(entry, dict):
+    for role, block in judgments.items():
+        if role not in units or not isinstance(block, dict):
             continue
-        suggested = entry.get("suggested")
-        resolved[role]["suggestion"] = {
-            "suggested": (
-                f"{suggested.get('model')}/{suggested.get('effort')}"
-                if isinstance(suggested, dict)
-                else None
-            ),
-            "confidence": entry.get("confidence"),
-            "floor": entry.get("floor"),
-            "low_confidence": entry.get("low_confidence", False),
-            "usable": entry.get("usable", False),
-            "problem": entry.get("problem"),
-            "reason": entry.get("reason", ""),
-        }
+        row = resolved[role]
+        row["tier_judgment"] = block
+        try:
+            raised = staffing.jev_raise_from(block)
+        except Exception:
+            raised = None
+        if raised is None:
+            if row.pop("jev_raise", None) is not None:
+                # The new judgment replaces the old raise: back to the default.
+                row.update(_staffed_row(bases[role]))
+                row.pop("jev_raise_refused", None)
+            continue
+        decision, refused = _resolve_one_role(staffing, role, root=root, jev_raise=raised)
+        if decision is None:
+            continue
+        row.update(_staffed_row(decision))
+        row["jev_raise"] = raised
+        row.pop("jev_raise_refused", None)
+        if refused is not None:
+            row["jev_raise_refused"] = refused
 
 
 def _resolve_catalogue(staffing: Any) -> dict[str, Any]:
@@ -635,6 +720,9 @@ def outstanding_questions(record: run_record.RunRecord) -> list[Question]:
     A profile migrated from the legacy ``branch_preview`` keys is incomplete, so the
     functional-test question is still asked, with the migrated values as its default: the operator
     confirms or changes them, and the plugin chooses nothing (parent ruling 2).
+
+    The staffing question carries the tier judgment (issue #96): a raise waiting for the operator
+    is pre-filled as its default, and the prompt names each raise and each advisory lower.
     """
     outstanding: list[Question] = []
     for question in QUESTIONS:
@@ -649,8 +737,66 @@ def outstanding_questions(record: run_record.RunRecord) -> list[Question]:
                     if migrated.get(field) is not None
                 }
                 question = replace(question, default=default)
-        outstanding.append(question)
+        outstanding.append(_with_tier_judgment(question, record))
     return outstanding
+
+
+def _judgment_blocks(record: run_record.RunRecord) -> dict[str, dict[str, Any]]:
+    """Each role's shown tier-judgment block, from the recorded staffing map."""
+    value = record.run_configuration["staffing_models_and_efforts"].get("value")
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(role): row["tier_judgment"]
+        for role, row in sorted(value.items())
+        if not str(role).startswith("_")
+        and isinstance(row, dict)
+        and isinstance(row.get("tier_judgment"), dict)
+        and row["tier_judgment"].get("shown")
+    }
+
+
+def _short_tier(tier: Any) -> str:
+    return f"{tier.get('model')}/{tier.get('effort')}" if isinstance(tier, dict) else "none"
+
+
+def _confidence_shown(block: dict[str, Any]) -> str:
+    value = block.get("confidence")
+    return f"{value:.2f}" if isinstance(value, (int, float)) else "n/a"
+
+
+def _with_tier_judgment(question: Question, record: run_record.RunRecord) -> Question:
+    """The staffing question with the tier judgment's raises and lowers folded in."""
+    if question.key != "staffing_overrides":
+        return question
+    value = record.run_configuration["staffing_models_and_efforts"].get("value") or {}
+    prefill: dict[str, Any] = {}
+    notes: list[str] = []
+    for role, block in _judgment_blocks(record).items():
+        band = block.get("band")
+        proposed = block.get("proposed")
+        line = (
+            f"{role}: {_short_tier(block.get('default'))} -> {_short_tier(proposed)} "
+            f"(confidence {_confidence_shown(block)})"
+        )
+        if band == "confirm-raise" and isinstance(proposed, dict):
+            vendor = (value.get(role) or {}).get("vendor") or PALETTE_VENDOR
+            prefill[role] = {
+                "vendor": vendor,
+                "model": proposed.get("model"),
+                "effort": proposed.get("effort"),
+            }
+            notes.append(f"raise to confirm, {line}")
+        elif band == "auto-raise":
+            notes.append(f"raise applied, {line}")
+        elif band == "advisory-lower":
+            notes.append(f"advisory lower, never applied, {line}")
+    if not notes:
+        return question
+    prompt = question.prompt + ". Tier judgment: " + "; ".join(notes)
+    if prefill:
+        prompt += ". The default below confirms the pending raises; 'none' declines them"
+    return replace(question, prompt=prompt, default=prefill or question.default)
 
 
 #: The vendor the tier palette staffs. A run is Claude-only (issue #90, ruling 5), so an override
@@ -1018,11 +1164,21 @@ def admit(
     validator: Callable[[str], tuple[bool, list[str]]],
     staffing: Any = None,
     answers: dict[str, Any] | None = None,
-    suggest: bool = False,
-    suggest_ask: Callable[..., Any] | None = None,
-    suggest_log_dir: Path | None = None,
+    title: str = "",
+    judge_tiers: bool = False,
+    judgment_ask: Callable[..., Any] | None = None,
+    judgment_getenv: Callable[[str], str | None] | None = None,
+    judgment_cache: bool = False,
+    judgment_log_dir: Path | None = None,
+    log_labels: bool = False,
 ) -> tuple[run_record.RunRecord, list[Question]]:
-    """Validate, fill, apply any answers, and return the record with what is still outstanding."""
+    """Validate, fill, apply any answers, and return the record with what is still outstanding.
+
+    ``judge_tiers`` runs the staffing tier judgment (see :func:`fill_defaults`) given the issue's
+    ``title`` and ``body``. ``log_labels`` writes each role's verdict once ``staffing_overrides``
+    is answered, labeled with the direction of the tier the operator finally accepted; the command
+    line turns it off for ``--dry-run``, which records nothing.
+    """
     existing = run_record.load(store_root, issue, warn=None)
     record = existing or run_record.RunRecord(issue=int(issue), repo=repo)
     if repo and not record.repo:
@@ -1038,13 +1194,17 @@ def admit(
         record,
         load_profile(repo_root),
         staffing,
-        suggest=suggest,
-        suggest_ask=suggest_ask,
-        suggest_log_dir=suggest_log_dir,
+        judge_tiers=judge_tiers,
+        issue=tier_judgment.issue_state(title, body) if judge_tiers else None,
+        judgment_ask=judgment_ask,
+        judgment_getenv=judgment_getenv,
+        judgment_cache=judgment_cache,
         repo_root=repo_root,
     )
     if answers:
         record = apply_answers(record, answers, staffing)
+        if log_labels and staffing is not None and "staffing_overrides" in answers:
+            record = label_tier_judgments(record, staffing, log_dir=judgment_log_dir)
 
     outstanding = outstanding_questions(record)
     admission = json.loads(json.dumps(record.admission))
@@ -1064,6 +1224,36 @@ def admit(
         }
     )
     return record, outstanding
+
+
+def label_tier_judgments(
+    record: run_record.RunRecord, staffing: Any, *, log_dir: Path | None = None
+) -> run_record.RunRecord:
+    """Log each role's judgment with the label the operator's answer to question 4 gives it.
+
+    The final tier is the role's recorded tier after the answer: the operator's override where
+    one was given, else the applied raise or the default. A block already labeled is skipped, so
+    a later run never logs it twice.
+    """
+    configuration = {name: dict(block) for name, block in record.run_configuration.items()}
+    value = json.loads(json.dumps(configuration["staffing_models_and_efforts"].get("value")))
+    if not isinstance(value, dict):
+        return record
+    blocks = {
+        role: row["tier_judgment"]
+        for role, row in value.items()
+        if not str(role).startswith("_")
+        and isinstance(row, dict)
+        and isinstance(row.get("tier_judgment"), dict)
+    }
+    finals = {
+        role: {"model": value[role].get("model"), "effort": value[role].get("effort")}
+        for role in blocks
+    }
+    if not tier_judgment.log_labels(staffing, blocks, finals, log_dir=log_dir):
+        return record
+    configuration["staffing_models_and_efforts"]["value"] = value
+    return run_record.RunRecord(**{**record.__dict__, "run_configuration": configuration})
 
 
 #: The next step admission itself writes while questions are outstanding. Only a next step of this
@@ -1118,7 +1308,9 @@ def render(record: run_record.RunRecord, outstanding: list[Question], path: Path
         block = record.run_configuration[name]
         if block["source"] == "unset":
             continue
-        lines.append(f"  {name} = {json.dumps(block['value'])}  [{block['source']}]")
+        lines.append(
+            f"  {name} = {json.dumps(_summary_value(name, block['value']))}  [{block['source']}]"
+        )
     filled = sum(
         1
         for name in run_record.RUN_CONFIGURATION_PARAMETERS
@@ -1132,6 +1324,10 @@ def render(record: run_record.RunRecord, outstanding: list[Question], path: Path
     lines.append(f"Functional-test environment:{source}")
     lines.extend(f"  {line}" for line in functional_environment.describe(environment))
     lines.append("")
+    judgment_lines = _render_tier_judgment(record)
+    if judgment_lines:
+        lines.extend(judgment_lines)
+        lines.append("")
     if outstanding:
         lines.append(f"Questions to answer, once ({len(outstanding)}):")
         for index, question in enumerate(outstanding, start=1):
@@ -1142,6 +1338,56 @@ def render(record: run_record.RunRecord, outstanding: list[Question], path: Path
     lines.append("")
     lines.append(f"Record: {path}" if path else "Record: not written (--dry-run)")
     return "\n".join(lines)
+
+
+def _summary_value(name: str, value: Any) -> Any:
+    """A parameter's value as the summary prints it: the staffing map without the tier-judgment
+    blocks, which the summary's own tier-judgment section shows in a readable form."""
+    if name != "staffing_models_and_efforts" or not isinstance(value, dict):
+        return value
+    return {
+        role: (
+            {key: item for key, item in row.items() if key != "tier_judgment"}
+            if isinstance(row, dict)
+            else row
+        )
+        for role, row in value.items()
+        if role != tier_judgment.RUN_WIDE_KEY
+    }
+
+
+def _render_tier_judgment(record: run_record.RunRecord) -> list[str]:
+    """The tier judgment's section of the summary, or nothing when it never ran."""
+    value = record.run_configuration["staffing_models_and_efforts"].get("value")
+    if not isinstance(value, dict):
+        return []
+    run_wide = value.get(tier_judgment.RUN_WIDE_KEY)
+    if not isinstance(run_wide, dict):
+        return []
+    status = run_wide.get("status")
+    if status == "off":
+        return [f"Tier judgment: switched off ({run_wide.get('note', '')})"]
+    if status != "ok":
+        return [f"Tier judgment: not consulted, the defaults stand ({run_wide.get('note', '')})"]
+    lines = ["Tier judgment (TypeSafe Jev):"]
+    labels = {
+        "auto-raise": "raise applied",
+        "confirm-raise": "raise to confirm",
+        "advisory-lower": "advisory lower, never applied",
+        "raise-at-ceiling": "raise wanted, already at the ceiling",
+        "agrees": "agrees",
+    }
+    for role, block in _judgment_blocks(record).items():
+        band = str(block.get("band"))
+        target = block.get("proposed") if band not in ("agrees", "raise-at-ceiling") else None
+        arrow = f" -> {_short_tier(target)}" if isinstance(target, dict) else ""
+        lines.append(
+            f"  {role}: {labels.get(band, band)}, {_short_tier(block.get('default'))}{arrow} "
+            f"(confidence {_confidence_shown(block)}): {block.get('reason', '')}"
+        )
+    if len(lines) == 1:
+        lines.append("  no judgment cleared the confidence floor; the defaults stand")
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -1178,8 +1424,9 @@ LENS_PRE_CHECKED_AT = 0.8
 LENS_CONSIDER_AT = 0.6
 
 #: How each tier-judgment band (the per-role block issue #96 writes) reads in the Jev cell. The
-#: band names are an interim copy of fleet-core's ``classify_judgment`` vocabulary (issue #96);
-#: import them from the staffing component once that lands. ``raise-at-ceiling`` carries no
+#: band names are fleet-core's ``staffing.BAND_*`` constants, copied because the table must still
+#: render a recorded block when the staffing component is unreachable; a test in
+#: ``tests/test_admission.py`` holds the copy to the constants. ``raise-at-ceiling`` carries no
 #: proposed tier, so it is rendered separately (``_AT_CEILING``); ``log-only`` is never shown.
 _BAND_NOTES: dict[str, str] = {
     "agrees": "agrees",
@@ -1706,8 +1953,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--suggest",
         action="store_true",
         help=(
-            "Consult the tier judgment once for every staffed role and record each suggestion "
-            "beside its default. Advisory: a suggestion never changes a value."
+            "Accepted and ignored: the tier judgment now runs by default whenever a TypeSafe "
+            "key is configured (issue #96). INFIQUETRA_TYPESAFE_TIERING=off switches it off "
+            "and makes no request."
         ),
     )
     parser.add_argument(
@@ -1750,7 +1998,10 @@ def main(argv: list[str] | None = None) -> int:
             validator=load_card_validator(),
             staffing=staffing,
             answers=answers,
-            suggest=args.suggest,
+            title=str(issue_payload.get("title") or ""),
+            judge_tiers=True,
+            judgment_cache=True,
+            log_labels=not args.dry_run,
         )
         path = None
         if not args.dry_run:

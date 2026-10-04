@@ -383,8 +383,9 @@ hook (#677/U5). Direct `Agent`/`Task` spawns carry no lease admission.
   example the plan tier), `"jev_raise_set_aside": true`. Record both in the execution evidence. Every form goes through fleet-core's staffing
   resolver (`staffing.resolve_shape`), which weighs the repository overlay, any recorded raise and
   the registry default and owns the order between them; do not restate it here. A raise reaches
-  it only when you pass the unit row's recorded `jev_raise` as `--jev-raise '<json>'` (staffing U4,
-  issue #96, writes it; until then there is none); `--root <checkout>` names where the overlay is
+  it only when you pass the unit row's recorded `jev_raise` as `--jev-raise '<json>'` (written on
+  the row by `/plan`'s `tier_judgment.py plan`, issue #96, only for an automatic raise; a row
+  without one has none to pass); `--root <checkout>` names where the overlay is
   read when you are not running from the repository root. An explicit
   plan tier is handed to that resolver as the operator's answer and validated against the same
   vocabulary as every other layer, so a model or effort the registry does not carry is refused

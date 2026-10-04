@@ -72,3 +72,17 @@ def _clear_ambient_plugin_root_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep plugin-resolution tests independent of an installed-plugin root."""
     for var in _PLUGIN_ROOT_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_live_tier_judgment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep every saga test off the TypeSafe network (issue #96).
+
+    ``admission.py``'s command line and ``tier_judgment.py plan`` run the tier judgment by default,
+    and an operator shell usually carries ``TYPESAFE_API_KEY``. Switching the judgment off here
+    means a test reaches the network only by un-setting the switch, and the tests that do so
+    inject a fake ``ask``. The key is removed too, so a forgotten injection fails open instead of
+    calling out.
+    """
+    monkeypatch.setenv("INFIQUETRA_TYPESAFE_TIERING", "off")
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)

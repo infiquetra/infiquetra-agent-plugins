@@ -91,6 +91,16 @@ python3 plugins/saga/scripts/admission.py --issue <N> --dry-run --render tables
 Read what it prints. It names the defaults it filled with the source of each, and the questions that
 remain, then prints the staffing and lens tables in one fixed format. Then:
 
+**The tier judgment runs here by default** (issue #96) whenever `TYPESAFE_API_KEY` is configured
+and `INFIQUETRA_TYPESAFE_TIERING=off` is not set. Admission asks TypeSafe Jev once, for every
+role, whether the issue needs a weaker, the same, or a stronger tier than the role's default, and
+prints a `Tier judgment` section. A raise at confidence 0.8 or above is already applied, one step,
+and recorded with its reason; the staffing table shows it as Proposed. A raise from 0.6 up to 0.8
+is pre-filled as the `staffing_overrides` default, so the operator confirms it by giving that
+default and declines it with `none`. A lower tier is shown as advisory and never applied. Do not
+apply or decline any of them yourself: the operator's answer to `staffing_overrides` decides, and
+admission logs it as the judgment's label when the answers are recorded.
+
 1. **A card that fails the validator stops here.** Admission exits 2 and names the missing fields.
    The repair belongs on the card, through `mission-control`, not in the plan — planning against a
    half-formed card is what the lifecycle repository's Shaping exit exists to prevent.
@@ -548,6 +558,40 @@ work shape. The command calls fleet-core's staffing resolver (`fleet_commons/sta
 which the repository overlay (`.saga/tier-defaults.json`), a recorded tier raise, and the registry
 default apply; this skill does not restate it. A malformed overlay makes the command exit 2 with
 the resolver's error: halt and surface it, never fall back silently.
+
+**Then ask the tier judgment about every unit, once** (issue #96). Write the units as a JSON list,
+`[{"id": "U1", "goal": "<the unit's goal>", "files": ["<expected path>", ...], "work_shape":
+"<shape>"}]` (omit `work_shape` for an `implementation` unit), and run:
+
+```bash
+python3 plugins/saga/scripts/tier_judgment.py plan --issue <N> --units <units.json>
+```
+
+It sends the issue and each unit's goal, files and work shape to TypeSafe Jev in one request and
+prints one row per unit: `default`, `proposed`, `band`, `confidence`, `applied`, `reason`, and
+`tier`, the tier the unit runs at. It records each answer, and any applied raise as `jev_raise`, on
+the unit's row in the run record; `/work` passes that row's `jev_raise` to
+`resolve-build-unit-tier --jev-raise`. Add `band` and `proposed` columns to the Step 1 table:
+
+- `auto-raise`: already applied, one step, with its reason. Show it as the unit's tier.
+- `confirm-raise`: proposed for the operator to confirm or decline in the Step 1 table.
+- `advisory-lower`: shown as advisory. It is never applied, and is applied by hand only if the
+  operator asks for it as an override.
+- Any other band: the default stands.
+
+`INFIQUETRA_TYPESAFE_TIERING=off`, a missing key, or a failed request prints every unit at its
+default with the reason and writes nothing; the table proceeds without the judgment.
+
+**After the operator confirms the table, record the tiers the plan finally chose**, which logs
+each judgment with its label:
+
+```bash
+python3 plugins/saga/scripts/tier_judgment.py label --issue <N> --final <final.json>
+```
+
+`<final.json>` is `{"<unit id>": "<model>/<effort>"}` for every unit in the table. If the operator
+gives no answer on a confirm-raise row, it is not applied: the default stands and is recorded as
+the final tier.
 
 An operator override confirmed in the Step 1 table is recorded as that unit's explicit tier in the
 plan, which `/work` passes as `--plan-model` / `--plan-effort`. Nothing writes the overlay for you;
