@@ -114,6 +114,8 @@ function fake(on: On): Fake {
   }
   on('session.start', async ($, e) => ({ cwd: e.cwd }))
   on('command.register', async ($, e) => ({ value: { command: e.name } }))
+  // The admission review mod (issue #103) registers its tool from the same session.start chain.
+  on('tool.register', async ($, e) => ({ value: { tool: e.name } }))
   on('session.cwd', async () => ({ value: CWD }))
   on('process.run', async ($, e) => {
     state.runs.push([...e.argv])
