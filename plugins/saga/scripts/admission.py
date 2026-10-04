@@ -664,6 +664,402 @@ def render(record: run_record.RunRecord, outstanding: list[Question], path: Path
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# The staffing and lens tables, in one fixed format (issue #102)
+# ---------------------------------------------------------------------------
+#
+# The operator answers staffing_overrides and lens_declaration against a table. Left to the model,
+# that table came out in a different shape every run, so admission renders it itself: one set of
+# rows (``review_data``) feeds both the fixed Markdown (``render_tables``) every harness prints
+# verbatim and the JSON a Claude Code pane reads. Nothing here changes the record.
+
+#: What ``--render`` can print.
+RENDER_CHOICES: tuple[str, ...] = ("summary", "tables", "json")
+
+#: The schema of ``--render json``.
+REVIEW_SCHEMA = "admission_review.v1"
+
+#: The two tables' titles and column orders. Bold text, never a Markdown heading: the plan skill
+#: quotes the block, and a heading line inside a skill splits its gate-record sections.
+STAFFING_TITLE = "**Staffing (answer: staffing_overrides)**"
+STAFFING_COLUMNS: tuple[str, ...] = ("Role", "Default", "Jev suggestion", "Proposed", "Why")
+LENS_TITLE = "**Lenses (answer: lens_declaration)**"
+LENS_COLUMNS: tuple[str, ...] = ("Lens", "Include", "Reason", "Jev probability")
+
+#: The text of an empty Jev cell. A cell is never left blank.
+NOT_CONFIGURED = "not configured"
+NO_SUGGESTION = "no suggestion"
+
+#: The probability bands a lens proposal is read in: pre-checked at 0.8 and above, worth
+#: considering from 0.6 up to 0.8.
+LENS_PRE_CHECKED_AT = 0.8
+LENS_CONSIDER_AT = 0.6
+
+#: How each tier-judgment band (the per-role block issue #96 writes) reads in the Jev cell.
+_BAND_NOTES: dict[str, str] = {
+    "agrees": "agrees",
+    "auto-raise": "raise applied",
+    "confirm-raise": "raise to confirm",
+    "advisory-lower": "advisory lower",
+    "raise-at-ceiling": "raise at ceiling",
+}
+
+
+def _tier_text(tier: Any, *, with_vendor: bool = True) -> str | None:
+    """``vendor model/effort`` for a tier mapping, or ``None`` when it names no model."""
+    if not isinstance(tier, dict) or not tier.get("model"):
+        return None
+    text = f"{tier['model']}/{tier.get('effort') or 'default'}"
+    if with_vendor and tier.get("vendor"):
+        text = f"{tier['vendor']} {text}"
+    return text
+
+
+def _tier(vendor: Any, model: Any, effort: Any) -> dict[str, Any] | None:
+    if not model:
+        return None
+    return {"vendor": vendor, "model": model, "effort": effort}
+
+
+def _default_tier(staffing: Any, role: str) -> tuple[dict[str, Any] | None, str | None]:
+    """A fresh staffing resolve for *role*: its default tier and work shape, or ``None``s."""
+    if staffing is None:
+        return None, None
+    try:
+        decision = staffing.resolve_role(role)
+    except Exception:
+        return None, None
+    tier = _tier(
+        getattr(decision, "vendor", None),
+        getattr(decision, "model", None),
+        getattr(decision, "effort", None),
+    )
+    shape = getattr(decision, "work_shape", None)
+    if not shape:
+        try:
+            shape = (staffing.roles().get(role) or {}).get("work_shape")
+        except Exception:
+            shape = None
+    return tier, shape
+
+
+def _confidence_text(confidence: Any) -> str | None:
+    return f"{confidence:.2f}" if isinstance(confidence, (int, float)) else None
+
+
+def _jev_staffing_cell(row: dict[str, Any], consult: Any) -> dict[str, Any]:
+    """The Jev cell for one role.
+
+    Reads, in order: the per-role ``tier_judgment`` block (issue #96), then the advisory
+    ``suggestion`` that ``--suggest`` records. With neither, the run-wide consult note
+    (``value['_tier_judgment']``) says whether the judgment was switched off or failed.
+    """
+    judgment = row.get("tier_judgment")
+    if isinstance(judgment, dict):
+        band = str(judgment.get("band") or "")
+        confidence = _confidence_text(judgment.get("confidence"))
+        shown = judgment.get("shown", True) is not False
+        tier = judgment.get("proposed") if band != "agrees" else judgment.get("default")
+        if band == "not-consulted":
+            state = "not-configured"
+        elif band in _BAND_NOTES and shown and confidence and _tier_text(tier, with_vendor=False):
+            cell = f"{_tier_text(tier, with_vendor=False)} ({confidence}, {_BAND_NOTES[band]})"
+            return {
+                "cell": cell,
+                "state": "suggested",
+                "band": band,
+                "suggested": _tier_text(tier, with_vendor=False),
+                "confidence": judgment.get("confidence"),
+                "reason": judgment.get("reason") or "",
+            }
+        else:
+            state = "no-suggestion"
+        return {
+            "cell": NOT_CONFIGURED if state == "not-configured" else NO_SUGGESTION,
+            "state": state,
+            "band": band or None,
+            "suggested": None,
+            "confidence": judgment.get("confidence"),
+            "reason": judgment.get("reason") or "",
+        }
+
+    suggestion = row.get("suggestion")
+    if isinstance(suggestion, dict):
+        suggested = suggestion.get("suggested")
+        confidence = _confidence_text(suggestion.get("confidence"))
+        if (
+            suggestion.get("usable")
+            and not suggestion.get("low_confidence")
+            and suggested
+            and confidence
+        ):
+            return {
+                "cell": f"{suggested} ({confidence})",
+                "state": "suggested",
+                "band": None,
+                "suggested": suggested,
+                "confidence": suggestion.get("confidence"),
+                "reason": suggestion.get("reason") or "",
+            }
+        return {
+            "cell": NO_SUGGESTION,
+            "state": "no-suggestion",
+            "band": None,
+            "suggested": None,
+            "confidence": suggestion.get("confidence"),
+            "reason": suggestion.get("reason") or suggestion.get("problem") or "",
+        }
+
+    consulted = isinstance(consult, dict) and consult.get("status") not in (None, "off")
+    return {
+        "cell": NO_SUGGESTION if consulted else NOT_CONFIGURED,
+        "state": "no-suggestion" if consulted else "not-configured",
+        "band": None,
+        "suggested": None,
+        "confidence": None,
+        "reason": (consult or {}).get("note", "") if isinstance(consult, dict) else "",
+    }
+
+
+def _staffing_rows(record: run_record.RunRecord, staffing: Any) -> dict[str, Any]:
+    """One row per role the record holds, in sorted order."""
+    block = record.run_configuration["staffing_models_and_efforts"]
+    value = block.get("value")
+    source = block.get("source", "unset")
+    if not isinstance(value, dict) or not any(not str(key).startswith("_") for key in value):
+        return {
+            "source": source,
+            "rows": [
+                {
+                    "role": "(staffing component unreachable)",
+                    "vendor": None,
+                    "default": None,
+                    "proposed": None,
+                    "jev": {
+                        "cell": NOT_CONFIGURED,
+                        "state": "not-configured",
+                        "band": None,
+                        "suggested": None,
+                        "confidence": None,
+                        "reason": "",
+                    },
+                    "why": NOT_CONFIGURED,
+                }
+            ],
+        }
+
+    consult = value.get("_tier_judgment")
+    # An operator answer either replaced the whole map (no row carries ``operator_override``) or
+    # was merged per role (the overridden rows carry it).
+    merged = any(isinstance(row, dict) and "operator_override" in row for row in value.values())
+    rows: list[dict[str, Any]] = []
+    for role in sorted(key for key in value if not str(key).startswith("_")):
+        row = value[role] if isinstance(value[role], dict) else {}
+        default, shape = _default_tier(staffing, role)
+        if default is None and source == "staffing":
+            default = _tier(row.get("vendor"), row.get("model"), row.get("effort"))
+        proposed = _tier(row.get("vendor"), row.get("model"), row.get("effort"))
+        raise_ = row.get("jev_raise")
+        operator = row.get("operator_override") is True or (source == "operator" and not merged)
+        if operator:
+            why = "operator answer"
+        elif isinstance(raise_, dict) and raise_.get("model"):
+            proposed = _tier(row.get("vendor"), raise_.get("model"), raise_.get("effort"))
+            why = f"Jev raise: {raise_.get('reason') or 'no reason recorded'}"
+        elif shape:
+            why = f"staffing default (work shape {shape})"
+        else:
+            why = "staffing default"
+        rows.append(
+            {
+                "role": role,
+                "vendor": (proposed or {}).get("vendor"),
+                "default": default,
+                "proposed": proposed,
+                "jev": _jev_staffing_cell(row, consult),
+                "why": why,
+            }
+        )
+    return {"source": source, "rows": rows}
+
+
+def _lens_proposal(record: run_record.RunRecord) -> dict[str, Any] | None:
+    """The Jev lens proposal admission records (issue #110), or ``None`` when absent."""
+    proposal = record.admission.get("lens_proposal")
+    return proposal if isinstance(proposal, dict) else None
+
+
+def _jev_lens_cell(lens: str, always_on: bool, proposal: dict[str, Any] | None) -> dict[str, Any]:
+    if proposal is None:
+        return {"cell": NOT_CONFIGURED, "state": "not-configured", "probability": None}
+    probabilities = proposal.get("probabilities")
+    probability = probabilities.get(lens) if isinstance(probabilities, dict) else None
+    if always_on or not isinstance(probability, (int, float)):
+        return {"cell": NO_SUGGESTION, "state": "no-suggestion", "probability": None}
+    cell = f"{probability:.2f}"
+    if probability >= LENS_PRE_CHECKED_AT:
+        cell += " (pre-checked)"
+    elif probability >= LENS_CONSIDER_AT:
+        cell += " (consider)"
+    return {"cell": cell, "state": "suggested", "probability": probability}
+
+
+def _declared(value: Any, key: str) -> dict[str, str]:
+    """A lens declaration's ``conditional_applies`` or ``conditional_does_not_apply``, as
+    ``{lens: reason}``. ``review_roster`` accepts a plain list for the first."""
+    entries = value.get(key) if isinstance(value, dict) else None
+    if isinstance(entries, dict):
+        return {str(lens): str(reason) for lens, reason in entries.items()}
+    if isinstance(entries, list):
+        return {str(lens): "" for lens in entries}
+    return {}
+
+
+def _lens_rows(record: run_record.RunRecord, staffing: Any) -> dict[str, Any]:
+    """One row per catalogue lens, in catalogue order."""
+    block = record.run_configuration["applicable_lenses"]
+    declaration = block.get("value") if block.get("source") == "operator" else None
+    applies = _declared(declaration, "conditional_applies")
+    excluded = _declared(declaration, "conditional_does_not_apply")
+    proposal = _lens_proposal(record)
+
+    catalogue: Any = None
+    version: Any = None
+    if staffing is not None:
+        try:
+            catalogue, version = staffing.lens_catalogue()
+        except Exception:
+            catalogue = None
+    if isinstance(catalogue, dict) and catalogue:
+        lenses = [
+            (str(lens), isinstance(entry, dict) and bool(entry.get("always_on")))
+            for lens, entry in catalogue.items()
+        ]
+    elif isinstance(declaration, dict):
+        lenses = [(str(lens), True) for lens in declaration.get("always_on") or []]
+        lenses += [(lens, False) for lens in [*applies, *excluded]]
+    else:
+        lenses = []
+
+    rows: list[dict[str, Any]] = []
+    for lens, always_on in lenses:
+        if always_on:
+            include, reason = "always on", "always-on lens"
+        elif lens in applies:
+            include, reason = "yes", applies[lens] or "included"
+        elif lens in excluded:
+            include, reason = "no", excluded[lens] or "no reason recorded"
+        else:
+            include, reason = "undeclared", "undeclared"
+        rows.append(
+            {
+                "lens": lens,
+                "always_on": always_on,
+                "include": include,
+                "reason": reason,
+                "jev": _jev_lens_cell(lens, always_on, proposal),
+            }
+        )
+    if not rows:
+        rows.append(
+            {
+                "lens": "(lens catalogue unreadable)",
+                "always_on": False,
+                "include": "undeclared",
+                "reason": "the lens catalogue could not be read",
+                "jev": {"cell": NOT_CONFIGURED, "state": "not-configured", "probability": None},
+            }
+        )
+    return {
+        "catalogue_version": version if isinstance(catalogue, dict) and catalogue else None,
+        "source": block.get("source", "unset"),
+        "rows": rows,
+    }
+
+
+def _palette() -> dict[str, Any] | None:
+    """The tiers an operator may pick from, from the bundled ``tier_palette``; ``None`` when it
+    cannot be loaded. Claude's palette only: it is the one the staffing component staffs."""
+    try:
+        import bundled_fleet  # noqa: PLC0415
+
+        palette = bundled_fleet.load("tier_palette")
+        models = list(palette.MODELS)
+        efforts = list(palette.EFFORTS)
+        return {
+            "vendor": "claude",
+            "models": models,
+            "efforts": efforts,
+            "effort_ceilings": {model: palette.effort_ceiling(model) for model in models},
+            "pairs": [
+                {"model": model, "effort": effort}
+                for model in models
+                for effort in efforts
+                if palette.supports_effort(model, effort)
+            ],
+        }
+    except Exception:
+        return None
+
+
+def _cell(value: Any) -> str:
+    """One table cell: ``|`` escaped, newlines folded, and never empty."""
+    text = " ".join(str(value if value is not None else "").split())
+    return text.replace("|", "\\|") or NOT_CONFIGURED
+
+
+def _table(columns: tuple[str, ...], rows: list[list[Any]]) -> list[str]:
+    lines = ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
+    lines += ["| " + " | ".join(_cell(value) for value in row) + " |" for row in rows]
+    return lines
+
+
+def render_tables(data: dict[str, Any]) -> str:
+    """The staffing and lens tables, in their fixed Markdown format, built from ``data`` alone."""
+    staffing_rows = [
+        [
+            row["role"],
+            _tier_text(row["default"]) or NOT_CONFIGURED,
+            row["jev"]["cell"],
+            _tier_text(row["proposed"]) or NOT_CONFIGURED,
+            row["why"],
+        ]
+        for row in data["staffing"]["rows"]
+    ]
+    lens_rows = [
+        [row["lens"], row["include"], row["reason"], row["jev"]["cell"]]
+        for row in data["lenses"]["rows"]
+    ]
+    lines = [STAFFING_TITLE, "", *_table(STAFFING_COLUMNS, staffing_rows), ""]
+    lines += [LENS_TITLE, "", *_table(LENS_COLUMNS, lens_rows)]
+    return "\n".join(lines)
+
+
+def review_data(
+    record: run_record.RunRecord,
+    outstanding: list[Question],
+    staffing: Any,
+    path: Path | None,
+) -> dict[str, Any]:
+    """Everything the two tables show, machine-readable (schema ``admission_review.v1``)."""
+    data: dict[str, Any] = {
+        "schema": REVIEW_SCHEMA,
+        "issue": record.issue,
+        "repo": record.repo,
+        "record_path": str(path) if path else None,
+        "pending_questions": [question.key for question in outstanding],
+        "questions": [
+            {"key": question.key, "prompt": question.prompt, "default": question.default}
+            for question in outstanding
+        ],
+        "staffing": _staffing_rows(record, staffing),
+        "lenses": _lens_rows(record, staffing),
+        "palette": _palette(),
+    }
+    data["tables_markdown"] = render_tables(data)
+    return data
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="admission.py",
@@ -687,6 +1083,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the questions and the filled defaults; write nothing.",
     )
+    parser.add_argument(
+        "--render",
+        choices=RENDER_CHOICES,
+        default="summary",
+        help=(
+            "What to print. summary (default): the filled defaults and the questions. tables: "
+            "the summary, then the staffing (staffing_overrides) and lens (lens_declaration) "
+            "tables in their fixed Markdown format, to show the operator exactly as printed. "
+            f"json: the same data, machine-readable (schema {REVIEW_SCHEMA})."
+        ),
+    )
     return parser
 
 
@@ -703,6 +1110,7 @@ def main(argv: list[str] | None = None) -> int:
             answers = json.loads(Path(args.answers).read_text(encoding="utf-8"))
 
         issue_payload = fetch_issue(args.issue, repo)
+        staffing = load_staffing()
         record, outstanding = admit(
             args.issue,
             repo,
@@ -710,12 +1118,19 @@ def main(argv: list[str] | None = None) -> int:
             repo_root=repo_root,
             body=issue_payload.get("body") or "",
             validator=load_card_validator(),
-            staffing=load_staffing(),
+            staffing=staffing,
             answers=answers,
             suggest=args.suggest,
         )
         path = None if args.dry_run else run_record.save(store_root, record)
-        print(render(record, outstanding, path))
+        if args.render == "json":
+            data = review_data(record, outstanding, staffing, path)
+            print(json.dumps(data, indent=2, sort_keys=True))
+        elif args.render == "tables":
+            data = review_data(record, outstanding, staffing, path)
+            print(render(record, outstanding, path) + "\n\n" + data["tables_markdown"])
+        else:
+            print(render(record, outstanding, path))
         return 0
     except run_record.UnknownRecordVersionError as exc:
         print(f"admission: {exc}", file=sys.stderr)

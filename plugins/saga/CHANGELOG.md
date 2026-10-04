@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/admission.py --render {summary,tables,json}` (issue #102). `tables` prints the summary
+  followed by the staffing table (Role, Default, Jev suggestion, Proposed, Why) and the lens table
+  (Lens, Include, Reason, Jev probability) in one fixed Markdown format; an empty Jev cell reads
+  "not configured" or "no suggestion", never blank. `json` prints the same rows machine-readable
+  (schema `admission_review.v1`), with the tier palette, for a Claude Code review pane. The
+  default, `summary`, is unchanged. The staffing Jev cell reads the per-role `tier_judgment` block
+  when one is recorded, and the lens Jev cell reads `admission.lens_proposal.probabilities`.
+- `skills/plan/SKILL.md` §0.1b runs admission with `--render tables` and tells the model to print
+  the tables block exactly as rendered and collect the two answers against its rows.
+
 ### Docs
 
 Four skill-instruction sentences named scripts that are not in this package at acc99fe7, marked

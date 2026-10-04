@@ -85,11 +85,11 @@ the per-repository profile, fleet-core's staffing component and the lifecycle re
 defaults, and only what is left over is put to you — once, in one message.
 
 ```bash
-python3 plugins/saga/scripts/admission.py --issue <N> --dry-run
+python3 plugins/saga/scripts/admission.py --issue <N> --dry-run --render tables
 ```
 
 Read what it prints. It names the defaults it filled with the source of each, and the questions that
-remain. Then:
+remain, then prints the staffing and lens tables in one fixed format. Then:
 
 1. **A card that fails the validator stops here.** Admission exits 2 and names the missing fields.
    The repair belongs on the card, through `mission-control`, not in the plan — planning against a
@@ -104,6 +104,18 @@ remain. Then:
    plan past them. The unanswered set is the run's authority: the approval boundaries are a grant
    only the operator can make, and a recorded grant nobody made is worse than a missing one, which
    is why the absence behaviour here is a halt rather than a safe default.
+
+   **When `staffing_overrides` or `lens_declaration` is outstanding, print the tables block
+   exactly as rendered**, in that same message: from the line
+   `**Staffing (answer: staffing_overrides)**` to the last row of the lens table. Do not
+   reformat, reorder, merge, abbreviate, or summarise it — admission owns that format so every
+   harness shows the same table. Collect the two answers against its rows:
+
+   - `staffing_overrides`: `"none"` to take the Proposed column, or
+     `{"<role>": {"vendor": ..., "model": ..., "effort": ...}}` for each role the operator changes.
+   - `lens_declaration`: `{"always_on": [...], "conditional_applies": {"<lens>": "<reason>"},
+     "conditional_does_not_apply": {"<lens>": "<reason>"}}`, with every conditional lens in the
+     table in exactly one of the two maps and a reason for each one left out.
 3. **Record the answers**, which writes the run record and clears the questions:
 
    ```bash

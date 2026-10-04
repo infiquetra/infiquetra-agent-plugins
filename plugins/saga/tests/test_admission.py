@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -862,3 +863,325 @@ def test_the_catalogue_never_overwrites_an_operator_lens_declaration(
     )
     # The parameter the operator did NOT answer still fills from the catalogue.
     assert filled.run_configuration["per_lens_score_threshold"]["source"] == "staffing"
+
+
+# ---------------------------------------------------------------------------
+# The staffing and lens tables, in one fixed format (issue #102)
+# ---------------------------------------------------------------------------
+#
+# The golden block below IS the format. A change to it must be deliberate: edit this constant in
+# the same commit as the renderer, and the plan skill's instruction to print it verbatim still
+# holds.
+
+GOLDEN_TABLES = """\
+**Staffing (answer: staffing_overrides)**
+
+| Role | Default | Jev suggestion | Proposed | Why |
+|---|---|---|---|---|
+| planner | claude opus/high | not configured | claude opus/high | staffing default (work shape judgment) |
+| worker | claude sonnet/medium | not configured | claude sonnet/medium | staffing default (work shape mechanical) |
+
+**Lenses (answer: lens_declaration)**
+
+| Lens | Include | Reason | Jev probability |
+|---|---|---|---|
+| correctness | always on | always-on lens | not configured |
+| security | always on | always-on lens | not configured |
+| performance | undeclared | undeclared | not configured |
+| privacy | undeclared | undeclared | not configured |"""
+
+
+def _table_staffing() -> SimpleNamespace:
+    """A staffing component with two roles and a four-lens catalogue, two of them conditional."""
+    tiers = {"planner": ("opus", "high"), "worker": ("sonnet", "medium")}
+
+    def roles() -> dict[str, Any]:
+        return {"planner": {"work_shape": "judgment"}, "worker": {"work_shape": "mechanical"}}
+
+    def resolve_role(role: str, **_kwargs: Any) -> SimpleNamespace:
+        model, effort = tiers[role]
+        return SimpleNamespace(vendor="claude", model=model, effort=effort)
+
+    def lens_catalogue(**_kwargs: Any) -> tuple[dict[str, Any], str]:
+        return {
+            "correctness": {"always_on": True},
+            "security": {"always_on": True},
+            "performance": {"always_on": False},
+            "privacy": {"always_on": False},
+        }, "1.0.0"
+
+    def sdlc_root(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    return SimpleNamespace(
+        roles=roles, resolve_role=resolve_role, lens_catalogue=lens_catalogue, sdlc_root=sdlc_root
+    )
+
+
+def _table_record(adm: ModuleType, staffing: Any) -> Any:
+    run_record = _load("run_record")
+    record = run_record.RunRecord(issue=102, repo="infiquetra/infiquetra-agent-plugins")
+    return adm.fill_defaults(record, {}, staffing)
+
+
+def _tables(adm: ModuleType, record: Any, staffing: Any) -> str:
+    data = adm.review_data(record, adm.outstanding_questions(record), staffing, None)
+    return adm.render_tables(data)
+
+
+def _rows(tables: str) -> list[list[str]]:
+    """Every data row of both tables, split into cells (an escaped pipe stays in its cell)."""
+    rows = []
+    for line in tables.splitlines():
+        if not line.startswith("| ") or line.startswith(("| Role ", "| Lens ")):
+            continue
+        rows.append([cell.strip() for cell in re.split(r"(?<!\\)\|", line)[1:-1]])
+    return rows
+
+
+def _assert_no_empty_cell(tables: str) -> None:
+    for line in tables.splitlines():
+        if line.startswith("|"):
+            assert "||" not in line.replace("\\|", ""), line
+            assert "| |" not in line, line
+    for row in _rows(tables):
+        assert all(cell for cell in row), row
+
+
+def test_the_tables_match_the_golden_format(adm: ModuleType) -> None:
+    staffing = _table_staffing()
+    tables = _tables(adm, _table_record(adm, staffing), staffing)
+    assert tables == GOLDEN_TABLES
+    _assert_no_empty_cell(tables)
+
+
+def test_the_tables_are_titled_in_bold_and_never_with_a_heading(adm: ModuleType) -> None:
+    """A heading line pasted into a skill would split its gate-record sections."""
+    for line in GOLDEN_TABLES.splitlines():
+        assert not line.startswith("#"), line
+    assert GOLDEN_TABLES.splitlines()[0] == adm.STAFFING_TITLE
+
+
+def test_a_recorded_suggestion_renders_with_its_confidence(adm: ModuleType) -> None:
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    value = record.run_configuration["staffing_models_and_efforts"]["value"]
+    value["planner"]["suggestion"] = {
+        "suggested": "opus/xhigh",
+        "confidence": 0.72,
+        "usable": True,
+        "low_confidence": False,
+    }
+    value["worker"]["suggestion"] = {"suggested": None, "usable": False, "problem": "timeout"}
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["planner"][2] == "opus/xhigh (0.72)"
+    assert rows["worker"][2] == "no suggestion"
+
+
+def test_the_tier_judgment_block_is_read_when_present(adm: ModuleType) -> None:
+    """The per-role block issue #96 writes, and the raise it applies beside the default."""
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    value = record.run_configuration["staffing_models_and_efforts"]["value"]
+    value["planner"]["tier_judgment"] = {
+        "band": "auto-raise",
+        "confidence": 0.86,
+        "default": {"model": "opus", "effort": "high"},
+        "proposed": {"model": "opus", "effort": "xhigh"},
+        "applied": True,
+        "shown": True,
+        "reason": "the change is a gate",
+    }
+    value["planner"]["jev_raise"] = {
+        "model": "opus",
+        "effort": "xhigh",
+        "confidence": 0.86,
+        "reason": "the change is a gate",
+    }
+    value["worker"]["tier_judgment"] = {"band": "log-only", "confidence": 0.41, "shown": False}
+    value["_tier_judgment"] = {"status": "ok", "note": ""}
+    tables = _tables(adm, record, staffing)
+    rows = {row[0]: row for row in _rows(tables)}
+    assert rows["planner"][1:] == [
+        "claude opus/high",
+        "opus/xhigh (0.86, raise applied)",
+        "claude opus/xhigh",
+        "Jev raise: the change is a gate",
+    ]
+    assert rows["worker"][2] == "no suggestion"
+    assert "_tier_judgment" not in rows
+    _assert_no_empty_cell(tables)
+
+
+def test_a_switched_off_judgment_reads_not_configured(adm: ModuleType) -> None:
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    value = record.run_configuration["staffing_models_and_efforts"]["value"]
+    value["_tier_judgment"] = {"status": "off", "note": "INFIQUETRA_TYPESAFE_TIERING=off"}
+    for role in ("planner", "worker"):
+        value[role]["tier_judgment"] = {"band": "not-consulted"}
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["planner"][2] == rows["worker"][2] == "not configured"
+
+
+def test_an_operator_override_keeps_the_fresh_default_and_says_why(adm: ModuleType) -> None:
+    staffing = _table_staffing()
+    record = adm.apply_answers(
+        _table_record(adm, staffing),
+        {"staffing_overrides": {"worker": {"vendor": "claude", "model": "opus", "effort": "low"}}},
+    )
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["worker"][1] == "claude sonnet/medium"
+    assert rows["worker"][3] == "claude opus/low"
+    assert rows["worker"][4] == "operator answer"
+
+
+def test_an_operator_lens_declaration_renders_with_escaped_reasons(adm: ModuleType) -> None:
+    staffing = _table_staffing()
+    record = adm.apply_answers(
+        _table_record(adm, staffing),
+        {
+            "lens_declaration": {
+                "always_on": ["correctness", "security"],
+                "conditional_applies": {"performance": "a hot loop | per request"},
+                "conditional_does_not_apply": {"privacy": "no personal\ndata is touched"},
+            }
+        },
+    )
+    tables = _tables(adm, record, staffing)
+    assert "| performance | yes | a hot loop \\| per request | not configured |" in tables
+    assert "| privacy | no | no personal data is touched | not configured |" in tables
+    _assert_no_empty_cell(tables)
+
+
+def test_a_lens_proposal_renders_its_probability_bands(adm: ModuleType) -> None:
+    """The read contract with issue #110: ``admission.lens_proposal.probabilities``."""
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    record.admission["lens_proposal"] = {
+        "ok": True,
+        "probabilities": {"performance": 0.85, "privacy": 0.7, "security": 0.4},
+    }
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["performance"][3] == "0.85 (pre-checked)"
+    assert rows["privacy"][3] == "0.70 (consider)"
+    assert rows["security"][3] == "no suggestion"
+    assert rows["correctness"][3] == "no suggestion"
+    record.admission["lens_proposal"]["probabilities"] = {"performance": 0.4}
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["performance"][3] == "0.40"
+    assert rows["privacy"][3] == "no suggestion"
+
+
+def test_unreachable_staffing_and_catalogue_render_placeholder_rows(adm: ModuleType) -> None:
+    run_record = _load("run_record")
+    record = run_record.RunRecord(issue=102, repo="infiquetra/infiquetra-agent-plugins")
+    tables = _tables(adm, record, None)
+    rows = _rows(tables)
+    assert rows == [
+        [
+            "(staffing component unreachable)",
+            "not configured",
+            "not configured",
+            "not configured",
+            "not configured",
+        ],
+        [
+            "(lens catalogue unreadable)",
+            "undeclared",
+            "the lens catalogue could not be read",
+            "not configured",
+        ],
+    ]
+    _assert_no_empty_cell(tables)
+
+
+def _run_main(adm: ModuleType, store: Path, repo_root: Path, *extra: str) -> int:
+    return adm.main(
+        [
+            "--issue",
+            "102",
+            "--repo",
+            "infiquetra/infiquetra-agent-plugins",
+            "--store-root",
+            str(store),
+            "--repo-root",
+            str(repo_root),
+            "--dry-run",
+            *extra,
+        ]
+    )
+
+
+def _patch_main(adm: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(adm, "load_card_validator", lambda: _passing_validator)
+    monkeypatch.setattr(adm, "load_staffing", _table_staffing)
+    monkeypatch.setattr(adm, "fetch_issue", lambda *_a, **_k: {"number": 102, "body": _good_card()})
+
+
+def test_render_tables_prints_the_summary_then_the_golden_block(
+    adm: ModuleType,
+    store: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_main(adm, monkeypatch)
+    assert _run_main(adm, store, repo_root, "--render", "tables") == 0
+    out = capsys.readouterr().out
+    assert out.startswith("Admission for issue 102")
+    assert out.rstrip("\n").endswith("\n\n" + GOLDEN_TABLES)
+    assert list(store.glob("*.json")) == []
+
+
+def test_the_default_render_is_the_summary_alone(
+    adm: ModuleType,
+    store: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_main(adm, monkeypatch)
+    assert _run_main(adm, store, repo_root) == 0
+    assert adm.STAFFING_TITLE not in capsys.readouterr().out
+
+
+def test_render_json_carries_the_rows_and_the_palette(
+    adm: ModuleType,
+    store: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_main(adm, monkeypatch)
+    assert _run_main(adm, store, repo_root, "--render", "json") == 0
+    data = json.loads(capsys.readouterr().out)
+    tier_palette = _load("bundled_fleet").load("tier_palette")
+    assert data["schema"] == "admission_review.v1"
+    assert data["tables_markdown"] == GOLDEN_TABLES
+    assert "staffing_overrides" in data["pending_questions"]
+    assert [row["role"] for row in data["staffing"]["rows"]] == ["planner", "worker"]
+    assert data["staffing"]["rows"][0]["jev"]["state"] == "not-configured"
+    assert data["lenses"]["catalogue_version"] == "1.0.0"
+    assert data["palette"]["models"] == list(tier_palette.MODELS)
+    assert {"model": "haiku", "effort": "xhigh"} not in data["palette"]["pairs"]
+    assert {"model": "haiku", "effort": "high"} in data["palette"]["pairs"]
+
+
+def test_the_help_documents_the_render_option(adm: ModuleType) -> None:
+    text = adm.build_parser().format_help()
+    assert "--render" in text
+    for choice in ("summary", "tables", "json"):
+        assert choice in text
+
+
+def test_the_plan_skill_prints_the_tables_exactly_as_rendered(adm: ModuleType) -> None:
+    skill = (REPO_ROOT / "plugins" / "saga" / "skills" / "plan" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    section = skill.split("### 0.1b")[1].split("### 0.2")[0]
+    assert "--render tables" in section
+    assert "exactly as rendered" in section
+    assert adm.STAFFING_TITLE in section
+    # No heading inside the section: it would split the gate-record marker's coverage.
+    assert [line for line in section.splitlines()[1:] if line.startswith("#")] == []
