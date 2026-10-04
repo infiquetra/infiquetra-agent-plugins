@@ -41,7 +41,6 @@ nothing does I/O at import.
 from __future__ import annotations
 
 import argparse
-import copy
 import glob as globlib
 import json
 import os
@@ -203,7 +202,8 @@ def find_unit(record: run_record.RunRecord, unit_id: str | None) -> dict[str, An
     Naming no unit is legal for a dry run, which reports the repository-wide half of the criterion.
     For a real iteration the caller must land on exactly one row, and ambiguity refuses rather than
     picking: writing an iteration onto the wrong unit is worse than stopping. A unit's identity is
-    ``run_record.unit_key``, the one definition the cost report also reads.
+    ``run_record.unit_key``, the rule ``usage add`` and the cost report also read (``merge_turn``
+    reads the same keys name-first; see run-record.md).
     """
     if unit_id is not None:
         try:
@@ -470,8 +470,6 @@ def head_revision(repo_root: Path, *, runner: Runner) -> str:
 
 
 def run_iteration(
-    record: run_record.RunRecord,
-    unit: dict[str, Any],
     criterion: Criterion,
     revision: str,
     *,
@@ -481,19 +479,11 @@ def run_iteration(
     clock: Callable[[], float] = time.monotonic,
     now: Callable[[], str] = _utc_now,
 ) -> tuple[dict[str, Any], bool]:
-    """Run the whole criterion once and return ``(iteration, green)``. Mutates *unit* in place.
+    """Run the whole criterion once and return ``(iteration, green)``, writing nothing.
 
-    The block on the unit row is added to, never replaced: an unknown key another consumer put on
-    the same row survives, which is the rule ``run-record.md`` states for every unit row.
+    The iteration carries no number: ``apply_iteration``, the only code that writes the
+    ``build_loop`` block, numbers it against the row it lands on.
     """
-    block = unit.setdefault(UNIT_KEY, {})
-    if not isinstance(block, dict):
-        raise BuildLoopError(f"the unit's {UNIT_KEY!r} key is not an object")
-    block["exit_criterion"] = criterion.as_record()
-    iterations = block.setdefault("iterations", [])
-    if not isinstance(iterations, list):
-        raise BuildLoopError(f"the unit's {UNIT_KEY}.iterations key is not a list")
-
     mapping = check_map(criterion.baseline)
     by_command = {entry["command"]: entry["catalogue_check"] for entry in mapping["commands"]}
 
@@ -532,7 +522,6 @@ def run_iteration(
     ) and preview_result["status"] in (STATUS_PASS, STATUS_NO_PREVIEW)
 
     iteration: dict[str, Any] = {
-        "iteration": len(iterations) + 1,
         "revision": revision,
         "started_at": started_at,
         "finished_at": now(),
@@ -546,10 +535,6 @@ def run_iteration(
         iteration["functional_checks_reason"] = REASON_NONE_PRESCRIBED
     if not criterion.scenario_smoke:
         iteration["scenario_smoke_reason"] = REASON_NONE_PRESCRIBED
-    iterations.append(iteration)
-
-    if green:
-        block["handed_to_code_review"] = {"revision": revision, "at": iteration["finished_at"]}
     return iteration, green
 
 
@@ -558,10 +543,11 @@ def apply_iteration(
 ) -> dict[str, Any]:
     """Write one finished *iteration* onto *unit*, a row read after the record's lock was taken.
 
-    ``main`` runs the checks on a scratch copy of the row, outside the lock, because they can take
-    minutes; then it takes the lock, re-reads the record and lands the result here (issue 95). The
-    iteration is renumbered against the fresh row, and every other key on it survives, including a
-    ``usage`` entry a unit session added while the checks ran.
+    This is the only code that writes the ``build_loop`` block. ``main`` runs the checks outside
+    the lock, because they can take minutes; then it takes the lock, re-reads the record and lands
+    the result here (issue 95). The block is added to, never replaced: the iteration is numbered
+    against the fresh row, and every other key on it survives, including a ``usage`` entry a unit
+    session added while the checks ran — the rule ``run-record.md`` states for every unit row.
     """
     block = unit.setdefault(UNIT_KEY, {})
     if not isinstance(block, dict):
@@ -774,12 +760,10 @@ def main(argv: list[str] | None = None, *, runner: Runner = subprocess_runner) -
                 f"{len(record.units)} unit rows, so which one this iteration belongs to is not implied"
             )
         revision = head_revision(repo_root, runner=runner)
-        # The checks run on a scratch copy of the row, with no lock held: they can take minutes.
-        # The result lands on a row re-read under the record's lock, so nothing another writer
-        # added meanwhile (a unit session's usage entry, a review result) is lost (issue 95).
+        # The checks run with no lock held: they can take minutes. The result lands on a row
+        # re-read under the record's lock, so nothing another writer added meanwhile (a unit
+        # session's usage entry, a review result) is lost (issue 95).
         iteration, green = run_iteration(
-            record,
-            copy.deepcopy(unit),
             criterion,
             revision,
             runner=runner,

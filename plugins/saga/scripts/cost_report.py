@@ -338,7 +338,10 @@ def build_report(
             done, reason = unit_completed(record, row)
             unit_cost = Decimal(0)
             priced_entries = unpriced_entries = 0
-            unit_groups: dict[tuple[str, str], Decimal | None] = {}
+            # Per (role, tier): the priced spend, and whether any of this unit's spend in that
+            # group was unpriced (a model listed with null rates can share a tier with a priced
+            # one), so a group's per-unit figure divides only by units it fully priced.
+            unit_groups: dict[tuple[str, str], dict[str, Any]] = {}
             for entry in entries:
                 label = tier_label(entry, table)
                 price = resolve_price(
@@ -346,13 +349,14 @@ def build_report(
                 )
                 cost = entry_cost(entry, price) if price else None
                 key = (str(entry.get("role", "")), label)
+                slot = unit_groups.setdefault(key, {"cost": None, "unpriced": False})
                 if cost is None:
                     model = str(entry.get("model", ""))
                     unpriced[model] = unpriced.get(model, 0) + 1
-                    unit_groups.setdefault(key, None)
+                    slot["unpriced"] = True
                     unpriced_entries += 1
                     continue
-                unit_groups[key] = (unit_groups.get(key) or Decimal(0)) + cost
+                slot["cost"] = (slot["cost"] or Decimal(0)) + cost
                 unit_cost += cost
                 priced_entries += 1
             pricing = _pricing(priced_entries, unpriced_entries)
@@ -388,13 +392,27 @@ def build_report(
                 excluded[PRICING_NONE] += 1
             else:
                 excluded[PRICING_UNPRICED] += 1
-            for key, cost in unit_groups.items():
+            for key, slot in unit_groups.items():
                 group = groups.setdefault(
                     key,
-                    {"cost": None, "units": 0, "iterations": 0, "cycles": 0},
+                    {
+                        "cost": None,
+                        "units": 0,
+                        "fully_priced_cost": Decimal(0),
+                        "fully_priced_units": 0,
+                        "partial": False,
+                        "iterations": 0,
+                        "cycles": 0,
+                    },
                 )
+                cost = slot["cost"]
                 if cost is not None:
                     group["cost"] = (group["cost"] or Decimal(0)) + cost
+                if slot["unpriced"]:
+                    group["partial"] = True
+                else:
+                    group["fully_priced_cost"] += cost
+                    group["fully_priced_units"] += 1
                 group["units"] += 1
                 group["iterations"] += len(iterations)
                 group["cycles"] += cycles
@@ -403,13 +421,18 @@ def build_report(
     for (role, tier), group in sorted(groups.items()):
         units = group["units"]
         cost = group["cost"]
+        priced_units = group["fully_priced_units"]
         rows.append(
             {
                 "role": role,
                 "tier": tier,
                 "completed_units": units,
+                "fully_priced_units": priced_units,
                 "total_usd": None if cost is None else _usd(cost),
-                "per_completed_unit_usd": None if cost is None else _usd(cost / units),
+                "total_is_partial": group["partial"] and cost is not None,
+                "per_completed_unit_usd": (
+                    _usd(group["fully_priced_cost"] / priced_units) if priced_units else None
+                ),
                 "mean_build_loop_iterations": group["iterations"] / units,
                 "mean_code_review_cycles": group["cycles"] / units,
             }
@@ -466,7 +489,8 @@ def render(report: Mapping[str, Any]) -> str:
     lines.append(
         "Completed unit: build loop green and latest code review "
         + " or ".join(TERMINAL_REVIEW_OUTCOMES)
-        + ". Per completed unit = a group's cost / completed units with an entry in that group."
+        + ". Per completed unit = a group's spend on the completed units it fully priced / those"
+        + " units."
     )
     lines.append("")
     if not report["completed_unit_count"]:
@@ -485,9 +509,16 @@ def render(report: Mapping[str, Any]) -> str:
             lines.append(
                 f"{_text(row['role']):<18} {_text(row['tier']):<24} {row['completed_units']:>5} "
                 f"{_money(row['per_completed_unit_usd']):>10} "
-                f"{_money(row['total_usd']):>10} "
+                f"{_money(row['total_usd'], partial=row['total_is_partial']):>10} "
                 f"{row['mean_build_loop_iterations']:>11.1f} {row['mean_code_review_cycles']:>13.1f}"
             )
+        for row in report["groups"]:
+            if row["total_is_partial"] or row["fully_priced_units"] < row["completed_units"]:
+                lines.append(
+                    f"  {_text(row['role'])} {_text(row['tier'])}: per unit divides by "
+                    f"{row['fully_priced_units']} of {row['completed_units']} completed units; "
+                    "the rest had some spend in this row unpriced"
+                )
         overall = report["overall"]
         lines.append(
             f"{'all roles':<18} {'':<24} {overall['fully_priced_units']:>5} "

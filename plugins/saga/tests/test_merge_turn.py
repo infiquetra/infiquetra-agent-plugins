@@ -492,3 +492,96 @@ class TestRecordLock:
         assert MT.main(["--record", str(store / "issue-1028.json"), "status"]) == 0
         assert held == [True]
         assert json.loads(capsys.readouterr().out)["holder"] is None
+
+    def test_a_merge_does_not_overwrite_a_key_another_writer_changed_meanwhile(self) -> None:
+        """A stale holder this turn released may have finished its own merge in the meantime."""
+        before = [_unit("unit-a", "a"), {**_unit("unit-c", "c"), "merge_state": MT.MERGE_MERGING}]
+        after = [
+            {**_unit("unit-a", "a"), "merge_state": MT.MERGE_MERGED, "merged_tip": "a" * 40},
+            {**_unit("unit-c", "c"), "merge_state": MT.MERGE_READY, "merge_worktree": None},
+        ]
+        fresh = [
+            _unit("unit-a", "a"),
+            {**_unit("unit-c", "c"), "merge_state": MT.MERGE_MERGED, "merged_tip": "c" * 40},
+        ]
+        skipped = MT.land_merge_keys(fresh, before, after, owner="unit-a")
+        assert fresh[1]["merge_state"] == MT.MERGE_MERGED, "the other writer's value survives"
+        assert fresh[1]["merged_tip"] == "c" * 40
+        assert skipped == ["unit-c.merge_state"]
+        assert fresh[0]["merge_state"] == MT.MERGE_MERGED
+        assert fresh[0]["merged_tip"] == "a" * 40
+
+    def test_the_merged_units_own_outcome_lands_whatever_its_row_says_now(self) -> None:
+        before = [_unit("unit-a", "a")]
+        after = [{**_unit("unit-a", "a"), "merge_state": MT.MERGE_MERGED, "merged_tip": "a" * 40}]
+        fresh = [{**_unit("unit-a", "a"), "merge_state": MT.MERGE_MERGING}]
+        assert MT.land_merge_keys(fresh, before, after, owner="unit-a") == []
+        assert fresh[0]["merge_state"] == MT.MERGE_MERGED
+
+    def test_main_merge_lands_merged_and_keeps_a_usage_entry_written_mid_merge(
+        self,
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _git(repo, "checkout", "unit-a")
+        _commit(repo, "one.txt", "unit a\n", "unit a works")
+        _git(repo, "checkout", "main")
+        store = tmp_path / "store"
+        _record(store, units=[_unit("unit-a", "unit-a"), _unit("unit-b", "unit-b")])
+        real_merge_unit = MT.merge_unit
+
+        def merge_unit(record, name, **kwargs):
+            result = real_merge_unit(record, name, **kwargs)
+            # Another writer lands while the git work runs with no lock held.
+            RR.update(
+                store,
+                1028,
+                lambda current: RR.add_usage(
+                    current,
+                    "unit-a",
+                    session_id="worker-1",
+                    role="worker",
+                    vendor="claude",
+                    model="claude-opus-5-5",
+                    effort="medium",
+                    counts={"output": 10},
+                ),
+            )
+            return result
+
+        monkeypatch.setattr(MT, "merge_unit", merge_unit)
+        code = MT.main(
+            [
+                "--record",
+                str(store / "issue-1028.json"),
+                "--repo-root",
+                str(repo),
+                "--parent-branch",
+                "parent/1",
+                "merge",
+                "--unit",
+                "unit-a",
+            ]
+        )
+        assert code == 0
+        printed = json.loads(capsys.readouterr().out)
+        row = RR.load(store, 1028, warn=None).units[0]
+        assert row["merge_state"] == MT.MERGE_MERGED
+        assert row["merged_tip"] == printed["merged_tip"]
+        assert row["merged_tip"] == _git(repo, "rev-parse", "parent/1").stdout.strip()
+        assert [entry["session_id"] for entry in row["usage"]["entries"]] == ["worker-1"]
+
+    def test_main_take_persists_the_turn(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        store = tmp_path / "store"
+        _record(store, units=[_unit("unit-a", "unit-a"), _unit("unit-b", "unit-b")])
+        assert (
+            MT.main(["--record", str(store / "issue-1028.json"), "take", "--unit", "unit-b"]) == 0
+        )
+        assert json.loads(capsys.readouterr().out)["merge_state"] == MT.MERGE_MERGING
+        units = RR.load(store, 1028, warn=None).units
+        assert units[1]["merge_state"] == MT.MERGE_MERGING
+        assert units[0]["merge_state"] == MT.MERGE_READY

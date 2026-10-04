@@ -257,9 +257,12 @@ session id that is empty or holds whitespace or a control character, a vendor, m
 is not a name (letters, digits and `. _ : / @ + -`, starting with a letter or digit), a role that is
 not lowercase letters, digits and hyphens, a unit the record does not have (it names the units the
 record does have, and never creates a row), a stored entry whose counts are not non-negative
-integers, and an issue with no record. `--unit` takes the row's `id`, or its `name` when the row
-has no `id`: the same identity rule `build_loop.py` and the cost report use. Every other key survives an addition: the row's other consumers' keys,
-unknown keys inside the usage block, and every other row.
+integers, and an issue with no record. `--unit` takes the row's `id`, else its `name`, else its
+`unit_id` (`run_record.unit_key`), the rule `build_loop.py --unit` and the cost report also use.
+`merge_turn.py --unit` reads the same three keys in the order `name`, `unit_id`, `id`, so the two
+rules name a row differently only when it carries both an `id` and a `name` that differ; give such
+a row the same value in both. Every other key survives an addition: the row's other consumers'
+keys, unknown keys inside the usage block, and every other row.
 
 **What a completed unit is.** `scripts/cost_report.py` prices usage from the dated table in
 `references/model-prices.yaml` and divides by completed units. A unit is completed when its build
@@ -269,9 +272,12 @@ code-review entry has the outcome `accepted` or `cycle_cap_best_available`. A re
 completed; the report shows its spend apart, with the reason.
 
 The **all roles** line divides only over completed units whose usage is recorded and fully priced,
-and names how many completed units it left out (no usage recorded, or some usage unpriced). A unit
-whose spend is all unpriced shows `unpriced`, never `$0.00`, and a total that leaves unpriced spend
-out is marked `+ unpriced`.
+and names how many completed units it left out (no usage recorded, or some usage unpriced). Each
+role-and-tier row does the same within the row: two models can share a tier while one is listed
+without rates, so a row's per-unit figure divides only by the completed units whose spend in that
+row is fully priced, and the report names any row that left units out. A unit whose spend is all
+unpriced shows `unpriced`, never `$0.00`, and a total that leaves unpriced spend out is marked
+`+ unpriced`.
 
 **Caveat until issue 113 lands.** The orchestrate plugin's `read_unit` keeps only the row keys its
 `Unit` type declares, and its `Run.save` rewrites the whole `units` array from that copy. Until
@@ -320,7 +326,8 @@ reconciles a stale tick back onto a live record.
 A write goes to a uniquely named temporary file in the same directory and is then moved into place
 with `os.replace`, the same pattern `saga.py` uses for its envelopes. A reader therefore always sees
 a whole record. The temporary name is unique per write, so two writers saving at once can never
-move each other's half-written file.
+move each other's half-written file. The write never widens the record's mode: an existing record
+keeps its own, and a new one gets what the user's umask allows.
 
 **Every read-modify-write takes the record's lock.** Issue 1018 shipped this record with no lock,
 because one coordinator owned one record. Issue 95 ended that: unit sessions add their own `usage`
@@ -354,7 +361,7 @@ or git merges would stall every unit session's `usage add`.
 | `admission.py` | `repo`, `admission`, `run_configuration`, `approval_scope` | admission runs unlocked; those fields land on a fresh read through `update` |
 | `qa_strategies.py` | the top-level `qa` block | `update` |
 | `merge_turn.py status`, `take` | unit rows' merge keys | wholly under `update` |
-| `merge_turn.py merge` | unit rows' `merge_state`, `merge_worktree`, `merged_tip` | git work runs unlocked; only the merge keys it changed land on a fresh read through `update` |
+| `merge_turn.py merge` | unit rows' `merge_state`, `merge_worktree`, `merged_tip` | git work runs unlocked; through `update`, each merge key it changed lands on a fresh read only if that row still holds the value the turn started from (the merged unit's own keys always land), and the keys it kept from another writer are listed as `kept_from_another_writer` |
 | agent-launcher `roster.py` | `roster` | `update` |
 | orchestrate `Run.save` | its unit rows and `orchestrate` | not yet: issue 113 |
 

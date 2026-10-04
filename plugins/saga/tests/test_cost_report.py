@@ -439,6 +439,35 @@ def test_all_roles_divides_only_over_fully_priced_completed_units(
     ) in text
 
 
+def test_a_group_divides_only_by_the_units_it_fully_priced_and_marks_its_total(
+    tmp_path: Path, store: Path
+) -> None:
+    """Two models share tier opus and one has null rates: its spend never halves the figure."""
+    prices = _table_with(
+        tmp_path,
+        "  claude-haiku-4-5:\n",
+        "  claude-opus-4-8:\n    vendor: claude\n    tier: opus\n    usd_per_million: null\n"
+        "  claude-haiku-4-5:\n",
+    )
+    units = [
+        _row("u1", _entry("w1", "worker", "claude-opus-5-5", "medium", uncached_input=1_000_000)),
+        _row("u2", _entry("w2", "worker", "claude-opus-4-8", "medium", uncached_input=1_000_000)),
+    ]
+    _write(store, 8, units, [_review(unit, "accepted") for unit in ("u1", "u2")])
+    result = _run(store, prices, "--today", VERIFIED.isoformat(), "--json")
+    assert result.returncode == 0, result.stderr
+    (group,) = json.loads(result.stdout)["groups"]
+    assert group["tier"] == "claude opus/medium"
+    assert group["completed_units"] == 2 and group["fully_priced_units"] == 1
+    assert Decimal(group["per_completed_unit_usd"]) == Decimal(4)  # $4 / 1, never $4 / 2
+    assert Decimal(group["total_usd"]) == Decimal(4) and group["total_is_partial"] is True
+
+    text = _run(store, prices, "--today", VERIFIED.isoformat()).stdout
+    row = next(line for line in text.splitlines() if line.startswith("worker "))
+    assert "$4.00 + unpriced" in row and "$2.00" not in row
+    assert "per unit divides by 1 of 2 completed units" in text
+
+
 def test_a_not_completed_unit_with_only_unpriced_spend_is_never_shown_as_zero(
     store: Path, prices: Path
 ) -> None:

@@ -1244,3 +1244,29 @@ class TestRunRecordLock:
         reread = RUN_RECORD.load(tmp_path, 11)
         assert reread is not None
         assert reread.units[0]["usage"] == {"entries": [{"x": 1}]}
+
+    def test_a_write_landing_after_the_writers_first_read_survives(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The change is applied to a copy read under the lock, never to the copy read before it.
+
+        Another writer lands after ``write_block`` has read the record (``require_record``) and
+        before its locked write, so only a writer that re-reads under the lock keeps it.
+        """
+        RUN_RECORD.save(tmp_path, RUN_RECORD.RunRecord(issue=12, repo="o/r", units=[{"id": "u1"}]))
+        real_update = QA.run_record.update
+
+        def update(store_root, issue, change, **kwargs):
+            def another_writer(record):
+                record.units[0]["usage"] = {"entries": [{"session_id": "landed-meanwhile"}]}
+                return record
+
+            real_update(store_root, issue, another_writer)
+            return real_update(store_root, issue, change, **kwargs)
+
+        monkeypatch.setattr(QA.run_record, "update", update)
+        QA.write_block(tmp_path, 12, {"verdict": "pass"})
+        reread = RUN_RECORD.load(tmp_path, 12)
+        assert reread is not None
+        assert reread.units[0]["usage"] == {"entries": [{"session_id": "landed-meanwhile"}]}
+        assert reread.extra[QA.RECORD_KEY] == {"verdict": "pass"}

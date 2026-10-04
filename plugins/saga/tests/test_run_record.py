@@ -968,3 +968,43 @@ def test_concurrent_usage_adds_lose_no_update(rr: ModuleType, store: Path) -> No
         assert process.wait(timeout=60) == 0
     entries = rr.load(store, 95, warn=None).units[0]["usage"]["entries"]
     assert sorted(e["session_id"] for e in entries) == [f"s-{n}" for n in range(8)]
+
+
+def test_a_new_record_gets_the_mode_the_umask_allows(rr: ModuleType, store: Path) -> None:
+    """The atomic replace never widens a record's mode past what a plain write would give."""
+    import os
+    import stat
+
+    previous = os.umask(0o077)
+    try:
+        path = rr.save(store, _units_record(rr))
+    finally:
+        os.umask(previous)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_a_write_keeps_an_existing_records_mode(rr: ModuleType, store: Path) -> None:
+    import os
+    import stat
+
+    previous = os.umask(0o022)
+    try:
+        path = rr.save(store, _units_record(rr))
+        path.chmod(0o600)
+        rr.set_next_step(store, 95, "after the operator restricted it")
+    finally:
+        os.umask(previous)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize(
+    ("row", "key"),
+    [
+        ({"id": "U1", "name": "unit one"}, "U1"),
+        ({"name": "unit one"}, "unit one"),
+        ({"unit_id": "U7"}, "U7"),
+        ({}, ""),
+    ],
+)
+def test_unit_key_reads_id_then_name_then_unit_id(rr: ModuleType, row: dict, key: str) -> None:
+    assert rr.unit_key(row) == key

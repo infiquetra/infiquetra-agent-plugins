@@ -50,6 +50,7 @@ import fcntl
 import json
 import os
 import re
+import stat
 import subprocess  # nosec B404 - fixed argv, no shell
 import sys
 import tempfile
@@ -497,19 +498,33 @@ def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> Path:
     The temporary name is unique per write (``mkstemp`` in the same directory), so two writers
     saving at once can never move each other's half-written file: a fixed ``<record>.tmp`` name let
     one writer's ``os.replace`` take the other's file and the second replace fail.
+
+    The replace carries the temporary file's mode onto the record, so the write never widens it:
+    an existing record keeps its own mode, and a new one gets what the user's umask allows, as a
+    plain ``write_text`` would have given it.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
     try:
+        os.fchmod(fd, _record_mode(path))
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
-        os.chmod(tmp_name, 0o644)
         os.replace(tmp_name, path)
     except BaseException:
         with suppress(FileNotFoundError):
             os.unlink(tmp_name)
         raise
     return path
+
+
+def _record_mode(path: Path) -> int:
+    """The mode a write of *path* gives it: the existing file's, else ``0o666`` less the umask."""
+    try:
+        return stat.S_IMODE(os.stat(path).st_mode)
+    except FileNotFoundError:
+        mask = os.umask(0)
+        os.umask(mask)
+        return 0o666 & ~mask
 
 
 def lock_path_for(record_file: Path) -> Path:
@@ -605,8 +620,13 @@ def get_next_step(store_root: Path, issue: int) -> str:
 
 
 def unit_key(row: Mapping[str, Any]) -> str:
-    """A unit row's identity: its ``id``, else its ``name`` — the rule ``build_loop`` uses."""
-    return str(row.get("id") or row.get("name") or "")
+    """A unit row's identity: its ``id``, else its ``name``, else its ``unit_id``.
+
+    ``build_loop.py``, ``usage add`` and the cost report all key on this. ``merge_turn.py`` reads
+    the same three keys name-first (see its ``unit_name``), so the two agree on every row that
+    carries one of them, or carries ``id`` and ``name`` with the same value.
+    """
+    return str(row.get("id") or row.get("name") or row.get("unit_id") or "")
 
 
 def find_unit_row(units: list[dict[str, Any]], unit_id: str) -> dict[str, Any]:

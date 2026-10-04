@@ -421,3 +421,36 @@ def test_appending_through_the_command_line_keeps_a_usage_entry_and_holds_the_lo
     reread = module.load(store, 1001, warn=None)
     assert reread.units[0]["usage"] == {"entries": [{"session_id": "s"}]}
     assert [entry["cycle"] for entry in reread.review_cycles] == [1]
+
+
+def test_a_write_landing_after_any_read_before_the_lock_survives_the_append(
+    rr: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The append is applied to a copy read under the lock, never to one read before it.
+
+    Another writer lands just before ``update`` takes the lock, so a copy read any earlier lacks
+    it, and only a writer that re-reads under the lock keeps it.
+    """
+    import json
+
+    module = rr.run_record
+    store = tmp_path / "store"
+    module.save(store, module.RunRecord(issue=1002, units=[{"id": "issue-1002"}]))
+    result_file = tmp_path / "result.json"
+    result_file.write_text(json.dumps(_result(rr).to_dict()), encoding="utf-8")
+    real_update = module.update
+
+    def update(store_root, issue, change, **kwargs):
+        def another_writer(record):
+            record.units[0]["usage"] = {"entries": [{"session_id": "landed-meanwhile"}]}
+            return record
+
+        real_update(store_root, issue, another_writer)
+        return real_update(store_root, issue, change, **kwargs)
+
+    monkeypatch.setattr(module, "update", update)
+    code = rr.main(["--result", str(result_file), "--issue", "1002", "--store-root", str(store)])
+    assert code == rr.EXIT_OK
+    reread = module.load(store, 1002, warn=None)
+    assert reread.units[0]["usage"] == {"entries": [{"session_id": "landed-meanwhile"}]}
+    assert [entry["cycle"] for entry in reread.review_cycles] == [1]

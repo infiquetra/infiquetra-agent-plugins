@@ -504,28 +504,43 @@ def land_merge_keys(
     fresh_units: list[dict[str, Any]],
     before: list[dict[str, Any]],
     after: list[dict[str, Any]],
-) -> None:
-    """Copy onto *fresh_units* each merge key the turn changed between *before* and *after*.
+    *,
+    owner: str | None = None,
+) -> list[str]:
+    """Copy onto *fresh_units* each merge key the turn changed, unless another writer beat it.
 
     *fresh_units* were read under the record's lock; *before* is the copy the turn started from
-    and *after* the copy it finished with. Only a key whose value the turn changed is written, so a
-    key another writer changed meanwhile, and every non-merge key, survives.
+    and *after* the copy it finished with. A key is written only when the turn changed it AND the
+    fresh row still holds the turn's starting value: a compare-and-set, so a key another writer
+    changed meanwhile keeps that writer's value even when this turn changed it too (a stale holder
+    this turn released may have finished its own merge in the meantime). Non-merge keys are never
+    touched.
+
+    The row named *owner*, the unit this turn merged, is the exception: the git merge already
+    happened, so its outcome lands whatever the row says now. Returns the ``row.key`` names the
+    compare-and-set skipped, for the caller to report.
     """
     old = _row_keys(before)
     new = _row_keys(after)
     target = _row_keys(fresh_units)
+    skipped: list[str] = []
     for key, row in new.items():
         if key not in target:
             continue
         previous = old.get(key, {})
         for name in MERGE_KEYS:
             value = row.get(name, _ABSENT)
-            if value == previous.get(name, _ABSENT):
+            started = previous.get(name, _ABSENT)
+            if value == started:
+                continue
+            if key != owner and target[key].get(name, _ABSENT) != started:
+                skipped.append(f"{key}.{name}")
                 continue
             if value is _ABSENT:
                 target[key].pop(name, None)
             else:
                 target[key][name] = value
+    return skipped
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -589,7 +604,9 @@ def main(argv: list[str] | None = None) -> int:
         def land(fresh: Any) -> Any:
             if fresh is None:
                 raise MergeTurnError(f"the run record at {path} disappeared during the merge")
-            land_merge_keys(fresh.units, before, record.units)
+            skipped = land_merge_keys(fresh.units, before, record.units, owner=args.unit)
+            if skipped:
+                result["kept_from_another_writer"] = skipped
             return fresh
 
         module.update(store_root, issue, land)

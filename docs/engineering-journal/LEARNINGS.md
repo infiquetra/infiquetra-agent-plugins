@@ -36,6 +36,24 @@ ones.
 
 **Generalizable rule.** When a renderer stops emitting a trailing section, keep
 its header in the strip list for as long as old drafts can still be revised.
+### Landing "only the keys this writer changed" is not lost-update safe without a compare
+
+**Evidence.** Review cycle 2 of issue 95 found `land_merge_keys` in
+`plugins/saga/scripts/merge_turn.py` wrote every merge key the turn changed between its unlocked
+starting copy and its finished copy onto the record re-read under the lock. `holder()` releases a
+stale `merging` row on that unlocked copy, so when the released unit finished its own merge in the
+meantime, the landing wrote `ready` over its `merged`.
+
+**Mechanism.** A diff between "before" and "after" tells a writer what it changed, not whether
+anyone else changed the same key since "before". Re-reading under the lock protects keys this
+writer did not touch; for keys it did touch, the fresh value must still equal "before"
+(compare-and-set), or the writer is overwriting a newer value with one derived from a stale copy.
+The fix lands a key only on that condition, except on the merged unit's own row, whose git outcome
+is the truth.
+
+**Generalizable rule.** A writer that does slow work unlocked and lands a delta later must
+compare-and-set each key it lands against the value it started from.
+
 ### An open row key set is only open if every whole-row writer carries unknown keys forward
 
 **Evidence.** The 2026-10-04 survey for issue 95 loaded a run record whose unit row carried

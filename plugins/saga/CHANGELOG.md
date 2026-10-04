@@ -46,6 +46,15 @@
   no lock" rule.
 - Every run-record write goes through a uniquely named temporary file, so two writers saving at
   once can no longer move each other's half-written file.
+  The write keeps an existing record's mode and gives a new one what the user's umask allows,
+  rather than widening it.
+- `merge_turn.py merge` lands a merge key on another unit's row only if that row still holds the
+  value the turn started from, so a release of a stale holder never overwrites that holder's own
+  finished merge.
+- `cost_report.py`: a role-and-tier row divides only by the completed units whose spend in it is
+  fully priced, marks a total that leaves unpriced spend out, and the JSON row carries
+  `fully_priced_units` and `total_is_partial`.
+- A unit row's identity (`run_record.unit_key`) falls back to `unit_id` after `id` and `name`.
 
 ### Docs
 
