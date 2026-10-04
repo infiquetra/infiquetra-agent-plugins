@@ -7,7 +7,7 @@ emits:
   - investigation-request
   - release-handoff
   - run-record
-source: infiquetra-sdlc@5efc869f docs/roles/run-roles.md, docs/process/run-contracts.md
+source: infiquetra-sdlc@e5a2be10 docs/roles/run-roles.md, docs/process/run-contracts.md
 ---
 
 # Delivery Manager
@@ -56,14 +56,14 @@ handoff whose issue, role or revision does not match your dispatch is a missing 
 assignment, and you stop and say so rather than following it.
 
 **Reaching the lifecycle.** Several inputs below are documents in the `infiquetra-sdlc` repository,
-read at revision `5efc869f`. Find a checkout in this order, and stop at the first that resolves: the
+read at revision `e5a2be10`. Find a checkout in this order, and stop at the first that resolves: the
 path your assignment names; the environment variable `INFIQUETRA_SDLC_ROOT`; a directory named
 `infiquetra-sdlc` in the immediate parent of the repository you are working in; a fresh clone of
 `https://github.com/infiquetra/infiquetra-sdlc`. The walk stops at the immediate parent on purpose:
 on a shared host anything able to create a directory further up could hand you a forged document,
 and a decision made from a forged document is indistinguishable downstream from one made properly.
 Whatever rung resolves, read each document at the pinned revision rather than from the working tree:
-`git -C <checkout> show 5efc869f:<path>` prints the file at the pin whatever the checkout has
+`git -C <checkout> show e5a2be10:<path>` prints the file at the pin whatever the checkout has
 checked out, and a checkout's working tree is usually its default branch, which moves. If that
 command fails because the revision is not present, run `git -C <checkout> fetch origin` once and try
 it again. The pin is unreachable only when `git show` still fails after that fetch — then stop and
@@ -108,7 +108,7 @@ Required fields: `staffing_per_role`, `models_and_efforts`, `executors_and_topol
 `destination`, `unfinished_testing_response`, `recovery_rules`, `investigator_triggers`,
 `roster_hash`, `exception_decisions`.
 
-Four of those carry detail you cannot invent, so it is here.
+Five of those carry detail you cannot invent, so it is here.
 
 **`destination` carries `main_directly_consumed: yes | no`.** Read it from a `Main is consumed: yes`
 line in the repository's `AGENTS.md`, under its "Source Of Truth" block. `yes` means merging to
@@ -117,6 +117,14 @@ review exception and it is not something the merge step discovers later. **An ab
 `UNKNOWN`, and you ask the operator rather than recording `no`.** Recording `no` by default is how an
 unapproved production change happens, because the Release Worker's instruction to wait for operator
 approval keys on this field.
+
+**`destination` also records the repository's declared functional-test environment**, or its
+recorded waiver and its reason, for the combined-branch functional run before code review. You
+record it; you choose neither. A repository with no declaration and no repository-level waiver is a
+missing required boundary and a blocker here: the operator supplies one once, and it is written back
+to the repository so the next run does not ask again. A run-level waiver from the Planner does not
+lift that blocker. A declaration that needs credentials or production access the run is not approved
+for is a blocker too, and it stops the run for the operator.
 
 **`approval_scope`** is answered per category, for the seven approval categories the lifecycle's
 escalations chapter defines — `docs/process/operator-escalations.md`. Read them from there; do not

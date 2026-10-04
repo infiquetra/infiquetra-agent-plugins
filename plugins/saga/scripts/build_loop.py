@@ -23,7 +23,9 @@ Five decisions here are contract for every later reader.
 * **Nothing is guessed** (plan KTD7). An unexecutable check yields ``could-not-execute`` — the lens
   catalogue's own rule, which says such a check is never a pass and never a fail. A repository that
   declares a branch preview but names no command for it gets that status and its reason, not an
-  invented deployment command.
+  invented deployment command. The functional-test environment the repository declares (issue #97)
+  is read from the record, or the profile, and reported; this module never picks one, and a unit
+  iteration does not run it (the combined-branch run is pre-review testing U4).
 * **Absence is recorded, not shown as nothing** (plan KTD9). No card in this tree yet writes the
   plan's child-scoped functional checks or its scenario smoke onto a unit's row. An absent key
   reads as an empty list carrying the reason ``none-prescribed``, so a reader of a green iteration
@@ -56,6 +58,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import functional_environment  # noqa: E402  (after the sys.path shim, by design)
 import run_record  # noqa: E402  (after the sys.path shim, by design)
 
 #: The key this module owns on a unit's row. One key, documented in
@@ -153,6 +156,9 @@ class Criterion:
     functional_checks: tuple[dict[str, Any], ...] = ()
     scenario_smoke: tuple[dict[str, Any], ...] = ()
     preview: Preview = field(default_factory=lambda: Preview(declared=False))
+    #: The repository's functional-test environment or waiver, resolved (issue #97); ``None`` when
+    #: nothing is declared. Read and recorded here, run by the combined-branch pass (U4).
+    environment: dict[str, Any] | None = None
 
     def as_record(self) -> dict[str, Any]:
         """The criterion as it is written onto the unit row, verbatim."""
@@ -161,6 +167,7 @@ class Criterion:
             "functional_checks": [dict(entry) for entry in self.functional_checks],
             "scenario_smoke": [dict(entry) for entry in self.scenario_smoke],
             "preview": {"declared": self.preview.declared, "command": self.preview.command},
+            "environment": dict(self.environment) if self.environment is not None else None,
         }
 
 
@@ -237,7 +244,30 @@ def read_criterion(
         functional_checks=functional,
         scenario_smoke=smoke,
         preview=preview,
+        environment=read_environment(record, profile),
     )
+
+
+def read_environment(
+    record: run_record.RunRecord, profile: dict[str, Any]
+) -> dict[str, Any] | None:
+    """The functional-test environment admission recorded, else what the profile declares.
+
+    The record wins: it is what the run was admitted with. A record admitted before issue #97 has
+    no ``admission.functional_test_environment``, so the profile is resolved instead, with the
+    record's legacy ``branch_preview`` answer standing in where the profile no longer carries it.
+    Never guessed: nothing declared reads as ``None``.
+    """
+    recorded = record.admission.get(functional_environment.PROFILE_KEY)
+    if isinstance(recorded, dict) and recorded.get("mode"):
+        return dict(recorded)
+    view = dict(profile)
+    if "branch_preview" not in view and record.admission.get("branch_preview") is not None:
+        view["branch_preview"] = record.admission.get("branch_preview")
+    try:
+        return functional_environment.resolve(view)
+    except functional_environment.DeclarationError as exc:
+        raise BuildLoopError(f"{PROFILE_FILENAME}: {exc}") from exc
 
 
 def _normalise_checks(raw: Any) -> list[dict[str, Any]]:
@@ -648,6 +678,21 @@ def format_dry_run(criterion: Criterion, mapping: dict[str, Any]) -> str:
             lines.append(f"  {entry['name']}: {entry['command']}")
     else:
         lines.append("  none prescribed in the run record")
+
+    lines.append("")
+    environment = criterion.environment
+    if environment is not None and environment.get("mode") == functional_environment.MODE_WAIVED:
+        lines.append(
+            f"Functional-test waiver, from {environment.get('source')}: {environment.get('reason')}"
+        )
+    else:
+        source = f", from {environment.get('source')}" if environment is not None else ""
+        lines.append(f"Functional-test environment{source}:")
+        lines.extend(f"  {line}" for line in functional_environment.describe(environment))
+        if environment is not None:
+            lines.append(
+                "  run on the combined branch before code review, never in a unit iteration"
+            )
 
     lines.append("")
     if not criterion.preview.declared:

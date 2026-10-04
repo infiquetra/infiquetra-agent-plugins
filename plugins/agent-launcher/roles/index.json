@@ -1,6 +1,6 @@
 {
   "schema": "roles_index.v1",
-  "sdlc_revision": "5efc869f",
+  "sdlc_revision": "e5a2be10",
   "roles": [
     {
       "role": "Architect",

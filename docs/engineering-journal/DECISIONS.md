@@ -29,6 +29,33 @@ LEARNINGS.md, same date).
 
 **Revisit when.** The run record stores per-lens "met" itself, or a combined-branch functional
 loop (issues #99 and #100) needs its own segment on the line.
+### A repository's functional-test environment lives in its tracked saga profile, and admission writes it once
+
+**Decision.** `.saga-profile.json` carries a `functional_test_environment` block (`kind`,
+`deploy_command`, `test_command`, `teardown_command`, `scope`) or a `functional_test_waiver` with a
+reason (issue #97, pre-review testing U2). It replaces `branch_preview` and
+`branch_preview_command` through a read-time migration. When neither is declared, admission asks
+one question and, on the operator's answer, writes the block into the tracked profile in the
+checkout it ran in, before it saves the run record. The resolved form is recorded at
+`admission.functional_test_environment` with `mode` `declared` or `waived` (the shape #98 reads),
+and a waiver carries `level: repository` to tell it from the Planner's run-level waiver.
+
+**Rationale.** The lifecycle at infiquetra-sdlc `e5a2be10` (sdlc#174) makes the declaration a
+repository fact that the operator supplies once and that is written back so the next run does not
+ask. The profile is already tracked and already the home of repository facts. Writing it before
+the record means a failed write leaves the question outstanding instead of recorded as answered.
+A legacy `branch_preview: true` profile is read as an incomplete declaration and offered as the
+question's default, because the old keys said a preview existed, not how to test against it, and
+taking them as an answer would be the plugin choosing the mechanism (parent ruling 2 of #91).
+
+**Rejected alternatives.** A separate file under `.saga/`, which is git-ignored, so a fresh worktree
+would ask again. Keeping `branch_preview` beside the block, which leaves two answers to one
+question. Migrating a legacy preview silently into an `ephemeral-stack` declaration without asking.
+Running the declared commands per unit now, which would deploy units to a shared stack and break
+parent ruling 3.
+
+**Revisit when.** Pre-review testing U4 (#99) runs the declaration on the combined branch and
+retires the per-unit preview, or a second harness needs the declaration outside the saga profile.
 
 ### The review findings pane shows "unscored" apart from "not run", and takes both from the verdict
 

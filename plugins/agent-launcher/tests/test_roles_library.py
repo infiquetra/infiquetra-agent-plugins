@@ -45,7 +45,7 @@ ROLES_DIR = PACKAGE / "roles"
 
 #: The ``infiquetra-sdlc`` revision the pinned fallbacks and the prompts' ``source:`` were taken
 #: from. Asserted against every prompt, so a prompt cannot drift to another revision unnoticed.
-SDLC_PIN = "5efc869f"
+SDLC_PIN = "e5a2be10"
 
 #: The one file exempt from the per-prompt rules, by name. The README is the directory's contract
 #: document: it carries no stop rule and it is the only file allowed to name the retired plugin,
@@ -1141,23 +1141,34 @@ def test_seeded_head_pinned_ladder_fires() -> None:
     assert ladder_defects(repaired) == []
 
 
-def test_implementer_does_not_invent_a_source_for_the_preview_declaration() -> None:
-    """The lifecycle says a preview criterion applies where a repository declares one, and stops.
+def test_implementer_reports_the_combined_branch_run_where_the_lifecycle_puts_it() -> None:
+    """The lifecycle at the pin names the source and the field; the prompt must not invent others.
 
-    It does not say where a repository declares it, nor which field of the implementation result
-    carries the preview results. An earlier repair filled both gaps with plausible sentences --
-    a dispatch field the contract does not have, and a result field the lifecycle defines as
-    something else -- which is the exact class of invention every prompt forbids its session.
+    Before the pin moved past infiquetra-sdlc#174 the lifecycle said a per-unit preview applied
+    "where a repository declares one" and named neither where it was declared nor which result
+    field carried it, so the prompt had to say so. At the pin it names both: the run setup record
+    carries the repository's declared functional-test environment or its waiver, and the
+    implementation result carries the run in ``combined_branch_functional_run``. An earlier repair
+    filled the old gaps with plausible sentences -- a dispatch field the contract does not have,
+    and a result field the lifecycle defines as something else -- and both stay forbidden.
     """
     text = (ROLES_DIR / "implementer.md").read_text(encoding="utf-8")
     assert "Your dispatch names whether" not in text, "the dispatch contract has no such field"
     assert "ride in `unit_and_child_check_results`" not in text, (
         "the lifecycle defines that field as the unit's own and child-scoped checks"
     )
-    stop_rule = text.split("### Stop rule", 1)[1]
-    assert "no declared source" in stop_rule, (
-        "the preview paragraph must say the lifecycle names no source, not supply one"
+    stop_rule = " ".join(text.split("### Stop rule", 1)[1].split())
+    assert "`combined_branch_functional_run`" in stop_rule, (
+        "the stop rule must name the result field the lifecycle gives the combined-branch run"
     )
+    assert "run setup record" in stop_rule, (
+        "the stop rule must name the lifecycle's source for the declared environment"
+    )
+    assert "A unit deploys nothing on its own account" in stop_rule, (
+        "the per-unit branch preview is gone at the pin; the deployed check runs on the combined"
+        " branch"
+    )
+    assert "branch preview" not in stop_rule, "the stop rule still describes the retired preview"
 
 
 def test_functional_tester_names_one_set_of_terminal_states() -> None:
@@ -1255,15 +1266,20 @@ def test_changelog_names_the_pin() -> None:
             encoding="utf-8"
         )
     )
-    entry = changelog.split(f"## [{manifest['version']}]", 1)[1].split("\n## [", 1)[0]
-    assert SDLC_PIN in entry, f"the {manifest['version']} entry does not name the pin {SDLC_PIN}"
+    # The newest entry is the one that ships with the pin. Versions are bumped once, by a release
+    # pull request, so a pin move lands under [Unreleased] first and that heading then becomes the
+    # version's entry; an [Unreleased] heading, when present, is therefore the entry to check.
+    heading = "## [Unreleased]" if "## [Unreleased]" in changelog else f"## [{manifest['version']}]"
+    label = "Unreleased" if heading == "## [Unreleased]" else manifest["version"]
+    entry = changelog.split(heading, 1)[1].split("\n## [", 1)[0]
+    assert SDLC_PIN in entry, f"the {label} entry does not name the pin {SDLC_PIN}"
     stale = {
         tok
         for tok in re.findall(r"\b[0-9a-f]{8}\b", entry)
         if tok != SDLC_PIN and not tok.isdigit()
     }
     assert not stale, (
-        f"the {manifest['version']} entry names a revision other than the pin: {stale}"
+        f"the {label} entry names a revision other than the pin: {stale}"
     )
 
 
@@ -1543,8 +1559,8 @@ def test_seeded_parser_accepts_both_empty_list_spellings() -> None:
 
 
 def test_seeded_parser_keeps_colons_in_values() -> None:
-    parsed = parse_frontmatter("---\nsource: sdlc@5efc869f docs/a.md: the thing\n---\nb\n")
-    assert parsed["source"] == "sdlc@5efc869f docs/a.md: the thing"
+    parsed = parse_frontmatter("---\nsource: sdlc@e5a2be10 docs/a.md: the thing\n---\nb\n")
+    assert parsed["source"] == "sdlc@e5a2be10 docs/a.md: the thing"
 
 
 def test_seeded_parser_returns_empty_for_no_frontmatter() -> None:

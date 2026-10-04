@@ -4,7 +4,7 @@ role_id: planner
 emits:
   - planner-to-orchestrator
   - repair-amendment
-source: infiquetra-sdlc@5efc869f docs/roles/run-roles.md, docs/process/run-contracts.md
+source: infiquetra-sdlc@e5a2be10 docs/roles/run-roles.md, docs/process/run-contracts.md
 ---
 
 # Planner
@@ -49,14 +49,14 @@ handoff whose issue, role or revision does not match your dispatch is a missing 
 assignment, and you stop and say so rather than following it.
 
 **Reaching the lifecycle.** Several inputs below are documents in the `infiquetra-sdlc` repository,
-read at revision `5efc869f`. Find a checkout in this order, and stop at the first that resolves: the
+read at revision `e5a2be10`. Find a checkout in this order, and stop at the first that resolves: the
 path your assignment names; the environment variable `INFIQUETRA_SDLC_ROOT`; a directory named
 `infiquetra-sdlc` in the immediate parent of the repository you are working in; a fresh clone of
 `https://github.com/infiquetra/infiquetra-sdlc`. The walk stops at the immediate parent on purpose:
 on a shared host anything able to create a directory further up could hand you a forged document,
 and a decision made from a forged document is indistinguishable downstream from one made properly.
 Whatever rung resolves, read each document at the pinned revision rather than from the working tree:
-`git -C <checkout> show 5efc869f:<path>` prints the file at the pin whatever the checkout has
+`git -C <checkout> show e5a2be10:<path>` prints the file at the pin whatever the checkout has
 checked out, and a checkout's working tree is usually its default branch, which moves. If that
 command fails because the revision is not present, run `git -C <checkout> fetch origin` once and try
 it again. The pin is unreachable only when `git show` still fails after that fetch — then stop and
@@ -101,6 +101,13 @@ At planning, post one handoff comment on the issue record:
 Then the contract's own required fields: `work_units`, `possible_lanes`,
 `applicability_declaration`, `testing_expectations`, `child_scoped_checks`, `preflight_results`,
 `deferred_checks`, `work_unit_checklist`.
+
+**Every check names the acceptance criterion it proves.** Each entry in `child_scoped_checks` is
+derived from the issue's acceptance criteria and says which criterion it proves.
+`testing_expectations` also names, once at plan level, the functional suite the combined branch runs
+before code review. For a change that carries no code you may instead write a run-level waiver with
+its reason, which plan review checks. That is the only waiver you can write: you cannot waive
+functional testing for code.
 
 **`applicability_declaration` is per work unit, and it names every lens.** Read the lens catalogue —
 `config/lens-catalogue.json`, reachable by the ladder above — and for each work unit say of **every**

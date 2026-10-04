@@ -134,6 +134,23 @@ remain, then prints the staffing and lens tables in one fixed format. Then:
    - `lens_declaration`: `{"always_on": [...], "conditional_applies": {"<lens>": "<reason>"},
      "conditional_does_not_apply": {"<lens>": "<reason>"}}`, with every conditional lens in the
      table in exactly one of the two maps and a reason for each one left out.
+
+   **When `functional_test_environment` is outstanding**, the operator declares how this
+   repository's changes are functionally tested before review. Collect it in the same message,
+   never choose it yourself, and record it as one of:
+
+   - `functional_test_environment`: `{"kind": "local" | "emulator" | "ephemeral-stack" |
+     "shared-nonprod", "deploy_command": "...", "test_command": "...", "teardown_command": "...",
+     "scope": "private" | "shared"}`. `test_command` is required; `deploy_command` is required
+     except for `local`; `teardown_command` is optional; `shared-nonprod` is always shared. Where
+     the printed question shows a `[default: ...]` migrated from a legacy branch preview, offer it
+     for the operator to confirm or change, and still ask for the test command.
+   - `functional_test_waiver`: `{"reason": "..."}`, where functional testing does not apply to the
+     repository at all, such as documentation only. The reason is required.
+
+   Admission writes this answer to `.saga-profile.json` in the checkout it ran in, and says so.
+   Commit that file with the plan, so the declaration reaches review in this run's pull request and
+   the next run in this repository is not asked again.
 3. **Record the answers**, which writes the run record and clears the questions:
 
    ```bash
@@ -154,9 +171,9 @@ an empty question set and costs nothing. The schema is
 
 The questions admission asks are the run's shape, not the plan's content: Risk tier and its
 justification, the seven approval-boundary scopes, the destination, staffing overrides, the lens
-declaration, the repair allowances, the response to unfinished functional testing, whether the
-repository has a branch preview, whether `main` is consumed directly, and whether the change is
-code, docs, or mixed. Phase 5's own questions (destination, backend) are separate and stay where
+declaration, the repair allowances, the response to unfinished functional testing, the repository's
+functional-test environment (kind, commands, private or shared) or a waiver reason, whether `main`
+is consumed directly, and whether the change is code, docs, or mixed. Phase 5's own questions (destination, backend) are separate and stay where
 they are; where admission has already recorded the destination, do not ask it again.
 
 ### 0.2 Issue handoff routing

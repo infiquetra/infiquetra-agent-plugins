@@ -113,7 +113,8 @@ Twelve, in this write order. Anything else is an unknown field, handled as above
 | `pending_questions` | the questions still to put to the operator; empty means nothing is outstanding |
 | `risk_tier` / `risk_justification` | the blast-radius tier and the one sentence saying why |
 | `destination` | saga's routing intent: `plan-only`, `pr`, `merge` or `nonprod-deploy` |
-| `branch_preview` | whether this repository has a branch preview deployment |
+| `functional_test_environment` | the repository's functional-test environment or waiver, resolved (issue #97): `{mode: declared, kind, deploy_command, test_command, teardown_command, scope, source}`, or `{mode: waived, level: repository, reason, source}`, where `source` is `profile` or `operator`. `{mode: incomplete, ..., missing, source: legacy-branch-preview}` is a profile still on the legacy `branch_preview` keys, recorded so the question can offer it as the default; it does not answer the question. Absent when nothing is declared. See `references/repository-profile.md` |
+| `branch_preview` | legacy: whether the repository had a branch preview deployment. Read only for records admitted before issue #97; admission no longer asks it |
 | `main_consumed_directly` | whether this repository's `main` branch is consumed directly |
 | `change_shape` | `code`, `docs` or `mixed` |
 | `lens_proposal` | the Jev lens proposal issue #110 writes: `{probabilities: {<lens>: 0.0–1.0}, ...}`. `admission.py --render` reads `probabilities` for the lens table's Jev probability column: 0.8 and above reads pre-checked, 0.6 up to 0.8 reads consider, and lower is kept in the JSON only. Absent until #110 lands, and the column reads `not configured` |

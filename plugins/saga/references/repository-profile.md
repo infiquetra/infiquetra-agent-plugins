@@ -27,8 +27,12 @@ joins the question set.
   "repo": "infiquetra/infiquetra-claude-plugins",
   "concurrency_allocation": 10,
   "nonproduction_destination": "none",
-  "branch_preview": false,
   "main_consumed_directly": false,
+  "functional_test_environment": {
+    "kind": "local",
+    "test_command": "uv run pytest tests/functional -q",
+    "scope": "private"
+  },
   "mechanical_tool_baseline": [
     "uv run ruff check .",
     "uv run ruff format --check .",
@@ -53,26 +57,77 @@ Four of the thirteen, named in `run-record.md`:
 | `mechanical_tool_baseline` | the commands that constitute "green" for this repository's stack |
 | `preflight_checks` | the checks planning performs before implementation starts |
 
-It also supplies two admission answers that are repository facts rather than run choices:
-`branch_preview` and `main_consumed_directly`. Both are among the questions the card lists, and both
-have the same answer every time for a given repository — which is exactly what a profile is for.
+It also settles two admission questions that are repository facts rather than run choices:
+`main_consumed_directly`, and the functional-test environment below. Both are among the questions
+admission asks, and both have the same answer every time for a given repository — which is exactly
+what a profile is for.
 
-## One optional key, for the build loop
+## The functional-test environment, or a waiver
 
-| Key | Type | Holds |
+Every code-bearing run proves its change works before code review: it builds the combined branch,
+deploys or starts it, runs the functional suite derived from the issue's acceptance criteria, and
+tears it down. The repository says once, here, how that is done. Saga never chooses the mechanism.
+This is the lifecycle's repository declaration at infiquetra-sdlc `e5a2be10` (the run model's
+combined-branch functional run).
+
+```json
+"functional_test_environment": {
+  "kind": "ephemeral-stack",
+  "deploy_command": "make stack-up BRANCH=$BRANCH",
+  "test_command": "make functional",
+  "teardown_command": "make stack-down BRANCH=$BRANCH",
+  "scope": "private"
+}
+```
+
+| Field | Required | Holds |
 |---|---|---|
-| `branch_preview_command` | string, optional | what the build loop runs to deploy a branch preview, in a repository whose `branch_preview` is `true` |
+| `kind` | yes | `local` (built and started on the host doing the work), `emulator` (a local emulation of the repository's cloud services, such as LocalStack), `ephemeral-stack` (a stack created for this branch alone) or `shared-nonprod` (the repository's shared non-production stack) |
+| `deploy_command` | yes, except for `local` | what builds and deploys, or starts, the change |
+| `test_command` | yes | what runs the functional suite against it |
+| `teardown_command` | no | what tears it down; when present it runs on every exit path, including a failed pass |
+| `scope` | yes, except for `shared-nonprod` | `private` to the branch, or `shared`. `shared-nonprod` is always `shared`: omit the scope or say `shared`; `private` is refused |
 
-It is **optional**, so a profile without it stays valid and `repository_profile.v1` does not change.
-It is written down here rather than only read in code because a key one consumer reads and no
-document describes is precisely the drift this repository keeps tests for.
+On a `shared-nonprod` stack only the combined branch is deployed, one run at a time, right before
+review; units still run their local checks first (parent ruling 3 of issue #91). Running the
+commands is pre-review testing U4: admission and the build loop read, check, record and print the
+declaration, and nothing in this change runs it.
 
-Where `branch_preview` is `true` and this key is absent, the build loop records the preview as
-`could-not-execute` with the reason "the profile declares a preview but names no command". It does
-**not** guess a deployment command: guessing a deployment is the one class of guess that can do
-real damage. Where `branch_preview` is `false` the key is ignored and the loop records
-`no-preview-declared`. Both cases are in
-`plugins/saga/references/mechanical-baseline.md` under "The branch preview".
+### The waiver
+
+A repository where functional testing does not apply, such as a documentation-only catalog, records
+a waiver instead:
+
+```json
+"functional_test_waiver": {"reason": "documentation only: nothing here runs"}
+```
+
+The reason is required; a waiver without one is refused. A profile that carries both
+`functional_test_environment` and `functional_test_waiver` is refused, because the two are
+alternatives and choosing between them is the operator's call. This is the lifecycle's
+**repository-level** waiver, supplied only by the operator. The other kind, a run-level waiver for a
+change that carries no code, is written by the Planner in the plan and is not part of this file.
+
+Admission records which one the run used at `admission.functional_test_environment` in the run
+record: `{"mode": "declared", <the five fields>, "source": ...}` or `{"mode": "waived", "level":
+"repository", "reason": ..., "source": ...}`, where `source` is `profile` or `operator`. The build
+loop's dry run prints it.
+
+### Migration from `branch_preview`
+
+The block replaces `branch_preview` and `branch_preview_command`, which earlier profiles carried for
+a per-unit branch preview. Admission reads an old profile like this, and asks once:
+
+| Old profile | Read as | What admission does |
+|---|---|---|
+| `branch_preview: true` and a `branch_preview_command` | an incomplete declaration: `kind` `ephemeral-stack`, `scope` `private`, `deploy_command` the old command, no `test_command` | asks the question once, with those values as its default, so the operator confirms or changes them and adds the test command |
+| `branch_preview: true` and no command | the same, with `deploy_command` missing too | asks once, with the kind and scope as the default |
+| `branch_preview: false`, or neither key | nothing declared | asks once |
+
+The plugin never takes the migrated values as an answer: the old keys said a preview existed, not
+how to test against it. When the operator answers, the write-back removes both legacy keys.
+`branch_preview_command` is still read by the build loop's legacy per-unit preview for records
+admitted before issue #97; see `plugins/saga/references/mechanical-baseline.md`.
 
 The remaining nine parameters come from elsewhere and are not the profile's business:
 `staffing_models_and_efforts` from the staffing component in fleet-core; `applicable_lenses` and
@@ -82,5 +137,18 @@ The remaining nine parameters come from elsewhere and are not the profile's busi
 
 ## Editing it
 
-By hand, in a pull request, like any other tracked configuration. A value changed here changes what
-admission stops asking, so the change belongs in review rather than in a run.
+Two ways, and both go through review.
+
+**Admission writes the functional-test declaration once.** When the operator answers the
+functional-test question, `admission.py` writes the answer into `.saga-profile.json` under the
+`--repo-root` it ran with (the working directory by default, which is the checkout `/plan` writes
+the plan into). It keeps every other key and its place, removes the alternative key and both legacy
+keys, and creates the file with `"schema": "repository_profile.v1"` when there is none. The write is
+atomic, and it happens before the run record is saved, so a failed write leaves the question
+outstanding rather than recorded. `--dry-run` writes nothing. Commit the file with the run's other
+changes: the declaration then reaches review in that run's pull request, and every later worktree
+sees it.
+
+**Everything else is edited by hand, in a pull request**, like any other tracked configuration. A
+value changed here changes what admission stops asking, so the change belongs in review rather than
+in a run.

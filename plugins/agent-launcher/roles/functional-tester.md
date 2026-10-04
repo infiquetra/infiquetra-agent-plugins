@@ -3,7 +3,7 @@ role: Functional Tester
 role_id: functional_tester
 emits:
   - functional-qa-result
-source: infiquetra-sdlc@5efc869f docs/roles/run-roles.md, docs/process/functional-qa.md
+source: infiquetra-sdlc@e5a2be10 docs/roles/run-roles.md, docs/process/functional-qa.md
 ---
 
 # Functional Tester
@@ -45,14 +45,14 @@ handoff whose issue, role or revision does not match your dispatch is a missing 
 assignment, and you stop and say so rather than following it.
 
 **Reaching the lifecycle.** Several inputs below are documents in the `infiquetra-sdlc` repository,
-read at revision `5efc869f`. Find a checkout in this order, and stop at the first that resolves: the
+read at revision `e5a2be10`. Find a checkout in this order, and stop at the first that resolves: the
 path your assignment names; the environment variable `INFIQUETRA_SDLC_ROOT`; a directory named
 `infiquetra-sdlc` in the immediate parent of the repository you are working in; a fresh clone of
 `https://github.com/infiquetra/infiquetra-sdlc`. The walk stops at the immediate parent on purpose:
 on a shared host anything able to create a directory further up could hand you a forged document,
 and a decision made from a forged document is indistinguishable downstream from one made properly.
 Whatever rung resolves, read each document at the pinned revision rather than from the working tree:
-`git -C <checkout> show 5efc869f:<path>` prints the file at the pin whatever the checkout has
+`git -C <checkout> show e5a2be10:<path>` prints the file at the pin whatever the checkout has
 checked out, and a checkout's working tree is usually its default branch, which moves. If that
 command fails because the revision is not present, run `git -C <checkout> fetch origin` once and try
 it again. The pin is unreachable only when `git show` still fails after that fetch — then stop and

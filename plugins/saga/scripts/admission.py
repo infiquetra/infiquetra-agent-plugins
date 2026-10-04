@@ -20,6 +20,11 @@ Putting the one message to the operator is the ``/plan`` skill's job, because th
 a conversation; keeping interactive input out of here is what makes "the operator is asked exactly
 once" a property a test can check rather than something a human has to observe.
 
+It writes one file besides the run record (issue #97): when the operator answers the
+functional-test environment question, the answer is written to the tracked ``.saga-profile.json``
+under ``--repo-root``, so the next run in that repository is not asked again. ``--dry-run`` writes
+neither.
+
 Exit codes are the run record's (see ``references/run-record.md``): 0 success, 2 a refusal —
 including a card that fails the validator — and 3 an unknown record version.
 """
@@ -33,7 +38,7 @@ import re
 import subprocess  # nosec B404
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -41,6 +46,7 @@ from typing import Any
 _SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(_SCRIPTS))
 
+import functional_environment  # noqa: E402  (after the sys.path shim, by design)
 import run_record  # noqa: E402  (after the sys.path shim, by design)
 
 #: The tracked per-repository profile. Tracked, at the repository root, because `.saga/` is
@@ -81,9 +87,17 @@ PROFILE_PARAMETERS: dict[str, str] = {
     "preflight_checks": "preflight_checks",
 }
 
-#: The two admission answers a profile can settle, because they are facts about a repository
-#: rather than choices about a run.
-PROFILE_ADMISSION_ANSWERS: tuple[str, ...] = ("branch_preview", "main_consumed_directly")
+#: The admission answers a profile settles as they stand, because they are facts about a repository
+#: rather than choices about a run. The functional-test environment is the other repository fact;
+#: it is checked before it is used, so it is read through ``functional_environment`` instead.
+PROFILE_ADMISSION_ANSWERS: tuple[str, ...] = ("main_consumed_directly",)
+
+#: The functional-test environment question's key, which is also where admission records the
+#: resolved declaration or waiver (``admission.functional_test_environment``).
+FUNCTIONAL_TEST_KEY = functional_environment.PROFILE_KEY
+
+#: The answers-file key for a repository-level waiver: the alternative to the environment block.
+FUNCTIONAL_TEST_WAIVER_KEY = functional_environment.WAIVER_KEY
 
 #: The lens catalogue supplies these two; the staffing component reads the catalogue, so they are
 #: filled from the same call that fills staffing.
@@ -127,7 +141,18 @@ QUESTIONS: tuple[Question, ...] = (
         "When prescribed functional testing cannot finish: bring the result to the operator, or "
         "continue repair toward the prescribed tests",
     ),
-    Question("branch_preview", "Does this repository have a branch preview deployment?"),
+    Question(
+        FUNCTIONAL_TEST_KEY,
+        "How is a change in this repository functionally tested before code review? Name the "
+        "kind: local (built and started on this host), emulator (a local emulation of its cloud "
+        "services, such as LocalStack), ephemeral-stack (a stack created for the branch alone) or "
+        "shared-nonprod (the shared non-production stack). Give the deploy-or-start command "
+        "(optional for local), the test command that runs the functional suite (required), an "
+        "optional teardown command, and whether the environment is private or shared "
+        "(shared-nonprod is always shared). Or give a reason to waive functional testing for the "
+        "whole repository, for example documentation only. The answer is written to "
+        ".saga-profile.json, so it is asked once per repository",
+    ),
     Question("main_consumed_directly", "Is this repository's main branch consumed directly?"),
     Question("change_shape", "Is this change code, docs, or mixed?"),
 )
@@ -310,6 +335,22 @@ def fill_defaults(
                 "value": profile[answer],
                 "source": "profile",
             }
+
+    if not _environment_answered(admission):
+        try:
+            resolved = functional_environment.resolve(profile)
+        except functional_environment.DeclarationError as exc:
+            raise AdmissionError(f"{PROFILE_FILENAME}: {exc}") from exc
+        if resolved is not None:
+            # An incomplete (legacy branch_preview) declaration is recorded too, so the question
+            # can offer it as the default; only a declared or waived one answers the question.
+            admission[FUNCTIONAL_TEST_KEY] = resolved
+            if resolved["mode"] in functional_environment.ANSWERED_MODES:
+                key, value = functional_environment.profile_entry(resolved)
+                admission.setdefault("answers", {})[FUNCTIONAL_TEST_KEY] = {
+                    "value": {key: value} if key != FUNCTIONAL_TEST_KEY else value,
+                    "source": "profile",
+                }
 
     if (
         staffing is not None
@@ -564,9 +605,19 @@ def _resolve_strictness_ladder(staffing: Any) -> Any | None:
     return ladder if ladder is not None else None
 
 
+def _environment_answered(admission: dict[str, Any]) -> bool:
+    """Is a declared environment or a waiver recorded? An incomplete migration is not an answer."""
+    recorded = admission.get(FUNCTIONAL_TEST_KEY)
+    return (
+        isinstance(recorded, dict) and recorded.get("mode") in functional_environment.ANSWERED_MODES
+    )
+
+
 def _is_answered(record: run_record.RunRecord, key: str) -> bool:
     """Has *key* already been answered? Used to decide what NOT to ask (plan R9)."""
     admission = record.admission
+    if key == FUNCTIONAL_TEST_KEY:
+        return _environment_answered(admission)
     if key in admission.get("answers", {}):
         return True
     if key in admission and admission[key] is not None:
@@ -579,8 +630,27 @@ def _is_answered(record: run_record.RunRecord, key: str) -> bool:
 
 
 def outstanding_questions(record: run_record.RunRecord) -> list[Question]:
-    """The questions still to put to the operator, in order. Empty means nothing is outstanding."""
-    return [question for question in QUESTIONS if not _is_answered(record, question.key)]
+    """The questions still to put to the operator, in order. Empty means nothing is outstanding.
+
+    A profile migrated from the legacy ``branch_preview`` keys is incomplete, so the
+    functional-test question is still asked, with the migrated values as its default: the operator
+    confirms or changes them, and the plugin chooses nothing (parent ruling 2).
+    """
+    outstanding: list[Question] = []
+    for question in QUESTIONS:
+        if _is_answered(record, question.key):
+            continue
+        if question.key == FUNCTIONAL_TEST_KEY:
+            migrated = record.admission.get(FUNCTIONAL_TEST_KEY)
+            if isinstance(migrated, dict) and migrated.get("mode") == "incomplete":
+                default = {
+                    field: migrated[field]
+                    for field in functional_environment.FIELDS
+                    if migrated.get(field) is not None
+                }
+                question = replace(question, default=default)
+        outstanding.append(question)
+    return outstanding
 
 
 #: The vendor the tier palette staffs. A run is Claude-only (issue #90, ruling 5), so an override
@@ -840,15 +910,25 @@ def apply_answers(
     approval_scope = dict(record.approval_scope)
     known = {question.key for question in QUESTIONS}
 
-    unknown = sorted(set(answers) - known - {"risk_justification"})
+    unknown = sorted(set(answers) - known - {"risk_justification", FUNCTIONAL_TEST_WAIVER_KEY})
     if unknown:
         raise AdmissionError(f"not admission questions: {', '.join(unknown)}")
     if "staffing_overrides" in answers:
         validate_staffing_overrides(answers["staffing_overrides"], record, staffing)
     if "lens_declaration" in answers:
         validate_lens_declaration(answers["lens_declaration"], staffing)
+    environment = functional_environment_answer(answers)
 
+    if environment is not None:
+        admission[FUNCTIONAL_TEST_KEY] = environment
+        key, value = functional_environment.profile_entry(environment)
+        admission.setdefault("answers", {})[FUNCTIONAL_TEST_KEY] = {
+            "value": {key: value} if key != FUNCTIONAL_TEST_KEY else value,
+            "source": "operator",
+        }
     for key, value in answers.items():
+        if key in (FUNCTIONAL_TEST_KEY, FUNCTIONAL_TEST_WAIVER_KEY):
+            continue
         admission.setdefault("answers", {})[key] = {"value": value, "source": "operator"}
         if key == "approval_scope" and isinstance(value, dict):
             for category in run_record.APPROVAL_CATEGORIES:
@@ -879,6 +959,18 @@ def apply_answers(
             "approval_scope": approval_scope,
         }
     )
+
+
+def functional_environment_answer(answers: dict[str, Any]) -> dict[str, Any] | None:
+    """The operator's functional-test environment or waiver, checked, or ``None`` if not answered.
+
+    Refuses an unknown kind, a missing test command, a missing deploy command outside ``local``, a
+    scope that contradicts the kind, a waiver without a reason, and both answers at once.
+    """
+    try:
+        return functional_environment.from_answers(answers)
+    except functional_environment.DeclarationError as exc:
+        raise AdmissionError(str(exc)) from exc
 
 
 def validate_card(body: str, validator: Callable[[str], tuple[bool, list[str]]]) -> dict[str, Any]:
@@ -1033,6 +1125,12 @@ def render(record: run_record.RunRecord, outstanding: list[Question], path: Path
         if record.run_configuration[name]["source"] != "unset"
     )
     lines.append(f"  ({filled} of {len(run_record.RUN_CONFIGURATION_PARAMETERS)} parameters)")
+    lines.append("")
+    recorded = record.admission.get(FUNCTIONAL_TEST_KEY)
+    environment = recorded if isinstance(recorded, dict) else None
+    source = f"  [{environment.get('source')}]" if environment else ""
+    lines.append(f"Functional-test environment:{source}")
+    lines.extend(f"  {line}" for line in functional_environment.describe(environment))
     lines.append("")
     if outstanding:
         lines.append(f"Questions to answer, once ({len(outstanding)}):")
@@ -1572,6 +1670,17 @@ def read_answers(source: str) -> dict[str, Any]:
     return answers
 
 
+def _write_profile(repo_root: Path, environment: dict[str, Any]) -> Path:
+    """Write the operator's declaration or waiver into the tracked profile (issue #97)."""
+    try:
+        return functional_environment.write_declaration(repo_root, environment)
+    except (OSError, functional_environment.DeclarationError) as exc:
+        raise AdmissionError(
+            f"could not write the functional-test declaration to "
+            f"{Path(repo_root) / PROFILE_FILENAME}: {exc}"
+        ) from exc
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="admission.py",
@@ -1580,7 +1689,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--issue", type=int, required=True)
     parser.add_argument("--repo", default=None, help="owner/name; defaults to the origin remote.")
     parser.add_argument("--store-root", default=None, help="Override the resolved store directory.")
-    parser.add_argument("--repo-root", default=None, help="Where to look for .saga-profile.json.")
+    parser.add_argument(
+        "--repo-root",
+        default=None,
+        help=(
+            "Where .saga-profile.json is read from, and where an answered functional-test "
+            "declaration is written."
+        ),
+    )
     parser.add_argument(
         "--answers",
         default=None,
@@ -1636,7 +1752,19 @@ def main(argv: list[str] | None = None) -> int:
             answers=answers,
             suggest=args.suggest,
         )
-        path = None if args.dry_run else save_admission(store_root, record)
+        path = None
+        if not args.dry_run:
+            environment = functional_environment_answer(answers or {})
+            if environment is not None:
+                # The profile first: a failed write leaves the record unsaved, so the question is
+                # still outstanding on the next run rather than recorded as answered.
+                written = _write_profile(repo_root, environment)
+                print(
+                    f"Wrote the functional-test declaration to {written}; commit it with this "
+                    "run's changes.",
+                    file=sys.stderr,
+                )
+            path = save_admission(store_root, record)
         if args.render == "json":
             data = review_data(record, outstanding, staffing, path, repo_root)
             print(json.dumps(data, indent=2, sort_keys=True))
