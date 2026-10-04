@@ -13,6 +13,19 @@ The catalog requires `python>=3.12`.
 
 ### Added
 
+- The tier judgment (issue #96). The `tier` verb gains a `direction` question (below, same or
+  above the task's `default_tier`) and an `auto_floor` of 0.80 beside its 0.60 confidence floor;
+  `Verb` has a new `auto_floor` field. `staffing.classify_judgment` sorts an answer into a band
+  (`auto-raise`, `confirm-raise`, `raise-at-ceiling`, `advisory-lower`, `agrees`, `log-only`,
+  `not-consulted`); only `auto-raise` applies, and nothing ever lowers a tier.
+  `staffing.one_step_raise` (one step, effort first, never to fable or past `xhigh`),
+  `one_step_lower` (display only), `tier_direction` (the verdict label), `jev_raise_from`,
+  `record_tier_verdicts`, `judgment_unit` and `tiering_enabled` are new.
+- `INFIQUETRA_TYPESAFE_TIERING=off` switches the tier judgment off; the consult returns before
+  the client is loaded and makes no request.
+- `jev_log.record_verdict` takes `state_hash=` and `questions_hash=` in place of `state` and
+  `questions`, so a verdict can be logged once its label is known; it refuses a call with neither.
+- `typesafe.md` §7 documents the tier judgment, and house rule 10 states its raise-only exception.
 - `fleet_commons.effort_rider` understands a fourth spawn kind, `claude-agent-type`: a subagent
   dispatched as an agent type whose definition carries the resolved model and effort (saga's
   Claude Code mod, issue #106). It is a real-knob pass-through, so `inject_effort` returns the
@@ -40,6 +53,18 @@ The catalog requires `python>=3.12`.
 
 ### Changed
 
+- `staffing.consult_tier_suggestions` asks the `direction` question, one per unit in one request,
+  with the issue (`issue=`) and each unit's task beside its default tier as state. It returns
+  `judgments` (was `suggestions`), logs nothing itself, and takes `getenv=`, `cache=` and
+  `auto_floor=`; `log_verdicts=` and `log_dir=` are gone. Decision ids use the new prefix
+  `staffing/tier-direction`. `SUGGEST_DECISION_PREFIX`, `SUGGESTED_EFFORT_ALIASES` and the
+  operator-override record for a differing suggestion are removed.
+- `TIER_POLICY` names every work shape's default exactly as `staffing.json` declares it (it said
+  mechanical work runs on Haiku), and the `tier` verb's model and effort choices are the palette:
+  fable, opus, sonnet, haiku and low, medium, high, xhigh. A test holds the policy to
+  `staffing.json` in both directions.
+- `staffing.py resolve --suggest` prints a `judgment:` line with the direction, confidence, both
+  floors and the band it would take in a run; `applies:` stays the default.
 - `references/staffing.md` describes the registered-type route and keeps the rider as the
   fallback, records that Claude Code 2.1.289 honors `effort:` in a plugin agent file (read from the
   build's loader), and corrects the agent-file paragraph: agent files live under the Claude

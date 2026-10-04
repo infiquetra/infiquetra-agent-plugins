@@ -172,6 +172,58 @@ def test_an_unwritable_directory_fails_loudly(tmp_path) -> None:
 # --------------------------------------------------------------------------- #
 
 
+def test_record_verdict_accepts_precomputed_hashes(tmp_path) -> None:
+    """A verdict written after the request, once its label is known, uses the stored hashes
+    (issue #96) and is otherwise the same record."""
+    state_hash, questions_hash = log.digest(STATE), log.digest(QUESTIONS)
+    record = log.record_verdict(
+        decision_id="staffing/tier-direction:o/r#96:role:worker",
+        state_hash=state_hash,
+        questions_hash=questions_hash,
+        answer=ANSWER,
+        confidence=0.93,
+        threshold=0.6,
+        resolved_model="jev-1.13.0",
+        label="above",
+        directory=tmp_path,
+    )
+    direct = log.record_verdict(
+        decision_id="d",
+        state=STATE,
+        questions=QUESTIONS,
+        answer=ANSWER,
+        confidence=0.93,
+        threshold=0.6,
+        resolved_model="jev-1.13.0",
+        directory=tmp_path,
+    )
+    assert record["state_hash"] == state_hash == direct["state_hash"]
+    assert record["questions_hash"] == questions_hash == direct["questions_hash"]
+    assert set(record) == set(direct)
+    assert record["label"] == "above"
+    assert record["verdict_hash"] == log.digest(
+        {key: record[key] for key in ("decision_id", "state_hash", "questions_hash", "at")}
+    )
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [{"questions": QUESTIONS}, {"state": STATE}, {"state_hash": "h"}, {"questions_hash": "h"}],
+)
+def test_record_verdict_refuses_neither_state_nor_hash(tmp_path, missing) -> None:
+    with pytest.raises(ValueError, match="needs the"):
+        log.record_verdict(
+            decision_id="d",
+            answer=ANSWER,
+            confidence=0.9,
+            threshold=0.6,
+            resolved_model="jev-1.13.0",
+            directory=tmp_path,
+            **missing,
+        )
+    assert not (tmp_path / log.VERDICT_FILENAME).exists()
+
+
 def test_key_order_cannot_change_a_hash() -> None:
     assert log.digest({"a": 1, "b": 2}) == log.digest({"b": 2, "a": 1})
 

@@ -185,6 +185,8 @@ def test_the_tool_and_the_registry_carry_the_same_verbs() -> None:
 def test_a_verb_carries_its_policy_text_in_one_place() -> None:
     tier = jev_verbs.VERBS["tier"].question_set()
     assert tier["model"]["instructions"]["policy"] == jev_verbs.TIER_POLICY
+    # The direction question is the one saga staffing asks (issue #96); it carries the same text.
+    assert tier["direction"]["instructions"]["policy"] == jev_verbs.TIER_POLICY
 
 
 def test_issue_flags_covers_the_five_flags_and_the_seven_approval_boundaries() -> None:

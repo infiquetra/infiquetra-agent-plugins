@@ -119,11 +119,15 @@ def _read_lines(path: Path) -> tuple[list[dict[str, Any]], int]:
 # --------------------------------------------------------------------------- #
 
 
+#: Stands in for "not passed", because ``None`` is a state a caller could hash.
+_UNSET: Any = object()
+
+
 def record_verdict(
     *,
     decision_id: str,
-    state: Any,
-    questions: Mapping[str, Any],
+    state: Any = _UNSET,
+    questions: Mapping[str, Any] | None = None,
     answer: Mapping[str, Any],
     confidence: float | None,
     threshold: float | None,
@@ -131,17 +135,34 @@ def record_verdict(
     label: Any = None,
     directory: Path | None = None,
     clock: Callable[[], float] = time.time,
+    state_hash: str | None = None,
+    questions_hash: str | None = None,
 ) -> dict[str, Any]:
     """Append one verdict.  Stores hashes and the answer, never the raw state.
 
     ``confidence`` is ``None`` for a yes/no answer, which carries a probability
     and no confidence field -- verified against the live endpoint.
+
+    ``state_hash`` and ``questions_hash`` stand in for ``state`` and ``questions``
+    when the verdict is written after the request, once its label is known: saga
+    staffing's tier judgment keeps the two hashes beside the answer in the run
+    record and logs the verdict when the operator's answer arrives (issue #96).
+    Each hash must be :func:`digest` of what was asked.  Neither form for either
+    half is refused rather than hashed as nothing.
     """
+    if state_hash is None:
+        if state is _UNSET:
+            raise ValueError("record_verdict needs the state or its state_hash")
+        state_hash = digest(state)
+    if questions_hash is None:
+        if questions is None:
+            raise ValueError("record_verdict needs the questions or their questions_hash")
+        questions_hash = digest(dict(questions))
     record = {
         "kind": "verdict",
         "decision_id": decision_id,
-        "state_hash": digest(state),
-        "questions_hash": digest(dict(questions)),
+        "state_hash": state_hash,
+        "questions_hash": questions_hash,
         "answer": dict(answer),
         "confidence": confidence,
         "threshold": threshold,
