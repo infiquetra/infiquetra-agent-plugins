@@ -5364,16 +5364,17 @@ def _contract_scaffold_body(
     return "\n\n".join(sections)
 
 
-# Machine-rendered handoff sections (review-finding #5 cascade): a prepare
-# owns these the way it owns the sidecar mirror — they are re-rendered from
-# the current maturity/artifact on every compile, never carried from a prior
-# generation.
 # Retired by issue #94: prepare no longer stamps an issue-type tier band, but
 # every draft prepared before #94 still ends with this section. It stays in the
 # strip list so a --from revision of such a draft drops it; otherwise the strip
 # loop stops at it and the older handoff sections above it are duplicated.
 _RETIRED_TIER_BAND_SECTION = "### Recommended Tier Band"
 
+# Machine-rendered handoff sections (review-finding #5 cascade): a prepare
+# owns these the way it owns the sidecar mirror — they are re-rendered from
+# the current maturity/artifact on every compile, never carried from a prior
+# generation. The list also holds the retired tier band, which is stripped but
+# never re-rendered (see _RETIRED_TIER_BAND_SECTION).
 _HANDOFF_CONTEXT_SECTIONS = (
     "### Handoff maturity",
     "### Suggested next action",
