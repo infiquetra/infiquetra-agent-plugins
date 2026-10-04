@@ -2,12 +2,16 @@
 
 ``com.infiquetra.claude/mods/run-record.ts`` reads saga state only by running
 ``run_record.py show <issue>`` and parsing what it prints. Its tests under
-``claude plugin test`` feed it hand-written process results, because the test
-kit's engine runs no process. That leaves one gap: the hand-written results
-could drift from what the script really prints and exits with. This module
-closes it from the Python side, by running the real script against a throwaway
-store and checking each fact the TypeScript parser keys on: the record version,
-the no-record message prefix, and the exit codes.
+``claude plugin test`` feed the parser hand-written process results, and a mod's
+own reader, the function that holds ``$``, is tested there too by stubbing the
+engine's process runner (``on('process.run', ...)``). Either way the process
+result is written by hand, so it could drift from what the script really prints
+and exits with. This module closes that gap from the Python side, by running the
+real script against a throwaway store and checking each fact the TypeScript
+parser keys on: the record version, the no-record message prefix, and the exit
+codes. It also ties the failure reasons the parser returns to the state
+contract's ``SagaRunReadFailure`` union, because nothing type-checks the
+adapter's TypeScript in continuous integration (DECISIONS.md, 2026-10-04).
 
 Every store here is a ``tmp_path``; nothing touches the primary checkout's
 ``.claude/saga/`` store.
@@ -32,7 +36,7 @@ CONTRACT = REPO_ROOT / "plugins" / "saga" / "com.infiquetra.claude" / "types" / 
 def _ts_constant(name: str) -> str:
     """The literal a top-level ``const`` in the reader is set to."""
     match = re.search(
-        rf"^(?:export )?const {name} = (?:'([^']*)'|(\d+))$",
+        rf"^(?:export )?const {name}(?:: \w+)? = (?:'([^']*)'|(\d+))$",
         READER.read_text(encoding="utf-8"),
         re.MULTILINE,
     )
@@ -100,3 +104,14 @@ def test_a_corrupt_record_is_an_error_not_a_missing_record(store: Path) -> None:
     ran = _show(store, 10)
     assert ran.returncode == int(_ts_constant("EXIT_RECORD_ERROR"))
     assert not ran.stderr.strip().startswith(_ts_constant("NO_RECORD_PREFIX"))
+
+
+def test_every_failure_reason_the_reader_returns_is_in_the_contract() -> None:
+    returned = set(re.findall(r"reason: '([a-z-]+)'", READER.read_text(encoding="utf-8")))
+    union = re.search(
+        r"export type SagaRunReadFailure =(.*?)\n\n", CONTRACT.read_text(encoding="utf-8"), re.S
+    )
+    assert union, "the contract no longer declares SagaRunReadFailure"
+    declared = set(re.findall(r"\| '([a-z-]+)'", union.group(1)))
+    assert returned, "run-record.ts returns no failure reason, so this check finds nothing"
+    assert returned == declared, f"reader returns {sorted(returned)}, contract declares {sorted(declared)}"

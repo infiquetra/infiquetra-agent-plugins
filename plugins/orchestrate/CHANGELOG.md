@@ -7,7 +7,9 @@
 - The Claude adapter carries an empty hooks module, `com.infiquetra.claude/mods/index.ts`, named
   from a new `com.infiquetra.claude/hooks/hooks.json` that `.claude-plugin/plugin.json` now names.
   It registers no hook yet; it exists so continuous integration validates and tests the adapter
-  before the fleet pane lands (issue #101).
+  before the fleet pane lands (issue #101). The hooks file also carries an empty `"hooks": {}`:
+  Claude Code 2.1.220 and 2.1.241 refuse a hooks file without that object, which would put
+  orchestrate in a plugin-load error on those builds.
 
 ## [6.0.1] - 2026-09-22
 

@@ -97,8 +97,9 @@ package's Claude adapter:
 - Saga's and orchestrate's modules sit under `com.infiquetra.claude/mods/`.
   Each adapter's `hooks/hooks.json` names one entry module under `modules`
   (`["../mods/index.ts"]`), beside saga's command hooks in the same file.
-  Orchestrate had no hooks file, so it gains one holding only `modules`, and its
-  Claude packaging manifest gains the `hooks` path.
+  Orchestrate had no hooks file, so it gains one holding `modules` and an empty
+  `"hooks": {}`, and its Claude packaging manifest gains the `hooks` path. The
+  empty object is required, not decoration: see the older-build observation.
 - Saga's state contract for mods is `com.infiquetra.claude/types/index.d.ts`,
   named by `"types"` in `plugins/saga/.claude-plugin/plugin.json`. That is a
   path-only change, as the 2026-08-25 decision "Claude installs the package
@@ -143,12 +144,46 @@ including the PreToolUse gates, and ran the SessionStart hooks. 2.1.220 and
 2.1.241 ignore `modules`. 2.1.242 through 2.1.285 log that the module was not
 loaded and carry on. On 2.1.289 a module that fails to load (`"no.such.event"
 is not an event`) logs `hooks module saga@inline failed to load` and still
-registers the eight command hooks. Builds before 2.1.286 report the manifest's
-`types` field as an unknown field they ignore; `claude plugin validate` passes
-with that warning. So the module stays in the same hooks file. One corner is
+registers the eight command hooks. Builds up to 2.1.246 report the manifest's
+`types` field as an unknown field they ignore (`claude plugin validate` passes
+with that warning); 2.1.285 recognises the field and passes with no warning. So
+the module stays in the same hooks file.
+
+Orchestrate's hooks file was checked separately, because it has no command
+hooks. Holding only `modules`, it fails to load on 2.1.220 and 2.1.241: the
+debug log shows `Failed to load hooks from
+./com.infiquetra.claude/hooks/hooks.json for orchestrate` with `"path":
+["hooks"], "message": "Invalid input: expected record, received undefined"`,
+and the plugin is marked `hook-load-failed`. Its command and skill still load,
+but an operator sees a plugin error that orchestrate never had before. Those
+builds' `claude plugin validate` does not read the hooks file, so validation
+passes and only a real load shows it. With `"hooks": {}` added, 2.1.220,
+2.1.241, 2.1.242, 2.1.285, 2.1.286 and 2.1.289 all load the file with no error
+(`--plugin-dir`, no network, 2026-10-04), and 2.1.286 and 2.1.289 still log
+`hooks module orchestrate@inline loaded`. `ModuleDeclarationTests` in
+`tests/test_claude_plugin_packaging.py` now refuses a hooks file that names a
+module without a `hooks` object. One corner is
 unverified: a build between 2.1.242 and 2.1.284 with the rollout flag turned on
 server-side, loading a module whose API it does not know. The flag could not be
 forced locally.
+
+**The adapter's TypeScript is not type-checked in CI, and that is accepted for
+now.** `claude plugin validate` does not type-check, and the tsconfig the
+engine generates covers only `hooks`, `types` and `tests` at a plugin root, so
+nothing compiles `com.infiquetra.claude/mods/` against
+`com.infiquetra.claude/types/index.d.ts`. A `tsc` step would need this build's
+`claude-code` declarations, which the engine writes only into a folder it loads
+in a session, not during `claude plugin validate` or `claude plugin test`; CI
+has no step that produces them today. Two cheaper guards stand in:
+`KNOWN_SCHEMA` is typed as the contract's `SagaRunRecordSchema`, and
+`plugins/saga/tests/test_mod_run_record_contract.py` checks that the failure
+reasons `run-record.ts` returns are exactly the contract's `SagaRunReadFailure`
+members (renaming `'error'` in the contract fails it). The adapter did
+type-check clean on 2026-10-04 with TypeScript 5.9.3 against the 2.1.289
+declarations bundled with the plugin-authoring skill, using the engine's own
+compiler options plus `allowImportingTsExtensions`; renaming `'error'` in the
+contract then failed with `TS2322`. Revisit when a mod's logic outgrows these
+guards, or when the engine can write its declarations without a session.
 
 **Rejected alternatives.** A separate hooks file for the module, which the card
 named as the fallback if an older build rejected the shared file; no build did.

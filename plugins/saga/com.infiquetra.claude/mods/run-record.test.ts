@@ -1,7 +1,18 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { KNOWN_SCHEMA, parseRunRecordShow, runRecordShowArgv, sagaScriptArgv } from './run-record.ts'
+import {
+  KNOWN_SCHEMA,
+  parseRunRecordShow,
+  runRecordRunFailed,
+  runRecordShowArgv,
+  sagaScriptArgv,
+} from './run-record.ts'
 
-const ran = (exitCode: number, stdout: string, stderr = '') => ({ exitCode, stdout, stderr })
+const ran = (exitCode: number, stdout: string, stderr = '', isStdoutTruncated = false) => ({
+  exitCode,
+  stdout,
+  stderr,
+  isStdoutTruncated,
+})
 const record = { schema: KNOWN_SCHEMA, issue: 7, next_step: 'plan', units: [] }
 
 describe('parseRunRecordShow', () => {
@@ -47,12 +58,35 @@ describe('parseRunRecordShow', () => {
     if (!read.ok) expect(read.reason).toBe('error')
   })
 
+  test('maps standard output the engine cut off to unreadable, naming the truncation', async () => {
+    const whole = JSON.stringify(record)
+    const read = parseRunRecordShow(ran(0, whole.slice(0, whole.length - 3), '', true))
+    expect(read.ok).toBe(false)
+    if (!read.ok) {
+      expect(read.reason).toBe('unreadable')
+      expect(read.detail).toContain('cut off')
+    }
+  })
+
   test('maps output that is not one JSON object to unreadable', async () => {
     for (const stdout of ['not json', '[]', 'null', '7']) {
       const read = parseRunRecordShow(ran(0, stdout))
       expect(read.ok).toBe(false)
       if (!read.ok) expect(read.reason).toBe('unreadable')
     }
+  })
+})
+
+describe('runRecordRunFailed', () => {
+  test('maps a rejected process run to error, keeping its message', async () => {
+    const read = runRecordRunFailed(new Error('spawn python3 ENOENT'))
+    expect(read).toEqual({ ok: false, reason: 'error', detail: 'run_record show did not run: spawn python3 ENOENT' })
+  })
+
+  test('maps a rejection that is not an Error to error as well', async () => {
+    const read = runRecordRunFailed('timed out')
+    expect(read.ok).toBe(false)
+    if (!read.ok) expect(read.reason).toBe('error')
   })
 })
 

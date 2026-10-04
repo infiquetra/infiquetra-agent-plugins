@@ -9,8 +9,10 @@
   yet. `mods/run-record.ts` is the shared reader every saga mod builds on: it runs
   `scripts/run_record.py show <issue>` and parses the JSON, refusing a record version other than
   `run_record.v1`. `com.infiquetra.claude/types/index.d.ts` is the state contract, named by
-  `types` in `.claude-plugin/plugin.json`. Mods load from Claude Code 2.1.286; older builds ignore
-  the module and keep every command hook (issue #101).
+  `types` in `.claude-plugin/plugin.json`. Mods load from Claude Code 2.1.286; older builds do not
+  load the module and keep every command hook, because saga's hooks file still carries its `hooks`
+  object (issue #101). The reader maps a run that never reached an exit (`runRecordRunFailed`) and
+  standard output the engine cut off at 4 MiB to explicit failed reads rather than throwing.
 - Issue 95: cost per completed unit. Each unit row in the run record can carry a `usage` block,
   one entry per model session that worked the unit (session id, role, vendor, model, effort, and
   counts in five billing categories: `uncached_input`, `cache_read`, `cache_write_5m`,
