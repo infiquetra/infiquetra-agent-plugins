@@ -195,9 +195,9 @@ When Work directly launches a build unit (an Implementation Unit executed as a d
 resolve its `{model, effort}` by running the resolver:
 
 ```bash
-python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier \
+python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier --explain \
   --plan-model <model> --plan-effort <effort>      # explicit plan tier
-python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier \
+python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier --explain \
   --work-shape <shape>                             # no explicit tier
 ```
 
@@ -209,8 +209,8 @@ default apply. This file does not restate that order. A recorded raise reaches i
 `--root <checkout>` names where the overlay is read. An explicit `{model, effort}` on the plan unit
 is passed as the operator's answer and validated against the same vocabulary as every other layer,
 so a model or effort the registry does not carry is refused rather than passed through to a spawn.
-The command prints `{"model", "effort", "source"}`; `source` names the layer that won, and
-`"jev_raise_set_aside": true` appears when a passed `--jev-raise` was outranked (a plan-recorded
+The command prints exactly `{"model", "effort"}`; with `--explain` it adds `source`, the layer that
+won, and `"jev_raise_set_aside": true` when a passed `--jev-raise` was outranked (a plan-recorded
 tier outranks a recorded raise), so the evidence never hides a raise that did not apply.
 When a unit declares neither a tier nor a work shape, the selected shape is the `worker` role's work
 shape, `implementation` (`staffing.unit_work_shape_default()`), not a literal at the spawn site.

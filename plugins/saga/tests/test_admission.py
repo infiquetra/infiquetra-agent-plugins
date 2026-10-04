@@ -2250,7 +2250,9 @@ def test_the_build_unit_tier_passes_a_recorded_raise_to_the_resolver(tmp_path: P
         root=tmp_path, jev_raise={"model": "opus", "effort": "high"}
     )
     assert raised == {"model": "opus", "effort": "high", "source": "jev-raise"}
-    command = _plan_command(tmp_path, "--jev-raise", '{"model": "opus", "effort": "high"}')
+    command = _plan_command(
+        tmp_path, "--explain", "--jev-raise", '{"model": "opus", "effort": "high"}'
+    )
     assert command.returncode == 0, command.stderr
     assert json.loads(command.stdout) == {"model": "opus", "effort": "high", "source": "jev-raise"}
     refused = _plan_command(tmp_path, "--jev-raise", '{"model": "fable", "effort": "medium"}')
@@ -2273,7 +2275,7 @@ def test_the_build_unit_tier_reads_the_overlay_from_its_root(
         "effort": "high",
         "source": "overlay",
     }
-    command = _plan_command(elsewhere, "--root", str(checkout))
+    command = _plan_command(elsewhere, "--explain", "--root", str(checkout))
     assert command.returncode == 0, command.stderr
     assert json.loads(command.stdout) == {"model": "sonnet", "effort": "high", "source": "overlay"}
 
@@ -2283,6 +2285,7 @@ def test_the_build_unit_command_shows_a_raise_a_plan_tier_set_aside(tmp_path: Pa
     # command must say the raise was set aside rather than drop it without a trace.
     command = _plan_command(
         tmp_path,
+        "--explain",
         "--plan-model", "opus", "--plan-effort", "medium",
         "--jev-raise", '{"model": "opus", "effort": "high"}',
     )
@@ -2295,16 +2298,37 @@ def test_the_build_unit_command_shows_a_raise_a_plan_tier_set_aside(tmp_path: Pa
     }
 
 
+def test_the_build_unit_command_explains_the_winning_layer_only_when_asked(
+    tmp_path: Path,
+) -> None:
+    # The default output stays exactly {model, effort}; --explain adds the resolver's source and,
+    # when a passed raise was outranked, jev_raise_set_aside. Neither key leaks without the flag.
+    raise_json = '{"model": "opus", "effort": "high"}'
+    explained = _plan_command(tmp_path, "--explain")
+    assert explained.returncode == 0, explained.stderr
+    assert explained.stdout.strip() == (
+        '{"model": "opus", "effort": "medium", "source": "policy"}'
+    )
+    set_aside = _plan_command(
+        tmp_path, "--plan-model", "opus", "--plan-effort", "medium", "--jev-raise", raise_json
+    )
+    assert set_aside.returncode == 0, set_aside.stderr
+    assert json.loads(set_aside.stdout) == {"model": "opus", "effort": "medium"}
+    raised = _plan_command(tmp_path, "--jev-raise", raise_json)
+    assert json.loads(raised.stdout) == {"model": "opus", "effort": "high"}
+
+
 def test_the_build_unit_command_runs_as_an_agent_runs_it(tmp_path: Path) -> None:
     undeclared = _plan_command(tmp_path)
     assert undeclared.returncode == 0, undeclared.stderr
-    assert undeclared.stdout.strip() == '{"model": "opus", "effort": "medium", "source": "policy"}'
+    # Issue #93's acceptance criterion, literally: the default output is exactly the two-key tier.
+    assert undeclared.stdout.strip() == '{"model": "opus", "effort": "medium"}'
 
     mechanical = _plan_command(tmp_path, "--work-shape", "mechanical")
-    assert json.loads(mechanical.stdout) == {"model": "sonnet", "effort": "medium", "source": "policy"}
+    assert json.loads(mechanical.stdout) == {"model": "sonnet", "effort": "medium"}
 
     explicit = _plan_command(tmp_path, "--plan-model", "haiku", "--plan-effort", "low")
-    assert json.loads(explicit.stdout) == {"model": "haiku", "effort": "low", "source": "operator"}
+    assert json.loads(explicit.stdout) == {"model": "haiku", "effort": "low"}
 
     unknown = _plan_command(tmp_path, "--work-shape", "nope")
     assert unknown.returncode == 2

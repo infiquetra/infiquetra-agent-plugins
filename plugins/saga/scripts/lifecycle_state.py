@@ -581,6 +581,14 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="checkout whose .saga/tier-defaults.json overlay applies (default: working directory)",
     )
+    build_tier.add_argument(
+        "--explain",
+        action="store_true",
+        help=(
+            "also print the winning layer as source, and jev_raise_set_aside when a passed "
+            "--jev-raise was outranked (default output is exactly {model, effort})"
+        ),
+    )
 
     recheck = subparsers.add_parser(
         "recheck-capability",
@@ -663,6 +671,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         except (ValueError, KeyError) as exc:
             print(json.dumps({"error": str(exc)}), file=sys.stderr)
             return 2
+        if not args.explain:
+            # The default output is exactly the tier, so an agent or a check comparing the printed
+            # string sees {"model", "effort"} and nothing else (issue #93's acceptance string).
+            resolved = {"model": resolved["model"], "effort": resolved["effort"]}
         print(json.dumps(resolved))
         return 0
     if args.command == "recheck-capability":

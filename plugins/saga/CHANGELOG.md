@@ -111,8 +111,10 @@
 - Admission passes its repository root to staffing, so the overlay is read from `--repo-root`
   rather than the working directory, records each role's tier `source`, and carries a role's
   recorded `jev_raise` into the resolver and back onto the entry.
-- `resolve-build-unit-tier` prints the winning layer as `source`, and `"jev_raise_set_aside": true`
-  when a passed `--jev-raise` was outranked, such as by a plan-recorded tier.
+- `resolve-build-unit-tier` prints exactly `{"model", "effort"}` by default, the string issue #93's
+  acceptance criterion names. `--explain` adds the winning layer as `source`, and
+  `"jev_raise_set_aside": true` when a passed `--jev-raise` was outranked, such as by a
+  plan-recorded tier.
 - Admission names a recorded raise in a role refusal only when the resolver refused the raise for
   its own reason; a refusal the raise did not cause (a Claude-only shape on a role pinned to
   another vendor) is reported once, without blaming the raise.
