@@ -13,8 +13,13 @@ to, as the reference ``refs/saga/leases/<name>``:
   transaction compares it, so two hosts racing for the lease get exactly one winner.
 * **Release is a compare-and-swap delete** with the object id the holder was given when it
   acquired. Someone else's lease is never deleted by a release.
-* **A crashed pass of the same run re-acquires its own lease.** The holder names the repository and
-  the issue; one coordinator owns one run, so a lease that names this run is this run's.
+* **A dead earlier pass of the same run is replaced, and nothing else is.** The holder names the
+  repository, the issue, the host and the pass number. A later pass re-acquires a lease only when
+  the holder is the same run on the same host with a lower pass number. A pass number is taken from
+  the run record, and the next one exists only after the earlier pass recorded its result, so such
+  a holder is finished with the environment. A holder from another host, or with the same pass
+  number (a concurrent invocation, or a pass killed before it recorded anything), is ``HELD`` like
+  any other holder, and the operator releases it if it is dead.
 * **A stale lease is reported, never broken.** The holder carries its start time and the bound the
   pass expected to finish within. Past the bound it is described as ``STALE`` with the exact
   command that releases it, and the operator decides. Clock skew between hosts therefore only
@@ -40,6 +45,7 @@ import argparse
 import json
 import os
 import re
+import secrets
 import socket
 import subprocess  # nosec B404  (git is the lease store; argument vectors only, never a shell)
 import sys
@@ -161,6 +167,18 @@ class LeaseHolder:
 
     def same_run(self, other: LeaseHolder) -> bool:
         return self.repo == other.repo and self.issue == other.issue
+
+    def left_by_earlier_pass_of(self, ours: LeaseHolder) -> bool:
+        """Whether this holder is a finished earlier pass of *ours*, safe to replace.
+
+        Same run is not enough: a second invocation of the same run, on this host or another,
+        would take the lease from a pass still deploying. The holder must be on the same host and
+        carry a lower pass number, which the run record hands out only after the earlier pass
+        recorded its result.
+        """
+        return (
+            self.same_run(ours) and self.host == ours.host and self.pass_number < ours.pass_number
+        )
 
 
 @dataclass(frozen=True)
@@ -334,7 +352,16 @@ class GitRefLeaseBackend:
         tree = self._git("mktree", stdin="")
         if not _ok(tree):
             return None, f"git mktree failed: {_err(tree)}"
-        commit = self._git("commit-tree", _out(tree), "-m", holder.to_json())
+        # A nonce paragraph keeps two identical holders written in the same second from making
+        # the same object id, which the remote would accept as an up-to-date push for both.
+        commit = self._git(
+            "commit-tree",
+            _out(tree),
+            "-m",
+            holder.to_json(),
+            "-m",
+            f"nonce: {secrets.token_hex(8)}",
+        )
         if not _ok(commit):
             return None, f"git commit-tree failed: {_err(commit)}"
         return _out(commit), ""
@@ -374,6 +401,8 @@ class GitRefLeaseBackend:
             )
         body = self._git("cat-file", "commit", token)
         message = _out(body).split("\n\n", 1)[1] if "\n\n" in _out(body) else ""
+        # The holder is the message's first paragraph; a nonce paragraph follows it.
+        message = message.split("\n\n", 1)[0]
         return LeaseState(name=name, held=True, token=token, holder=LeaseHolder.from_json(message))
 
     def acquire(self, name: str, holder: LeaseHolder) -> AcquireResult:
@@ -393,7 +422,7 @@ class GitRefLeaseBackend:
             return AcquireResult(
                 COULD_NOT_EXECUTE, detail=f"the lease push to {self.remote} failed: {_err(pushed)}"
             )
-        if isinstance(state.holder, LeaseHolder) and state.holder.same_run(holder):
+        if isinstance(state.holder, LeaseHolder) and state.holder.left_by_earlier_pass_of(holder):
             replaced = self._push(f"{oid}:{ref}", expect=f"{ref}:{state.token}")
             if _ok(replaced):
                 return AcquireResult(

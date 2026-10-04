@@ -564,7 +564,10 @@ whether the run is single-lane, and which units are still to merge. When it is c
 
 The combined branch is built, deployed or started through the environment the repository declared,
 tested with the functional suite, and torn down — repeated until it is green. Run it in a checkout
-of the combined branch (the parent branch after the last merge, or the one unit's branch):
+of the combined branch (the parent branch after the last merge, or the one unit's branch). **Only the
+coordinator runs `--combined`**, one invocation at a time: a merging worker that sees integration
+complete in 3.2 reports back and stops here. A second invocation of the same run does not take the
+shared lease from a pass still running; it waits like any other run.
 
 ```bash
 uv run python plugins/saga/scripts/build_loop.py --record <run record path> \

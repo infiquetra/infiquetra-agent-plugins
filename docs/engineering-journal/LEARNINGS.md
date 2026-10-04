@@ -2,6 +2,24 @@
 
 ## 2026-10-04
 
+### Two identical lease commits are one object, so both pushes "win"
+
+**Evidence.** Issue #99, review cycle 1. `test_a_concurrent_invocation_of_the_same_pass_waits_on_a_live_lease`
+in `plugins/saga/tests/test_environment_lease.py` first failed: two invocations wrote the same
+holder within one second, `git commit-tree` produced the same object id for both, and the second
+`--force-with-lease=<ref>:` push was accepted as already up to date. `GitRefLeaseBackend._commit`
+now adds a random nonce paragraph to the commit message, and `read` parses only the first
+paragraph as the holder. The same cycle stopped a second invocation of the same run from taking
+a live lease (a holder is replaced only by a later pass on the same host) and stamped the
+holder's start time at each acquire attempt, so a lease won after a wait is not reported stale.
+
+**Mechanism.** Git objects are content-addressed. A compare-and-swap create guards against a
+different value being there, not the same value, so identical content from two writers never
+conflicts.
+
+**Generalizable rule.** When a git push is a lock, make every attempt's object unique; equal
+content from two contenders is not a conflict to git.
+
 ### In an orchestrate run, /plan runs before the rows its checks belong on exist
 
 **Evidence.** Issue #98, review cycle 1. `functional_checks.py write` refused (exit 2) a record

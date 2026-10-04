@@ -122,16 +122,39 @@ def test_a_release_with_the_wrong_token_deletes_nothing(hosts: tuple[Path, Path,
     assert _remote_ref(remote) == token
 
 
-def test_the_same_run_re_acquires_its_own_lease_after_a_crash(
+def test_a_later_pass_on_the_same_host_replaces_a_lease_left_by_an_earlier_pass(
     hosts: tuple[Path, Path, Path],
 ) -> None:
-    remote, host_a, host_b = hosts
-    L.GitRefLeaseBackend(host_a).acquire("shared-nonprod", _holder(7))
-    again = L.GitRefLeaseBackend(host_b).acquire(
+    remote, host_a, _ = hosts
+    L.GitRefLeaseBackend(host_a).acquire("shared-nonprod", _holder(7, pass_number=1))
+    again = L.GitRefLeaseBackend(host_a).acquire(
         "shared-nonprod", _holder(7, started_at="2026-10-04T01:00:00Z", pass_number=2)
     )
     assert again.status == L.REACQUIRED
     assert _remote_ref(remote) == again.token
+
+
+def test_the_same_run_from_another_host_waits_on_a_live_lease(
+    hosts: tuple[Path, Path, Path],
+) -> None:
+    remote, host_a, host_b = hosts
+    first = L.GitRefLeaseBackend(host_a).acquire("shared-nonprod", _holder(7, pass_number=1))
+    second = L.GitRefLeaseBackend(host_b).acquire(
+        "shared-nonprod", _holder(7, host="builder-2", pass_number=2)
+    )
+    assert second.status == L.HELD and not second.acquired
+    assert second.token == first.token
+    assert _remote_ref(remote) == first.token
+
+
+def test_a_concurrent_invocation_of_the_same_pass_waits_on_a_live_lease(
+    hosts: tuple[Path, Path, Path],
+) -> None:
+    remote, host_a, _ = hosts
+    first = L.GitRefLeaseBackend(host_a).acquire("shared-nonprod", _holder(7, pass_number=2))
+    second = L.GitRefLeaseBackend(host_a).acquire("shared-nonprod", _holder(7, pass_number=2))
+    assert second.status == L.HELD
+    assert _remote_ref(remote) == first.token
 
 
 def test_a_repository_pre_push_hook_does_not_run_for_a_lease_push(

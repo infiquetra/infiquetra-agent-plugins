@@ -21,8 +21,9 @@
 - New `scripts/environment_lease.py`: a shared environment takes one run at a time through the
   git reference `refs/saga/leases/<name>` on the declared remote, acquired by a compare-and-swap
   push and released by a compare-and-swap delete. The holder names the repository, issue,
-  revision, a short host label, start time and bound; a waiting run prints it, the same run
-  re-acquires its own lease after a crash, and a stale lease is reported with the exact `release`
+  revision, a short host label, start time and bound; a waiting run prints it, a later pass of
+  the same run on the same host replaces a lease left by an earlier pass (any other holder, the
+  same run's included, is waited on), and a stale lease is reported with the exact `release`
   command and never broken automatically. `status` and `release --expect <oid>` are the operator's
   commands.
 - `functional_test_environment` takes an optional `lease` block, `{remote, name}`, defaulting to

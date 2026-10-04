@@ -63,6 +63,7 @@ nothing does I/O at import.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import glob as globlib
 import json
 import os
@@ -1061,8 +1062,11 @@ def acquire_lease(
     """Take the lease, waiting up to *lease_wait* seconds on a holder and saying what it waits on."""
     started = clock()
     while True:
+        # The start time is stamped at each attempt, so a lease won after a wait does not carry
+        # the wait as time held and is never described as stale the moment it is taken.
+        attempt = dataclasses.replace(holder, started_at=environment_lease.iso_utc(wall_now()))
         try:
-            result = backend.acquire(name, holder)
+            result = backend.acquire(name, attempt)
         except environment_lease.LeaseError as exc:
             return (
                 environment_lease.AcquireResult(environment_lease.COULD_NOT_EXECUTE, detail=str(exc)),

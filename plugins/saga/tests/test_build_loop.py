@@ -20,6 +20,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -1068,7 +1069,9 @@ class FakeLeaseBackend:
         current = self.refs.get(name)
         if current is not None:
             seen = current[1]
-            if isinstance(seen, environment_lease.LeaseHolder) and seen.same_run(holder):
+            if isinstance(seen, environment_lease.LeaseHolder) and seen.left_by_earlier_pass_of(
+                holder
+            ):
                 token = self.hold(name, holder)
                 return environment_lease.AcquireResult(
                     environment_lease.REACQUIRED, token=token, holder=holder
@@ -1408,18 +1411,111 @@ def test_a_private_environment_never_takes_a_lease(tmp_path: Path) -> None:
     assert lease == {"required": False, "status": "not-required"}
 
 
-def test_the_same_run_re_acquires_its_own_lease_left_by_a_crashed_pass(tmp_path: Path) -> None:
+def _record_after_an_interrupted_pass() -> dict[str, Any]:
+    payload = _combined_record()
+    payload["combined_branch"] = {
+        "environment": dict(_SHARED),
+        "passes": [
+            {
+                "pass": 1,
+                "status": "could-not-execute",
+                "interrupted": True,
+                "environment_problems": ["the pass was interrupted: KeyboardInterrupt"],
+            }
+        ],
+    }
+    return payload
+
+
+def test_a_later_pass_replaces_the_lease_left_by_an_interrupted_pass_on_this_host(
+    tmp_path: Path,
+) -> None:
     backend = FakeLeaseBackend()
     backend.hold(
         "shared-nonprod",
-        _other_holder(repo="infiquetra/infiquetra-claude-plugins", issue=1027, host="builder-1"),
+        _other_holder(
+            repo="infiquetra/infiquetra-claude-plugins",
+            issue=1027,
+            host=environment_lease.host_label(),
+            pass_number=1,
+        ),
     )
-    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    path = _write(tmp_path / "issue-1027.json", _record_after_an_interrupted_pass())
     runner = FakeRunner()
     assert _combined(path, runner, backend) == build_loop.EXIT_GREEN
     assert "deploy-stack --env nonprod" in _commands(runner)
     assert _combined_block(path)["passes"][-1]["lease"]["status"] == "re-acquired"
     assert backend.refs == {}
+
+
+def test_a_second_invocation_of_the_same_run_does_not_take_a_live_lease(tmp_path: Path) -> None:
+    """The same run's pass still deploying, on this host or another, is waited on, not replaced."""
+    for host in (environment_lease.host_label(), "another-host"):
+        backend = FakeLeaseBackend()
+        live = _other_holder(
+            repo="infiquetra/infiquetra-claude-plugins", issue=1027, host=host, pass_number=1
+        )
+        token = backend.hold("shared-nonprod", live)
+        path = _write(tmp_path / "issue-1027.json", _combined_record())
+        runner = FakeRunner()
+        assert _combined(path, runner, backend) == build_loop.EXIT_NOT_GREEN, host
+        assert "deploy-stack --env nonprod" not in _commands(runner), host
+        assert _combined_block(path)["passes"][-1]["lease"]["status"] == "held", host
+        assert backend.refs["shared-nonprod"] == (token, live), host
+
+
+def test_a_lease_won_after_waiting_is_stamped_when_taken_and_is_not_stale() -> None:
+    """The wait is not counted as time held: the pushed start time is the moment of the win."""
+    start = datetime(2026, 10, 4, tzinfo=UTC)
+    elapsed = [0.0]
+    backend = FakeLeaseBackend()
+    backend.hold("shared-nonprod", _other_holder())
+    pushed: list[Any] = []
+    original = backend.acquire
+
+    def acquire(name: str, holder: Any) -> Any:
+        pushed.append(holder)
+        if elapsed[0] >= 1470:
+            backend.refs.pop(name, None)
+        return original(name, holder)
+
+    backend.acquire = acquire  # type: ignore[method-assign]
+
+    def sleep(seconds: float) -> None:
+        elapsed[0] += seconds
+
+    def wall_now() -> datetime:
+        return start + timedelta(seconds=elapsed[0])
+
+    ours = environment_lease.LeaseHolder(
+        repo="infiquetra/example",
+        issue=1,
+        revision="c" * 40,
+        host="builder-1",
+        started_at=environment_lease.iso_utc(start),
+        bound_seconds=600,
+        pass_number=1,
+    )
+    result, waited = build_loop.acquire_lease(
+        backend,
+        "shared-nonprod",
+        ours,
+        lease_wait=1800,
+        remote="origin",
+        repo_root=Path("."),
+        clock=lambda: elapsed[0],
+        sleep=sleep,
+        wall_now=wall_now,
+        report=lambda _: None,
+    )
+    assert result.status == environment_lease.ACQUIRED
+    assert waited >= 1470
+    won = result.holder
+    assert won.started_at == environment_lease.iso_utc(wall_now())
+    assert won.started_at == pushed[-1].started_at
+    assert not environment_lease.is_stale(won, wall_now())
+    state = backend.read("shared-nonprod")
+    assert "STALE" not in environment_lease.describe(state, wall_now())
 
 
 def test_a_stale_holder_is_reported_with_the_release_command_and_is_never_released(

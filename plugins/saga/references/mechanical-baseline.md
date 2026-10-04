@@ -266,8 +266,13 @@ deploying host already pushes to. `<name>` and the remote come from the declarat
   is never deleted by a release.
 - **A second run waits**, polling every 30 seconds up to `--lease-wait`, and prints the holder on
   each poll. When the wait runs out the pass is could-not-execute and names the holder.
-- **The same run re-acquires its own lease** left by a pass that crashed: one coordinator owns one
-  run, so a lease that names this repository and issue is this run's.
+- **A later pass of the same run replaces a lease left by an earlier pass**, and only then: the
+  holder must name this repository and issue, this host, and a lower pass number. A pass number
+  comes from the run record, which hands out the next one only after the earlier pass recorded its
+  result. A holder from another host, or with the same pass number (a concurrent invocation, or a
+  pass killed before it recorded anything), is held like any other run's lease.
+- **The start time is stamped when the lease is taken**, not when the wait began, so a lease won
+  after waiting is not reported stale the moment it is taken.
 - **A stale lease is reported, never broken.** Past its bound it is described as `STALE` with the
   command that releases it, and the operator decides:
 

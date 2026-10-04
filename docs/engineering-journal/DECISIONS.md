@@ -32,8 +32,9 @@ names, default `origin` and `shared-nonprod`. `plugins/saga/scripts/environment_
 it by pushing a commit on the empty tree, whose message is the holder, with
 `--force-with-lease=<ref>:` (an empty expected value: only if the reference does not exist) and
 `--no-verify`, and releases it by deleting it with `--force-with-lease=<ref>:<oid it acquired>`.
-The holder names the repository, issue, revision, a short host label, start time and bound. The
-same run re-acquires its own lease after a crash; a stale lease is reported with the exact release
+The holder names the repository, issue, revision, a short host label, start time and bound. A
+later pass of the same run, on the same host, replaces a lease left by an earlier pass; a holder
+from another host or with the same pass number waits like any other; a stale lease is reported with the exact release
 command and never broken automatically. The record and the merge turn stay lock-free, as issue 1018
 required; this is the one scoped exception, required by issue #91's operator ruling 3.
 
