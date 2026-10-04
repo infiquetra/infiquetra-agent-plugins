@@ -47,7 +47,16 @@ function engine(on: any, answer: { current: unknown; exitCode?: number; stdout?:
     steps: [] as any[],
     agents: [] as { id: string; type: string }[],
   }
+  // The other saga mods share this session.start chain: give them what they ask for,
+  // and record only this mod's script runs.
+  on('command.register', async (_$: any, e: any) => ({ value: { command: e.name } }))
+  on('tool.register', async (_$: any, e: any) => ({ value: { tool: e.name } }))
+  on('session.id', async () => ({ value: 'session-1' }))
   on('process.run', async (_$: any, e: any) => {
+    if (!e.argv.some((arg: string) => arg.endsWith('role_agent_types.py'))) {
+      const none = JSON.stringify({ schema: 'run_status.v1', repo_root: '/work/repo', branch: '', match: null })
+      return { value: { exitCode: 0, stdout: none, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     seen.argv.push([...e.argv])
     return {
       value: {

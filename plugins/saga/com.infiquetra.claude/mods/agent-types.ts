@@ -149,7 +149,9 @@ async function refresh($: EngineInterface, cwd: string): Promise<void> {
 }
 
 export function registerAgentTypes(on: On): void {
-  on('session.start', async ($, e, next) => {
+  // A matcher that takes every directory: the engine refuses a second matcherless
+  // `session.start` in one plugin, and the admission review mod holds that slot.
+  on('session.start', { cwd: /^/ }, async ($, e, next) => {
     await refresh($, e.cwd)
     return next(e)
   })
