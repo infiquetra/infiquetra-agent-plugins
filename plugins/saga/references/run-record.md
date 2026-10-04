@@ -192,6 +192,18 @@ mechanical-check result". The key set is deliberately **not** fixed: a consumer 
 inside a row without a version bump, because a row is one consumer's working state rather than a
 cross-consumer contract. What is fixed is that a key another consumer does not know is left alone.
 
+**The round-trip rule for every whole-row writer.** A writer that rewrites a whole unit row, or the
+whole `units` array, writes only the keys it owns from memory and carries every other key forward
+from the row as it is on disk when it writes, re-read under the record lock (see "Writing" below).
+Carrying them forward from the copy it loaded earlier is not enough: that copy misses whatever
+another writer added since. The same holds for top-level keys: everything the writer does not own
+comes from the fresh re-read. A writer that adds a key to one row in place, as the build loop does,
+must follow the same lock-and-re-read sequence. Orchestrate's `Run.save` follows this rule since issue
+113; before it, a load and save through orchestrate dropped `build_loop` and every other key its
+`Unit` did not declare. Orchestrate owns the keys its `Unit` declares and which rows exist: a row
+`start` creates fresh carries nothing forward, and a row orchestrate does not hold is not written
+back.
+
 The orchestrate plugin is the first such consumer, and issue 1025 added three keys, documented here
 so the two do not drift:
 
