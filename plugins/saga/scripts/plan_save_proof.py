@@ -320,8 +320,9 @@ def assert_regions(api: ModuleType, contract: Any, skill: str, spec: str) -> Non
         + ", ".join(groups["proxy"])
         + ": prepend an `EFFORT_RIDER` directive: a labeled proxy because the Agent tool has no per-call effort parameter.",
         "See `plugins/fleet-core/references/staffing.md`.",
-        "The proposed tier cell is `<model>/<effort>`: use `tier_resolver.resolve(...).model`",
-        "and `tier_resolver.resolve(...).effort` verbatim so dispatch receives both resolved values.",
+        "The proposed tier cell is `<model>/<effort>`: use the `model` and `effort` that",
+        "`lifecycle_state.py resolve-build-unit-tier` prints (fleet-core `staffing.resolve_shape`)",
+        "verbatim so dispatch receives both resolved values.",
         "Team Execution A7 uses the same pair and splits on `/`; its older note is tracked by #993.",
     ]
     actual = re.findall(r"<!--\n(.*?)\n-->", note, re.S)

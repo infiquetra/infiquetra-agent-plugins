@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Dispatch-time tier resolver — maps a work shape to a ``{model, effort}`` tier (#362).
 
-One callable seam for tier decisions that today live scattered across team-execution's 25
-hardcoded agent ``model:`` literals, the prose-only heuristic table at
-``plugins/saga/skills/plan/SKILL.md:298-304``, and assorted per-call literals. ``resolve()``
-reads defaults from the ``work_shapes`` block of the machine-readable ``staffing.json`` registry
-(U1, merged there by issue #1021) and never hardcodes a heuristic in code.
+``resolve()`` is the policy layer: the bottom rung of the staffing precedence. It reads a work
+shape's default from the ``work_shapes`` block of the machine-readable ``staffing.json`` registry
+(U1, merged there by issue #1021) and never hardcodes a heuristic in code. A caller that wants a
+staffing answer calls ``staffing.resolve_shape`` or ``staffing.resolve_role`` instead: those apply
+the operator's answer, the repository overlay and a recorded Jev raise above this default, in the
+one order ``staffing.TIER_PRECEDENCE`` writes down (issue #93). Calling ``resolve()`` directly
+for a staffing answer skips every one of those layers without an error.
 
 Imports ``MODELS``, ``EFFORTS``, ``model_rank``, ``effort_rank`` from ``tier_palette`` via
 ``fleet_commons_shim`` — never re-declaring the tuples (KTD1/KTD2).

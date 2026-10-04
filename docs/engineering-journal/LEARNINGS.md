@@ -283,6 +283,24 @@ last-writer-wins under it.
 **Generalizable rule.** A whole-document writer that shares its file with other writers must
 re-read under a shared lock at save time and merge its owned keys onto that fresh copy; keeping
 unknown keys from the load is necessary but not sufficient.
+### A caller that enters a layered resolver below its top layer drops every layer above it, silently
+
+**Evidence.** Before issue #93, `resolve_build_unit_tier` in `plugins/saga/scripts/lifecycle_state.py`
+called `tier_resolver.resolve(None, shape)` directly, while admission called
+`staffing.resolve_role`, which reads the `.saga/tier-defaults.json` overlay first. With an overlay
+naming `sonnet/high` for a shape, admission reported `sonnet/high` and `/work` launched at the
+registry default, with no error from either. `test_admission_plan_and_work_agree_with_an_overlay`
+in `plugins/saga/tests/test_admission.py` now pins the agreement. The same audit found that the
+`/plan` tier table's marker had named `test_skill_registry_sync` as its guard since the table was
+generated, and no test of that name existed until this change added it.
+
+**Mechanism.** `tier_resolver.resolve` is a complete, valid-looking answer on its own: it returns a
+palette member and never fails for a known shape. Nothing about its output says that the overlay
+and raise layers above it were skipped, so a caller reaching it directly gets a plausible tier
+that is wrong only when one of those layers is present.
+
+**Generalizable rule.** Call the top of a layered resolver, never a layer inside it, and when a
+document names the test that guards it, check that the test exists.
 
 ## 2026-09-22
 

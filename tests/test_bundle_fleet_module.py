@@ -689,6 +689,7 @@ class LiveTreeTests(unittest.TestCase):
                 "jev_log",
                 "plugin_resolution",
                 "retry_backoff",
+                "staffing",
                 "staffing.json",
                 "tier_palette",
                 "tier_resolver",

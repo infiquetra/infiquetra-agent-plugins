@@ -2,8 +2,11 @@
 
 Asserts the `work_shapes` block of `staffing.json` parses as JSON, every `default_model` / `default_effort`
 is a member of the canonical `MODELS` / `EFFORTS` vocabulary (tier_palette.py), and
-all generated work-shape rows from `plugins/saga/skills/plan/SKILL.md:298-304` are
+all generated work-shape rows of the tier table in `plugins/saga/skills/plan/SKILL.md` are
 represented as registry keys.
+
+Issue #93 adds the implementation work shape, the one staffing resolver's precedence, the
+Claude-only refusal, and the render-sync guard the tier table's marker has always named.
 """
 
 from __future__ import annotations
@@ -35,6 +38,7 @@ from fleet_commons.tier_palette import EFFORTS, MODELS  # noqa: E402
 # to preserve the sonnet-vs-haiku distinction the prose table draws within one row.
 SKILL_MD_ROWS = (
     "judgment",
+    "implementation",
     "mechanical",
     "read-only-survey",
     "offload-test-gated",
@@ -264,3 +268,254 @@ def test_cli_resolve_unknown_work_shape_errors(capsys: pytest.CaptureFixture[str
     exit_code = tier_resolver.main(["resolve", "--work-shape", "not-a-real-work-shape"])
     assert exit_code == 1
     assert "error:" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Issue #93 (staffing U1): the implementation work shape, the one resolver, the
+# Claude-only refusal, and the tier table's render-sync guard.
+# ---------------------------------------------------------------------------
+
+from fleet_commons import render_tier_table, staffing  # noqa: E402
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+PLAN_SKILL = REPO_ROOT / "plugins" / "saga" / "skills" / "plan" / "SKILL.md"
+
+
+@pytest.fixture
+def no_overlay(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> pathlib.Path:
+    """Run from an empty directory so no machine-local overlay can change an answer."""
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+def _write_overlay(root: pathlib.Path, overlay: dict[str, dict[str, str]]) -> None:
+    (root / ".saga").mkdir(exist_ok=True)
+    (root / ".saga" / "tier-defaults.json").write_text(json.dumps(overlay), encoding="utf-8")
+
+
+def _registry_with_worker_vendor(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, role: str, vendor: str
+) -> None:
+    document = json.loads(STAFFING_PATH.read_text(encoding="utf-8"))
+    document["roles"][role]["vendor"] = vendor
+    copy = tmp_path / "staffing.json"
+    copy.write_text(json.dumps(document), encoding="utf-8")
+    monkeypatch.setattr(staffing, "STAFFING_PATH", copy)
+
+
+def test_implementation_resolves_opus_medium_in_the_policy_layer() -> None:
+    result = resolve(None, "implementation")
+    assert (result.model, result.effort) == ("opus", "medium")
+    assert result.needs_confirm is False
+
+
+def test_only_implementation_is_declared_claude_only(registry: dict[str, dict[str, str]]) -> None:
+    flagged = {shape for shape, row in registry.items() if "claude_only" in row}
+    assert flagged == {"implementation"}
+    assert registry["implementation"]["claude_only"] is True
+
+
+def test_resolve_shape_implementation_is_opus_medium_from_policy(no_overlay: pathlib.Path) -> None:
+    decision = staffing.resolve_shape("implementation")
+    assert (decision.vendor, decision.model, decision.effort) == ("claude", "opus", "medium")
+    assert decision.source == "policy"
+
+
+def test_worker_role_resolves_claude_opus_medium(no_overlay: pathlib.Path) -> None:
+    decision = staffing.resolve_role("worker")
+    assert (decision.vendor, decision.model, decision.effort) == ("claude", "opus", "medium")
+    assert decision.work_shape == "implementation"
+
+
+@pytest.mark.parametrize("role", ["merging-worker", "release-worker"])
+def test_merging_and_release_workers_stay_on_mechanical(
+    no_overlay: pathlib.Path, role: str
+) -> None:
+    decision = staffing.resolve_role(role)
+    assert (decision.vendor, decision.model, decision.effort) == ("claude", "sonnet", "medium")
+    assert decision.work_shape == "mechanical"
+    assert staffing.resolve_shape("mechanical").tier == "sonnet/medium"
+
+
+def test_claude_only_shape_refuses_another_vendor(no_overlay: pathlib.Path) -> None:
+    with pytest.raises(staffing.StaffingError) as caught:
+        staffing.resolve_shape("implementation", vendor="codex")
+    assert "implementation" in str(caught.value)
+    assert "codex" in str(caught.value)
+
+
+def test_a_role_pinned_to_another_vendor_through_implementation_fails_loud(
+    no_overlay: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _registry_with_worker_vendor(no_overlay, monkeypatch, "worker", "codex")
+    with pytest.raises(staffing.StaffingError, match="codex"):
+        staffing.resolve_role("worker")
+
+
+def test_the_claude_only_guard_is_per_shape(
+    no_overlay: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The same pin on a judgment-shape role still translates, so the guard is the row's flag and
+    # not a blanket refusal of every pinned vendor.
+    _registry_with_worker_vendor(no_overlay, monkeypatch, "planner", "codex")
+    decision = staffing.resolve_role("planner")
+    assert decision.vendor == "codex"
+    assert decision.vendor_pinned_by_role is True
+    assert decision.model == staffing.vendors()["codex"]["models"]["gpt-5.6-terra"]
+
+
+def test_the_claude_only_guard_precedes_the_overlay(no_overlay: pathlib.Path) -> None:
+    _write_overlay(no_overlay, {"implementation": {"model": "sonnet", "effort": "high"}})
+    with pytest.raises(staffing.StaffingError, match="codex"):
+        staffing.resolve_shape("implementation", vendor="codex", root=no_overlay)
+
+
+def test_a_non_boolean_claude_only_flag_fails_loud(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    document = json.loads(STAFFING_PATH.read_text(encoding="utf-8"))
+    document["work_shapes"]["implementation"]["claude_only"] = "yes"
+    copy = tmp_path / "staffing.json"
+    copy.write_text(json.dumps(document), encoding="utf-8")
+    monkeypatch.setattr(staffing, "STAFFING_PATH", copy)
+    with pytest.raises(staffing.StaffingError, match="claude_only"):
+        staffing.resolve_shape("implementation", root=tmp_path)
+
+
+def test_precedence_is_written_once() -> None:
+    assert staffing.TIER_PRECEDENCE == ("operator", "overlay", "jev-raise", "policy")
+
+
+def test_operator_answer_wins_over_every_other_layer(no_overlay: pathlib.Path) -> None:
+    _write_overlay(no_overlay, {"implementation": {"model": "sonnet", "effort": "high"}})
+    decision = staffing.resolve_shape(
+        "implementation",
+        root=no_overlay,
+        answer={"model": "haiku", "effort": "low"},
+        jev_raise={"model": "opus", "effort": "high"},
+    )
+    assert (decision.tier, decision.source) == ("haiku/low", "operator")
+
+
+def test_overlay_wins_over_a_recorded_raise(no_overlay: pathlib.Path) -> None:
+    _write_overlay(no_overlay, {"implementation": {"model": "sonnet", "effort": "high"}})
+    decision = staffing.resolve_shape(
+        "implementation", root=no_overlay, jev_raise={"model": "opus", "effort": "high"}
+    )
+    assert (decision.tier, decision.source) == ("sonnet/high", "overlay")
+
+
+def test_a_recorded_raise_wins_over_the_policy_default(no_overlay: pathlib.Path) -> None:
+    raise_ = {
+        "model": "opus",
+        "effort": "high",
+        "confidence": 0.85,
+        "reason": "touches IAM policy",
+        "decision_id": "staffing/tier:93",
+    }
+    decision = staffing.resolve_shape("implementation", root=no_overlay, jev_raise=raise_)
+    assert (decision.tier, decision.source) == ("opus/high", "jev-raise")
+
+
+def test_a_one_model_rung_raise_is_accepted(no_overlay: pathlib.Path) -> None:
+    decision = staffing.resolve_shape(
+        "mechanical", root=no_overlay, jev_raise={"model": "opus", "effort": "medium"}
+    )
+    assert (decision.tier, decision.source) == ("opus/medium", "jev-raise")
+
+
+def test_no_layer_present_falls_to_policy(no_overlay: pathlib.Path) -> None:
+    decision = staffing.resolve_shape("implementation", root=no_overlay)
+    assert (decision.tier, decision.source) == ("opus/medium", "policy")
+
+
+@pytest.mark.parametrize(
+    ("model", "effort", "why"),
+    [
+        ("sonnet", "medium", "a lowering"),
+        ("opus", "low", "a lowering"),
+        ("opus", "medium", "no step at all"),
+        ("opus", "xhigh", "two effort rungs"),
+        ("fable", "medium", "the strongest model"),
+        ("fable", "high", "two axes at once"),
+    ],
+)
+def test_a_raise_that_is_not_exactly_one_step_up_is_refused(
+    no_overlay: pathlib.Path, model: str, effort: str, why: str
+) -> None:
+    with pytest.raises(staffing.StaffingError, match="jev raise"):
+        staffing.resolve_shape(
+            "implementation", root=no_overlay, jev_raise={"model": model, "effort": effort}
+        )
+
+
+@pytest.mark.parametrize(
+    ("model", "effort"),
+    [("gpt-5", "high"), ("opus", "max"), ("haiku", "xhigh")],
+)
+def test_an_off_palette_or_unrunnable_raise_is_refused(
+    no_overlay: pathlib.Path, model: str, effort: str
+) -> None:
+    with pytest.raises(staffing.StaffingError):
+        staffing.resolve_shape(
+            "implementation", root=no_overlay, jev_raise={"model": model, "effort": effort}
+        )
+
+
+def test_a_malformed_raise_fails_loud_even_when_the_overlay_hides_it(
+    no_overlay: pathlib.Path,
+) -> None:
+    _write_overlay(no_overlay, {"implementation": {"model": "sonnet", "effort": "high"}})
+    with pytest.raises(staffing.StaffingError, match="jev raise"):
+        staffing.resolve_shape(
+            "implementation", root=no_overlay, jev_raise={"model": "sonnet", "effort": "low"}
+        )
+
+
+def test_resolve_role_passes_the_raise_through(no_overlay: pathlib.Path) -> None:
+    decision = staffing.resolve_role("worker", jev_raise={"model": "opus", "effort": "high"})
+    assert (decision.tier, decision.source) == ("opus/high", "jev-raise")
+
+
+def test_undeclared_build_units_run_at_the_worker_shape() -> None:
+    assert staffing.unit_work_shape_default() == staffing.roles()["worker"]["work_shape"]
+    assert staffing.unit_work_shape_default() == "implementation"
+
+
+def test_implementation_keeps_its_tier_on_an_unattended_run() -> None:
+    assert staffing.unattended_step_down("implementation") is False
+    assert staffing.unattended_step_down("judgment") is True
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["resolve", "--shape", "implementation"], "opus/medium"),
+        (["resolve", "--role", "worker"], "claude opus/medium"),
+        (["resolve", "--role", "merging-worker"], "claude sonnet/medium"),
+        (["resolve", "--role", "release-worker"], "claude sonnet/medium"),
+    ],
+)
+def test_staffing_cli_short_forms(
+    no_overlay: pathlib.Path, capsys: pytest.CaptureFixture[str], argv: list[str], expected: str
+) -> None:
+    assert staffing.main(argv) == 0
+    assert capsys.readouterr().out.strip() == expected
+
+
+def _skill_tier_block() -> str:
+    text = PLAN_SKILL.read_text(encoding="utf-8")
+    begin = text.index(render_tier_table.TIER_TABLE_BEGIN)
+    end = text.index(render_tier_table.TIER_TABLE_END) + len(render_tier_table.TIER_TABLE_END)
+    return text[begin:end]
+
+
+def test_skill_registry_sync() -> None:
+    """The generated tier table in /plan's skill is byte-identical to the renderer's output."""
+    assert _skill_tier_block() == render_tier_table.render_block()
+
+
+def test_skill_registry_sync_catches_seeded_divergence() -> None:
+    policy = json.loads(json.dumps(tier_resolver.load_policy()))
+    policy["implementation"]["default_model"] = "sonnet"
+    assert render_tier_table.render_block(policy) != _skill_tier_block()

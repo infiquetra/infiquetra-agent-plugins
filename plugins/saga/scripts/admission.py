@@ -275,6 +275,7 @@ def fill_defaults(
     suggest: bool = False,
     suggest_ask: Callable[..., Any] | None = None,
     suggest_log_dir: Path | None = None,
+    repo_root: Path | None = None,
 ) -> run_record.RunRecord:
     """Fill every defaultable parameter, recording where each value came from (plan R7).
 
@@ -286,6 +287,9 @@ def fill_defaults(
     each beside its default. Advisory and fail-open: a suggestion never changes a value, and a
     component without a consult entry point — or a failed request — leaves the defaults exactly
     as they would have been.
+
+    ``repo_root`` is the checkout whose repository tier overlay staffing reads; ``None`` reads it
+    from the working directory.
     """
     configuration = {name: dict(block) for name, block in record.run_configuration.items()}
     admission = json.loads(json.dumps(record.admission))
@@ -311,7 +315,12 @@ def fill_defaults(
         and configuration["staffing_models_and_efforts"]["source"] != "operator"
     ):
         resolved = _resolve_staffing(
-            staffing, suggest=suggest, suggest_ask=suggest_ask, suggest_log_dir=suggest_log_dir
+            staffing,
+            root=repo_root,
+            recorded=configuration["staffing_models_and_efforts"].get("value"),
+            suggest=suggest,
+            suggest_ask=suggest_ask,
+            suggest_log_dir=suggest_log_dir,
         )
         if resolved is not None:
             _fill(configuration, "staffing_models_and_efforts", resolved, "staffing")
@@ -339,11 +348,18 @@ def fill_defaults(
 def _resolve_staffing(
     staffing: Any,
     *,
+    root: Path | None = None,
+    recorded: Any = None,
     suggest: bool = False,
     suggest_ask: Callable[..., Any] | None = None,
     suggest_log_dir: Path | None = None,
 ) -> dict[str, Any] | None:
     """Ask the staffing component for each role's vendor, model and effort.
+
+    The staffing component owns the tier precedence; this function restates none of it. It hands
+    over the repository root for the overlay and, for each role, any ``jev_raise`` already
+    recorded on that role's entry in ``recorded`` (the previous staffing value), and keeps that
+    raise on the entry it returns so a re-run does not drop it.
 
     With ``suggest``, one batched tier consult covers every resolved role, and each role's
     suggestion is recorded beside its default. The consult is best-effort: a component without
@@ -355,16 +371,22 @@ def _resolve_staffing(
         return None
     resolved: dict[str, Any] = {}
     operator_set: dict[str, bool] = {}
+    previous = recorded if isinstance(recorded, dict) else {}
     for role in sorted(roles):
+        entry = previous.get(role)
+        jev_raise = entry.get("jev_raise") if isinstance(entry, dict) else None
         try:
-            decision = staffing.resolve_role(role)
+            decision = staffing.resolve_role(role, root=root, jev_raise=jev_raise)
         except Exception:
             continue
         resolved[role] = {
             "vendor": getattr(decision, "vendor", None),
             "model": getattr(decision, "model", None),
             "effort": getattr(decision, "effort", None),
+            "source": getattr(decision, "source", None),
         }
+        if jev_raise is not None:
+            resolved[role]["jev_raise"] = jev_raise
         operator_set[role] = getattr(decision, "source", "policy") == "overlay"
     if suggest and resolved:
         _attach_suggestions(staffing, resolved, operator_set, suggest_ask, suggest_log_dir)
@@ -868,6 +890,7 @@ def admit(
         suggest=suggest,
         suggest_ask=suggest_ask,
         suggest_log_dir=suggest_log_dir,
+        repo_root=repo_root,
     )
     if answers:
         record = apply_answers(record, answers, staffing)

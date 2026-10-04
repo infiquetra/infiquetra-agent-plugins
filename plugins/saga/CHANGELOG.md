@@ -102,6 +102,20 @@
 
 ### Changed
 
+- The builder now defaults to Claude `opus/medium`: `resolve-build-unit-tier` with no plan tier and
+  no work shape resolves the `worker` role's work shape, `implementation`, instead of `mechanical`
+  (issue #93).
+- `resolve_build_unit_tier` resolves every input through fleet-core's `staffing.resolve_shape`. An
+  explicit plan tier is passed as the operator's answer; the repository overlay now applies, which
+  it silently did not before; and the function takes `root=` and `jev_raise=`.
+- Admission passes its repository root to staffing, so the overlay is read from `--repo-root`
+  rather than the working directory, records each role's tier `source`, and carries a role's
+  recorded `jev_raise` into the resolver and back onto the entry.
+- `/plan`'s tier section no longer names `parse_tier_band`, `resolve_tier_for_plan` or
+  `write_tier_default`, none of which exist; it runs `resolve-build-unit-tier`. `/work` and its
+  execution-strategy reference name the resolver and restate no precedence order.
+- The generated effort-honouring note points at `resolve-build-unit-tier` instead of
+  `tier_resolver.resolve`, which skips the overlay.
 - `admission.py` validates the `staffing_overrides` and `lens_declaration` answers before it records
   anything (issue #103), exiting 2 with one line: an override names a role the run staffs, that
   role's own vendor, and a model and effort the tier palette lists together; a lens declaration has

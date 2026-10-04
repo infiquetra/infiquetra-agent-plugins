@@ -11,9 +11,14 @@ reads them for a staffing answer.
 
 It answers three resolve questions:
 
-* ``resolve_shape(work_shape)`` — the tier for a work shape, honouring the repository overlay.
+* ``resolve_shape(work_shape)`` — the tier for a work shape, through every tier layer.
 * ``resolve_role(role)`` — the vendor, model and effort for a named role.
 * ``resolve_role(role, lens=...)`` — the same, plus the lens's qualification status.
+
+**Tier precedence is written once, in** :func:`resolve_shape` **and** :data:`TIER_PRECEDENCE`.
+The operator's answer wins; then the repository overlay; then a Jev-applied raise recorded in the
+run record; then the work shape's registry default. Admission, ``/plan`` and ``/work`` all reach a
+tier through this module (issue #93), so no skill or caller restates that order.
 
 It composes ``tier_palette`` and ``tier_resolver`` rather than replacing them (KTD2), and it
 dispatches nothing: every call returns a :class:`StaffingDecision` describing the answer, the
@@ -112,6 +117,18 @@ RATINGS: tuple[str, ...] = ("STRONG", "MODERATE", "WEAK")
 
 DEFAULT_VENDOR = "claude"
 
+#: The tier layers :func:`resolve_shape` consults, first match wins. Each name is also the
+#: ``source`` a decision reports. ``operator`` is the operator's explicit answer (admission's
+#: answer, or the tier a plan unit records after the operator confirmed it); ``overlay`` is the
+#: repository's ``.saga/tier-defaults.json``; ``jev-raise`` is a raise the tier judgment applied
+#: and the run record keeps (written by staffing U4, issue #96); ``policy`` is the work shape's
+#: registry default. This tuple and ``resolve_shape`` are the only places the order is written.
+TIER_PRECEDENCE: tuple[str, ...] = ("operator", "overlay", "jev-raise", "policy")
+
+#: The role whose work shape an undeclared build unit runs at. ``/work`` derives its default from
+#: this role's row rather than carrying a second work-shape literal (issue #93).
+BUILD_UNIT_ROLE = "worker"
+
 #: The named judgment verb consulted for tier suggestions (issue 1033). The verb supplies the
 #: question criteria, the policy text, and the confidence floor, so this module carries none of
 #: those as literals.
@@ -157,9 +174,11 @@ class Qualification:
 class StaffingDecision:
     """One staffing answer, with the inputs and the layer that supplied it.
 
-    ``source`` names where the *tier* came from: ``overlay`` for the per-repository file, or
-    ``policy`` for the shared work-shape registry. A vendor pinned on a role is not a tier, so it
-    is reported separately in ``vendor_pinned_by_role`` rather than overwriting that provenance.
+    ``source`` names where the *tier* came from, one of :data:`TIER_PRECEDENCE`: ``operator``
+    for an explicit answer, ``overlay`` for the per-repository file, ``jev-raise`` for a recorded
+    raise, or ``policy`` for the shared work-shape registry. A vendor pinned on a role is not a
+    tier, so it is reported separately in ``vendor_pinned_by_role`` rather than overwriting that
+    provenance.
     ``suggestion`` is the advisory tier the caller passed in, recorded whether or not it agrees
     with the chosen tier and never able to change it.
     """
@@ -376,14 +395,104 @@ def _validate_suggestion(suggestion: dict[str, str] | None) -> dict[str, str] | 
 # --------------------------------------------------------------------------- shape
 
 
+def _claude_only(work_shape: str, row: Mapping[str, Any]) -> bool:
+    """Whether a work-shape row refuses every non-Claude vendor; a non-boolean flag fails loud."""
+    flag = row.get("claude_only", False)
+    if not isinstance(flag, bool):
+        raise StaffingError(
+            f"work shape {work_shape!r} has a non-boolean claude_only {flag!r} in the registry"
+        )
+    return flag
+
+
+def unattended_step_down(work_shape: str) -> bool:
+    """Whether an unattended run may step this work shape one rung cheaper (``recommend_tier``).
+
+    True unless the registry row says ``unattended_step_down: false``. The implementation work
+    shape says false: the builder's ``opus/medium`` default is what staffing U3 measures, and a
+    posture heuristic quietly moving unattended builders back to Sonnet would hide that test.
+    """
+    registry = work_shapes()
+    work_shape = _tier_resolver.canonical_work_shape(work_shape)
+    if work_shape not in registry:
+        raise StaffingError(
+            f"unknown work-shape {work_shape!r}; expected one of {sorted(registry)}"
+        )
+    flag = registry[work_shape].get("unattended_step_down", True)
+    if not isinstance(flag, bool):
+        raise StaffingError(
+            f"work shape {work_shape!r} has a non-boolean unattended_step_down {flag!r}"
+        )
+    return flag
+
+
+def unit_work_shape_default() -> str:
+    """The work shape an undeclared build unit runs at: the ``worker`` role's own shape.
+
+    ``/work`` and ``/plan`` call this instead of naming a shape, so re-pointing the worker role in
+    the registry moves every undeclared unit with it.
+    """
+    row = roles().get(BUILD_UNIT_ROLE)
+    if not isinstance(row, dict) or "work_shape" not in row:
+        raise StaffingError(
+            f"role {BUILD_UNIT_ROLE!r} is missing from the registry or has no work_shape"
+        )
+    return str(row["work_shape"])
+
+
+def _validate_jev_raise(
+    work_shape: str,
+    raise_: object,
+    *,
+    base: Mapping[str, str],
+    registry: dict[str, Any],
+) -> dict[str, str]:
+    """Validate a recorded Jev raise against the work shape's default it raises.
+
+    A raise is exactly one step above its base: one model rung with the effort unchanged, or one
+    effort rung with the model unchanged. It never names the strongest model, and an effort off
+    the Claude palette (``max``) fails the palette check. Anything else is refused rather than
+    applied, so a recorded lowering, a two-step jump, or a hand-edited record cannot reach a
+    spawn through this layer. The recorded ``confidence``, ``reason`` and ``decision_id`` ride
+    along in the run record; the resolver reads only the tier.
+    """
+    where = f"jev raise for {work_shape!r}"
+    tier = validate_tier(work_shape, raise_, registry=registry, where=where)
+    strongest_model = MODELS[0]
+    if tier["model"] == strongest_model:
+        raise StaffingError(f"{where}: a recorded raise never reaches {strongest_model!r}")
+    model_steps = _tier_palette.model_rank(base["model"]) - _tier_palette.model_rank(tier["model"])
+    effort_steps = _tier_palette.effort_rank(tier["effort"]) - _tier_palette.effort_rank(
+        base["effort"]
+    )
+    if sorted((model_steps, effort_steps)) != [0, 1]:
+        raise StaffingError(
+            f"{where}: {tier['model']}/{tier['effort']} is not exactly one step above the "
+            f"default {base['model']}/{base['effort']} (one model rung or one effort rung)"
+        )
+    return tier
+
+
 def resolve_shape(
     work_shape: str,
     *,
     root: Path | None = None,
     suggestion: dict[str, str] | None = None,
     vendor: str = DEFAULT_VENDOR,
+    answer: Mapping[str, str] | None = None,
+    jev_raise: Mapping[str, Any] | None = None,
 ) -> StaffingDecision:
-    """Resolve a work shape to a tier: the repository overlay first, then the shared policy."""
+    """Resolve a work shape to a tier through every layer of :data:`TIER_PRECEDENCE`.
+
+    First match wins: the operator's ``answer``; the repository overlay under ``root`` (the
+    working directory when ``root`` is None); a recorded ``jev_raise``; the work shape's
+    registry default. Every layer is validated against the palette whether or not it wins, so a
+    malformed raise fails loud even when the overlay hides it.
+
+    A work shape whose row says ``claude_only`` refuses any non-Claude ``vendor`` before any
+    layer is read: its tier was chosen for a Claude model, and translating it into another
+    vendor's execution class would staff that vendor at a tier nobody decided.
+    """
     registry = work_shapes()
     # Canonicalise first: a role-tier alias is a legal input that maps onto a registry key, and
     # checking membership before mapping silently lost the three aliases the team-execution agent
@@ -394,17 +503,33 @@ def resolve_shape(
             f"unknown work-shape {work_shape!r}; expected one of {sorted(registry)} "
             f"or an alias of one ({sorted(_tier_resolver.ROLE_TIER_ALIASES)})"
         )
+    if _claude_only(work_shape, registry[work_shape]) and vendor != DEFAULT_VENDOR:
+        raise StaffingError(
+            f"work shape {work_shape!r} is Claude-only; vendor {vendor!r} cannot inherit its "
+            "tier through translation. Pin the role to a work shape without claude_only, or "
+            "unpin the vendor."
+        )
     recorded = _validate_suggestion(suggestion)
-    overlay = load_overlay(root)
-    if work_shape in overlay:
-        tier = overlay[work_shape]
-        source = "overlay"
-    else:
-        # Pass the already-loaded block: tier_resolver.load_policy() re-reads and re-parses the
-        # whole registry on every call, which is the read the memoized loader exists to avoid.
-        resolution = _tier_resolver.resolve(None, work_shape, policy=registry)
-        tier = {"model": resolution.model, "effort": resolution.effort}
-        source = "policy"
+    # Pass the already-loaded block: tier_resolver.load_policy() re-reads and re-parses the whole
+    # registry on every call, which is the read the memoized loader exists to avoid.
+    resolution = _tier_resolver.resolve(None, work_shape, policy=registry)
+    default = {"model": resolution.model, "effort": resolution.effort}
+    layers: dict[str, dict[str, str] | None] = {
+        "operator": (
+            validate_tier(work_shape, answer, registry=registry, where="operator answer")
+            if answer is not None
+            else None
+        ),
+        "overlay": load_overlay(root).get(work_shape),
+        "jev-raise": (
+            _validate_jev_raise(work_shape, jev_raise, base=default, registry=registry)
+            if jev_raise is not None
+            else None
+        ),
+        "policy": default,
+    }
+    source = next(name for name in TIER_PRECEDENCE if layers[name] is not None)
+    tier = layers[source] or default
     model, effort = translate_for_vendor(vendor, tier["model"], tier["effort"])
     return StaffingDecision(
         vendor=vendor,
@@ -535,12 +660,15 @@ def resolve_role(
     suggestion: dict[str, str] | None = None,
     checkout: Path | None = None,
     require_lens: bool = True,
+    answer: Mapping[str, str] | None = None,
+    jev_raise: Mapping[str, Any] | None = None,
 ) -> StaffingDecision:
     """Resolve a role to a vendor, model and effort, and for a reviewing role its lens status.
 
-    The tier comes from the role's work shape, so the per-repository overlay still wins where it
-    names that shape. A role may pin a vendor; the pin is reported in ``vendor_pinned_by_role``
-    and does not change ``source``, which names only where the tier came from.
+    The tier comes from the role's work shape through :func:`resolve_shape`, so ``answer``, the
+    per-repository overlay and ``jev_raise`` apply in the one precedence order written there. A
+    role may pin a vendor; the pin is reported in ``vendor_pinned_by_role`` and does not change
+    ``source``, which names only where the tier came from.
 
     A lens only ever narrows the answer: it attaches the qualification status read from the
     ledger, which can downgrade a scoring executor to the documented-policy outcome but never
@@ -553,7 +681,14 @@ def resolve_role(
     vendor = str(row.get("vendor", DEFAULT_VENDOR))
     if vendor not in vendors():
         raise StaffingError(f"role {role!r} pins unknown vendor {vendor!r}")
-    base = resolve_shape(work_shape, root=root, suggestion=suggestion, vendor=vendor)
+    base = resolve_shape(
+        work_shape,
+        root=root,
+        suggestion=suggestion,
+        vendor=vendor,
+        answer=answer,
+        jev_raise=jev_raise,
+    )
     model, effort = base.model, base.effort
 
     qualification: Qualification | None = None

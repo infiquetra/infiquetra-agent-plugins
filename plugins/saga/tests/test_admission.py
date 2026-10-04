@@ -1951,3 +1951,173 @@ def test_the_lens_jev_cell_carries_its_band_for_a_pane(adm: ModuleType) -> None:
         "performance": "pre-checked",
         "privacy": "consider",
     }
+
+
+# ---------------------------------------------------------------------------
+# Issue #93 (staffing U1): admission, /plan and /work resolve one tier through
+# fleet-core's one staffing resolver. These use the bundled staffing component
+# admission really loads, never a fake, because the defect being closed was three
+# paths that each looked right alone and disagreed with each other.
+# ---------------------------------------------------------------------------
+
+import subprocess  # noqa: E402
+
+LIFECYCLE_STATE = SCRIPTS / "lifecycle_state.py"
+SAGA_SKILLS = REPO_ROOT / "plugins" / "saga" / "skills"
+TIER_DOCS = (
+    SAGA_SKILLS / "plan" / "SKILL.md",
+    SAGA_SKILLS / "work" / "SKILL.md",
+    SAGA_SKILLS / "work" / "references" / "execution-strategy.md",
+)
+
+
+def _bundled_staffing(adm: ModuleType) -> Any:
+    staffing = adm.load_staffing()
+    if staffing is None:
+        pytest.skip("saga's bundled staffing component is not reachable")
+    return staffing
+
+
+def _overlay(root: Path, model: str, effort: str) -> None:
+    (root / ".saga").mkdir(exist_ok=True)
+    (root / ".saga" / "tier-defaults.json").write_text(
+        json.dumps({"implementation": {"model": model, "effort": effort}}), encoding="utf-8"
+    )
+
+
+def _admitted_staffing(
+    adm: ModuleType, repo_root: Path, *, previous: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    run_record = _load("run_record")
+    record = run_record.RunRecord(issue=93, repo="infiquetra/infiquetra-agent-plugins")
+    if previous is not None:
+        configuration = {name: dict(block) for name, block in record.run_configuration.items()}
+        configuration["staffing_models_and_efforts"] = {"value": previous, "source": "staffing"}
+        record = run_record.RunRecord(**{**record.__dict__, "run_configuration": configuration})
+    filled = adm.fill_defaults(record, {}, _bundled_staffing(adm), repo_root=repo_root)
+    block = filled.run_configuration["staffing_models_and_efforts"]
+    assert block["source"] == "staffing"
+    return block["value"]
+
+
+def _plan_command(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run the command /plan and /work name, the way an agent runs it (AGENTS.md rule)."""
+    return subprocess.run(
+        [sys.executable, str(LIFECYCLE_STATE), "resolve-build-unit-tier", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_admission_staffs_the_worker_at_opus_medium(
+    adm: ModuleType, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(repo_root)
+    value = _admitted_staffing(adm, repo_root)
+    worker = value["worker"]
+    assert (worker["vendor"], worker["model"], worker["effort"]) == ("claude", "opus", "medium")
+    assert worker["source"] == "policy"
+    for role in ("merging-worker", "release-worker"):
+        row = value[role]
+        assert (row["vendor"], row["model"], row["effort"]) == ("claude", "sonnet", "medium")
+
+
+def _three_paths(adm: ModuleType, repo_root: Path) -> dict[str, tuple[str, str]]:
+    worker = _admitted_staffing(adm, repo_root)["worker"]
+    lifecycle_state = _load("lifecycle_state")
+    work = lifecycle_state.resolve_build_unit_tier(root=repo_root)
+    plan = _plan_command(repo_root)
+    assert plan.returncode == 0, plan.stderr
+    planned = json.loads(plan.stdout)
+    direct = _bundled_staffing(adm).resolve_shape("implementation", root=repo_root)
+    return {
+        "admission": (worker["model"], worker["effort"]),
+        "work": (work["model"], work["effort"]),
+        "plan": (planned["model"], planned["effort"]),
+        "resolver": (direct.model, direct.effort),
+    }
+
+
+def test_admission_plan_and_work_agree_with_no_overlay(
+    adm: ModuleType, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(repo_root)
+    paths = _three_paths(adm, repo_root)
+    assert set(paths.values()) == {("opus", "medium")}, paths
+
+
+def test_admission_plan_and_work_agree_with_an_overlay(
+    adm: ModuleType, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Before #93 /work called the policy layer directly and skipped this overlay.
+    _overlay(repo_root, "sonnet", "high")
+    monkeypatch.chdir(repo_root)
+    paths = _three_paths(adm, repo_root)
+    assert set(paths.values()) == {("sonnet", "high")}, paths
+
+
+def test_admission_reads_the_overlay_from_its_repo_root(
+    adm: ModuleType, repo_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _overlay(repo_root, "sonnet", "high")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    worker = _admitted_staffing(adm, repo_root)["worker"]
+    assert (worker["model"], worker["effort"], worker["source"]) == ("sonnet", "high", "overlay")
+
+
+def test_admission_applies_and_keeps_a_recorded_raise(
+    adm: ModuleType, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(repo_root)
+    raise_ = {
+        "model": "opus",
+        "effort": "high",
+        "confidence": 0.86,
+        "reason": "refund logic",
+        "decision_id": "staffing/tier:93",
+    }
+    previous = {
+        "worker": {"vendor": "claude", "model": "opus", "effort": "high", "jev_raise": raise_}
+    }
+    worker = _admitted_staffing(adm, repo_root, previous=previous)["worker"]
+    assert (worker["model"], worker["effort"], worker["source"]) == ("opus", "high", "jev-raise")
+    assert worker["jev_raise"] == raise_
+
+
+def test_the_build_unit_command_runs_as_an_agent_runs_it(tmp_path: Path) -> None:
+    undeclared = _plan_command(tmp_path)
+    assert undeclared.returncode == 0, undeclared.stderr
+    assert undeclared.stdout.strip() == '{"model": "opus", "effort": "medium"}'
+
+    mechanical = _plan_command(tmp_path, "--work-shape", "mechanical")
+    assert json.loads(mechanical.stdout) == {"model": "sonnet", "effort": "medium"}
+
+    explicit = _plan_command(tmp_path, "--plan-model", "haiku", "--plan-effort", "low")
+    assert json.loads(explicit.stdout) == {"model": "haiku", "effort": "low"}
+
+    unknown = _plan_command(tmp_path, "--work-shape", "nope")
+    assert unknown.returncode == 2
+    assert "nope" in json.loads(unknown.stderr)["error"]
+
+    unrunnable = _plan_command(tmp_path, "--plan-model", "haiku", "--plan-effort", "xhigh")
+    assert unrunnable.returncode == 2
+    assert "unrunnable" in json.loads(unrunnable.stderr)["error"]
+
+
+@pytest.mark.parametrize("doc", TIER_DOCS, ids=lambda path: path.name)
+def test_the_skills_name_the_resolver_and_restate_no_precedence(doc: Path) -> None:
+    text = doc.read_text(encoding="utf-8")
+    for retired in (
+        "parse_tier_band",
+        "resolve_tier_for_plan",
+        "write_tier_default",
+        "tier_defaults",
+        "overlay >",
+        "issue band",
+    ):
+        assert retired not in text, f"{doc.name} still names {retired!r}"
+    assert "resolve-build-unit-tier" in text

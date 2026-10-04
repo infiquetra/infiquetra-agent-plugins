@@ -18,6 +18,9 @@
 
 ### Changed
 
+- The build-time Fleet Core bundle now carries `staffing.py`, because the bundled
+  `intent_envelope.recommend_tier` takes its base tier from the staffing resolver (issue #93).
+  Regenerated `staffing.json` and `tier_resolver.py` carry the new `implementation` work shape.
 - Existing issues keep their band section. Nothing reads it, so it is inert and is not rewritten. A `--from` revision of a draft prepared before #94 still strips the section, through the `_RETIRED_TIER_BAND_SECTION` entry in the handoff strip list.
 
 ### Tests

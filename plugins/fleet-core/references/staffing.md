@@ -11,7 +11,7 @@ a staffing question of; `tier_palette.py` and `tier_resolver.py` read the same f
 the vocabulary and the work-shape and runtime resolution their existing importers already use.
 Grow the vocabulary **there**, never with a second bare literal elsewhere — a repository-wide
 guard,
-`tests/test_tier_vocab_single_source.py::test_no_bare_model_literals_outside_module`, fails the
+`plugins/fleet-core/tests/test_tier_vocab_single_source.py::test_no_bare_model_literals_outside_module`, fails the
 build if a second vocabulary source appears in production Python.
 
 ## What the data file holds
@@ -19,7 +19,7 @@ build if a second vocabulary source appears in production Python.
 | Block | What it answers |
 |---|---|
 | `models`, `efforts`, `scalar_efforts` | the Claude model and effort vocabulary, and the portable scalar superset |
-| `work_shapes` | the tier default per work shape — the eight rows `tier_resolver.resolve()` reads |
+| `work_shapes` | the tier default per work shape — the nine rows `tier_resolver.resolve()` reads; a row may carry `claude_only` and `unattended_step_down` |
 | `vendors` | the per-vendor palette: models, accepted efforts, effort collapse, effort application |
 | `capability_ratings` | per model family and per engine variant, with trust tiers and cost-and-speed ranks |
 | `roles` | per-role staffing defaults: the work shape a role's tier comes from, and the capability its candidates are ranked by |
@@ -85,21 +85,54 @@ execution-class names the vendor palette is keyed on, and its effort collapsed t
 per-vendor table a launch would use. A pin naming a vendor whose `runtime_supported` is false is
 refused rather than answered, because the answer would be a tier nobody can launch.
 
+**A Claude-only work shape is never translated.** A `work_shapes` row carrying `"claude_only": true`
+refuses every non-Claude vendor before any tier layer is read: its tier was chosen for a Claude
+model, and rendering it as another vendor's execution class would staff that vendor at a tier
+nobody decided. `implementation` (the `worker` role's shape, `opus/medium`) is the one such row
+today. A role pinned to another vendor through it fails loud, naming the vendor; pin that role to a
+shape without the flag, or unpin the vendor. The flag lives outside the portable subset shared with
+the Codex plugin repository, so it needs no schema version change.
+
 **The translation has a hole, and it is the weakest rung.** The portable vocabulary has three names
 (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5`) and the Claude palette has four, so `haiku` has nothing
 to translate through. Two work shapes resolve to `haiku` — `purely-mechanical` and
 `offload-test-gated` — and a role pinning a non-Claude vendor on either of them fails loud rather
 than guessing. Giving the vendor palettes a fourth execution class is what closes it.
 
-**Precedence.** For a work shape: the per-repository overlay at `.saga/tier-defaults.json` first,
-then the shared `work_shapes` policy. On the command line "per-repository" means *relative to the
-working directory* — there is no upward walk, so running from a subdirectory silently skips an
-overlay that exists at the repository root. The `source` field in `--json` is how you tell: it
-reads `overlay` or `policy`. A Python caller should pass `root=` explicitly rather than rely on the
-working directory. For a role: the role's own entry, which names a work shape and
-may pin a vendor; where it names only a work shape the work-shape precedence applies. A lens only
-ever narrows the answer — it attaches a qualification status that can downgrade a scoring executor
-to the documented-policy outcome, and can never promote one.
+**Precedence — written here and in `staffing.py`, nowhere else.** For a work shape,
+`resolve_shape` takes the first of these that is present (`staffing.TIER_PRECEDENCE`):
+
+1. `operator` — the operator's explicit answer, passed as `answer=`: admission's answer, or the
+   tier a plan unit records after the operator confirmed it in `/plan`'s table (`/work` passes it
+   as `--plan-model` / `--plan-effort`).
+2. `overlay` — the per-repository overlay at `.saga/tier-defaults.json`.
+3. `jev-raise` — a raise the tier judgment applied, recorded in the run record and passed as
+   `jev_raise=` (written by staffing U4, issue #96; absent until then). The resolver refuses a
+   recorded raise that is not exactly one step above the work shape's default — one model rung or
+   one effort rung, not both — or that names `fable`; `max` is off the Claude palette and fails
+   the palette check.
+4. `policy` — the shared `work_shapes` default.
+
+Every layer is validated whether or not it wins. Admission, `/plan` (through
+`lifecycle_state.py resolve-build-unit-tier`), `/work` and `intent_envelope.recommend_tier` all call
+this resolver; a skill or caller that restates the order is a second copy waiting to drift, so they
+name the resolver instead. `tier_resolver.resolve()` is the `policy` layer alone: calling it for a
+staffing answer skips the three layers above it without an error.
+
+On the command line "per-repository" means *relative to the working directory* — there is no
+upward walk, so running from a subdirectory silently skips an overlay that exists at the repository
+root. The `source` field in `--json` is how you tell: it names the layer from the list above. A
+Python caller should pass `root=` explicitly rather than rely on the working directory; admission
+passes its `--repo-root`. For a role: the role's own entry, which names a work shape and may pin a
+vendor; where it names only a work shape the work-shape precedence applies. A lens only ever
+narrows the answer — it attaches a qualification status that can downgrade a scoring executor to
+the documented-policy outcome, and can never promote one.
+
+**An undeclared build unit runs at the worker's shape.** `staffing.unit_work_shape_default()`
+returns the `worker` role's `work_shape`, so re-pointing that role moves every undeclared unit with
+it. **An unattended run steps one rung cheaper** (`intent_envelope.recommend_tier`) unless the row
+says `"unattended_step_down": false`; `implementation` says false, because the builder's default is
+what the run's cost-per-unit measurement checks.
 
 **Failing loud.** An unknown work shape, role, vendor or lens, an off-palette model, an effort above
 a model's ceiling, and a malformed overlay each raise with the offending value named. This component
@@ -188,7 +221,8 @@ is no model or effort for this component to choose.
    on `debug`.
 2. Optionally add `"vendor"` to pin the role to a vendor other than `claude`. No shipped role does,
    so read the hole named under "Asking the resolver" first: a pinned vendor on a work shape that
-   resolves to `haiku` cannot be rendered.
+   resolves to `haiku` cannot be rendered, and one on a `claude_only` shape (`implementation`) is
+   refused outright.
 3. A role whose capability is `adversarial-review` is a *reviewing* role: `resolve` requires a lens
    for it, and `explain` accepts one optionally.
 4. The role vocabulary itself belongs to the software-development-lifecycle repository (issue
@@ -203,9 +237,9 @@ Most specific wins, in this order:
 2. Team-level default (an optional team-wide effort override; usually absent today).
 3. Per-teammate agent-frontmatter default (`effort:`).
 
-The cascade wraps `tier_resolver.resolve(role_kind, work_shape, envelope_ceiling,
-operator_override)` — it is not a fourth standalone resolver. A plan-unit tier maps to
-`operator_override={"effort": …}` when present, short-circuiting the wrap.
+The cascade wraps `staffing.resolve_shape(work_shape, root=…, answer=…)` — it is not a fourth
+standalone resolver. A plan-unit tier is passed as the operator's `answer` when present, which wins
+over every other tier layer.
 
 Any `plugins/*/agents/*.md` file may carry an `effort:` frontmatter field, and its value must be one
 of `EFFORTS`. A required lint (`tests/test_agent_tier_lint.py`, reused by
@@ -291,8 +325,8 @@ runtimes. `SCALAR_EFFORTS` derives from `scalar_efforts` the same way `EFFORTS` 
 
 - The `/plan` tier table is **rendered** from the registry by `render_tier_table.py`, and the
   team-execution worker table is **validated** against it. A hand-edit that drifts fails
-  `tests/test_tier_resolver.py::test_skill_registry_sync` and the tier-token guards in
-  `tests/test_tier_vocab_single_source.py`. Change the registry, not the tables.
+  `plugins/fleet-core/tests/test_tier_resolver.py::test_skill_registry_sync` and the tier-token
+  guards in `plugins/fleet-core/tests/test_tier_vocab_single_source.py`. Change the registry, not the tables.
 - `effort_ceiling` for engine-owned chaperone-dispatch workers — those stay pinned to their
   chaperone tiers and are excluded from the per-teammate ceiling halt.
 - The capability ratings are **copied** from `plugins/saga/references/engine-registry.yaml`, and a

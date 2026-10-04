@@ -363,8 +363,9 @@ def render_effort_note(contract: Contract) -> str:
         lines.append(f"For {group}: {sentence}")
     lines += [
         f"See `{EFFORT_REFERENCE}`.",
-        "The proposed tier cell is `<model>/<effort>`: use `tier_resolver.resolve(...).model`",
-        "and `tier_resolver.resolve(...).effort` verbatim so dispatch receives both resolved values.",
+        "The proposed tier cell is `<model>/<effort>`: use the `model` and `effort` that",
+        "`lifecycle_state.py resolve-build-unit-tier` prints (fleet-core `staffing.resolve_shape`)",
+        "verbatim so dispatch receives both resolved values.",
         "Team Execution A7 uses the same pair and splits on `/`; its older note is tracked by #993.",
     ]
     return region("EFFORT HONORING NOTE", "<!--\n" + "\n".join(lines) + "\n-->")

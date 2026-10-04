@@ -3,8 +3,8 @@
 # source-version: 0.32.0
 # source-commit: authored
 # source-path: scripts/fleet_commons/intent_envelope.py
-# source-sha256: d2bee6e0aeff2df810dc958a541043986f3c980c23f4845a6ab3306fb17f221c
-# output-sha256: d2bee6e0aeff2df810dc958a541043986f3c980c23f4845a6ab3306fb17f221c
+# source-sha256: 3ba2484a9556f929971c9735ef24c4b56131335e5d2ac71d578c270811a0bff1
+# output-sha256: 3ba2484a9556f929971c9735ef24c4b56131335e5d2ac71d578c270811a0bff1
 # --- end generated bundle stamp ---
 #!/usr/bin/env python3
 """Canonical fleet IntentEnvelope — the one committed run-start posture schema (#380).
@@ -205,6 +205,10 @@ def _tier_resolver() -> ModuleType:
 
 def _tier_palette() -> ModuleType:
     return _load_sibling("tier_palette")
+
+
+def _staffing() -> ModuleType:
+    return _load_sibling("staffing")
 
 
 def _require_str(value: Any, *, where: str) -> str:
@@ -670,31 +674,43 @@ class TierRecommendation:
     because: str
 
 
-def recommend_tier(work_shape: str, run_mode: str) -> TierRecommendation:
+def recommend_tier(
+    work_shape: str, run_mode: str, *, root: Path | None = None
+) -> TierRecommendation:
     """The mode-aware tier default for a work shape (T12-F6-7).
 
-    ``attended`` recommends the registry default (throughput); ``unattended`` recommends
-    exactly one rung cheaper via the ladder ops (cheapest-defensible), respecting the
-    ordered escalation ladders (``{#tier-vocab-ordering}``) — at the ladder floor the
-    fallback equals the default (a no-op floor, never an error).
+    The base is the staffing resolver's answer (``staffing.resolve_shape``), so the repository
+    overlay under ``root`` and the rest of the one tier precedence apply here exactly as they do
+    for admission and ``/work`` (issue #93). ``attended`` recommends that base (throughput);
+    ``unattended`` recommends exactly one rung cheaper via the ladder ops (cheapest-defensible),
+    respecting the ordered escalation ladders (``{#tier-vocab-ordering}``) — at the ladder floor
+    the fallback equals the base (a no-op floor, never an error). A work shape whose registry row
+    says ``unattended_step_down: false`` (the implementation shape) keeps its base unattended too.
     """
     if run_mode not in RUN_MODES:
         raise IntentEnvelopeError(f"run_mode {run_mode!r} not in {RUN_MODES}")
-    resolver = _tier_resolver()
-    resolution = resolver.resolve(None, work_shape)
+    staffing = _staffing()
+    decision = staffing.resolve_shape(work_shape, root=root)
+    because = f"{decision.source} {decision.model}/{decision.effort} for {decision.work_shape!r}"
     if run_mode == ATTENDED:
         return TierRecommendation(
-            model=resolution.model,
-            effort=resolution.effort,
-            because=f"attended default: {resolution.because}",
+            model=decision.model,
+            effort=decision.effort,
+            because=f"attended default: {because}",
         )
-    model, effort = resolver.cheaper_fallback(resolution.model, resolution.effort)
+    if not staffing.unattended_step_down(decision.work_shape):
+        return TierRecommendation(
+            model=decision.model,
+            effort=decision.effort,
+            because=f"unattended, no step-down for this work shape: {because}",
+        )
+    model, effort = _tier_resolver().cheaper_fallback(decision.model, decision.effort)
     return TierRecommendation(
         model=model,
         effort=effort,
         because=(
             f"unattended: one rung cheaper than the attended default "
-            f"{resolution.model}/{resolution.effort} (cheapest-defensible)"
+            f"{decision.model}/{decision.effort} (cheapest-defensible)"
         ),
     )
 

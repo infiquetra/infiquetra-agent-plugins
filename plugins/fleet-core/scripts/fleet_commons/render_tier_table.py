@@ -4,9 +4,11 @@
 Replaces the prose-only heuristic table authored by hand at
 ``plugins/saga/skills/plan/SKILL.md`` (its Phase 5.2a) with a block rendered
 straight from the registry, so a registry edit is the only way to change the table —
-no second, hand-maintained copy to drift out of sync. ``tests/test_tier_resolver.py``
-parses the live SKILL.md block and asserts it equals this renderer's output
-(``skill_registry_sync``); a seeded divergence between the two fails the test.
+no second, hand-maintained copy to drift out of sync.
+``plugins/fleet-core/tests/test_tier_resolver.py::test_skill_registry_sync`` parses the live
+SKILL.md block and asserts it equals this renderer's output; a seeded divergence between the two
+fails the test. There is no write mode: regenerate by running this script and replacing the
+marker block in ``plugins/saga/skills/plan/SKILL.md`` with its output.
 
 Row order and prose labels mirror the original hand-authored table (R2's five
 SKILL.md rows); the *tier* and *rationale* columns come from the registry, never
@@ -55,7 +57,7 @@ _tier_resolver = _load_sibling("tier_resolver")
 TIER_TABLE_BEGIN = (
     "<!-- BEGIN GENERATED TIER TABLE (rendered from staffing.json via "
     "render_tier_table.py — do not hand-edit; a seeded divergence fails "
-    "tests/test_tier_resolver.py::test_skill_registry_sync) -->"
+    "plugins/fleet-core/tests/test_tier_resolver.py::test_skill_registry_sync) -->"
 )
 TIER_TABLE_END = "<!-- END GENERATED TIER TABLE -->"
 
@@ -66,6 +68,10 @@ _ROW_SPECS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "Judgment, design, adversarial review, architectural decisions",
         ("judgment",),
+    ),
+    (
+        "Implementing a settled plan unit, including its tests",
+        ("implementation",),
     ),
     (
         "Mechanical, deterministic, scripted transforms, scaffolding",

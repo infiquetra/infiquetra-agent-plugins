@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "_comment": "Canonical Fleet Core staffing data \u2014 the ONE authoring source for the model palette, the effort vocabulary, the work-shape tier policy, the per-vendor palette, the capability ratings and trust tiers, and the per-role staffing defaults (issue #1021). It absorbs the former models.json and tier_policy.json, which are deleted. models/efforts are the live Claude vocabulary for existing consumers (tier_palette.MODELS/EFFORTS, tier_resolver.resolve()). Do not treat them as the multi-vendor router. scalar_efforts, execution_classes, and root_orchestration_profiles are the portable subset shared with the Codex plugin repository, whose own copy stays at its schema_version 2 (KTD7); the subset is shared by content, not by version number; they are the authoritative execution-class policy. lineage_models/lineage_efforts are Codex compatibility data and are deliberately not ported. work_shapes is the work-shape -> tier registry that tier_resolver.load_policy() reads. vendors is the per-vendor palette that tier_resolver derives SUPPORTED_RUNTIMES, _RUNTIME_MODELS, _RUNTIME_ACCEPTED_EFFORTS, _EFFORT_COLLAPSE and _EFFORT_APPLICATION_MODE from. ORDERING IS LOAD-BEARING for models/efforts: rank 0 is the strongest model, rung 0 is the weakest effort. Grow the Claude vocabulary under models/efforts, never with a second bare literal elsewhere \u2014 see plugins/fleet-core/references/staffing.md.",
+  "_comment": "Canonical Fleet Core staffing data \u2014 the ONE authoring source for the model palette, the effort vocabulary, the work-shape tier policy, the per-vendor palette, the capability ratings and trust tiers, and the per-role staffing defaults (issue #1021). It absorbs the former models.json and tier_policy.json, which are deleted. models/efforts are the live Claude vocabulary for existing consumers (tier_palette.MODELS/EFFORTS, tier_resolver.resolve()). Do not treat them as the multi-vendor router. scalar_efforts, execution_classes, and root_orchestration_profiles are the portable subset shared with the Codex plugin repository, whose own copy stays at its schema_version 2 (KTD7); the subset is shared by content, not by version number; they are the authoritative execution-class policy. lineage_models/lineage_efforts are Codex compatibility data and are deliberately not ported. work_shapes is the work-shape -> tier registry that tier_resolver.load_policy() reads; a row may also carry claude_only: true, which makes staffing.resolve_shape refuse any non-Claude vendor rather than translate the tier, and unattended_step_down: false, which keeps intent_envelope.recommend_tier from stepping an unattended run one rung cheaper. vendors is the per-vendor palette that tier_resolver derives SUPPORTED_RUNTIMES, _RUNTIME_MODELS, _RUNTIME_ACCEPTED_EFFORTS, _EFFORT_COLLAPSE and _EFFORT_APPLICATION_MODE from. ORDERING IS LOAD-BEARING for models/efforts: rank 0 is the strongest model, rung 0 is the weakest effort. Grow the Claude vocabulary under models/efforts, never with a second bare literal elsewhere \u2014 see plugins/fleet-core/references/staffing.md.",
   "models": {
     "fable": {
       "rank": 0,
@@ -55,6 +55,13 @@
       "default_model": "opus",
       "default_effort": "high",
       "rationale": "Judgment, design, adversarial review, architectural decisions \u2014 deep reasoning needed; cost-justified."
+    },
+    "implementation": {
+      "default_model": "opus",
+      "default_effort": "medium",
+      "claude_only": true,
+      "unattended_step_down": false,
+      "rationale": "Implementing a settled plan unit, including its tests \u2014 bounded scope, but integration and correctness judgement on real code; Claude only, never translated to another vendor's execution class."
     },
     "mechanical": {
       "default_model": "sonnet",
@@ -629,7 +636,7 @@
       "capability": "long-form-writing"
     },
     "worker": {
-      "work_shape": "mechanical",
+      "work_shape": "implementation",
       "capability": "code-generation"
     },
     "lens-reviewer": {

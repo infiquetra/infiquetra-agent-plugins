@@ -475,12 +475,14 @@ kinds alike. Where admission already recorded a staffing plan for the run, that 
 authority for the roles it names and this step fills in only the units it does not cover.
 
 **Step 1 — Derive per-unit tiers.** For each Implementation Unit in the plan, assign a `{model, effort}`
-tier from the work-shape heuristic (R10). Surface the tier table for operator override before locking:
+tier from the work-shape heuristic (R10). An Implementation Unit that writes code, with its tests, is
+the `implementation` work shape. Surface the tier table for operator override before locking:
 
-<!-- BEGIN GENERATED TIER TABLE (rendered from staffing.json via render_tier_table.py — do not hand-edit; a seeded divergence fails tests/test_tier_resolver.py::test_skill_registry_sync) -->
+<!-- BEGIN GENERATED TIER TABLE (rendered from staffing.json via render_tier_table.py — do not hand-edit; a seeded divergence fails plugins/fleet-core/tests/test_tier_resolver.py::test_skill_registry_sync) -->
 | Work shape | Default tier | Rationale |
 |---|---|---|
 | Judgment, design, adversarial review, architectural decisions | `opus / high` | Judgment, design, adversarial review, architectural decisions — deep reasoning needed; cost-justified. |
+| Implementing a settled plan unit, including its tests | `opus / medium` | Implementing a settled plan unit, including its tests — bounded scope, but integration and correctness judgement on real code; Claude only, never translated to another vendor's execution class. |
 | Mechanical, deterministic, scripted transforms, scaffolding | `sonnet / medium` (or `haiku / low` for purely mechanical) | Mechanical, deterministic, scripted transforms, scaffolding — bounded output, predictable steps.; Purely mechanical work within the mechanical work-shape — cheapest tier still safe for bounded, predictable steps. |
 | Read-only survey, search, grep, sampling, census | `sonnet / low` | Read-only survey, search, grep, sampling, census — low-effort read, no write risk. |
 | External-engine delegation, `intent=offload`, `verifiability=test-gated` (ratify-only) | `haiku / low` | External-engine delegation, intent=offload, verifiability=test-gated — chaperone ratifies the declared test oracle and provenance; keep the chaperone cheap unless evidence size escalates. |
@@ -497,7 +499,10 @@ and ask the operator to confirm or override before proceeding. Do not lock tiers
 `plugins/saga/references/intent-envelope.md`), derive each unit's PROPOSED tier through
 `intent_envelope.seeded_tier(spec, work_shape)` (equivalently `intent_envelope.py recommend
 --work-shape <shape> --run-mode <mode>`): the posture was asked ONCE at run start, and an
-unattended posture proposes one rung cheaper than the attended default for the same work shape.
+unattended posture proposes one rung cheaper than the attended default for the same work shape,
+except for a work shape whose registry row turns that step-down off (the `implementation` shape:
+the builder's default is what the run's cost measurement checks, so a posture heuristic does not
+move it). The attended default comes from the same staffing resolver as the command below.
 This changes only the table's proposed defaults — the table itself, the operator-override flow,
 and the `VERIFY_N_CAP` mechanics are unchanged, and no per-unit posture question is ever asked
 (the fleet drift guard fails on one).
@@ -510,26 +515,23 @@ run-scoped ceiling file are removed, so the table this skill authors is the tier
 operator who wants a different tier mid-run re-plans the unit; there is no longer a lever that
 clamps an already-emitted spec.
 
-**Persisted tier preferences (#368).** Before deriving cold from the registry table above, resolve
-each work-shape through fleet-core's staffing component
-(`fleet_commons/staffing.py`, `load_overlay` and `resolve_shape`) — precedence is **repo overlay >
-issue band > shared registry**. Issue 1030 removed saga's own `tier_defaults.py`; the component it
-delegated to is the one implementation and is now read directly:
+**Resolve each unit's proposed tier through the one staffing resolver (#93).** Do not derive a
+tier from the table above by eye. Run, for each unit:
 
-1. **Repo overlay** — a committed `.saga/tier-defaults.json` (`{"<work-shape>": {"model", "effort"}}`)
-   pins repo-tuned defaults. `staffing.load_overlay(root)` returns them. Missing file → clean registry
-   fallback; malformed (bad JSON, unknown shape, off-palette or unrunnable tier) → `StaffingError`, halt
-   and surface (never degrade silently).
-2. **Issue band** — when the driving issue carries a `### Recommended Tier Band` section
-   (auto-stamped by `mission-control:issue` at creation), parse it with `parse_tier_band(body)` and
-   pass it to `resolve_tier_for_plan(work_shape, issue_band=band)`. The band seeds the proposed tier
-   only where no repo override exists; an absent band is normal (`None`), a present-but-invalid one
-   fails loud.
-3. **Write-back** — when the operator confirms a tier override in the Step 1 table, persist it with
-   `write_tier_default(work_shape, model, effort)` so the next `/plan` proposes the accreted
-   preference. Read-merge-write: never clobbers other keys. The file is **tracked** — commit the
-   dirtied overlay with the run's changes (the repo accretes tier judgment). Every persisted override
-   originates from an explicit operator confirmation; never auto-promote silently.
+```bash
+python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier --work-shape <shape>
+```
+
+Omit `--work-shape` for an `implementation` unit: an undeclared unit runs at the `worker` role's
+work shape. The command calls fleet-core's staffing resolver (`fleet_commons/staffing.py`,
+`resolve_shape`), the same function admission and `/work` use. That resolver owns the order in
+which the repository overlay (`.saga/tier-defaults.json`), a recorded tier raise, and the registry
+default apply; this skill does not restate it. A malformed overlay makes the command exit 2 with
+the resolver's error: halt and surface it, never fall back silently.
+
+An operator override confirmed in the Step 1 table is recorded as that unit's explicit tier in the
+plan, which `/work` passes as `--plan-model` / `--plan-effort`. Nothing writes the overlay for you;
+it is an operator-committed file.
 
 <!-- BEGIN GENERATED EFFORT HONORING NOTE -->
 <!-- Source: plugins/saga/references/plan-save-contract.yaml; renderer: plugins/saga/scripts/plan_save_contract.py.
@@ -539,8 +541,9 @@ The honoring seam is `fleet_commons.effort_rider.inject_effort(prompt, effort, s
 For `external-engine`, `workflow`: effort already rides on real controls; injecting a rider would double-count it.
 For `agent`: prepend an `EFFORT_RIDER` directive: a labeled proxy because the Agent tool has no per-call effort parameter.
 See `plugins/fleet-core/references/staffing.md`.
-The proposed tier cell is `<model>/<effort>`: use `tier_resolver.resolve(...).model`
-and `tier_resolver.resolve(...).effort` verbatim so dispatch receives both resolved values.
+The proposed tier cell is `<model>/<effort>`: use the `model` and `effort` that
+`lifecycle_state.py resolve-build-unit-tier` prints (fleet-core `staffing.resolve_shape`)
+verbatim so dispatch receives both resolved values.
 Team Execution A7 uses the same pair and splits on `/`; its older note is tracked by #993.
 -->
 <!-- END GENERATED EFFORT HONORING NOTE -->

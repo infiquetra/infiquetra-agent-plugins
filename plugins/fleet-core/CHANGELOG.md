@@ -9,6 +9,42 @@ describe the derived slice and are left as the record of those releases.
 
 The catalog requires `python>=3.12`.
 
+## [Unreleased]
+
+### Added
+
+- `staffing.json` gains the `implementation` work shape at `opus/medium`, for implementing a
+  settled plan unit including its tests, and the `worker` role now points at it (issue #93). The
+  merging and release workers stay on `mechanical` at `sonnet/medium`.
+- A `work_shapes` row may carry `claude_only: true`. `staffing.resolve_shape` then refuses any
+  non-Claude vendor, naming it, rather than translating the tier into that vendor's execution
+  class. `implementation` is the one such row. No schema version change: `work_shapes` is outside
+  the portable subset shared with the Codex plugin repository.
+- A `work_shapes` row may carry `unattended_step_down: false`, which keeps
+  `intent_envelope.recommend_tier` from stepping an unattended run one rung cheaper.
+  `implementation` carries it.
+- `staffing.resolve_shape` and `staffing.resolve_role` take `answer=` (the operator's explicit
+  tier) and `jev_raise=` (a raise recorded in the run record). `staffing.TIER_PRECEDENCE` writes
+  the order once: operator answer, repository overlay, recorded raise, registry default. A recorded
+  raise that is not exactly one model rung or one effort rung above the default, or that names
+  `fable`, is refused.
+- `staffing.unit_work_shape_default()` returns the `worker` role's work shape, the default for an
+  undeclared build unit, and `staffing.unattended_step_down()` reads the new row flag.
+- `test_tier_resolver.py::test_skill_registry_sync` and its seeded-divergence twin, the guard the
+  `/plan` tier table's marker has named since the table was generated but that did not exist.
+
+### Changed
+
+- `intent_envelope.recommend_tier` takes its base from `staffing.resolve_shape` (so the repository
+  overlay applies) and accepts `root=`.
+- `render_tier_table.py` renders an `implementation` row.
+
+### Removed
+
+- `cost_weights.py`, `cost_weights.json` and `test_cost_weights.py`. The ordinal cost table rated
+  `opus/medium` at 2.67 times `sonnet/medium`, about double the measured gap, and nothing outside
+  its own test read it.
+
 ## [0.32.0] - 2026-09-22
 
 0.32.0 — imported in full from infiquetra-claude-plugins@acc99fe7 (upstream

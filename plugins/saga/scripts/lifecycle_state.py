@@ -7,6 +7,7 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 DESTINATION_ALIASES = {
@@ -442,57 +443,28 @@ def recheck_orchestration_capability(
     }
 
 
-def _assert_known_tier(model: str, effort: str, *, source: str) -> None:
-    """Refuse a model, an effort, or a COMBINATION the shared tier vocabulary does not carry.
-
-    The vocabulary is ``fleet_commons.tier_palette``'s ``MODELS`` / ``EFFORTS``, reached through the
-    build-time Fleet Core bundle, so there is one authority rather than a second copy here.
-
-    Membership in each list separately is not enough, and checking only that was the gap: every
-    effort is a legal effort and every model a legal model, but not every pairing runs. ``haiku``
-    tops out below ``xhigh``, so a plan naming that model at that effort passed two membership
-    checks and named a tier no host can execute. The sibling path could never produce it -- an
-    overlay entry goes through ``fleet_commons.staffing.validate_tier`` against the registry, and a registry
-    default is runnable by construction -- so an explicit tier was the one door into this function
-    that skipped the check its own alternative enforces.
-    """
-    from pathlib import Path as _Path  # noqa: PLC0415
-
-    _scripts_dir = _Path(__file__).resolve().parent
-    if str(_scripts_dir) not in sys.path:
-        sys.path.insert(0, str(_scripts_dir))
-    import bundled_fleet  # noqa: PLC0415
-
-    palette = bundled_fleet.load("tier_palette")
-    if model not in palette.MODELS:
-        raise ValueError(f"{source} model {model!r} is not one of {list(palette.MODELS)}")
-    if effort not in palette.EFFORTS:
-        raise ValueError(f"{source} effort {effort!r} is not one of {list(palette.EFFORTS)}")
-    if not palette.supports_effort(model, effort):
-        raise ValueError(
-            f"{source} names {model!r} at {effort!r}, which that model cannot run; its ceiling is "
-            f"{palette.effort_ceiling(model)!r}"
-        )
-
-
 def resolve_build_unit_tier(
     *,
     plan_tier: dict[str, str] | None = None,
     work_shape: str | None = None,
+    root: Path | None = None,
+    jev_raise: dict[str, Any] | None = None,
 ) -> dict[str, str]:
-    """Resolve the tier for a directly launched build unit (WK3 #929).
+    """Resolve the tier for a directly launched build unit (WK3 #929, one resolver since #93).
 
-    Precedence mirrors the shared tier chain: an explicit ``plan_tier`` wins; otherwise the work
-    shape (default ``mechanical`` for an undeclared unit per
-    ``references/execution-strategy.md``) is resolved through
-    :mod:`fleet_commons.tier_resolver`, never a literal at the spawn site. The ``tier_defaults``
-    rung that sat in front of it was removed with issue 1030.
+    Every input goes to fleet-core's staffing resolver, ``staffing.resolve_shape``, which owns the
+    tier precedence; this function restates none of it. An explicit ``plan_tier`` is the
+    operator-confirmed tier the plan recorded for the unit, so it is passed as the resolver's
+    ``answer``; ``jev_raise`` is a raise recorded in the run record. An undeclared unit runs at the
+    ``worker`` role's work shape (``staffing.unit_work_shape_default()``, the ``implementation``
+    shape), never a literal here. ``root`` is where the repository overlay is read from; it
+    defaults to the working directory, as admission's does.
 
     **An explicit tier is validated against the same vocabulary its sibling path resolves from.**
     It used to be returned after a key-presence check alone, so a plan naming ``{"model": "gpt-5"}``
-    or ``{"effort": "maximum"}`` passed straight through to a spawn while the shape path could only
-    ever produce a registry value. "Explicit wins" is about PRECEDENCE, not about skipping the
-    check that the value exists.
+    or ``{"effort": "maximum"}`` passed straight through to a spawn. "Explicit wins" is about
+    PRECEDENCE, not about skipping the check that the value exists, and the resolver applies that
+    check, including the per-model effort ceiling, to every layer.
 
     **There is no host or session input at all**, which is what makes inheritance impossible: the
     function cannot consult a host tier it is never given and never reads from the environment. An
@@ -500,26 +472,17 @@ def resolve_build_unit_tier(
     non-inheritance — a parameter whose only purpose was to be ignored, which made that test
     unfailable by construction.
     """
-    if plan_tier is not None:
-        if "model" not in plan_tier or "effort" not in plan_tier:
-            raise ValueError(f"plan_tier must contain model and effort, got {plan_tier!r}")
-        model = str(plan_tier["model"])
-        effort = str(plan_tier["effort"])
-        _assert_known_tier(model, effort, source="plan_tier")
-        return {"model": model, "effort": effort}
-    shape = work_shape or "mechanical"
-    # The repo-overlay chain in `tier_defaults.py` was removed by issue 1030; issue 1021 had already
-    # moved the tier policy into fleet-core's staffing component, which is the single source now.
-    from pathlib import Path as _Path  # noqa: PLC0415  (lazy to avoid top-level side effects)
-
-    _scripts_dir = _Path(__file__).resolve().parent
+    if plan_tier is not None and ("model" not in plan_tier or "effort" not in plan_tier):
+        raise ValueError(f"plan_tier must contain model and effort, got {plan_tier!r}")
+    _scripts_dir = Path(__file__).resolve().parent
     if str(_scripts_dir) not in sys.path:
         sys.path.insert(0, str(_scripts_dir))
     import bundled_fleet  # noqa: PLC0415
 
-    resolver = bundled_fleet.load("tier_resolver")
-    resolved = resolver.resolve(None, shape)
-    return {"model": resolved.model, "effort": resolved.effort}
+    staffing = bundled_fleet.load("staffing")
+    shape = work_shape or staffing.unit_work_shape_default()
+    decision = staffing.resolve_shape(shape, root=root, answer=plan_tier, jev_raise=jev_raise)
+    return {"model": decision.model, "effort": decision.effort}
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -588,7 +551,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     build_tier.add_argument(
         "--work-shape",
-        help="work shape to resolve when no explicit plan tier is given (default: mechanical)",
+        help=(
+            "work shape to resolve when no explicit plan tier is given (default: the worker "
+            "role's work shape, implementation)"
+        ),
     )
 
     recheck = subparsers.add_parser(
