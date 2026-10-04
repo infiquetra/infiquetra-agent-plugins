@@ -509,7 +509,10 @@ python3 plugins/saga/scripts/run_status.py [--repo-root <dir>] summary [--issue 
 `run_status.py summary` is the display view the Claude Code mods and other harnesses read. It joins
 this record (`next_step`, `updated_at`) with the per-worktree saga envelope (the lifecycle phase and
 the plan path, which this record does not carry) and writes nothing. `--json` prints
-`run_status.v1`; its exit codes match `show` above.
+`run_status.v1`; its exit codes match `show` above. `--all-active` lists only active runs, the
+way `next_step_context` defines them: a record whose `next_step` is empty is a closed run and is
+left out, even when it is the issue this checkout's `issue/N` branch resolves to. A run only the
+envelope knows (no record yet) stays. Named with `--issue` alone, a closed run still prints.
 
 Each row also carries where the run stands, for the run status band (issue #105): `build_loop`
 (from the unit rows' `build_loop.iterations`: the unit whose `worktree` is this checkout, or the

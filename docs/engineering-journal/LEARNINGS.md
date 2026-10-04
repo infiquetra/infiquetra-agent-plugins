@@ -2,6 +2,22 @@
 
 ## 2026-10-04
 
+### A run resolved from the branch name is not an active run
+
+**Evidence.** Issue #105, review cycle 1. `run_status.py summary --all-active` filtered only the
+other issues by a non-empty `next_step`; the issue resolved from the checkout's `issue/N` branch
+was always listed first. A checkout still on `issue/412` after the run closed (its record's
+`next_step` cleared to `""`) kept a band line and the status-line entry `saga #412`. `summary` in
+`plugins/saga/scripts/run_status.py` now drops that row when its record exists and its `next_step`
+is empty; `test_all_active_leaves_out_a_closed_run_on_the_resolved_branch` covers it.
+
+**Mechanism.** `next_step_context.resolve_issue` answers "which run would this checkout belong to",
+not "is that run still going". A branch outlives its run, so the resolver keeps naming a closed run.
+Only the record's `next_step` says whether it is active.
+
+**Generalizable rule.** Apply the active filter to every row a display lists, including the one it
+resolved from the checkout; resolving an issue never implies the run is open.
+
 ### A mod's own `$.command.run` never reaches its own command hook; a button press does
 
 **Evidence.** Issue #105. The review findings pane's header (`plugins/saga/com.infiquetra.claude/mods/review-pane.tsx`,

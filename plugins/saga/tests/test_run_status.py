@@ -154,6 +154,40 @@ def test_all_active_lists_the_resolved_issue_first_and_skips_finished_runs(
     assert [row["issue"] for row in json.loads(out)["runs"]] == [104, 200]
 
 
+def test_all_active_leaves_out_a_closed_run_on_the_resolved_branch(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A checkout still on `issue/104` after its run closed draws no band line."""
+    run_record.set_next_step(store, 104, "plan")
+    run_record.set_next_step(store, 104, "")
+    for args in (("--json",), ("--band",)):
+        code, out, _ = _run(repo, store, "summary", "--all-active", *args, capsys=capsys)
+        assert code == 0
+        if args == ("--json",):
+            assert json.loads(out)["runs"] == []
+        else:
+            assert "#104" not in out
+
+
+def test_all_active_keeps_a_resolved_run_only_the_envelope_knows(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _tick(repo, 104, lifecycle_phase="plan", plan_path=PLAN)
+    code, out, _ = _run(repo, store, "summary", "--all-active", "--json", capsys=capsys)
+    assert code == 0
+    assert [row["issue"] for row in json.loads(out)["runs"]] == [104]
+
+
+def test_a_closed_run_named_without_all_active_still_shows(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_record.set_next_step(store, 104, "plan")
+    run_record.set_next_step(store, 104, "")
+    code, out, _ = _run(repo, store, "summary", "--issue", "104", "--json", capsys=capsys)
+    assert code == 0
+    assert [row["issue"] for row in json.loads(out)["runs"]] == [104]
+
+
 def test_all_active_skips_an_unreadable_record_with_a_warning(
     repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

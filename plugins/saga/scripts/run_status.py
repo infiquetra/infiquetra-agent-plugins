@@ -14,7 +14,9 @@ nothing. Two stores feed it, and neither is complete alone:
 ``summary`` prints one row per run. With ``--issue`` it is that issue; with neither flag it is the
 issue ``next_step_context.resolve_issue`` finds (this worktree's active saga, then an ``issue/N``
 branch); ``--all-active`` lists every record whose ``next_step`` is not empty, the resolved issue
-first, then newest first. A run appears when either store knows it. Each row also carries where the
+first, then newest first. Under ``--all-active`` the resolved issue follows the same rule: a record
+whose ``next_step`` is empty is a closed run and is left out, while a run only the envelope knows
+(no record yet) stays. A run appears when either store knows it. Each row also carries where the
 run stands for the run status band (issue #105): its build loop, its latest code review cycle
 against the allowance and how many lenses met their bar, and ``band_line``, the one line every
 harness shows. ``summary --band`` prints that line per run.
@@ -336,6 +338,11 @@ def summary(
     if all_active:
         issues += [number for number in active_issues(store_root) if number != resolved]
     runs = [row for row in (run_view(store_root, repo_root, n) for n in issues) if row is not None]
+    if all_active:
+        # ``next_step_context`` treats an empty next step as a closed run: announce nothing. A
+        # checkout left on its ``issue/N`` branch must not keep a closed run on the band. A row
+        # with no record (``record_path`` null) is a run the envelope alone knows, so it stays.
+        runs = [row for row in runs if row["record_path"] is None or row["next_step"].strip()]
     return {"schema": SCHEMA, "repo_root": str(repo_root), "runs": runs}
 
 
@@ -753,7 +760,7 @@ def build_parser() -> argparse.ArgumentParser:
     summ.add_argument(
         "--all-active",
         action="store_true",
-        help="Every run whose next step is not empty, the resolved issue first.",
+        help="Every run whose next step is not empty (the resolved issue too), the resolved issue first.",
     )
     summ.add_argument("--json", action="store_true", help=f"Print the {SCHEMA} document.")
     summ.add_argument(

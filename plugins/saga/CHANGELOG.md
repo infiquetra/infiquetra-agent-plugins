@@ -10,7 +10,8 @@
   the 10,000-character limit), and Hide, which hides the band for the session. Saga's status-line
   entry shows the first run's issue and phase. It refreshes after the session starts, every minute,
   after each main-loop turn and after a Bash call that ran a saga or orchestrate state script, and
-  draws nothing when no run is active. It is read-only.
+  draws nothing when no run is active: `summary --all-active` leaves out a closed run (empty
+  `next_step`) even when the checkout is still on its `issue/N` branch. It is read-only.
 - `scripts/run_status.py summary` rows now carry `build_loop` (the unit in this checkout, or the
   only one, with its latest pass, failing and could-not-execute counts; otherwise units green),
   `review` (the latest code review cycle against the standard and escalated allowances, and lenses

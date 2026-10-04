@@ -261,6 +261,24 @@ describe('the run status band', () => {
     expect(fakes.statuses).toEqual([undefined])
   })
 
+  test('a run that closes while the checkout stays on its branch leaves the band and the status line', async ($, on) => {
+    const fakes = fake(on)
+    await start($, fakes)
+    expect(fakes.statuses).toEqual(['saga #412 · work'])
+    // run_status.py leaves a closed run (empty next step) out under --all-active, even the branch's own.
+    fakes.summary = ok(summaryOf([]))
+    await fakes.clock.advance(BAND_REFRESH_MS)
+    expect(bandReads(fakes)).toHaveLength(2)
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount({ plugin: 'saga', surface, ...band() })
+      expect(await ui.find({ type: 'Box', key: 'beneath' })).toBeDefined()
+      expect(await ui.findAll({ type: 'Text' })).toEqual([])
+      expect(await ui.findAll({ type: 'Button' })).toEqual([])
+      await ui.unmount()
+    }
+    expect(fakes.statuses).toEqual(['saga #412 · work', undefined])
+  })
+
   test('one line per active run, cut to the band width and its rows', async ($, on) => {
     const fakes = fake(on)
     fakes.summary = ok(summaryOf([run(412), run(500, '#500 · plan'), run(501, '#501 · plan')]))
