@@ -98,7 +98,7 @@ a particular file.
 One JSON file per issue holds the run's whole state, outside any worktree:
 
 ```bash
-uv run python plugins/saga/scripts/run_record.py show --issue <N>
+uv run python plugins/saga/scripts/run_record.py show <N>
 ```
 
 If there is no record, admission has not run for this issue. Stop and say so — the lens declaration
@@ -119,6 +119,25 @@ downstream.
 
 Untracked files are not in `git diff` output. Note them as excluded from review rather than
 reviewing them as though they were part of the change.
+
+### 0.3 Read the functional evidence
+
+Review does not start on code that has not been shown to work. The revision must carry a passing
+combined-branch functional run, or the repository's recorded waiver (issue #100):
+
+```bash
+uv run python plugins/saga/scripts/build_loop.py --record <run record path> \
+  --handoff --revision "$REVIEWED_SHA"
+```
+
+It reads the run record and writes nothing. **Exit 2** prints one line, such as `no passing
+combined-branch functional run and no waiver at <sha>` or `the latest combined pass at <sha> is
+fail`: say that plainly, name the revision, and stop. Do not review anyway, and do not proceed
+silently. The fix is the combined-branch loop in `/work` Phase 3.3, not a review. **Exit 0** prints
+the evidence: the pass, the environment and its deploy, test and teardown results. When it reports
+`waived: true`, proceed, and state the waiver and its reason in the Phase 5.1 presentation. This
+check decides whether review may start, never whether the change is accepted: acceptance is the
+verdict's, and `/work` keeps its authority over what happens next.
 
 ## Phase 1 — Resolve the roster
 
@@ -361,8 +380,10 @@ they never implement, commit, or repair code.
 
 **At the cap there is no further cycle.** The open findings are prepared as linked defect issues,
 mission-control files them, their numbers are listed in the result, and the run proceeds with
-`cycle_cap_best_available`. Merging is not production promotion, so remaining quality problems can
-still be investigated in testing with the findings preserved.
+`cycle_cap_best_available`. A cap result is recorded only for a revision with passing functional
+evidence (0.3): `review_result.py` refuses to write one at any other revision. Merging is not
+production promotion, so remaining quality problems can still be investigated in testing with the
+findings preserved.
 
 The narrow exception has **two categories and the catalogue is closed at them**. A merge stays
 blocked only by *reproduced* evidence of data loss or destructive behaviour, or of a security

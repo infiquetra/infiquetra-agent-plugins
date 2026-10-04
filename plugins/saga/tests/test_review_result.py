@@ -454,3 +454,107 @@ def test_a_write_landing_after_any_read_before_the_lock_survives_the_append(
     reread = module.load(store, 1002, warn=None)
     assert reread.units[0]["usage"] == {"entries": [{"session_id": "landed-meanwhile"}]}
     assert [entry["cycle"] for entry in reread.review_cycles] == [1]
+
+
+# ---------------------------------------------------------------------------
+# The cycle cap needs proven working code — issue #100 (pre-review testing U5)
+# ---------------------------------------------------------------------------
+
+
+def _combined_pass(revision: str, *, green: bool = True, waiver: str | None = None) -> dict:
+    entry: dict[str, Any] = {
+        "pass": 1,
+        "revision": revision,
+        "status": "pass" if green else "fail",
+        "green": green,
+        "deploy": {"status": "pass"},
+        "test": {"status": "pass" if green else "fail"},
+        "teardown": {"status": "pass"},
+    }
+    if waiver is not None:
+        entry["waiver"] = {"level": "repository", "reason": waiver}
+    return entry
+
+
+def _with_passes(record: Any, *passes: dict) -> Any:
+    record.extra["combined_branch"] = {
+        "environment": {"kind": "ephemeral-stack", "scope": "private"},
+        "passes": list(passes),
+    }
+    return record
+
+
+def _cap(rr: ModuleType, **overrides: Any) -> Any:
+    return _result(rr, outcome="cycle_cap_best_available", cycle=5, **overrides)
+
+
+def test_a_cap_result_at_a_revision_with_no_functional_run_is_refused(
+    rr: ModuleType, record_module: ModuleType
+) -> None:
+    with pytest.raises(rr.ReviewResultError) as caught:
+        rr.append_result(_record(record_module), _cap(rr))
+    message = str(caught.value)
+    assert REVISION in message
+    assert "no passing combined-branch functional run and no waiver" in message
+
+
+def test_a_cap_result_at_a_revision_with_a_green_combined_pass_is_appended(
+    rr: ModuleType, record_module: ModuleType
+) -> None:
+    record = _with_passes(_record(record_module), _combined_pass(REVISION))
+    updated = rr.append_result(record, _cap(rr))
+    assert updated.review_cycles[-1]["outcome"] == "cycle_cap_best_available"
+
+
+def test_a_cap_result_under_a_recorded_waiver_is_appended(
+    rr: ModuleType, record_module: ModuleType
+) -> None:
+    record = _with_passes(_record(record_module), _combined_pass(REVISION, waiver="docs only"))
+    assert rr.append_result(record, _cap(rr)).review_cycles
+
+
+def test_a_cap_result_whose_green_pass_is_at_another_revision_is_refused(
+    rr: ModuleType, record_module: ModuleType
+) -> None:
+    record = _with_passes(_record(record_module), _combined_pass(OTHER_REVISION))
+    with pytest.raises(rr.ReviewResultError):
+        rr.append_result(record, _cap(rr))
+    failing = _with_passes(_record(record_module), _combined_pass(REVISION, green=False))
+    with pytest.raises(rr.ReviewResultError):
+        rr.append_result(failing, _cap(rr))
+
+
+@pytest.mark.parametrize("outcome", ["repairs_requested", "accepted", "review_incomplete"])
+def test_other_outcomes_need_no_functional_evidence_to_be_recorded(
+    rr: ModuleType, record_module: ModuleType, outcome: str
+) -> None:
+    """The pre-review gate is `build_loop.py --handoff`; the write refuses only the cap."""
+    updated = rr.append_result(_record(record_module), _result(rr, outcome=outcome))
+    assert updated.review_cycles[-1]["outcome"] == outcome
+
+
+def test_a_cap_in_the_post_merge_loop_is_unaffected(
+    rr: ModuleType, record_module: ModuleType
+) -> None:
+    updated = rr.append_result(_record(record_module), _cap(rr, loop=rr.LOOP_POST_MERGE))
+    assert updated.review_cycles[-1]["loop"] == "post_merge"
+
+
+def test_the_command_line_refuses_an_unproven_cap_and_leaves_the_record_unchanged(
+    rr: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import json
+
+    module = rr.run_record
+    store = tmp_path / "store"
+    path = module.save(store, module.RunRecord(issue=1001, units=[{"id": "issue-1001"}]))
+    before = path.read_bytes()
+    result_file = tmp_path / "result.json"
+    result_file.write_text(json.dumps(_cap(rr).to_dict()), encoding="utf-8")
+
+    code = rr.main(["--result", str(result_file), "--issue", "1001", "--store-root", str(store)])
+
+    assert code == rr.EXIT_REFUSED
+    err = capsys.readouterr().err
+    assert "cycle_cap_best_available names revision" in err and REVISION in err
+    assert path.read_bytes() == before

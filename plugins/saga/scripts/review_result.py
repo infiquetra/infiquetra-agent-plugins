@@ -42,6 +42,19 @@ rules. Every entry therefore carries a ``loop`` field valued ``code_review`` or
 than the array's length. Without the field a long testing phase would silently
 spend the pre-merge budget.
 
+THE CYCLE CAP NEEDS PROVEN WORKING CODE
+=======================================
+
+At the cycle cap the run proceeds with the best-available revision, so that
+revision must be one that passed the combined-branch functional run, or one the
+repository's recorded waiver admits (issue #100, pre-review testing U5). A
+``cycle_cap_best_available`` result in the code-review loop naming any other
+revision is refused at the write, here, rather than decided by code review: the
+verdict is still computed by :mod:`review_consensus`, and this module only
+declines to record an acceptance the record cannot back. The fix the refusal
+names is to run the combined-branch loop on that revision and record the result
+again. Every other outcome, and the post-merge loop, is unaffected.
+
 READING AN OLDER RESULT
 =======================
 
@@ -929,14 +942,43 @@ def comparable_lens_set(
         )
 
 
+#: The outcome that lets a run proceed past an unaccepted review, and so needs proof the code works.
+CYCLE_CAP_OUTCOME = "cycle_cap_best_available"
+
+
+def cap_refusal(record: Any, result: ReviewResult) -> str | None:
+    """Why *result* may not be recorded, or ``None`` when it may.
+
+    Only a ``cycle_cap_best_available`` result in the code-review loop is checked: its revision
+    must carry a passing combined-branch functional run, or a waived one. *record* is duck-typed
+    (a ``RunRecord`` from any import of ``run_record``, or the raw JSON object), because the build
+    loop's reader is.
+    """
+    if result.loop != LOOP_CODE_REVIEW or result.outcome != CYCLE_CAP_OUTCOME:
+        return None
+    import build_loop  # noqa: PLC0415  (lazy: only a cap result needs the functional evidence)
+
+    if build_loop.functional_evidence(record, result.revision)["admits"]:
+        return None
+    return (
+        f"review_result: {CYCLE_CAP_OUTCOME} names revision {result.revision}, which has no "
+        "passing combined-branch functional run and no waiver; run build_loop.py --combined on "
+        f"{result.revision} and record this result again"
+    )
+
+
 def append_result(
     record: run_record.RunRecord,
     result: ReviewResult,
 ) -> run_record.RunRecord:
     """Append *result* to the record's review history.
 
-    Legacy entries are left exactly as they are. A missing key is not a refusal.
+    Legacy entries are left exactly as they are. A missing key is not a refusal. A cycle-cap
+    result at a revision with no passing functional run is (``cap_refusal``).
     """
+    refusal = cap_refusal(record, result)
+    if refusal is not None:
+        raise ReviewResultError(refusal)
     cycles = list(record.review_cycles)
     cycles.append(result.to_dict())
     return run_record.RunRecord(**{**record.__dict__, "review_cycles": cycles})

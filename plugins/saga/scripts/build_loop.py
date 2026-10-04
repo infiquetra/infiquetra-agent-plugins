@@ -58,6 +58,14 @@ The combined-branch mode (issue #99, pre-review testing U4) adds three more deci
   the run-level top-level key ``combined_branch``, which ``run_record.py`` preserves as an unknown
   field.
 
+The review gate (issue #100, pre-review testing U5) adds one more.
+
+* **Code review starts only from ``--handoff``.** It reads, and writes nothing: exit 0 prints the
+  revision to review only when the latest combined pass at it is green, waived or not; anything
+  else is a refusal, exit 2, naming what is missing. A green unit loop alone admits nothing, and
+  no override reaches this gate: the repository's recorded waiver is the only exception, and the
+  closeout prints its reason.
+
 House testability pattern, mirroring ``run_record.py`` and ``saga.py``: every filesystem function
 takes its root as an explicit argument, ``runner``, ``now`` and ``clock`` are injectable, and
 nothing does I/O at import.
@@ -94,6 +102,9 @@ import run_record  # noqa: E402  (after the sys.path shim, by design)
 #: The key this module owns on a unit's row. One key, documented in
 #: ``plugins/saga/references/mechanical-baseline.md``; ``run_record.v1`` does not change (KTD2).
 UNIT_KEY = "build_loop"
+
+#: A full forty-character commit identifier, the only revision shape code review accepts.
+FULL_REVISION = re.compile(r"^[0-9a-f]{40}$")
 
 #: Where the repository profile lives, relative to the repository root.
 PROFILE_FILENAME = ".saga-profile.json"
@@ -1451,8 +1462,10 @@ def functional_evidence(record: Any, revision: str) -> dict[str, Any]:
     """Whether *record* carries a passing combined-branch functional run at *revision*.
 
     The question code review's gate asks (pre-review testing U5). *record* is a ``RunRecord`` or
-    the record's raw JSON object. ``admits`` is true for a green pass at exactly *revision*,
-    including a waived one; a green pass at another revision is stale and admits nothing.
+    the record's raw JSON object. ``admits`` is true when the latest pass at exactly *revision* is
+    green, including a waived one. A green pass at another revision is stale and admits nothing,
+    and a later pass at the same revision that did not go green withdraws an earlier green one:
+    the newest evidence about a revision is the evidence.
     """
     extra = getattr(record, "extra", None)
     source = extra if isinstance(extra, dict) else record if isinstance(record, dict) else {}
@@ -1468,6 +1481,7 @@ def functional_evidence(record: Any, revision: str) -> dict[str, Any]:
         "admits": False,
         "status": "missing",
         "pass": None,
+        "pass_status": None,
         "revision": revision,
         "environment": {
             "kind": (environment or {}).get("kind"),
@@ -1481,20 +1495,86 @@ def functional_evidence(record: Any, revision: str) -> dict[str, Any]:
     if not at_revision:
         return evidence
     latest = at_revision[-1]
-    green = [entry for entry in at_revision if entry.get("green")]
-    chosen = green[-1] if green else latest
     for step in ("deploy", "test", "teardown"):
-        result = chosen.get(step)
+        result = latest.get(step)
         evidence[step] = result.get("status") if isinstance(result, dict) else None
-    evidence["pass"] = chosen.get("pass")
-    if not green:
+    evidence["pass"] = latest.get("pass")
+    evidence["pass_status"] = latest.get("status")
+    if not latest.get("green"):
         evidence["status"] = "failed"
         return evidence
-    waiver = chosen.get("waiver")
+    waiver = latest.get("waiver")
     evidence["admits"] = True
     evidence["status"] = "waived" if isinstance(waiver, dict) else "passed"
     evidence["waiver_reason"] = waiver.get("reason") if isinstance(waiver, dict) else None
     return evidence
+
+
+def _latest_green_revision(record: run_record.RunRecord) -> str | None:
+    block = record.extra.get(COMBINED_KEY)
+    handed = block.get("handed_to_code_review") if isinstance(block, dict) else None
+    revision = handed.get("revision") if isinstance(handed, dict) else None
+    return revision if isinstance(revision, str) and FULL_REVISION.match(revision) else None
+
+
+def _commits_since(repo_root: Path, older: str, newer: str, *, runner: Runner) -> int | None:
+    """How many commits *newer* has that *older* does not, or ``None`` when git cannot say."""
+    try:
+        code, detail = runner(
+            ["git", "-C", str(repo_root), "rev-list", f"{older}..{newer}", "--count"], 60, None
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    text = detail.strip()
+    return int(text) if code == 0 and text.isdigit() else None
+
+
+def handoff(
+    record: run_record.RunRecord,
+    revision: str,
+    *,
+    repo_root: Path,
+    runner: Runner,
+    from_head: bool,
+) -> dict[str, Any]:
+    """The review gate: the evidence that admits *revision* to code review, or a refusal.
+
+    Reads and writes nothing else. Returns the evidence when the latest combined pass at *revision*
+    is green, waived or not, and raises ``BuildLoopError`` naming what is missing otherwise. When
+    *revision* is ``HEAD`` and the green pass is at an earlier commit, the refusal says how far
+    ``HEAD`` moved, because the fix is to run the combined pass again, not to review the old one.
+    """
+    evidence = functional_evidence(record, revision)
+    if evidence["admits"]:
+        waived = evidence["status"] == "waived"
+        return {
+            "revision": revision,
+            "pass": evidence["pass"],
+            "status": evidence["status"],
+            "waived": waived,
+            "waiver_reason": evidence["waiver_reason"],
+            "environment": evidence["environment"],
+            "deploy": evidence["deploy"],
+            "test": evidence["test"],
+            "teardown": evidence["teardown"],
+        }
+    if evidence["status"] == "failed":
+        raise BuildLoopError(
+            f"the latest combined pass at {revision} is {evidence['pass_status']}, not green; "
+            "run the combined-branch loop until it is green before code review"
+        )
+    green = _latest_green_revision(record)
+    if from_head and green is not None and green != revision:
+        moved = _commits_since(repo_root, green, revision, runner=runner)
+        count = f"{moved} commit{'s' if moved != 1 else ''}" if moved is not None else "on"
+        raise BuildLoopError(
+            f"HEAD moved {count} since the green pass at {green}; run the combined-branch loop "
+            f"again at {revision} before code review"
+        )
+    raise BuildLoopError(
+        f"no passing combined-branch functional run and no waiver at {revision}; run "
+        "build_loop.py --combined on it before code review"
+    )
 
 
 def format_combined_pass(entry: dict[str, Any]) -> str:
@@ -1723,6 +1803,19 @@ def build_parser() -> argparse.ArgumentParser:
             "test and teardown through the declared environment, one run at a time when shared."
         ),
     )
+    mode.add_argument(
+        "--handoff",
+        action="store_true",
+        help=(
+            "The review gate: print the revision to review only when the latest combined pass at "
+            "it is green or waived; refuse with exit 2 otherwise. Writes nothing."
+        ),
+    )
+    parser.add_argument(
+        "--revision",
+        default=None,
+        help="With --handoff: the full revision to check instead of HEAD under --repo-root.",
+    )
     parser.add_argument(
         "--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS, help="Seconds per check."
     )
@@ -1768,6 +1861,23 @@ def main(
         path = _resolve_record_path(args)
         record = load_record_file(path)
         repo_root = _resolve_repo_root(args)
+        if args.revision is not None and not args.handoff:
+            raise BuildLoopError("--revision belongs to --handoff, the review gate")
+        if args.handoff:
+            revision = args.revision
+            if revision is not None and not FULL_REVISION.match(revision):
+                raise BuildLoopError(
+                    f"--revision {revision!r} is not a full forty-character commit identifier"
+                )
+            admitted = handoff(
+                record,
+                revision or head_revision(repo_root, runner=runner),
+                repo_root=repo_root,
+                runner=runner,
+                from_head=revision is None,
+            )
+            print(json.dumps(admitted, sort_keys=True))
+            return EXIT_GREEN
         profile = load_profile(
             repo_root, profile_path=Path(args.profile).resolve() if args.profile else None
         )

@@ -4,6 +4,23 @@
 
 ### Added
 
+- **Code review does not start without a passing combined-branch functional run** (issue #100,
+  pre-review testing U5). New `build_loop.py --handoff [--revision <sha>]`, the review gate: it
+  reads the record, writes nothing, and exits 0 printing the revision and its evidence only when
+  the latest combined pass at it is green or under the repository's waiver; otherwise exit 2
+  names what is missing (no pass, a `fail` or `could-not-execute` pass, or `HEAD` moved since the
+  green pass). `/work` §5.1 takes `REVIEWED_SHA` from it instead of reading the record inline, and
+  a standalone `/code-review` runs it in the new Phase 0.3 and stops when it refuses. The
+  review-gate override does not reach it.
+- **The cycle cap needs proven working code.** `review_result.py` refuses to record a
+  `cycle_cap_best_available` code-review result at a revision with no passing combined-branch
+  functional run and no waiver (`cap_refusal`, exit 2 on the command line, record unchanged).
+- **The closeout cites the functional evidence.** `release_step.py close` adds
+  `pre_review_functional_evidence` (the pass, environment and deploy, test and teardown results,
+  or `waived: <reason>`) and `residual_issues` after the required parts, and refuses a
+  `delivered` close when a cap revision is unproven or open cap findings outnumber the residual
+  issues filed.
+
 - **`/work` proves the combined branch works before code review** (issue #99, pre-review testing
   U4). `build_loop.py --combined` runs one pass after integration: the mechanical baseline on the
   combined revision, then the declared deploy-or-start command, the test command and every plan
@@ -215,6 +232,13 @@
   never reads the cell's display text.
 
 ### Changed
+
+- `build_loop.functional_evidence` lets the latest pass at a revision decide: a later pass there
+  that did not go green withdraws an earlier green one (issue #100).
+- `/code-review` Phase 0.1 names the working command, `run_record.py show <N>`; the old
+  `show --issue <N>` form was refused by the parser (issue #100).
+- `/work` §5.3 no longer calls the best-available revision "cycle-three"; the cap is the standard
+  allowance plus the escalated one.
 
 - `/work` brings the units together before code review: the merge turn moved from §5.4 to the
   new Phase 3.2, and Phase 3.3 runs the combined-branch loop, so review starts only on a revision

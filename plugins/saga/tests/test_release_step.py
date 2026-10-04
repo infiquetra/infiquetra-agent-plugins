@@ -355,6 +355,141 @@ class TestClose:
             assert known in str(caught.value)
 
 
+REVIEWED = "c" * 40
+
+
+def _combined(revision: str = REVIEWED, *, green: bool = True, waiver: str = "") -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "pass": 2,
+        "revision": revision,
+        "status": "pass" if green else "fail",
+        "green": green,
+        "deploy": {"status": "pass"},
+        "test": {"status": "pass" if green else "fail"},
+        "teardown": {"status": "pass"},
+    }
+    if waiver:
+        entry["waiver"] = {"level": "repository", "reason": waiver}
+    return {
+        "environment": {"kind": "ephemeral-stack", "scope": "private"},
+        "passes": [entry],
+        **({"handed_to_code_review": {"revision": revision, "pass": 2}} if green else {}),
+    }
+
+
+def _review(outcome: str, *, residuals: list[int] | None = None, open_findings: int = 0) -> dict:
+    findings = [{"status": "open"} for _ in range(open_findings)]
+    findings.append({"status": "fixed-verified"})
+    return {
+        "schema": "review_result.v2",
+        "loop": "code_review",
+        "unit": "issue-1028",
+        "cycle": 5,
+        "revision": REVIEWED,
+        "outcome": outcome,
+        "findings": findings,
+        "residual_issues": residuals or [],
+    }
+
+
+class TestCloseCitesTheFunctionalEvidence:
+    """Issue #100: the closeout cites the pre-review functional run and the residual issues."""
+
+    def _close(self, tmp_path: Path, record: dict[str, Any], capsys: Any) -> tuple[int, Any, str]:
+        path = tmp_path / "issue-1028.json"
+        path.write_text(json.dumps({"schema": "run_record.v1", "issue": 1028, **record}))
+        code = RS.main(["--record", str(path), "close", "--disposition", "delivered"])
+        captured = capsys.readouterr()
+        return code, json.loads(captured.out) if code == 0 else None, captured.err
+
+    def test_the_delivered_closeout_cites_the_combined_pass(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        record = {"combined_branch": _combined(), "review_cycles": [_review("accepted")]}
+        code, comment, err = self._close(tmp_path, record, capsys)
+        assert code == 0, err
+        line = comment["parts"]["pre_review_functional_evidence"]
+        assert line == (
+            f"pass 2 at {REVIEWED} (ephemeral-stack, private): deploy pass, test pass, "
+            "teardown pass"
+        )
+        assert line in comment["body"]
+        residual = comment["parts"]["residual_issues"]
+        assert residual.startswith("none: review did not end at the cycle cap")
+
+    def test_a_waived_run_prints_the_waiver_and_its_reason(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        record = {"combined_branch": _combined(waiver="docs only")}
+        code, comment, err = self._close(tmp_path, record, capsys)
+        assert code == 0, err
+        assert comment["parts"]["pre_review_functional_evidence"].startswith("waived: docs only")
+        assert "waived: docs only" in comment["body"]
+
+    def test_the_cap_cycles_residual_issues_are_listed(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        record = {
+            "combined_branch": _combined(),
+            "review_cycles": [
+                _review("cycle_cap_best_available", residuals=[301, 302], open_findings=2)
+            ],
+        }
+        code, comment, err = self._close(tmp_path, record, capsys)
+        assert code == 0, err
+        assert comment["parts"]["residual_issues"] == "#301, #302"
+        assert "#301, #302" in comment["body"]
+        assert REVIEWED in comment["parts"]["pre_review_functional_evidence"]
+
+    def test_delivered_is_refused_when_the_cap_revision_has_no_functional_run(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        for block in (None, _combined("d" * 40), _combined(green=False)):
+            record: dict[str, Any] = {
+                "review_cycles": [
+                    _review("cycle_cap_best_available", residuals=[301], open_findings=1)
+                ]
+            }
+            if block is not None:
+                record["combined_branch"] = block
+            code, _, err = self._close(tmp_path, record, capsys)
+            assert code == 2
+            assert f"cycle_cap_best_available at {REVIEWED}" in err
+            assert "no passing combined-branch functional run and no waiver" in err
+
+    def test_delivered_is_refused_when_open_cap_findings_outnumber_the_filed_issues(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        record = {
+            "combined_branch": _combined(),
+            "review_cycles": [
+                _review("cycle_cap_best_available", residuals=[301], open_findings=2)
+            ],
+        }
+        code, _, err = self._close(tmp_path, record, capsys)
+        assert code == 2
+        assert "2 open finding(s) and 1 residual issue(s) filed" in err
+
+    def test_a_record_with_no_combined_run_records_the_absence_with_a_reason(self) -> None:
+        comment = RS.closeout_comment({}, disposition="delivered")
+        assert comment["parts"]["pre_review_functional_evidence"].startswith("not recorded: ")
+        reviewed_only = {"review_cycles": [_review("accepted")]}
+        line = RS.closeout_comment(reviewed_only, disposition="delivered")["parts"][
+            "pre_review_functional_evidence"
+        ]
+        assert line == f"not recorded: no combined-branch functional pass at {REVIEWED}"
+
+    def test_a_non_delivered_close_is_not_refused_over_the_cap(self) -> None:
+        record = {"review_cycles": [_review("cycle_cap_best_available", open_findings=3)]}
+        comment = RS.closeout_comment(record, disposition="canceled")
+        assert comment["closure_reason"] == "NOT_PLANNED"
+
+    def test_the_evidence_parts_follow_the_required_ones_and_leave_them_unchanged(self) -> None:
+        assert set(RS.EVIDENCE_PARTS).isdisjoint(RS.CLOSEOUT_PARTS)
+        keys = list(RS.closeout_comment({}, disposition="delivered")["parts"])
+        assert keys[-2:] == list(RS.EVIDENCE_PARTS)
+
+
 class TestNoProductionDeployment:
     """Card 1028 says no production deployment exists here — as a guard, not a promise.
 

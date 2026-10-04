@@ -29,6 +29,35 @@ only: two invocations on one host are exactly the failing case.
 **Revisit when.** Stale leases from crashed invocations need operator release often enough to cost
 real time; then add a liveness signal (a heartbeat on the holder) rather than inference from the
 record.
+### Code review starts from a gate command, and the cycle cap is refused at the record
+
+**Decision.** Two checks enforce issue #91's operator rulings 4 and 5 (issue #100, pre-review
+testing U5). First, `/work` §5.1 and a standalone `/code-review` Phase 0.3 take the revision to
+review only from `build_loop.py --handoff`, which exits 0 and prints it only when the latest
+combined-branch pass at that revision is green or waived, and refuses with exit 2 otherwise.
+Second, `review_result.append_result`, the one write path for both `/work` and a standalone
+review, refuses a `code_review` entry with the outcome `cycle_cap_best_available` at a revision
+without that evidence. `release_step.py close` then cites the evidence, or the waiver and its
+reason, and refuses a `delivered` close when a cap revision is unproven or the cap left more open
+findings than residual issues filed. `build_loop.functional_evidence` now lets the latest pass at
+a revision decide, so a later failing pass withdraws an earlier green one.
+
+**Rationale.** The hand-off was prose (`/work` read `units[0]` with inline Python), so nothing
+could test it; a command with an exit code can be tested and cannot be skipped by mis-reading the
+record. The write path is the single place both callers go through, and refusing there keeps the
+verdict computed by `review_consensus.py` unchanged: code review still decides nothing about
+acceptance, which was this card's stop condition.
+
+**Rejected alternatives.** `/code-review` refusing to score an unproven revision at the cap: that
+makes the review decide acceptance. A Work-only prose check at §5.3: untestable and easy to
+bypass. Letting `--review-gate-override` cover the functional gate: it is an acceptance override,
+and the recorded waiver, whose reason the closeout prints, is the only exception ruling 2 allows.
+Adding the evidence to `CLOSEOUT_PARTS`: that tuple mirrors infiquetra-sdlc's
+`terminal-outcomes.md`, so the two new parts follow it instead.
+
+**Revisit when.** infiquetra-sdlc's `terminal-outcomes.md` names a functional-evidence closeout
+part (then move it into `CLOSEOUT_PARTS`), or a run-level waiver lands on the run record and the
+gate has to read it.
 
 ### An orchestrate expansion creates one `/work` row per plan unit, named by its U-ID
 
