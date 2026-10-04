@@ -346,9 +346,22 @@ def _resolve_project_mappings(sdlc_path: Path) -> dict[str, Any]:
     return {}
 
 
+# Test seam: when set to "1", skip the live GitHub read and resolve from the vendored copy (or
+# the local checkout). The package's own test suite sets it for every test, because each
+# load_config() otherwise spends one REST call on the operator's token, and a full suite run
+# exhausted the hourly budget on 2026-10-04. Production callers never set it.
+SDLC_SCHEMA_OFFLINE_ENV = "INFIQUETRA_SDLC_SCHEMA_OFFLINE"
+
+
 def _resolve_sdlc_schema(sdlc_path: Path) -> dict[str, Any]:
-    """Resolve sdlc-schema.json via GitHub main → vendored → local fallback."""
+    """Resolve sdlc-schema.json via GitHub main → vendored → local fallback.
+
+    The GitHub read is skipped when ``INFIQUETRA_SDLC_SCHEMA_OFFLINE=1`` (see
+    ``SDLC_SCHEMA_OFFLINE_ENV``).
+    """
     try:
+        if os.environ.get(SDLC_SCHEMA_OFFLINE_ENV) == "1":
+            raise GhApiError("live schema read skipped: INFIQUETRA_SDLC_SCHEMA_OFFLINE=1")
         result = _gh(
             [
                 "api",

@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- The package's test suite no longer reads the SDLC schema live from GitHub. `load_config()`
+  fetched `infiquetra-sdlc/config/sdlc-schema.json` through `gh api` before falling back to the
+  vendored copy, so one suite run spent 291 REST calls on the operator's token. A new test seam,
+  `INFIQUETRA_SDLC_SCHEMA_OFFLINE=1`, skips that read; `tests/conftest.py` sets it for every test,
+  and the four tests of the live-read path clear it and stub `gh`. Production callers never set it.
+
 ## [2.21.1] - 2026-09-22
 
 2.21.1 — imported from infiquetra-claude-plugins@acc99fe7 (upstream 2.21.0); authored here from this commit; no provenance manifest from now on.

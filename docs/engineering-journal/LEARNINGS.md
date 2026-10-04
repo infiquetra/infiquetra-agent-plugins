@@ -1,5 +1,23 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-04
+
+### A test suite that reads live configuration spends the operator's API budget, not CI's
+
+**Evidence.** On 2026-10-04 the GitHub REST budget for the operator's account reached 0 of 5,000
+at 03:44 UTC while several agents ran `plugins/mission-control/tests`. A sample after the reset
+showed about 70 calls a minute, all `gh api repos/infiquetra/infiquetra-sdlc/contents/config/sdlc-schema.json`,
+from a `pytest plugins/mission-control/tests` process. With a logging `gh` stub on the path, one
+suite run on main attempted 291 such reads; after the fix it makes none (707 passed, 0 calls).
+
+**Mechanism.** `_resolve_sdlc_schema` in `plugins/mission-control/scripts/sdlc_manager.py` tries
+GitHub main first and only then the vendored copy, and every `load_config()` calls it. CI never
+noticed: its runner has no `gh` login, so the read fails fast and falls back. On a developer
+machine `gh` is logged in, so each test that loads config spends one REST call.
+
+**Generalizable rule.** A suite that passes in CI can still be non-hermetic locally; give every
+live read a test seam the suite's conftest turns on, and count calls with a stub to prove it.
+
 ## 2026-09-22
 
 ### Two merge pipelines cannot run side by side under this repository's branch protection
