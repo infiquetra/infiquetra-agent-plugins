@@ -56,6 +56,40 @@ parent ruling 3.
 
 **Revisit when.** Pre-review testing U4 (#99) runs the declaration on the combined branch and
 retires the per-unit preview, or a second harness needs the declaration outside the saga profile.
+### Jev applies a tier raise by itself at 0.8, one step, effort first; lowering stays advisory
+
+**Decision.** Saga staffing's tier judgment (issue #96) is on by default whenever a TypeSafe key is
+configured, and `INFIQUETRA_TYPESAFE_TIERING=off` switches it off with no request. It runs once at
+admission for every role, given the issue, and once in `/plan`'s tier table for every unit, given
+that unit. It asks Jev a narrower question than before: does this unit need a weaker, the same, or
+a stronger tier than its default? A raise at confidence 0.8 or above applies automatically, one
+step, effort first (one effort rung while the model's ceiling allows it, else one model rung),
+never to Fable, never past `xhigh` (coordinator ruling: `xhigh` is reachable, `max` is not on the
+palette), and never over a tier an operator or the repository overlay set. It is recorded as
+`jev_raise` with a reason composed from the chosen criterion and the confidence, and the staffing
+resolver honors it as its `jev-raise` layer. A raise from 0.6 up to 0.8 is pre-filled in admission
+question 4 or proposed in `/plan`'s table for the operator. A lower tier is shown as advisory and
+never applied. Below 0.6 an answer is logged and not shown. House rule 10 in
+`plugins/fleet-core/references/typesafe.md` is amended for raises only. Each verdict is logged
+once its label is known: the direction from the default to the tier the operator finally accepted.
+
+**Rationale.** Opus/medium builders cost real money, and the cheaper mistake is an unnecessary
+one-step raise, not a silent quality loss. A raise is bounded and visible (one step, a reason, the
+operator can still override), whereas a wrong automatic lowering is invisible until review fails.
+The one prior tier verdict in the log (2026-09-20) answered `opus/max` at 0.9 from a work-shape
+label alone, which is why the question became relative to the default and the step became one
+rung. Labels from the operator's answer are what will let the harness decide later whether
+lowering may ever be automatic.
+
+**Rejected alternatives.** Asking for an absolute tier from the whole palette (it reached for the
+top of the scale). Automatic in both directions (a lowering can only be trusted after measurement).
+Staying fully advisory (no run ever used it; no skill passed `--suggest`). Confirming every raise
+per run (an extra question on every admission for a bounded, reversible change). Allowing a raise
+to Fable or `max`.
+
+**Revisit when.** The harness holds about thirty labeled verdicts per direction; or agreement in
+the 0.8-and-above band falls below what justified automation; or issue #95's cost per completed
+unit shows automatic raises adding cost without fewer repair cycles.
 
 ### The review findings pane shows "unscored" apart from "not run", and takes both from the verdict
 

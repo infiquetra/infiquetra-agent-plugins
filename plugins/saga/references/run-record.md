@@ -198,11 +198,17 @@ tier, and every writer must put them here so the staffing table can find them:
 
 | Key | Where | Written by | Holds |
 |---|---|---|---|
-| `suggestion` | per role | `admission.py --suggest` today | the advisory Jev tier: `{suggested, confidence, usable, low_confidence, reason}` |
-| `tier_judgment` | per role | issue #96 | `{band, confidence, default, proposed, applied, shown, reason}`; `band` is one of `agrees`, `auto-raise`, `confirm-raise`, `advisory-lower`, `raise-at-ceiling`, `log-only`, `not-consulted` |
-| `jev_raise` | per role | issue #96 | `{model, effort, confidence, reason, decision_id}`; one step above the default, never fable or max |
+| `suggestion` | per role | `admission.py --suggest` before issue #96; read, no longer written | the advisory Jev tier: `{suggested, confidence, usable, low_confidence, reason}` |
+| `tier_judgment` | per role | `admission.py` (issue #96) | `{direction, confidence, probabilities, band, default, proposed, applied, shown, reason, threshold, auto_floor, answer, decision_id, state_hash, questions_hash, resolved_model}`, plus `labeled` once its verdict is logged; `band` is one of `agrees`, `auto-raise`, `confirm-raise`, `advisory-lower`, `raise-at-ceiling`, `log-only`, `not-consulted` |
+| `jev_raise` | per role | `admission.py` (issue #96), for an `auto-raise` only | `{model, effort, confidence, reason, decision_id}`; one step above the default, never fable or max. The role's `model`, `effort` and `source` (`jev-raise`) are the resolver's answer with it |
 | `operator_override` | per role | admission's per-role merge (issue #103) | `true` on a role the operator's answer named |
-| `_tier_judgment` | run-wide | issue #96 | `{status, note}`; `status: "off"` means the judgment is switched off |
+| `_tier_judgment` | run-wide | `admission.py` (issue #96) | `{status, note}`; `status: "off"` means the judgment is switched off, `ok` that every role was judged (a later run does not ask again), anything else that the request failed and the defaults stood |
+
+A `tier_judgment` block keeps the hashes of what was asked so its verdict can be logged later:
+when `staffing_overrides` is answered, admission logs each block once, labeled with the direction
+(`below`, `same` or `above`) from the block's `default` to the role's final tier, and sets
+`labeled`. A failed or switched-off consult writes only `_tier_judgment` and leaves every role,
+including a raise an earlier consult recorded, as it was.
 
 A `staffing_overrides` answer is merged per role (see "The two answers admission validates"
 above), so `operator_override` marks exactly the roles the operator's answer named.
@@ -363,6 +369,27 @@ branch, the base commit, the issue mapping and its review state. That key is unk
 and is preserved unchanged across a read and a write, which is exactly the extension point the
 "Unknown top-level fields" rule above describes. Orchestrate never writes `admission`,
 `approval_scope`, `run_configuration`, `review_cycles` or `roster`.
+
+### `tier_judgments` — `/plan`'s per-unit tier judgments
+
+The tier judgment in `/plan` (issue #96) does **not** write unit rows. `/plan` defines its units
+before any unit row exists, and the rows belong to the writers that run units: orchestrate cannot
+load a row that holds only an `id` (its `Unit` needs `name`, `vendor` and `task`), and its
+`Run.save` writes back only the rows its run holds, so a row invented here would break every later
+orchestrate command on the issue or be deleted by the next save.
+
+Instead `tier_judgment.py` keeps a top-level key of its own, `tier_judgments`, a map from the plan
+unit's id to one entry. It is an unknown top-level field to `run_record.py`, so it is preserved
+unchanged by every reader and writer, orchestrate's save included (see "Unknown top-level
+fields" above). `tier_judgment.py plan` writes the first two keys of an entry and
+`tier_judgment.py label` the third; both write through `run_record.update`, under the record lock,
+and carry every other entry and key forward:
+
+| Key | Holds |
+|---|---|
+| `tier_judgment` | the unit's judgment block, the same shape as the per-role block in the staffing map, plus `labeled` once its verdict is logged |
+| `jev_raise` | `{model, effort, confidence, reason, decision_id}` for an automatic raise only; `/work` reads it with `tier_judgment.py raise --issue <N> --unit <id>` and passes it to `lifecycle_state.py resolve-build-unit-tier --jev-raise` |
+| `planned_tier` | `{model, effort}`, the tier `/plan` finally recorded for the unit after the operator confirmed the table |
 
 ## `approval_scope`
 

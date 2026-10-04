@@ -54,7 +54,8 @@ uv run python plugins/fleet-core/scripts/fleet_commons/staffing.py resolve \
   --role lens-reviewer --lens security
 # the rated alternatives for a role
 uv run python plugins/fleet-core/scripts/fleet_commons/staffing.py explain --role lens-reviewer
-# the tier judgment's suggestion beside the default (advisory; exit zero either way)
+# ask the tier judgment about this unit and print the band it would take in a run
+# (the tier printed is the default; exit zero either way)
 uv run python plugins/fleet-core/scripts/fleet_commons/staffing.py resolve --shape judgment --suggest
 ```
 
@@ -110,7 +111,7 @@ than guessing. Giving the vendor palettes a fourth execution class is what close
    `answer=` is follow-up work.
 2. `overlay` — the per-repository overlay at `.saga/tier-defaults.json`.
 3. `jev-raise` — a raise the tier judgment applied, recorded in the run record and passed as
-   `jev_raise=` (written by staffing U4, issue #96; absent until then). The resolver refuses a
+   `jev_raise=` (written by admission and `tier_judgment.py plan`, issue #96). The resolver refuses a
    recorded raise that is not exactly one step above the work shape's default — one model rung or
    one effort rung, not both — or that names `fable`; `max` is off the Claude palette and fails
    the palette check.
@@ -147,22 +148,38 @@ a model's ceiling, and a malformed overlay each raise with the offending value n
 sits on a path every subagent spawn reads, so a silent default would be invisible and wrong
 everywhere at once.
 
-**The advisory suggestion.** Bare `--suggest` consults the `tier` judgment verb once about the
-unit being resolved and records its suggestion beside the chosen tier; `--suggest model/effort`
-records that tier as the suggestion instead, making no call. Either way the suggestion cannot
-change the resolved tier. A suggestion below the verb's confidence floor, or one that fails
-palette validation, is reported with its reason and left off the record; a failed request falls
-open to the default the same way. Every scored suggestion is logged to the verdict log with the
-chosen tier as its label, plus an override record where an operator-set tier differs from a
-suggestion that cleared the floor. Admission's `--suggest` runs the same consult once per run,
-batched over every staffed role.
+**The tier judgment (issue #96).** `consult_tier_suggestions` asks the `tier` judgment verb, in
+one request for a batch of units, whether each unit needs a weaker, the same, or a stronger tier
+than its default, given the issue (title, body and keyword flags) and the unit (description, goal,
+expected files, work shape). `classify_judgment` sorts each answer into a band, using the verb's
+confidence floor (0.6) and automatic floor (0.8):
 
-With a bare `--suggest` the output is three lines instead of one — the `default:`, the
-`suggestion:` with its confidence and floor, and `applies:` naming the tier that stands — and
-`--json` adds a `consult` block with the request status and reason. `applies:` is always the
-default: a suggestion is recorded beside the tier, never promoted over it. The `resolve` path
-itself still never calls out, so a staffing question can never depend on a service being
-reachable.
+- a raise at 0.8 or above, on a tier no operator set, is `auto-raise`: `one_step_raise` moves it
+  one step, effort first (one effort rung while the model's ceiling allows, else one model rung
+  with the effort unchanged), never to `fable` and never past the palette's top effort;
+- a raise from 0.6 up to 0.8, or any raise over an operator-set tier, is `confirm-raise` and waits
+  for the operator;
+- a raise with no step left (`opus/xhigh`, any `fable` tier) is `raise-at-ceiling`, shown only;
+- a lower tier is `advisory-lower` and is **never** applied;
+- below 0.6 an answer is `log-only`: logged, not shown.
+
+The consult itself changes nothing. Its callers (saga's admission for each role, and
+`tier_judgment.py plan` in `/plan` for each unit) record an `auto-raise` as the role's or unit's
+`jev_raise`, which `resolve_shape` honors as its `jev-raise` layer above, and log each verdict with
+`record_tier_verdicts` once the operator's final tier gives it a label (`tier_direction`). Decision
+ids are `staffing/tier-direction:<repo>#<issue>:role:<role>` or `...:unit:<id>`, so the evaluation
+harness can score each run's judgment separately. `INFIQUETRA_TYPESAFE_TIERING=off` returns before
+the client is loaded and makes no request; a failed request leaves every default standing with the
+reason. The full rule is §7 of [`typesafe.md`](typesafe.md).
+
+**On the command line**, bare `--suggest` asks the same question about the one unit being
+resolved; `--suggest model/effort` still records that tier as an advisory suggestion and makes no
+call. The command line has no run record to hold a raise, so the output is the `default:`, a
+`judgment:` line with the direction, confidence, both floors and the band it would take in a run,
+a `reason:` line, and `applies:`, which is always the default. `--json` adds a `consult` block
+with the status, band, proposed tier and reason. The verdict is logged with no label. The
+`resolve` path itself still never calls out, so a staffing question can never depend on a service
+being reachable.
 
 ## To add a model
 

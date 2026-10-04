@@ -11,6 +11,7 @@ it.  Same posture as the version pin's guard.
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,8 @@ def _load(name: str, filename: str) -> Any:
 tc = _load("typesafe_client_for_reference_drift", "typesafe_client.py")
 log = _load("jev_log_for_reference_drift", "jev_log.py")
 ev = _load("jev_eval_for_reference_drift", "jev_eval.py")
+verbs = _load("jev_verbs_for_reference_drift", "jev_verbs.py")
+staffing = _load("staffing_for_reference_drift", "staffing.py")
 
 DOC = REFERENCE.read_text(encoding="utf-8")
 
@@ -123,3 +126,43 @@ def test_the_documented_secret_key_names_are_all_recognized() -> None:
     ):
         assert f"`{name}`" in DOC
         assert tc.names_a_secret(name), f"the reference claims {name!r} is redacted, but it is not"
+
+
+def _house_rule(number: int) -> str:
+    match = re.search(rf"^{number}\. (.+)$", DOC, re.MULTILINE)
+    assert match, f"house rule {number} is missing from the reference"
+    return match.group(1)
+
+
+def test_house_rule_10_states_the_raise_only_exception() -> None:
+    """Issue #96: the rule names the one automatic decision and keeps lowering advisory."""
+    rule = _house_rule(10)
+    assert "raise-only exception" in rule
+    assert "0.8" in rule
+    assert "never to Fable" in rule
+    assert "lower a tier stays advisory" in rule
+    assert "DECISIONS.md" in rule
+
+
+def test_the_tiering_switch_is_documented() -> None:
+    assert f"{staffing.TIERING_ENV}=off" in DOC
+    assert "makes no request" in DOC
+
+
+def test_the_tier_bands_match_the_verb() -> None:
+    """Section 7's floors are the verb's, and every band the staffing component emits is named."""
+    section = DOC[DOC.index("## 7. The tier judgment") :]
+    verb = verbs.VERBS["tier"]
+    assert f"{verb.confidence_floor:.1f}" in section
+    assert f"{verb.auto_floor:.1f}" in section
+    for band in (
+        staffing.BAND_AUTO_RAISE,
+        staffing.BAND_CONFIRM_RAISE,
+        staffing.BAND_ADVISORY_LOWER,
+        staffing.BAND_LOG_ONLY,
+        staffing.BAND_RAISE_AT_CEILING,
+        staffing.BAND_AGREES,
+        staffing.BAND_NOT_CONSULTED,
+    ):
+        assert f"`{band}`" in section, f"the band {band!r} is not described in section 7"
+    assert staffing.JUDGMENT_DECISION_PREFIX in section

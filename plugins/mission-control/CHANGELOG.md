@@ -18,6 +18,8 @@
 
 ### Changed
 
+- Regenerated the bundled `staffing.py` and `jev_log.py` for the tier judgment (issue #96). Nothing
+  in mission-control calls the changed functions.
 - The build-time Fleet Core bundle now carries `staffing.py`, because the bundled
   `intent_envelope.recommend_tier` takes its base tier from the staffing resolver (issue #93).
   Regenerated `staffing.json` and `tier_resolver.py` carry the new `implementation` work shape.

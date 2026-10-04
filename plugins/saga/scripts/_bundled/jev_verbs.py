@@ -3,8 +3,8 @@
 # source-version: 0.32.0
 # source-commit: authored
 # source-path: scripts/fleet_commons/jev_verbs.py
-# source-sha256: 89d18aaad309f50b4bdb9d502a56fa2ca336f5f47223c4ecc615234d28891070
-# output-sha256: 89d18aaad309f50b4bdb9d502a56fa2ca336f5f47223c4ecc615234d28891070
+# source-sha256: d5074108c8a7870c776c7dfd58bfa0d3e51f5a431596f30d45791548835e70d1
+# output-sha256: d5074108c8a7870c776c7dfd58bfa0d3e51f5a431596f30d45791548835e70d1
 # --- end generated bundle stamp ---
 """The named-verb registry (plan U5, requirement R14).
 
@@ -15,9 +15,10 @@ rather than aspirational: the command-line tool builds its subcommands from this
 mapping, so a verb that exists here and nowhere else still works, and a verb that
 exists only in the tool reds the registry-completeness test.
 
-Nothing here consumes the confidence floor yet.  The first consumer is the
-staffing card (issue 1033); it is recorded here so every caller reads the same
-number rather than inventing one.
+The confidence floor and, where a verb has one, the automatic floor are read by
+their callers rather than restated: saga staffing's tier judgment (issue #96)
+reads the ``tier`` verb's ``confidence_floor`` (shown below it, logged only) and
+``auto_floor`` (a raise at or above it applies by itself; lowering never does).
 """
 
 from __future__ import annotations
@@ -26,11 +27,21 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+# The work-shape defaults, one clause per shape, exactly as staffing.json declares them
+# (``<shape> -> <model>/<effort>``).  A hand-written literal so this module stays declarative
+# data with no file I/O; test_staffing_suggest.py's drift test reads staffing.json and fails in
+# both directions when a shape is missing here, named here and not there, or tiered differently.
 TIER_POLICY = (
-    "Tiering rule: judgment, design, architecture, root-cause investigation, or "
-    "adversarial review -> opus. Mechanical or deterministic work (scaffolding, "
-    "fixed transforms, mechanical edits, running commands) -> haiku. Read-only "
-    "survey, search, sampling, summarising -> sonnet."
+    "Staffing defaults by work shape: judgment -> opus/high; implementation -> opus/medium; "
+    "mechanical -> sonnet/medium; purely-mechanical -> haiku/low; read-only-survey -> "
+    "sonnet/low; offload-test-gated -> haiku/low; offload -> sonnet/medium; second-opinion -> "
+    "opus/high; divergence -> opus/high. Models from weakest to strongest: haiku, sonnet, opus, "
+    "fable. Efforts from lowest to highest: low, medium, high, xhigh. Judge a task against its "
+    "own default_tier. Answer 'above' only when the issue or the unit carries risk or reasoning "
+    "the default does not cover: security, an API contract other code depends on, "
+    "infrastructure, personal data, or a design decision with lasting consequences. Answer "
+    "'below' only when the work is plainly narrower than its shape suggests. Otherwise answer "
+    "'same'."
 )
 
 # The seven approval boundaries, quoted from the sdlc process chapter
@@ -69,6 +80,10 @@ class Verb:
     state_help: str
     questions: dict[str, Any] = field(default_factory=dict)
     confidence_floor: float = 0.6
+    #: The confidence at or above which a caller may act on the answer without asking, or
+    #: ``None`` when no answer of this verb is ever automatic.  Only the ``tier`` verb sets it,
+    #: and only for a raise (typesafe.md house rule 10, amended 2026-10-04).
+    auto_floor: float | None = None
 
     def question_set(self) -> dict[str, Any]:
         return {key: dict(value) for key, value in self.questions.items()}
@@ -93,15 +108,42 @@ def _score(instructions: str, levels: Sequence[str]) -> dict[str, Any]:
 VERBS: dict[str, Verb] = {
     "tier": Verb(
         name="tier",
-        summary="Which model tier and effort should run a task",
-        state_help='the task description, as {"task": "..."}',
+        summary="Whether a task needs a weaker, the same, or a stronger tier than its default",
+        state_help=(
+            'the task and its default tier, as {"task": {"description": "...", '
+            '"default_tier": "model/effort"}}'
+        ),
+        # 0.60 shows a judgment to the operator; below it the verdict is logged and not shown.
+        # 0.80 applies a raise by itself, one step, effort first, never to fable or past the
+        # palette's top effort.  A lower tier is never applied automatically: lowering stays
+        # advisory until the harness has scored about thirty labeled verdicts (house rule 10).
+        confidence_floor=0.60,
+        auto_floor=0.80,
         questions={
+            "direction": _choice(
+                "Relative to the default_tier in `task`, does `task` need a weaker tier, the "
+                "same tier, or a stronger tier?",
+                {
+                    "below": "plainly narrower than its work shape; a weaker tier is enough",
+                    "same": "the work shape's default fits",
+                    "above": (
+                        "carries risk or reasoning the default does not cover: security, an "
+                        "API contract, infrastructure, personal data, or a lasting design "
+                        "decision"
+                    ),
+                },
+                TIER_POLICY,
+            ),
+            # The absolute questions serve only the ``jev tier`` command line.  Their keys are
+            # the Claude palette in staffing.json, as dict keys rather than a second tuple of
+            # model or effort names (test_tier_vocab_single_source.py).
             "model": _choice(
                 "Which model tier should run `task`?",
                 {
-                    "haiku": "cheapest; mechanical or deterministic work",
-                    "sonnet": "mid; survey, search, summarising, moderate coding",
-                    "opus": "most capable; judgment, design, adversarial review, root cause",
+                    "haiku": "cheapest; purely mechanical, bounded, predictable steps",
+                    "sonnet": "mid; mechanical edits, survey, search, summarising",
+                    "opus": "strong; implementation, judgment, design, adversarial review",
+                    "fable": "strongest; a per-unit override for the hardest work, never a default",
                 },
                 TIER_POLICY,
             ),
@@ -111,7 +153,7 @@ VERBS: dict[str, Verb] = {
                     "low": "obvious steps, little ambiguity",
                     "medium": "some judgment",
                     "high": "substantial ambiguity or many interacting constraints",
-                    "max": "consequential architectural or strategic decision",
+                    "xhigh": "consequential architectural or strategic decision",
                 },
             ),
         },

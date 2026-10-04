@@ -4,6 +4,21 @@
 
 ### Added
 
+- The tier judgment runs by default (issue #96). Admission asks TypeSafe Jev once, for every role,
+  whether the issue needs a weaker, the same, or a stronger tier than the role's default, sending
+  the issue's title, body and four keyword flags. A raise at 0.8 or above is applied one step and
+  recorded as the role's `jev_raise` with its reason, and the role resolves through it; a raise
+  from 0.6 up to 0.8 is pre-filled as question 4's default; a lower tier is advisory only. The
+  summary gains a `Tier judgment` section. `INFIQUETRA_TYPESAFE_TIERING=off` makes no request.
+- `scripts/tier_judgment.py`: `plan` judges every plan unit in one request and records
+  `tier_judgment` and any `jev_raise` under the run record's top-level `tier_judgments` map,
+  keyed by plan unit id, never on the `units` rows (a row holding only `id` cannot be loaded by
+  orchestrate and is dropped by its save); `label` records each unit's final `planned_tier` there
+  and logs the verdicts; `raise` prints one unit's recorded `jev_raise` for `/work`. `skills/plan/SKILL.md` runs both in §5.2a, and §0.1b
+  explains the judgment at admission.
+- Each verdict is logged once its label is known (the operator's answer to question 4, or the tier
+  `/plan` finally records), under a run-scoped decision id; a dry run logs nothing.
+- `tests/conftest.py` switches the judgment off and removes the key for every saga test.
 - Issue 106: saga's roles as Claude Code agent types that carry a real model and effort.
   `mods/agent-types.ts` registers `saga:<role>` (`saga:worker`, `saga:planner`,
   `saga:plan-reviewer`, `saga:functional-tester`, `saga:release-worker`) at session start and again
@@ -150,6 +165,12 @@
 
 ### Changed
 
+- `admission.py --suggest` is accepted and ignored; `admit` and `fill_defaults` take
+  `judge_tiers`, `title`, `judgment_ask`, `judgment_getenv`, `judgment_cache`, `judgment_log_dir`
+  and `log_labels` in place of `suggest`, `suggest_ask` and `suggest_log_dir`. The library default
+  makes no request; the command line turns the judgment on.
+- A switched-off or failed consult records only `_tier_judgment` and keeps every role's tier,
+  including a raise an earlier consult recorded.
 - Issue 106: `/work` dispatches a build unit as `saga:worker` with no `model` parameter when
   Claude Code offers that type and its tier is the unit's resolved tier. Otherwise it uses a
   generic agent with the resolved model and the effort rider, as before, and records which route

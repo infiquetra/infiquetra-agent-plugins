@@ -7,7 +7,8 @@ reason on standard error.
 
     jev ask --state '{"x":"hello"}' --noul 'Is `x` a greeting?'
     jev ask --state-file state.json --noul '...' --dry-run
-    jev tier --state '{"task":"rename a variable across 12 files"}'
+    jev tier --state '{"task": {"description": "rename a variable across 12 files",
+                                "default_tier": "sonnet/medium"}}'
     jev eval --cached docs/analysis/2026-09-18-typesafe-jev-research-inputs/
 
 ``--dry-run`` prints the request body and makes no call.  The body never carries

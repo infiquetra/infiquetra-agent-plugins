@@ -69,7 +69,7 @@ One JSON object per line, appended, never rewritten.
 | `confidence` | the answer's confidence, or `null` — see below |
 | `threshold` | the confidence floor in force when the answer was taken |
 | `resolved_model` | the version that answered, such as `jev-1.13.0`, never the alias |
-| `label` | the known-correct value when one is known, else null; the harness scores against it |
+| `label` | the known-correct value when one is known, else null; the harness scores against it. A caller whose label arrives later may write the verdict then, from the `state_hash` and `questions_hash` it kept, rather than at consult time (§7) |
 | `at` | an ISO 8601 timestamp |
 | `verdict_hash` | the identity an override points back to |
 
@@ -96,7 +96,7 @@ The cache is keyed on the **requested** model alias, because the resolved versio
 7. Log every verdict with the resolved model version, outside model context. Pin it, and re-judge when the alias moves.
 8. Fail open by documented policy, per gate, and say which side fails open.
 9. Never use it for arithmetic, counting, date comparison, adversarial screening, live external state, generation, main-session model routing, or controller staffing from benchmark tables.
-10. Suggest first. A decision becomes automatic only after a recorded harness run at the chosen band, and the operator can always override.
+10. Suggest first. A decision becomes automatic only after a recorded harness run at the chosen band, and the operator can always override. One raise-only exception, decided 2026-10-04 (`docs/engineering-journal/DECISIONS.md`): saga staffing's tier judgment (§7) applies a tier raise by itself at confidence 0.8 or above — one step, effort first, never to Fable, never past the palette's top effort, never over a tier the operator set — and records the raise with its reason in the run record, where the operator can still override it. A raise from 0.6 up to 0.8 waits for the operator. A suggestion to lower a tier stays advisory until the harness has scored about thirty labeled verdicts; nothing lowers a tier automatically. Below 0.6 a judgment is logged and not shown.
 
 ---
 
@@ -149,3 +149,31 @@ Both thresholds are **provisional**: they come from which mistake is cheaper, no
 The official `typesafe-sdk` package where it can be imported; a dependency-free `urllib` transport everywhere else, which is what lets a hook or a script run outside this project's environment. `INFIQUETRA_TYPESAFE_TRANSPORT` forces one or the other. An unrecognized value, or a request for the SDK where it is not installed, fails loudly — the two transports differ in how the key is handled, so a silent substitution would be a behavior change nobody could see.
 
 The package is pinned to a single minor version with a guard test, because it is pre-1.0 and shipped breaking changes in two consecutive releases four days apart. When the guard reds, read the vendor changelog before widening the range.
+
+---
+
+## 7. The tier judgment
+
+Saga staffing asks Jev one question per unit: does this unit need a weaker tier than its default, the same tier, or a stronger one? It asks once at admission for every staffed role, given the issue, and once when `/plan` renders its per-unit tier table, for every plan unit, given that unit. The question is the `tier` verb's `direction` question, whose policy text names each work shape's default exactly as `staffing.json` declares it. The implementation is `consult_tier_suggestions` and `classify_judgment` in `plugins/fleet-core/scripts/fleet_commons/staffing.py`; saga's glue is `plugins/saga/scripts/tier_judgment.py`.
+
+**What it sends**, all permitted by §1: the issue's title and body; the four keyword flags `parse_issue.extract` computes from the body (security, API, infrastructure, privacy); and per unit its description, goal, expected file paths, work shape and default tier. Never a transcript, never customer content.
+
+**The bands.** The verb's confidence floor is 0.6 and its automatic floor is 0.8.
+
+| Band | When | Applied |
+|---|---|---|
+| `auto-raise` | `above` at 0.8 or more, on a tier no operator set | yes: one step, effort first, recorded as the role's or unit's `jev_raise` |
+| `confirm-raise` | `above` from 0.6 up to 0.8, or `above` over an operator-set tier | no: pre-filled in admission question 4, proposed in `/plan`'s table |
+| `raise-at-ceiling` | `above` where no automatic step exists (the default is already `opus/xhigh`, or Fable) | no: shown only |
+| `advisory-lower` | `below` at 0.6 or more | never: shown as advisory |
+| `agrees` | `same` at 0.6 or more | nothing to apply |
+| `log-only` | any answer below 0.6, or one with no usable direction | no: logged, not shown |
+| `not-consulted` | switched off, failed, or no answer for the unit | no: the default stands |
+
+The staffing resolver (`resolve_shape`) honors a recorded `jev_raise` as its `jev-raise` layer and refuses one that is not exactly one step above the default or that names Fable. A raise recorded for the `planner` role affects only planner spawns after admission; it never re-routes the session already running, so house rule 9's bar on main-session model routing is not engaged.
+
+**Decision ids carry the run.** A role's verdict is `staffing/tier-direction:<repo>#<issue>:role:<role>`; a plan unit's is `staffing/tier-direction:<repo>#<issue>:unit:<id>`. The harness skips a repeated decision id and drops one that carries two labels, so an id without the run's identity could be scored once in all, not once per run.
+
+**Labels come from the operator.** Each verdict is written once its label is known, from the hashes kept in the run record: at admission, when question 4 is answered (the label is the direction from the default to the role's final tier); in `/plan`, when `tier_judgment.py label` records the tier the plan finally chose. A dry run logs nothing. These labels are what will let the harness decide whether lowering may ever become automatic.
+
+**The off switch and failing open.** `INFIQUETRA_TYPESAFE_TIERING=off` makes no request: the consult returns before the client is loaded, and every unit keeps its default. With the switch on and no `TYPESAFE_API_KEY`, the client fails open and says so. A slow or failing endpoint costs admission or `/plan` at most twenty seconds and two attempts; then the defaults stand, the reason is recorded under the staffing map's `_tier_judgment`, and any raise an earlier consult recorded is left as it was. The judgment never fails the step that asked it.

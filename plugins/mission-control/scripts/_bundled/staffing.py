@@ -3,8 +3,8 @@
 # source-version: 0.32.0
 # source-commit: authored
 # source-path: scripts/fleet_commons/staffing.py
-# source-sha256: 698d43651973b885b64abbfb1bbb4963cfe9b0747d9f4c62755081defaf5074f
-# output-sha256: 698d43651973b885b64abbfb1bbb4963cfe9b0747d9f4c62755081defaf5074f
+# source-sha256: e8fb2944d24b994782a96b8d2ee4d8bc557243ee57f3ec956c8712cb7fb245b5
+# output-sha256: e8fb2944d24b994782a96b8d2ee4d8bc557243ee57f3ec956c8712cb7fb245b5
 # --- end generated bundle stamp ---
 #!/usr/bin/env python3
 """The one staffing resolver — "role or work shape, and for review the lens, to a tier" (#1021).
@@ -33,12 +33,15 @@ dispatches nothing: every call returns a :class:`StaffingDecision` describing th
 layer that supplied it, and any advisory suggestion the caller passed in. Persisting that record
 belongs to the run record (KTD8), not here.
 
-The advisory tier suggestion (KTD9) arrives two ways. ``resolve_shape`` and ``resolve_role`` take
-it as a parameter and never call out, so a staffing question can never depend on a service being
-reachable. ``consult_tier_suggestions`` (issue 1033) is the explicit consult: it asks the tier
-judgment verb about a batch of units in one request, validates each answer like any tier, and logs
-one verdict per suggested unit. Either way the suggestion is recorded beside the chosen tier and
-can never change it.
+``resolve_shape`` and ``resolve_role`` never call out, so a staffing question can never depend on
+a service being reachable. The tier judgment (issue #96) is a separate, explicit consult:
+``consult_tier_suggestions`` asks the ``tier`` judgment verb, in one request for a whole batch of
+units, whether each unit needs a weaker, the same, or a stronger tier than its default, given the
+real issue and the unit. ``classify_judgment`` turns each answer into a band. Only a raise at the
+verb's automatic floor may apply without the operator: one step, effort first, never to the
+strongest model, never over an operator-set tier. The caller records that raise in the run record,
+and ``resolve_shape`` honors it as its ``jev-raise`` layer. A suggestion to lower a tier is never
+applied. ``INFIQUETRA_TYPESAFE_TIERING=off`` switches the consult off before anything is loaded.
 """
 
 from __future__ import annotations
@@ -138,20 +141,39 @@ TIER_PRECEDENCE: tuple[str, ...] = ("operator", "overlay", "jev-raise", "policy"
 #: this role's row rather than carrying a second work-shape literal (issue #93).
 BUILD_UNIT_ROLE = "worker"
 
-#: The named judgment verb consulted for tier suggestions (issue 1033). The verb supplies the
-#: question criteria, the policy text, and the confidence floor, so this module carries none of
-#: those as literals.
+#: The named judgment verb consulted for the tier judgment (issues 1033 and #96). The verb supplies
+#: the question criteria, the policy text, the confidence floor and the automatic floor, so this
+#: module carries none of those as literals.
 TIER_SUGGEST_VERB = "tier"
 
-#: Decision-id namespace for suggestion verdicts, so ``jev eval`` can score this judgment point
-#: separately from every other.
-SUGGEST_DECISION_PREFIX = "staffing/tier-suggest"
+#: The verb question the staffing consult asks: below, same or above the unit's default.
+DIRECTION_QUESTION = "direction"
+DIRECTION_BELOW = "below"
+DIRECTION_SAME = "same"
+DIRECTION_ABOVE = "above"
 
-#: Scalar effort names the tier verb may suggest that are not Claude-palette rungs, mapped onto
-#: the palette top they read as. The verb's effort question offers low/medium/high/max while
-#: EFFORTS tops out at xhigh; without this map a "max" suggestion — the honest answer for a
-#: consequential decision — would be unusable on arrival.
-SUGGESTED_EFFORT_ALIASES: dict[str, str] = {"max": "xhigh"}
+#: Decision-id namespace for tier-judgment verdicts, so ``jev eval`` scores this judgment point
+#: apart from every other, and apart from the retired absolute-tier verdicts logged under
+#: ``staffing/tier-suggest``. A run-scoped caller appends ``<repo>#<issue>`` before the unit key:
+#: ``jev eval`` skips a repeated decision id and drops one that carries two labels, so an id
+#: without the run's identity could be scored once in total, not once per run.
+JUDGMENT_DECISION_PREFIX = "staffing/tier-direction"
+
+#: The switch that turns the tier judgment off. Any of the off values skips the consult before the
+#: client is even loaded, so no request is made. Unset, empty, or anything else leaves it on; the
+#: client then fails open on its own when ``TYPESAFE_API_KEY`` is absent.
+TIERING_ENV = "INFIQUETRA_TYPESAFE_TIERING"
+_TIERING_OFF_VALUES = frozenset({"off", "0", "false", "no"})
+
+#: The bands :func:`classify_judgment` sorts an answer into. Admission's staffing table and the
+#: run record name them; ``applied`` is true only for ``auto-raise``.
+BAND_NOT_CONSULTED = "not-consulted"
+BAND_LOG_ONLY = "log-only"
+BAND_AGREES = "agrees"
+BAND_ADVISORY_LOWER = "advisory-lower"
+BAND_AUTO_RAISE = "auto-raise"
+BAND_CONFIRM_RAISE = "confirm-raise"
+BAND_RAISE_AT_CEILING = "raise-at-ceiling"
 
 #: Argparse sentinel for a bare ``--suggest``: consult the client. A MODEL/EFFORT value keeps its
 #: issue-1021 meaning (record the parameter, make no call). An object rather than a string so no
@@ -938,41 +960,245 @@ def qualify_lens(
     )
 
 
-# --------------------------------------------------------------------------- tier suggestion
+# --------------------------------------------------------------------------- tier judgment
 
 
 def _load_commons(module: str) -> Any:
     """Load a sibling fleet-commons module, lazily.
 
     The resolve path never calls this: asking this module a staffing question keeps exactly the
-    dependency graph it had before the suggestion (KTD9). Only the consult entry points below
+    dependency graph it had before the tier judgment (KTD9). Only the consult entry points below
     reach it, and a load failure there falls open to the defaults rather than raising.
     """
     return _load_sibling(module)
 
 
-def suggestion_unit(
-    task: str, default: Mapping[str, str], *, operator_set: bool = False
-) -> dict[str, Any]:
-    """One unit for :func:`consult_tier_suggestions`: its description, the default tier that
-    stands whatever the model says, and whether an operator set that tier.
+def tiering_enabled(getenv: Callable[[str], str | None] | None = None) -> bool:
+    """Whether the tier judgment may run: true unless :data:`TIERING_ENV` holds an off value.
 
-    ``operator_set`` is what makes an override record meaningful: when an operator-set tier differs
-    from a suggestion that cleared the floor, the difference is logged as an override of that
-    suggestion (mission-control's rule: the author's value is the decision, a difference is the
-    override). A policy default standing over a suggestion is the standing rule, not an override.
+    It reads only the switch. Whether a credential is configured is the client's question, and the
+    client is the one reader of ``TYPESAFE_API_KEY``; without it the consult fails open with the
+    client's own note and makes no request.
+    """
+    read = getenv if getenv is not None else os.environ.get
+    value = read(TIERING_ENV)
+    return str(value or "").strip().lower() not in _TIERING_OFF_VALUES
+
+
+def one_step_raise(model: str, effort: str) -> dict[str, str] | None:
+    """The tier one step above ``model/effort``, or ``None`` when no automatic raise exists.
+
+    Effort first: one effort rung, while the model's ceiling allows it. At the ceiling, one model
+    rung with the effort unchanged, unless that rung is the strongest model, which an automatic
+    raise never reaches, or the new model cannot run the effort. The palette has no ``max`` effort,
+    so a raise can never land on it. Every result is one that :func:`resolve_shape` accepts as a
+    ``jev_raise`` over the same default.
+    """
+    if (
+        model not in MODELS
+        or effort not in EFFORTS
+        or not _tier_palette.supports_effort(model, effort)
+    ):
+        return None
+    if model == MODELS[0]:
+        # The strongest model is never reached by an automatic raise, and never raised within.
+        return None
+    ceiling = _tier_palette.effort_ceiling(model)
+    if _tier_palette.effort_rank(effort) < _tier_palette.effort_rank(ceiling):
+        return {"model": model, "effort": _tier_palette.escalate("effort", effort, 1)}
+    stronger = _tier_palette.escalate("model", model, 1)
+    if stronger == MODELS[0] or not _tier_palette.supports_effort(stronger, effort):
+        return None
+    return {"model": stronger, "effort": effort}
+
+
+def one_step_lower(model: str, effort: str) -> dict[str, str] | None:
+    """The tier one step below ``model/effort``, effort first, for display only.
+
+    Nothing applies it: a lower tier stays advisory until the harness has measured the judgment.
+    ``None`` at the palette floor.
+    """
+    if model not in MODELS or effort not in EFFORTS:
+        return None
+    lower_effort = _tier_palette.downgrade("effort", effort, 1)
+    if lower_effort != effort:
+        return {"model": model, "effort": lower_effort}
+    weaker = _tier_palette.downgrade("model", model, 1)
+    if weaker == model:
+        return None
+    clamped, _note = _tier_palette.clamp_effort_to_model(weaker, effort)
+    return {"model": weaker, "effort": clamped}
+
+
+def tier_direction(default: Mapping[str, str], final: Mapping[str, str]) -> str:
+    """Whether ``final`` is below, the same as, or above ``default``: the verdict's label.
+
+    Model strength decides; effort breaks a tie on the same model.
+    """
+    base_model = _tier_palette.model_rank(str(default["model"]))
+    final_model = _tier_palette.model_rank(str(final["model"]))
+    if final_model != base_model:
+        # MODELS is strongest first, so a smaller rank is the stronger model.
+        return DIRECTION_ABOVE if final_model < base_model else DIRECTION_BELOW
+    base_effort = _tier_palette.effort_rank(str(default["effort"]))
+    final_effort = _tier_palette.effort_rank(str(final["effort"]))
+    if final_effort == base_effort:
+        return DIRECTION_SAME
+    return DIRECTION_ABOVE if final_effort > base_effort else DIRECTION_BELOW
+
+
+def _tier_token(tier: Mapping[str, str] | None) -> str:
+    return f"{tier['model']}/{tier['effort']}" if tier else "none"
+
+
+def _probabilities_text(probabilities: Any) -> str:
+    if not isinstance(probabilities, Mapping):
+        return ""
+    parts = [
+        f"{key} {float(value):.2f}"
+        for key, value in probabilities.items()
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+    ]
+    return f" (probabilities: {', '.join(parts)})" if parts else ""
+
+
+def classify_judgment(
+    direction: str | None,
+    confidence: float | None,
+    *,
+    default: Mapping[str, str],
+    operator_set: bool = False,
+    floor: float,
+    auto_floor: float,
+    criterion: str = "",
+    probabilities: Any = None,
+) -> dict[str, Any]:
+    """Sort one direction answer into a band, and say what it proposes and whether it applies.
+
+    Returns ``{band, proposed, applied, shown, reason}``. Jev returns no free-text reason, so the
+    reason is composed here from the chosen criterion, the confidence and the step taken.
+
+    * Below ``floor``, or with no confidence: ``log-only``, never shown, never applied.
+    * ``same``: ``agrees``.
+    * ``below``: ``advisory-lower``, shown with the one-step-lower tier, **never applied**.
+    * ``above`` at ``auto_floor`` or higher on a tier no operator set: ``auto-raise``, applied,
+      one step, effort first (:func:`one_step_raise`).
+    * ``above`` from ``floor`` up to ``auto_floor``, or at any confidence over an operator-set tier:
+      ``confirm-raise``, shown for the operator to confirm, not applied.
+    * ``above`` where no automatic step exists: ``raise-at-ceiling``, shown, not applied.
+    """
+    base = {"model": str(default["model"]), "effort": str(default["effort"])}
+    because = f": {criterion}" if criterion else ""
+    odds = _probabilities_text(probabilities)
+    if confidence is None or direction not in (DIRECTION_BELOW, DIRECTION_SAME, DIRECTION_ABOVE):
+        return {
+            "band": BAND_LOG_ONLY,
+            "proposed": None,
+            "applied": False,
+            "shown": False,
+            "reason": f"no usable direction or confidence; the default {_tier_token(base)} stands",
+        }
+    if confidence < floor:
+        return {
+            "band": BAND_LOG_ONLY,
+            "proposed": None,
+            "applied": False,
+            "shown": False,
+            "reason": (
+                f"'{direction}' at confidence {confidence:.2f}, below the floor {floor:.2f}; "
+                f"logged, not shown{odds}"
+            ),
+        }
+    if direction == DIRECTION_SAME:
+        return {
+            "band": BAND_AGREES,
+            "proposed": dict(base),
+            "applied": False,
+            "shown": True,
+            "reason": f"the default fits at confidence {confidence:.2f}{because}{odds}",
+        }
+    if direction == DIRECTION_BELOW:
+        lower = one_step_lower(base["model"], base["effort"])
+        return {
+            "band": BAND_ADVISORY_LOWER,
+            "proposed": lower,
+            "applied": False,
+            "shown": True,
+            "reason": (
+                f"a weaker tier ({_tier_token(lower)}) at confidence {confidence:.2f}{because}; "
+                f"advisory only, a lower tier is never applied automatically{odds}"
+            ),
+        }
+    raised = one_step_raise(base["model"], base["effort"])
+    if raised is None:
+        return {
+            "band": BAND_RAISE_AT_CEILING,
+            "proposed": None,
+            "applied": False,
+            "shown": True,
+            "reason": (
+                f"a stronger tier at confidence {confidence:.2f}{because}; "
+                f"{_tier_token(base)} is already the strongest an automatic raise may reach{odds}"
+            ),
+        }
+    step = "one effort step" if raised["model"] == base["model"] else "one model step"
+    if confidence >= auto_floor and not operator_set:
+        return {
+            "band": BAND_AUTO_RAISE,
+            "proposed": raised,
+            "applied": True,
+            "shown": True,
+            "reason": (
+                f"raised {step}, {_tier_token(base)} to {_tier_token(raised)}, at confidence "
+                f"{confidence:.2f}{because}{odds}"
+            ),
+        }
+    why_not = (
+        "the operator set this tier, so a raise waits for the operator"
+        if operator_set
+        else f"below the automatic floor {auto_floor:.2f}, so it waits for the operator"
+    )
+    return {
+        "band": BAND_CONFIRM_RAISE,
+        "proposed": raised,
+        "applied": False,
+        "shown": True,
+        "reason": (
+            f"proposes {step}, {_tier_token(base)} to {_tier_token(raised)}, at confidence "
+            f"{confidence:.2f}{because}; {why_not}{odds}"
+        ),
+    }
+
+
+def judgment_unit(
+    task: str | Mapping[str, Any],
+    default: Mapping[str, str],
+    *,
+    operator_set: bool = False,
+) -> dict[str, Any]:
+    """One unit for :func:`consult_tier_suggestions`.
+
+    ``task`` is what Jev judges: a description string, or a mapping that may carry
+    ``description``, ``work_shape``, ``goal`` and ``files`` (a plan unit). ``default`` is the tier
+    the unit runs at without a raise. ``operator_set`` marks a tier an operator chose, such as one
+    from the repository overlay, which an automatic raise never overrides.
     """
     try:
         model, effort = str(default["model"]), str(default["effort"])
     except (KeyError, TypeError) as exc:
         raise StaffingError(
-            f"suggestion unit needs a default {{'model', 'effort'}}, got {default!r}"
+            f"judgment unit needs a default {{'model', 'effort'}}, got {default!r}"
         ) from exc
+    described = dict(task) if isinstance(task, Mapping) else {"description": str(task)}
     return {
-        "task": task,
+        "task": described,
         "default": {"model": model, "effort": effort},
         "operator_set": bool(operator_set),
     }
+
+
+#: The pre-#96 name, kept so an older caller still builds a unit.
+suggestion_unit = judgment_unit
 
 
 def describe_unit(label: str, decision: StaffingDecision) -> str:
@@ -989,48 +1215,64 @@ def describe_unit(label: str, decision: StaffingDecision) -> str:
 def consult_tier_suggestions(
     units: Mapping[str, Mapping[str, Any]],
     *,
-    decision_prefix: str = SUGGEST_DECISION_PREFIX,
+    issue: Mapping[str, Any] | None = None,
+    decision_prefix: str = JUDGMENT_DECISION_PREFIX,
     floor: float | None = None,
+    auto_floor: float | None = None,
     ask: Callable[..., Any] | None = None,
     client: Any = None,
     verbs: Any = None,
     log_module: Any = None,
-    log_verdicts: bool = True,
-    log_dir: Path | None = None,
+    getenv: Callable[[str], str | None] | None = None,
+    cache: bool = False,
     timeout: float | None = None,
     max_attempts: int | None = None,
     total_deadline: float | None = None,
 ) -> dict[str, Any]:
-    """Ask the tier verb about every unit in one request; the defaults stand regardless.
+    """Ask the tier verb's direction question about every unit in one request.
 
-    ``units`` maps a label to :func:`suggestion_unit`. The whole batch goes out as one ``ask``
-    call over one ``{"tasks": ...}`` state (the house batching rule), and each label comes back
-    as one entry carrying the ``suggested`` tier, its ``confidence`` (the weaker of the model's
-    and the effort's), the ``floor``, and ``chosen`` — the default that stands. A suggestion
-    below the floor, or one that fails palette validation, is reported with its reason and is
-    never carried onto a decision. A client failure, a timeout, a malformed body, or an
-    unloadable client falls open the same way, with the reason in ``note``.
+    ``units`` maps a key to :func:`judgment_unit`. ``issue`` is the issue the units serve, as
+    ``{title, body, flags}``; it travels once, beside the units, as the state's ``issue``. The
+    state is the issue plus each unit's task and default tier, all permitted by the data rule in
+    ``references/typesafe.md``. Each key comes back as one judgment block carrying the answer's
+    ``direction``, ``confidence`` and ``probabilities``, the band from :func:`classify_judgment`,
+    and everything a later :func:`record_tier_verdicts` call needs to log the verdict once its
+    label is known (``decision_id``, ``state_hash``, ``questions_hash``, ``threshold``,
+    ``resolved_model`` and the raw ``answer``). Nothing is logged here: the label is the
+    operator's final answer, which arrives later.
 
-    Three properties, mirroring the sibling advisory paths (``jev_widen``, mission-control's
-    ``issue prepare --suggest``):
+    Properties, mirroring the sibling advisory paths:
 
-    * **Advisory.** Nothing here returns a tier to run. The caller records a suggestion beside
-      its own answer; the answer is computed without consulting.
-    * **Fail open.** Every failure mode returns a result whose entries carry ``chosen`` and a
-      reason. The only raise is a malformed ``units`` mapping, which is the caller's bug.
-    * **One call path, injectable.** ``ask`` defaults to the client's and is a parameter, so a
-      test hands in a fake and cannot reach the network even by accident.
+    * **Off means no request.** With :data:`TIERING_ENV` off, it returns status ``off`` before the
+      client is loaded.
+    * **Fail open.** A client failure, a timeout, a malformed body, or an unloadable client returns
+      every unit at band ``not-consulted`` with the reason in ``note``. The only raise is a
+      malformed ``units`` mapping, which is the caller's bug.
+    * **Raises only.** ``applied`` is true only for band ``auto-raise``; nothing lowers a tier.
+    * **One call path, injectable.** ``ask`` defaults to the client's, so a test hands in a fake.
+
+    ``cache`` passes the verdict-log directory to the client as its answer cache, so a dry run and
+    the answers run that follows it get identical answers from one request.
     """
     normalized = {
-        key: suggestion_unit(
-            str(unit.get("task", key)),
+        key: judgment_unit(
+            unit.get("task", key),
             unit.get("default", {}),
             operator_set=bool(unit.get("operator_set", False)),
         )
         if isinstance(unit, Mapping)
-        else suggestion_unit(key, {})
+        else judgment_unit(key, {})
         for key, unit in units.items()
     }
+
+    if not tiering_enabled(getenv):
+        return _consult_failure(
+            normalized,
+            "off",
+            f"the tier judgment is switched off ({TIERING_ENV}=off); no request was made",
+            floor,
+            auto_floor,
+        )
 
     try:
         client = client if client is not None else _load_commons("typesafe_client")
@@ -1038,24 +1280,28 @@ def consult_tier_suggestions(
         log_module = log_module if log_module is not None else _load_commons("jev_log")
     except Exception as exc:  # noqa: BLE001 - a missing fleet-core is not a broken default
         return _consult_failure(
-            normalized, "error", f"the TypeSafe client could not be loaded ({exc})", floor
+            normalized,
+            "error",
+            f"the TypeSafe client could not be loaded ({exc})",
+            floor,
+            auto_floor,
         )
 
-    if floor is None:
-        try:
-            floor = float(verbs.VERBS[TIER_SUGGEST_VERB].confidence_floor)
-        except (AttributeError, KeyError, TypeError, ValueError):
-            floor = None
-    if floor is None:
+    try:
+        verb = verbs.VERBS[TIER_SUGGEST_VERB]
+        floor = float(verb.confidence_floor) if floor is None else float(floor)
+        auto_floor = float(verb.auto_floor) if auto_floor is None else float(auto_floor)
+    except (AttributeError, KeyError, TypeError, ValueError):
         return _consult_failure(
             normalized,
             "error",
-            f"the {TIER_SUGGEST_VERB!r} verb carries no confidence floor",
+            f"the {TIER_SUGGEST_VERB!r} verb carries no confidence floor or automatic floor",
+            None,
             None,
         )
 
     if not normalized:
-        return {"status": "ok", "note": "", "resolved_model": "", "floor": floor, "suggestions": {}}
+        return _consult_outcome("ok", "", "", floor, auto_floor, {})
 
     try:
         questions = _suggest_questions(normalized, verbs)
@@ -1065,9 +1311,16 @@ def consult_tier_suggestions(
             "error",
             f"the {TIER_SUGGEST_VERB!r} verb question set is unusable ({exc})",
             floor,
+            auto_floor,
         )
 
-    state = {"tasks": {key: unit["task"] for key, unit in normalized.items()}}
+    state: dict[str, Any] = {}
+    if issue:
+        state["issue"] = dict(issue)
+    state["tasks"] = {
+        key: {**unit["task"], "default_tier": _tier_token(unit["default"])}
+        for key, unit in normalized.items()
+    }
     options: dict[str, Any] = {}
     if timeout is not None:
         options["timeout"] = timeout
@@ -1075,88 +1328,111 @@ def consult_tier_suggestions(
         options["max_attempts"] = max_attempts
     if total_deadline is not None:
         options["total_deadline"] = total_deadline
+    if cache:
+        try:
+            options["cache_dir"] = log_module.log_dir()
+        except Exception:  # noqa: BLE001 - no cache is a slower consult, not a failed one
+            pass
     try:
         caller = ask if ask is not None else client.ask
         result = caller(state, questions, **options)
     except Exception as exc:  # noqa: BLE001 - a caller's defaults must survive any failure
         return _consult_failure(
-            normalized, "error", f"the request raised {type(exc).__name__}", floor
+            normalized, "error", f"the request raised {type(exc).__name__}", floor, auto_floor
         )
 
     status = getattr(result, "status", "error")
     if status != getattr(client, "STATUS_OK", "ok"):
         note = getattr(result, "note", "") or f"the request returned status {status}"
-        return _consult_failure(normalized, status, note, floor)
+        return _consult_failure(normalized, status, note, floor, auto_floor)
 
     answers = dict(getattr(result, "answers", None) or {})
     resolved_model = str(getattr(result, "model", "") or "")
-    suggestions = {
-        key: _shape_suggestion(key, unit, answers, client, floor)
-        for key, unit in normalized.items()
+    try:
+        state_hash = str(log_module.digest(state))
+        questions_hash = str(log_module.digest(dict(questions)))
+    except Exception:  # noqa: BLE001 - without hashes the verdict cannot be logged later
+        state_hash = questions_hash = ""
+    criteria = {
+        key: question.get("criteria", {})
+        for key, question in questions.items()
+        if isinstance(question, Mapping)
     }
-    if log_verdicts:
-        _record_suggest_verdicts(
-            log_module,
-            decision_prefix=decision_prefix,
-            units=normalized,
-            state=state,
-            questions=questions,
-            answers=answers,
-            suggestions=suggestions,
-            floor=floor,
+    judgments = {}
+    for key, unit in normalized.items():
+        block = _shape_judgment(key, unit, answers, client, criteria, floor, auto_floor)
+        block.update(
+            decision_id=f"{decision_prefix}:{key}",
+            state_hash=state_hash,
+            questions_hash=questions_hash,
             resolved_model=resolved_model,
-            log_dir=log_dir,
         )
+        judgments[key] = block
     return {
-        "status": "ok",
-        "note": "",
+        **_consult_outcome("ok", "", resolved_model, floor, auto_floor, judgments),
+        "state_hash": state_hash,
+        "questions_hash": questions_hash,
+    }
+
+
+def _consult_outcome(
+    status: str,
+    note: str,
+    resolved_model: str,
+    floor: float | None,
+    auto_floor: float | None,
+    judgments: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "status": status,
+        "note": note,
         "resolved_model": resolved_model,
         "floor": floor,
-        "suggestions": suggestions,
+        "auto_floor": auto_floor,
+        "judgments": judgments,
     }
 
 
 def _consult_failure(
-    units: Mapping[str, Mapping[str, Any]], status: str, note: str, floor: float | None
+    units: Mapping[str, Mapping[str, Any]],
+    status: str,
+    note: str,
+    floor: float | None,
+    auto_floor: float | None,
 ) -> dict[str, Any]:
     """The fall-open result: every unit keeps its default, with the reason why."""
-    return {
-        "status": status,
-        "note": note,
-        "resolved_model": "",
-        "floor": floor,
-        "suggestions": {
-            key: {
-                "suggested": None,
-                "confidence": None,
-                "model_confidence": None,
-                "effort_confidence": None,
-                "floor": floor,
-                "low_confidence": False,
-                "usable": False,
-                "problem": None,
-                "chosen": dict(unit["default"]),
-                "reason": note,
-            }
-            for key, unit in units.items()
-        },
+    judgments = {
+        key: {
+            "direction": None,
+            "confidence": None,
+            "probabilities": None,
+            "band": BAND_NOT_CONSULTED,
+            "default": dict(unit["default"]),
+            "proposed": None,
+            "applied": False,
+            "shown": False,
+            "reason": note,
+            "threshold": floor,
+            "auto_floor": auto_floor,
+            "answer": None,
+        }
+        for key, unit in units.items()
     }
+    return _consult_outcome(status, note, "", floor, auto_floor, judgments)
 
 
 def _suggest_questions(units: Mapping[str, Mapping[str, Any]], verbs: Any) -> dict[str, Any]:
-    """One model and one effort question per unit, from the tier verb's own set.
+    """One direction question per unit, from the tier verb's own set.
 
     The criteria and policy text are the verb's verbatim; only the task reference is retargeted
     from the verb's single-task ```task``` onto this unit's entry in the batched ``tasks`` state.
     """
-    base = verbs.VERBS[TIER_SUGGEST_VERB].question_set()
+    base = verbs.VERBS[TIER_SUGGEST_VERB].question_set()[DIRECTION_QUESTION]
     questions: dict[str, Any] = {}
     for key in units:
-        ref = f"`tasks.{key}`"
-        for name in ("model", "effort"):
-            question = dict(base[name])
-            question["instructions"] = _retarget_instructions(base[name]["instructions"], ref)
-            questions[f"{key}__{name}"] = question
+        question = dict(base)
+        question["instructions"] = _retarget_instructions(base["instructions"], f"`tasks.{key}`")
+        questions[f"{key}__{DIRECTION_QUESTION}"] = question
     return questions
 
 
@@ -1191,183 +1467,122 @@ def _safe_value(client: Any, answer: Mapping[str, Any]) -> Any:
         return None
 
 
-def _unusable_reason(model: str, effort: str) -> str | None:
-    """Why a suggested pair may not stand beside a tier, or None when it may."""
-    if model not in MODELS:
-        return f"suggested model {model!r} is not in the palette {MODELS}"
-    if effort not in EFFORTS:
-        return f"suggested effort {effort!r} is not in the palette {EFFORTS}"
-    if not _tier_palette.supports_effort(model, effort):
-        return (
-            f"suggested tier {model}/{effort} is unrunnable "
-            f"({model}'s ceiling is {_tier_palette.effort_ceiling(model)!r})"
-        )
-    return None
-
-
-def _shape_suggestion(
+def _shape_judgment(
     key: str,
     unit: Mapping[str, Any],
     answers: Mapping[str, Any],
     client: Any,
+    criteria: Mapping[str, Any],
     floor: float,
+    auto_floor: float,
 ) -> dict[str, Any]:
-    """One unit's answers into the entry the caller records: what was suggested, how confident,
-    and the default that stands."""
-    chosen = dict(unit["default"])
-    model_answer = answers.get(f"{key}__model")
-    effort_answer = answers.get(f"{key}__effort")
-    model_conf = _safe_confidence(client, model_answer)
-    effort_conf = _safe_confidence(client, effort_answer)
-    base: dict[str, Any] = {
-        "model_confidence": model_conf,
-        "effort_confidence": effort_conf,
-        "floor": floor,
-        "chosen": chosen,
-    }
-    if not isinstance(model_answer, Mapping) or not isinstance(effort_answer, Mapping):
-        missing = ", ".join(
-            name
-            for name, answer in (("model", model_answer), ("effort", effort_answer))
-            if not isinstance(answer, Mapping)
-        )
+    """One unit's answer into the judgment block the caller records."""
+    question_key = f"{key}__{DIRECTION_QUESTION}"
+    answer = answers.get(question_key)
+    default = dict(unit["default"])
+    if not isinstance(answer, Mapping):
         return {
-            **base,
-            "suggested": None,
+            "direction": None,
             "confidence": None,
-            "low_confidence": False,
-            "usable": False,
-            "problem": None,
-            "reason": f"the answer carried no suggestion for '{key}' (missing {missing}); "
-            "the default stands",
+            "probabilities": None,
+            "band": BAND_NOT_CONSULTED,
+            "default": default,
+            "proposed": None,
+            "applied": False,
+            "shown": False,
+            "reason": f"the answer carried no judgment for '{key}'; the default stands",
+            "threshold": floor,
+            "auto_floor": auto_floor,
+            "answer": None,
         }
-    model = _safe_value(client, model_answer)
-    effort_raw = _safe_value(client, effort_answer)
-    if not isinstance(model, str) or not isinstance(effort_raw, str):
-        return {
-            **base,
-            "suggested": None,
-            "confidence": None,
-            "low_confidence": False,
-            "usable": False,
-            "problem": "the answer has no usable tier value",
-            "reason": f"the answer for '{key}' has no usable tier value; the default stands",
-        }
-    effort = SUGGESTED_EFFORT_ALIASES.get(effort_raw, effort_raw)
-    suggested = {"model": model, "effort": effort}
-    confidence = (
-        min(model_conf, effort_conf) if model_conf is not None and effort_conf is not None else None
+    direction = _safe_value(client, answer)
+    direction = direction if isinstance(direction, str) else None
+    confidence = _safe_confidence(client, answer)
+    probabilities = answer.get("probabilities")
+    described = criteria.get(question_key, {})
+    criterion = str(described.get(direction, "")) if isinstance(described, Mapping) else ""
+    classified = classify_judgment(
+        direction,
+        confidence,
+        default=default,
+        operator_set=bool(unit.get("operator_set")),
+        floor=floor,
+        auto_floor=auto_floor,
+        criterion=criterion,
+        probabilities=probabilities,
     )
-    problem = _unusable_reason(model, effort)
-    if problem is not None:
-        return {
-            **base,
-            "suggested": suggested,
-            "confidence": confidence,
-            "low_confidence": False,
-            "usable": False,
-            "problem": problem,
-            "reason": f"{problem}; the default stands",
-        }
-    if confidence is None or confidence < floor:
-        if confidence is None:
-            reason = "no confidence was reported; the default stands"
-        else:
-            reason = (
-                f"confidence {confidence:.2f} is below the floor {floor:.2f}; the default stands"
-            )
-        return {
-            **base,
-            "suggested": suggested,
-            "confidence": confidence,
-            "low_confidence": True,
-            "usable": True,
-            "problem": None,
-            "reason": reason,
-        }
-    if suggested == chosen:
-        reason = "agrees with the default; recorded beside it"
-    else:
-        reason = "differs from the default; advisory only, the default stands"
     return {
-        **base,
-        "suggested": suggested,
+        "direction": direction,
         "confidence": confidence,
-        "low_confidence": False,
-        "usable": True,
-        "problem": None,
-        "reason": reason,
+        "probabilities": dict(probabilities) if isinstance(probabilities, Mapping) else None,
+        "default": default,
+        **classified,
+        "threshold": floor,
+        "auto_floor": auto_floor,
+        "answer": dict(answer),
     }
 
 
-def _record_suggest_verdicts(
-    log_module: Any,
-    *,
-    decision_prefix: str,
-    units: Mapping[str, Mapping[str, Any]],
-    state: Any,
-    questions: Mapping[str, Any],
-    answers: Mapping[str, Any],
-    suggestions: Mapping[str, dict[str, Any]],
-    floor: float,
-    resolved_model: str,
-    log_dir: Path | None,
-) -> None:
-    """Append one verdict per suggested unit, plus an override where an operator-set tier differs
-    from a suggestion that cleared the floor.
+def jev_raise_from(block: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The run-record ``jev_raise`` for an applied raise, or ``None`` for every other band.
 
-    The verdict's answer is the combined ``model/effort`` choice so the evaluation harness can
-    join it against the ``chosen`` label; the two raw answers ride along as ``parts`` for audit.
-    A unit with no suggestion to score — missing answers, unusable values — writes nothing, and a
-    failed request never reaches here. Best-effort like jev_widen's: evidence is never worth
-    failing a staffing answer for.
+    The shape :func:`resolve_shape` reads (its tier) plus what the record keeps beside it:
+    ``{model, effort, confidence, reason, decision_id}``.
     """
-    for key, entry in suggestions.items():
-        suggested = entry.get("suggested")
-        if not isinstance(suggested, dict):
+    if block.get("band") != BAND_AUTO_RAISE or not block.get("applied"):
+        return None
+    proposed = block.get("proposed")
+    if not isinstance(proposed, Mapping):
+        return None
+    return {
+        "model": proposed.get("model"),
+        "effort": proposed.get("effort"),
+        "confidence": block.get("confidence"),
+        "reason": block.get("reason", ""),
+        "decision_id": block.get("decision_id", ""),
+    }
+
+
+def record_tier_verdicts(
+    blocks: Mapping[str, Mapping[str, Any]],
+    labels: Mapping[str, str | None],
+    *,
+    log_module: Any = None,
+    log_dir: Path | None = None,
+) -> dict[str, str]:
+    """Log one verdict per judgment block that carries an answer; return each verdict's hash.
+
+    ``labels`` maps the same keys to the verdict's label (:func:`tier_direction` of the default
+    and the tier the operator finally accepted), or ``None`` where none is known. A block without
+    an answer (not consulted, failed, switched off) has nothing to score and writes nothing.
+    Best-effort like every verdict writer: evidence is never worth failing a staffing answer for,
+    so a log that cannot be written returns what was logged so far.
+    """
+    written: dict[str, str] = {}
+    try:
+        log_module = log_module if log_module is not None else _load_commons("jev_log")
+    except Exception:  # noqa: BLE001 - see the docstring
+        return written
+    for key, block in blocks.items():
+        answer = block.get("answer")
+        if not isinstance(answer, Mapping) or not block.get("state_hash"):
             continue
-        tier = f"{suggested.get('model')}/{suggested.get('effort')}"
-        chosen = entry["chosen"]
-        label = f"{chosen['model']}/{chosen['effort']}"
         try:
             record = log_module.record_verdict(
-                decision_id=f"{decision_prefix}:{key}",
-                state=state,
-                questions=questions,
-                answer={
-                    "type": "choice",
-                    "choice": tier,
-                    "confidence": entry.get("confidence"),
-                    "parts": {
-                        "model": answers.get(f"{key}__model"),
-                        "effort": answers.get(f"{key}__effort"),
-                    },
-                },
-                confidence=entry.get("confidence"),
-                threshold=floor,
-                resolved_model=resolved_model,
-                label=label,
+                decision_id=str(block.get("decision_id") or f"{JUDGMENT_DECISION_PREFIX}:{key}"),
+                state_hash=str(block["state_hash"]),
+                questions_hash=str(block.get("questions_hash") or ""),
+                answer=dict(answer),
+                confidence=block.get("confidence"),
+                threshold=block.get("threshold"),
+                resolved_model=str(block.get("resolved_model") or ""),
+                label=labels.get(key),
                 directory=log_dir,
             )
         except Exception:  # noqa: BLE001, PERF203 - see the docstring
-            return
-        try:
-            if (
-                entry.get("usable")
-                and not entry.get("low_confidence")
-                and units.get(key, {}).get("operator_set")
-                and suggested != entry.get("chosen")
-            ):
-                log_module.record_override(
-                    verdict_hash=record["verdict_hash"],
-                    chosen=label,
-                    rationale=(
-                        f"the operator's tier for '{key}' is {label}; the suggestion was {tier}"
-                    ),
-                    directory=log_dir,
-                )
-        except Exception:  # noqa: BLE001 - see the docstring
-            return
+            return written
+        written[key] = str(record.get("verdict_hash", "")) if isinstance(record, Mapping) else ""
+    return written
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1387,9 +1602,10 @@ def build_parser() -> argparse.ArgumentParser:
         const=CONSULT,
         metavar="MODEL/EFFORT",
         help=(
-            "bare: consult the tier judgment once and record its suggestion beside the answer; "
-            "with MODEL/EFFORT: record that tier as the advisory suggestion instead. "
-            "Neither can change the resolved tier"
+            "bare: ask the tier judgment once whether this unit needs a weaker, the same, or a "
+            "stronger tier, and print the band it would take in a run; with MODEL/EFFORT: record "
+            "that tier as the advisory suggestion instead. Neither changes the tier this command "
+            f"resolves. {TIERING_ENV}=off makes no request"
         ),
     )
     resolve.add_argument(
@@ -1452,11 +1668,12 @@ def _cli_resolve(args: argparse.Namespace) -> int:
 
 
 def _cli_consult(args: argparse.Namespace) -> int:
-    """Resolve the default, consult the tier judgment once, and print both.
+    """Resolve the default, ask the tier judgment once, and print both.
 
-    The suggestion is carried onto the decision only when it is usable and clears the floor; the
-    resolved tier is the default's whatever the model says. A client failure still exits zero:
-    the consult is advisory, and the default it falls open to is a complete answer.
+    The command line has no run record to hold a raise, so ``applies:`` is always the default; the
+    judgment line names the band the answer would take in a run, where admission or ``/plan``
+    records an automatic raise. A client failure still exits zero: the default it falls open to is
+    a complete answer. The verdict is logged with no label, because no operator answer follows.
     """
     if args.shape:
         if args.lens:
@@ -1468,16 +1685,17 @@ def _cli_consult(args: argparse.Namespace) -> int:
         label = decision.role or args.role
     outcome = consult_tier_suggestions(
         {
-            label: suggestion_unit(
-                describe_unit(label, decision),
+            label: judgment_unit(
+                {"description": describe_unit(label, decision), "work_shape": decision.work_shape},
                 {"model": decision.model, "effort": decision.effort},
-                operator_set=decision.source == "overlay",
+                operator_set=decision.source in ("operator", "overlay"),
             )
-        }
+        },
+        decision_prefix=f"{JUDGMENT_DECISION_PREFIX}:cli",
     )
-    entry = outcome["suggestions"][label]
-    if entry.get("usable") and not entry.get("low_confidence") and entry.get("suggested"):
-        decision = replace(decision, suggestion=dict(entry["suggested"]))
+    entry = outcome["judgments"][label]
+    if outcome["status"] == "ok":
+        record_tier_verdicts({label: entry}, {})
     if args.json:
         payload = decision.as_dict()
         payload["consult"] = {
@@ -1485,31 +1703,39 @@ def _cli_consult(args: argparse.Namespace) -> int:
             "note": outcome["note"],
             "resolved_model": outcome["resolved_model"],
             "floor": outcome["floor"],
+            "auto_floor": outcome["auto_floor"],
+            "direction": entry.get("direction"),
             "confidence": entry.get("confidence"),
+            "band": entry.get("band"),
+            "proposed": entry.get("proposed"),
             "reason": entry.get("reason"),
         }
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        print("\n".join(_format_consult(decision, entry, outcome["floor"])))
+        print("\n".join(_format_consult(decision, entry, outcome)))
     return 0
 
 
 def _format_consult(
-    decision: StaffingDecision, entry: dict[str, Any], floor: float | None
+    decision: StaffingDecision, entry: Mapping[str, Any], outcome: Mapping[str, Any]
 ) -> list[str]:
-    """The short human form: the default, the suggestion with its confidence, and what applies."""
+    """The short human form: the default, the judgment and its band, and what applies here."""
     lines = [f"default: {_short_form(decision)} ({decision.source})"]
-    suggested = entry.get("suggested")
-    if not isinstance(suggested, dict):
-        lines.append(f"suggestion: none ({entry.get('reason', 'no suggestion')})")
+    direction = entry.get("direction")
+    confidence = entry.get("confidence")
+    if direction is None or not isinstance(confidence, (int, float)):
+        lines.append(f"judgment: none ({entry.get('reason', 'no judgment')})")
     else:
-        confidence = entry.get("confidence")
-        shown = f"{confidence:.2f}" if isinstance(confidence, (int, float)) else "n/a"
+        floor, auto_floor = outcome.get("floor"), outcome.get("auto_floor")
         floor_shown = f"{floor:.2f}" if isinstance(floor, (int, float)) else "n/a"
+        auto_shown = f"{auto_floor:.2f}" if isinstance(auto_floor, (int, float)) else "n/a"
+        proposed = entry.get("proposed")
         lines.append(
-            f"suggestion: {suggested.get('model')}/{suggested.get('effort')} "
-            f"at confidence {shown} (floor {floor_shown}); {entry.get('reason', '')}"
+            f"judgment: {direction} at confidence {confidence:.2f} "
+            f"(floor {floor_shown}, auto {auto_shown}); in a run: {entry.get('band')}"
+            + (f" -> {_tier_token(proposed)}" if isinstance(proposed, Mapping) else "")
         )
+        lines.append(f"reason: {entry.get('reason', '')}")
     lines.append(f"applies: {_short_form(decision)}")
     return lines
 

@@ -57,6 +57,59 @@ block source cannot tell them apart.
 
 **Generalizable rule.** When two readers must agree about whose value a record row is, put the
 rule in the record's own module and have both call it, rather than letting each re-derive it.
+### A judgment that recurs every run needs the run's identity in its decision id
+
+**Evidence.** Before issue #96, `staffing.py` logged tier verdicts as `staffing/tier-suggest:<key>`,
+where the key was a role or work-shape name. `jev_eval.py` joins answers to labels on
+`decision_id`, skips a repeated id, and drops any id that carries more than one distinct label as
+a conflict. The tier judgment now logs `staffing/tier-direction:<repo>#<issue>:role:<role>` and
+`...:unit:<id>` (`plugins/saga/scripts/tier_judgment.py`, `decision_prefix`).
+
+**Mechanism.** Thirty runs of the `worker` role produce thirty verdicts with one id. The harness
+scores the first and skips the rest, and once two runs label it differently it drops the id
+entirely. The "about thirty labeled verdicts" gate in house rule 10 could never be reached.
+
+**Generalizable rule.** When a judgment is asked once per run about a recurring subject, put the
+run's identity (repository and issue) in its decision id, and keep the subject as the suffix.
+
+### A writer that does not own a shared list must not add entries to it
+
+**Evidence.** Issue #96's first version of `tier_judgment.py plan` recorded each plan unit's
+judgment on the run record's `units` rows and created a row holding only `id` when none matched.
+Review reproduced the failure: on a record with an `orchestrate` block, orchestrate's `Run.load`
+raised `TypeError: Unit.__init__() missing 3 required positional arguments: 'name', 'vendor', and
+'task'`, and `Run.save` writes back only the rows its run holds, so a loadable row would still have
+lost its judgment. The fix keeps the judgments in a top-level `tier_judgments` map keyed by plan
+unit id (`plugins/saga/scripts/tier_judgment.py`, `PLAN_KEY`), which every writer preserves as an
+unknown top-level field; `plugins/orchestrate/tests/test_orchestrate_record.py` now loads and saves
+such a record through orchestrate.
+
+**Mechanism.** Adding a key to a row someone else owns is safe, because the round-trip rule
+carries it forward. Adding a row is not: row membership is the owner's decision, and the owner's
+loader assumes the fields it creates rows with. Listing the new keys as "documented foreign row
+keys" silenced the notice but hid that the row itself was foreign.
+
+**Generalizable rule.** Annotate a shared list's existing entries if you must, but put state about
+things the owner has not created yet under a key of your own.
+
+### A command that is on by default makes its tests call out unless the test package switches it off
+
+**Evidence.** Issue #96 made `admission.py`'s command line run the tier judgment by default. The
+first run of `plugins/saga/tests/test_admission.py` afterwards made one live TypeSafe request from
+`test_the_table_reads_the_overlay_admission_staffs_from_repo_root`, which drives `main()` with the
+real bundled staffing component, because the operator's shell carried `TYPESAFE_API_KEY`. Only
+fixture data was sent, and the dry run logged no verdict. The fix is the autouse fixture
+`_no_live_tier_judgment` in `plugins/saga/tests/conftest.py`, which sets
+`INFIQUETRA_TYPESAFE_TIERING=off` and removes the key, plus library defaults
+(`admit(judge_tiers=False)`) that make no request unless asked.
+
+**Mechanism.** Tests that inject a fake `ask` are safe, but a test that exercises the real command
+line reaches the real client, and the client reads the key from the environment. An interactive
+shell that exports credentials turns any such test into a live call.
+
+**Generalizable rule.** When a network-backed behaviour becomes on by default, add an autouse
+fixture that switches it off for the whole test package in the same change, and let the tests
+that need it on pass an explicit switch and a fake client.
 
 ### A card filed from a pull request's follow-ups can be closed by that same pull request
 
