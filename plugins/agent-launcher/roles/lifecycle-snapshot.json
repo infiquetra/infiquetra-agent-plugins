@@ -1,7 +1,7 @@
 {
   "schema": "lifecycle_snapshot.v1",
   "source_repo": "https://github.com/infiquetra/infiquetra-sdlc",
-  "sdlc_revision": "5efc869f",
+  "sdlc_revision": "e5a2be10",
   "note": "Vendored from infiquetra-sdlc at the revision above. This is the data the suite checks the prompts against when no sibling checkout is reachable, which is the normal case in continuous integration. When a checkout IS reachable, test_vendored_snapshot_matches_the_live_lifecycle compares every field here against it and fails on any drift. Regenerate deliberately when the pin moves; never hand-edit.",
   "roles": {
     "product": "Product",
@@ -68,11 +68,11 @@
       ],
       "field_descriptions": {
         "applicability_declaration": "Which review lenses apply to each unit, and the reason for each inclusion and each exclusion.",
-        "child_scoped_checks": "The checks that belong to each unit's own scope, per unit.",
+        "child_scoped_checks": "The checks that belong to each unit's own scope, per unit, each derived from the issue's acceptance criteria and naming the criterion it proves.",
         "deferred_checks": "Every check that cannot be run yet, each naming the step it will run at and the role that will run it. A deferred check with no named step and role is not adequate.",
         "possible_lanes": "The lanes the Planner determines could run concurrently. What actually runs is the Delivery Manager's choice.",
         "preflight_results": "One row per preflight check: the check, the environment it was observed in, the time of observation, the role that ran it, the outcome, its validity class, and the window that validity holds for.",
-        "testing_expectations": "The prescribed functional scenarios, their targets, their execution environments, and the tools they need.",
+        "testing_expectations": "The prescribed functional scenarios, their targets, their execution environments, and the tools they need; and, once at plan level, the functional suite the combined branch runs before code review, or a run-level waiver with its reason for a change that carries no code.",
         "work_unit_checklist": "The work-unit list rendered as a checklist the Delivery Manager ticks in place as units complete, so progress stays visible without a card per unit.",
         "work_units": "The implementation work units the work decomposes into, each with its file custody, its dependencies, its ordering, its concurrency, its checks, and its assignment. Work units are the breakdown of execution and are never child issues."
       }
@@ -117,7 +117,7 @@
         "approval_scope": "The seven approval categories of the escalations chapter, each with the scope the operator granted or `none`. An unscoped grant is invalid and is reported as a missing required boundary.",
         "concurrency_allocation": "How much concurrency each hosting session is allocated. There is no single global cap to derive one from.",
         "cycle_allowances": "The cycle allowance for each loop, with this run's values and the rule for raising one.",
-        "destination": "The non-production destination the run targets, carrying whether that repository's `main` branch is directly consumed.",
+        "destination": "The non-production destination the run targets, carrying whether that repository's `main` branch is directly consumed, and the repository's declared functional-test environment for the pre-review combined-branch run, or its recorded waiver and reason.",
         "exception_decisions": "Judgment calls already made — a technical ruling, a product ruling within the recorded intent, or an operator-reserved decision — that the Delivery Manager executes against.",
         "executors_and_topology": "The logical executor assigned to each lens, and the physical topology the logical executors are hosted on.",
         "investigator_triggers": "The Investigator requests that are pre-approved for this run and need no fresh authorisation.",
@@ -154,6 +154,7 @@
       "sender_role": "implementer",
       "required_fields": [
         "branch_and_revision",
+        "combined_branch_functional_run",
         "mechanical_check_results",
         "recheck_results",
         "unexplained_behaviour",
@@ -162,6 +163,7 @@
       ],
       "field_descriptions": {
         "branch_and_revision": "The branch the unit was implemented on and the revision the result applies to.",
+        "combined_branch_functional_run": "The combined-branch functional run behind the revision this result hands to review: each pass's revision, outcome and teardown outcome, the declared environment, and the passing pass on that same revision; or the recorded waiver that still applies, with its reason. The result that hands the combined branch to review carries it: the single lane's result, the result of the implementer whose change completes the combined branch once its pass has passed, or a repair batch's result. A unit result that hands nothing to review, on the integrating path, writes that the run is pending at step 6. The review controller checks this field before a cycle starts.",
         "mechanical_check_results": "The mechanical checks that ran, with the version of each tool that ran them.",
         "recheck_results": "The preflight checks re-run before this work, with what was observed and when.",
         "unexplained_behaviour": "Behaviour the worker could not explain, reported rather than left out; it is one of the two pre-approved triggers for an investigation.",
@@ -319,7 +321,7 @@
         "residual_issues"
       ],
       "field_descriptions": {
-        "closing_version": "The version the parent closed on.",
+        "closing_version": "The version the parent closed on, with the pre-review functional evidence it carried: its passing combined-branch functional run, or the waiver and its reason. A version produced in the post-merge repair loop carries its own passing run too, because every repair batch passes the run before it returns to review, in either loop.",
         "cycles_used_per_loop": "How many cycles each loop actually used.",
         "decision_required": "The decision the operator still has to make, or the explicit statement that there is none.",
         "escalations": "Every escalation the run made.",
@@ -345,5 +347,5 @@
     "accessibility-human-usability": "baseline",
     "experience": "baseline"
   },
-  "content_sha256": "54354c7914e5eb02c9cebc245534e9e215219a307c676dca7bcb402ea36d7ebf"
+  "content_sha256": "29116bc436c6b7de3b383e834c02a3c39893ad9e0b5e73befd4f09b0fcfbdeca"
 }

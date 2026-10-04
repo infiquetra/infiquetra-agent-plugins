@@ -10,7 +10,7 @@ its own: no role that repository does not name, no contract it does not define, 
 threshold. When this directory and that repository disagree, that repository is right and this
 directory is stale.
 
-Read from `infiquetra-sdlc` revision `5efc869f`.
+Read from `infiquetra-sdlc` revision `e5a2be10`.
 
 **One thing here is copied rather than referenced, and it is worth naming.** Each prompt lists the
 required field names of the contract it posts. Those names are the lifecycle's, transcribed — a
@@ -65,7 +65,7 @@ heading here and the field there are the same idea under two names.
 ## The output contract, once
 
 Every role posts its result as a handoff comment on the issue record, in the shape
-`infiquetra-sdlc` `docs/process/run-contracts.md` fixes, at revision `5efc869f`. The comment opens with a heading naming the contract:
+`infiquetra-sdlc` `docs/process/run-contracts.md` fixes, at revision `e5a2be10`. The comment opens with a heading naming the contract:
 
 ```markdown
 ### Handoff: <contract name> (<contract-id>)

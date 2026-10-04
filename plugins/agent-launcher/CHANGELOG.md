@@ -4,6 +4,17 @@
 
 ### Changed
 
+- **The roles library is re-pinned to infiquetra-sdlc revision `e5a2be10`** (issue #97), the merge
+  of infiquetra-sdlc#174, which requires functional testing of the combined branch before code
+  review. `roles/lifecycle-snapshot.json` is regenerated from the lifecycle at that revision: the
+  `implementation-result` contract gains the required field `combined_branch_functional_run`, and
+  four field descriptions change. The prompts follow the lifecycle there. The three implementer
+  prompts name the new field, and the Initial Implementation Worker's stop rule drops the per-unit
+  branch preview for the combined-branch run. The Delivery Manager records the repository's
+  declared functional-test environment or its waiver. The Review Controller checks the run before a
+  cycle starts. The Planner and the Plan Reviewer carry the run-level waiver rule.
+  `test_changelog_names_the_pin` now reads the `[Unreleased]` entry when there is one, because a
+  pin move lands there before the release that bumps the version.
 - `roster.py` writes the run record's `roster` through saga's `run_record.update` (issue 95): it
   takes the record's lock, re-reads the record and replaces only `roster` on that fresh copy, so a
   unit row or usage entry written since the roster was read survives. With a saga older than issue
