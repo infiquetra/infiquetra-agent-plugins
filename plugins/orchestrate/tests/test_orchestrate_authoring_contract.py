@@ -7,6 +7,9 @@ units off one file fell back to ``after``, asserting a dependency that did not e
 pin the producer path: both surfaces teach both edges and when to reach for each, the Phase 4 JSON
 contract shows a unit actually authoring ``serialize``, and neither surface ever again calls
 ``after`` the only ordering.
+
+They also pin the `/work` row naming rule (issue #135): both surfaces state that an expansion
+creates one `/work` row per plan unit, named by its U-ID, and no example shows any other name.
 """
 
 from __future__ import annotations
@@ -117,3 +120,66 @@ def test_no_surface_authorizes_direct_wrapper_or_manual_worktree_bypass() -> Non
         assert "not a license to bypass `expand` or `go`" in collapsed or (
             "does not authorize bypassing `expand` or `go`" in collapsed
         ), f"{relative_path} does not clearly prohibit bypassing expand or go"
+
+
+# The /work row naming rule (issue #135). Saga's functional-check write finds each plan unit's row
+# by its name, so an expansion that names a /work row anything but a plan U-ID leaves that unit
+# pending and /work stops on exit 5 before its first build-loop iteration.
+WORK_ROW_NAMING_RULE = (
+    "exactly one `/work` row per plan unit, named by that unit's U-ID",
+    "A lane that builds several plan units carries several rows, one per U-ID",
+    "`plugins/saga/scripts/functional_checks.py write`",
+    "exits 5",
+)
+
+PLAN_UID = re.compile(r"U[1-9][0-9]*")
+# A unit object shown anywhere in a surface: one flat JSON object carrying a name and a task.
+UNIT_OBJECT = re.compile(r"\{[^{}]*\"name\"\s*:[^{}]*\"task\"\s*:[^{}]*\}")
+WORK_TASK = re.compile(r"^/(?:saga:)?work\b")
+
+
+def _work_row_names(text: str) -> list[str]:
+    """Every unit name the surface shows on a row whose task invokes `/work`.
+
+    It reads each flat unit object in the text rather than only parseable JSON blocks, so a row
+    shown in a non-JSON fence or with an ellipsis still counts.
+    """
+    names: list[str] = []
+    for match in UNIT_OBJECT.finditer(text):
+        body = match.group(0)
+        name = re.search(r"\"name\"\s*:\s*\"([^\"]*)\"", body)
+        task = re.search(r"\"task\"\s*:\s*\"([^\"]*)\"", body)
+        if name and task and WORK_TASK.match(task.group(1)):
+            names.append(name.group(1))
+    return names
+
+
+def test_command_states_the_work_row_naming_rule() -> None:
+    _assert_all_present(_read(COMMAND_PATH), WORK_ROW_NAMING_RULE, COMMAND_PATH)
+
+
+def test_skill_states_the_work_row_naming_rule() -> None:
+    _assert_all_present(_read(SKILL_PATH), WORK_ROW_NAMING_RULE, SKILL_PATH)
+
+
+def test_command_shows_the_rule_in_phase_5() -> None:
+    text = _read(COMMAND_PATH)
+    phase_5 = text.split("## Phase 5", 1)[1].split("\n## ", 1)[0]
+    _assert_all_present(phase_5, WORK_ROW_NAMING_RULE[:2], f"{COMMAND_PATH} Phase 5")
+
+
+def test_every_work_row_example_is_named_by_a_plan_uid() -> None:
+    shown: list[str] = []
+    for relative_path in SURFACES:
+        names = _work_row_names(_read(relative_path))
+        wrong = [name for name in names if not PLAN_UID.fullmatch(name)]
+        assert wrong == [], f"{relative_path} shows /work rows not named by a plan U-ID: {wrong!r}"
+        shown.extend(names)
+    # Guard the guard: the command's expansion example must still show /work rows to check.
+    assert shown, "no surface shows a /work row any more, so the naming rule is untested"
+
+
+def test_work_row_scanner_catches_a_lane_name() -> None:
+    sample = '{"name": "build-api", "vendor": "claude", "task": "/saga:work docs/plans/x.md"}'
+    assert _work_row_names(sample) == ["build-api"]
+    assert not PLAN_UID.fullmatch("build-api")

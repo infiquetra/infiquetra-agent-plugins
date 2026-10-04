@@ -2,6 +2,29 @@
 
 ## 2026-10-04
 
+### An orchestrate expansion creates one `/work` row per plan unit, named by its U-ID
+
+**Decision.** When orchestrate expands a run with its `/work` phase, it creates exactly one row per
+plan unit, and names the row by that unit's U-ID (`U1`, `U2`, ...). A lane that builds several plan
+units carries several rows, one per U-ID, never one row under a lane name (issue #135, the
+follow-up to #98). The portable skill and the Claude `/orchestrate` command state the rule in the
+same words, and `plugins/orchestrate/tests/test_orchestrate_authoring_contract.py` fails if either
+shows a `/work` row with any other name.
+
+**Rationale.** `plugins/saga/scripts/functional_checks.py write` finds each plan unit's row by its
+`id`, `name` or `unit_id`. In an orchestrate-driven run the rows do not exist when `/plan` writes,
+so `/work` writes again before its first build-loop iteration and stops on exit 5 if a unit still
+has no row. One row per U-ID makes that lookup exact with no change to the writer or to `/work`.
+
+**Rejected alternatives.** Letting `/work` pass the U-IDs a lane builds to the writer and count
+exit 5 only for those: it adds a second naming channel the writer and the build loop would both
+have to learn, and a lane row still could not carry several units' checks under one key. Leaving
+the rule in the skill alone: the Claude command is what an operator actually follows, and its
+example taught the opposite.
+
+**Revisit when.** A `/work` lane needs to build several plan units in one session and one worktree
+often enough that one row per unit becomes a cost.
+
 ### A plan proves its acceptance criteria in fenced YAML blocks, copied onto the run record by their own script
 
 **Decision.** A plan names each unit's functional checks in a fenced block whose info string is
