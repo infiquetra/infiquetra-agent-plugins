@@ -81,6 +81,8 @@ function fake(on: On): Fake {
   on('session.end', async ($, e) => ({ sessionId: e.sessionId }))
   on('session.id', async () => ({ value: SESSION }))
   on('command.register', async ($, e) => ({ value: { command: e.name } }))
+  // The admission review mod (issue #103) registers its tool from the same session.start chain.
+  on('tool.register', async ($, e) => ({ value: { tool: e.name } }))
   on('agent.list', async () => ({ value: state.agents.map((a) => ({ ...a, description: '', status: 'running' })) }))
   on('ui.log', async () => ({ value: undefined }))
   on('process.run', async ($, e) => {
