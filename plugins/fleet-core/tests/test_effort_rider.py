@@ -2,8 +2,9 @@
 
 `EFFORT_RIDER` carries one prompt-preamble directive per canonical `tier_palette.EFFORTS` value;
 `inject_effort(prompt, effort, spawn_kind)` prepends the rider only on the native Agent-tool
-(`spawn_kind="agent"`) path and passes through the two real-knob paths (`workflow`,
-`external-engine`) without double-injecting. Unknown effort or spawn_kind raises.
+(`spawn_kind="agent"`) path and passes through the three real-knob paths (`workflow`,
+`external-engine`, `claude-agent-type`) without double-injecting. Unknown effort or spawn_kind
+raises.
 
 Loaded two ways: directly via sys.path (fast unit assertions) and cross-plugin via
 `fleet_commons_shim.load("effort_rider")` (R8: consumed like tier_palette / tier_resolver).
@@ -47,6 +48,33 @@ def test_workflow_kind_is_pass_through() -> None:
 def test_external_engine_kind_is_pass_through() -> None:
     prompt = "do the thing"
     assert effort_rider.inject_effort(prompt, "xhigh", "external-engine") == prompt
+
+
+def test_spawn_kinds_are_the_rider_and_three_real_knobs() -> None:
+    assert effort_rider.SPAWN_KINDS == ("agent", "workflow", "external-engine", "claude-agent-type")
+
+
+@pytest.mark.parametrize("effort", EFFORTS)
+def test_claude_agent_type_kind_is_pass_through_for_every_effort(effort: str) -> None:
+    # The effort rides in the registered agent type's definition (issue #106): no rider.
+    prompt = "do the thing"
+    assert effort_rider.inject_effort(prompt, effort, "claude-agent-type") == prompt
+
+
+def test_reconcile_claude_agent_type_compares_the_observed_request_effort() -> None:
+    assert (
+        effort_rider.reconcile_effort("medium", "claude-agent-type", manifest_effort="medium")
+        is None
+    )
+    line = effort_rider.reconcile_effort("medium", "claude-agent-type", manifest_effort="high")
+    assert line is not None
+    assert line.startswith("tiering-drift[claude-agent-type]")
+    assert "'medium'" in line and "'high'" in line
+
+
+def test_reconcile_claude_agent_type_requires_the_observed_effort() -> None:
+    with pytest.raises(ValueError, match="requires manifest_effort"):
+        effort_rider.reconcile_effort("medium", "claude-agent-type")
 
 
 @pytest.mark.parametrize("effort", EFFORTS)

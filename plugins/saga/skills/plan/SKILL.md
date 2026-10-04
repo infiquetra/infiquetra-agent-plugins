@@ -558,7 +558,7 @@ it is an operator-committed file.
 Do not hand-edit; guard: tests/test_saga_spec_consumer_row.py::test_plan_docs_generated_regions_match_contract. -->
 <!--
 The honoring seam is `fleet_commons.effort_rider.inject_effort(prompt, effort, spawn_kind)`.
-For `external-engine`, `workflow`: effort already rides on real controls; injecting a rider would double-count it.
+For `claude-agent-type`, `external-engine`, `workflow`: effort already rides on real controls; injecting a rider would double-count it.
 For `agent`: prepend an `EFFORT_RIDER` directive: a labeled proxy because the Agent tool has no per-call effort parameter.
 See `plugins/fleet-core/references/staffing.md`.
 The proposed tier cell is `<model>/<effort>`: use the `model` and `effort` that

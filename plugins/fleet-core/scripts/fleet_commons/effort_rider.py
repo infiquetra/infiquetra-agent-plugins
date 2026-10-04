@@ -3,20 +3,24 @@
 
 `effort` is a first-class value across the fleet (authored in agent frontmatter and the
 team-execution A7 worker table, validated against the canonical `tier_palette.EFFORTS`
-vocabulary, resolved through the three-layer cascade). Two of the three dispatch paths honor
+vocabulary, resolved through the three-layer cascade). Three of the four dispatch paths honor
 it with a **real per-call knob** already:
 
 * ``workflow`` (Workflow/ultracode) emits ``agent(prompt, {effort})`` — the knob rides in the
   opts dict (``execution_spec.py:982``); injecting a rider here would double-count it.
 * ``external-engine`` passes ``effort=resolution.effort`` straight to the engine
   (``external-engine-workers.md:155``).
+* ``claude-agent-type`` dispatches a subagent of an agent type that was registered with the
+  role's model and effort (saga's Claude Code mod registers ``saga:<role>`` types, issue #106);
+  the effort rides in the type's definition, so the prompt passes through unchanged.
 
 The native **Agent-tool teammate** path (``spawn_kind = "agent"``) has no harness knob for
 subagent reasoning effort, so the only lever is a **labeled proxy**: a short prompt-preamble
 directive (``EFFORT_RIDER``) prepended to the teammate's prompt. This mirrors the
 ``BUDGET_RIDER`` prepend pattern (``execution_spec.py:132``, injected at ``:1000`` / ``:1247``).
+It stays the fallback for an Agent-tool spawn that names no registered agent type.
 
-Routing all three kinds through one ``inject_effort()`` seam means "how effort is honored" lives
+Routing all four kinds through one ``inject_effort()`` seam means "how effort is honored" lives
 in exactly one function: when the harness ships a native subagent-effort parameter, the
 ``agent`` branch flips from "prepend rider" to "pass real knob" and nothing upstream (authoring,
 lint, cascade, provenance, reconcile) changes. That single-swap property is the whole point of
@@ -64,9 +68,9 @@ def _load_sibling(name: str):
 
 EFFORTS: tuple[str, ...] = _load_sibling("tier_palette").EFFORTS
 
-# The set of spawn kinds the seam understands. Only ``agent`` gets a rider; the other two are
+# The set of spawn kinds the seam understands. Only ``agent`` gets a rider; the other three are
 # real-knob pass-throughs. An unknown kind is a programming error and raises.
-_PASS_THROUGH_KINDS = ("workflow", "external-engine")
+_PASS_THROUGH_KINDS = ("workflow", "external-engine", "claude-agent-type")
 _RIDER_KIND = "agent"
 SPAWN_KINDS = (_RIDER_KIND, *_PASS_THROUGH_KINDS)
 
@@ -103,9 +107,9 @@ assert set(EFFORT_RIDER) == set(EFFORTS), (
 def inject_effort(prompt: str, effort: str, spawn_kind: str) -> str:
     """Return ``prompt`` with the resolved ``effort`` honored for ``spawn_kind``.
 
-    * ``spawn_kind`` in ``{"workflow", "external-engine"}`` → pass-through: ``prompt`` is
-      returned unchanged, because the effort already rides as a real per-call knob on that
-      path and re-injecting a rider would double-count it.
+    * ``spawn_kind`` in ``{"workflow", "external-engine", "claude-agent-type"}`` → pass-through:
+      ``prompt`` is returned unchanged, because the effort already rides as a real per-call knob
+      on that path and re-injecting a rider would double-count it.
     * ``spawn_kind == "agent"`` → the ``EFFORT_RIDER[effort]`` directive is prepended to
       ``prompt`` (the labeled proxy for the native Agent-tool teammate path).
 
@@ -134,10 +138,11 @@ def reconcile_effort(
     Returns ``None`` on a match — R9's "nothing on match". Returns a named ``tiering-drift`` line
     on a mismatch. The comparison is **honest per path**:
 
-    * ``spawn_kind`` in ``{"workflow", "external-engine"}`` (real-knob paths) — ``manifest_effort``
-      is the effort value the worker manifest recorded as actually passed to ``agent()`` / the
-      engine (``worker-manifest.md:48,54``). Reconciliation compares it directly against
-      ``resolved_effort``; a mismatch names both values.
+    * ``spawn_kind`` in ``{"workflow", "external-engine", "claude-agent-type"}`` (real-knob
+      paths) — ``manifest_effort`` is the effort value recorded as actually passed to
+      ``agent()`` / the engine (``worker-manifest.md:48,54``), or, for ``claude-agent-type``, the
+      effort the subagent's request was observed to send. Reconciliation compares it directly
+      against ``resolved_effort``; a mismatch names both values.
     * ``spawn_kind == "agent"`` (native Agent-tool teammate — no real knob) — reconciliation can
       only confirm the ``EFFORT_RIDER[resolved_effort]`` directive text reached the constructed
       spawn prompt. It never claims to observe actual harness reasoning spend; the drift line
