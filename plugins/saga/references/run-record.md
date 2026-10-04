@@ -370,20 +370,26 @@ and is preserved unchanged across a read and a write, which is exactly the exten
 "Unknown top-level fields" rule above describes. Orchestrate never writes `admission`,
 `approval_scope`, `run_configuration`, `review_cycles` or `roster`.
 
-The tier judgment in `/plan` (issue #96) is the fourth consumer. `tier_judgment.py plan` writes
-the first two keys on the row whose `id`, `name` or `unit_id` is the plan unit's id, creating a row
-with just `id` when there is none; `tier_judgment.py label` writes the third. Both write through
-`run_record.update`, under the record lock, and carry every other key on the row forward:
+### `tier_judgments` — `/plan`'s per-unit tier judgments
 
-<!-- BEGIN UNIT ROW KEYS -->
+The tier judgment in `/plan` (issue #96) does **not** write unit rows. `/plan` defines its units
+before any unit row exists, and the rows belong to the writers that run units: orchestrate cannot
+load a row that holds only an `id` (its `Unit` needs `name`, `vendor` and `task`), and its
+`Run.save` writes back only the rows its run holds, so a row invented here would break every later
+orchestrate command on the issue or be deleted by the next save.
+
+Instead `tier_judgment.py` keeps a top-level key of its own, `tier_judgments`, a map from the plan
+unit's id to one entry. It is an unknown top-level field to `run_record.py`, so it is preserved
+unchanged by every reader and writer, orchestrate's save included (see "Unknown top-level
+fields" above). `tier_judgment.py plan` writes the first two keys of an entry and
+`tier_judgment.py label` the third; both write through `run_record.update`, under the record lock,
+and carry every other entry and key forward:
 
 | Key | Holds |
 |---|---|
 | `tier_judgment` | the unit's judgment block, the same shape as the per-role block in the staffing map, plus `labeled` once its verdict is logged |
-| `jev_raise` | `{model, effort, confidence, reason, decision_id}` for an automatic raise only; `/work` passes it to `lifecycle_state.py resolve-build-unit-tier --jev-raise` |
+| `jev_raise` | `{model, effort, confidence, reason, decision_id}` for an automatic raise only; `/work` reads it with `tier_judgment.py raise --issue <N> --unit <id>` and passes it to `lifecycle_state.py resolve-build-unit-tier --jev-raise` |
 | `planned_tier` | `{model, effort}`, the tier `/plan` finally recorded for the unit after the operator confirmed the table |
-
-<!-- END UNIT ROW KEYS -->
 
 ## `approval_scope`
 

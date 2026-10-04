@@ -13,8 +13,14 @@ This module is saga's half, shared by ``admission.py`` and ``/plan``:
   labeled ``below``, ``same`` or ``above`` relative to the default, and marks the block so it is
   never logged twice.
 * The ``plan`` command asks once for every plan unit and records each unit's judgment, and any
-  automatic raise as ``jev_raise``, on the unit's row in the run record. The ``label`` command
-  records the tier ``/plan`` finally chose for each unit as ``planned_tier`` and logs the labels.
+  automatic raise as ``jev_raise``, under the plan unit's id in the run record's top-level
+  ``tier_judgments`` map. The ``label`` command records the tier ``/plan`` finally chose for each
+  unit there as ``planned_tier`` and logs the labels. The ``raise`` command prints one unit's
+  recorded ``jev_raise`` (or ``null``) for ``/work`` to pass to ``--jev-raise``.
+
+The plan-unit judgments live in a top-level map of their own, never on the ``units`` rows: those
+rows belong to the writers that run units (orchestrate, the build loop), and a row this module
+invented (one holding only an ``id``) cannot be loaded by orchestrate and is dropped by its save.
 
 ``INFIQUETRA_TYPESAFE_TIERING=off`` switches the judgment off: no request is made and every unit
 keeps its default. Exit codes are the run record's: 0 success, 2 a refusal, 3 an unknown record
@@ -46,6 +52,12 @@ MAX_ATTEMPTS = 2
 
 #: The run-wide key in the staffing map that says whether the judgment ran (``status``, ``note``).
 RUN_WIDE_KEY = "_tier_judgment"
+
+#: The run record's top-level key holding ``/plan``'s per-unit judgments, keyed by plan unit id.
+#: Each entry holds ``tier_judgment``, ``jev_raise`` (an automatic raise only) and
+#: ``planned_tier``. It is an unknown top-level field to ``run_record.py``, so every reader and
+#: writer preserves it unchanged, orchestrate's ``Run.save`` included.
+PLAN_KEY = "tier_judgments"
 
 
 class TierJudgmentError(ValueError):
@@ -170,7 +182,7 @@ def log_labels(
 
 
 # ---------------------------------------------------------------------------
-# /plan: one consult for every unit, recorded on the unit rows
+# /plan: one consult for every unit, recorded under the record's ``tier_judgments`` map
 # ---------------------------------------------------------------------------
 
 
@@ -229,13 +241,28 @@ def plan_units(
     return built
 
 
-def _row_for(units: list[dict[str, Any]], unit_id: str) -> dict[str, Any]:
-    for row in units:
-        if isinstance(row, dict) and run_record.unit_key(row) == unit_id:
-            return row
-    row = {"id": unit_id}
-    units.append(row)
-    return row
+def plan_judgments(record: run_record.RunRecord) -> dict[str, dict[str, Any]]:
+    """A deep copy of *record*'s ``tier_judgments`` map, ``{}`` when it has none or it is malformed.
+
+    Entries that are not objects are dropped: they carry nothing this module could use.
+    """
+    raw = record.extra.get(PLAN_KEY)
+    if not isinstance(raw, Mapping):
+        return {}
+    copied = json.loads(json.dumps(raw))
+    return {str(key): value for key, value in copied.items() if isinstance(value, dict)}
+
+
+def plan_entry(record: run_record.RunRecord, unit_id: str) -> dict[str, Any] | None:
+    """The ``tier_judgments`` entry for *unit_id*, or ``None``. ``/work`` reads ``jev_raise`` here."""
+    return plan_judgments(record).get(str(unit_id))
+
+
+def _with_plan_judgments(
+    record: run_record.RunRecord, judgments: dict[str, dict[str, Any]]
+) -> run_record.RunRecord:
+    extra = {**record.extra, PLAN_KEY: judgments}
+    return run_record.RunRecord(**{**record.__dict__, "extra": extra})
 
 
 def _summary(unit_id: str, block: Mapping[str, Any]) -> dict[str, Any]:
@@ -269,12 +296,12 @@ def run_plan(
     ask: Any = None,
     getenv: Any = None,
 ) -> dict[str, Any]:
-    """Judge every plan unit in one request and record each judgment on its unit row.
+    """Judge every plan unit in one request and record each judgment under ``tier_judgments``.
 
-    Each row gets its ``tier_judgment`` block and, for an automatic raise, its ``jev_raise``, which
-    ``/work`` passes to ``lifecycle_state.py resolve-build-unit-tier --jev-raise``. A row is found
-    by ``run_record.unit_key`` (``id``, else ``name``, else ``unit_id``) and created with ``id``
-    when the record has none. Returns the rows to show in ``/plan``'s tier table.
+    Each plan unit's entry, keyed by its id, gets its ``tier_judgment`` block and, for an
+    automatic raise, its ``jev_raise``, which ``/work`` passes to
+    ``lifecycle_state.py resolve-build-unit-tier --jev-raise``. The ``units`` rows are never
+    touched. Returns the rows to show in ``/plan``'s tier table.
     """
     if not dry_run and run_record.load(store_root, issue, warn=None) is None:
         raise TierJudgmentError(
@@ -305,23 +332,23 @@ def run_plan(
             }
         blocks[unit_id] = block
 
-    # Only an answered consult touches the rows: a switched-off or failed one leaves every row,
-    # and any raise an earlier consult recorded, exactly as it was.
+    # Only an answered consult writes: a switched-off or failed one leaves every entry, and any
+    # raise an earlier consult recorded, exactly as it was.
     if not dry_run and outcome.get("status") == "ok":
 
         def change(current: run_record.RunRecord | None) -> run_record.RunRecord:
             if current is None:
                 raise TierJudgmentError(f"the run record for issue {issue} disappeared")
-            rows = json.loads(json.dumps(current.units))
+            judgments = plan_judgments(current)
             for unit_id, block in blocks.items():
-                row = _row_for(rows, unit_id)
-                row["tier_judgment"] = block
+                entry = judgments.setdefault(unit_id, {})
+                entry["tier_judgment"] = block
                 raised = staffing.jev_raise_from(block)
                 if raised is not None:
-                    row["jev_raise"] = raised
+                    entry["jev_raise"] = raised
                 else:
-                    row.pop("jev_raise", None)
-            return run_record.RunRecord(**{**current.__dict__, "units": rows})
+                    entry.pop("jev_raise", None)
+            return _with_plan_judgments(current, judgments)
 
         run_record.update(store_root, issue, change)
 
@@ -340,7 +367,11 @@ def run_label(
     staffing: Any,
     log_dir: Path | None = None,
 ) -> dict[str, str]:
-    """Record each unit's final tier as ``planned_tier`` and log its judgment's label, once."""
+    """Record each unit's final tier as ``planned_tier`` and log its judgment's label, once.
+
+    The entry is created when the plan consult wrote none (the judgment was off or failed), so the
+    final tier is recorded either way.
+    """
     parsed: dict[str, dict[str, str]] = {}
     for unit_id, value in finals.items():
         tier = _tier(value)
@@ -352,18 +383,15 @@ def run_label(
     def change(current: run_record.RunRecord | None) -> run_record.RunRecord:
         if current is None:
             raise TierJudgmentError(f"no run record for issue {issue}")
-        rows = json.loads(json.dumps(current.units))
+        judgments = plan_judgments(current)
         blocks: dict[str, dict[str, Any]] = {}
         for unit_id, tier in parsed.items():
-            try:
-                row = run_record.find_unit_row(rows, unit_id)
-            except run_record.RunRecordError as exc:
-                raise TierJudgmentError(str(exc)) from exc
-            row["planned_tier"] = tier
-            if isinstance(row.get("tier_judgment"), dict):
-                blocks[unit_id] = row["tier_judgment"]
+            entry = judgments.setdefault(unit_id, {})
+            entry["planned_tier"] = tier
+            if isinstance(entry.get("tier_judgment"), dict):
+                blocks[unit_id] = entry["tier_judgment"]
         logged.update(log_labels(staffing, blocks, parsed, log_dir=log_dir))
-        return run_record.RunRecord(**{**current.__dict__, "units": rows})
+        return _with_plan_judgments(current, judgments)
 
     run_record.update(store_root, issue, change)
     return logged
@@ -374,7 +402,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="tier_judgment.py",
         description=(
             "Ask TypeSafe Jev whether each plan unit needs a weaker, the same, or a stronger "
-            "tier than its default, and record the answer on the unit rows. "
+            "tier than its default, and record the answer in the run record's "
+            "tier_judgments map. "
             "INFIQUETRA_TYPESAFE_TIERING=off makes no request."
         ),
     )
@@ -390,6 +419,12 @@ def build_parser() -> argparse.ArgumentParser:
     label.add_argument("--issue", type=int, required=True)
     label.add_argument("--final", required=True, help='JSON {"<unit id>": "model/effort"}')
     label.add_argument("--store-root", default=None)
+    raised = sub.add_parser(
+        "raise", help="print a plan unit's recorded jev_raise as JSON, or null when it has none"
+    )
+    raised.add_argument("--issue", type=int, required=True)
+    raised.add_argument("--unit", required=True, help="the plan unit's id")
+    raised.add_argument("--store-root", default=None)
     return parser
 
 
@@ -424,6 +459,14 @@ def main(argv: list[str] | None = None) -> int:
                 dry_run=args.dry_run,
             )
             print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.command == "raise":
+            record = run_record.load(store_root, args.issue, warn=None)
+            if record is None:
+                raise TierJudgmentError(f"no run record for issue {args.issue}")
+            entry = plan_entry(record, args.unit) or {}
+            raise_ = entry.get("jev_raise")
+            print(json.dumps(raise_ if isinstance(raise_, dict) else None, sort_keys=True))
             return 0
         finals = _read_json(args.final)
         if not isinstance(finals, dict):

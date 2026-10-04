@@ -128,7 +128,12 @@ def test_issue_state_sends_the_four_keyword_flags_and_never_widens(
     assert state["flags"]["has_security"] is True
 
 
-def test_plan_makes_one_request_and_records_each_unit_row(
+def _entries(tj: ModuleType, rr: ModuleType, store: Path) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = tj.plan_judgments(rr.load(store, 96, warn=None))
+    return result
+
+
+def test_plan_makes_one_request_and_records_each_unit_under_tier_judgments(
     tj: ModuleType, rr: ModuleType, staffing: Any, store: Path, repo_root: Path
 ) -> None:
     _seed(rr, store, [{"name": "U2", "branch": "issue/96-u2"}])
@@ -154,9 +159,11 @@ def test_plan_makes_one_request_and_records_each_unit_row(
     assert rows["U2"]["tier"] == {"model": "opus", "effort": "medium"}
 
     record = rr.load(store, 96, warn=None)
-    by_key = {rr.unit_key(row): row for row in record.units}
-    assert len(record.units) == 3, "the existing row named U2 was reused, not duplicated"
-    assert by_key["U2"]["branch"] == "issue/96-u2"
+    assert record.units == [{"name": "U2", "branch": "issue/96-u2"}], (
+        "the units rows belong to the writers that run units; the judgment never touches them"
+    )
+    by_key = _entries(tj, rr, store)
+    assert set(by_key) == {"U1", "U2", "U3"}
     assert "jev_raise" not in by_key["U2"]
     raise_ = by_key["U1"]["jev_raise"]
     assert (raise_["model"], raise_["effort"]) == ("opus", "high")
@@ -169,7 +176,7 @@ def test_a_recorded_unit_raise_is_what_work_resolves(
 ) -> None:
     _seed(rr, store)
     _plan(tj, staffing, store, repo_root, {"U1": ("above", 0.85)}, [])
-    raise_ = rr.find_unit_row(rr.load(store, 96, warn=None).units, "U1")["jev_raise"]
+    raise_ = _entries(tj, rr, store)["U1"]["jev_raise"]
     lifecycle_state = _load("lifecycle_state")
     resolved = lifecycle_state.resolve_build_unit_tier(root=repo_root, jev_raise=raise_)
     assert (resolved["model"], resolved["effort"]) == ("opus", "high")
@@ -194,7 +201,7 @@ def test_plan_with_the_off_switch_makes_no_request_and_writes_nothing(
     assert result["status"] == "off"
     assert all(row["band"] == "not-consulted" for row in result["units"])
     assert result["units"][0]["tier"] == {"model": "opus", "effort": "medium"}
-    assert rr.load(store, 96, warn=None).units == []
+    assert "tier_judgments" not in rr.load(store, 96, warn=None).extra
 
 
 def test_a_failed_plan_consult_keeps_an_earlier_raise(
@@ -208,8 +215,7 @@ def test_a_failed_plan_consult_keeps_an_earlier_raise(
 
     result = _plan(tj, staffing, store, repo_root, {}, [], ask=failing)
     assert result["status"] == "error"
-    row = rr.find_unit_row(rr.load(store, 96, warn=None).units, "U1")
-    assert row["jev_raise"]["effort"] == "high"
+    assert _entries(tj, rr, store)["U1"]["jev_raise"]["effort"] == "high"
 
 
 def test_plan_refuses_without_a_run_record(
@@ -230,8 +236,7 @@ def test_label_writes_planned_tier_and_logs_each_verdict_once(
     logged = tj.run_label(96, store_root=store, finals=finals, staffing=staffing, log_dir=log_dir)
     assert logged == {"U1": "above", "U2": "same", "U3": "same"}
 
-    record = rr.load(store, 96, warn=None)
-    u1 = rr.find_unit_row(record.units, "U1")
+    u1 = _entries(tj, rr, store)["U1"]
     assert u1["planned_tier"] == {"model": "opus", "effort": "high"}
     assert u1["tier_judgment"]["labeled"] == "above"
     lines = (log_dir / "verdicts.jsonl").read_text(encoding="utf-8").splitlines()
@@ -247,14 +252,43 @@ def test_label_writes_planned_tier_and_logs_each_verdict_once(
     assert (log_dir / "verdicts.jsonl").read_text(encoding="utf-8").splitlines() == lines
 
 
-def test_label_refuses_an_unknown_unit_or_a_malformed_tier(
+def test_label_records_a_unit_the_judgment_never_saw_and_refuses_a_malformed_tier(
     tj: ModuleType, rr: ModuleType, staffing: Any, store: Path
 ) -> None:
-    _seed(rr, store, [{"id": "U1"}])
-    with pytest.raises(tj.TierJudgmentError, match="no unit"):
-        tj.run_label(96, store_root=store, finals={"U9": "opus/high"}, staffing=staffing)
+    """With the judgment off, ``plan`` writes nothing; ``label`` still records the final tier."""
+    _seed(rr, store)
+    assert tj.run_label(96, store_root=store, finals={"U9": "opus/high"}, staffing=staffing) == {}
+    assert _entries(tj, rr, store) == {"U9": {"planned_tier": {"model": "opus", "effort": "high"}}}
+    assert rr.load(store, 96, warn=None).units == []
     with pytest.raises(tj.TierJudgmentError, match="model/effort"):
         tj.run_label(96, store_root=store, finals={"U1": "opus"}, staffing=staffing)
+
+
+def test_a_tier_judgments_entry_survives_another_writers_record_update(
+    tj: ModuleType, rr: ModuleType, staffing: Any, store: Path, repo_root: Path
+) -> None:
+    _seed(rr, store)
+    _plan(tj, staffing, store, repo_root, {"U1": ("above", 0.85)}, [])
+    rr.set_next_step(store, 96, "work")
+    assert _entries(tj, rr, store)["U1"]["jev_raise"]["effort"] == "high"
+
+
+def test_the_raise_command_prints_the_recorded_raise_or_null(
+    tj: ModuleType,
+    rr: ModuleType,
+    staffing: Any,
+    store: Path,
+    repo_root: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _seed(rr, store)
+    _plan(tj, staffing, store, repo_root, {"U1": ("above", 0.85)}, [])
+    argv = ["raise", "--issue", "96", "--store-root", str(store)]
+    assert tj.main([*argv, "--unit", "U1"]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert (printed["model"], printed["effort"]) == ("opus", "high")
+    assert tj.main([*argv, "--unit", "U2"]) == 0
+    assert json.loads(capsys.readouterr().out) is None
 
 
 def test_the_command_line_exits_2_on_a_malformed_units_file_or_a_missing_record(
@@ -314,4 +348,4 @@ def test_the_plan_command_runs_end_to_end_with_the_judgment_off(
         {"model": "opus", "effort": "medium"},
         {"model": "sonnet", "effort": "low"},
     ]
-    assert rr.load(store, 96, warn=None).units == []
+    assert "tier_judgments" not in rr.load(store, 96, warn=None).extra

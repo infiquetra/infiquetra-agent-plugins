@@ -11,8 +11,10 @@
   from 0.6 up to 0.8 is pre-filled as question 4's default; a lower tier is advisory only. The
   summary gains a `Tier judgment` section. `INFIQUETRA_TYPESAFE_TIERING=off` makes no request.
 - `scripts/tier_judgment.py`: `plan` judges every plan unit in one request and records
-  `tier_judgment` and any `jev_raise` on the unit rows; `label` records each unit's final
-  `planned_tier` and logs the verdicts. `skills/plan/SKILL.md` runs both in §5.2a, and §0.1b
+  `tier_judgment` and any `jev_raise` under the run record's top-level `tier_judgments` map,
+  keyed by plan unit id, never on the `units` rows (a row holding only `id` cannot be loaded by
+  orchestrate and is dropped by its save); `label` records each unit's final `planned_tier` there
+  and logs the verdicts; `raise` prints one unit's recorded `jev_raise` for `/work`. `skills/plan/SKILL.md` runs both in §5.2a, and §0.1b
   explains the judgment at admission.
 - Each verdict is logged once its label is known (the operator's answer to question 4, or the tier
   `/plan` finally records), under a run-scoped decision id; a dry run logs nothing.

@@ -449,12 +449,9 @@ class RunBranchResolutionError(RuntimeError):
 
 # Unit-row keys that are in-memory only and never reach the record (issue #1025).
 UNPERSISTED_UNIT_FIELDS = frozenset({"launch_receipt"})
-DOCUMENTED_FOREIGN_ROW_KEYS = frozenset(
-    {"build_loop", "usage", "tier_judgment", "jev_raise", "planned_tier"}
-)
+DOCUMENTED_FOREIGN_ROW_KEYS = frozenset({"build_loop", "usage"})
 """Unit-row keys other writers own that the run-record contract names: the build loop's block
-(``plugins/saga/references/run-record.md``), the ``usage`` block issue 95 added, and the tier
-judgment's three keys issue #96 added (``tier_judgment``, ``jev_raise``, ``planned_tier``).
+(``plugins/saga/references/run-record.md``) and the ``usage`` block issue 95 added.
 
 They are carried across a save like any key this Orchestrate does not own, but ``read_unit`` does
 not print a notice for them: they are expected on every row, and repeating the notice on every

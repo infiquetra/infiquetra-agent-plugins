@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from orchestrate_support import (
@@ -489,6 +492,59 @@ class TestKeysOrchestrateDoesNotOwn:
         assert "'build_loop'" not in err
         assert "'usage'" not in err
         assert "'vibrance'" in err, "an undocumented key still gets its notice"
+
+    def test_sagas_plan_tier_judgment_survives_an_orchestrate_load_and_save(
+        self, orch, tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Issue #96: ``/plan`` runs ``tier_judgment.py plan`` against a record orchestrate drives.
+
+        The judgment must neither add a row orchestrate cannot load (one holding only ``id``) nor
+        be lost by orchestrate's save, which writes back only the rows its run holds.
+        """
+        saga_scripts = Path(__file__).resolve().parents[3] / "plugins" / "saga" / "scripts"
+        if not (saga_scripts / "tier_judgment.py").is_file():
+            pytest.skip("saga's tier judgment is not beside this package")
+        # tier_judgment.py puts saga's scripts on sys.path; keep that out of the other tests.
+        monkeypatch.setattr(sys, "path", list(sys.path))
+        tj = load_orchestrate("_tier_judgment_for_orchestrate", saga_scripts / "tier_judgment.py")
+        staffing = tj.load_staffing()
+        if staffing is None:
+            pytest.skip("saga's bundled staffing component is not reachable")
+
+        repo = make_repo(tmp_path)
+        monkeypatch.chdir(repo)
+        write_record(store, 34, units=[unit_row("u1")], branch="issue/34")
+
+        def ask(_state: Any, questions: Any, **_options: Any) -> Any:
+            answers = {
+                key: {"type": "choice", "choice": "above", "confidence": 0.9} for key in questions
+            }
+            return SimpleNamespace(status="ok", answers=answers, model="jev-test", note="")
+
+        result = tj.run_plan(
+            34,
+            "o/r",
+            store_root=store,
+            units=[{"id": "U1", "goal": "rotate the signing key", "files": ["a.py"]}],
+            title="Rotate the key",
+            body="Touches IAM.",
+            staffing=staffing,
+            root=repo,
+            ask=ask,
+            getenv=lambda _name: None,
+        )
+        assert result["status"] == "ok"
+        assert [row["name"] for row in read_record(store, 34)["units"]] == ["u1"]
+
+        r = orch.Run.load(34, store)
+        assert [unit.name for unit in r.units] == ["u1"]
+        r.save()
+
+        on_disk = read_record(store, 34)
+        assert [row["name"] for row in on_disk["units"]] == ["u1"]
+        entry = on_disk["tier_judgments"]["U1"]
+        assert entry["tier_judgment"]["band"] == "auto-raise"
+        assert (entry["jev_raise"]["model"], entry["jev_raise"]["effort"]) == ("opus", "high")
 
     def test_a_save_refuses_a_record_that_became_unreadable_after_load(
         self, orch, tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch

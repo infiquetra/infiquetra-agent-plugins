@@ -31,8 +31,6 @@
 
 ### Changed
 
-- `DOCUMENTED_FOREIGN_ROW_KEYS` adds `tier_judgment`, `jev_raise` and `planned_tier`, the unit-row
-  keys saga's `/plan` tier judgment writes (issue #96), so a load does not print a notice for them.
 - `status` asks herdr once per call for every running unit, instead of once per running unit, so
   an unresponsive herdr costs its timeout once (issue #109).
 - `expand`'s checks moved into `validate_expansion`, which `launch-table --issue` calls too, so
