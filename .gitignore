@@ -39,3 +39,6 @@ dist/
 build/
 *.egg-info/
 .DS_Store
+
+# Written by claude --plugin-dir when a package has a hooks module; Claude-only
+plugins/*/tsconfig.json

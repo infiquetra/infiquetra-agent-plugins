@@ -1,0 +1,116 @@
+# Cycle-23 mutation proof - Claude Code module sources stay in the Claude adapter
+# Digests are bound by MutationProofBindingTest: change a graded file
+# without re-running this proof and the suite fails. Paths are repository-relative.
+#
+# Supersedes 2026-10-04-cycle22-mutation-proof-claude-module-sources.txt for
+# the binding test only. Cycle 22 is preserved apart from restoring its lost
+# runner command. Reason: review cycle 2 of issue #101 (mods U0) found three
+# holes in check_claude_module_sources. It pruned every node_modules directory
+# although .gitignore does not ignore node_modules, so a committed dependency
+# directory passed. Its prune list restated .gitignore by hand and had drifted
+# (htmlcov/, dist/, build/, memories/ and sessions/ were missing), so ignored
+# build output failed the check on a developer's machine. And it did not refuse
+# the tsconfig.json Claude Code writes at a package root when it loads a hooks
+# module. The check now takes its candidates from
+# `git ls-files --cached --others --exclude-standard` when the root is the top
+# of its own git work tree, and walks the tree with a prune list checked against
+# .gitignore otherwise; node_modules is no longer pruned; a tsconfig.json
+# directly under plugins/<package>/ is refused; and the engine-written
+# .claude-plugin/types/ exemption lives in the check alone, no longer also in
+# the walk.
+#
+# The other four graded files were not edited and were not re-graded:
+#   plugins/unifi/scripts/site_profile.py
+#   scripts/assess_clients.py
+#   scripts/check_compatibility_matrix.py
+#   scripts/port_config.py
+# Their cycle-19 digests (carried unchanged through cycles 20 to 22) are carried below.
+#
+# This cycle re-graded ONLY check_claude_module_sources and its two candidate
+# helpers. Every other guard inside scripts/check_repo.py was not re-patched here.
+#
+# Runner: each mutation is one exact string replacement in scripts/check_repo.py,
+# then `python3 -m unittest tests.test_check_repo tests.test_claude_plugin_packaging`,
+# then the pristine bytes are written back. MutationProofBindingTest is not in
+# those two modules, so it is excluded from grading by construction. Each
+# mutation names the first test that killed it.
+#
+# One round of this proof before the final one found three survivors. Two were
+# the same exemption written twice (the walk pruned .claude-plugin/types/ and
+# the check skipped it), so removing either one alone changed nothing; the walk's
+# copy was deleted. The third mutation widened the tsconfig refusal along an
+# axis the tests could not see; it was replaced by one that keys the refusal on
+# the file name alone, which the tests do see.
+
+## scripts/check_repo.py -- one guard, eighteen mutations, eighteen killed
+
+## MUTATION 1: the wire: `*check_claude_module_sources(root),` deleted from check_repo()
+   Killed by: tests.test_check_repo.GateWiringTests.test_the_gate_reports_a_module_source_outside_the_claude_adapter
+   FAILED (failures=1)
+## MUTATION 2: the check reports no module source: `continue` inserted before the module `errors.append(`
+   Killed by: tests.test_check_repo.ClaudeModuleSourceGitTests.test_a_root_below_the_top_of_some_other_work_tree_is_walked_instead
+   FAILED (failures=17)
+## MUTATION 3: ENGINE_MODULE_SUFFIXES narrowed to (".ts",)
+   Killed by: tests.test_check_repo.ClaudeModuleSourceGitTests.test_ignored_files_are_skipped_and_unignored_ones_are_refused
+   FAILED (failures=11)
+## MUTATION 4: the engine-written .claude-plugin/types/ exemption removed from the check
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_committed_dot_directories_are_walked
+   FAILED (failures=2)
+## MUTATION 5: the types exemption widened to every directory named types
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_a_types_directory_elsewhere_is_still_walked
+   FAILED (failures=2)
+## MUTATION 6: ".git" dropped from MODULE_SOURCE_PRUNED_DIRECTORY_NAMES
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_ignored_local_state_directories_are_not_walked
+   FAILED (failures=1)
+## MUTATION 7: ".claude" (agent worktrees) dropped from MODULE_SOURCE_PRUNED_DIRECTORY_NAMES
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_ignored_local_state_directories_are_not_walked
+   FAILED (failures=1)
+## MUTATION 8: "htmlcov" dropped from MODULE_SOURCE_PRUNED_DIRECTORY_NAMES
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_cache_and_build_directories_are_ignored
+   FAILED (failures=1)
+## MUTATION 9: "dist" dropped from MODULE_SOURCE_PRUNED_DIRECTORY_NAMES
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_cache_and_build_directories_are_ignored
+   FAILED (failures=1)
+## MUTATION 10: the cycle-22 rule restored: node_modules pruned again
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_a_dependency_directory_is_walked_because_git_does_not_ignore_it
+   FAILED (failures=2)
+## MUTATION 11: adapter test loosened: `parts[0] == "plugins" and ` deleted
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_an_adapter_of_the_same_name_outside_a_package_is_not_an_adapter
+   FAILED (failures=1)
+## MUTATION 12: adapter test loosened: adapter name anywhere in the path counts
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_an_adapter_of_the_same_name_outside_a_package_is_not_an_adapter
+   FAILED (failures=1)
+## MUTATION 13: git never consulted: the walk is always used
+   Killed by: tests.test_check_repo.ClaudeModuleSourceGitTests.test_ignored_files_are_skipped_and_unignored_ones_are_refused
+   FAILED (failures=1)
+## MUTATION 14: git lists ignored files too: `--exclude-standard` deleted
+   Killed by: tests.test_check_repo.ClaudeModuleSourceGitTests.test_ignored_files_are_skipped_and_unignored_ones_are_refused
+   FAILED (failures=1)
+## MUTATION 15: git lists untracked files only: `--cached` deleted
+   Killed by: tests.test_check_repo.ClaudeModuleSourceGitTests.test_a_force_added_package_tsconfig_is_refused
+   FAILED (failures=1)
+## MUTATION 16: a root below the top of another work tree borrows its listing: the top-level comparison deleted
+   Killed by: tests.test_check_repo.ClaudeModuleSourceGitTests.test_a_root_below_the_top_of_some_other_work_tree_is_walked_instead
+   FAILED (failures=1)
+## MUTATION 17: the package-root tsconfig refusal removed
+   Killed by: tests.test_check_repo.ClaudeModuleSourceGitTests.test_a_force_added_package_tsconfig_is_refused
+   FAILED (failures=2)
+## MUTATION 18: the tsconfig refusal keyed on the file name alone, at any depth
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_the_engine_written_package_tsconfig_is_refused
+   FAILED (failures=1)
+
+## RESTORED
+# carried from cycle 19, not re-graded in this cycle:
+plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
+# carried from cycle 19, not re-graded in this cycle:
+scripts/assess_clients.py sha256: 2f8fafe988f791e53403d619ed61e4749930838435d001993e8cf581ca1ad9d8
+# carried from cycle 19, not re-graded in this cycle:
+scripts/check_compatibility_matrix.py sha256: 6850094b2af1624f6c59a9ef5d898a3af8e14e097a2235065948ae5796309de5
+scripts/check_repo.py sha256: 9c4dc07fe9156a8066ba3717d8ed7358a82c20209d18f5c1d7ef687da52cd172
+# carried from cycle 19, not re-graded in this cycle:
+scripts/port_config.py sha256: 56216b7c8018b361d611356e21bc2383cb7d71ebf478f28436fee3c5c8e46b17
+byte-identical to pristine: YES
+
+## SCANNER OUTPUT ON THE BRANCH (issue/101-mods-foundation)
+# python3 scripts/check_repo.py -> "Repository validation passed."
+# check_claude_module_sources(ROOT) -> [] on this worktree, taking its candidates from git.
