@@ -53,6 +53,39 @@ and its subsections are listed again on their own.
 **Revisit when.** The run record gains a plan path, or a mod needs a field that changes faster than
 a script call every few seconds can serve.
 
+### Orchestrate's launch approval waits in the engine's question dialog, on a table the script prints
+
+**Decision.** Issue #109 moves orchestrate's launch table out of the model's hands.
+`orchestrate.py launch-table --plan <file> [--issue <N>]` prints it in one fixed format, validated
+by `start`'s checks (or `expand`'s, through the new shared `validate_expansion`), with the plan
+file's sha256 in its header, and a golden test in
+`plugins/orchestrate/tests/test_orchestrate_launch_table.py` pins the format. In Claude Code the
+model calls `mcp__orchestrate__review_launch_table`; the mod in
+`plugins/orchestrate/com.infiquetra.claude/mods/launch-approval.tsx` shows that text in a pane
+and collects the answer with `$.ui.ask` (the engine's AskUserQuestion dialog), options ordered
+Change, Cancel, Approve so a reflexive Enter does not approve. The tool's result is the decision
+only; the model still runs `start` itself, so the mod launches nothing. Every other harness prints
+the same text verbatim. The plan gains two display-only keys, `vendors_allowed` and
+`later_phases`, which `start` and `expand` ignore.
+
+**Rationale.** The card asked for Approve and Change buttons in the pane. A hook's own time is
+capped at ten seconds (`HookBudget`, claude-code.d.ts in 2.1.289) and only a wait inside a `$` or
+`next` call is free, so a tool call cannot wait on a pane press; `$.ui.ask` is that free wait and
+its answer comes back as the tool result, which is the provenance a launch gate needs.
+
+**Rejected alternatives.** Pane buttons that answer through `$.prompt.submit`: the answer would
+arrive as a plugin-originated prompt, not as the tool's result. `$.tool.call` of AskUserQuestion:
+the host refuses it and points at `$.ui.ask`. Letting `start` refuse a plan whose digest differs
+from the approved one: that changes the launch path, which the card keeps out of scope; the
+digest is shown and returned so the operator and the model can compare it.
+
+**Also decided.** The plugin's one `session.start` hook lives in `mods/index.ts` and registers the
+`/fleet-view` command and the tool from plain-data specs the two mod files export. The fleet pane's
+refresh timer is started by the command and cancelled when the pane closes, so nothing polls while
+no pane is open.
+
+**Revisit when.** The mod API offers a free wait on a pane press, or `start` gains a digest check
+(then pass the approved `plan_sha256` to it).
 ### Admission renders the staffing and lens tables itself, from the same rows as its JSON
 
 **Decision.** `plugins/saga/scripts/admission.py --render tables` prints the operator-facing

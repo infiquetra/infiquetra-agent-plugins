@@ -33,17 +33,30 @@ S="${CLAUDE_PLUGIN_ROOT:-.}/skills/orchestrate/scripts/orchestrate.py"
 
 python3 "$S" roster                                # agents this machine can launch
 python3 "$S" plan-check --plan plan.json           # validate a plan, create nothing
+python3 "$S" launch-table --plan plan.json         # the table the operator approves; creates nothing
 python3 "$S" start --issue 42 --plan plan.json     # branch + unit rows onto the record
-python3 "$S" go                                    # launch every eligible unit
-python3 "$S" status                                # the table, with live herdr state
-python3 "$S" settle                                # sessions with branch evidence become done
+python3 "$S" go --issue 42                         # launch every eligible unit
+python3 "$S" status --issue 42                     # the table, with live herdr state
+python3 "$S" status --issue 42 --json              # the same reading as JSON (orchestrate.status.v1)
+python3 "$S" settle --issue 42                     # sessions with branch evidence become done
+python3 "$S" launch-table --plan next.json --issue 42  # an expansion's table, checked as expand checks it
 python3 "$S" expand --issue 42 --plan next.json    # append units a finished phase named
-python3 "$S" review-result --file <result.json>     # persist the typed result and route repairs
+python3 "$S" review-result --issue 42 --file <result.json>  # persist the typed result and route repairs
 python3 "$S" merge --issue 42                      # one merge turn per ready unit, onto the parent branch
-python3 "$S" park --unit <name> --evidence "<err>" # record push-succeeded / PR-blocked unit
-python3 "$S" resume --unit <name>                  # open/adopt missing PR and continue run
-python3 "$S" clean --branches                      # close tabs, remove worktrees
+python3 "$S" park --issue 42 --unit <name> --evidence "<err>"  # record push-succeeded / PR-blocked unit
+python3 "$S" resume --issue 42 --unit <name>       # open/adopt missing PR and continue run
+python3 "$S" clean --issue 42 --branches           # close tabs, remove worktrees
 ```
+
+**The approval table is the script's output, never the model's drawing.** Write the plan JSON
+first, run `launch-table --plan <file>` (add `--issue <N>` for an expansion), and show what it
+prints verbatim in a fenced block. It validates the plan with the same checks `start` (or
+`expand`) runs, so a plan it refuses would not have started either, and its header carries the
+plan file's sha256: what the operator approves is exactly the file `start` then reads. An edit
+changes the plan file and re-runs `launch-table`; the table is never redrawn by hand. Two
+optional plan keys are display-only and ignored by `start` and `expand`: `vendors_allowed` (the
+allow-list the operator chose) and `later_phases` (rows of `phase`, `what`, `cap`, `after` for the
+phases that have no units yet).
 
 Standard library only, so `python3` — not `uv run`, which would need the target repo to be a uv
 project.

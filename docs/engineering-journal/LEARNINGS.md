@@ -106,6 +106,28 @@ the Select does not list never reaches the chain or `onSelect` and resolves `und
 **Generalizable rule.** Hold a mod's dispatch open with a loop of short `$` calls, capped, and
 prove it with a test that waits past ten real seconds.
 
+### `$.ui.ask` hides a dialog that answered itself, and a plugin gets one unmatched `session.start`
+
+**Evidence.** Issue #109, `plugins/orchestrate/com.infiquetra.claude/mods/launch-approval.tsx`
+and its test `a dialog that resolved itself while the operator was away is dismissed, never
+approved` in `launch-approval.test.ts` (`claude plugin test plugins/orchestrate`, 2.1.286 and
+2.1.289). AskUserQuestion's result carries `afkTimeoutMs` when the dialog resolved itself with the
+operator away; `$.ui.ask` resolves to the label alone. Separately, `claude plugin validate --strict`
+(2.1.289) refused the first layout, two mod files each hooking `session.start`: `on("session.start")
+is registered twice without a matcher`.
+
+**Mechanism.** `$.ui.ask` is a `tool.call` of AskUserQuestion through every hook but the caller's,
+then reduced to the chosen label, so the auto-resolution flag never reaches the caller. A second
+hook of the same plugin on `tool.call` for AskUserQuestion does see the full result, and answering
+`{ deny }` there makes the caller's `$.ui.ask` reject. The validator allows one matcherless hook
+per event per plugin, and it refuses `$` passed into a function imported from another file, so
+start-time registration has to sit in one file and take plain data from the others.
+
+**Generalizable rule.** Any approval built on `$.ui.ask` needs an AskUserQuestion hook that turns
+an auto-resolved answer into a refusal. Put a plugin's one `session.start` in its entry module and
+have each mod export its command and tool specs as data. In `claude plugin test`, a `Text`
+element's `key` is not reported (find it by `text`), and the test's `$` has no `ui.close`; press
+the pane's own Close button instead.
 ### A test suite that reads live configuration spends the operator's API budget, not CI's
 
 **Evidence.** On 2026-10-04 the GitHub REST budget for the operator's account reached 0 of 5,000

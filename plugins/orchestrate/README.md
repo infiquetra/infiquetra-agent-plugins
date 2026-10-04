@@ -14,11 +14,11 @@ the skill. Claude-only procedure text lives under the client extension.
 | Path | What it is |
 |---|---|
 | [`plugin.json`](plugin.json) | Portable Agent Plugins manifest |
-| [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json) | Claude packaging manifest. Paths only: the command directory and the portable skills directory |
+| [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json) | Claude packaging manifest. Paths only: the command directory, the portable skills directory, the adapter's hooks file and its types contract |
 | [`skills/orchestrate/SKILL.md`](skills/orchestrate/SKILL.md) | The skill: what the driver does, how to run it, and the ordering rules |
 | [`skills/orchestrate/scripts/orchestrate.py`](skills/orchestrate/scripts/orchestrate.py) | The driver. Standard library only |
 | [`skills/orchestrate/scripts/herdr_events.py`](skills/orchestrate/scripts/herdr_events.py) | Herdr event-socket client used by `wait` |
-| [`com.infiquetra.claude/`](com.infiquetra.claude/plugin.json) | Claude adapter: manifest and the `/orchestrate` command |
+| [`com.infiquetra.claude/`](com.infiquetra.claude/plugin.json) | Claude adapter: manifest, the `/orchestrate` command, and two Claude Code mods (`mods/`): the `/fleet-view <issue>` pane, drawn from `status --json`, and the launch-approval tool `mcp__orchestrate__review_launch_table`, which shows `launch-table`'s output and returns the operator's answer. Neither mod launches, lands or closes anything |
 | [`tests/`](tests/) | The driver's pytest suite |
 
 ## How a harness runs it
@@ -28,7 +28,13 @@ From the package root:
 ```bash
 python3 skills/orchestrate/scripts/orchestrate.py --help
 python3 skills/orchestrate/scripts/orchestrate.py plan-check --plan plan.json
+python3 skills/orchestrate/scripts/orchestrate.py launch-table --plan plan.json
+python3 skills/orchestrate/scripts/orchestrate.py status --issue 42 --json
 ```
+
+`launch-table` prints the table the operator approves in one fixed format and
+creates nothing; every harness shows that output as printed. `status --json`
+is the machine-readable run (schema `orchestrate.status.v1`).
 
 Claude Code installs this package from the repository marketplace. It sets
 `CLAUDE_PLUGIN_ROOT` to the package root, so the same driver is
