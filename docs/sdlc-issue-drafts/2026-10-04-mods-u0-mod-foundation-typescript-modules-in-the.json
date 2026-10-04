@@ -1,0 +1,214 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-04T01:49:28.385411+00:00",
+  "created_at": "2026-10-04T01:53:26.860046+00:00",
+  "created_issue_number": 101,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/101",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-04-mods-u0-mod-foundation-typescript-modules-in-the.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-03-staffing-testing-mods/d00-mods-foundation.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "medium",
+    "confidence": 0.43,
+    "distribution": {
+      "high": 0.41,
+      "low": 0.0,
+      "medium": 0.51,
+      "very-high": 0.08
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": true,
+    "overridden": true,
+    "score": 1.56,
+    "suggested": "high"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-04-mods-u0-mod-foundation-typescript-modules-in-the.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-03\ntopic: saga-staffing-testing-mods\nmaturity: requirements-ready\n---\n\n# mods U0 \u2014 Mod foundation: TypeScript modules in the Claude adapters, validated and tested in CI\n\n### Objective\n\nSet up everything the seven mods share:\n\n- where module files live inside each plugin's Claude adapter, and how the hooks file names them;\n- how a mod reads saga state and writes answers back;\n- the minimum Claude Code build;\n- CI that validates and tests every mod.\n\n### Intent\n\n1. **Location.** Module files live inside the plugin's Claude adapter, under\n   `com.infiquetra.claude/`. They are named from the adapter's existing `hooks/hooks.json` under\n   `modules`, beside the command hooks already there. Each plugin that keeps state contracts ships\n   one `types/index.d.ts`, named from its Claude packaging manifest. That manifest change is\n   path-only, as the 2026-08-25 packaging decision requires. `tests/test_claude_plugin_packaging.py`\n   is updated to hold the new path in both directions.\n2. **Reading and writing state.** A shared pattern reads saga state by running\n   `run_record.py show <N>` through the mod's host-command call and parsing its JSON. It never\n   parses prose and n",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-03-staffing-testing-mods/d00-mods-foundation.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-03-staffing-testing-mods/d00-mods-foundation.md",
+    "ref": "docs/brainstorms/2026-10-03-staffing-testing-mods/d00-mods-foundation.md",
+    "title": "mods U0 \u2014 Mod foundation: TypeScript modules in the Claude adapters, validated and tested in CI",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "capability",
+        "confidence": 0.88,
+        "distribution": {
+          "capability": 0.9,
+          "context-update": 0.01,
+          "defect": 0.0,
+          "enhancement": 0.08,
+          "exploration": 0.01
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "capability"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-03-staffing-testing-mods/d00-mods-foundation.md",
+        "confidence": 0.67,
+        "distribution": {
+          "Fleet Telemetry Baseline Build-Out": 0.0,
+          "improve-agent-plugins": 0.1,
+          "improve-claude-plugins": 0.72,
+          "improve-codex-plugins": 0.0,
+          "infiquetra-maintentance": 0.0,
+          "none": 0.18000000000000002,
+          "system-updates": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": true,
+        "suggested": "improve-claude-plugins"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "medium",
+        "confidence": 0.43,
+        "distribution": {
+          "high": 0.41,
+          "low": 0.0,
+          "medium": 0.51,
+          "very-high": 0.08
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": true,
+        "overridden": true,
+        "score": 1.56,
+        "suggested": "high"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.84,
+        "distribution": {
+          "Awaiting operator input": 0.0,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.0,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.05,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.0,
+          "Discovering": 0.0,
+          "Execution planning": 0.03,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.06999999999999999,
+          "Ready for Planning": 0.85,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "mods U0 \u2014 Mod foundation: TypeScript modules in the Claude adapters, validated and tested in CI",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "capability",
+    "confidence": 0.88,
+    "distribution": {
+      "capability": 0.9,
+      "context-update": 0.01,
+      "defect": 0.0,
+      "enhancement": 0.08,
+      "exploration": 0.01
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": false,
+    "suggested": "capability"
+  },
+  "updated_at": "2026-10-04T01:53:41.286613+00:00"
+}

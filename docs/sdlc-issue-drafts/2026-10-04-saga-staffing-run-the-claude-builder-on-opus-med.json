@@ -1,0 +1,214 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-04T01:49:35.753568+00:00",
+  "created_at": "2026-10-04T01:49:41.136357+00:00",
+  "created_issue_number": 90,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/90",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-04-saga-staffing-run-the-claude-builder-on-opus-med.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-03-staffing-testing-mods/a0-staffing-parent.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "high",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "high",
+    "confidence": 0.65,
+    "distribution": {
+      "high": 0.66,
+      "low": 0.0,
+      "medium": 0.0,
+      "very-high": 0.34
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": false,
+    "overridden": false,
+    "score": 2.34,
+    "suggested": "high"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-04-saga-staffing-run-the-claude-builder-on-opus-med.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-03\ntopic: saga-staffing-testing-mods\nmaturity: requirements-ready\n---\n\n# Saga staffing: run the Claude builder on Opus medium, resolve tiers one way, and let Jev decide raises\n\n### Objective\n\nStop staffing saga's builder \u2014 the `worker` role that implements plan units \u2014 on Claude Sonnet. Run\nit on Claude Opus at medium effort by default, resolve every role's tier through one code path,\nrecord cost per completed unit so the decision is checked against measurement rather than assumed,\nand, when TypeSafe is configured, let Jev raise a unit's tier from what the issue and the unit\nactually say.\n\nThis is Claude-only. Other vendors' palettes, the portable execution classes shared with the Codex\nplugin repository, and orchestrate's live-catalog model choice for non-Claude units are untouched.\n\n### Intent\n\n**Why the builder is on Sonnet today.** `plugins/fleet-core/scripts/fleet_commons/staffing.json`\nmaps the `worker` role to the `mechanical` work shape, which defaults to `sonnet/medium`. The same\nfile defines mechanical as \"deterministic, scripted transforms, scaffolding \u2014 bounded output,\npredictable steps\". Implementing a plan unit that writes refund or IAM code is not t",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-03-staffing-testing-mods/a0-staffing-parent.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-03-staffing-testing-mods/a0-staffing-parent.md",
+    "ref": "docs/brainstorms/2026-10-03-staffing-testing-mods/a0-staffing-parent.md",
+    "title": "Saga staffing: run the Claude builder on Opus medium, resolve tiers one way, and let Jev decide raises",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "capability",
+        "confidence": 0.53,
+        "distribution": {
+          "capability": 0.32,
+          "context-update": 0.01,
+          "defect": 0.04,
+          "enhancement": 0.62,
+          "exploration": 0.01
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "enhancement"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-03-staffing-testing-mods/a0-staffing-parent.md",
+        "confidence": 0.42,
+        "distribution": {
+          "Fleet Telemetry Baseline Build-Out": 0.01,
+          "improve-agent-plugins": 0.38,
+          "improve-claude-plugins": 0.5,
+          "improve-codex-plugins": 0.0,
+          "infiquetra-maintentance": 0.0,
+          "none": 0.1,
+          "system-updates": 0.01
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "improve-claude-plugins"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "high",
+        "confidence": 0.65,
+        "distribution": {
+          "high": 0.66,
+          "low": 0.0,
+          "medium": 0.0,
+          "very-high": 0.34
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": false,
+        "overridden": false,
+        "score": 2.34,
+        "suggested": "high"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.63,
+        "distribution": {
+          "Awaiting operator input": 0.01,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.01,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.13,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.01,
+          "Discovering": 0.0,
+          "Execution planning": 0.04,
+          "Gathering evidence": 0.01,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.14,
+          "Ready for Planning": 0.65,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "Saga staffing: run the Claude builder on Opus medium, resolve tiers one way, and let Jev decide raises",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "capability",
+    "confidence": 0.53,
+    "distribution": {
+      "capability": 0.32,
+      "context-update": 0.01,
+      "defect": 0.04,
+      "enhancement": 0.62,
+      "exploration": 0.01
+    },
+    "floor": 0.6,
+    "low_confidence": true,
+    "overridden": true,
+    "suggested": "enhancement"
+  },
+  "updated_at": "2026-10-04T01:49:54.917355+00:00"
+}

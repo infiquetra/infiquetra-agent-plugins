@@ -1,0 +1,76 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-04T01:49:34.732360+00:00",
+  "created_at": "2026-10-04T01:53:06.234525+00:00",
+  "created_issue_number": 100,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/100",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-04-pre-review-testing-u5-review-gate-and-cycle-limi.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-03-staffing-testing-mods/c5-review-gate-and-cycle-limit.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-04-pre-review-testing-u5-review-gate-and-cycle-limi.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-03\ntopic: saga-staffing-testing-mods\nmaturity: requirements-ready\n---\n\n# pre-review testing U5 \u2014 Review gate and cycle-limit acceptance require passing functional tests\n\n### Objective\n\nRefuse to start code review without a passing combined-branch functional run, unless the run\ncarries a recorded waiver. At the review cycle limit, accept only a revision that passed the\nacceptance tests.\n\n### Intent\n\n1. **The gate.** `/work`'s review step (Phase 5.1) already refuses unless the build loop went green\n   on the revision under review. Extend \"green\" to include the combined-branch functional pass from\n   pre-review testing U4, unless the run record carries a waiver. A standalone `/code-review` reads\n   the same evidence. It says plainly when there is none and does not proceed silently.\n2. **The cycle limit.** When review ends `cycle_cap_best_available`, the revision it names must be\n   one with a passing functional run. If the latest revision has none, run the loop on it first.\n   The closeout cites the functional evidence, and every leftover finding is filed as a linked\n   issue.\n\n### Risk\n\nhigh\nIt adds a hard gate in front of review and changes what may be accepted at ",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-03-staffing-testing-mods/c5-review-gate-and-cycle-limit.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-03-staffing-testing-mods/c5-review-gate-and-cycle-limit.md",
+    "ref": "docs/brainstorms/2026-10-03-staffing-testing-mods/c5-review-gate-and-cycle-limit.md",
+    "title": "pre-review testing U5 \u2014 Review gate and cycle-limit acceptance require passing functional tests",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "pre-review testing U5 \u2014 Review gate and cycle-limit acceptance require passing functional tests",
+  "updated_at": "2026-10-04T01:53:22.125934+00:00"
+}

@@ -1,0 +1,214 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-04T01:49:31.284729+00:00",
+  "created_at": "2026-10-04T01:55:29.076454+00:00",
+  "created_issue_number": 107,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/107",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-04-mods-u6-live-per-unit-token-capture-for-claude-s.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-03-staffing-testing-mods/d06-live-token-capture.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "medium",
+    "confidence": 0.93,
+    "distribution": {
+      "high": 0.06,
+      "low": 0.01,
+      "medium": 0.93,
+      "very-high": 0.0
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": false,
+    "overridden": false,
+    "score": 1.05,
+    "suggested": "medium"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-04-mods-u6-live-per-unit-token-capture-for-claude-s.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-03\ntopic: saga-staffing-testing-mods\nmaturity: requirements-ready\n---\n\n# mods U6 \u2014 Live per-unit token capture for Claude sessions\n\n### Objective\n\nRecord each Claude session's token usage into the run record unit it is working, as it happens.\nCost per completed unit then comes from live data instead of being reconstructed from transcripts.\n\n### Intent\n\n1. A turn-complete hook reads the turn's usage: uncached input, cache read, cache writes and\n   output, with the model and effort. It covers the main thread and every subagent loop.\n2. The mod resolves which unit the session belongs to from its working directory and branch,\n   against the run record's units. Orchestrate launches each unit in its own worktree. A session\n   with no matching unit records nothing.\n3. Usage is batched and written through `run_record.py usage add`, the portable writer added by the\n   staffing parent's U3. The write happens on a short timer and at session end, not as one process\n   per turn.\n\n### Risk\n\nmedium\nIt writes to the shared run record from every Claude unit session, but only through the record's\nown append command.\n\n### Out-of-scope / non-goals\n\n- Pricing and the report belong to ",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-03-staffing-testing-mods/d06-live-token-capture.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-03-staffing-testing-mods/d06-live-token-capture.md",
+    "ref": "docs/brainstorms/2026-10-03-staffing-testing-mods/d06-live-token-capture.md",
+    "title": "mods U6 \u2014 Live per-unit token capture for Claude sessions",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "capability",
+        "confidence": 0.89,
+        "distribution": {
+          "capability": 0.91,
+          "context-update": 0.01,
+          "defect": 0.0,
+          "enhancement": 0.08,
+          "exploration": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "capability"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-03-staffing-testing-mods/d06-live-token-capture.md",
+        "confidence": 0.5,
+        "distribution": {
+          "Fleet Telemetry Baseline Build-Out": 0.07,
+          "improve-agent-plugins": 0.14,
+          "improve-claude-plugins": 0.57,
+          "improve-codex-plugins": 0.0,
+          "infiquetra-maintentance": 0.0,
+          "none": 0.22,
+          "system-updates": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "improve-claude-plugins"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "medium",
+        "confidence": 0.93,
+        "distribution": {
+          "high": 0.06,
+          "low": 0.01,
+          "medium": 0.93,
+          "very-high": 0.0
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": false,
+        "overridden": false,
+        "score": 1.05,
+        "suggested": "medium"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.86,
+        "distribution": {
+          "Awaiting operator input": 0.0,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.0,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.03,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.0,
+          "Discovering": 0.0,
+          "Execution planning": 0.03,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.06999999999999999,
+          "Ready for Planning": 0.87,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "mods U6 \u2014 Live per-unit token capture for Claude sessions",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "capability",
+    "confidence": 0.89,
+    "distribution": {
+      "capability": 0.91,
+      "context-update": 0.01,
+      "defect": 0.0,
+      "enhancement": 0.08,
+      "exploration": 0.0
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": false,
+    "suggested": "capability"
+  },
+  "updated_at": "2026-10-04T01:55:42.899423+00:00"
+}

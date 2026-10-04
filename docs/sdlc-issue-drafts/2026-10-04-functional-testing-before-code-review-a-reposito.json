@@ -1,0 +1,214 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-04T01:49:27.410160+00:00",
+  "created_at": "2026-10-04T01:49:58.145687+00:00",
+  "created_issue_number": 91,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/91",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-04-functional-testing-before-code-review-a-reposito.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-03-staffing-testing-mods/c0-pre-review-testing-parent.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "high",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "high",
+    "confidence": 0.52,
+    "distribution": {
+      "high": 0.47,
+      "low": 0.0,
+      "medium": 0.0,
+      "very-high": 0.53
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": true,
+    "overridden": true,
+    "score": 2.52,
+    "suggested": "very-high"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-04-functional-testing-before-code-review-a-reposito.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-03\ntopic: saga-staffing-testing-mods\nmaturity: requirements-ready\n---\n\n# Functional testing before code review: a repository-declared build, deploy and test loop\n\n### Objective\n\nMake every code-bearing saga run prove its change works before any code review starts. The run\nbuilds, deploys or starts the change where the repository says to, and runs functional tests\nderived from the issue's acceptance criteria. It repeats that until green, so review spends its\ncycles on judgment rather than on code that does not run.\n\n### Intent\n\n**Why.** A failing test is easier to fix than a vague review judgment, and working code that meets\nits acceptance criteria is easier to accept when review hits its cycle limit. Today saga's\npre-review loop is, in practice, lint, type checks and unit tests.\n\n**Current state, verified 2026-10-03.**\n\n- `/work` Phase 3 runs `plugins/saga/scripts/build_loop.py` until green. Phase 5.1 reviews only\n  the revision the loop went green at, and a repair commit makes the review stale.\n- `build_loop.py` reads per-unit `functional_checks` and `scenario_smoke`, but nothing writes them.\n  It is the only non-test code that touches those keys, so every pass r",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-03-staffing-testing-mods/c0-pre-review-testing-parent.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-03-staffing-testing-mods/c0-pre-review-testing-parent.md",
+    "ref": "docs/brainstorms/2026-10-03-staffing-testing-mods/c0-pre-review-testing-parent.md",
+    "title": "Functional testing before code review: a repository-declared build, deploy and test loop",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "capability",
+        "confidence": 0.58,
+        "distribution": {
+          "capability": 0.66,
+          "context-update": 0.03,
+          "defect": 0.0,
+          "enhancement": 0.29,
+          "exploration": 0.02
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": false,
+        "suggested": "capability"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-03-staffing-testing-mods/c0-pre-review-testing-parent.md",
+        "confidence": 0.27,
+        "distribution": {
+          "Fleet Telemetry Baseline Build-Out": 0.01,
+          "improve-agent-plugins": 0.35,
+          "improve-claude-plugins": 0.18,
+          "improve-codex-plugins": 0.01,
+          "infiquetra-maintentance": 0.03,
+          "none": 0.39,
+          "system-updates": 0.03
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "none"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "high",
+        "confidence": 0.52,
+        "distribution": {
+          "high": 0.47,
+          "low": 0.0,
+          "medium": 0.0,
+          "very-high": 0.53
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": true,
+        "overridden": true,
+        "score": 2.52,
+        "suggested": "very-high"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.91,
+        "distribution": {
+          "Awaiting operator input": 0.0,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.0,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.060000000000000005,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.0,
+          "Discovering": 0.0,
+          "Execution planning": 0.0,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.01,
+          "Ready for Planning": 0.92,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "Functional testing before code review: a repository-declared build, deploy and test loop",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "capability",
+    "confidence": 0.58,
+    "distribution": {
+      "capability": 0.66,
+      "context-update": 0.03,
+      "defect": 0.0,
+      "enhancement": 0.29,
+      "exploration": 0.02
+    },
+    "floor": 0.6,
+    "low_confidence": true,
+    "overridden": false,
+    "suggested": "capability"
+  },
+  "updated_at": "2026-10-04T01:50:13.597899+00:00"
+}

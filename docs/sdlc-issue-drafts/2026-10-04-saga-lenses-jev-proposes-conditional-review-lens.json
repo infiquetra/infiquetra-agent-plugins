@@ -1,0 +1,214 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-04T01:49:35.269040+00:00",
+  "created_at": "2026-10-04T01:56:26.346310+00:00",
+  "created_issue_number": 110,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/110",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-04-saga-lenses-jev-proposes-conditional-review-lens.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-03-staffing-testing-mods/b0-jev-lens-proposals.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "medium",
+    "confidence": 0.94,
+    "distribution": {
+      "high": 0.04,
+      "low": 0.01,
+      "medium": 0.95,
+      "very-high": 0.0
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": false,
+    "overridden": false,
+    "score": 1.04,
+    "suggested": "medium"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-04-saga-lenses-jev-proposes-conditional-review-lens.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-03\ntopic: saga-staffing-testing-mods\nmaturity: requirements-ready\n---\n\n# Saga lenses: Jev proposes conditional review lenses at admission when configured\n\n### Objective\n\nHave admission's lens question (question 5) arrive pre-filled with Jev's proposed additions,\nwhenever TypeSafe is configured. Jev may add conditional lenses and never remove one. The questions\nare generated from the lifecycle repository's lens catalogue.\n\n### Intent\n\n**Today.** `plugins/saga/scripts/review_roster.py --propose` already asks Jev whether each excluded\nconditional lens applies after all, at a probability threshold of 0.5, and can only add lenses.\nThe code-review skill describes it as an optional step the planner \"may\" run at review time. By\nthen admission has already fixed the lens set, and nothing calls it: the verdict log holds no lens\nproposals. Separately, `plugins/fleet-core/scripts/fleet_commons/jev_verbs.py` carries a `lenses`\nverb that predates the catalogue. It asks about five keys, two of which are always-on lenses, and\nnothing in the plugins calls it.\n\n**Change.**\n\n1. When `TYPESAFE_API_KEY` is present (and `INFIQUETRA_TYPESAFE_LENSES=off` is not set), admission\n   runs the",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-03-staffing-testing-mods/b0-jev-lens-proposals.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-03-staffing-testing-mods/b0-jev-lens-proposals.md",
+    "ref": "docs/brainstorms/2026-10-03-staffing-testing-mods/b0-jev-lens-proposals.md",
+    "title": "Saga lenses: Jev proposes conditional review lenses at admission when configured",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "enhancement",
+        "confidence": 0.62,
+        "distribution": {
+          "capability": 0.3,
+          "context-update": 0.0,
+          "defect": 0.0,
+          "enhancement": 0.7,
+          "exploration": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "enhancement"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-03-staffing-testing-mods/b0-jev-lens-proposals.md",
+        "confidence": 0.38,
+        "distribution": {
+          "Fleet Telemetry Baseline Build-Out": 0.0,
+          "improve-agent-plugins": 0.47,
+          "improve-claude-plugins": 0.21,
+          "improve-codex-plugins": 0.01,
+          "infiquetra-maintentance": 0.01,
+          "none": 0.29,
+          "system-updates": 0.01
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "improve-agent-plugins"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "medium",
+        "confidence": 0.94,
+        "distribution": {
+          "high": 0.04,
+          "low": 0.01,
+          "medium": 0.95,
+          "very-high": 0.0
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": false,
+        "overridden": false,
+        "score": 1.04,
+        "suggested": "medium"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.9,
+        "distribution": {
+          "Awaiting operator input": 0.0,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.0,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.05,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.0,
+          "Discovering": 0.0,
+          "Execution planning": 0.01,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.03,
+          "Ready for Planning": 0.91,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "Saga lenses: Jev proposes conditional review lenses at admission when configured",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "enhancement",
+    "confidence": 0.62,
+    "distribution": {
+      "capability": 0.3,
+      "context-update": 0.0,
+      "defect": 0.0,
+      "enhancement": 0.7,
+      "exploration": 0.0
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": false,
+    "suggested": "enhancement"
+  },
+  "updated_at": "2026-10-04T01:56:41.292371+00:00"
+}

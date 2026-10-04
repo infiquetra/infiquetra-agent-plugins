@@ -1,0 +1,214 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-04T01:49:36.766390+00:00",
+  "created_at": "2026-10-04T01:51:07.138648+00:00",
+  "created_issue_number": 94,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/94",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-04-staffing-u2-retire-mission-control-s-issue-type.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-03-staffing-testing-mods/a2-retire-tier-band.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "medium",
+    "confidence": 0.96,
+    "distribution": {
+      "high": 0.02,
+      "low": 0.02,
+      "medium": 0.96,
+      "very-high": 0.0
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": false,
+    "overridden": false,
+    "score": 1.01,
+    "suggested": "medium"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-04-staffing-u2-retire-mission-control-s-issue-type.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-03\ntopic: saga-staffing-testing-mods\nmaturity: requirements-ready\n---\n\n# staffing U2 \u2014 Retire mission-control's issue-type tier band stamp\n\n### Objective\n\nStop stamping `### Recommended Tier Band` onto new issues. The band is derived from the issue type\nalone, admission never reads it, and the `/plan` functions that were meant to apply it no longer\nexist. Jev's per-issue judgment (staffing U4) replaces it.\n\n### Intent\n\n`plugins/mission-control/scripts/sdlc_manager.py` carries `_ISSUE_TYPE_TIER_BANDS` and\n`derive_tier_band`, which stamp `opus/high` on capability and defect cards and `sonnet/medium` on\nenhancement and context-update cards. After staffing U1 the builder defaults to `opus/medium`, so an\nenhancement card stamped `sonnet/medium` actively misleads a planner who reads it.\n\nRemove the stamp, the type-to-band map, the fence-aware stamping helpers, and the documentation that\ndescribes them. Existing issue bodies keep their old section; nothing reads it any more, so it is\ninert and is not rewritten.\n\n### Risk\n\nmedium\nThe change touches issue creation for every repository mission-control files into, but it only\nremoves an advisory section that no code consumes",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-03-staffing-testing-mods/a2-retire-tier-band.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-03-staffing-testing-mods/a2-retire-tier-band.md",
+    "ref": "docs/brainstorms/2026-10-03-staffing-testing-mods/a2-retire-tier-band.md",
+    "title": "staffing U2 \u2014 Retire mission-control's issue-type tier band stamp",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "enhancement",
+        "confidence": 0.74,
+        "distribution": {
+          "capability": 0.01,
+          "context-update": 0.13,
+          "defect": 0.06,
+          "enhancement": 0.79,
+          "exploration": 0.01
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "enhancement"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-03-staffing-testing-mods/a2-retire-tier-band.md",
+        "confidence": 0.31,
+        "distribution": {
+          "Fleet Telemetry Baseline Build-Out": 0.0,
+          "improve-agent-plugins": 0.31,
+          "improve-claude-plugins": 0.19,
+          "improve-codex-plugins": 0.01,
+          "infiquetra-maintentance": 0.41,
+          "none": 0.06,
+          "system-updates": 0.02
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "infiquetra-maintentance"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "medium",
+        "confidence": 0.96,
+        "distribution": {
+          "high": 0.02,
+          "low": 0.02,
+          "medium": 0.96,
+          "very-high": 0.0
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": false,
+        "overridden": false,
+        "score": 1.01,
+        "suggested": "medium"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.68,
+        "distribution": {
+          "Awaiting operator input": 0.01,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.01,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.19,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.01,
+          "Discovering": 0.0,
+          "Execution planning": 0.01,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.01,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.05,
+          "Ready for Planning": 0.71,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "staffing U2 \u2014 Retire mission-control's issue-type tier band stamp",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "enhancement",
+    "confidence": 0.74,
+    "distribution": {
+      "capability": 0.01,
+      "context-update": 0.13,
+      "defect": 0.06,
+      "enhancement": 0.79,
+      "exploration": 0.01
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": false,
+    "suggested": "enhancement"
+  },
+  "updated_at": "2026-10-04T01:51:21.630062+00:00"
+}

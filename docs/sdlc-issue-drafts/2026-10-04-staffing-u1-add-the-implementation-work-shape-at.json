@@ -1,0 +1,76 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-04T01:49:36.279154+00:00",
+  "created_at": "2026-10-04T01:50:47.162095+00:00",
+  "created_issue_number": 93,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/93",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-04-staffing-u1-add-the-implementation-work-shape-at.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-03-staffing-testing-mods/a1-implementation-shape.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-04-staffing-u1-add-the-implementation-work-shape-at.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-03\ntopic: saga-staffing-testing-mods\nmaturity: requirements-ready\n---\n\n# staffing U1 \u2014 Add the implementation work shape at Claude opus/medium and resolve every tier through one resolver\n\n### Objective\n\nMove saga's builder off Claude Sonnet by giving it its own work shape, and make admission, `/plan`\nand `/work` all answer \"what tier does this role or unit run at\" through one function in fleet-core's\nstaffing component.\n\n### Intent\n\n**The shape.** Add an `implementation` row to `work_shapes` in\n`plugins/fleet-core/scripts/fleet_commons/staffing.json` with `default_model: opus`,\n`default_effort: medium`, and a rationale naming the work: implementing a settled plan unit,\nincluding its tests. Point `roles.worker.work_shape` at it. Leave `mechanical` at `sonnet/medium`;\nthe merging and release workers keep it.\n\n**Claude only.** The new shape is declared Claude-only. A role pinned to another vendor that\nresolves through it fails loud, naming the vendor, rather than translating `opus` into that vendor's\nportable execution class. `execution_classes`, `root_orchestration_profiles` and every non-Claude\nrow under `vendors` stay byte-identical.\n\n**One resolver.** Today three",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-03-staffing-testing-mods/a1-implementation-shape.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-03-staffing-testing-mods/a1-implementation-shape.md",
+    "ref": "docs/brainstorms/2026-10-03-staffing-testing-mods/a1-implementation-shape.md",
+    "title": "staffing U1 \u2014 Add the implementation work shape at Claude opus/medium and resolve every tier through one resolver",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "staffing U1 \u2014 Add the implementation work shape at Claude opus/medium and resolve every tier through one resolver",
+  "updated_at": "2026-10-04T01:51:02.226961+00:00"
+}
