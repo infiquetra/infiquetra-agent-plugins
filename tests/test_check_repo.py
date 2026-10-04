@@ -253,6 +253,28 @@ class GateWiringTests(unittest.TestCase):
             self.undeclared_bundle(root)
             self.assertTrue(check_repo.check_fleet_bundle_outputs(root))
 
+    @staticmethod
+    def misplaced_module(root: Path) -> None:
+        plugin = make_plugin(root)
+        write(plugin / "skills" / "example" / "pane.ts", "export const x = 1\n")
+
+    def test_the_gate_reports_a_module_source_outside_the_claude_adapter(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.misplaced_module(root)
+            problems = check_repo.check_repo(root)
+        self.assertTrue(
+            any("pane.ts" in problem for problem in problems),
+            f"check_repo did not run the Claude module source check; it reported {problems}",
+        )
+
+    def test_the_module_source_check_finds_it_on_its_own_too(self) -> None:
+        """So a failure of the test above localizes to the wiring, not the check."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.misplaced_module(root)
+            self.assertTrue(check_repo.check_claude_module_sources(root))
+
 
 class ProvenanceManifestTests(unittest.TestCase):
     def test_package_without_provenance_manifest_passes(self) -> None:
@@ -1114,6 +1136,89 @@ class MachineSpecificPathTests(unittest.TestCase):
     def test_the_committed_repository_has_no_hits(self) -> None:
         """The real gate, against the real tree: no machine-specific path ships."""
         self.assertEqual(check_repo.check_machine_specific_paths(ROOT), [])
+
+
+class ClaudeModuleSourceTests(unittest.TestCase):
+    """A Claude Code mod is Claude-specific, so its source lives only in a Claude adapter."""
+
+    ADAPTER = check_repo.CLAUDE_ADAPTER_DIRECTORY_NAME
+
+    def findings(self, *relative_paths: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            make_plugin(root)
+            for relative in relative_paths:
+                write(root / relative, "export const x = 1\n")
+            return check_repo.check_claude_module_sources(root)
+
+    def test_a_module_inside_the_claude_adapter_is_accepted(self) -> None:
+        self.assertEqual(
+            self.findings(
+                f"plugins/example/{self.ADAPTER}/mods/index.ts",
+                f"plugins/example/{self.ADAPTER}/mods/index.test.ts",
+                f"plugins/example/{self.ADAPTER}/types/index.d.ts",
+                f"plugins/example/{self.ADAPTER}/mods/pane.tsx",
+            ),
+            [],
+        )
+
+    def test_typescript_outside_the_adapter_is_refused_and_named(self) -> None:
+        misplaced = (
+            "plugins/example/index.ts",
+            "plugins/example/skills/example/pane.ts",
+            "plugins/example/types/index.d.ts",
+            "scripts/tool.ts",
+            "tests/helper.mts",
+        )
+        problems = self.findings(*misplaced)
+        self.assertEqual(len(problems), len(misplaced), problems)
+        for relative in misplaced:
+            with self.subTest(path=relative):
+                self.assertTrue(
+                    any(problem.startswith(f"{relative}:") for problem in problems), problems
+                )
+                self.assertTrue(any(self.ADAPTER in problem for problem in problems))
+
+    #: Written out here rather than read from the gate, so narrowing the gate's
+    #: list fails this test instead of shrinking it.
+    ENGINE_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
+
+    def test_every_suffix_the_engine_loads_is_refused_outside_the_adapter(self) -> None:
+        for suffix in self.ENGINE_SUFFIXES:
+            with self.subTest(suffix=suffix):
+                self.assertEqual(len(self.findings(f"plugins/example/mod{suffix}")), 1)
+
+    def test_an_adapter_of_the_same_name_outside_a_package_is_not_an_adapter(self) -> None:
+        # Only plugins/<package>/com.infiquetra.claude/ is a Claude adapter. A
+        # directory that merely carries the name elsewhere does not launder a mod.
+        self.assertEqual(len(self.findings(f"docs/{self.ADAPTER}/mods/index.ts")), 1)
+        self.assertEqual(len(self.findings(f"vendor/example/{self.ADAPTER}/m.ts")), 1)
+        self.assertEqual(len(self.findings(f"plugins/example/x/{self.ADAPTER}/m.ts")), 1)
+
+    def test_engine_written_declarations_in_a_dot_directory_are_ignored(self) -> None:
+        # ``claude --plugin-dir`` lays its API types into .claude-plugin/types/;
+        # they ignore themselves in git and never ship.
+        self.assertEqual(
+            self.findings("plugins/example/.claude-plugin/types/claude-code/index.d.ts"), []
+        )
+
+    def test_dependency_and_cache_directories_are_ignored(self) -> None:
+        self.assertEqual(
+            self.findings(
+                "node_modules/pkg/index.js",
+                "plugins/example/node_modules/pkg/index.js",
+                "plugins/example/__pycache__/x.js",
+            ),
+            [],
+        )
+
+    def test_other_files_are_not_module_sources(self) -> None:
+        self.assertEqual(
+            self.findings("plugins/example/scripts/tool.py", "plugins/example/README.md"), []
+        )
+
+    def test_the_repository_itself_keeps_its_mods_in_the_adapters(self) -> None:
+        self.assertEqual(check_repo.check_claude_module_sources(ROOT), [])
 
 
 class ContinuousIntegrationTests(unittest.TestCase):

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -281,6 +282,20 @@ INERT_HOME_DIRECTORY_USERS = frozenset({"operator", "example", "op", "test"})
 # record they preserve (see the 2026-09-22 custody-move decision item 6,
 # "Captured fixture transcripts keep the machine paths they recorded").
 MACHINE_SPECIFIC_PATH_SCAN_DIRECTORIES = ("plugins", "scripts", "ports", "schemas", "tests")
+
+# Every suffix Claude Code loads as a hooks module (a "mod"). The engine treats
+# each of them as an ES module whatever the suffix, so a ``.js`` mod is as
+# Claude-specific as a ``.ts`` one, and all eight are held to the same place.
+ENGINE_MODULE_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
+
+# The only directory a module source may sit in: a package's Claude adapter.
+CLAUDE_ADAPTER_DIRECTORY_NAME = "com.infiquetra.claude"
+
+# Directory names the module-source walk never enters. Dot-directories are
+# pruned as well, by rule rather than by name: they hold git's own data and the
+# ``.claude-plugin/types/`` declarations the engine writes into any folder it
+# loads with ``--plugin-dir``, which ignore themselves in git and never ship.
+MODULE_SOURCE_PRUNED_DIRECTORY_NAMES = frozenset({"node_modules", "__pycache__", "venv"})
 
 
 def sha256_bytes(payload: bytes) -> str:
@@ -997,6 +1012,49 @@ def check_machine_specific_paths(root: Path) -> list[str]:
     return errors
 
 
+def check_claude_module_sources(root: Path) -> list[str]:
+    """Refuse a TypeScript or JavaScript module outside a Claude adapter.
+
+    Claude Code mods are TypeScript modules the Claude CLI loads from a
+    package's hooks file, and nothing but Claude runs them. The portable core
+    must stay vendor-neutral (AGENTS.md, "Rules"), so a module source belongs
+    under ``plugins/<package>/com.infiquetra.claude/`` and nowhere else: one at a
+    package root, under ``skills/`` or ``scripts/``, or anywhere outside
+    ``plugins/`` would be read as portable material by every other harness that
+    reads the package.
+
+    The walk covers the whole repository rather than ``plugins/`` alone, because
+    a module dropped in ``scripts/`` or ``tests/`` is just as misplaced. It
+    prunes dot-directories and dependency or interpreter caches, which are never
+    committed.
+    """
+    errors: list[str] = []
+    for current, directories, files in os.walk(root):
+        directories[:] = sorted(
+            name
+            for name in directories
+            if not name.startswith(".") and name not in MODULE_SOURCE_PRUNED_DIRECTORY_NAMES
+        )
+        relative_directory = Path(current).relative_to(root)
+        parts = relative_directory.parts
+        inside_adapter = (
+            len(parts) >= 3 and parts[0] == "plugins" and parts[2] == CLAUDE_ADAPTER_DIRECTORY_NAME
+        )
+        if inside_adapter:
+            # Everything below an adapter is allowed; there is nothing to look for.
+            directories[:] = []
+            continue
+        for name in sorted(files):
+            if not name.lower().endswith(ENGINE_MODULE_SUFFIXES):
+                continue
+            relative = (relative_directory / name).as_posix()
+            errors.append(
+                f"{relative}: TypeScript/JavaScript module source outside a Claude adapter; "
+                f"Claude Code mods belong under plugins/<package>/{CLAUDE_ADAPTER_DIRECTORY_NAME}/"
+            )
+    return errors
+
+
 def check_port_descriptors(root: Path) -> list[str]:
     """Every port descriptor loads, and names a package tree that exists.
 
@@ -1098,6 +1156,7 @@ def check_repo(root: Path) -> list[str]:
         *check_skill_frontmatter(root),
         *check_secret_free_values(root),
         *check_machine_specific_paths(root),
+        *check_claude_module_sources(root),
     ]
 
 
