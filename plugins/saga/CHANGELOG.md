@@ -13,6 +13,13 @@
   when one is recorded, and the lens Jev cell reads `admission.lens_proposal.probabilities`.
 - `skills/plan/SKILL.md` §0.1b runs admission with `--render tables` and tells the model to print
   the tables block exactly as rendered and collect the two answers against its rows.
+  A staffing override is asked for as the complete role map, because the answer replaces the
+  recorded map until issue #96 merges per role.
+- The staffing table's Why column names a repository overlay (`.saga/tier-defaults.json`) tier
+  as such, and a recorded Jev raise is shown as Proposed only when it is exactly one step above the
+  default and names neither fable nor max; otherwise the Why column says it was refused.
+- `references/run-record.md` lists `admission.lens_proposal` and the per-role staffing keys the
+  tables read (`suggestion`, `tier_judgment`, `jev_raise`, `operator_override`, `_tier_judgment`).
 
 ### Docs
 

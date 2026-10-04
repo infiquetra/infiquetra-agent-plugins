@@ -116,6 +116,7 @@ Twelve, in this write order. Anything else is an unknown field, handled as above
 | `branch_preview` | whether this repository has a branch preview deployment |
 | `main_consumed_directly` | whether this repository's `main` branch is consumed directly |
 | `change_shape` | `code`, `docs` or `mixed` |
+| `lens_proposal` | the Jev lens proposal issue #110 writes: `{probabilities: {<lens>: 0.0–1.0}, ...}`. `admission.py --render` reads `probabilities` for the lens table's Jev probability column: 0.8 and above reads pre-checked, 0.6 up to 0.8 reads consider, and lower is kept in the JSON only. Absent until #110 lands, and the column reads `not configured` |
 
 ### Two things called "destination"
 
@@ -166,6 +167,23 @@ Each value is an object:
 
 `source` is one of `operator`, `profile`, `staffing`, `lifecycle-default` or `unset`, so a later
 reader can tell an answer the operator gave from one a default filled.
+
+### The staffing rows the admission tables read
+
+`staffing_models_and_efforts.value` maps each role to `{vendor, model, effort}`. A key that starts
+with `_` is run-wide, not a role. `admission.py --render tables|json` reads these keys beside the
+tier, and every writer must put them here so the staffing table can find them:
+
+| Key | Where | Written by | Holds |
+|---|---|---|---|
+| `suggestion` | per role | `admission.py --suggest` today | the advisory Jev tier: `{suggested, confidence, usable, low_confidence, reason}` |
+| `tier_judgment` | per role | issue #96 | `{band, confidence, default, proposed, applied, shown, reason}`; `band` is one of `agrees`, `auto-raise`, `confirm-raise`, `advisory-lower`, `raise-at-ceiling`, `log-only`, `not-consulted` |
+| `jev_raise` | per role | issue #96 | `{model, effort, confidence, reason, decision_id}`; one step above the default, never fable or max |
+| `operator_override` | per role | issue #96's per-role merge | `true` on a role the operator's answer changed |
+| `_tier_judgment` | run-wide | issue #96 | `{status, note}`; `status: "off"` means the judgment is switched off |
+
+Until issue #96 merges an answer per role, a `staffing_overrides` answer replaces the whole map, so
+the plan skill asks for the complete role map.
 
 ## `units` — the keys a unit row carries
 

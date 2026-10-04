@@ -23,9 +23,19 @@ this fixes is that very improvisation. A pane that parses the printed Markdown: 
 (issue #101) rules that a mod never parses prose, so the pane reads the JSON instead. Markdown
 headings as table titles: they break the gate-record lint as described above.
 
+**Interim copies, deliberately.** The Proposed and Why columns apply the staffing precedence of
+coordinator ruling 7 (operator answer > repository overlay > a recorded Jev raise > work-shape
+default, refusing a raise that is not exactly one step up or that names fable or max) in one
+display-only function, `_proposed_and_why`, because the resolver issue #93 builds does not exist
+yet. Likewise the tier-judgment band names (issue #96) and the 0.8 / 0.6 lens bands (issue #110)
+are copied, not imported. The JSON carries a `status` field (`unreachable`,
+`catalogue-unreadable`) instead of placeholder rows, so a pane never has to match display text.
+The keys the tables read are listed in `plugins/saga/references/run-record.md`.
+
 **Revisit when.** A harness needs a different format than Markdown tables, or the Jev data the
 tables read (the per-role tier judgment from issue #96, the lens proposal from issue #110) lands in
-a different place in the run record.
+a different place in the run record. Replace the interim copies when #93's resolver, #96's band
+constants and #110's thresholds land: call or import them and delete the copies here.
 
 ## 2026-09-22
 

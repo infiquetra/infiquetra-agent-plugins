@@ -108,7 +108,9 @@ QUESTIONS: tuple[Question, ...] = (
     ),
     Question("destination", "Destination: plan-only, pr, merge, or nonprod-deploy"),
     Question(
-        "staffing_overrides", "Any staffing override, per role, or 'none' to take the defaults"
+        "staffing_overrides",
+        "Any staffing override, as the complete role map (every role, changes applied), "
+        "or 'none' to take the defaults",
     ),
     Question(
         "lens_declaration",
@@ -691,18 +693,32 @@ NOT_CONFIGURED = "not configured"
 NO_SUGGESTION = "no suggestion"
 
 #: The probability bands a lens proposal is read in: pre-checked at 0.8 and above, worth
-#: considering from 0.6 up to 0.8.
+#: considering from 0.6 up to 0.8. Below 0.6 a probability is logged and not shown (issue #110,
+#: Intent item 2), so the cell reads "no suggestion" and only the JSON row keeps the value.
+#: Interim copies: import them from review_roster once issue #110 defines them there.
 LENS_PRE_CHECKED_AT = 0.8
 LENS_CONSIDER_AT = 0.6
 
-#: How each tier-judgment band (the per-role block issue #96 writes) reads in the Jev cell.
+#: How each tier-judgment band (the per-role block issue #96 writes) reads in the Jev cell. The
+#: band names are an interim copy of fleet-core's ``classify_judgment`` vocabulary (issue #96);
+#: import them from the staffing component once that lands. ``raise-at-ceiling`` carries no
+#: proposed tier, so it is rendered separately (``_AT_CEILING``); ``log-only`` is never shown.
 _BAND_NOTES: dict[str, str] = {
     "agrees": "agrees",
     "auto-raise": "raise applied",
     "confirm-raise": "raise to confirm",
     "advisory-lower": "advisory lower",
-    "raise-at-ceiling": "raise at ceiling",
 }
+_AT_CEILING = "raise-at-ceiling"
+
+#: The strongest model an automatic Jev raise may name (coordinator ruling 7): never fable.
+_RAISE_MODEL_CEILING = "opus"
+
+#: The staffing-table and lens-table states a pane branches on instead of matching display text.
+STAFFING_UNREACHABLE = "unreachable"
+LENS_CATALOGUE_UNREADABLE = "catalogue-unreadable"
+_STAFFING_PLACEHOLDER = "(staffing component unreachable)"
+_LENS_PLACEHOLDER = "(lens catalogue unreadable)"
 
 
 def _tier_text(tier: Any, *, with_vendor: bool = True) -> str | None:
@@ -721,14 +737,16 @@ def _tier(vendor: Any, model: Any, effort: Any) -> dict[str, Any] | None:
     return {"vendor": vendor, "model": model, "effort": effort}
 
 
-def _default_tier(staffing: Any, role: str) -> tuple[dict[str, Any] | None, str | None]:
-    """A fresh staffing resolve for *role*: its default tier and work shape, or ``None``s."""
+def _default_tier(staffing: Any, role: str) -> tuple[dict[str, Any] | None, str | None, str | None]:
+    """A fresh staffing resolve for *role*: its default tier, its work shape, and where the tier
+    came from (``overlay`` for ``.saga/tier-defaults.json``, ``policy`` for the shared work-shape
+    registry), or ``None``s."""
     if staffing is None:
-        return None, None
+        return None, None, None
     try:
         decision = staffing.resolve_role(role)
     except Exception:
-        return None, None
+        return None, None, None
     tier = _tier(
         getattr(decision, "vendor", None),
         getattr(decision, "model", None),
@@ -740,7 +758,87 @@ def _default_tier(staffing: Any, role: str) -> tuple[dict[str, Any] | None, str 
             shape = (staffing.roles().get(role) or {}).get("work_shape")
         except Exception:
             shape = None
-    return tier, shape
+    source = getattr(decision, "source", None)
+    return tier, shape, source if isinstance(source, str) else None
+
+
+def _one_step_raise(base: dict[str, Any]) -> dict[str, Any] | None:
+    """The tier exactly one step above *base*, or ``None`` at the ceiling.
+
+    An interim copy of fleet-core's ``one_step_raise`` as issue #96 designs it: effort first, up
+    to the model's own ceiling; then the model, never past opus. ``max`` is not a palette rung, so
+    it is excluded by construction. Raises when the palette cannot be loaded or *base* is unknown.
+    """
+    import bundled_fleet  # noqa: PLC0415
+
+    palette = bundled_fleet.load("tier_palette")
+    model, effort = str(base["model"]), str(base.get("effort") or "")
+    ceiling = palette.effort_ceiling(model)
+    if palette.effort_rank(effort) < palette.effort_rank(ceiling):
+        return {"model": model, "effort": palette.escalate("effort", effort, 1, ceiling=ceiling)}
+    if palette.model_rank(model) > palette.model_rank(_RAISE_MODEL_CEILING):
+        raised = palette.escalate("model", model, 1, ceiling=_RAISE_MODEL_CEILING)
+        return {"model": raised, "effort": palette.clamp_effort_to_model(raised, effort)[0]}
+    return None
+
+
+def _raise_refusal(raise_: dict[str, Any], base: dict[str, Any] | None) -> str | None:
+    """Why the staffing resolver would refuse a recorded Jev raise, or ``None`` when it passes."""
+    model, effort = raise_.get("model"), raise_.get("effort")
+    if model == "fable":
+        return "it names fable"
+    if effort == "max":
+        return "it names max"
+    if base is None:
+        return "there is no default to raise from"
+    try:
+        step = _one_step_raise(base)
+    except Exception:
+        return "the tier palette could not be read to check it"
+    if step is None or (step["model"], step["effort"]) != (model, effort):
+        return "it is not exactly one step above the default"
+    return None
+
+
+def _proposed_and_why(
+    row: dict[str, Any],
+    default: dict[str, Any] | None,
+    shape: str | None,
+    default_source: str | None,
+    *,
+    operator: bool,
+) -> tuple[dict[str, Any] | None, str]:
+    """Which tier wins for one role, and the Why cell that names where it came from.
+
+    DISPLAY-ONLY INTERIM COPY of the staffing precedence. Coordinator ruling 7 writes the
+    precedence once, in the resolver issue #93 builds: operator's admission answer > repository
+    overlay (``.saga/tier-defaults.json``) > a recorded Jev raise > work-shape default, refusing a
+    raise that is not exactly one step above its base or that names fable or max. This function
+    mirrors that order and those refusals so the table never shows a tier the run would not
+    staff; once #93's resolver exists, call it here instead and delete the copy.
+    """
+    recorded = _tier(row.get("vendor"), row.get("model"), row.get("effort"))
+    shape_note = f"work shape {shape}" if shape else None
+    if operator:
+        return recorded, "operator answer"
+    raise_ = row.get("jev_raise") if isinstance(row.get("jev_raise"), dict) else {}
+    has_raise = bool(raise_.get("model"))
+    if default_source == "overlay":
+        why = "repository overlay (.saga/tier-defaults.json" + (
+            f", {shape_note})" if shape_note else ")"
+        )
+        if has_raise:
+            why += "; the overlay outranks the recorded Jev raise"
+        return recorded, why
+    base_why = f"staffing default ({shape_note})" if shape_note else "staffing default"
+    if has_raise:
+        refusal = _raise_refusal(raise_, default or recorded)
+        if refusal is None:
+            proposed = _tier(row.get("vendor"), raise_.get("model"), raise_.get("effort"))
+            return proposed, f"Jev raise: {raise_.get('reason') or 'no reason recorded'}"
+        refused = _tier_text(raise_, with_vendor=False)
+        return recorded, f"{base_why}; recorded Jev raise to {refused} refused: {refusal}"
+    return recorded, base_why
 
 
 def _confidence_text(confidence: Any) -> str | None:
@@ -762,6 +860,16 @@ def _jev_staffing_cell(row: dict[str, Any], consult: Any) -> dict[str, Any]:
         tier = judgment.get("proposed") if band != "agrees" else judgment.get("default")
         if band == "not-consulted":
             state = "not-configured"
+        elif band == _AT_CEILING and shown and confidence:
+            # No proposed tier exists: the default is already the strongest a raise may reach.
+            return {
+                "cell": f"at ceiling ({confidence})",
+                "state": "at-ceiling",
+                "band": band,
+                "suggested": None,
+                "confidence": judgment.get("confidence"),
+                "reason": judgment.get("reason") or "",
+            }
         elif band in _BAND_NOTES and shown and confidence and _tier_text(tier, with_vendor=False):
             cell = f"{_tier_text(tier, with_vendor=False)} ({confidence}, {_BAND_NOTES[band]})"
             return {
@@ -827,26 +935,9 @@ def _staffing_rows(record: run_record.RunRecord, staffing: Any) -> dict[str, Any
     value = block.get("value")
     source = block.get("source", "unset")
     if not isinstance(value, dict) or not any(not str(key).startswith("_") for key in value):
-        return {
-            "source": source,
-            "rows": [
-                {
-                    "role": "(staffing component unreachable)",
-                    "vendor": None,
-                    "default": None,
-                    "proposed": None,
-                    "jev": {
-                        "cell": NOT_CONFIGURED,
-                        "state": "not-configured",
-                        "band": None,
-                        "suggested": None,
-                        "confidence": None,
-                        "reason": "",
-                    },
-                    "why": NOT_CONFIGURED,
-                }
-            ],
-        }
+        # No placeholder row in the data: a pane reads ``status``, and ``render_tables`` draws
+        # the placeholder line from it.
+        return {"source": source, "status": STAFFING_UNREACHABLE, "rows": []}
 
     consult = value.get("_tier_judgment")
     # An operator answer either replaced the whole map (no row carries ``operator_override``) or
@@ -855,21 +946,11 @@ def _staffing_rows(record: run_record.RunRecord, staffing: Any) -> dict[str, Any
     rows: list[dict[str, Any]] = []
     for role in sorted(key for key in value if not str(key).startswith("_")):
         row = value[role] if isinstance(value[role], dict) else {}
-        default, shape = _default_tier(staffing, role)
+        default, shape, default_source = _default_tier(staffing, role)
         if default is None and source == "staffing":
             default = _tier(row.get("vendor"), row.get("model"), row.get("effort"))
-        proposed = _tier(row.get("vendor"), row.get("model"), row.get("effort"))
-        raise_ = row.get("jev_raise")
         operator = row.get("operator_override") is True or (source == "operator" and not merged)
-        if operator:
-            why = "operator answer"
-        elif isinstance(raise_, dict) and raise_.get("model"):
-            proposed = _tier(row.get("vendor"), raise_.get("model"), raise_.get("effort"))
-            why = f"Jev raise: {raise_.get('reason') or 'no reason recorded'}"
-        elif shape:
-            why = f"staffing default (work shape {shape})"
-        else:
-            why = "staffing default"
+        proposed, why = _proposed_and_why(row, default, shape, default_source, operator=operator)
         rows.append(
             {
                 "role": role,
@@ -880,7 +961,7 @@ def _staffing_rows(record: run_record.RunRecord, staffing: Any) -> dict[str, Any
                 "why": why,
             }
         )
-    return {"source": source, "rows": rows}
+    return {"source": source, "status": "ok", "rows": rows}
 
 
 def _lens_proposal(record: run_record.RunRecord) -> dict[str, Any] | None:
@@ -896,21 +977,22 @@ def _jev_lens_cell(lens: str, always_on: bool, proposal: dict[str, Any] | None) 
     probability = probabilities.get(lens) if isinstance(probabilities, dict) else None
     if always_on or not isinstance(probability, (int, float)):
         return {"cell": NO_SUGGESTION, "state": "no-suggestion", "probability": None}
-    cell = f"{probability:.2f}"
-    if probability >= LENS_PRE_CHECKED_AT:
-        cell += " (pre-checked)"
-    elif probability >= LENS_CONSIDER_AT:
-        cell += " (consider)"
-    return {"cell": cell, "state": "suggested", "probability": probability}
+    if probability < LENS_CONSIDER_AT:
+        # Logged, not shown (issue #110): the JSON row keeps the value for the record.
+        return {"cell": NO_SUGGESTION, "state": "below-threshold", "probability": probability}
+    band = "pre-checked" if probability >= LENS_PRE_CHECKED_AT else "consider"
+    return {"cell": f"{probability:.2f} ({band})", "state": "suggested", "probability": probability}
 
 
 def _declared(value: Any, key: str) -> dict[str, str]:
     """A lens declaration's ``conditional_applies`` or ``conditional_does_not_apply``, as
-    ``{lens: reason}``. ``review_roster`` accepts a plain list for the first."""
+    ``{lens: reason}``. Matches ``review_roster._lens_entries``, the declaration's consumer: a
+    plain list is accepted for ``conditional_applies`` only, so the table never shows an
+    exclusion the review would not honour."""
     entries = value.get(key) if isinstance(value, dict) else None
     if isinstance(entries, dict):
         return {str(lens): str(reason) for lens, reason in entries.items()}
-    if isinstance(entries, list):
+    if isinstance(entries, list) and key == "conditional_applies":
         return {str(lens): "" for lens in entries}
     return {}
 
@@ -960,19 +1042,12 @@ def _lens_rows(record: run_record.RunRecord, staffing: Any) -> dict[str, Any]:
                 "jev": _jev_lens_cell(lens, always_on, proposal),
             }
         )
-    if not rows:
-        rows.append(
-            {
-                "lens": "(lens catalogue unreadable)",
-                "always_on": False,
-                "include": "undeclared",
-                "reason": "the lens catalogue could not be read",
-                "jev": {"cell": NOT_CONFIGURED, "state": "not-configured", "probability": None},
-            }
-        )
+    read = isinstance(catalogue, dict) and bool(catalogue)
     return {
-        "catalogue_version": version if isinstance(catalogue, dict) and catalogue else None,
+        "catalogue_version": version if read else None,
         "source": block.get("source", "unset"),
+        # Unreadable with an operator declaration: the rows are the declaration's lenses.
+        "status": "ok" if read else LENS_CATALOGUE_UNREADABLE,
         "rows": rows,
     }
 
@@ -1025,11 +1100,11 @@ def render_tables(data: dict[str, Any]) -> str:
             row["why"],
         ]
         for row in data["staffing"]["rows"]
-    ]
+    ] or [[_STAFFING_PLACEHOLDER, NOT_CONFIGURED, NOT_CONFIGURED, NOT_CONFIGURED, NOT_CONFIGURED]]
     lens_rows = [
         [row["lens"], row["include"], row["reason"], row["jev"]["cell"]]
         for row in data["lenses"]["rows"]
-    ]
+    ] or [[_LENS_PLACEHOLDER, "undeclared", "the lens catalogue could not be read", NOT_CONFIGURED]]
     lines = [STAFFING_TITLE, "", *_table(STAFFING_COLUMNS, staffing_rows), ""]
     lines += [LENS_TITLE, "", *_table(LENS_COLUMNS, lens_rows)]
     return "\n".join(lines)

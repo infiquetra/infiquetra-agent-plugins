@@ -111,8 +111,10 @@ remain, then prints the staffing and lens tables in one fixed format. Then:
    reformat, reorder, merge, abbreviate, or summarise it — admission owns that format so every
    harness shows the same table. Collect the two answers against its rows:
 
-   - `staffing_overrides`: `"none"` to take the Proposed column, or
-     `{"<role>": {"vendor": ..., "model": ..., "effort": ...}}` for each role the operator changes.
+   - `staffing_overrides`: `"none"` to take the Proposed column, or the complete role map,
+     `{"<role>": {"vendor": ..., "model": ..., "effort": ...}}` with every role in the table and
+     the operator's changes applied. Never send only the changed roles: the answer replaces the
+     whole recorded map, so a role left out loses its seat.
    - `lens_declaration`: `{"always_on": [...], "conditional_applies": {"<lens>": "<reason>"},
      "conditional_does_not_apply": {"<lens>": "<reason>"}}`, with every conditional lens in the
      table in exactly one of the two maps and a reason for each one left out.
