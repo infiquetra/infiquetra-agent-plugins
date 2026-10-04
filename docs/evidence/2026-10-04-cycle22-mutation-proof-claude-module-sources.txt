@@ -24,7 +24,7 @@
 # scripts/check_repo.py was not re-patched here.
 #
 # Runner: each mutation is one exact string replacement in scripts/check_repo.py,
-# then ,
+# then `python3 -m unittest tests.test_check_repo tests.test_claude_plugin_packaging`,
 # then the pristine bytes are written back. MutationProofBindingTest is not in
 # those two modules, so it is excluded from grading by construction. Each
 # mutation names the first test that killed it.

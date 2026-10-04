@@ -30,7 +30,8 @@ What every package looks like now:
   four skill-scoped harnesses (OpenCode, Gemini CLI, Muse, Hermes) can reach
   them.
 - **Claude-only behaviour under `com.infiquetra.claude/`** (commands, agents,
-  hooks, MCP registration, output styles). The root `.claude-plugin/plugin.json`
+  hooks, MCP registration, output styles, Claude Code mods: TypeScript hooks
+  modules under `mods/` and a `types/index.d.ts` state contract). The root `.claude-plugin/plugin.json`
   and the generated root marketplace carry paths and identity only
   (`scripts/sync_marketplace.py`, checked by `check_repo.py`).
 - **Codex packaging** at `plugins/<pkg>/.codex-plugin/plugin.json` and the
@@ -148,8 +149,10 @@ git diff --check
 
 The validation script checks the repository baseline, local Markdown links, the
 Agent Plugin manifests under `plugins/`, each package's provenance manifest, the
-build declarations and generated bundle stamps, and the portable skills'
-frontmatter. It installs nothing and makes no network call, so this baseline
+build declarations and generated bundle stamps, the portable skills'
+frontmatter, and that no TypeScript or JavaScript module source (nor the
+`tsconfig.json` Claude Code writes at a package root) sits outside a Claude
+adapter. It installs nothing and makes no network call, so this baseline
 cannot be broken by a package index outage. A second continuous integration job
 pins the catalog's declared floor, `python>=3.12`, installs `requests`,
 `urllib3`, and `pytest`, and runs the ported plugin tests. The pin is the floor
@@ -157,6 +160,12 @@ itself rather than the newest interpreter, because a floor that is never
 exercised is not a floor. The floor is a single value with a single owner,
 [`tests/test_python_floor.py`](tests/test_python_floor.py), and every place the
 catalog states it is checked against that owner.
+
+A third continuous integration job, `claude-mods`, installs Claude Code at the
+recorded floor build (2.1.286) and at the pinned build (2.1.289) and, for every
+package whose Claude adapter names a hooks module, runs
+`claude plugin validate --strict` and `claude plugin test`. Neither command
+needs a login.
 
 ## Development
 
