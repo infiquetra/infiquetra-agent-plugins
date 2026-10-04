@@ -75,6 +75,10 @@ consumers (`/work`, `/doc-review`, the saga) depend on.
   test-file paths.
 - **Scope Boundaries** — what is explicitly out of scope. Keep `Deferred to Follow-Up Work` (planned
   work for a later PR/issue) distinct from true non-goals.
+- **Functional checks and the Scenario Smoke** — each unit's `functional-checks` block and the
+  plan-level `## Scenario Smoke` section, together proving every acceptance criterion on the
+  issue (see "Functional checks" below). `/plan` copies them onto the run record and the build
+  loop runs them; `/doc-review` refuses a plan that leaves a criterion unproven.
 
 ## Include when material (Deep / warranted only)
 
@@ -153,6 +157,45 @@ Each `### U<N>. [Name]` includes:
     for non-feature-bearing units; a feature-bearing unit with blank test scenarios is incomplete.
 - **Verification** — how the implementer knows the unit is complete, expressed as observable outcomes,
   not shell-command scripts.
+- **Functional checks** — a fenced `functional-checks` block under a `**Functional checks:**` label:
+  the commands that run this unit's change and prove the acceptance criteria it advances. Grammar
+  below. A unit with `Test expectation: none` may omit the block.
+
+### Functional checks
+
+A functional check is a command the repository can already run (no new test framework) that
+exercises the change the way a user or caller would, and proves one or more of the issue's
+acceptance criteria. Criteria are cited as `AC-<n>`: the criterion's 1-based position in the
+issue's `### Acceptance criteria` list, checked or not. Each check is a YAML mapping inside a fenced
+block whose info string is exactly `functional-checks`, under the unit's `### U<N>.` heading:
+
+```functional-checks
+- name: writer-lists-the-checks        # unique in the plan
+  command: python3 -m pytest plugins/saga/tests/test_functional_checks.py -q
+  proves: [AC-1]                       # one or more AC-<n>
+  runs: local                          # local | environment
+```
+
+- `runs: local` runs in the unit's own build-loop iteration.
+- `runs: environment` runs against the repository's declared functional-test environment
+  (`references/repository-profile.md` in the saga plugin), once, on the combined branch before code
+  review. A unit iteration records it but does not run it.
+
+The plan-level smoke is a `## Scenario Smoke` section holding one fenced `scenario-smoke` block in
+the same shape, every entry `runs: environment`. It is required for a code-bearing plan. A change
+that carries no code writes, in its place, the Planner's run-level waiver:
+
+```functional-test-waiver
+reason: documentation only; nothing in this change runs
+```
+
+A plan carries the smoke or the waiver, never both, and the waiver is never for code: only the
+operator waives functional testing for code, at the repository level, through admission.
+
+Every acceptance criterion must be proven by at least one check or by the smoke.
+`python3 plugins/saga/scripts/functional_checks.py map --plan <path> --issue <N>` reports the
+mapping; `/doc-review` runs it as a blocking check. A malformed block is a
+`functional-check-malformed` finding from `plugins/saga/scripts/plan_artifact_conformance.py`.
 
 ## Scope-class extensions
 
@@ -208,6 +251,7 @@ the plan to write the code for them and without re-asking the operator. Concrete
 - Repo-relative file paths for the work, and explicit test-file paths for feature-bearing units.
 - Decisions with rationale (KTDs), not just tasks.
 - Per-unit test scenarios specific enough that the implementer knows exactly what to test.
+- Every acceptance criterion on the issue proven by a functional check or the scenario smoke.
 - Clear dependencies and sequencing (U-ID dependency cites).
 
 ---

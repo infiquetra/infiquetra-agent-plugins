@@ -4,6 +4,27 @@
 
 ### Added
 
+- **`/plan` turns acceptance criteria into functional checks, and `/doc-review` refuses a plan
+  that leaves one unproven** (issue #98, pre-review testing U3). Each plan unit carries a fenced
+  `functional-checks` block of `{name, command, proves, runs}` entries, `proves` naming the issue's
+  criteria as `AC-<n>` and `runs` being `local` or `environment`; a plan-level `## Scenario Smoke`
+  section carries one `scenario-smoke` block, or, for a change with no code, the Planner's
+  `functional-test-waiver`. The grammar is in `skills/plan/references/plan-sections.md`.
+- New `scripts/functional_checks.py`: `extract` prints a plan's checks; `write` copies them onto
+  the run record's unit rows as `functional_checks` and `scenario_smoke`, under the record lock,
+  idempotently, keeping every other key (`/plan` §5.3a); `map` maps the checks to the issue's
+  acceptance criteria and exits 1 naming each unmapped criterion, or reports the waiver that skips
+  the check. `/doc-review` makes each unmapped criterion a `P1` finding, and `/plan` §5.4 runs
+  `map` before dispatching the review. A waiver never hides a malformed plan: a run-level waiver
+  beside a check or a smoke is not honoured, and a repository-level one still reports malformed
+  blocks as not ready.
+- In a record orchestrate drives, `write` adds no row; a plan unit with no row yet is listed as
+  `pending` and the command exits 5, which is not a refusal, so `/plan` continues. `/work` runs
+  the write again before its first build-loop iteration, once `orchestrate expand` has created
+  the `/work` rows, each named by the plan U-ID it builds.
+- `parse_issue.acceptance_criteria(body)` reads the `### Acceptance criteria` list as `AC-1`,
+  `AC-2`, ...; `extract`'s output is unchanged.
+- `plan_artifact_conformance.py` reports a malformed check block as `functional-check-malformed`.
 - The tier judgment runs by default (issue #96). Admission asks TypeSafe Jev once, for every role,
   whether the issue needs a weaker, the same, or a stronger tier than the role's default, sending
   the issue's title, body and four keyword flags. A raise at 0.8 or above is applied one step and
@@ -165,6 +186,12 @@
 
 ### Changed
 
+- `build_loop.py` keeps a check's `proves` and `runs` in the recorded criterion. A unit iteration
+  runs only local checks; a `runs: environment` check or smoke entry is recorded and deferred to
+  the combined-branch run, and a list holding only such entries records the reason
+  `deferred-to-combined-branch`. `--dry-run` without `--unit` on a record with several unit rows
+  now lists every unit's checks, where it used to print `none prescribed in the run record`, and
+  prints what each check proves and where it runs.
 - `admission.py --suggest` is accepted and ignored; `admit` and `fill_defaults` take
   `judge_tiers`, `title`, `judgment_ask`, `judgment_getenv`, `judgment_cache`, `judgment_log_dir`
   and `log_labels` in place of `suggest`, `suggest_ask` and `suggest_log_dir`. The library default

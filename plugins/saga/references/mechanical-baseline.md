@@ -151,13 +151,35 @@ because a profile without it stays valid.
 
 ## The functional checks and the scenario smoke
 
-No step in saga writes these onto a unit's row yet. The run model puts them at step 2, written by
-the Planner, and the card that built this loop did not build that writer.
+The Planner writes them. `/plan` puts each unit's checks in a fenced `functional-checks` block and
+the plan's smoke in a `scenario-smoke` block (the grammar is in
+`plugins/saga/skills/plan/references/plan-sections.md`), and §5.3a copies them onto the unit rows
+with `python3 plugins/saga/scripts/functional_checks.py write --plan <path> --issue <N>`: each
+unit's own checks as `functional_checks`, and the plan's smoke as `scenario_smoke` on every unit
+row. Each entry is one object:
 
-So an absent key reads as an **empty list** and the iteration records the reason
-`none-prescribed`, and the dry run prints `none prescribed in the run record`. Without that reason
-a reader of a green iteration could not tell "the plan prescribed none" from "the plan prescribed
-three and the loop lost them", and those are very different facts about the same green.
+| Key | Holds |
+|---|---|
+| `name` | the check's name, unique in the plan |
+| `command` | the command line, run with no shell |
+| `proves` | the acceptance criteria it proves, as `AC-<n>`, the criterion's position in the issue's list |
+| `runs` | `local`, run in the unit's iteration, or `environment`, run against the declared functional-test environment on the combined branch |
+
+The loop also reads an entry written before issue #98: a `{name, command}` object or a bare
+command string, which runs locally. The recorded criterion keeps `proves` and `runs`, and the dry
+run prints them beside each command. With no `--unit` on a record with more than one row, the dry
+run lists every unit's checks under its id, and the smoke once when every unit carries the same
+list.
+
+**An `environment` check is recorded and deferred, not run, in a unit iteration.** It runs once on
+the combined branch before code review (pre-review testing U4). A list whose every entry is
+deferred records the reason `deferred-to-combined-branch`.
+
+An absent or empty list reads as an **empty list** and the iteration records the reason
+`none-prescribed`, and the dry run prints `none prescribed in the run record`. That still happens
+for a unit the plan gave no checks, and for a run whose functional testing is waived. Without that
+reason a reader of a green iteration could not tell "the plan prescribed none" from "the plan
+prescribed three and the loop lost them", and those are very different facts about the same green.
 
 ## The record block
 

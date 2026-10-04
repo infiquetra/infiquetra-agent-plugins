@@ -383,6 +383,118 @@ def test_a_prescribed_check_list_carries_no_none_prescribed_reason(tmp_path: Pat
 
 
 # ---------------------------------------------------------------------------
+# The plan's checks, as functional_checks.py writes them (issue #98).
+# ---------------------------------------------------------------------------
+
+#: One unit row exactly as ``functional_checks.py write`` leaves it.
+PLANNED_UNIT: dict[str, Any] = {
+    "id": "U1",
+    "functional_checks": [
+        {"name": "cli", "command": "check-cli", "proves": ["AC-1"], "runs": "local"},
+        {"name": "stack", "command": "check-stack", "proves": ["AC-2"], "runs": "environment"},
+    ],
+    "scenario_smoke": [
+        {"name": "smoke", "command": "smoke-it", "proves": ["AC-3"], "runs": "environment"}
+    ],
+}
+
+
+def test_the_recorded_criterion_keeps_what_each_check_proves_and_where_it_runs(
+    tmp_path: Path,
+) -> None:
+    path = _write(tmp_path / "issue-1027.json", _record_dict(units=[PLANNED_UNIT]))
+    assert build_loop.main(["--record", str(path), "--unit", "U1"], runner=FakeRunner()) == 0
+    criterion = _block(path)["exit_criterion"]
+    assert criterion["functional_checks"] == PLANNED_UNIT["functional_checks"]
+    assert criterion["scenario_smoke"] == PLANNED_UNIT["scenario_smoke"]
+
+
+def test_an_environment_check_is_recorded_but_not_run_in_a_unit_iteration(
+    tmp_path: Path,
+) -> None:
+    """Pre-review testing ruling 3: the declared environment only ever gets the combined branch."""
+    path = _write(tmp_path / "issue-1027.json", _record_dict(units=[PLANNED_UNIT]))
+    runner = FakeRunner()
+    assert build_loop.main(["--record", str(path), "--unit", "U1"], runner=runner) == 0
+
+    ran = {call[0] for call in runner.calls}
+    assert "check-cli" in ran
+    assert "check-stack" not in ran and "smoke-it" not in ran
+    iteration = _block(path)["iterations"][0]
+    assert [entry["name"] for entry in iteration["functional_checks"]] == ["cli"]
+    assert "functional_checks_reason" not in iteration
+    assert iteration["scenario_smoke"] == []
+    assert iteration["scenario_smoke_reason"] == build_loop.REASON_DEFERRED == (
+        "deferred-to-combined-branch"
+    )
+
+
+def test_a_list_of_only_environment_checks_is_deferred_not_none_prescribed(
+    tmp_path: Path,
+) -> None:
+    unit = {"id": "U1", "functional_checks": [PLANNED_UNIT["functional_checks"][1]]}
+    path = _write(tmp_path / "issue-1027.json", _record_dict(units=[unit]))
+    assert build_loop.main(["--record", str(path), "--unit", "U1"], runner=FakeRunner()) == 0
+    iteration = _block(path)["iterations"][0]
+    assert iteration["functional_checks_reason"] == build_loop.REASON_DEFERRED
+    assert iteration["scenario_smoke_reason"] == build_loop.REASON_NONE_PRESCRIBED
+
+
+def test_a_check_with_no_runs_key_still_runs_locally(tmp_path: Path) -> None:
+    """Back-compatibility: every entry written before issue #98 carries no ``runs``."""
+    unit = {"id": "U1", "functional_checks": [{"name": "old", "command": "old-check"}]}
+    path = _write(tmp_path / "issue-1027.json", _record_dict(units=[unit]))
+    runner = FakeRunner(verdicts={"old-check": 1})
+    assert build_loop.main(["--record", str(path), "--unit", "U1"], runner=runner) == 4
+    assert _block(path)["iterations"][0]["functional_checks"][0]["status"] == "fail"
+
+
+def test_the_dry_run_of_a_record_with_several_units_lists_each_unit_s_checks(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Before issue #98 a dry run with no --unit on two rows printed 'none prescribed'."""
+    second = {
+        "id": "U2",
+        "functional_checks": [
+            {"name": "api", "command": "check-api", "proves": ["AC-4"], "runs": "local"}
+        ],
+        "scenario_smoke": PLANNED_UNIT["scenario_smoke"],
+    }
+    path = _write(tmp_path / "issue-1027.json", _record_dict(units=[PLANNED_UNIT, second]))
+    argv = ["--record", str(path), "--repo-root", str(tmp_path), "--dry-run"]
+    assert build_loop.main(argv, runner=FakeRunner()) == 0
+    out = capsys.readouterr().out
+    assert "none prescribed in the run record" not in out
+    assert "  Unit U1:\n    cli: check-cli  (proves AC-1; runs locally)" in out
+    assert (
+        "    stack: check-stack  (proves AC-2; runs against the declared environment, on the "
+        "combined branch)"
+    ) in out
+    assert "  Unit U2:\n    api: check-api  (proves AC-4; runs locally)" in out
+    assert out.count("smoke: smoke-it") == 1
+
+
+def test_the_dry_run_lists_the_smoke_per_unit_when_the_units_differ(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    second = {"id": "U2", "scenario_smoke": [{"name": "other", "command": "other-smoke"}]}
+    path = _write(tmp_path / "issue-1027.json", _record_dict(units=[PLANNED_UNIT, second]))
+    argv = ["--record", str(path), "--repo-root", str(tmp_path), "--dry-run"]
+    assert build_loop.main(argv, runner=FakeRunner()) == 0
+    smoke = capsys.readouterr().out.split("Scenario smoke, from the plan:")[1]
+    assert "  Unit U1:\n    smoke: smoke-it" in smoke
+    assert "  Unit U2:\n    other: other-smoke" in smoke
+
+
+def test_the_reference_no_longer_says_no_step_writes_the_checks() -> None:
+    """Issue #98, third criterion: the writer exists, so the sentence denying it is gone."""
+    text = REFERENCE.read_text(encoding="utf-8")
+    assert "No step in saga writes these onto a unit's row yet" not in text
+    assert "functional_checks.py write" in text
+    assert build_loop.REASON_DEFERRED in text
+
+
+# ---------------------------------------------------------------------------
 # The record: iterations accumulate, unknown keys survive, versions are refused.
 # ---------------------------------------------------------------------------
 

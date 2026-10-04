@@ -2,6 +2,50 @@
 
 ## 2026-10-04
 
+### In an orchestrate run, /plan runs before the rows its checks belong on exist
+
+**Evidence.** Issue #98, review cycle 1. `functional_checks.py write` refused (exit 2) a record
+carrying the `orchestrate` block when a plan unit had no row, and `/plan` §5.3a said to stop on
+exit 2. But `/plan` runs inside a row `orchestrate start` created, and the `/work` rows arrive
+later through `orchestrate expand` (`cmd_expand`), so every orchestrate-driven `/plan` would have
+stopped. The writer now writes the rows that exist, lists the rest as `pending` and exits 5;
+`/work` re-runs the write before its first build-loop iteration.
+`test_write_after_expand_adds_the_rows_that_were_pending` covers the sequence.
+
+**Mechanism.** The writer's refusal assumed the rows came first and the plan second. In the
+orchestrate lifecycle the plan decides which rows exist, so the rows always come after it.
+
+**Generalizable rule.** Before making a missing precondition a hard stop, check which step
+creates it; if that step runs later, record the work as pending and re-run it at that step.
+
+### A waiver short-circuit dropped the parser's own problems
+
+**Evidence.** Issue #98, review cycle 1. `map_criteria` returned "waived" with no problems for
+any waiver, so a plan carrying both a run-level waiver and a check that proved only AC-1 passed
+the blocking `/doc-review` mapping check. A waiver now skips the mapping only for a well-formed
+plan, and a run-level waiver is ignored beside any check or smoke.
+
+**Mechanism.** The early return for the waiver ran before the problems `parse_plan` had already
+found were consulted, so the check reported a state its own input contradicted.
+
+**Generalizable rule.** An exemption short-circuit must still surface validation errors found
+before it; exempt the judgement, never the input check.
+
+### A dry run that cannot pick a unit reported the plan's checks as absent
+
+**Evidence.** Issue #98. `build_loop.find_unit` (`plugins/saga/scripts/build_loop.py`) returns
+`None` when no `--unit` is named and the record has more than one row, and `read_criterion` then
+read an empty row: `build_loop.py --issue <N> --dry-run` printed "none prescribed in the run
+record" for a two-unit record whose U1 carried a check. The dry run now lists every row's checks
+under its id; `test_the_dry_run_of_a_record_with_several_units_lists_each_unit_s_checks` covers it.
+
+**Mechanism.** `None` meant "no unit was chosen", and the reader treated it as "a unit with nothing
+on it". Both print the same absence message, so a choice the caller never made looked like a fact
+about the plan.
+
+**Generalizable rule.** When a reader cannot resolve its subject, report that it could not, or
+report every candidate; never let "not chosen" fall through to the empty case.
+
 ### A run resolved from the branch name is not an active run
 
 **Evidence.** Issue #105, review cycle 1. `run_status.py summary --all-active` filtered only the

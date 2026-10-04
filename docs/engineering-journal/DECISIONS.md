@@ -2,6 +2,39 @@
 
 ## 2026-10-04
 
+### A plan proves its acceptance criteria in fenced YAML blocks, copied onto the run record by their own script
+
+**Decision.** A plan names each unit's functional checks in a fenced block whose info string is
+`functional-checks`, under the unit's `### U<N>.` heading, and the plan-level smoke in one
+`scenario-smoke` block under `## Scenario Smoke` (issue #98, pre-review testing U3). Each entry is
+`{name, command, proves, runs}`. `proves` cites criteria as `AC-<n>`, the criterion's 1-based
+position in the issue's `### Acceptance criteria` list, and `runs` is `local` or `environment`. A
+change with no code writes a `functional-test-waiver` block with its reason in place of the smoke.
+A new script, `plugins/saga/scripts/functional_checks.py`, reads the blocks once: `write` copies
+them onto the run record's unit rows at `/plan` §5.3a under the record lock, `map` is the blocking
+check `/doc-review` runs, and `plan_artifact_conformance.py` reports malformed blocks through the
+same parser. A unit iteration of the build loop runs only `local` entries; `environment` entries
+are recorded and deferred, with the reason `deferred-to-combined-branch`.
+
+**Rationale.** The build loop already read `functional_checks` and `scenario_smoke` from the unit
+row, so the writer only had to produce that shape. A fenced YAML block keeps the plan's per-unit
+bold-label prose intact under the formatting contract and parses without guessing. Numbering
+criteria by position reuses the `AC-<n>` vocabulary `parse_issue.py` already reports, and `map`
+quotes each criterion's text so a renumbered issue shows as a mismatch, not a silent pass.
+Deferring `environment` entries follows parent ruling 3 of #91: a shared stack only ever receives
+the combined branch, and a unit loop that tried to reach an undeployed environment would never go
+green.
+
+**Rejected alternatives.** Parsing the checks out of bold-label prose (`**Functional checks:**`
+lines), which breaks on every formatting variation. Matching checks to criteria by their text,
+which drifts the first time either is reworded. Writing the checks through `saga.py save`,
+`plan-save-contract.yaml` and `plan_save_contract.py`, as the card listed: those render and prove
+the saga tick, which is untracked local state, while the run record is what the build loop reads.
+Running `environment` entries in every unit iteration.
+
+**Revisit when.** Pre-review testing U4 (#99) runs the deferred entries on the combined branch, or
+an issue template gives acceptance criteria stable identifiers of their own.
+
 ### The run status band's words are rendered by `run_status.py`, not by the mod
 
 **Decision.** The run status band (issue #105) draws `band_line` exactly as

@@ -18,6 +18,12 @@ Run it:
 ``root`` defaults to ``docs/plans``. The JSON report goes to stdout; the exit code is
 ``corpus_exit`` — 0 when no new-contract document fails the contract, 1 otherwise.
 Legacy findings are reported without failing the run.
+
+The plan's functional-check blocks (issue #98) are checked in the same pass: a malformed
+``functional-checks``, ``scenario-smoke`` or ``functional-test-waiver`` block is a
+``functional-check-malformed`` finding, read by ``functional_checks.parse_plan`` so the grammar has
+one parser. A plan with no such block is not a finding here: whether every acceptance criterion is
+proven needs the issue, and ``functional_checks.py map`` is the check that reads it.
 """
 
 from __future__ import annotations
@@ -32,6 +38,10 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import functional_checks  # noqa: E402  (after the sys.path shim, by design)
 
 # The marker triple, exactly as declared in plan/SKILL.md ("The body MUST use the exact
 # section markers ..."). The definition-pin test asserts the declaration still carries
@@ -49,6 +59,7 @@ KIND_LEGACY_NO_BACKEND = "legacy-no-backend"
 KIND_MISSING_REQUIRED_FIELD = "missing-required-field"
 KIND_BACKEND_NOT_IN_ENUM = "backend-not-in-enum"
 KIND_MARKER_MISSING = "marker-missing"
+KIND_FUNCTIONAL_CHECK_MALFORMED = "functional-check-malformed"
 
 
 @dataclass(frozen=True)
@@ -132,6 +143,8 @@ def check_document(path: Path) -> list[Finding]:
         findings.append(
             Finding(path, KIND_MARKER_MISSING, f"missing plan marker: {marker}", legacy)
         )
+    for problem in functional_checks.parse_plan(text).problems:
+        findings.append(Finding(path, KIND_FUNCTIONAL_CHECK_MALFORMED, problem, legacy))
     return findings
 
 

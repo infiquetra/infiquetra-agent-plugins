@@ -397,6 +397,16 @@ table.
 - **Implementation Units** — with stable **U-IDs** (`U1.`, `U2.`), each independently landable, with
   per-unit test scenarios and repo-relative test-file paths. Feature-bearing units require real test
   scenarios; only non-feature units (config, scaffolding) may use `Test expectation: none -- [reason]`.
+- **Functional checks** — under each unit, a fenced `functional-checks` block: the tests that run
+  the change and prove the issue's acceptance criteria. Each check names its command, the
+  criteria it proves as `AC-<n>` (the criterion's position in the issue's `### Acceptance
+  criteria` list), and whether it runs `local` or against the declared `environment`. Every
+  acceptance criterion is proven by at least one check or by the scenario smoke; `/doc-review`
+  refuses a plan that leaves one unproven. The grammar is in `references/plan-sections.md`.
+- **Scenario Smoke** — a plan-level `## Scenario Smoke` section holding one fenced
+  `scenario-smoke` block, run once against the repository's declared environment on the combined
+  branch before code review. A change that carries no code writes a `functional-test-waiver`
+  block with its reason there instead; that is the only waiver this skill may write.
 - **Scope Boundaries** — what is explicitly out of scope, with `Deferred to Follow-Up Work` kept
   distinct from true non-goals.
 
@@ -691,6 +701,32 @@ additional tick carrying the same state (harmless to `restore`, visible to `saga
 Either way, STOP and surface the error to the operator — do not continue to Phase 5.4 on a
 failed save.
 
+#### 5.3a Write the functional checks onto the run record
+
+The build loop reads each unit's functional checks and the scenario smoke from the unit's row in
+the run record, so the plan's checks are copied there now:
+
+```bash
+python3 plugins/saga/scripts/functional_checks.py write --plan <plan path> --issue <N>
+```
+
+Each `### U<N>.` unit's checks land on the row whose `id`, `name` or `unit_id` is that U-ID (a
+row is added when none matches), as `functional_checks`, and the plan's smoke as
+`scenario_smoke`; every other key on every row is left alone. The write holds the record's lock
+and is idempotent, so **re-run it after every §5.4 repair batch** that changes a check. Exit 2
+means it refused — no record yet, or a malformed check block (it names the unit and the field) —
+and nothing was written: STOP and surface it.
+
+**Exit 5 is pending, not a refusal: continue.** In an orchestrate-driven run `/plan` is itself one
+of orchestrate's unit lanes, and the record has no rows for the plan's units yet: `orchestrate
+expand` adds the `/work` rows after this plan is finished. The writer adds no row to a record
+orchestrate drives, so it writes the rows that already exist and lists the rest as `pending`.
+Say in the plan's handoff line that the checks for those units are pending, and go on to §5.4.
+`/work` runs the same write again before its first build-loop iteration, once `expand` has
+created the rows. For the write to land, each `/work` unit in the expansion table is named by the
+plan U-ID it builds (`U1`, `U2`, ...).
+`python3 plugins/saga/scripts/build_loop.py --issue <N> --dry-run` then lists every unit's checks.
+
 ### 5.4 Dispatch the plan review, and loop until it passes
 
 <!-- gate-record: id=plan-review-floor absence=HALT transport=ask-user-question -->
@@ -727,6 +763,11 @@ skipped on the busy days it matters most.
 Say which of the three happened and why. The choice is read from the record rather than probed
 from the environment because the same run continues in other sessions and on other machines, and a
 rule that reads the environment answers differently in each of them.
+
+**Map the acceptance criteria before dispatching.** Run
+`python3 plugins/saga/scripts/functional_checks.py map --plan <plan path> --issue <N>` first. On
+exit 1, add a functional check for each criterion it names and repeat §5.3a, so the reviewer is
+not spent on a gap a script already found. The reviewer runs the same command as a blocking check.
 
 **The loop is the repair protocol.** Dispatch, read the result, repair the plan document, dispatch
 again — recording **one entry per turn** in the record's `review_cycles` (its cycle number, its

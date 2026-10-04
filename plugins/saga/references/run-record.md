@@ -370,6 +370,29 @@ and is preserved unchanged across a read and a write, which is exactly the exten
 "Unknown top-level fields" rule above describes. Orchestrate never writes `admission`,
 `approval_scope`, `run_configuration`, `review_cycles` or `roster`.
 
+The plan is the fourth consumer, and issue #98 added two keys. `/plan` writes them through
+`functional_checks.py write` and `build_loop.py` reads them; the entry shape is in
+`plugins/saga/references/mechanical-baseline.md`:
+
+<!-- BEGIN UNIT ROW KEYS -->
+
+| Key | Holds |
+|---|---|
+| `functional_checks` | the unit's functional checks from its plan section, each `{name, command, proves, runs}` |
+| `scenario_smoke` | the plan-level scenario smoke, the same list on every row the plan names |
+
+<!-- END UNIT ROW KEYS -->
+
+The writer adds a `{"id": "U<N>"}` row for a plan unit no row names, except in a record that
+carries the `orchestrate` key: orchestrate owns which rows exist there, and a row without its
+`name`, `vendor` and `task` would not load. There it writes the rows that exist, lists the rest
+as `pending` and exits 5, which is not a refusal. In an orchestrate run `/plan` runs inside one of
+the rows `orchestrate start` created, so the `/work` rows do not exist yet; `orchestrate expand`
+adds them after `/plan` finishes. Each `/work` unit in the expansion table is named by the plan
+U-ID it builds, and `/work` runs the write again before its first build-loop iteration, which is
+when those rows first exist. A row `expand` creates is fresh and carries nothing forward, so the
+checks are written after it, never before.
+
 ### `tier_judgments` — `/plan`'s per-unit tier judgments
 
 The tier judgment in `/plan` (issue #96) does **not** write unit rows. `/plan` defines its units

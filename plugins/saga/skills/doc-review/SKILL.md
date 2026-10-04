@@ -98,7 +98,9 @@ Always check:
    the document itself, linked source, or local repository evidence.
 2. **Assumptions.** Surface stale, wrong, or unstated assumptions that would affect execution.
 3. **Requirement mapping.** Check origin requirements, acceptance criteria, schema requirements,
-   implementation units, and gates map correctly.
+   implementation units, and gates map correctly. For a plan with an attached issue, whether every
+   acceptance criterion has a functional check is decided by the blocking check in the next
+   section, not by judgment.
 4. **Completeness.** Detect missing fields, schema requirements, gates, decisions, or review
    artifacts the document already implies.
 5. **Open-choice pressure.** Flag implementation choices that should be defaults, decisions, or
@@ -113,6 +115,33 @@ Triggered lenses:
   user-facing behavior is prominent.
 - Use deployment readiness scrutiny when the document includes deploy, rollback, release,
   environment, or CI/CD behavior.
+
+## Acceptance-criteria mapping — a blocking check
+
+A plan must prove every acceptance criterion on its issue with a functional check: a test that runs
+the change, written in the plan's `functional-checks` blocks or its plan-level `scenario-smoke`
+block (the grammar is in `plugins/saga/skills/plan/references/plan-sections.md`). This check applies
+when the target classifies as a plan and an issue is attached: `/plan` dispatched the review with
+the issue number, or the plan names its issue. Run it:
+
+```bash
+python3 plugins/saga/scripts/functional_checks.py map --plan <plan path> --issue <N>
+```
+
+- **Exit 1 is not ready.** Report each unmapped criterion as a `P1` finding that names its `AC-<n>`
+  and quotes its text, so the repair is "add a check that proves this criterion". A check that
+  cites an `AC-<n>` the issue does not have is also `P1`, and so is each malformed check entry the
+  output lists. `AC-<n>` is the criterion's position in the issue's `### Acceptance criteria` list,
+  so a renumbered issue shows up here as a mismatch rather than passing silently.
+- **Exit 0 with status `waived`** means functional testing is waived for this run. Write: functional
+  testing is waived for this run (`<level>` level: `<reason>`); the mapping check was skipped. A
+  `repository`-level waiver is the operator's, recorded at admission, and is not yours to question
+  here. A `run`-level waiver is the Planner's, written in the plan: check that the change carries
+  no code and that the waiver states its reason. A run-level waiver on a code-bearing change is a
+  `P1` finding, because no role but the operator may waive functional testing for code.
+- **Exit 2 stops the review**, as a rubric that cannot be loaded does: the plan or the issue could
+  not be read, or the issue has no `### Acceptance criteria` section with items. Say which.
+- When no issue is attached, say in one line that the mapping check did not apply.
 
 ## A cross-family reviewer seat
 
@@ -184,6 +213,7 @@ change. Examples:
 Unsafe changes become findings instead of edits:
 
 - inventing acceptance criteria
+- choosing the test that proves an acceptance criterion
 - choosing architecture without evidence
 - changing scope based on preference
 - resolving product decisions without user input

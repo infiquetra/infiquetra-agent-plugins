@@ -4,12 +4,21 @@ Issue 1026, units U1 through U4, and card 933. These cases pin instruction text,
 changed is what the three skills instruct — there is no runtime module between the operator and
 the behaviour. Each case therefore names the file and the contract sentence it guards, so a later
 edit that drops the sentence fails here rather than silently removing a gate.
+
+Issue #98 added the one exception: the acceptance-criteria mapping check is a script,
+``functional_checks.py map``, that the review runs. Its cases below exercise the real module, and
+the prose pins hold the two skills to running it.
 """
 
 from __future__ import annotations
 
+import importlib.util
+import json
 import re
+import sys
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -21,6 +30,22 @@ DOC_REVIEW_SKILL = SAGA / "skills" / "doc-review" / "SKILL.md"
 WORKFLOW_BACKEND_REF = SAGA / "references" / "workflow-backend.md"
 ROSTER = ROOT / "plugins" / "agent-launcher" / "skills" / "agent-launcher" / "scripts" / "roster.py"
 PLAN_REVIEWER_ROLE = ROOT / "plugins" / "agent-launcher" / "roles" / "plan-reviewer.md"
+SCRIPTS = SAGA / "scripts"
+
+
+def _load(name: str) -> ModuleType:
+    if str(SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(SCRIPTS))
+    spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+#: The real mapping module, at module scope: the behavioural cases below run it, never a fake.
+functional_checks = _load("functional_checks")
 
 
 def _section(text: str, heading: str) -> str:
@@ -244,3 +269,224 @@ def test_no_skill_points_at_the_reference_file_that_was_deleted() -> None:
         assert "references/workflow-backend.md" not in text, (
             f"{skill.name} still sends the reader to a reference file that does not exist"
         )
+
+
+# --------------------------------------------------------------------------- issue #98
+
+
+ISSUE_BODY = """### Objective
+
+Prove every criterion.
+
+### Acceptance criteria
+
+- [ ] The writer lists the checks.
+- [ ] The reviewer blocks an unmapped criterion.
+- [ ] The smoke covers the whole flow.
+
+### Verification
+
+- not a criterion
+"""
+
+
+def _plan(unit_proves: str, smoke_proves: str = "[AC-3]") -> str:
+    return f"""# Plan
+
+## Implementation Units
+
+### U1. The only unit
+
+```functional-checks
+- name: unit-check
+  command: python3 -m pytest tests/test_unit.py -q
+  proves: {unit_proves}
+  runs: local
+```
+
+## Scenario Smoke
+
+```scenario-smoke
+- name: flow-smoke
+  command: ./smoke.sh
+  proves: {smoke_proves}
+  runs: environment
+```
+
+## Key Technical Decisions
+
+KTD1: a fixture.
+"""
+
+
+def _map(
+    tmp_path: Path, plan: str, *, record: dict[str, Any] | None = None, body: str = ISSUE_BODY
+) -> list[str]:
+    (tmp_path / "plan.md").write_text(plan, encoding="utf-8")
+    (tmp_path / "body.md").write_text(body, encoding="utf-8")
+    argv = [
+        "map",
+        "--plan",
+        str(tmp_path / "plan.md"),
+        "--body-file",
+        str(tmp_path / "body.md"),
+        "--repo-root",
+        str(tmp_path),
+        "--json",
+    ]
+    if record is not None:
+        (tmp_path / "issue-98.json").write_text(json.dumps(record), encoding="utf-8")
+        argv += ["--record", str(tmp_path / "issue-98.json")]
+    return argv
+
+
+def test_an_unmapped_acceptance_criterion_blocks_readiness(tmp_path: Path, capsys) -> None:
+    """The card's named case: a criterion no check proves is named, with its text, and exit 1."""
+    argv = _map(tmp_path, _plan("[AC-1]"))
+    assert functional_checks.main(argv) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "not-ready"
+    assert result["unmapped"] == [
+        {"id": "AC-2", "text": "The reviewer blocks an unmapped criterion."}
+    ]
+
+
+def test_the_text_report_names_the_unmapped_criterion_and_quotes_it(tmp_path: Path, capsys) -> None:
+    argv = [arg for arg in _map(tmp_path, _plan("[AC-1]")) if arg != "--json"]
+    assert functional_checks.main(argv) == 1
+    out = capsys.readouterr().out
+    assert "AC-2 NOT MAPPED: The reviewer blocks an unmapped criterion." in out
+
+
+def test_every_criterion_mapped_one_only_through_the_smoke_is_ready(
+    tmp_path: Path, capsys
+) -> None:
+    argv = _map(tmp_path, _plan("[AC-1, AC-2]"))
+    assert functional_checks.main(argv) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "ready"
+    third = result["criteria"][2]
+    assert third["id"] == "AC-3"
+    assert third["mapped_by"] == [{"name": "flow-smoke", "unit": None, "runs": "environment"}]
+
+
+def test_a_check_citing_a_criterion_the_issue_lacks_is_not_ready(tmp_path: Path, capsys) -> None:
+    argv = _map(tmp_path, _plan("[AC-1, AC-2, AC-9]"))
+    assert functional_checks.main(argv) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["unmapped"] == []
+    assert result["unknown_refs"] == [{"ref": "AC-9", "check": "unit-check", "unit": "U1"}]
+
+
+def test_a_repository_waiver_recorded_at_admission_skips_the_mapping(
+    tmp_path: Path, capsys
+) -> None:
+    record = {
+        "schema": "run_record.v1",
+        "issue": 98,
+        "admission": {
+            "functional_test_environment": {
+                "mode": "waived",
+                "level": "repository",
+                "reason": "documentation only: nothing here runs",
+                "source": "operator",
+            }
+        },
+        "units": [],
+    }
+    argv = _map(tmp_path, _plan("[AC-1]"), record=record)
+    assert functional_checks.main(argv) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "waived"
+    assert result["waiver"]["reason"] == "documentation only: nothing here runs"
+    assert result["waiver"]["level"] == "repository"
+
+
+def test_a_run_level_waiver_in_the_plan_skips_the_mapping_and_says_so(
+    tmp_path: Path, capsys
+) -> None:
+    plan = (
+        "# Plan\n\n## Implementation Units\n\n### U1. Docs\n\n## Scenario Smoke\n\n"
+        "```functional-test-waiver\nreason: documentation only, no code\n```\n"
+    )
+    argv = [arg for arg in _map(tmp_path, plan) if arg != "--json"]
+    assert functional_checks.main(argv) == 0
+    out = capsys.readouterr().out
+    assert "waived for this run (run level: documentation only, no code)" in out
+    assert "the mapping check was skipped" in out
+
+
+def test_a_run_level_waiver_beside_checks_does_not_skip_the_mapping(
+    tmp_path: Path, capsys
+) -> None:
+    """A plan carrying checks is code-bearing by its own evidence, so its waiver is not honoured."""
+    plan = (
+        "# Plan\n\n## Implementation Units\n\n### U1. The only unit\n\n"
+        "```functional-checks\n- name: unit-check\n  command: python3 -m pytest -q\n"
+        "  proves: [AC-1]\n  runs: local\n```\n\n## Scenario Smoke\n\n"
+        "```functional-test-waiver\nreason: docs only\n```\n"
+    )
+    argv = [arg for arg in _map(tmp_path, plan) if arg != "--json"]
+    assert functional_checks.main(argv) == 1
+    out = capsys.readouterr().out
+    assert "waived" not in out.splitlines()[0]
+    assert "the plan carries a functional-test waiver and functional checks; keep one" in out
+    assert "AC-2 NOT MAPPED" in out and "AC-3 NOT MAPPED" in out
+
+
+def test_a_repository_waiver_does_not_hide_a_malformed_block(tmp_path: Path, capsys) -> None:
+    record = {
+        "schema": "run_record.v1",
+        "issue": 98,
+        "admission": {
+            "functional_test_environment": {
+                "mode": "waived",
+                "level": "repository",
+                "reason": "nothing here runs",
+                "source": "operator",
+            }
+        },
+        "units": [],
+    }
+    plan = _plan("[AC-1]").replace("  runs: local\n", "  runs: nowhere\n")
+    argv = _map(tmp_path, plan, record=record)
+    assert functional_checks.main(argv) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "not-ready"
+    assert result["unmapped"] == []
+    assert any("runs must be" in problem for problem in result["problems"])
+
+
+def test_an_issue_with_no_acceptance_criteria_section_is_a_refusal(
+    tmp_path: Path, capsys
+) -> None:
+    argv = _map(tmp_path, _plan("[AC-1]"), body="### Objective\n\nNo criteria here.\n")
+    assert functional_checks.main(argv) == 2
+    assert "Acceptance criteria" in capsys.readouterr().err
+
+
+def test_doc_review_runs_the_mapping_check_and_makes_a_gap_blocking() -> None:
+    body = _section(
+        DOC_REVIEW_SKILL.read_text(encoding="utf-8"),
+        "## Acceptance-criteria mapping — a blocking check",
+    )
+    assert "functional_checks.py map --plan <plan path> --issue <N>" in body
+    assert "`P1` finding that names its `AC-<n>`" in body
+    assert "the mapping check was skipped" in body
+    assert "Exit 2 stops the review" in body
+    assert "A run-level waiver on a code-bearing change is a" in body
+
+
+def test_choosing_the_proving_test_is_never_a_safe_in_place_fix() -> None:
+    body = _section(DOC_REVIEW_SKILL.read_text(encoding="utf-8"), "## Safe In-Place Fixes")
+    assert "- choosing the test that proves an acceptance criterion" in body
+
+
+def test_plan_writes_the_checks_onto_the_record_and_maps_before_dispatch() -> None:
+    text = PLAN_SKILL.read_text(encoding="utf-8")
+    start = text.index("#### 5.3a Write the functional checks onto the run record")
+    section = text[start : text.index("### 5.4 ", start)]
+    assert "functional_checks.py write --plan <plan path> --issue <N>" in section
+    assert "re-run it after every §5.4 repair batch" in section
+    body = _section(text, "### 5.4 Dispatch the plan review, and loop until it passes")
+    assert "functional_checks.py map --plan <plan path> --issue <N>" in body
