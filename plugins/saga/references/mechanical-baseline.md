@@ -12,7 +12,7 @@ and `docs/lifecycle/run-model.md` step 5 for the exit criterion and the branch-p
 
 ## What the criterion is made of
 
-Four parts, each read from somewhere that already holds it. Nothing here is judged at the end of
+Five parts, each read from somewhere that already holds it. Nothing here is judged at the end of
 the work.
 
 | Part | Where it is read from |
@@ -21,6 +21,7 @@ the work.
 | The child-scoped functional checks | the unit's row, key `functional_checks` |
 | The branch preview deployment | `admission.branch_preview` in the record, plus the optional `branch_preview_command` in `.saga-profile.json` |
 | The scenario smoke | the unit's row, key `scenario_smoke` |
+| The functional-test environment, or its waiver | `admission.functional_test_environment` in the record; for a record admitted before issue #97, the `functional_test_environment` or `functional_test_waiver` block in `.saga-profile.json` |
 
 ## The catalogue's rules, quoted
 
@@ -101,12 +102,36 @@ the clause silently. They are reported separately from an uncovered catalogue ch
 a repository has never configured is a different fact from a catalogue check whose baseline command
 is missing.
 
+## The functional-test environment
+
+The repository declares, once, how a change is functionally tested before code review: the kind of
+environment, its deploy-or-start, test and teardown commands, and whether it is private or shared.
+A repository where functional testing does not apply records a waiver with its reason instead. The
+shape, the waiver and the migration from `branch_preview` are in
+`plugins/saga/references/repository-profile.md`.
+
+The loop reads it, never chooses it, and records it in `exit_criterion.environment`. The dry run
+prints it: the kind and scope and the three commands, or `Functional-test waiver` with its reason,
+or `not declared — admission asks for it`. A profile still on the legacy `branch_preview` keys reads
+as an incomplete declaration and the dry run says which field is missing. A declaration the loop
+could not use (an unknown kind, no test command) is a refusal, exit 2, naming the field.
+
+**A unit iteration does not run it.** The lifecycle at infiquetra-sdlc `e5a2be10` runs the
+deployed or started check once, on the combined branch, before code review, and a shared
+non-production stack only ever receives the combined branch. Running it per unit would break that,
+so the combined-branch pass belongs to pre-review testing U4. Until then the per-unit branch
+preview below still runs for records admitted before issue #97.
+
 ## The branch preview
 
-The lifecycle repository's run model, step 5: "Where the repository declares a branch preview, the
-unit's exit criterion also includes a branch preview deployment and a scenario smoke run against
-that preview... Where the repository declares no preview, the criterion does not apply and no unit
-is held back by it."
+The per-unit branch preview is legacy. Admission no longer asks `branch_preview`, so a record
+admitted after issue #97 records `no-preview-declared` here; the table below still governs a record
+admitted before it.
+
+The lifecycle repository's run model at `5efc869f`, step 5: "Where the repository declares a
+branch preview, the unit's exit criterion also includes a branch preview deployment and a scenario
+smoke run against that preview... Where the repository declares no preview, the criterion does not
+apply and no unit is held back by it."
 
 Three cases, and the loop errors in none of them:
 
@@ -146,7 +171,7 @@ same row is left alone.
 
 | Key | Type | Holds |
 |---|---|---|
-| `exit_criterion` | object | the criterion as it was read: `baseline`, `functional_checks`, `scenario_smoke`, `preview` |
+| `exit_criterion` | object | the criterion as it was read: `baseline`, `functional_checks`, `scenario_smoke`, `preview`, `environment` (the declared functional-test environment or waiver, or null) |
 | `iterations` | array | one entry per invocation, in order, never replaced |
 | `handed_to_code_review` | object | `{revision, at}`, written on the green iteration only |
 

@@ -4,6 +4,25 @@
 
 ### Added
 
+- **A repository declares its functional-test environment once, in `.saga-profile.json`** (issue
+  #97, pre-review testing U2). The `functional_test_environment` block names the `kind` (`local`,
+  `emulator`, `ephemeral-stack` or `shared-nonprod`), the `deploy_command` (optional for `local`),
+  the required `test_command`, an optional `teardown_command`, and the `scope` (`private` or
+  `shared`; `shared-nonprod` is always shared). A repository where functional testing does not
+  apply records `functional_test_waiver: {"reason": "..."}` instead; the reason is required and a
+  profile carrying both is refused. The new `scripts/functional_environment.py` reads, checks and
+  writes the declaration; it runs nothing.
+- Admission asks for it once when it is missing: the `branch_preview` question is replaced, in the
+  same position, by `functional_test_environment`, which names the four kinds and offers the
+  waiver. The answer (`functional_test_environment` or `functional_test_waiver` in the answers
+  file) is checked, recorded at `admission.functional_test_environment` with `mode` `declared` or
+  `waived` and its `source`, and written back to `.saga-profile.json` under `--repo-root` before
+  the run record is saved. `--dry-run` writes nothing. The admission summary prints the
+  declaration.
+- `build_loop.py --dry-run` prints the declared environment, or the waiver and its reason, or
+  `not declared — admission asks for it`, and each iteration's `exit_criterion` records it as
+  `environment`. A unit iteration runs none of its commands; the combined-branch run is
+  pre-review testing U4.
 - The run status band in Claude Code (issue #105): above the prompt, one line per active saga run,
   as in `#412 · work · build loop pass 3, 2 failing · review cycle 1/3 · 7/10 lenses met`, with
   buttons that open the plan viewer, the review findings pane and the raw run record (paged under
@@ -115,6 +134,13 @@
 
 ### Changed
 
+- **`branch_preview` and `branch_preview_command` migrate into the functional-test declaration**
+  (issue #97). A profile with `branch_preview: true` and a command is read as an incomplete
+  `ephemeral-stack`, `private` declaration with that deploy command, and admission asks once with
+  those values as the default; `branch_preview: false` declares nothing and is asked. The
+  write-back removes both legacy keys. An answers file that still carries `branch_preview` is
+  refused as not an admission question. The per-unit branch preview still runs for records
+  admitted before this change.
 - `/plan-view` and `/review-view` keep their behaviour; each now opens through one function that
   the slash command and the band's button press share (issue #105).
 - The builder now defaults to Claude `opus/medium`: `resolve-build-unit-tier` with no plan tier and

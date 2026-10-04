@@ -122,6 +122,14 @@ def _fake_staffing() -> SimpleNamespace:
     )
 
 
+#: A complete local declaration: no deploy command, which only `local` may omit.
+_LOCAL_ENVIRONMENT: dict[str, Any] = {
+    "kind": "local",
+    "test_command": "python3 -m pytest tests -q",
+    "scope": "private",
+}
+
+
 def _write_profile(repo_root: Path) -> None:
     (repo_root / ".saga-profile.json").write_text(
         json.dumps(
@@ -129,7 +137,7 @@ def _write_profile(repo_root: Path) -> None:
                 "schema": "repository_profile.v1",
                 "concurrency_allocation": 10,
                 "nonproduction_destination": "none",
-                "branch_preview": False,
+                "functional_test_environment": _LOCAL_ENVIRONMENT,
                 "main_consumed_directly": False,
                 "mechanical_tool_baseline": ["uv run ruff check ."],
                 "preflight_checks": ["the plan cleared /doc-review"],
@@ -297,7 +305,7 @@ def test_a_missing_profile_is_not_an_error(adm: ModuleType, store: Path, repo_ro
         validator=_passing_validator,
     )
     assert record.run_configuration["concurrency_allocation"]["source"] == "unset"
-    assert "branch_preview" in {question.key for question in outstanding}
+    assert "functional_test_environment" in {question.key for question in outstanding}
 
 
 def test_this_repositorys_own_profile_parses_and_fills_what_it_claims(adm: ModuleType) -> None:
@@ -337,7 +345,7 @@ def test_the_question_set_on_a_fresh_record_with_no_profile_is_the_cards_ten(
         "lens_declaration",
         "repair_allowances",
         "unfinished_testing_response",
-        "branch_preview",
+        "functional_test_environment",
         "main_consumed_directly",
         "change_shape",
     ]
@@ -357,7 +365,7 @@ def test_a_profile_removes_the_two_repository_facts_from_the_question_set(
         validator=_passing_validator,
     )
     asked = {question.key for question in outstanding}
-    assert "branch_preview" not in asked
+    assert "functional_test_environment" not in asked
     assert "main_consumed_directly" not in asked
     assert len(outstanding) == 8
 
@@ -377,7 +385,7 @@ def _all_answers() -> dict[str, Any]:
         },
         "repair_allowances": {"standard": 3, "escalated": 2},
         "unfinished_testing_response": "bring the result to the operator",
-        "branch_preview": False,
+        "functional_test_environment": dict(_LOCAL_ENVIRONMENT),
         "main_consumed_directly": False,
         "change_shape": "code",
     }
@@ -2478,3 +2486,418 @@ def test_the_table_reads_the_overlay_admission_staffs_from_repo_root(
         "repository overlay (.saga/tier-defaults.json, work shape mechanical); "
         "the overlay outranks the recorded Jev raise"
     )
+
+
+# ---------------------------------------------------------------------------
+# The functional-test environment, declared once per repository (issue #97)
+# ---------------------------------------------------------------------------
+
+PROFILE_REFERENCE = REPO_ROOT / "plugins" / "saga" / "references" / "repository-profile.md"
+
+
+def _admit_main(
+    adm: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    store: Path,
+    repo_root: Path,
+    *,
+    issue: int = 97,
+    answers: dict[str, Any] | None = None,
+    dry_run: bool = False,
+) -> int:
+    """Run admission's command line with the network and the siblings faked out."""
+    monkeypatch.setattr(adm, "load_card_validator", lambda: _passing_validator)
+    monkeypatch.setattr(adm, "load_staffing", lambda: None)
+    monkeypatch.setattr(
+        adm, "fetch_issue", lambda *_a, **_k: {"number": issue, "body": _good_card()}
+    )
+    argv = [
+        "--issue",
+        str(issue),
+        "--repo",
+        "infiquetra/infiquetra-agent-plugins",
+        "--store-root",
+        str(store),
+        "--repo-root",
+        str(repo_root),
+    ]
+    if answers is not None:
+        answers_path = store.parent / f"answers-{issue}.json"
+        answers_path.write_text(json.dumps(answers), encoding="utf-8")
+        argv += ["--answers", str(answers_path)]
+    if dry_run:
+        argv.append("--dry-run")
+    exit_code: int = adm.main(argv)
+    return exit_code
+
+
+def _profile(repo_root: Path) -> dict[str, Any]:
+    loaded: dict[str, Any] = json.loads(
+        (repo_root / ".saga-profile.json").read_text(encoding="utf-8")
+    )
+    return loaded
+
+
+def test_a_missing_declaration_is_exactly_one_question_naming_the_four_kinds(
+    adm: ModuleType, store: Path, repo_root: Path
+) -> None:
+    _, outstanding = adm.admit(
+        97,
+        "infiquetra/infiquetra-agent-plugins",
+        store_root=store,
+        repo_root=repo_root,
+        body=_good_card(),
+        validator=_passing_validator,
+    )
+    asked = [question for question in outstanding if question.key.startswith("functional_test")]
+    assert [question.key for question in asked] == ["functional_test_environment"]
+    prompt = asked[0].prompt
+    for kind in ("local", "emulator", "ephemeral-stack", "shared-nonprod"):
+        assert kind in prompt
+    assert "waive" in prompt
+    assert ".saga-profile.json" in prompt
+
+
+def test_an_answer_is_written_back_to_the_profile_and_keeps_its_other_keys(
+    adm: ModuleType, store: Path, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_record = _load("run_record")
+    (repo_root / ".saga-profile.json").write_text(
+        json.dumps({"schema": "repository_profile.v1", "concurrency_allocation": 4}),
+        encoding="utf-8",
+    )
+    answer = {"kind": "local", "test_command": "python3 -m pytest tests -q", "scope": "private"}
+    assert (
+        _admit_main(
+            adm, monkeypatch, store, repo_root, answers={"functional_test_environment": answer}
+        )
+        == 0
+    )
+    profile = _profile(repo_root)
+    assert profile == {
+        "schema": "repository_profile.v1",
+        "concurrency_allocation": 4,
+        "functional_test_environment": answer,
+    }
+    record = run_record.load(store, 97, warn=None)
+    recorded = record.admission["functional_test_environment"]
+    assert recorded["mode"] == "declared"
+    assert recorded["source"] == "operator"
+    assert recorded["deploy_command"] is None
+    assert "functional_test_environment" not in record.admission["pending_questions"]
+
+
+def test_after_the_write_back_the_next_run_is_not_asked_and_reads_the_profile(
+    adm: ModuleType, store: Path, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answer = {"kind": "local", "test_command": "make functional", "scope": "private"}
+    assert (
+        _admit_main(
+            adm, monkeypatch, store, repo_root, answers={"functional_test_environment": answer}
+        )
+        == 0
+    )
+    record, outstanding = adm.admit(
+        98,
+        "infiquetra/infiquetra-agent-plugins",
+        store_root=store,
+        repo_root=repo_root,
+        body=_good_card(),
+        validator=_passing_validator,
+    )
+    assert "functional_test_environment" not in {question.key for question in outstanding}
+    recorded = record.admission["functional_test_environment"]
+    assert recorded["source"] == "profile"
+    assert recorded["test_command"] == "make functional"
+    assert record.admission["answers"]["functional_test_environment"]["source"] == "profile"
+
+
+def test_a_dry_run_with_an_answer_writes_no_profile(
+    adm: ModuleType, store: Path, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answers = {"functional_test_environment": dict(_LOCAL_ENVIRONMENT)}
+    assert _admit_main(adm, monkeypatch, store, repo_root, answers=answers, dry_run=True) == 0
+    assert not (repo_root / ".saga-profile.json").exists()
+    assert list(store.glob("*.json")) == []
+
+
+@pytest.mark.parametrize("waiver", [{"reason": ""}, {"reason": "   "}, {}])
+def test_a_waiver_needs_a_reason(
+    adm: ModuleType,
+    store: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    waiver: dict[str, Any],
+) -> None:
+    exit_code = _admit_main(
+        adm, monkeypatch, store, repo_root, answers={"functional_test_waiver": waiver}
+    )
+    assert exit_code == 2
+    assert "reason" in capsys.readouterr().err
+    assert not (repo_root / ".saga-profile.json").exists()
+    assert list(store.glob("*.json")) == []
+
+
+def test_a_waiver_with_a_reason_replaces_a_declaration_in_the_profile(
+    adm: ModuleType, store: Path, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_record = _load("run_record")
+    _write_profile(repo_root)
+    waiver = {"reason": "documentation only; nothing here runs"}
+    assert (
+        _admit_main(adm, monkeypatch, store, repo_root, answers={"functional_test_waiver": waiver})
+        == 0
+    )
+    profile = _profile(repo_root)
+    assert profile["functional_test_waiver"] == waiver
+    assert "functional_test_environment" not in profile
+    recorded = run_record.load(store, 97, warn=None).admission["functional_test_environment"]
+    assert recorded == {
+        "mode": "waived",
+        "level": "repository",
+        "reason": waiver["reason"],
+        "source": "operator",
+    }
+
+
+def test_a_waiver_nested_under_the_environment_key_is_accepted(adm: ModuleType) -> None:
+    run_record = _load("run_record")
+    record = adm.apply_answers(
+        run_record.RunRecord(issue=97),
+        {"functional_test_environment": {"functional_test_waiver": {"reason": "docs only"}}},
+    )
+    assert record.admission["functional_test_environment"]["mode"] == "waived"
+
+
+@pytest.mark.parametrize(
+    ("answer", "named"),
+    [
+        ({"kind": "docker", "test_command": "t", "scope": "private"}, "kind"),
+        ({"kind": "local", "scope": "private"}, "test_command"),
+        ({"kind": "local", "test_command": " ", "scope": "private"}, "test_command"),
+        ({"kind": "emulator", "test_command": "t", "scope": "private"}, "deploy_command"),
+        (
+            {
+                "kind": "shared-nonprod",
+                "deploy_command": "d",
+                "test_command": "t",
+                "scope": "private",
+            },
+            "always shared",
+        ),
+        ({"kind": "ephemeral-stack", "deploy_command": "d", "test_command": "t"}, "scope"),
+        ({"kind": "local", "test_command": "t", "scope": "private", "extra": 1}, "unexpected"),
+    ],
+)
+def test_a_declaration_the_build_loop_could_not_use_is_refused(
+    adm: ModuleType, answer: dict[str, Any], named: str
+) -> None:
+    run_record = _load("run_record")
+    with pytest.raises(adm.AdmissionError) as excinfo:
+        adm.apply_answers(run_record.RunRecord(issue=97), {"functional_test_environment": answer})
+    assert named in str(excinfo.value)
+
+
+def test_a_refused_declaration_exits_2_and_writes_nothing(
+    adm: ModuleType,
+    store: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    answers = {"functional_test_environment": {"kind": "emulator", "test_command": "t"}}
+    assert _admit_main(adm, monkeypatch, store, repo_root, answers=answers) == 2
+    assert "deploy_command" in capsys.readouterr().err
+    assert not (repo_root / ".saga-profile.json").exists()
+
+
+def test_shared_nonprod_without_a_scope_resolves_to_shared(adm: ModuleType) -> None:
+    run_record = _load("run_record")
+    record = adm.apply_answers(
+        run_record.RunRecord(issue=97),
+        {
+            "functional_test_environment": {
+                "kind": "shared-nonprod",
+                "deploy_command": "make deploy-nonprod",
+                "test_command": "make functional",
+                "teardown_command": "make teardown",
+            }
+        },
+    )
+    recorded = record.admission["functional_test_environment"]
+    assert recorded["scope"] == "shared"
+    assert recorded["teardown_command"] == "make teardown"
+
+
+def test_a_legacy_branch_preview_is_asked_once_with_the_migrated_default(
+    adm: ModuleType, store: Path, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (repo_root / ".saga-profile.json").write_text(
+        json.dumps(
+            {
+                "schema": "repository_profile.v1",
+                "branch_preview": True,
+                "branch_preview_command": "deploy-preview",
+                "main_consumed_directly": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    record, outstanding = adm.admit(
+        97,
+        "infiquetra/infiquetra-agent-plugins",
+        store_root=store,
+        repo_root=repo_root,
+        body=_good_card(),
+        validator=_passing_validator,
+    )
+    asked = [question for question in outstanding if question.key.startswith("functional_test")]
+    assert len(asked) == 1
+    assert asked[0].default == {
+        "kind": "ephemeral-stack",
+        "deploy_command": "deploy-preview",
+        "scope": "private",
+    }
+    assert record.admission["functional_test_environment"]["mode"] == "incomplete"
+    assert record.admission["functional_test_environment"]["missing"] == ["test_command"]
+
+    confirmed = {**asked[0].default, "test_command": "make smoke"}
+    assert (
+        _admit_main(
+            adm, monkeypatch, store, repo_root, answers={"functional_test_environment": confirmed}
+        )
+        == 0
+    )
+    profile = _profile(repo_root)
+    assert "branch_preview" not in profile
+    assert "branch_preview_command" not in profile
+    assert profile["functional_test_environment"] == confirmed
+    assert profile["main_consumed_directly"] is False
+
+
+def test_a_legacy_branch_preview_false_declares_nothing_and_is_asked(
+    adm: ModuleType, store: Path, repo_root: Path
+) -> None:
+    (repo_root / ".saga-profile.json").write_text(
+        json.dumps({"schema": "repository_profile.v1", "branch_preview": False}),
+        encoding="utf-8",
+    )
+    record, outstanding = adm.admit(
+        97,
+        "infiquetra/infiquetra-agent-plugins",
+        store_root=store,
+        repo_root=repo_root,
+        body=_good_card(),
+        validator=_passing_validator,
+    )
+    question = next(q for q in outstanding if q.key == "functional_test_environment")
+    assert question.default is None
+    assert record.admission.get("functional_test_environment") is None
+
+
+def test_a_profile_declaring_both_the_environment_and_a_waiver_is_refused(
+    adm: ModuleType, store: Path, repo_root: Path
+) -> None:
+    (repo_root / ".saga-profile.json").write_text(
+        json.dumps(
+            {
+                "functional_test_environment": dict(_LOCAL_ENVIRONMENT),
+                "functional_test_waiver": {"reason": "docs"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(adm.AdmissionError) as excinfo:
+        adm.admit(
+            97,
+            "infiquetra/infiquetra-agent-plugins",
+            store_root=store,
+            repo_root=repo_root,
+            body=_good_card(),
+            validator=_passing_validator,
+        )
+    assert "both" in str(excinfo.value)
+
+
+def test_answering_both_the_environment_and_a_waiver_is_refused(adm: ModuleType) -> None:
+    run_record = _load("run_record")
+    with pytest.raises(adm.AdmissionError):
+        adm.apply_answers(
+            run_record.RunRecord(issue=97),
+            {
+                "functional_test_environment": dict(_LOCAL_ENVIRONMENT),
+                "functional_test_waiver": {"reason": "docs"},
+            },
+        )
+
+
+def test_an_answers_file_still_carrying_branch_preview_is_refused(adm: ModuleType) -> None:
+    run_record = _load("run_record")
+    with pytest.raises(adm.AdmissionError) as excinfo:
+        adm.apply_answers(run_record.RunRecord(issue=97), {"branch_preview": False})
+    assert "not admission questions: branch_preview" in str(excinfo.value)
+
+
+def test_an_operator_answer_outranks_the_profile_on_a_re_run(
+    adm: ModuleType, store: Path, repo_root: Path
+) -> None:
+    run_record = _load("run_record")
+    _write_profile(repo_root)
+    answer = {"kind": "emulator", "deploy_command": "localstack up", "test_command": "t"}
+    answer["scope"] = "private"
+    record, _ = adm.admit(
+        97,
+        "infiquetra/infiquetra-agent-plugins",
+        store_root=store,
+        repo_root=repo_root,
+        body=_good_card(),
+        validator=_passing_validator,
+        answers={"functional_test_environment": answer},
+    )
+    run_record.save(store, record)
+    again, _ = adm.admit(
+        97,
+        "infiquetra/infiquetra-agent-plugins",
+        store_root=store,
+        repo_root=repo_root,
+        body=_good_card(),
+        validator=_passing_validator,
+    )
+    assert again.admission["functional_test_environment"]["kind"] == "emulator"
+    assert again.admission["functional_test_environment"]["source"] == "operator"
+
+
+def test_the_summary_names_the_declared_environment(
+    adm: ModuleType, store: Path, repo_root: Path
+) -> None:
+    _write_profile(repo_root)
+    record, outstanding = adm.admit(
+        97,
+        "infiquetra/infiquetra-agent-plugins",
+        store_root=store,
+        repo_root=repo_root,
+        body=_good_card(),
+        validator=_passing_validator,
+    )
+    text = adm.render(record, outstanding, None)
+    assert "Functional-test environment:  [profile]" in text
+    assert "kind: local (scope: private)" in text
+    assert "test: python3 -m pytest tests -q" in text
+
+
+def test_the_profile_reference_documents_the_block_the_waiver_and_the_migration() -> None:
+    """Acceptance criterion 1 of issue #97, pinned so the document cannot drift from the code."""
+    text = PROFILE_REFERENCE.read_text(encoding="utf-8")
+    for term in (
+        "functional_test_environment",
+        "functional_test_waiver",
+        "Migration from `branch_preview`",
+        "branch_preview_command",
+        "local",
+        "emulator",
+        "ephemeral-stack",
+        "shared-nonprod",
+        "teardown_command",
+    ):
+        assert term in text, f"repository-profile.md does not name {term}"

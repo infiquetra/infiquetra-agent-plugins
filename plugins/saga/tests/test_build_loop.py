@@ -525,6 +525,151 @@ def test_naming_neither_a_record_nor_an_issue_is_a_refusal(
 
 
 # ---------------------------------------------------------------------------
+# The declared functional-test environment, printed and recorded (issue #97).
+# ---------------------------------------------------------------------------
+
+_DECLARED = {
+    "mode": "declared",
+    "kind": "ephemeral-stack",
+    "deploy_command": "make stack-up",
+    "test_command": "make functional",
+    "teardown_command": "make stack-down",
+    "scope": "private",
+    "source": "operator",
+}
+
+
+def _with_environment(environment: dict[str, Any] | None) -> dict[str, Any]:
+    payload = _record_dict()
+    if environment is not None:
+        payload["admission"]["functional_test_environment"] = environment
+    return payload
+
+
+def test_the_dry_run_prints_the_declared_environment_from_the_record(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _write(tmp_path / "issue-1027.json", _with_environment(_DECLARED))
+    assert build_loop.main(["--record", str(path), "--dry-run"], runner=FakeRunner()) == 0
+    out = capsys.readouterr().out
+    assert "Functional-test environment, from operator:" in out
+    assert "kind: ephemeral-stack (scope: private)" in out
+    assert "deploy or start: make stack-up" in out
+    assert "test: make functional" in out
+    assert "teardown: make stack-down" in out
+
+
+def test_the_dry_run_prints_the_waiver_and_its_reason(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    waiver = {
+        "mode": "waived",
+        "level": "repository",
+        "reason": "documentation only",
+        "source": "profile",
+    }
+    path = _write(tmp_path / "issue-1027.json", _with_environment(waiver))
+    assert build_loop.main(["--record", str(path), "--dry-run"], runner=FakeRunner()) == 0
+    out = capsys.readouterr().out
+    assert "Functional-test waiver, from profile: documentation only" in out
+    assert "run on the combined branch" not in out
+
+
+def test_the_dry_run_says_when_no_environment_is_declared(
+    record_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    empty = tmp_path / "empty-repo"
+    empty.mkdir()
+    assert (
+        build_loop.main(
+            ["--record", str(record_file), "--dry-run", "--repo-root", str(empty)],
+            runner=FakeRunner(),
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "Functional-test environment:\n  not declared — admission asks for it" in out
+
+
+def test_a_record_admitted_before_the_block_falls_back_to_the_profile(
+    record_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    profile = tmp_path / "profile.json"
+    profile.write_text(
+        json.dumps(
+            {
+                "functional_test_environment": {
+                    "kind": "local",
+                    "test_command": "python3 -m pytest tests -q",
+                    "scope": "private",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert (
+        build_loop.main(
+            ["--record", str(record_file), "--dry-run", "--profile", str(profile)],
+            runner=FakeRunner(),
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "Functional-test environment, from profile:" in out
+    assert "deploy or start: none — local" in out
+    assert "test: python3 -m pytest tests -q" in out
+
+
+def test_a_legacy_preview_reads_as_an_incomplete_declaration(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _write(tmp_path / "issue-1027.json", _record_dict(branch_preview=True))
+    profile = tmp_path / "profile.json"
+    profile.write_text(json.dumps({"branch_preview_command": "deploy-preview"}), encoding="utf-8")
+    assert (
+        build_loop.main(
+            ["--record", str(path), "--dry-run", "--profile", str(profile)], runner=FakeRunner()
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "Functional-test environment, from legacy-branch-preview:" in out
+    assert "deploy or start: deploy-preview" in out
+    assert "missing test_command" in out
+
+
+def test_an_invalid_profile_declaration_is_a_refusal(
+    record_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    profile = tmp_path / "profile.json"
+    profile.write_text(
+        json.dumps({"functional_test_environment": {"kind": "local", "scope": "private"}}),
+        encoding="utf-8",
+    )
+    assert (
+        build_loop.main(
+            ["--record", str(record_file), "--dry-run", "--profile", str(profile)],
+            runner=FakeRunner(),
+        )
+        == 2
+    )
+    assert "test_command" in capsys.readouterr().err
+
+
+def test_an_iteration_records_the_environment_and_runs_none_of_its_commands(
+    tmp_path: Path,
+) -> None:
+    """U2 declares and records; running the commands on the combined branch is U4."""
+    path = _write(tmp_path / "issue-1027.json", _with_environment(_DECLARED))
+    runner = FakeRunner()
+    assert build_loop.main(["--record", str(path), "--unit", "U1"], runner=runner) == 0
+    criterion = _block(path)["exit_criterion"]
+    assert criterion["environment"] == _DECLARED
+    ran = [" ".join(call) for call in runner.calls]
+    assert not any("make" in call for call in ran), ran
+
+
+# ---------------------------------------------------------------------------
 # The drift guards: the document and the code say the same thing.
 # ---------------------------------------------------------------------------
 
