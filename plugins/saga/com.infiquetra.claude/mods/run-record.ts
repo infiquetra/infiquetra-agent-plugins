@@ -30,6 +30,8 @@
 
 import type { ProcessRunResult } from 'claude-code'
 import type {
+  SagaReviewView,
+  SagaReviewViewSchema,
   SagaRunRead,
   SagaRunRecord,
   SagaRunRecordSchema,
@@ -172,13 +174,21 @@ export function runStatusSummaryArgv(pluginRoot: string, query: RunStatusQuery):
   return sagaScriptArgv(pluginRoot, 'run_status.py', args)
 }
 
-/** Turn what `run_status.py summary --json` did into the view, or the reason there is none. */
-export function parseRunStatusSummary(ran: ProcessResult): RunStatusRead {
+/** Why a `run_status.py` command produced no view. */
+type RunStatusFailure = { ok: false; reason: 'unknown-version' | 'unreadable' | 'error'; detail: string }
+
+type RunStatusObjectRead = { ok: true; value: Record<string, unknown> } | RunStatusFailure
+
+/**
+ * The JSON object a `run_status.py` command printed, or why there is none.
+ * `command` names it in every detail, as in "run_status summary".
+ */
+function parseRunStatusObject(ran: ProcessResult, command: string): RunStatusObjectRead {
   const detail = ran.stderr.trim()
   if (ran.exitCode === EXIT_UNKNOWN_VERSION) return { ok: false, reason: 'unknown-version', detail }
   if (ran.exitCode !== 0) return { ok: false, reason: 'error', detail }
   if (ran.isStdoutTruncated) {
-    return { ok: false, reason: 'unreadable', detail: 'run_status summary printed more than the engine keeps (4 MiB)' }
+    return { ok: false, reason: 'unreadable', detail: `${command} printed more than the engine keeps (4 MiB)` }
   }
   let parsed: unknown
   try {
@@ -187,9 +197,16 @@ export function parseRunStatusSummary(ran: ProcessResult): RunStatusRead {
     return { ok: false, reason: 'unreadable', detail: String(err) }
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return { ok: false, reason: 'unreadable', detail: 'run_status summary did not print a JSON object' }
+    return { ok: false, reason: 'unreadable', detail: `${command} did not print a JSON object` }
   }
-  const view = parsed as { schema?: unknown; runs?: unknown }
+  return { ok: true, value: parsed as Record<string, unknown> }
+}
+
+/** Turn what `run_status.py summary --json` did into the view, or the reason there is none. */
+export function parseRunStatusSummary(ran: ProcessResult): RunStatusRead {
+  const parsed = parseRunStatusObject(ran, 'run_status summary')
+  if (!parsed.ok) return parsed
+  const view = parsed.value
   if (view.schema !== KNOWN_RUN_STATUS_SCHEMA) {
     return {
       ok: false,
@@ -200,7 +217,7 @@ export function parseRunStatusSummary(ran: ProcessResult): RunStatusRead {
   if (!Array.isArray(view.runs)) {
     return { ok: false, reason: 'unreadable', detail: 'run_status summary printed no runs list' }
   }
-  return { ok: true, view: parsed as SagaRunStatusView }
+  return { ok: true, view: view as unknown as SagaRunStatusView }
 }
 
 /** Read the run view through `run`. Never rejects, as `readRunRecordWith`. */
@@ -214,5 +231,73 @@ export async function readRunStatusWith(
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err)
     return { ok: false, reason: 'error', detail: `run_status summary did not run: ${detail}` }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// `run_status.py review`: the latest code review, lens by lens (issue #108)
+//
+// Whether a lens met its bar is the verdict's own rule
+// (`review_consensus.lens_outcomes_for_result`); the script applies it and a
+// mod shows the answer, never recomputing it.
+// ---------------------------------------------------------------------------
+
+/** The view version this module reads; `REVIEW_SCHEMA` in `scripts/run_status.py`. */
+export const KNOWN_REVIEW_VIEW_SCHEMA: SagaReviewViewSchema = 'review_view.v1'
+
+/** Which review `run_status.py review` reports, and from which checkout. */
+export type ReviewViewQuery = {
+  /** The checkout whose run is read: the session's directory. */
+  repoRoot: string
+  /** One issue; left out, the issue the checkout's active saga or `issue/N` branch names. */
+  issue?: number
+}
+
+/** The outcome of reading the review view. A mod shows `detail` rather than guessing. */
+export type ReviewViewRead =
+  | { ok: true; view: SagaReviewView }
+  | { ok: false; reason: 'unknown-version' | 'unreadable' | 'error'; detail: string }
+
+/** The argv that prints the latest code review as JSON. */
+export function runStatusReviewArgv(pluginRoot: string, query: ReviewViewQuery): string[] {
+  const args = ['--repo-root', query.repoRoot, 'review']
+  if (query.issue !== undefined) {
+    requireIssue(query.issue)
+    args.push('--issue', String(query.issue))
+  }
+  args.push('--json')
+  return sagaScriptArgv(pluginRoot, 'run_status.py', args)
+}
+
+/** Turn what `run_status.py review --json` did into the view, or the reason there is none. */
+export function parseRunStatusReview(ran: ProcessResult): ReviewViewRead {
+  const parsed = parseRunStatusObject(ran, 'run_status review')
+  if (!parsed.ok) return parsed
+  const view = parsed.value
+  if (view.schema !== KNOWN_REVIEW_VIEW_SCHEMA) {
+    return {
+      ok: false,
+      reason: 'unknown-version',
+      detail: `review view version ${JSON.stringify(view.schema)} is not ${KNOWN_REVIEW_VIEW_SCHEMA}`,
+    }
+  }
+  const review = view.review as { lenses?: unknown } | null | undefined
+  if (review === undefined || (review !== null && !Array.isArray(review.lenses))) {
+    return { ok: false, reason: 'unreadable', detail: 'run_status review printed no lens list' }
+  }
+  return { ok: true, view: view as unknown as SagaReviewView }
+}
+
+/** Read the review view through `run`. Never rejects, as `readRunRecordWith`. */
+export async function readReviewViewWith(
+  run: ProcessRunner,
+  pluginRoot: string,
+  query: ReviewViewQuery,
+): Promise<ReviewViewRead> {
+  try {
+    return parseRunStatusReview(await run(runStatusReviewArgv(pluginRoot, query)))
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    return { ok: false, reason: 'error', detail: `run_status review did not run: ${detail}` }
   }
 }

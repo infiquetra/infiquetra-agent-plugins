@@ -1,13 +1,17 @@
 import { describe, expect, test } from 'claude-code/testing'
 import {
+  KNOWN_REVIEW_VIEW_SCHEMA,
   KNOWN_RUN_STATUS_SCHEMA,
   KNOWN_SCHEMA,
   parseRunRecordShow,
+  parseRunStatusReview,
   parseRunStatusSummary,
+  readReviewViewWith,
   readRunRecordWith,
   readRunStatusWith,
   runRecordRunFailed,
   runRecordShowArgv,
+  runStatusReviewArgv,
   runStatusSummaryArgv,
   sagaScriptArgv,
 } from './run-record.ts'
@@ -228,5 +232,66 @@ describe('run_status summary', () => {
       { repoRoot: '/repo' },
     )
     expect(read).toEqual({ ok: false, reason: 'error', detail: 'run_status summary did not run: spawn python3 ENOENT' })
+  })
+})
+
+describe('run_status review', () => {
+  const base = { schema: KNOWN_REVIEW_VIEW_SCHEMA, repo_root: '/repo', issue: 7, record_path: '/r.json', legacy_entries: 0 }
+  const view = { ...base, review: { cycle: 1, lenses: [{ lens: 'correctness', state: 'met' }] } }
+
+  test('runStatusReviewArgv names the checkout and asks for JSON', async () => {
+    expect(runStatusReviewArgv('/root', { repoRoot: '/repo' })).toEqual([
+      'python3',
+      '/root/scripts/run_status.py',
+      '--repo-root',
+      '/repo',
+      'review',
+      '--json',
+    ])
+    expect(runStatusReviewArgv('/root', { repoRoot: '/repo', issue: 7 })).toEqual([
+      'python3',
+      '/root/scripts/run_status.py',
+      '--repo-root',
+      '/repo',
+      'review',
+      '--issue',
+      '7',
+      '--json',
+    ])
+    expect(() => runStatusReviewArgv('/root', { repoRoot: '/repo', issue: -1 })).toThrow()
+  })
+
+  test('parses a review_view.v1 view, with a review or with none', async () => {
+    expect(parseRunStatusReview(ran(0, JSON.stringify(view)))).toEqual({ ok: true, view })
+    const none = { ...base, review: null }
+    expect(parseRunStatusReview(ran(0, JSON.stringify(none)))).toEqual({ ok: true, view: none })
+  })
+
+  test('refuses another view version, exit 3, a failed run, cut output and a review with no lenses', async () => {
+    const cases: [ReturnType<typeof ran>, string][] = [
+      [ran(0, JSON.stringify({ ...view, schema: 'review_view.v2' })), 'unknown-version'],
+      [ran(3, '', 'run_status: unknown record version'), 'unknown-version'],
+      [ran(2, '', 'run_status: git failed'), 'error'],
+      [ran(0, JSON.stringify(view), '', true), 'unreadable'],
+      [ran(0, 'not json'), 'unreadable'],
+      [ran(0, JSON.stringify(base)), 'unreadable'],
+      [ran(0, JSON.stringify({ ...base, review: { cycle: 1 } })), 'unreadable'],
+    ]
+    for (const [result, reason] of cases) {
+      const read = parseRunStatusReview(result)
+      expect(read.ok).toBe(false)
+      if (!read.ok) expect(read.reason).toBe(reason)
+    }
+  })
+
+  test('readReviewViewWith resolves to error, not a rejection, when the runner rejects', async () => {
+    const read = await readReviewViewWith(
+      async () => {
+        throw new Error('spawn python3 ENOENT')
+      },
+      '/root',
+      { repoRoot: '/repo' },
+    )
+    expect(read).toEqual({ ok: false, reason: 'error', detail: 'run_status review did not run: spawn python3 ENOENT' })
   })
 })

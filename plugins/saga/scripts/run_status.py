@@ -16,6 +16,12 @@ issue ``next_step_context.resolve_issue`` finds (this worktree's active saga, th
 branch); ``--all-active`` lists every record whose ``next_step`` is not empty, the resolved issue
 first, then newest first. A run appears when either store knows it.
 
+``review`` prints the latest code review result in the run record, lens by lens (issue #108): for
+each selected lens whether it met its bar, did not, did not run, or ran without a bar to meet, and
+its findings. Whether a lens met its bar comes from ``review_consensus.lens_outcomes_for_result``,
+the rule the verdict itself applies, so a display never re-derives it. A lens that did not run is
+never shown with a score.
+
 Exit codes mirror ``run_record.py``: 0 with a (possibly empty) list, 2 for a refusal (the store
 root cannot be resolved, a record is not valid JSON), 3 for a record version this saga does not
 write. Each refusal is one line on standard error, never a traceback.
@@ -37,10 +43,38 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import next_step_context  # noqa: E402  (after the sys.path shim, by design)
+import review_consensus  # noqa: E402
+import review_result  # noqa: E402
 import run_record  # noqa: E402
 
 #: The version token of what ``summary --json`` prints.
 SCHEMA = "run_status.v1"
+
+#: The version token of what ``review --json`` prints.
+REVIEW_SCHEMA = "review_view.v1"
+
+#: How many of a lens's findings the lens list shows under its row.
+TOP_FINDINGS = 3
+
+#: A lens's state in the review view. ``not_run`` and ``unscored`` carry no score on purpose.
+LENS_STATES = ("met", "not_met", "not_run", "unscored")
+
+#: The reason given for a selected lens that has no row in the result.
+REASON_NO_RESULT = "no result recorded"
+
+#: The finding fields the review view carries, in the order a display reads them.
+FINDING_FIELDS = (
+    "id",
+    "severity",
+    "path",
+    "line",
+    "category",
+    "dimension",
+    "evidence",
+    "impact",
+    "status",
+    "confidence",
+)
 
 
 def repo_toplevel(start: Path, *, runner: Callable[..., Any] | None = None) -> Path:
@@ -162,6 +196,200 @@ def render_line(run: dict[str, Any]) -> str:
     return " · ".join(parts)
 
 
+# ---------------------------------------------------------------------------
+# ``review``: the latest code review result, lens by lens (issue #108)
+# ---------------------------------------------------------------------------
+
+
+def selected_lenses(record: run_record.RunRecord) -> list[str]:
+    """The lenses admission selected for the run: always-on first, then the conditional ones.
+
+    Read from ``run_configuration.applicable_lenses.value`` in the shape ``admission.py`` records
+    (an ``always_on`` list and a ``conditional_applies`` mapping or list). Anything else selects
+    nothing here; the review's own rows still show.
+    """
+    block = record.run_configuration.get("applicable_lenses")
+    value = block.get("value") if isinstance(block, dict) else None
+    if not isinstance(value, dict):
+        return []
+    lenses: list[str] = []
+    always_on = value.get("always_on")
+    if isinstance(always_on, list):
+        lenses += [str(lens) for lens in always_on]
+    applies = value.get("conditional_applies")
+    if isinstance(applies, (dict, list)):
+        lenses += sorted(str(lens) for lens in applies)
+    return list(dict.fromkeys(lenses))
+
+
+def latest_review(
+    record: run_record.RunRecord, *, loop: str, unit: str | None = None
+) -> dict[str, Any] | None:
+    """The newest ``review_result.v2`` entry in *loop* (and for *unit*, when given), or ``None``.
+
+    Entries are appended in the order the review wrote them, so the newest is the last match.
+    Legacy ``review_result.v1`` entries are never chosen.
+    """
+    for entry in reversed(record.review_cycles):
+        if not isinstance(entry, dict) or entry.get("schema") != review_result.RESULT_SCHEMA:
+            continue
+        if entry.get("loop") != loop:
+            continue
+        if unit is not None and entry.get("unit") != unit:
+            continue
+        return entry
+    return None
+
+
+def _finding_order(finding: dict[str, Any]) -> tuple[int, str, int, str]:
+    """Most severe first, then by path and line."""
+    severity = str(finding.get("severity", ""))
+    rank = (
+        review_result.SEVERITY_VOCABULARY.index(severity)
+        if severity in review_result.SEVERITY_VOCABULARY
+        else len(review_result.SEVERITY_VOCABULARY)
+    )
+    line = str(finding.get("line", ""))
+    number = int(line) if line.isdigit() else sys.maxsize
+    return (rank, str(finding.get("path", "")), number, line)
+
+
+def _finding_view(finding: dict[str, Any]) -> dict[str, Any]:
+    return {name: finding.get(name) for name in FINDING_FIELDS}
+
+
+def _lens_state(outcome: review_consensus.LensOutcome) -> str:
+    if outcome.usable:
+        return "met" if outcome.met else "not_met"
+    if outcome.reason == review_consensus.REASON_NOT_EXECUTED:
+        return "not_run"
+    return "unscored"
+
+
+def lens_views(
+    entry: dict[str, Any], selected: list[str]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """One view per lens, and the findings no listed lens owns.
+
+    The lenses are the result's rows in its order, then every selected lens the result has no row
+    for, shown as ``not_run``. Only a ``met`` or ``not_met`` lens carries ``derived_overall``.
+    """
+    rows = {
+        str(row.get("lens", "")): row
+        for row in entry.get("per_lens_results") or []
+        if isinstance(row, dict)
+    }
+    findings = sorted(
+        (f for f in entry.get("findings") or [] if isinstance(f, dict)), key=_finding_order
+    )
+    states: list[tuple[str, str, str | None]] = [
+        (outcome.lens_id, _lens_state(outcome), outcome.reason or None)
+        for outcome in review_consensus.lens_outcomes_for_result(entry)
+    ]
+    shown = {lens for lens, _, _ in states}
+    states += [(lens, "not_run", REASON_NO_RESULT) for lens in selected if lens not in shown]
+
+    views: list[dict[str, Any]] = []
+    for lens, state, reason in states:
+        owned = [_finding_view(f) for f in findings if str(f.get("lens", "")) == lens]
+        overall = rows.get(lens, {}).get("derived_overall") if state in ("met", "not_met") else None
+        views.append(
+            {
+                "lens": lens,
+                "state": state,
+                "reason": reason,
+                "derived_overall": overall,
+                "finding_count": len(owned),
+                "top": owned[:TOP_FINDINGS],
+                "findings": owned,
+            }
+        )
+    listed = {view["lens"] for view in views}
+    unattributed = [_finding_view(f) for f in findings if str(f.get("lens", "")) not in listed]
+    return views, unattributed
+
+
+def review_view(
+    store_root: Path,
+    repo_root: Path,
+    *,
+    issue: int | None = None,
+    unit: str | None = None,
+    loop: str = review_result.LOOP_CODE_REVIEW,
+    resolve: Callable[[Path], int | None] = next_step_context.resolve_issue,
+) -> dict[str, Any]:
+    """The ``review_view.v1`` document ``review`` prints. ``review`` is null without a result.
+
+    Raises the loader's errors as :func:`run_view` does.
+    """
+    resolved = issue if issue is not None else resolve(Path(repo_root))
+    view: dict[str, Any] = {
+        "schema": REVIEW_SCHEMA,
+        "repo_root": str(repo_root),
+        "issue": resolved,
+        "record_path": None,
+        "legacy_entries": 0,
+        "review": None,
+    }
+    if resolved is None:
+        return view
+    record = run_record.load(store_root, resolved, warn=None)
+    if record is None:
+        return view
+    view["record_path"] = str(run_record.record_path(store_root, resolved))
+    view["legacy_entries"] = len(review_result.legacy_entries(record))
+    entry = latest_review(record, loop=loop, unit=unit)
+    if entry is None:
+        return view
+    lenses, unattributed = lens_views(entry, selected_lenses(record))
+    view["review"] = {
+        "unit": entry.get("unit"),
+        "cycle": entry.get("cycle"),
+        "loop": entry.get("loop"),
+        "revision": entry.get("revision"),
+        "outcome": entry.get("outcome"),
+        "reason": entry.get("reason") or None,
+        "lenses": lenses,
+        "unattributed_findings": unattributed,
+        "advisory_count": len(entry.get("advisory_findings") or []),
+        "duplicate_count": len(entry.get("duplicate_findings") or []),
+    }
+    return view
+
+
+#: How each state reads in the plain table and in the pane.
+STATE_WORDS = {"met": "met", "not_met": "not met", "not_run": "not run", "unscored": "unscored"}
+
+
+def _finding_line(finding: dict[str, Any]) -> str:
+    return f"{finding['severity']} {finding['path']}:{finding['line']} {finding['category']}"
+
+
+def render_review(view: dict[str, Any]) -> list[str]:
+    """The review as a fixed-width table: the fallback every other harness prints."""
+    review = view["review"]
+    if review is None:
+        which = f"#{view['issue']}" if view["issue"] is not None else "this checkout"
+        return [f"run_status: no review result recorded for {which}"]
+    header = (
+        f"#{view['issue']} · {review['unit']} · cycle {review['cycle']} · {review['loop']} · "
+        f"{review['outcome']} · {str(review['revision'])[:12]}"
+    )
+    lines = [header]
+    width = max([len("lens"), *(len(lens["lens"]) for lens in review["lenses"])])
+    lines.append(f"{'lens':<{width}}  {'state':<8}  findings")
+    for lens in review["lenses"]:
+        reason = f"  ({lens['reason']})" if lens["state"] in ("not_run", "unscored") else ""
+        lines.append(
+            f"{lens['lens']:<{width}}  {STATE_WORDS[lens['state']]:<8}  "
+            f"{lens['finding_count']}{reason}"
+        )
+        lines += [f"  {_finding_line(finding)}" for finding in lens["top"]]
+    if review["unattributed_findings"]:
+        lines.append(f"other findings: {len(review['unattributed_findings'])}")
+    return lines
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="run_status.py",
@@ -186,6 +414,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Every run whose next step is not empty, the resolved issue first.",
     )
     summ.add_argument("--json", action="store_true", help=f"Print the {SCHEMA} document.")
+    rev = sub.add_parser("review", help="The latest code review result, lens by lens.")
+    rev.add_argument("--issue", type=int, default=None, help="This issue (default: resolved).")
+    rev.add_argument("--unit", default=None, help="This unit's history only.")
+    rev.add_argument(
+        "--loop",
+        choices=review_result.LOOPS,
+        default=review_result.LOOP_CODE_REVIEW,
+        help="Which repair loop's history to read (default: code_review).",
+    )
+    rev.add_argument("--json", action="store_true", help=f"Print the {REVIEW_SCHEMA} document.")
     return parser
 
 
@@ -201,7 +439,12 @@ def main(argv: list[str] | None = None, *, runner: Callable[..., Any] | None = N
             if args.store_root
             else run_record.resolve_store_root(repo_root, runner=runner)
         )
-        view = summary(store_root, repo_root, issue=args.issue, all_active=args.all_active)
+        if args.command == "review":
+            view = review_view(
+                store_root, repo_root, issue=args.issue, unit=args.unit, loop=args.loop
+            )
+        else:
+            view = summary(store_root, repo_root, issue=args.issue, all_active=args.all_active)
     except run_record.UnknownRecordVersionError as exc:
         print(f"run_status: {exc}", file=sys.stderr)
         return 3
@@ -210,6 +453,8 @@ def main(argv: list[str] | None = None, *, runner: Callable[..., Any] | None = N
         return 2
     if args.json:
         print(json.dumps(view, indent=2, ensure_ascii=False))
+    elif args.command == "review":
+        print("\n".join(render_review(view)))
     elif view["runs"]:
         for run in view["runs"]:
             print(render_line(run))

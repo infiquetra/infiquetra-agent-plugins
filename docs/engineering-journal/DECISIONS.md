@@ -2,6 +2,32 @@
 
 ## 2026-10-04
 
+### The review findings pane shows "unscored" apart from "not run", and takes both from the verdict
+
+**Decision.** `plugins/saga/scripts/run_status.py review` (schema `review_view.v1`) gives each lens
+of the latest review result one of four states, and the `/review-view` pane (issue #108) shows them
+as they come. `met` and `not_met` are the usable rows; `not_run` is a lens that did not execute or
+a selected lens (`run_configuration.applicable_lenses`) with no row in the result; `unscored` is a
+lens that ran and reported findings but sets no bar (catalogue-unscorable, or no qualified
+executor). The state comes from `review_consensus.lens_outcomes_for_result`, the loop body of
+`verdict_for_result` extracted unchanged, so the pane and the verdict apply one rule. Only a
+usable lens carries `derived_overall` in the view, and the pane draws no score at all.
+
+**Rationale.** The card's acceptance criterion says a lens with no usable result is labelled "not
+run". The verdict has two distinct unusable cases, and an unscored lens did run and may hold real
+findings; calling it "not run" would hide those findings behind a label that says there are none.
+Both labels meet the criterion's purpose, which is that an unusable lens never reads as a low
+score. Operator ruling 2 on the mods parent (#92) keeps the rule in the script; a mod that
+recomputed "met" from the thresholds would be a second, driftable copy of the verdict.
+
+**Rejected alternatives.** One "not run" label for every unusable lens (above). Computing the
+state in TypeScript from the raw `per_lens_results` rows (a second copy of policy in a mod).
+Matching on the reason text in `run_status.py`: the reasons are now named constants in
+`review_consensus.py`, which the view maps from.
+
+**Revisit when.** The verdict gains another unusable case, or the executor-verification ledger
+gains entries and "unscored" becomes rare enough to fold away.
+
 ### Saga mods read a display view from `run_status.py`, not the plan path from the run record
 
 **Decision.** `plugins/saga/scripts/run_status.py summary --json` (schema `run_status.v1`) is the
