@@ -1,0 +1,76 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-04T03:44:53.975325+00:00",
+  "created_at": "2026-10-04T03:56:06.765479+00:00",
+  "created_issue_number": 117,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/117",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-04-saga-move-every-run-record-read-modify-write-ont.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-03-staffing-testing-mods/f2-saga-writers-take-record-lock.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-04-saga-move-every-run-record-read-modify-write-ont.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-04\ntopic: saga-staffing-testing-mods\nmaturity: requirements-ready\n---\n\n# saga: move every run-record read-modify-write onto the shared record lock\n\n### Objective\n\nMake every saga script that reads, changes and rewrites a run record do it under the run-record\nlock, so a usage entry, a build-loop result or a review result written by one process is never\noverwritten by another process's stale copy.\n\n### Intent\n\nIssue #95 added the run-record lock to `plugins/saga/scripts/run_record.py`: `record_lock` takes an\nexclusive `fcntl.flock` on `<record path>.lock`, and `update(store_root, issue, change)` re-reads the\nrecord while holding it, applies the change and writes through the atomic replace. Issue #113 gave\norchestrate the same lock. But #95 moved only its own two writers (`usage add` and\n`set_next_step`). The survey and #95's implementer found these saga writers still load the whole\nrecord, change it and replace it without the lock:\n\n- `plugins/saga/scripts/admission.py` (two writes);\n- `plugins/saga/scripts/review_result.py` (two writes);\n- `plugins/saga/scripts/qa_strategies.py` (two writes);\n- `plugins/saga/scripts/build_loop.py` (its write by path).\n\nEach can era",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-03-staffing-testing-mods/f2-saga-writers-take-record-lock.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-03-staffing-testing-mods/f2-saga-writers-take-record-lock.md",
+    "ref": "docs/brainstorms/2026-10-03-staffing-testing-mods/f2-saga-writers-take-record-lock.md",
+    "title": "saga: move every run-record read-modify-write onto the shared record lock",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "saga: move every run-record read-modify-write onto the shared record lock",
+  "updated_at": "2026-10-04T03:56:22.490619+00:00"
+}

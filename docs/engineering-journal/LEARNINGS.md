@@ -2,6 +2,26 @@
 
 ## 2026-10-04
 
+### A card filed from a pull request's follow-ups can be closed by that same pull request
+
+**Evidence.** Issue #117 was filed on 2026-10-04 from issue #95's implementer follow-ups. It said four
+saga writers (`admission.py`, `review_result.py`, `qa_strategies.py`, `build_loop.py`) still
+replaced the run record without the lock. By the time #117 was picked up, the merged pull request
+for #95 (#120, commit 245e3b0) had already moved all four onto `run_record.update` or `file_lock`,
+added a concurrency test for each, and documented them in `plugins/saga/references/run-record.md`.
+What #117 still added was enforcement: `test_no_saga_script_replaces_a_run_record_outside_the_lock`
+and `test_save_takes_no_lock_so_a_caller_holding_it_can_save` in
+`plugins/saga/tests/test_run_record.py`.
+
+**Mechanism.** A follow-up describes the branch as it stood when the implementer wrote it, not as it
+merged, because review rounds keep changing the branch after the follow-up is written. Also, a grep
+for `run_record.save` misses the aliases saga already uses (`import run_record as _m` behind
+`_run_record()` in `merge_turn.py`), so the guard parses each script and resolves those names.
+
+**Generalizable rule.** Before building a card filed from follow-ups, diff its claims against
+`origin/main`; when the code has already moved, turn the card's goal into a guard test that fails on
+a regression.
+
 ### Preserving unknown keys on load is not enough when the save writes back the copy it loaded
 
 **Evidence.** Issue #113. Orchestrate's `read_unit`
