@@ -105,17 +105,32 @@ remain, then prints the staffing and lens tables in one fixed format. Then:
    only the operator can make, and a recorded grant nobody made is worse than a missing one, which
    is why the absence behaviour here is a halt rather than a safe default.
 
-   **When `staffing_overrides` or `lens_declaration` is outstanding, print the tables block
-   exactly as rendered**, in that same message: from the line
+   **In Claude Code, when the tool `mcp__saga__review_admission` is listed and
+   `staffing_overrides` or `lens_declaration` is outstanding, call it with `{"issue": <N>}`
+   before the message** instead of printing the two tables. It opens a review pane with both
+   tables and a control per row, and the operator's answers are recorded through admission itself,
+   which validates them. Read the `status` it returns:
+
+   - `submitted`: both answers are already in the record, and its `answers` field shows them.
+     Never retype or re-record them; put only the other printed questions in the one message.
+   - `dismissed`, `not-placed`, `unavailable`, `nothing-to-review`, `timed-out` or `error`:
+     nothing was recorded. Fall back to the tables below, exactly as if the tool were absent.
+
+   Every other harness (Codex, Grok, Agy, a Claude Code without the tool) has no such tool and
+   always takes the tables path below.
+
+   **When `staffing_overrides` or `lens_declaration` is outstanding and the review pane did not
+   record it, print the tables block exactly as rendered** (the `--render tables` output above),
+   in that same message: from the line
    `**Staffing (answer: staffing_overrides)**` to the last row of the lens table. Do not
    reformat, reorder, merge, abbreviate, or summarise it — admission owns that format so every
    harness shows the same table. Collect the two answers against its rows:
 
    - `staffing_overrides`: `"none"` to take the Proposed column, or the complete role map,
      `{"<role>": {"vendor": ..., "model": ..., "effort": ...}}` with every role in the table and
-     the operator's changes applied. Never send only the changed roles: the answer replaces the
-     whole recorded map, so a role left out loses its seat. (Temporary: until issue #96 merges
-     overrides per role; #96 removes this rule.)
+     the operator's changes applied. Admission merges an override role by role and refuses a
+     tier the palette does not list, but send every role: the complete role map records that the
+     operator reviewed each row.
    - `lens_declaration`: `{"always_on": [...], "conditional_applies": {"<lens>": "<reason>"},
      "conditional_does_not_apply": {"<lens>": "<reason>"}}`, with every conditional lens in the
      table in exactly one of the two maps and a reason for each one left out.
@@ -125,6 +140,8 @@ remain, then prints the staffing and lens tables in one fixed format. Then:
    printf '%s' "$ANSWERS_JSON" > /tmp/admission-answers.json
    python3 plugins/saga/scripts/admission.py --issue <N> --answers /tmp/admission-answers.json
    ```
+
+   `--answers -` reads the same JSON from standard input instead of a file.
 
 The record lands at `<primary checkout>/.claude/saga/runs/issue-<N>.json` — an absolute path outside
 any worktree, so every later role reads the same file. Say that path in your first message; later

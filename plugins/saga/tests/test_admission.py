@@ -8,8 +8,10 @@ here reaches the network: the card validator and the staffing component are inje
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import re
+import subprocess  # nosec B404
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -301,9 +303,7 @@ def test_a_missing_profile_is_not_an_error(adm: ModuleType, store: Path, repo_ro
 def test_this_repositorys_own_profile_parses_and_fills_what_it_claims(adm: ModuleType) -> None:
     """The tracked `.saga-profile.json` is real configuration, so it is checked like one."""
     if not LIVE_PROFILE.is_file():
-        pytest.skip(
-            "this catalog does not carry the upstream repository's .saga-profile.json"
-        )
+        pytest.skip("this catalog does not carry the upstream repository's .saga-profile.json")
     profile = adm.load_profile(REPO_ROOT)
     assert LIVE_PROFILE.is_file()
     assert profile["schema"] == "repository_profile.v1"
@@ -370,7 +370,11 @@ def _all_answers() -> dict[str, Any]:
         "approval_scope": dict.fromkeys(run_record.APPROVAL_CATEGORIES, "none"),
         "destination": "pr",
         "staffing_overrides": "none",
-        "lens_declaration": {"always_on": ["correctness"], "conditional": []},
+        "lens_declaration": {
+            "always_on": ["correctness", "security"],
+            "conditional_applies": {},
+            "conditional_does_not_apply": {},
+        },
         "repair_allowances": {"standard": 3, "escalated": 2},
         "unfinished_testing_response": "bring the result to the operator",
         "branch_preview": False,
@@ -1101,6 +1105,7 @@ def test_a_lens_proposal_renders_its_probability_bands(adm: ModuleType) -> None:
         "cell": "no suggestion",
         "state": "below-threshold",
         "probability": 0.4,
+        "band": None,
     }
 
 
@@ -1480,18 +1485,32 @@ def test_an_unreadable_catalogue_still_shows_the_operator_declaration(adm: Modul
     assert rows["privacy"][1:3] == ["no", "no personal data"]
 
 
+def _recorded_declaration(adm: ModuleType, staffing: Any, declaration: dict[str, Any]) -> Any:
+    """A record holding *declaration* as an operator answer, written past admission's validation.
+
+    Admission refuses a malformed declaration since issue #103, but a record written before then
+    can still hold one, and the tables must show it as the review would read it.
+    """
+    record = _table_record(adm, staffing)
+    record.run_configuration["applicable_lenses"] = {
+        "value": declaration,
+        "chosen_by": "planner",
+        "source": "operator",
+    }
+    return record
+
+
 def test_a_lens_in_both_maps_is_listed_once_and_excluded_without_a_catalogue(
     adm: ModuleType,
 ) -> None:
     staffing = _table_staffing()
-    record = adm.apply_answers(
-        _table_record(adm, staffing),
+    record = _recorded_declaration(
+        adm,
+        staffing,
         {
-            "lens_declaration": {
-                "always_on": ["correctness"],
-                "conditional_applies": {"performance": "hot path"},
-                "conditional_does_not_apply": {"performance": "no hot path"},
-            }
+            "always_on": ["correctness"],
+            "conditional_applies": {"performance": "hot path"},
+            "conditional_does_not_apply": {"performance": "no hot path"},
         },
     )
 
@@ -1523,9 +1542,8 @@ def test_the_table_and_the_review_roster_agree_on_a_declaration(
     """A list for ``conditional_does_not_apply`` is ignored by the review, so the table too."""
     roster = _load("review_roster")
     staffing = _table_staffing()
-    record = adm.apply_answers(
-        _table_record(adm, staffing),
-        {"lens_declaration": {"always_on": ["correctness", "security"], **declaration}},
+    record = _recorded_declaration(
+        adm, staffing, {"always_on": ["correctness", "security"], **declaration}
     )
     rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
     entries = roster._lens_entries(declaration)
@@ -1539,7 +1557,7 @@ def test_the_table_and_the_review_roster_agree_on_a_declaration(
 
 
 def test_an_override_answered_as_the_skill_documents_keeps_every_role(adm: ModuleType) -> None:
-    """The plan skill asks for the complete role map, because apply_answers replaces the map."""
+    """The plan skill asks for the complete role map, so every row records the operator."""
     staffing = _table_staffing()
     record = _table_record(adm, staffing)
     data = adm.review_data(record, adm.outstanding_questions(record), staffing, None)
@@ -1598,3 +1616,338 @@ def test_saving_admission_creates_the_record_when_there_is_none(
     adm.save_admission(store, rr.RunRecord(issue=1023, repo="o/r", next_step="plan"))
     reread = rr.load(store, 1023, warn=None)
     assert reread is not None and reread.next_step == "plan"
+
+
+# ---------------------------------------------------------------------------
+# The review pane's answers path (issue #103)
+# ---------------------------------------------------------------------------
+#
+# The Claude Code review pane hands its answers to ``admission.py --answers -`` on standard input.
+# The pane's TypeScript test pins the payload it sends (GOLDEN ANSWERS in the fixture below); these
+# tests push that same text through the real script, so the two halves of the hand-off cannot drift.
+
+PANE_FIXTURE = (
+    REPO_ROOT
+    / "plugins"
+    / "saga"
+    / "com.infiquetra.claude"
+    / "mods"
+    / "fixtures"
+    / "admission-review.fixture.ts"
+)
+
+
+def _golden_answers() -> dict[str, Any]:
+    text = PANE_FIXTURE.read_text(encoding="utf-8")
+    body = text.split("/* BEGIN GOLDEN ANSWERS */")[1].split("/* END GOLDEN ANSWERS */")[0]
+    return json.loads(body)
+
+
+def _answer_main(
+    adm: ModuleType,
+    store: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    answers: Any,
+) -> int:
+    """Run ``admission.py --answers -`` with *answers* on standard input."""
+    _patch_main(adm, monkeypatch)
+    text = answers if isinstance(answers, str) else json.dumps(answers)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(text))
+    return adm.main(
+        [
+            "--issue",
+            "103",
+            "--repo",
+            "infiquetra/infiquetra-agent-plugins",
+            "--store-root",
+            str(store),
+            "--repo-root",
+            str(repo_root),
+            "--answers",
+            "-",
+        ]
+    )
+
+
+def _tiers(value: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        role: {key: row[key] for key in ("vendor", "model", "effort")}
+        for role, row in value.items()
+        if not role.startswith("_")
+    }
+
+
+def test_the_panes_golden_answers_record_with_the_operator_as_their_source(
+    adm: ModuleType, store: Path, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _golden_answers()
+    assert _answer_main(adm, store, repo_root, monkeypatch, payload) == 0
+
+    shown = subprocess.run(  # nosec B603 — fixed argv, no shell
+        [sys.executable, str(SCRIPTS / "run_record.py"), "--store-root", str(store), "show", "103"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    configuration = json.loads(shown.stdout)["run_configuration"]
+    staffing = configuration["staffing_models_and_efforts"]
+    assert staffing["source"] == "operator"
+    assert _tiers(staffing["value"]) == payload["staffing_overrides"]
+    for role in payload["staffing_overrides"]:
+        assert staffing["value"][role]["operator_override"] is True, role
+    assert configuration["applicable_lenses"]["source"] == "operator"
+    assert configuration["applicable_lenses"]["value"] == payload["lens_declaration"]
+    assert "staffing_overrides" not in json.loads(shown.stdout)["admission"]["pending_questions"]
+
+
+def test_answers_that_are_not_json_on_standard_input_exit_2(
+    adm: ModuleType,
+    store: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert _answer_main(adm, store, repo_root, monkeypatch, "not json") == 2
+    assert "standard input" in capsys.readouterr().err
+    assert list(store.glob("*.json")) == []
+
+
+def test_a_partial_staffing_override_merges_role_by_role(adm: ModuleType) -> None:
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    before = record.run_configuration["staffing_models_and_efforts"]["value"]
+    after = adm.apply_answers(
+        record,
+        {"staffing_overrides": {"worker": {"vendor": "claude", "model": "opus", "effort": "low"}}},
+        staffing,
+    )
+    block = after.run_configuration["staffing_models_and_efforts"]
+    assert block["source"] == "operator"
+    assert sorted(_tiers(block["value"])) == ["planner", "worker"]
+    assert block["value"]["planner"] == before["planner"]
+    assert "operator_override" not in block["value"]["planner"]
+    assert block["value"]["worker"] == {
+        "vendor": "claude",
+        "model": "opus",
+        "effort": "low",
+        "operator_override": True,
+    }
+    rows = {row[0]: row for row in _rows(_tables(adm, after, staffing))}
+    assert rows["worker"][4] == "operator answer"
+    assert rows["planner"][4] == "staffing default (work shape judgment)"
+
+
+def test_a_merge_keeps_the_run_wide_keys_and_the_roles_own_jev_fields(adm: ModuleType) -> None:
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    value = record.run_configuration["staffing_models_and_efforts"]["value"]
+    value["_tier_judgment"] = {"status": "off", "note": "switched off"}
+    value["worker"]["tier_judgment"] = {"band": "not-consulted"}
+    after = adm.apply_answers(
+        record,
+        {"staffing_overrides": {"worker": {"vendor": "claude", "model": "opus", "effort": "low"}}},
+        staffing,
+    )
+    merged = after.run_configuration["staffing_models_and_efforts"]["value"]
+    assert merged["_tier_judgment"] == {"status": "off", "note": "switched off"}
+    assert merged["worker"]["tier_judgment"] == {"band": "not-consulted"}
+
+
+@pytest.mark.parametrize(
+    ("override", "names"),
+    [
+        ({"worker": {"vendor": "claude", "model": "haiku", "effort": "xhigh"}}, "ceiling is high"),
+        ({"worker": {"vendor": "claude", "model": "gpt", "effort": "high"}}, "'gpt'"),
+        ({"worker": {"vendor": "claude", "model": "opus", "effort": "max"}}, "'max'"),
+        ({"auditor": {"vendor": "claude", "model": "opus", "effort": "high"}}, "'auditor'"),
+        ({"worker": {"vendor": "codex", "model": "opus", "effort": "high"}}, "'codex'"),
+        ({"worker": {"model": "opus", "effort": "high"}}, "missing vendor"),
+        (
+            {"worker": {"vendor": "claude", "model": "opus", "effort": "high", "x": 1}},
+            "unexpected x",
+        ),
+        ("opus everywhere", "mapping of role"),
+    ],
+)
+def test_an_off_palette_or_unknown_override_is_refused_with_one_line(
+    adm: ModuleType,
+    store: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    override: Any,
+    names: str,
+) -> None:
+    assert _answer_main(adm, store, repo_root, monkeypatch, {"staffing_overrides": override}) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("admission: ")
+    assert err.count("\n") == 1
+    assert names in err
+    assert list(store.glob("*.json")) == [], "a refused answer writes nothing"
+
+
+def test_none_and_an_empty_override_take_the_defaults(adm: ModuleType) -> None:
+    staffing = _table_staffing()
+    for answer in ("none", None, {}):
+        after = adm.apply_answers(
+            _table_record(adm, staffing), {"staffing_overrides": answer}, staffing
+        )
+        assert after.run_configuration["staffing_models_and_efforts"]["source"] == "staffing"
+
+
+_GOOD_DECLARATION: dict[str, Any] = {
+    "always_on": ["correctness", "security"],
+    "conditional_applies": {"performance": "a hot loop"},
+    "conditional_does_not_apply": {"privacy": "no personal data"},
+}
+
+
+@pytest.mark.parametrize(
+    ("change", "names"),
+    [
+        ({"conditional_does_not_apply": {"privacy": "  "}}, "needs a reason: privacy"),
+        (
+            {"conditional_does_not_apply": {"privacy": "x", "security": "not needed"}},
+            "always-on lens as conditional: security",
+        ),
+        (
+            {"conditional_applies": {"performance": "hot", "privacy": "logs"}},
+            "both applying and not applying: privacy",
+        ),
+        (
+            {"conditional_applies": {"performance": "hot", "accessibility": "a ui"}},
+            "does not have: accessibility",
+        ),
+        ({"conditional_does_not_apply": {}}, "undeclared: privacy"),
+        ({"always_on": ["correctness"]}, "always_on must be"),
+        ({"conditional_does_not_apply": ["privacy"]}, "must map each lens"),
+        ({"conditional": []}, "unexpected keys (conditional)"),
+    ],
+)
+def test_a_lens_declaration_the_review_would_misread_is_refused(
+    adm: ModuleType, change: dict[str, Any], names: str
+) -> None:
+    staffing = _table_staffing()
+    with pytest.raises(adm.AdmissionError) as excinfo:
+        adm.apply_answers(
+            _table_record(adm, staffing),
+            {"lens_declaration": {**_GOOD_DECLARATION, **change}},
+            staffing,
+        )
+    assert names in str(excinfo.value)
+
+
+def test_a_complete_lens_declaration_is_accepted(adm: ModuleType) -> None:
+    staffing = _table_staffing()
+    after = adm.apply_answers(
+        _table_record(adm, staffing), {"lens_declaration": _GOOD_DECLARATION}, staffing
+    )
+    assert after.run_configuration["applicable_lenses"]["value"] == _GOOD_DECLARATION
+
+
+def test_without_a_catalogue_only_the_declarations_shape_is_checked(adm: ModuleType) -> None:
+    run_record = _load("run_record")
+    declaration = {"always_on": ["correctness"], "conditional_applies": ["performance"]}
+    after = adm.apply_answers(
+        run_record.RunRecord(issue=103), {"lens_declaration": declaration}, None
+    )
+    assert after.run_configuration["applicable_lenses"]["value"] == declaration
+    with pytest.raises(adm.AdmissionError):
+        adm.apply_answers(
+            run_record.RunRecord(issue=103),
+            {"lens_declaration": {"always_on": ["correctness"], "conditional": []}},
+            None,
+        )
+
+
+def test_answering_in_two_passes_leaves_plan_as_the_next_step(
+    adm: ModuleType, store: Path, repo_root: Path
+) -> None:
+    """The pane records questions 4 and 5 first; the rest follow in a second pass."""
+    staffing = _table_staffing()
+    answers = _all_answers()
+    answers["lens_declaration"] = _GOOD_DECLARATION
+    first = {key: answers.pop(key) for key in ("staffing_overrides", "lens_declaration")}
+
+    def admit(given: dict[str, Any]) -> Any:
+        record, outstanding = adm.admit(
+            103,
+            "infiquetra/infiquetra-agent-plugins",
+            store_root=store,
+            repo_root=repo_root,
+            body=_good_card(),
+            validator=_passing_validator,
+            staffing=staffing,
+            answers=given,
+        )
+        adm.save_admission(store, record)
+        return record, outstanding
+
+    record, outstanding = admit(first)
+    assert outstanding
+    assert (
+        record.next_step
+        == f"answer the {len(outstanding)} outstanding admission question(s), then plan"
+    )
+    record, outstanding = admit(answers)
+    assert outstanding == []
+    assert record.next_step == "plan"
+    assert adm.run_record.load(store, 103, warn=None).next_step == "plan"
+
+
+def test_a_next_step_a_later_step_set_survives_a_second_pass(
+    adm: ModuleType, store: Path, repo_root: Path
+) -> None:
+    run_record = _load("run_record")
+    run_record.set_next_step(store, 103, "U4 the spore hooks")
+    record, _ = adm.admit(
+        103,
+        "infiquetra/infiquetra-agent-plugins",
+        store_root=store,
+        repo_root=repo_root,
+        body=_good_card(),
+        validator=_passing_validator,
+        answers=_all_answers(),
+    )
+    adm.save_admission(store, record)
+    assert record.next_step == "U4 the spore hooks"
+    assert run_record.load(store, 103, warn=None).next_step == "U4 the spore hooks"
+
+
+def test_the_plan_skill_calls_the_review_pane_and_falls_back_to_the_tables(
+    adm: ModuleType,
+) -> None:
+    skill = (REPO_ROOT / "plugins" / "saga" / "skills" / "plan" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    section = skill.split("### 0.1b")[1].split("### 0.2")[0]
+    assert "mcp__saga__review_admission" in section
+    for status in (
+        "submitted",
+        "dismissed",
+        "not-placed",
+        "unavailable",
+        "nothing-to-review",
+        "timed-out",
+        "error",
+    ):
+        assert f"`{status}`" in section, status
+    assert "exactly as if the tool were absent" in section
+    assert "--render tables" in section
+    assert "Never retype or re-record them" in section
+    assert [line for line in section.splitlines()[1:] if line.startswith("#")] == []
+
+
+def test_the_lens_jev_cell_carries_its_band_for_a_pane(adm: ModuleType) -> None:
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    record.admission["lens_proposal"] = {"probabilities": {"performance": 0.85, "privacy": 0.7}}
+    data = adm.review_data(record, [], staffing, None)
+    bands = {row["lens"]: row["jev"]["band"] for row in data["lenses"]["rows"]}
+    assert bands == {
+        "correctness": None,
+        "security": None,
+        "performance": "pre-checked",
+        "privacy": "consider",
+    }

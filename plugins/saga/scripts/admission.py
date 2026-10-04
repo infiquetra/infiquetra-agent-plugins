@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import re
 import subprocess  # nosec B404
 import sys
 from collections.abc import Callable
@@ -504,8 +505,255 @@ def outstanding_questions(record: run_record.RunRecord) -> list[Question]:
     return [question for question in QUESTIONS if not _is_answered(record, question.key)]
 
 
-def apply_answers(record: run_record.RunRecord, answers: dict[str, Any]) -> run_record.RunRecord:
-    """Record *answers*, which outrank every default (plan R9)."""
+#: The vendor the tier palette staffs. A run is Claude-only (issue #90, ruling 5), so an override
+#: names it or the role's own default vendor, never another.
+PALETTE_VENDOR = "claude"
+
+#: The keys one staffing-override row may carry.
+_OVERRIDE_KEYS: tuple[str, ...] = ("vendor", "model", "effort")
+
+#: The keys a lens declaration may carry: the shape ``review_roster._lens_entries`` reads.
+_DECLARATION_KEYS: tuple[str, ...] = (
+    "always_on",
+    "conditional_applies",
+    "conditional_does_not_apply",
+)
+
+
+def _no_override(value: Any) -> bool:
+    """``none``, null and an empty mapping all mean "take the defaults"."""
+    return value is None or value == "none" or value == {}
+
+
+def _load_tier_palette() -> Any:
+    import bundled_fleet  # noqa: PLC0415
+
+    try:
+        return bundled_fleet.load("tier_palette")
+    except Exception as exc:
+        raise AdmissionError(
+            f"the tier palette could not be loaded ({exc}), so a staffing override cannot be "
+            "checked; admission never records an unchecked tier"
+        ) from exc
+
+
+def _known_roles(record: run_record.RunRecord, staffing: Any) -> set[str] | None:
+    """The roles a run staffs: the staffing component's, else the recorded map's, else unknown."""
+    roles: Any = None
+    if staffing is not None:
+        try:
+            roles = staffing.roles()
+        except Exception:
+            roles = None
+    if roles:
+        return {str(role) for role in roles}
+    value = record.run_configuration["staffing_models_and_efforts"].get("value")
+    if isinstance(value, dict):
+        roles = {str(role) for role in value if not str(role).startswith("_")}
+        if roles:
+            return roles
+    return None
+
+
+def _default_vendor(record: run_record.RunRecord, staffing: Any, role: str) -> str:
+    """The vendor *role* is staffed with: a fresh resolve, else the recorded row, else Claude."""
+    if staffing is not None:
+        try:
+            vendor = getattr(staffing.resolve_role(role), "vendor", None)
+        except Exception:
+            vendor = None
+        if vendor:
+            return str(vendor)
+    value = record.run_configuration["staffing_models_and_efforts"].get("value")
+    row = value.get(role) if isinstance(value, dict) else None
+    if isinstance(row, dict) and row.get("vendor"):
+        return str(row["vendor"])
+    return PALETTE_VENDOR
+
+
+def validate_staffing_overrides(
+    value: Any, record: run_record.RunRecord, staffing: Any = None
+) -> None:
+    """Refuse a staffing override the run could not staff (issue #103).
+
+    Every row must name a role the run staffs, that role's own vendor, and a model and effort the
+    tier palette lists together. Raises :class:`AdmissionError` naming the first problem.
+    """
+    if _no_override(value):
+        return
+    if not isinstance(value, dict):
+        raise AdmissionError(
+            "staffing_overrides must be 'none' or a mapping of role to {vendor, model, effort}"
+        )
+    palette = _load_tier_palette()
+    roles = _known_roles(record, staffing)
+    for role, row in value.items():
+        role = str(role)
+        if roles is not None and role not in roles:
+            raise AdmissionError(
+                f"staffing_overrides names an unknown role {role!r}; the run staffs "
+                + ", ".join(sorted(roles))
+            )
+        if not isinstance(row, dict):
+            raise AdmissionError(
+                f"staffing_overrides[{role!r}] must be an object of {', '.join(_OVERRIDE_KEYS)}"
+            )
+        missing = [key for key in _OVERRIDE_KEYS if not row.get(key)]
+        extra = sorted(set(row) - set(_OVERRIDE_KEYS))
+        if missing or extra:
+            raise AdmissionError(
+                f"staffing_overrides[{role!r}] must carry exactly {', '.join(_OVERRIDE_KEYS)}"
+                + (f"; missing {', '.join(missing)}" if missing else "")
+                + (f"; unexpected {', '.join(extra)}" if extra else "")
+            )
+        model, effort, vendor = str(row["model"]), str(row["effort"]), str(row["vendor"])
+        if model not in palette.MODELS:
+            raise AdmissionError(
+                f"staffing_overrides[{role!r}]: model {model!r} is not in the tier palette "
+                f"({', '.join(palette.MODELS)})"
+            )
+        if effort not in palette.EFFORTS:
+            raise AdmissionError(
+                f"staffing_overrides[{role!r}]: effort {effort!r} is not in the tier palette "
+                f"({', '.join(palette.EFFORTS)})"
+            )
+        if not palette.supports_effort(model, effort):
+            raise AdmissionError(
+                f"staffing_overrides[{role!r}]: {model} does not take effort {effort} "
+                f"(its ceiling is {palette.effort_ceiling(model)})"
+            )
+        expected = _default_vendor(record, staffing, role)
+        if vendor != expected:
+            raise AdmissionError(
+                f"staffing_overrides[{role!r}]: vendor {vendor!r} is not the role's vendor "
+                f"{expected!r}; an override changes the model and effort only"
+            )
+
+
+def _catalogue_lenses(staffing: Any) -> tuple[set[str], set[str]] | None:
+    """The catalogue's ``(always-on, conditional)`` lenses, or ``None`` when it is unreadable."""
+    if staffing is None:
+        return None
+    try:
+        catalogue, _version = staffing.lens_catalogue()
+    except Exception:
+        return None
+    if not isinstance(catalogue, dict) or not catalogue:
+        return None
+    always_on = {
+        str(lens)
+        for lens, row in catalogue.items()
+        if isinstance(row, dict) and row.get("always_on")
+    }
+    return always_on, {str(lens) for lens in catalogue} - always_on
+
+
+def validate_lens_declaration(value: Any, staffing: Any = None) -> None:
+    """Refuse a lens declaration the review would misread (issue #103).
+
+    The shape is the one ``review_roster._lens_entries`` reads: ``always_on``, a list;
+    ``conditional_applies``, a mapping of lens to reason (or a plain list); and
+    ``conditional_does_not_apply``, a mapping of lens to a non-empty reason. No lens is in both
+    maps and no always-on lens is in either. When the lens catalogue is readable, ``always_on`` is
+    its always-on set and every conditional lens is declared exactly once; when it is not, only
+    the shape is checked.
+    """
+    if not isinstance(value, dict):
+        raise AdmissionError(
+            "lens_declaration must be an object of " + ", ".join(_DECLARATION_KEYS)
+        )
+    extra = sorted(set(value) - set(_DECLARATION_KEYS))
+    if extra:
+        raise AdmissionError(
+            f"lens_declaration has unexpected keys ({', '.join(extra)}); it carries "
+            + ", ".join(_DECLARATION_KEYS)
+        )
+    always_on = value.get("always_on")
+    if not isinstance(always_on, list) or not all(isinstance(lens, str) for lens in always_on):
+        raise AdmissionError("lens_declaration.always_on must be a list of lens identifiers")
+    applies = value.get("conditional_applies") or {}
+    if not isinstance(applies, (dict, list)):
+        raise AdmissionError(
+            "lens_declaration.conditional_applies must map each lens to the reason it applies"
+        )
+    excluded = value.get("conditional_does_not_apply") or {}
+    if not isinstance(excluded, dict):
+        raise AdmissionError(
+            "lens_declaration.conditional_does_not_apply must map each lens to the reason it "
+            "does not apply"
+        )
+    unexplained = sorted(
+        str(lens) for lens, reason in excluded.items() if not str(reason or "").strip()
+    )
+    if unexplained:
+        raise AdmissionError(
+            "lens_declaration: a lens left out needs a reason: " + ", ".join(unexplained)
+        )
+    applied = {str(lens) for lens in applies}
+    left_out = {str(lens) for lens in excluded}
+    both = sorted(applied & left_out)
+    if both:
+        raise AdmissionError(
+            "lens_declaration names a lens as both applying and not applying: " + ", ".join(both)
+        )
+
+    catalogue = _catalogue_lenses(staffing)
+    always = set(always_on) | (catalogue[0] if catalogue else set())
+    deselected = sorted((applied | left_out) & always)
+    if deselected:
+        raise AdmissionError(
+            "lens_declaration lists an always-on lens as conditional: "
+            + ", ".join(deselected)
+            + "; no declaration can deselect one"
+        )
+    if catalogue is None:
+        return
+    catalogue_always, catalogue_conditional = catalogue
+    if set(always_on) != catalogue_always:
+        raise AdmissionError(
+            "lens_declaration.always_on must be the catalogue's always-on lenses: "
+            + ", ".join(sorted(catalogue_always))
+        )
+    unknown = sorted((applied | left_out) - catalogue_conditional)
+    if unknown:
+        raise AdmissionError(
+            "lens_declaration names lenses the catalogue does not have: " + ", ".join(unknown)
+        )
+    undeclared = sorted(catalogue_conditional - applied - left_out)
+    if undeclared:
+        raise AdmissionError(
+            "lens_declaration leaves conditional lenses undeclared: "
+            + ", ".join(undeclared)
+            + "; each one applies or carries the reason it does not"
+        )
+
+
+def _merge_overrides(current: Any, overrides: dict[str, Any]) -> dict[str, Any]:
+    """Lay *overrides* onto the recorded staffing map, role by role.
+
+    A role the answer names takes its vendor, model and effort and is marked
+    ``operator_override``; every other role, and every run-wide ``_`` key, keeps what the
+    staffing component recorded. A partial answer therefore never drops a role.
+    """
+    merged = json.loads(json.dumps(current)) if isinstance(current, dict) else {}
+    for role, row in overrides.items():
+        kept = merged.get(role) if isinstance(merged.get(role), dict) else {}
+        merged[str(role)] = {
+            **kept,
+            **{key: row[key] for key in _OVERRIDE_KEYS},
+            "operator_override": True,
+        }
+    return merged
+
+
+def apply_answers(
+    record: run_record.RunRecord, answers: dict[str, Any], staffing: Any = None
+) -> run_record.RunRecord:
+    """Record *answers*, which outrank every default (plan R9).
+
+    The staffing override and the lens declaration are validated first (issue #103), against the
+    staffing component and its lens catalogue when *staffing* is given; a refusal records nothing.
+    """
     admission = json.loads(json.dumps(record.admission))
     configuration = {name: dict(block) for name, block in record.run_configuration.items()}
     approval_scope = dict(record.approval_scope)
@@ -514,6 +762,10 @@ def apply_answers(record: run_record.RunRecord, answers: dict[str, Any]) -> run_
     unknown = sorted(set(answers) - known - {"risk_justification"})
     if unknown:
         raise AdmissionError(f"not admission questions: {', '.join(unknown)}")
+    if "staffing_overrides" in answers:
+        validate_staffing_overrides(answers["staffing_overrides"], record, staffing)
+    if "lens_declaration" in answers:
+        validate_lens_declaration(answers["lens_declaration"], staffing)
 
     for key, value in answers.items():
         admission.setdefault("answers", {})[key] = {"value": value, "source": "operator"}
@@ -531,8 +783,10 @@ def apply_answers(record: run_record.RunRecord, answers: dict[str, Any]) -> run_
         elif key == "lens_declaration":
             _fill(configuration, "applicable_lenses", value, "operator")
         elif key == "staffing_overrides":
-            if value not in (None, "none", {}):
-                _fill(configuration, "staffing_models_and_efforts", value, "operator")
+            if not _no_override(value):
+                current = configuration["staffing_models_and_efforts"].get("value")
+                merged = _merge_overrides(current, value)
+                _fill(configuration, "staffing_models_and_efforts", merged, "operator")
         elif key in admission:
             admission[key] = value
 
@@ -616,7 +870,7 @@ def admit(
         suggest_log_dir=suggest_log_dir,
     )
     if answers:
-        record = apply_answers(record, answers)
+        record = apply_answers(record, answers, staffing)
 
     outstanding = outstanding_questions(record)
     admission = json.loads(json.dumps(record.admission))
@@ -629,9 +883,26 @@ def admit(
         else "plan"
     )
     record = run_record.RunRecord(
-        **{**record.__dict__, "admission": admission, "next_step": record.next_step or next_step}
+        **{
+            **record.__dict__,
+            "admission": admission,
+            "next_step": _next_step(record.next_step, next_step),
+        }
     )
     return record, outstanding
+
+
+#: The next step admission itself writes while questions are outstanding. Only a next step of this
+#: form is admission's to replace: answering in two passes (the review pane records questions 4 and
+#: 5, the rest follow) must not leave the first pass's count on the record (issue #103).
+_ADMISSION_NEXT_STEP = re.compile(r"answer the \d+ outstanding admission question\(s\), then plan")
+
+
+def _next_step(current: str, fresh: str) -> str:
+    """Keep a next step a later step set; replace an empty one or one admission wrote."""
+    if current and not _ADMISSION_NEXT_STEP.fullmatch(current):
+        return current
+    return fresh
 
 
 #: The record fields ``admit`` writes. Everything else on the record belongs to another writer.
@@ -644,7 +915,8 @@ def save_admission(store_root: Path, admitted: run_record.RunRecord) -> Path:
     ``admit`` can consult the tier judgment, so it runs with no lock held. The write then re-reads
     the record under the lock and lands only the admission-owned fields on that fresh copy, so a
     unit row, a review result or a usage entry written meanwhile survives. A fresh ``next_step``
-    wins over admission's suggestion, the same rule ``admit`` applies to the copy it read.
+    wins over admission's suggestion, the same rule ``admit`` applies to the copy it read; one
+    admission itself wrote earlier is replaced (``_next_step``).
     """
 
     def change(current: run_record.RunRecord | None) -> run_record.RunRecord:
@@ -655,7 +927,7 @@ def save_admission(store_root: Path, admitted: run_record.RunRecord) -> Path:
             **{
                 **current.__dict__,
                 **owned,
-                "next_step": current.next_step or admitted.next_step,
+                "next_step": _next_step(current.next_step, admitted.next_step),
             }
         )
 
@@ -997,17 +1269,34 @@ def _lens_proposal(record: run_record.RunRecord) -> dict[str, Any] | None:
 
 
 def _jev_lens_cell(lens: str, always_on: bool, proposal: dict[str, Any] | None) -> dict[str, Any]:
+    """The Jev cell for one lens. ``band`` (``pre-checked``, ``consider`` or ``None``) is what a
+    pane branches on, so it never reads the cell's display text."""
     if proposal is None:
-        return {"cell": NOT_CONFIGURED, "state": "not-configured", "probability": None}
+        return {
+            "cell": NOT_CONFIGURED,
+            "state": "not-configured",
+            "probability": None,
+            "band": None,
+        }
     probabilities = proposal.get("probabilities")
     probability = probabilities.get(lens) if isinstance(probabilities, dict) else None
     if always_on or not isinstance(probability, (int, float)):
-        return {"cell": NO_SUGGESTION, "state": "no-suggestion", "probability": None}
+        return {"cell": NO_SUGGESTION, "state": "no-suggestion", "probability": None, "band": None}
     if probability < LENS_CONSIDER_AT:
         # Logged, not shown (issue #110): the JSON row keeps the value for the record.
-        return {"cell": NO_SUGGESTION, "state": "below-threshold", "probability": probability}
+        return {
+            "cell": NO_SUGGESTION,
+            "state": "below-threshold",
+            "probability": probability,
+            "band": None,
+        }
     band = "pre-checked" if probability >= LENS_PRE_CHECKED_AT else "consider"
-    return {"cell": f"{probability:.2f} ({band})", "state": "suggested", "probability": probability}
+    return {
+        "cell": f"{probability:.2f} ({band})",
+        "state": "suggested",
+        "probability": probability,
+        "band": band,
+    }
 
 
 def _declared(value: Any, key: str) -> dict[str, str]:
@@ -1091,7 +1380,7 @@ def _palette() -> dict[str, Any] | None:
         models = list(palette.MODELS)
         efforts = list(palette.EFFORTS)
         return {
-            "vendor": "claude",
+            "vendor": PALETTE_VENDOR,
             "models": models,
             "efforts": efforts,
             "effort_ceilings": {model: palette.effort_ceiling(model) for model in models},
@@ -1164,6 +1453,26 @@ def review_data(
     return data
 
 
+def read_answers(source: str) -> dict[str, Any]:
+    """The answers JSON from a file, or from standard input when *source* is ``-``.
+
+    Standard input is how the Claude Code review pane hands its answers over (issue #103): the
+    answers never touch a temporary file, and the script stays the one writer.
+    """
+    try:
+        text = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise AdmissionError(f"could not read the answers from {source}: {exc}") from exc
+    try:
+        answers = json.loads(text)
+    except json.JSONDecodeError as exc:
+        where = "standard input" if source == "-" else source
+        raise AdmissionError(f"the answers in {where} are not JSON: {exc}") from exc
+    if not isinstance(answers, dict):
+        raise AdmissionError("the answers must be one JSON object of question key to answer")
+    return answers
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="admission.py",
@@ -1173,7 +1482,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo", default=None, help="owner/name; defaults to the origin remote.")
     parser.add_argument("--store-root", default=None, help="Override the resolved store directory.")
     parser.add_argument("--repo-root", default=None, help="Where to look for .saga-profile.json.")
-    parser.add_argument("--answers", default=None, help="A JSON file of answers to record.")
+    parser.add_argument(
+        "--answers",
+        default=None,
+        help="A JSON file of answers to record, or '-' to read the JSON from standard input.",
+    )
     parser.add_argument(
         "--suggest",
         action="store_true",
@@ -1209,9 +1522,7 @@ def main(argv: list[str] | None = None) -> int:
         store_root = (
             Path(args.store_root).resolve() if args.store_root else run_record.resolve_store_root()
         )
-        answers = None
-        if args.answers:
-            answers = json.loads(Path(args.answers).read_text(encoding="utf-8"))
+        answers = read_answers(args.answers) if args.answers else None
 
         issue_payload = fetch_issue(args.issue, repo)
         staffing = load_staffing()

@@ -67,6 +67,44 @@ and the main screen never raise a link press.
 
 **Generalizable rule.** A mod that makes text pressable must create the links itself, keep the
 page under the element's limit after linking, and offer a button route for surfaces without clicks.
+### "Accept all" must apply only the proposals that exist, and validate before it writes
+
+**Evidence.** Review cycle 1 of issue #103 found that the admission pane's Accept all
+(`plugins/saga/com.infiquetra.claude/mods/admission-review.tsx`, `submit(true)`) replaced the
+operator's picks with `initialSelections` and wrote them to state before checking for lenses left
+out with no reason. The fix is `acceptAllSelections`, and the check now runs first. The tests
+`Accept all restores every proposal and keeps the operator's answer for a lens with none` and
+`Accept all with a lens left out and no reason changes nothing in the pane` in
+`admission-review.test.ts` fail against the earlier code.
+
+**Mechanism.** Until issue #110 supplies Jev lens proposals, every undeclared conditional lens
+opens as left out with an empty reason. Restoring the opening picks therefore discarded every
+reason the operator had typed, and the reason check then refused. Accept all could never succeed
+while the lens declaration was pending.
+
+**Generalizable rule.** A bulk "accept" action overwrites only fields that have a proposal, and a
+refused action leaves the form exactly as it was.
+
+### A Claude Code mod that waits for a person must wait on `$` calls, never on a bare Promise
+
+**Evidence.** Issue #103's tool `mcp__saga__review_admission`
+(`plugins/saga/com.infiquetra.claude/mods/admission-review.tsx`) holds its `tool.call` open
+until the operator submits the review pane. On Claude Code 2.1.289,
+`the tool outlasts the ten-second hook budget while the operator decides` in
+`admission-review.test.ts` waits twelve real seconds before Submit and passes when the hook
+loops on `await $.process.run(['sleep', '1'])`. Swapping that one line for
+`await new Promise((r) => setTimeout(r, 1000))` fails the same test, and the engine reports
+`saga's tool.call hook was skipped: saga: exceeded 10000ms budget`.
+
+**Mechanism.** A hook's budget is 10,000 ms of its own time per dispatch (`HookBudget.ms`). The
+clock stops only while a `next(e)` or a `$` call is in flight, and a `$.clock` wait still counts,
+so a bare Promise or `$.clock.sleep` spends the budget and the hook is skipped. A `$.process.run`
+of `sleep 1` spends almost none. Two related findings from the same work: in the test kit, `key`
+on a `Text` is not kept (put the key on a wrapping `Box` to find it), and a `ui.select` of a value
+the Select does not list never reaches the chain or `onSelect` and resolves `undefined`.
+
+**Generalizable rule.** Hold a mod's dispatch open with a loop of short `$` calls, capped, and
+prove it with a test that waits past ten real seconds.
 
 ### A test suite that reads live configuration spends the operator's API budget, not CI's
 

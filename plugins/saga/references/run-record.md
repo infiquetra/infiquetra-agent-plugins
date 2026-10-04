@@ -118,6 +118,27 @@ Twelve, in this write order. Anything else is an unknown field, handled as above
 | `change_shape` | `code`, `docs` or `mixed` |
 | `lens_proposal` | the Jev lens proposal issue #110 writes: `{probabilities: {<lens>: 0.0–1.0}, ...}`. `admission.py --render` reads `probabilities` for the lens table's Jev probability column: 0.8 and above reads pre-checked, 0.6 up to 0.8 reads consider, and lower is kept in the JSON only. Absent until #110 lands, and the column reads `not configured` |
 
+### The two answers admission validates
+
+Admission checks two answers before it records anything, and a refusal exits 2 with one line
+naming the problem (issue #103). Whoever supplies them — the plan skill from the conversation, or
+the Claude Code review pane through `admission.py --answers -` on standard input — goes through the
+same check.
+
+- **`staffing_overrides`** is `"none"` (or null, or `{}`) to take the defaults, or a map of role to
+  `{vendor, model, effort}`, exactly those three keys. Every role is one the staffing component
+  staffs, the vendor is that role's own, and the model and effort are a pair the tier palette lists
+  (so `haiku` stops at `high`, and `max` is never one). A partial map is merged role by role onto
+  `run_configuration.staffing_models_and_efforts`: a named role takes the answer and is marked
+  `operator_override: true`, every other role keeps its recorded row, and the parameter's source
+  becomes `operator`. The plan skill and the pane both send the complete role map.
+- **`lens_declaration`** is `{always_on, conditional_applies, conditional_does_not_apply}` and lands
+  as `run_configuration.applicable_lenses`: `always_on` a list, `conditional_applies` a map of lens
+  to the reason it applies (a plain list is accepted), and `conditional_does_not_apply` a map of
+  lens to a non-empty reason. No lens is in both maps and no always-on lens is in either. When the
+  lens catalogue is readable, `always_on` is its always-on set and every conditional lens is in
+  exactly one map; when it is not, only the shape is checked.
+
 ### Two things called "destination"
 
 `admission.destination` is saga's own four-value routing intent — the enum in
@@ -179,11 +200,11 @@ tier, and every writer must put them here so the staffing table can find them:
 | `suggestion` | per role | `admission.py --suggest` today | the advisory Jev tier: `{suggested, confidence, usable, low_confidence, reason}` |
 | `tier_judgment` | per role | issue #96 | `{band, confidence, default, proposed, applied, shown, reason}`; `band` is one of `agrees`, `auto-raise`, `confirm-raise`, `advisory-lower`, `raise-at-ceiling`, `log-only`, `not-consulted` |
 | `jev_raise` | per role | issue #96 | `{model, effort, confidence, reason, decision_id}`; one step above the default, never fable or max |
-| `operator_override` | per role | issue #96's per-role merge | `true` on a role the operator's answer changed |
+| `operator_override` | per role | admission's per-role merge (issue #103) | `true` on a role the operator's answer named |
 | `_tier_judgment` | run-wide | issue #96 | `{status, note}`; `status: "off"` means the judgment is switched off |
 
-Until issue #96 merges an answer per role, a `staffing_overrides` answer replaces the whole map, so
-the plan skill asks for the complete role map.
+A `staffing_overrides` answer is merged per role (see "The two answers admission validates"
+above), so `operator_override` marks exactly the roles the operator's answer named.
 
 ## `units` — the keys a unit row carries
 
@@ -348,6 +369,10 @@ ticks are *meant* to hold stale values. `saga.authoritative_next_step()` prefers
 falls back to the envelope only when there is no record. `saga.mirror_next_step_to_record()` is the
 one write in the other direction: a tick that sets a next step updates the authority. Nothing
 reconciles a stale tick back onto a live record.
+
+Admission writes a next step only while it owns it: on a record with none, or over its own
+`answer the N outstanding admission question(s), then plan`, which it recomputes on every pass so
+answers given in two passes end at `plan`. A next step any later step set is never overwritten.
 
 ## Writing: atomic replace, under the record's lock
 
