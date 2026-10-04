@@ -15,8 +15,9 @@ What makes a repeated `go` launch a unit once is that the launch is persisted be
 is called; what makes a relaunch safe is that every launch gets its own fresh worktree; what
 serialises merges is a `merge_state` field checked against git rather than trusted. The one lock
 here is the run record's shared write lock (issue #113), held only across a save's re-read and
-atomic replace so a save never erases what another writer put in the record; it guards the file,
-not a unit, and has no owner or expiry.
+atomic replace so a save never erases a unit-row or top-level key Orchestrate does not own. Its
+own keys (the ``Unit`` fields and the ``orchestrate`` block) and which rows exist still come from
+memory. The lock guards the file, not a unit, and has no owner or expiry.
 """
 
 from __future__ import annotations
@@ -447,6 +448,13 @@ class RunBranchResolutionError(RuntimeError):
 
 # Unit-row keys that are in-memory only and never reach the record (issue #1025).
 UNPERSISTED_UNIT_FIELDS = frozenset({"launch_receipt"})
+DOCUMENTED_FOREIGN_ROW_KEYS = frozenset({"build_loop", "usage"})
+"""Unit-row keys other writers own that the run-record contract names: the build loop's block
+(``plugins/saga/references/run-record.md``) and the ``usage`` block issue 95 adds.
+
+They are carried across a save like any key this Orchestrate does not own, but ``read_unit`` does
+not print a notice for them: they are expected on every row, and repeating the notice on every
+load would bury the one that matters, a key nothing documents (issue #113)."""
 
 
 class RecordError(RuntimeError):
@@ -664,9 +672,9 @@ class Run:
     def save(self) -> Path:
         """Write the unit rows and this run's own block back to the record, and nothing else.
 
-        A read-modify-write under the run record's shared lock (``record_lock``): the record is
-        re-read from disk while the lock is held, so everything this Orchestrate does not own is
-        taken from the copy on disk NOW, not from the copy loaded earlier. That covers
+        A read-modify-write under the run record's shared lock (``shared_record_lock``): the
+        record is re-read from disk while the lock is held, so everything this Orchestrate does
+        not own is taken from the copy on disk NOW, not from the copy loaded earlier. That covers
         ``admission``, ``approval_scope``, ``run_configuration``, ``review_cycles``, ``roster``,
         every unknown top-level key a newer writer put there, and -- inside each unit row loaded
         from the record -- every key the ``Unit`` dataclass does not declare, such as the build
@@ -678,8 +686,7 @@ class Run:
         if self.record is None or self.store_root is None:
             raise RecordError("this run is not attached to a record; nothing was written")
         module = _run_record_module()
-        path = Path(module.record_path(self.store_root, self.record.issue))
-        with record_lock(path):
+        with shared_record_lock(module, self.store_root, self.record.issue):
             on_disk = reread_record(self.store_root, self.record.issue)
             base = on_disk if on_disk is not None else self.record
             disk_rows = {
@@ -711,9 +718,7 @@ class Run:
             return row
         disk_row = disk_rows.get(unit.name)
         carried = (
-            unit_passthrough(disk_row)
-            if disk_row is not None
-            else self.unit_passthrough[unit.name]
+            unit_passthrough(disk_row) if disk_row is not None else self.unit_passthrough[unit.name]
         )
         for key, value in carried.items():
             row.setdefault(key, value)
@@ -1104,6 +1109,20 @@ def reread_record(store_root: Path, issue: int) -> Any:
         raise RecordError(str(exc)) from None
 
 
+def shared_record_lock(module: Any, store_root: Path, issue: int) -> Any:
+    """The run record's shared lock, taken through saga's own ``record_lock`` when it has one.
+
+    Saga's ``run_record`` gains ``record_lock(store_root, issue)`` in issue 95. Using it whenever
+    the installed saga provides it keeps one definition of the lock file, so a later change to its
+    name cannot leave the two writers locking different files. An older saga without it gets the
+    local copy below, which names the same file.
+    """
+    saga_lock = getattr(module, "record_lock", None)
+    if callable(saga_lock):
+        return saga_lock(store_root, issue)
+    return record_lock(Path(module.record_path(store_root, issue)))
+
+
 @contextlib.contextmanager
 def record_lock(record_file: Path) -> Iterator[None]:
     """Hold the run record's shared advisory lock for one read-modify-write.
@@ -1156,17 +1175,20 @@ def read_unit(raw: dict[str, Any]) -> Unit:
     existed because the old fixed-path run file was rewritten whole on every save and 83% of a
     75-unit record was task text; one issue's record is not that file.
 
-    A key this Unit does not know never reaches the ``Unit``: it is named in a one-line notice
-    (the unit, the key and this Orchestrate's version) and kept apart by ``unit_passthrough``, so
-    ``Run.save`` writes it back unchanged. A row's key set is open by the record's contract --
-    the build loop's ``build_loop`` and a ``usage`` block live there -- so another writer's key is
-    carried, never dropped. The record's own ``schema`` token is what refuses a document this
+    A key this Unit does not know never reaches the ``Unit``: it is kept apart by
+    ``unit_passthrough``, so ``Run.save`` writes it back unchanged. A row's key set is open by the
+    record's contract -- the build loop's ``build_loop`` and a ``usage`` block live there -- so
+    another writer's key is carried, never dropped. A key in ``DOCUMENTED_FOREIGN_ROW_KEYS`` loads
+    silently; any other is named in a one-line notice (the unit, the key and this Orchestrate's
+    version), the safety net for a hand-edited row. The record's own ``schema`` token is what refuses a document this
     version cannot read at all, before any unit row is reached.
     """
     known = set(Unit.__dataclass_fields__)
     unknown = [key for key in raw if key not in known]
     if unknown:
         for key in unknown:
+            if key in DOCUMENTED_FOREIGN_ROW_KEYS:
+                continue
             print(
                 f"NOTICE: unit {raw.get('name', '?')} carries key {key!r}, which this "
                 f"Orchestrate {_orchestrate_version()} does not own; it is kept unchanged on "

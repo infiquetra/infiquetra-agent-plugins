@@ -185,7 +185,6 @@ class TestRecordContract:
         assert "launch_receipt" not in read_record(store, 11)["units"][0]
 
 
-
 BUILD_LOOP = {
     "criterion": "tests pass",
     "iterations": [{"iteration": 1, "revision": "a" * 40, "green": True}],
@@ -321,18 +320,92 @@ class TestKeysOrchestrateDoesNotOwn:
         assert row["usage"] == USAGE
         assert after["orchestrate"]["branch"] == "issue/24"
 
-    def test_a_fresh_unit_carries_nothing_from_a_same_named_row_on_disk(
+    def test_start_writes_fresh_rows_that_carry_nothing_from_a_same_named_row(
         self, orch, tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``start`` replacing the planned units is unchanged: a row it creates starts clean."""
         repo = make_repo(tmp_path)
         monkeypatch.chdir(repo)
-        write_record(store, 25, units=[unit_row("u1", usage=USAGE)], branch="issue/25")
-        r = orch.Run.load(25, store)
-        r.units = [orch.Unit(name="u1", vendor="claude", task="new work")]
-        r.unit_passthrough = {}
+        monkeypatch.setattr(orch, "assert_agent_launcher_available", lambda: None)
+        monkeypatch.setattr(orch, "assert_vendors_available", lambda units: None)
+        monkeypatch.setattr(orch, "assert_saga_reachable", lambda units: None)
+        monkeypatch.setattr(orch, "parent_branch_name", lambda issue, **kw: (f"issue/{issue}", "t"))
+        write_record(
+            store, 25, units=[unit_row("u1", usage=USAGE, build_loop=BUILD_LOOP)], branch="old"
+        )
+        plan = tmp_path / "plan-25.json"
+        plan.write_text(
+            json.dumps(
+                {"run_id": "25", "units": [{"name": "u1", "vendor": "claude", "task": "new work"}]}
+            )
+        )
+        code = orch.cmd_start(args(25, store, plan=str(plan), base=None, branch=None))
+        assert code == 0
+        row = read_record(store, 25)["units"][0]
+        assert row["name"] == "u1"
+        assert row["task"] == "new work"
+        assert "usage" not in row
+        assert "build_loop" not in row
+
+    def test_a_unit_created_in_this_process_keeps_a_key_added_after_its_first_save(
+        self, orch, tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A replacement worker ``wait`` appends is saved, then another writer adds to its row."""
+        repo = make_repo(tmp_path)
+        monkeypatch.chdir(repo)
+        write_record(store, 27, units=[unit_row("u1")], branch="issue/27")
+        r = orch.Run.load(27, store)
+        r.units.append(orch.Unit(name="u1-r1", vendor="claude", task="replacement"))
+        assert "u1-r1" not in r.unit_passthrough
         r.save()
-        assert "usage" not in read_record(store, 25)["units"][0]
+
+        def add_usage(payload: dict) -> None:
+            payload["units"][1]["usage"] = USAGE
+
+        _rewrite_on_disk(store, 27, add_usage)
+        r.unit("u1-r1").status = "running"
+        r.save()
+        rows = {row["name"]: row for row in read_record(store, 27)["units"]}
+        assert rows["u1-r1"]["usage"] == USAGE
+        assert rows["u1-r1"]["status"] == "running"
+
+    def test_a_loaded_row_gone_from_disk_is_written_back_with_its_loaded_keys(
+        self, orch, tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = make_repo(tmp_path)
+        monkeypatch.chdir(repo)
+        write_record(
+            store, 28, units=[unit_row("u1", build_loop=BUILD_LOOP), unit_row("u2")], branch="b"
+        )
+        r = orch.Run.load(28, store)
+
+        def drop_u1(payload: dict) -> None:
+            payload["units"] = [row for row in payload["units"] if row["name"] != "u1"]
+
+        _rewrite_on_disk(store, 28, drop_u1)
+        r.save()
+        rows = {row["name"]: row for row in read_record(store, 28)["units"]}
+        assert rows["u1"]["build_loop"] == BUILD_LOOP
+
+    def test_a_record_gone_from_disk_is_written_back_from_the_loaded_copy(
+        self, orch, tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = make_repo(tmp_path)
+        monkeypatch.chdir(repo)
+        path = write_record(
+            store,
+            29,
+            units=[unit_row("u1", usage=USAGE)],
+            branch="issue/29",
+            extra_top_level={"loaded_with": 1},
+        )
+        r = orch.Run.load(29, store)
+        path.unlink()
+        r.save()
+        after = read_record(store, 29)
+        assert after["units"][0]["usage"] == USAGE
+        assert after["loaded_with"] == 1
+        assert after["orchestrate"]["branch"] == "issue/29"
 
     def test_save_waits_for_the_shared_record_lock(
         self, orch, tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch
@@ -346,23 +419,76 @@ class TestKeysOrchestrateDoesNotOwn:
         monkeypatch.chdir(repo)
         path = write_record(store, 26, units=[unit_row("u1")], branch="issue/26")
         r = orch.Run.load(26, store)
+        r.unit("u1").status = "running"
         lock_file = path.with_name(path.name + ".lock")
-        fd = os.open(lock_file, os.O_RDWR | os.O_CREAT, 0o644)
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        saver = threading.Thread(target=r.save)
-        saver.start()
-        saver.join(timeout=0.5)
-        assert saver.is_alive(), "save must wait while another writer holds the record lock"
+        errors: list[Exception] = []
+
+        def save() -> None:
+            try:
+                r.save()
+            except Exception as exc:  # noqa: BLE001 -- any failure is asserted below
+                errors.append(exc)
 
         def add_usage(payload: dict) -> None:
             payload["units"][0]["usage"] = USAGE
 
-        _rewrite_on_disk(store, 26, add_usage)
-        os.close(fd)
+        saver = threading.Thread(target=save, daemon=True)
+        fd = os.open(lock_file, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            saver.start()
+            saver.join(timeout=0.5)
+            assert saver.is_alive(), "save must wait while another writer holds the record lock"
+            _rewrite_on_disk(store, 26, add_usage)
+        finally:
+            os.close(fd)
         saver.join(timeout=10)
         assert not saver.is_alive()
-        assert read_record(store, 26)["units"][0]["usage"] == USAGE
+        assert errors == []
+        row = read_record(store, 26)["units"][0]
+        assert row["status"] == "running", "the save wrote after the lock was released"
+        assert row["usage"] == USAGE, "the save re-read the record under the lock"
         assert lock_file.is_file(), "the lock file is never deleted"
+
+    def test_save_takes_sagas_own_record_lock_when_saga_provides_one(
+        self, orch, tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One definition of the lock file: saga's ``record_lock`` (issue 95) wins when present."""
+        import contextlib
+
+        repo = make_repo(tmp_path)
+        monkeypatch.chdir(repo)
+        write_record(store, 30, units=[unit_row("u1")], branch="issue/30")
+        r = orch.Run.load(30, store)
+        module = orch._run_record_module()
+        taken: list[tuple[Path, int]] = []
+
+        @contextlib.contextmanager
+        def saga_record_lock(store_root: Path, issue: int):
+            taken.append((Path(store_root), issue))
+            yield store_root
+
+        monkeypatch.setattr(module, "record_lock", saga_record_lock, raising=False)
+        r.save()
+        assert taken == [(store, 30)]
+
+    def test_documented_foreign_row_keys_load_without_a_notice(
+        self, orch, tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch, capsys
+    ) -> None:
+        repo = make_repo(tmp_path)
+        monkeypatch.chdir(repo)
+        write_record(
+            store,
+            31,
+            units=[unit_row("u1", build_loop=BUILD_LOOP, usage=USAGE, vibrance="high")],
+            branch="issue/31",
+        )
+        orch.Run.load(31, store)
+        err = capsys.readouterr().err
+        assert "'build_loop'" not in err
+        assert "'usage'" not in err
+        assert "'vibrance'" in err, "an undocumented key still gets its notice"
+
 
 class TestStartRequiresTheRecord:
     def test_start_with_no_record_refuses_and_names_the_admission_command(

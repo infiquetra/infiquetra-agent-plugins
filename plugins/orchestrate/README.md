@@ -63,6 +63,7 @@ socket.
 
 ## What the driver will not do
 
-It does not write a GitHub project board. It does not count tokens, reserve
-concurrency slots, or keep a lock. A unit that goes wrong still has its
+It does not write a GitHub project board. It does not count tokens or reserve
+concurrency slots. Its only lock is the run record's shared write lock, held
+for the length of one save (issue #113). A unit that goes wrong still has its
 worktree, its branch, and its tab.

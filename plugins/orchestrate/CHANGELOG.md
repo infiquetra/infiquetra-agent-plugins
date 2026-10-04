@@ -15,7 +15,9 @@
 
 - Loading and saving a saga run record no longer erases unit-row keys Orchestrate does not own (issue #113). `read_unit` still keeps such a key off the `Unit`, but `Run.load` now holds it beside the unit in `Run.unit_passthrough`, and `Run.save` writes it back. The build loop's `build_loop` block and the `usage` block survived no Orchestrate-driven run before this.
 - `Run.save` no longer overwrites what another process wrote after the load. It takes the run record's shared lock (`fcntl.flock` on `<record path>.lock`, the convention in `plugins/saga/references/run-record.md`), re-reads the record, writes Orchestrate's own unit-row keys and `orchestrate` block from memory, and carries every other unit-row and top-level key forward from the copy on disk. Unit membership is unchanged: `start` still writes fresh rows that carry nothing, and a row the run does not hold is not written back.
-- The load notice for such a key now says it is kept unchanged on save, instead of saying this Orchestrate ignores it.
+- `Run.save` takes the lock through saga's `run_record.record_lock` when the installed saga provides one (issue #95), so there is one definition of the lock file; an older saga gets Orchestrate's own copy, which names the same file.
+- The load notice for such a key now says it is kept unchanged on save, instead of saying this Orchestrate ignores it, and it is no longer printed for the row keys the run-record contract names (`build_loop`, `usage`), which every command would otherwise repeat for every unit.
+- Saga writers that do not take the lock yet (the build loop, `merge_turn`, `review_result`, `qa_strategies`, `admission`) can still overwrite an Orchestrate save; issue #117 moves them onto it.
 
 ## [6.0.1] - 2026-09-22
 
