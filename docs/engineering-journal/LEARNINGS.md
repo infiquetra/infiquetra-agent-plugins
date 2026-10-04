@@ -125,8 +125,10 @@ fail on the old driver and pass on the fixed one.
 Writing back the loaded copy, even a key-preserving one, loses what another writer (the build
 loop, a unit session adding `usage`) put on disk between the load and the save, because a run's
 coordinator loads once and saves many times during a long `wait`. Only a re-read at save time,
-under a lock both writers take, closes the second gap: the save then takes every key it does not
-own from the fresh copy and only its own keys from memory.
+under a lock every writer takes, closes the second gap: the save then takes every key it does not
+own from the fresh copy and only its own keys from memory. The lock protects only writers that take
+it: saga's build loop, `merge_turn`, `review_result`, `qa_strategies` and `admission` still write a
+whole stale copy without it, so they can still erase an orchestrate save until issue #117 lands.
 
 **Generalizable rule.** A whole-document writer that shares its file with other writers must
 re-read under a shared lock at save time and merge its owned keys onto that fresh copy; keeping

@@ -70,6 +70,12 @@
 
 ### Docs
 
+- `references/run-record.md` names the shared run-record lock (an exclusive `fcntl.flock` on
+  `<record>.lock`, re-read under the lock, then the atomic replace) and the round-trip rule for a
+  writer that rewrites whole unit rows, which orchestrate's `Run.save` now follows (issue #113). It
+  also lists the saga writers that do not take the lock yet (`build_loop`, `merge_turn`,
+  `review_result`, `qa_strategies`, `admission`); issue #117 moves them onto it.
+
 Four skill-instruction sentences named scripts that are not in this package at acc99fe7, marked
 "retired in the portable package" in place rather than deleted, because the step they describe is
 still the intended one once a replacement ships:

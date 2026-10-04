@@ -198,8 +198,8 @@ from the row as it is on disk when it writes, re-read under the record lock (see
 Carrying them forward from the copy it loaded earlier is not enough: that copy misses whatever
 another writer added since. The same holds for top-level keys: everything the writer does not own
 comes from the fresh re-read. A writer that adds a key to one row in place, as the build loop does,
-must follow the same lock-and-re-read sequence. Orchestrate's `Run.save` follows this rule since issue
-113; before it, a load and save through orchestrate dropped `build_loop` and every other key its
+must follow the same lock-and-re-read sequence; the build loop does not yet (see "Writers that do
+not take the lock yet" below). Orchestrate's `Run.save` follows this rule since issue 113; before it, a load and save through orchestrate dropped `build_loop` and every other key its
 `Unit` did not declare. Orchestrate owns the keys its `Unit` declares and which rows exist: a row
 `start` creates fresh carries nothing forward, and a row orchestrate does not hold is not written
 back.
