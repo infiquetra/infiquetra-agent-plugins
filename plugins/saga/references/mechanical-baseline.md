@@ -219,7 +219,7 @@ Each step is classified so an environment problem never reads as a defect in the
 | deploy | `pass` | `could-not-execute`, with its exit code kept | `could-not-execute` |
 | test and environment checks | `pass` | `fail` | `could-not-execute` |
 | teardown | `pass` | `could-not-execute`, an environment problem | `could-not-execute` |
-| lease | acquired | held by another run, or the remote unreachable: `could-not-execute` | — |
+| lease | acquired | held by another run or another invocation of this run, or the remote unreachable: `could-not-execute` | — |
 
 A pass is `fail` when any baseline, test or environment check failed; otherwise
 `could-not-execute` when any step could not execute, the lease was not taken or not released, or
@@ -261,18 +261,25 @@ deploying host already pushes to. `<name>` and the remote come from the declarat
   pushed with `--force-with-lease=<ref>:` (an empty expected value: only if the reference does not
   exist) and `--no-verify`, so a repository's pre-push hook does not run for it.
 - **The holder** names the repository, the issue, the revision under test, a short host label, the
-  start time and the bound the pass expected to finish within.
+  start time, the bound the pass expected to finish within, the pass number, and an `invocation`
+  nonce drawn once per `build_loop.py --combined` invocation. The pass's `lease` block on the run
+  record keeps the same `invocation` and the object id (`token`) it was given.
 - **Release** is a compare-and-swap delete with the object id acquire returned. Another run's lease
   is never deleted by a release.
 - **A second run waits**, polling every 30 seconds up to `--lease-wait`, and prints the holder on
   each poll. When the wait runs out the pass is could-not-execute and names the holder.
-- **A later pass of the same run replaces a lease left by an earlier pass**, and only then: the
-  holder must name this repository and issue, this host, and a lower pass number. A pass number
-  comes from the run record, which hands out the next one only after the earlier pass recorded its
-  result. A holder from another host, or with the same pass number (a concurrent invocation, or a
-  pass killed before it recorded anything), is held like any other run's lease.
-- **The start time is stamped when the lease is taken**, not when the wait began, so a lease won
-  after waiting is not reported stale the moment it is taken.
+- **One invocation holds a lease, and no other invocation takes it over** (issues #139 and #140).
+  Acquire never replaces an existing holder: not another run's, and not one left by an earlier
+  invocation of this same run, on this host or another. A pass number cannot prove the earlier
+  invocation finished, because any other invocation of the run that records a pass (one that gave
+  up after `--lease-wait`, for instance) moves the count while the holder is still deploying. The
+  later invocation waits and reports the holder, as for any other run.
+- **A crashed invocation's lease is released by the operator.** Its holder outlives its bound and is
+  reported `STALE`, with the `release --expect <object id>` command below; until someone runs it,
+  every invocation of every run waits on it, and three waits in a row are an environment stop.
+- **The start time and the pass number are read when the lease is taken**, not when the wait
+  began. A lease won after waiting is not reported stale the moment it is taken, and it names the
+  pass number the record hands out at that moment, after every pass that landed during the wait.
 - **A stale lease is reported, never broken.** Past its bound it is described as `STALE` with the
   command that releases it, and the operator decides:
 
@@ -313,7 +320,7 @@ file lock, after the pass ran with no lock held.
 | `status` | string | `pass`, `fail` or `could-not-execute` |
 | `green` | boolean | the status is `pass` |
 | `baseline` | array | one result per baseline command |
-| `lease` | object | `required`, `status`; when required also `remote`, `ref`, `token`, `holder`, `waited_seconds`, `release_status`, `detail` |
+| `lease` | object | `required`, `status`; when required also `remote`, `ref`, `invocation` (this invocation's nonce), `token`, `holder` (with its `pass_number` and `invocation`), `waited_seconds`, `release_status`, `detail` |
 | `deploy` | object | the deploy result, `not-declared`, or null when not reached |
 | `test` | object | the declared test command's result, or null when not reached |
 | `environment_checks` | array | one result per environment-bound plan check and scenario smoke |

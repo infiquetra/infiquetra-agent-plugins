@@ -566,8 +566,11 @@ The combined branch is built, deployed or started through the environment the re
 tested with the functional suite, and torn down — repeated until it is green. Run it in a checkout
 of the combined branch (the parent branch after the last merge, or the one unit's branch). **Only the
 coordinator runs `--combined`**, one invocation at a time: a merging worker that sees integration
-complete in 3.2 reports back and stops here. A second invocation of the same run does not take the
-shared lease from a pass still running; it waits like any other run.
+complete in 3.2 reports back and stops here. **A shared lease belongs to the one invocation that
+took it.** A second invocation of the same run never takes it over, even from a pass that looks
+finished; it waits and reports the holder like any other run. If the invocation that holds it
+crashed, its lease is reported `STALE` with the exact release command; the operator checks that
+nothing is deploying and runs `environment_lease.py ... release --expect <object id>`.
 
 ```bash
 uv run python plugins/saga/scripts/build_loop.py --record <run record path> \

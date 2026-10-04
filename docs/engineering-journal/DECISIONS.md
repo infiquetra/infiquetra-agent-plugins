@@ -2,6 +2,34 @@
 
 ## 2026-10-04
 
+### A shared-environment lease belongs to one invocation, and nothing takes it over
+
+**Decision.** A lease on a shared non-production environment belongs to exactly one
+`build_loop.py --combined` invocation, named by an `invocation` nonce written into the holder when
+it is taken. No invocation takes over a lease it does not hold: not another run's, and not one
+left by an earlier invocation of the same run (issues #139 and #140, follow-ups to #99). The
+same-run re-acquire path (`LeaseHolder.left_by_earlier_pass_of` and the `re-acquired` status) is
+removed. A crashed invocation's lease is reported `STALE` and released by the operator with
+`environment_lease.py release --expect <object id>`. The pass number and start time a lease
+carries are read when it is won, not before the wait.
+
+**Rationale.** Replacement keyed on a lower pass number assumed the run record hands out the next
+number only after the earlier pass finished. Any other invocation of the run that records a pass,
+for example one that gives up after `--lease-wait`, moves the count while the holder is still
+deploying, so two deploys of one run could reach the shared stack at once. Only the operator can
+know that a holder is dead, and the stale report already gives them the exact command.
+
+**Rejected alternatives.** Re-reading the record before replacing and replacing only when a landed
+pass carries the holder's token (#139 and #140's suggestion): a pass lands its record after its
+release, so a token in a landed pass means the lease was already released; the only holder it
+would replace is one whose release failed, a case rare enough that the operator path covers it,
+and the check adds a record read inside the lease protocol. Keeping replacement for the same host
+only: two invocations on one host are exactly the failing case.
+
+**Revisit when.** Stale leases from crashed invocations need operator release often enough to cost
+real time; then add a liveness signal (a heartbeat on the holder) rather than inference from the
+record.
+
 ### An orchestrate expansion creates one `/work` row per plan unit, named by its U-ID
 
 **Decision.** When orchestrate expands a run with its `/work` phase, it creates exactly one row per
@@ -32,9 +60,9 @@ names, default `origin` and `shared-nonprod`. `plugins/saga/scripts/environment_
 it by pushing a commit on the empty tree, whose message is the holder, with
 `--force-with-lease=<ref>:` (an empty expected value: only if the reference does not exist) and
 `--no-verify`, and releases it by deleting it with `--force-with-lease=<ref>:<oid it acquired>`.
-The holder names the repository, issue, revision, a short host label, start time and bound. A
-later pass of the same run, on the same host, replaces a lease left by an earlier pass; a holder
-from another host or with the same pass number waits like any other; a stale lease is reported with the exact release
+The holder names the repository, issue, revision, a short host label, start time and bound. (The
+same-run replacement this entry first allowed was removed the same day; see "A shared-environment
+lease belongs to one invocation" above.) Every holder waits like any other; a stale lease is reported with the exact release
 command and never broken automatically. The record and the merge turn stay lock-free, as issue 1018
 required; this is the one scoped exception, required by issue #91's operator ruling 3.
 
