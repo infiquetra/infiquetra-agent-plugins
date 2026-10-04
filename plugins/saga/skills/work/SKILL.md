@@ -377,7 +377,9 @@ hook (#677/U5). Direct `Agent`/`Task` spawns carry no lease admission.
   python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier --work-shape <shape>
   ```
 
-  It prints `{"model": ..., "effort": ...}` as JSON. Every form goes through fleet-core's staffing
+  It prints `{"model": ..., "effort": ..., "source": ...}` as JSON, where `source` names the layer
+  that won; when a `--jev-raise` was passed but a higher layer won (for example the plan tier), it
+  adds `"jev_raise_set_aside": true`. Record both in the execution evidence. Every form goes through fleet-core's staffing
   resolver (`staffing.resolve_shape`), which weighs the repository overlay, any recorded raise and
   the registry default and owns the order between them; do not restate it here. A raise reaches
   it only when you pass the unit row's recorded `jev_raise` as `--jev-raise '<json>'` (staffing U4,

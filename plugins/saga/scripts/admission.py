@@ -415,7 +415,9 @@ def _resolve_one_role(
     strongest model or off the palette) does not drop the role: the role resolves without the
     raise, and ``refused`` carries the resolver's message so the record shows the refusal beside
     the raise it kept. Any other refusal, such as a Claude-only work shape on a role pinned to
-    another vendor, raises :class:`AdmissionError` naming the role.
+    another vendor, raises :class:`AdmissionError` naming the role; the raise is named there only
+    when the resolver refused it with a message of its own, so a refusal the raise did not cause
+    is never blamed on it.
     """
     try:
         return staffing.resolve_role(role, root=root, jev_raise=jev_raise), None
@@ -430,7 +432,11 @@ def _resolve_one_role(
         except Exception as exc:
             if not _is_refusal(staffing, exc):
                 return None, None
-            refused, first = str(first), exc
+            # Dropping the raise did not clear the refusal, so the raise was not its cause. Name
+            # it only when it was refused for a reason of its own, never by repeating the message.
+            if str(exc) != str(first):
+                refused = str(first)
+            first = exc
     try:
         staffing.resolve_role(role, root=root, require_lens=False)
     except Exception as exc:

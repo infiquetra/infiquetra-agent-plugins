@@ -449,7 +449,7 @@ def resolve_build_unit_tier(
     work_shape: str | None = None,
     root: Path | None = None,
     jev_raise: dict[str, Any] | None = None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Resolve the tier for a directly launched build unit (WK3 #929, one resolver since #93).
 
     Every input goes to fleet-core's staffing resolver, ``staffing.resolve_shape``, which owns the
@@ -459,6 +459,10 @@ def resolve_build_unit_tier(
     ``worker`` role's work shape (``staffing.unit_work_shape_default()``, the ``implementation``
     shape), never a literal here. ``root`` is where the repository overlay is read from; it
     defaults to the working directory, as admission's does.
+
+    The result carries the resolver's ``source`` (which layer won). When a ``jev_raise`` was passed
+    but a higher layer won, ``jev_raise_set_aside`` is true: a plan-recorded tier outranks a raise,
+    and the evidence must show the raise was set aside rather than silently dropped.
 
     **An explicit tier is validated against the same vocabulary its sibling path resolves from.**
     It used to be returned after a key-presence check alone, so a plan naming ``{"model": "gpt-5"}``
@@ -482,7 +486,16 @@ def resolve_build_unit_tier(
     staffing = bundled_fleet.load("staffing")
     shape = work_shape or staffing.unit_work_shape_default()
     decision = staffing.resolve_shape(shape, root=root, answer=plan_tier, jev_raise=jev_raise)
-    return {"model": decision.model, "effort": decision.effort}
+    resolved: dict[str, Any] = {
+        "model": decision.model,
+        "effort": decision.effort,
+        "source": decision.source,
+    }
+    if jev_raise is not None and decision.source != "jev-raise":
+        # A valid raise a higher layer outranked (a plan tier passed as the operator's answer, or
+        # the repository overlay). Say so, so the execution evidence shows it was set aside.
+        resolved["jev_raise_set_aside"] = True
+    return resolved
 
 
 def _build_parser() -> argparse.ArgumentParser:

@@ -283,6 +283,23 @@ last-writer-wins under it.
 **Generalizable rule.** A whole-document writer that shares its file with other writers must
 re-read under a shared lock at save time and merge its owned keys onto that fresh copy; keeping
 unknown keys from the load is necessary but not sufficient.
+### Diagnosing a refusal by retrying without one input blames that input unless the retry changes the answer
+
+**Evidence.** The second review of issue #93 found that `_resolve_one_role` in
+`plugins/saga/scripts/admission.py` retried a refused role without its recorded Jev raise and, when
+the retry was refused too, reported the first message as "its recorded raise was also refused". For
+a Claude-only shape on a codex-pinned worker both calls fail with the same message before any layer
+is read, so the error printed it twice and blamed the raise.
+`test_admission_does_not_blame_a_raise_that_did_not_cause_the_refusal` and
+`test_admission_names_a_refused_raise_beside_the_role_refusal` in
+`plugins/saga/tests/test_admission.py` now pin both outcomes.
+
+**Mechanism.** Removing an input and still failing proves only that the input was not sufficient
+for the failure; the original error is attributable to it only if it differs from the retry's.
+
+**Generalizable rule.** When you infer a cause by removing an input, name that input only if the
+result changed when you removed it.
+
 ### A fail-open `except` around a resolver turns the resolver's new refusals into silent omissions
 
 **Evidence.** Review of issue #93 found that `_resolve_staffing` in

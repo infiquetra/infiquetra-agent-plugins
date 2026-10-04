@@ -2150,6 +2150,89 @@ def test_admission_fails_loud_when_staffing_refuses_a_role(adm: ModuleType) -> N
         adm.fill_defaults(record, {}, staffing)
 
 
+def test_admission_does_not_blame_a_raise_that_did_not_cause_the_refusal(
+    adm: ModuleType,
+) -> None:
+    # A valid raise on a worker whose Claude-only shape refuses the codex pin: dropping the raise
+    # leaves the same refusal, so the raise is not named and the message appears once.
+    real = _bundled_staffing(adm)
+
+    def resolve_role(role: str, **kwargs: Any) -> Any:
+        return real.resolve_shape(
+            "implementation", vendor="codex", root=kwargs.get("root"),
+            jev_raise=kwargs.get("jev_raise"),
+        )
+
+    staffing = SimpleNamespace(
+        roles=lambda: {"worker": {}}, resolve_role=resolve_role, StaffingError=real.StaffingError
+    )
+    run_record = _load("run_record")
+    record = run_record.RunRecord(issue=93, repo="infiquetra/infiquetra-agent-plugins")
+    configuration = {name: dict(block) for name, block in record.run_configuration.items()}
+    configuration |= {
+        "staffing_models_and_efforts": {
+            "value": {"worker": {"jev_raise": {"model": "opus", "effort": "high"}}},
+            "source": "staffing",
+        }
+    }
+    record = run_record.RunRecord(**{**record.__dict__, "run_configuration": configuration})
+    with pytest.raises(adm.AdmissionError) as raised:
+        adm.fill_defaults(record, {}, staffing)
+    message = str(raised.value)
+    assert "Claude-only" in message
+    assert message.count("Claude-only") == 1, message
+    assert "recorded raise" not in message
+
+
+def test_admission_names_a_refused_raise_beside_the_role_refusal(adm: ModuleType) -> None:
+    # The raise and the default are refused for different reasons: both reasons, in order.
+    class Refusal(Exception):
+        pass
+
+    def resolve_role(role: str, **kwargs: Any) -> Any:
+        if kwargs.get("jev_raise") is not None:
+            raise Refusal("jev raise names the strongest model")
+        raise Refusal("work shape 'implementation' is Claude-only")
+
+    staffing = SimpleNamespace(
+        roles=lambda: {"worker": {}}, resolve_role=resolve_role, StaffingError=Refusal
+    )
+    run_record = _load("run_record")
+    record = run_record.RunRecord(issue=93, repo="infiquetra/infiquetra-agent-plugins")
+    configuration = {name: dict(block) for name, block in record.run_configuration.items()}
+    configuration |= {
+        "staffing_models_and_efforts": {
+            "value": {"worker": {"jev_raise": {"model": "fable", "effort": "medium"}}},
+            "source": "staffing",
+        }
+    }
+    record = run_record.RunRecord(**{**record.__dict__, "run_configuration": configuration})
+    with pytest.raises(
+        adm.AdmissionError,
+        match=r"'worker': work shape 'implementation' is Claude-only; "
+        r"its recorded raise was also refused: jev raise names the strongest model",
+    ):
+        adm.fill_defaults(record, {}, staffing)
+
+
+def test_admission_stays_fail_open_for_a_staffing_component_too_old_for_its_arguments(
+    adm: ModuleType,
+) -> None:
+    # The documented fail-open path: a component whose resolve_role takes only the role (no
+    # root= or jev_raise=) and has no StaffingError. Admission proceeds and the role is absent.
+    staffing = SimpleNamespace(
+        roles=lambda: {"worker": {}},
+        resolve_role=lambda role: SimpleNamespace(
+            vendor="claude", model="opus", effort="medium", source="policy"
+        ),
+    )
+    run_record = _load("run_record")
+    record = run_record.RunRecord(issue=93, repo="infiquetra/infiquetra-agent-plugins")
+    filled = adm.fill_defaults(record, {}, staffing)
+    block = filled.run_configuration.get("staffing_models_and_efforts")
+    assert block is None or "worker" not in (block.get("value") or {})
+
+
 def test_admission_still_skips_the_lens_reviewer_without_a_lens(
     adm: ModuleType, repo_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2166,10 +2249,10 @@ def test_the_build_unit_tier_passes_a_recorded_raise_to_the_resolver(tmp_path: P
     raised = lifecycle_state.resolve_build_unit_tier(
         root=tmp_path, jev_raise={"model": "opus", "effort": "high"}
     )
-    assert raised == {"model": "opus", "effort": "high"}
+    assert raised == {"model": "opus", "effort": "high", "source": "jev-raise"}
     command = _plan_command(tmp_path, "--jev-raise", '{"model": "opus", "effort": "high"}')
     assert command.returncode == 0, command.stderr
-    assert json.loads(command.stdout) == {"model": "opus", "effort": "high"}
+    assert json.loads(command.stdout) == {"model": "opus", "effort": "high", "source": "jev-raise"}
     refused = _plan_command(tmp_path, "--jev-raise", '{"model": "fable", "effort": "medium"}')
     assert refused.returncode == 2
     assert "jev raise" in json.loads(refused.stderr)["error"]
@@ -2188,22 +2271,40 @@ def test_the_build_unit_tier_reads_the_overlay_from_its_root(
     assert lifecycle_state.resolve_build_unit_tier(root=checkout) == {
         "model": "sonnet",
         "effort": "high",
+        "source": "overlay",
     }
     command = _plan_command(elsewhere, "--root", str(checkout))
     assert command.returncode == 0, command.stderr
-    assert json.loads(command.stdout) == {"model": "sonnet", "effort": "high"}
+    assert json.loads(command.stdout) == {"model": "sonnet", "effort": "high", "source": "overlay"}
+
+
+def test_the_build_unit_command_shows_a_raise_a_plan_tier_set_aside(tmp_path: Path) -> None:
+    # A plan-recorded tier is passed as the operator's answer and outranks a recorded raise; the
+    # command must say the raise was set aside rather than drop it without a trace.
+    command = _plan_command(
+        tmp_path,
+        "--plan-model", "opus", "--plan-effort", "medium",
+        "--jev-raise", '{"model": "opus", "effort": "high"}',
+    )
+    assert command.returncode == 0, command.stderr
+    assert json.loads(command.stdout) == {
+        "model": "opus",
+        "effort": "medium",
+        "source": "operator",
+        "jev_raise_set_aside": True,
+    }
 
 
 def test_the_build_unit_command_runs_as_an_agent_runs_it(tmp_path: Path) -> None:
     undeclared = _plan_command(tmp_path)
     assert undeclared.returncode == 0, undeclared.stderr
-    assert undeclared.stdout.strip() == '{"model": "opus", "effort": "medium"}'
+    assert undeclared.stdout.strip() == '{"model": "opus", "effort": "medium", "source": "policy"}'
 
     mechanical = _plan_command(tmp_path, "--work-shape", "mechanical")
-    assert json.loads(mechanical.stdout) == {"model": "sonnet", "effort": "medium"}
+    assert json.loads(mechanical.stdout) == {"model": "sonnet", "effort": "medium", "source": "policy"}
 
     explicit = _plan_command(tmp_path, "--plan-model", "haiku", "--plan-effort", "low")
-    assert json.loads(explicit.stdout) == {"model": "haiku", "effort": "low"}
+    assert json.loads(explicit.stdout) == {"model": "haiku", "effort": "low", "source": "operator"}
 
     unknown = _plan_command(tmp_path, "--work-shape", "nope")
     assert unknown.returncode == 2
