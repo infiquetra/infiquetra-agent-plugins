@@ -21,5 +21,6 @@
   "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
   "commands": "./com.infiquetra.claude/commands/",
   "hooks": "./com.infiquetra.claude/hooks/hooks.json",
-  "skills": "./skills/"
+  "skills": "./skills/",
+  "types": "./com.infiquetra.claude/types/index.d.ts"
 }

@@ -1,0 +1,75 @@
+# Cycle-21 mutation proof - Claude Code module sources stay in the Claude adapter
+# Digests are bound by MutationProofBindingTest: change a graded file
+# without re-running this proof and the suite fails. Paths are repository-relative.
+#
+# Supersedes 2026-09-22-cycle20-mutation-proof-inert-placeholder-users.txt for
+# the binding test only. Cycle 20 is preserved unedited. Reason: issue #101
+# (mods U0) added one guard to scripts/check_repo.py,
+# check_claude_module_sources, wired into check_repo(). It refuses a file with
+# any suffix Claude Code loads as a hooks module (.ts .tsx .mts .cts .js .jsx
+# .mjs .cjs) outside plugins/<package>/com.infiquetra.claude/, pruning
+# dot-directories and node_modules, __pycache__ and venv.
+#
+# The other four graded files were not edited and were not re-graded:
+#   plugins/unifi/scripts/site_profile.py
+#   scripts/assess_clients.py
+#   scripts/check_compatibility_matrix.py
+#   scripts/port_config.py
+# Their cycle-19 digests (carried unchanged through cycle 20) are carried below.
+#
+# This cycle graded ONLY the new guard. Every other guard inside
+# scripts/check_repo.py was not re-patched here.
+#
+# Runner: each mutation is one exact string replacement in scripts/check_repo.py,
+# then `python3 -m unittest tests.test_check_repo tests.test_claude_plugin_packaging`,
+# then the pristine bytes are written back. MutationProofBindingTest is not in
+# those two modules, so it is excluded from grading by construction.
+#
+# One round of this proof before the final one found two survivors, and the
+# tests were strengthened before this run: narrowing ENGINE_MODULE_SUFFIXES
+# survived because the suffix test iterated the gate's own constant (it now
+# lists the eight suffixes itself), and deleting `parts[0] == "plugins"`
+# survived because no fixture put an adapter-named directory two levels below
+# a top-level directory other than plugins/ (vendor/example/com.infiquetra.claude/
+# now does). Both are killed below.
+
+## scripts/check_repo.py -- one new guard, seven mutations, seven killed
+
+## MUTATION 1: the wire: `*check_claude_module_sources(root),` deleted from check_repo()
+   Killed by: tests.test_check_repo.GateWiringTests.test_the_gate_reports_a_module_source_outside_the_claude_adapter
+   FAILED (failures=1)
+## MUTATION 2: the check reports nothing: `continue` inserted before `errors.append(`
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_an_adapter_of_the_same_name_outside_a_package_is_not_an_adapter
+   FAILED (failures=12)
+## MUTATION 3: ENGINE_MODULE_SUFFIXES narrowed to (".ts",)
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_every_suffix_the_engine_loads_is_refused_outside_the_adapter
+   FAILED (failures=8)
+## MUTATION 4: dot-directory pruning removed: `not name.startswith(".") and ` deleted
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_engine_written_declarations_in_a_dot_directory_are_ignored
+   FAILED (failures=1)
+## MUTATION 5: node_modules dropped from MODULE_SOURCE_PRUNED_DIRECTORY_NAMES
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_dependency_and_cache_directories_are_ignored
+   FAILED (failures=1)
+## MUTATION 6: adapter test loosened: `parts[0] == "plugins" and ` deleted
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_an_adapter_of_the_same_name_outside_a_package_is_not_an_adapter
+   FAILED (failures=1)
+## MUTATION 7: adapter test loosened: adapter name anywhere in the path counts
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_an_adapter_of_the_same_name_outside_a_package_is_not_an_adapter
+   FAILED (failures=1)
+
+## RESTORED
+# carried from cycle 19, not re-graded in this cycle:
+plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
+# carried from cycle 19, not re-graded in this cycle:
+scripts/assess_clients.py sha256: 2f8fafe988f791e53403d619ed61e4749930838435d001993e8cf581ca1ad9d8
+# carried from cycle 19, not re-graded in this cycle:
+scripts/check_compatibility_matrix.py sha256: 6850094b2af1624f6c59a9ef5d898a3af8e14e097a2235065948ae5796309de5
+scripts/check_repo.py sha256: 6a725c6c04451166e1921dbff6e13e7649184404cd732bde7173e964eefebf3d
+# carried from cycle 19, not re-graded in this cycle:
+scripts/port_config.py sha256: 56216b7c8018b361d611356e21bc2383cb7d71ebf478f28436fee3c5c8e46b17
+byte-identical to pristine: YES
+
+## SCANNER OUTPUT ON THE BRANCH (issue/101-mods-foundation)
+# python3 scripts/check_repo.py -> "Repository validation passed."
+# check_claude_module_sources(ROOT) -> [] (zero hits; the five new .ts files
+# sit under plugins/saga/com.infiquetra.claude/ and plugins/orchestrate/com.infiquetra.claude/)

@@ -80,7 +80,15 @@ def test_hooks_json_is_valid() -> None:
     """hooks.json must itself be parseable JSON."""
     hooks_json = ROOT / "plugins" / "saga" / "com.infiquetra.claude" / "hooks" / "hooks.json"
     data = json.loads(hooks_json.read_text())
-    assert set(data) == {"hooks"}
+    assert set(data) == {"hooks", "modules"}
+
+
+def test_hooks_json_names_the_one_hooks_module() -> None:
+    """The mods load from one module named beside the command hooks, never instead of them."""
+    hooks_json = ROOT / "plugins" / "saga" / "com.infiquetra.claude" / "hooks" / "hooks.json"
+    data = json.loads(hooks_json.read_text())
+    assert data["modules"] == ["../mods/index.ts"]
+    assert (hooks_json.parent / data["modules"][0]).resolve().is_file()
 
 
 def test_hooks_json_wires_pretooluse() -> None:

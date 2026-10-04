@@ -1101,7 +1101,24 @@ class MutationProofBindingTest(unittest.TestCase):
         changes a graded file's bytes. Counting that as a kill made every
         mutation a kill by construction -- see the cycle-12 proof's header.
 
-        The document is cycle 20. Cycle 19 remains the proof of the bytes
+        The document is cycle 23. Cycle 22 remains the proof of the bytes
+        before review cycle 2 of issue #101 made the module-source check take
+        its candidates from git, stop pruning ``node_modules`` and refuse the
+        engine-written package ``tsconfig.json``; cycle 23 re-grades only that
+        guard (eighteen mutations, eighteen killed) and carries the other four
+        digests.
+
+        Cycle 22's account follows. Cycle 21 remains the proof of the bytes
+        before review cycle 1 of issue #101 stopped the module-source walk from
+        pruning every dot-directory; cycle 22 re-grades only that guard (eleven
+        mutations, eleven killed) and carries the other four digests.
+
+        Cycle 21's account follows. Cycle 20 remains the proof of the bytes
+        before issue #101 added ``check_claude_module_sources`` to
+        ``scripts/check_repo.py``; cycle 21 grades only that guard (seven
+        mutations, seven killed) and carries the other four digests.
+
+        Cycle 20's account follows. Cycle 19 remains the proof of the bytes
         before the allowlist was replaced, and is preserved unedited. Cycle
         20 exists because ``scripts/check_repo.py`` gained one more guard: a
         review found that ``MACHINE_SPECIFIC_PATH_ALLOWLIST`` exempted a file
@@ -1120,7 +1137,7 @@ class MutationProofBindingTest(unittest.TestCase):
         """
         root = self.EVIDENCE.parent.parent
         recorded = self._recorded(
-            "2026-09-22-cycle20-mutation-proof-inert-placeholder-users.txt"
+            "2026-10-04-cycle23-mutation-proof-claude-module-sources.txt"
         )
         self.assertEqual(set(recorded), set(self.GRADED), recorded)
         for relative in self.GRADED:

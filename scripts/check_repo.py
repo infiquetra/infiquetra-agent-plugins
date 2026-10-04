@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import unquote
@@ -281,6 +283,58 @@ INERT_HOME_DIRECTORY_USERS = frozenset({"operator", "example", "op", "test"})
 # record they preserve (see the 2026-09-22 custody-move decision item 6,
 # "Captured fixture transcripts keep the machine paths they recorded").
 MACHINE_SPECIFIC_PATH_SCAN_DIRECTORIES = ("plugins", "scripts", "ports", "schemas", "tests")
+
+# Every suffix Claude Code loads as a hooks module (a "mod"). The engine treats
+# each of them as an ES module whatever the suffix, so a ``.js`` mod is as
+# Claude-specific as a ``.ts`` one, and all eight are held to the same place.
+ENGINE_MODULE_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
+
+# The only directory a module source may sit in: a package's Claude adapter.
+CLAUDE_ADAPTER_DIRECTORY_NAME = "com.infiquetra.claude"
+
+# When the repository is a git work tree, the module-source check takes its
+# candidates from git (tracked files plus untracked files ``.gitignore`` does not
+# exclude), so ``.gitignore`` stays the one authority on what can be committed.
+# Without git it walks the tree and prunes these directory names instead: git's
+# own data, and the cache, build and local agent-state directories the
+# repository's ``.gitignore`` keeps out of every commit
+# (``ModuleSourceFallbackTests`` checks the list against ``.gitignore``). A
+# ``node_modules`` directory is not ignored and is walked, because a committed
+# dependency directory is as misplaced as any other module source. Other
+# dot-directories are walked too, because several of them are committed and
+# ship: ``.claude-plugin/``, ``.codex-plugin/``, ``.github/`` and ``.agents/``.
+MODULE_SOURCE_PRUNED_DIRECTORY_NAMES = frozenset(
+    {
+        ".git",
+        "__pycache__",
+        "venv",
+        ".venv",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".pytest_cache",
+        "htmlcov",
+        "dist",
+        "build",
+        ".claude",
+        ".saga",
+        ".serena",
+        ".hermes",
+        ".qwen",
+        "memories",
+        "sessions",
+    }
+)
+
+# The one committed-looking path the check also skips: the API declarations
+# ``claude --plugin-dir`` writes into ``<package>/.claude-plugin/types/``. That
+# directory carries its own ``.gitignore`` and never ships.
+ENGINE_WRITTEN_TYPES_DIRECTORY = (".claude-plugin", "types")
+
+# The other file ``claude --plugin-dir`` writes when a package has a hooks
+# module: ``<package>/tsconfig.json``, pointing at the engine-written types. It
+# is Claude-only, so it must never be committed at the portable package root;
+# the repository ``.gitignore`` ignores it and this check refuses it.
+ENGINE_WRITTEN_PACKAGE_TSCONFIG = "tsconfig.json"
 
 
 def sha256_bytes(payload: bytes) -> str:
@@ -997,6 +1051,104 @@ def check_machine_specific_paths(root: Path) -> list[str]:
     return errors
 
 
+def _git_candidate_files(root: Path) -> list[str] | None:
+    """Every file git would let a commit carry under *root*, or None without git.
+
+    Tracked files plus untracked files ``.gitignore`` does not exclude. None when
+    git is missing, fails, or *root* is not the top of its own work tree (a
+    temporary directory inside some other checkout must not borrow its files).
+    """
+    try:
+        top = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if top.returncode != 0 or Path(top.stdout.strip()).resolve() != root.resolve():
+            return None
+        listed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "-z",
+            ],
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if listed.returncode != 0:
+        return None
+    return sorted({name for name in listed.stdout.decode("utf-8").split("\0") if name})
+
+
+def _walked_candidate_files(root: Path) -> list[str]:
+    """The fallback without git: walk *root*, pruning what ``.gitignore`` excludes."""
+    found: list[str] = []
+    for current, directories, files in os.walk(root):
+        relative_directory = Path(current).relative_to(root)
+        directories[:] = sorted(
+            name for name in directories if name not in MODULE_SOURCE_PRUNED_DIRECTORY_NAMES
+        )
+        found.extend((relative_directory / name).as_posix() for name in files)
+    return sorted(found)
+
+
+def check_claude_module_sources(root: Path) -> list[str]:
+    """Refuse a TypeScript or JavaScript module, or Claude's tsconfig, outside a Claude adapter.
+
+    Claude Code mods are TypeScript modules the Claude CLI loads from a
+    package's hooks file, and nothing but Claude runs them. The portable core
+    must stay vendor-neutral (AGENTS.md, "Rules"), so a module source belongs
+    under ``plugins/<package>/com.infiquetra.claude/`` and nowhere else: one at a
+    package root, under ``skills/`` or ``scripts/``, or anywhere outside
+    ``plugins/`` would be read as portable material by every other harness that
+    reads the package. The same holds for the ``tsconfig.json`` the engine
+    writes at a package root when it loads a hooks module.
+
+    The check covers the whole repository rather than ``plugins/`` alone,
+    because a module dropped in ``scripts/`` or ``tests/`` is just as misplaced.
+    It includes committed dot-directories such as ``.claude-plugin/``, which
+    holds distribution metadata only (DECISIONS.md, 2026-08-25). In a git work
+    tree the candidates are the files git would let a commit carry; otherwise a
+    walk prunes what ``.gitignore`` excludes. Either way the engine-written
+    ``.claude-plugin/types/`` is skipped, because it ignores itself in git.
+    """
+    candidates = _git_candidate_files(root)
+    if candidates is None:
+        candidates = _walked_candidate_files(root)
+    errors: list[str] = []
+    for relative in candidates:
+        parts = tuple(relative.split("/"))
+        if len(parts) >= 3 and parts[0] == "plugins" and parts[2] == CLAUDE_ADAPTER_DIRECTORY_NAME:
+            continue
+        if any(
+            parts[index : index + 2] == ENGINE_WRITTEN_TYPES_DIRECTORY
+            for index in range(len(parts) - 2)
+        ):
+            continue
+        at_package_root = len(parts) == 3 and parts[0] == "plugins"
+        if at_package_root and parts[2] == ENGINE_WRITTEN_PACKAGE_TSCONFIG:
+            errors.append(
+                f"{relative}: the tsconfig Claude Code writes when it loads a hooks module; it "
+                "is Claude-only and must not be committed at the portable package root"
+            )
+            continue
+        if not parts[-1].lower().endswith(ENGINE_MODULE_SUFFIXES):
+            continue
+        errors.append(
+            f"{relative}: TypeScript/JavaScript module source outside a Claude adapter; "
+            f"Claude Code mods belong under plugins/<package>/{CLAUDE_ADAPTER_DIRECTORY_NAME}/"
+        )
+    return errors
+
+
 def check_port_descriptors(root: Path) -> list[str]:
     """Every port descriptor loads, and names a package tree that exists.
 
@@ -1098,6 +1250,7 @@ def check_repo(root: Path) -> list[str]:
         *check_skill_frontmatter(root),
         *check_secret_free_values(root),
         *check_machine_specific_paths(root),
+        *check_claude_module_sources(root),
     ]
 
 

@@ -1,0 +1,83 @@
+# Cycle-22 mutation proof - Claude Code module sources stay in the Claude adapter
+# Digests are bound by MutationProofBindingTest: change a graded file
+# without re-running this proof and the suite fails. Paths are repository-relative.
+#
+# Supersedes 2026-10-04-cycle21-mutation-proof-claude-module-sources.txt for
+# the binding test only. Cycle 21 is preserved unedited. Reason: review cycle 1
+# of issue #101 (mods U0) found that check_claude_module_sources pruned every
+# dot-directory on the claim that none is committed. Several are committed and
+# ship (.claude-plugin/, .codex-plugin/, .github/, .agents/), so a module source
+# under plugins/<package>/.claude-plugin/ passed the gate. The walk now prunes
+# by name only: .git, node_modules, __pycache__, venv, and the ignored
+# dependency, cache and agent-state directories (.venv, .mypy_cache, .ruff_cache,
+# .pytest_cache, .claude, .saga, .serena, .hermes, .qwen), plus the engine-written
+# <package>/.claude-plugin/types/ directory, which carries its own .gitignore.
+#
+# The other four graded files were not edited and were not re-graded:
+#   plugins/unifi/scripts/site_profile.py
+#   scripts/assess_clients.py
+#   scripts/check_compatibility_matrix.py
+#   scripts/port_config.py
+# Their cycle-19 digests (carried unchanged through cycles 20 and 21) are carried below.
+#
+# This cycle re-graded ONLY check_claude_module_sources. Every other guard inside
+# scripts/check_repo.py was not re-patched here.
+#
+# Runner: each mutation is one exact string replacement in scripts/check_repo.py,
+# then `python3 -m unittest tests.test_check_repo tests.test_claude_plugin_packaging`,
+# then the pristine bytes are written back. MutationProofBindingTest is not in
+# those two modules, so it is excluded from grading by construction. Each
+# mutation names the first test that killed it.
+
+## scripts/check_repo.py -- one guard, eleven mutations, eleven killed
+
+## MUTATION 1: the wire: `*check_claude_module_sources(root),` deleted from check_repo()
+   Killed by: tests.test_check_repo.GateWiringTests.test_the_gate_reports_a_module_source_outside_the_claude_adapter
+   FAILED (failures=1)
+## MUTATION 2: the check reports nothing: `continue` inserted before `errors.append(`
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_a_types_directory_elsewhere_is_still_walked
+   FAILED (failures=14)
+## MUTATION 3: ENGINE_MODULE_SUFFIXES narrowed to (".ts",)
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_committed_dot_directories_are_walked
+   FAILED (failures=9)
+## MUTATION 4: the cycle-21 rule restored: every dot-directory pruned again
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_a_types_directory_elsewhere_is_still_walked
+   FAILED (failures=2)
+## MUTATION 5: the engine-written .claude-plugin/types/ exemption removed
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_committed_dot_directories_are_walked
+   FAILED (failures=2)
+## MUTATION 6: the types exemption widened to every directory named types
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_a_types_directory_elsewhere_is_still_walked
+   FAILED (failures=2)
+## MUTATION 7: ".git" dropped from MODULE_SOURCE_PRUNED_DIRECTORY_NAMES
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_ignored_local_state_directories_are_not_walked
+   FAILED (failures=1)
+## MUTATION 8: ".claude" (agent worktrees) dropped from MODULE_SOURCE_PRUNED_DIRECTORY_NAMES
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_ignored_local_state_directories_are_not_walked
+   FAILED (failures=1)
+## MUTATION 9: node_modules dropped from MODULE_SOURCE_PRUNED_DIRECTORY_NAMES
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_dependency_and_cache_directories_are_ignored
+   FAILED (failures=1)
+## MUTATION 10: adapter test loosened: `parts[0] == "plugins" and ` deleted
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_an_adapter_of_the_same_name_outside_a_package_is_not_an_adapter
+   FAILED (failures=1)
+## MUTATION 11: adapter test loosened: adapter name anywhere in the path counts
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_an_adapter_of_the_same_name_outside_a_package_is_not_an_adapter
+   FAILED (failures=1)
+
+## RESTORED
+# carried from cycle 19, not re-graded in this cycle:
+plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
+# carried from cycle 19, not re-graded in this cycle:
+scripts/assess_clients.py sha256: 2f8fafe988f791e53403d619ed61e4749930838435d001993e8cf581ca1ad9d8
+# carried from cycle 19, not re-graded in this cycle:
+scripts/check_compatibility_matrix.py sha256: 6850094b2af1624f6c59a9ef5d898a3af8e14e097a2235065948ae5796309de5
+scripts/check_repo.py sha256: 905ce856e11f3a8281ed2eee16db55b76efca863573fee90639ca96b88562ff2
+# carried from cycle 19, not re-graded in this cycle:
+scripts/port_config.py sha256: 56216b7c8018b361d611356e21bc2383cb7d71ebf478f28436fee3c5c8e46b17
+byte-identical to pristine: YES
+
+## SCANNER OUTPUT ON THE BRANCH (issue/101-mods-foundation)
+# python3 scripts/check_repo.py -> "Repository validation passed."
+# check_claude_module_sources(ROOT) -> [] on this worktree, and [] on the primary
+# checkout, whose ignored .claude/ holds agent worktrees with whole checkouts.

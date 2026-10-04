@@ -67,3 +67,63 @@ jobs:
 
       - name: Run ported plugin tests
         run: python -m pytest plugins/*/tests -q --import-mode=importlib
+
+  claude-mods:
+    name: Claude Code mods (${{ matrix.claude-code }})
+    runs-on: ubuntu-latest
+    # A separate job because the Claude Code CLI is a dependency, and the
+    # `validate` job above stays the hermetic, standard-library-only baseline.
+    #
+    # The matrix is the floor and the pin. 2.1.286 is the minimum build that
+    # loads these plugins' mods, held by CLAUDE_CODE_FLOOR in
+    # tests/test_claude_plugin_packaging.py and recorded in DECISIONS.md; a
+    # floor that is never exercised is not a floor. 2.1.289 is the build the
+    # mods were written against. Neither run needs a login or a secret.
+    strategy:
+      fail-fast: false
+      matrix:
+        claude-code: ['2.1.286', '2.1.289']
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The package links its native binary in a postinstall script. Run that
+      # script by hand when the npm in use skipped it, then prove the exact
+      # build is the one on PATH.
+      - name: Install Claude Code ${{ matrix.claude-code }}
+        run: |
+          npm install -g "@anthropic-ai/claude-code@${{ matrix.claude-code }}"
+          claude --version || node "$(npm root -g)/@anthropic-ai/claude-code/install.cjs"
+          claude --version | grep -F "${{ matrix.claude-code }} (Claude Code)"
+
+      # Every package whose Claude adapter names a hooks module is validated
+      # and tested, derived from the tree rather than listed here. The guard
+      # keeps the loop from passing by finding nothing.
+      - name: Validate and test every plugin that ships a mod
+        run: |
+          set -euo pipefail
+          visited=""
+          for hooks in plugins/*/com.infiquetra.claude/hooks/hooks.json; do
+            grep -q '"modules"' "$hooks" || continue
+            plugin="${hooks%%/com.infiquetra.claude/*}"
+            claude plugin validate --strict "$plugin"
+            claude plugin test "$plugin"
+            visited="$visited ${plugin#plugins/}"
+          done
+          echo "validated and tested:$visited"
+          for required in saga orchestrate; do
+            case " $visited " in
+              *" $required "*) ;;
+              *) echo "plugins/$required ships no mod that was validated and tested" >&2; exit 1 ;;
+            esac
+          done
+
+      # Run with the CLI on PATH, so the validator test in this module runs
+      # instead of skipping.
+      - name: Run the packaging tests against this build
+        run: python3 -m unittest tests.test_claude_plugin_packaging -v

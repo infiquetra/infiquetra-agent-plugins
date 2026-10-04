@@ -63,6 +63,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import check_repo  # noqa: E402
 import sync_marketplace  # noqa: E402
 
 #: The repository's Claude marketplace. Claude requires this exact location.
@@ -90,12 +91,42 @@ PORTABLE_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
 #: vendor adapter that reads the package.
 CLAUDE_CONVENTION_DIRS = ("hooks", "agents", "commands", "output-styles")
 
-#: The manifest keys whose value is a path into the package.
-COMPONENT_KEYS = ("hooks", "skills", "agents", "commands", "mcpServers", "outputStyles")
+#: The manifest keys whose value is a path into the package. ``types`` names a
+#: plugin's state contract for Claude Code mods: one ``.d.ts`` file.
+COMPONENT_KEYS = ("hooks", "skills", "agents", "commands", "mcpServers", "outputStyles", "types")
 
 #: The component keys that must resolve inside the client extension. A portable
 #: surface may be declared too (``skills``), which is why this is a subset.
-EXTENSION_ONLY_KEYS = ("hooks", "agents", "commands", "mcpServers", "outputStyles")
+EXTENSION_ONLY_KEYS = ("hooks", "agents", "commands", "mcpServers", "outputStyles", "types")
+
+#: Where a package's mod state contract sits inside the client extension.
+TYPES_CONTRACT_RELATIVE = Path(EXTENSION_NAME) / "types" / "index.d.ts"
+
+#: Every suffix Claude Code loads as a hooks module, read from the repository
+#: gate, which is the authority that keeps them in the adapter. The gate's own
+#: test restates the list deliberately, so narrowing it fails there.
+MODULE_SUFFIXES = check_repo.ENGINE_MODULE_SUFFIXES
+
+#: The packages that must ship a hooks module, so the module rules below cannot
+#: pass by finding none.
+MODULE_PACKAGES = ("orchestrate", "saga")
+
+#: The minimum Claude Code build that loads these plugins' mods. The single
+#: authority, as ``tests/test_python_floor.py`` is for Python: the continuous
+#: integration matrix must exercise it, and ``DECISIONS.md`` (2026-10-04, "Claude
+#: Code mods live in the Claude adapter") records why it is this build.
+#:
+#: 2.1.286 is the first build that loads an installed plugin's module by default
+#: and runs ``claude plugin test`` without an environment variable. Earlier
+#: builds keep loading every command hook in the same file and do not load the
+#: module, so an operator there gets the plain fallbacks. That holds only when the
+#: file also carries a ``hooks`` object: 2.1.220 and 2.1.241 refuse a hooks file
+#: without one, ``modules`` or not (see ModuleDeclarationTests).
+CLAUDE_CODE_FLOOR = (2, 1, 286)
+CLAUDE_CODE_FLOOR_VERSION = "{}.{}.{}".format(*CLAUDE_CODE_FLOOR)
+
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+CLAUDE_VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
 #: Expands to the installed package root at runtime.
 PLUGIN_ROOT_TOKEN = "${CLAUDE_PLUGIN_ROOT}"
@@ -519,8 +550,168 @@ class VersionAgreementTests(unittest.TestCase):
                 self.assertIn("marketplace entry", sites)
 
 
-if __name__ == "__main__":
-    unittest.main()
+class ModuleDeclarationTests(unittest.TestCase):
+    """A hooks module is named from the adapter's hooks file, and lives in the adapter.
+
+    Claude Code reads ``modules`` from the hooks file the manifest names: an
+    array of exactly one path, relative to that file (``"modules":
+    "../mods/index.ts"`` as a string, or a second entry, is refused by
+    ``claude plugin validate``). The module sits beside the command hooks in
+    the same file, so an older build that ignores it keeps every command hook.
+
+    That only works when the file still parses on those builds. 2.1.220 and
+    2.1.241 require ``hooks`` to be an object and refuse the whole file
+    otherwise (debug log: ``Failed to load hooks from ... "path": ["hooks"],
+    "message": "Invalid input: expected record, received undefined"``), so a
+    hooks file that names a module and has no command hook carries ``"hooks":
+    {}``. ``claude plugin validate`` on those builds does not read the file, so
+    only this test catches the omission.
+    """
+
+    @staticmethod
+    def hooks_file(package: Path) -> Path | None:
+        declared = _load(package / CLAUDE_MANIFEST_RELATIVE).get("hooks")
+        if not isinstance(declared, str):
+            return None
+        return package / declared
+
+    def module_packages(self) -> dict[str, tuple[Path, object]]:
+        found: dict[str, tuple[Path, object]] = {}
+        for package in claude_packages():
+            hooks = self.hooks_file(package)
+            if hooks is None or not hooks.is_file():
+                continue
+            payload = _load(hooks)
+            if "modules" in payload:
+                found[package.name] = (hooks, payload["modules"])
+        return found
+
+    def test_the_mod_bearing_packages_declare_a_module(self) -> None:
+        found = self.module_packages()
+        for name in MODULE_PACKAGES:
+            with self.subTest(package=name):
+                self.assertIn(name, found, f"plugins/{name} names no hooks module")
+
+    def test_every_hooks_file_that_names_a_module_carries_a_hooks_object(self) -> None:
+        found = self.module_packages()
+        self.assertTrue(found, "no package names a hooks module, so this rule checks nothing")
+        for name, (hooks, _modules) in found.items():
+            with self.subTest(package=name):
+                self.assertIsInstance(
+                    _load(hooks).get("hooks"),
+                    dict,
+                    f"{hooks.relative_to(ROOT)} names a module but no `hooks` object; "
+                    "Claude Code before 2.1.242 refuses the file",
+                )
+
+    def test_modules_names_exactly_one_module_inside_the_extension(self) -> None:
+        for name, (hooks, modules) in self.module_packages().items():
+            with self.subTest(package=name):
+                self.assertIsInstance(modules, list, "modules must be an array, not a string")
+                assert isinstance(modules, list)
+                self.assertEqual(len(modules), 1, "the engine loads one hooks module per plugin")
+                self.assertIsInstance(modules[0], str)
+                module = (hooks.parent / modules[0]).resolve()
+                self.assertTrue(module.is_file(), f"{modules[0]} does not resolve from {hooks}")
+                self.assertTrue(
+                    module.is_relative_to((PLUGINS / name / EXTENSION_NAME).resolve()),
+                    f"{modules[0]} must live under {EXTENSION_NAME}",
+                )
+                self.assertIn(module.suffix, MODULE_SUFFIXES)
+
+    def test_a_package_with_a_module_ships_a_test_for_it(self) -> None:
+        # `claude plugin test` exits 1 on a plugin with a module and no test
+        # file, which would turn continuous integration red for no defect.
+        for name in self.module_packages():
+            extension = PLUGINS / name / EXTENSION_NAME
+            tests = [
+                path
+                for pattern in ("*.test.ts", "*.test.tsx")
+                for path in extension.rglob(pattern)
+            ]
+            with self.subTest(package=name):
+                self.assertTrue(tests, f"plugins/{name} ships a module and no *.test.ts")
+
+
+class TypesContractTests(unittest.TestCase):
+    """A package's mod state contract is declared by path, and every one on disk is declared."""
+
+    def test_a_declared_types_contract_is_a_declaration_file_in_the_extension(self) -> None:
+        for package in claude_packages():
+            declared = _load(package / CLAUDE_MANIFEST_RELATIVE).get("types")
+            if declared is None:
+                continue
+            with self.subTest(package=package.name):
+                self.assertIsInstance(declared, str)
+                self.assertEqual(
+                    (package / declared).resolve(),
+                    (package / TYPES_CONTRACT_RELATIVE).resolve(),
+                    f"types must name ./{TYPES_CONTRACT_RELATIVE.as_posix()}",
+                )
+                self.assertTrue((package / declared).is_file())
+
+    def test_every_contract_on_disk_is_declared_by_its_manifest(self) -> None:
+        # The reverse direction: a contract the manifest does not name is never
+        # checked by `claude plugin validate`, so it can drift silently.
+        contracts = sorted(PLUGINS.glob(f"*/{TYPES_CONTRACT_RELATIVE.as_posix()}"))
+        self.assertIn(
+            PLUGINS / "saga" / TYPES_CONTRACT_RELATIVE,
+            contracts,
+            "saga's state contract is missing, so this rule would pass with nothing to check",
+        )
+        for contract in contracts:
+            package = contract.parents[2]
+            with self.subTest(package=package.name):
+                manifest = package / CLAUDE_MANIFEST_RELATIVE
+                self.assertTrue(manifest.is_file())
+                self.assertEqual(
+                    _load(manifest).get("types"), f"./{TYPES_CONTRACT_RELATIVE.as_posix()}"
+                )
+
+    def test_the_contract_is_self_contained(self) -> None:
+        # The engine requires a contract with no import and no reference.
+        for contract in sorted(PLUGINS.glob(f"*/{TYPES_CONTRACT_RELATIVE.as_posix()}")):
+            text = contract.read_text(encoding="utf-8")
+            with self.subTest(contract=contract.relative_to(ROOT).as_posix()):
+                self.assertNotRegex(text, r"(?m)^\s*import\b")
+                self.assertNotIn("/// <reference", text)
+
+
+class ClaudeCodeFloorTests(unittest.TestCase):
+    """The minimum Claude Code build is one value, and continuous integration runs it."""
+
+    def test_the_mods_job_exercises_the_floor(self) -> None:
+        text = CI_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("claude-mods:", text, "ci.yml has no job that validates and tests the mods")
+        job = text.split("claude-mods:", 1)[1]
+        self.assertIn(f"'{CLAUDE_CODE_FLOOR_VERSION}'", job)
+        self.assertIn("claude plugin validate", job)
+        self.assertIn("claude plugin test", job)
+
+    def test_the_decision_records_the_floor(self) -> None:
+        decisions = (ROOT / "docs" / "engineering-journal" / "DECISIONS.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(f"Claude Code {CLAUDE_CODE_FLOOR_VERSION}", decisions)
+
+
+def installed_claude_version(cli: str) -> tuple[int, int, int] | None:
+    completed = subprocess.run(
+        [cli, "--version"], capture_output=True, text=True, timeout=60, check=False
+    )
+    match = CLAUDE_VERSION.search(completed.stdout)
+    if match is None:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+class InstalledVersionParsingTests(unittest.TestCase):
+    def test_the_version_line_is_parsed(self) -> None:
+        self.assertEqual(
+            CLAUDE_VERSION.search("2.1.289 (Claude Code)\n").groups(), ("2", "1", "289")
+        )
+        self.assertLess((2, 1, 285), CLAUDE_CODE_FLOOR)
+        self.assertGreaterEqual((2, 1, 289), CLAUDE_CODE_FLOOR)
 
 
 class AgentsDeclarationTests(unittest.TestCase):
@@ -547,13 +738,31 @@ class AgentsDeclarationTests(unittest.TestCase):
         cli = shutil.which("claude")
         if cli is None:
             self.skipTest("the claude CLI is not on PATH; the validator cannot be exercised here")
+        version = installed_claude_version(cli)
+        # An unreadable version is a failure, not a skip: continuous integration
+        # installs the CLI so this test runs, and a skip would pass silently.
+        self.assertIsNotNone(version, f"could not read a version from `{cli} --version`")
+        assert version is not None
+        below_floor = version < CLAUDE_CODE_FLOOR
+        mod_packages = set(ModuleDeclarationTests().module_packages())
         for package_root in sorted(ROOT.glob("plugins/*")):
             if not (package_root / ".claude-plugin" / "plugin.json").is_file():
                 continue
             with self.subTest(package=package_root.name):
+                if below_floor and package_root.name in mod_packages:
+                    # Below the floor the validator does not know the mods' API,
+                    # and these packages promise nothing there beyond their
+                    # command hooks. Every other package is still validated.
+                    self.skipTest(
+                        f"claude {version} is below the mods floor {CLAUDE_CODE_FLOOR_VERSION}"
+                    )
                 completed = subprocess.run(
                     [cli, "plugin", "validate", str(package_root)],
                     capture_output=True, text=True, timeout=120, check=False,
                 )
                 self.assertIn("Validation passed", completed.stdout + completed.stderr,
                               (completed.stdout + completed.stderr)[-600:])
+
+
+if __name__ == "__main__":
+    unittest.main()

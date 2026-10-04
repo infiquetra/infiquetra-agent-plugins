@@ -87,6 +87,140 @@ a guessed rate looks exactly like a verified one in the output.
 **Revisit when.** A vendor reports cost directly in its usage data, or the price table's
 `verified_on` passes 30 days (the report warns), or review_incomplete units turn out to be a
 material share of spend.
+### Claude Code mods live in the Claude adapter, load from Claude Code 2.1.286, and are validated in CI
+
+**Author.** Claude for Jeff Cox (issue #101, mods U0, branch `issue/101-mods-foundation`)
+
+**Decision.** A Claude Code mod is a TypeScript module, and it lives only in a
+package's Claude adapter:
+
+- Saga's and orchestrate's modules sit under `com.infiquetra.claude/mods/`.
+  Each adapter's `hooks/hooks.json` names one entry module under `modules`
+  (`["../mods/index.ts"]`), beside saga's command hooks in the same file.
+  Orchestrate had no hooks file, so it gains one holding `modules` and an empty
+  `"hooks": {}`, and its Claude packaging manifest gains the `hooks` path. The
+  empty object is required, not decoration: see the older-build observation.
+- Saga's state contract for mods is `com.infiquetra.claude/types/index.d.ts`,
+  named by `"types"` in `plugins/saga/.claude-plugin/plugin.json`. That is a
+  path-only change, as the 2026-08-25 decision "Claude installs the package
+  root" requires.
+- Mods read saga state only by running `run_record.py show <issue>` through
+  `$.process.run` and parsing its JSON, and write back only through a script's
+  command line. The guarded reader is written once, `readRunRecordWith` in
+  `mods/run-record.ts`; a mod passes it `(argv) => $.process.run(argv)`, and it
+  turns a run that could not start or timed out into reason `'error'`, so no
+  mod carries its own catch.
+- One departure from "never parse prose": `run_record.py show` exits 2 both for
+  a missing record and for every other loader failure, with no exit code of its
+  own for the missing case. The reader tells them apart by the start of the
+  script's stderr message (`NO_RECORD_PREFIX`), and
+  `plugins/saga/tests/test_mod_run_record_contract.py` pins that prefix and
+  both exit codes against the real script. Revisit when `run_record.py` gains
+  a distinct exit code for a missing record; the reader then matches the code.
+- Loading a package that has a hooks module with `--plugin-dir` makes the
+  engine write `<package>/tsconfig.json` (and `.claude-plugin/types/`, which
+  carries its own `.gitignore`). The repository `.gitignore` ignores
+  `plugins/*/tsconfig.json`, and `scripts/check_repo.py` refuses one that is
+  committed anyway, so the Claude-only file never lands in the portable root.
+- `scripts/check_repo.py` refuses every suffix the engine loads as a module
+  (`.ts .tsx .mts .cts .js .jsx .mjs .cjs`) outside
+  `plugins/<package>/com.infiquetra.claude/`. In a git work tree it takes its
+  candidates from `git ls-files --cached --others --exclude-standard`, so
+  `.gitignore` is the one authority on what could be committed; without git it
+  walks the tree, pruning a directory list a test checks against `.gitignore`.
+  `node_modules` is not ignored, so a committed dependency directory is checked
+  like any other.
+- The minimum build is **Claude Code 2.1.286**, held as `CLAUDE_CODE_FLOOR` in
+  `tests/test_claude_plugin_packaging.py`. A new `claude-mods` CI job installs
+  2.1.286 and 2.1.289 from npm and runs `claude plugin validate --strict` and
+  `claude plugin test` on every package whose adapter names a module.
+
+**Why 2.1.286.** The card's rule was "2.1.289 or the first build with mods,
+whichever is earlier". Measured on real builds (darwin-arm64 binaries from npm,
+2026-10-03 and 2026-10-04), "the first build with mods" has three readings:
+
+- 2.1.242 is the first build that parses `modules`. It loads a module only
+  behind a server-side rollout flag (`tengu_plugin_hooks_modules`) that is off by
+  default.
+- 2.1.246 has no `claude plugin test` and does not know events the mods will
+  use (`"session.start" is not an event`).
+- 2.1.285, the npm `stable` tag on 2026-10-03, loads an installed plugin's
+  module only with `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` and runs `claude plugin
+  test` only with it set.
+- 2.1.286 is the first build that loads the module by default (debug log:
+  `hooks module saga@inline loaded`) and runs `claude plugin test` with no
+  environment variable.
+
+The mods ship enabled by default (the #92 operator ruling), so the floor is the
+first build where that is true without operator action. Builds below it,
+including the stable channel today, get the plain fallbacks every other harness
+gets.
+
+**Older-build observation (the card's stop condition did not trigger).** A copy
+of saga with this change was loaded with `--plugin-dir` and no network on
+2.1.220, 2.1.241, 2.1.242, 2.1.246, 2.1.285, 2.1.286 and 2.1.289. Every build
+logged `Registered 8 hooks`, which is all eight of saga's command hooks,
+including the PreToolUse gates, and ran the SessionStart hooks. 2.1.220 and
+2.1.241 ignore `modules`. 2.1.242 through 2.1.285 log that the module was not
+loaded and carry on. On 2.1.289 a module that fails to load (`"no.such.event"
+is not an event`) logs `hooks module saga@inline failed to load` and still
+registers the eight command hooks. Builds up to 2.1.246 report the manifest's
+`types` field as an unknown field they ignore (`claude plugin validate` passes
+with that warning); 2.1.285 recognises the field and passes with no warning. So
+the module stays in the same hooks file.
+
+Orchestrate's hooks file was checked separately, because it has no command
+hooks. Holding only `modules`, it fails to load on 2.1.220 and 2.1.241: the
+debug log shows `Failed to load hooks from
+./com.infiquetra.claude/hooks/hooks.json for orchestrate` with `"path":
+["hooks"], "message": "Invalid input: expected record, received undefined"`,
+and the plugin is marked `hook-load-failed`. Its command and skill still load,
+but an operator sees a plugin error that orchestrate never had before. Those
+builds' `claude plugin validate` does not read the hooks file, so validation
+passes and only a real load shows it. With `"hooks": {}` added, 2.1.220,
+2.1.241, 2.1.242, 2.1.285, 2.1.286 and 2.1.289 all load the file with no error
+(`--plugin-dir`, no network, 2026-10-04), and 2.1.286 and 2.1.289 still log
+`hooks module orchestrate@inline loaded`. `ModuleDeclarationTests` in
+`tests/test_claude_plugin_packaging.py` now refuses a hooks file that names a
+module without a `hooks` object. One corner is
+unverified: a build between 2.1.242 and 2.1.284 with the rollout flag turned on
+server-side, loading a module whose API it does not know. The flag could not be
+forced locally.
+
+**The adapter's TypeScript is not type-checked in CI, and that is accepted for
+now.** `claude plugin validate` does not type-check, and the tsconfig the
+engine generates covers only `hooks`, `types` and `tests` at a plugin root, so
+nothing compiles `com.infiquetra.claude/mods/` against
+`com.infiquetra.claude/types/index.d.ts`. A `tsc` step would need this build's
+`claude-code` declarations, which the engine writes only into a folder it loads
+in a session, not during `claude plugin validate` or `claude plugin test`; CI
+has no step that produces them today. Two cheaper guards stand in:
+`KNOWN_SCHEMA` is typed as the contract's `SagaRunRecordSchema`, and
+`plugins/saga/tests/test_mod_run_record_contract.py` checks that the failure
+reasons `run-record.ts` returns are exactly the contract's `SagaRunReadFailure`
+members (renaming `'error'` in the contract fails it). The adapter did
+type-check clean on 2026-10-04 with TypeScript 5.9.3 against the 2.1.289
+declarations bundled with the plugin-authoring skill, using the engine's own
+compiler options plus `allowImportingTsExtensions`; renaming `'error'` in the
+contract then failed with `TS2322`. Revisit when a mod's logic outgrows these
+guards, or when the engine can write its declarations without a session.
+
+**Rejected alternatives.** A separate hooks file for the module, which the card
+named as the fallback if an older build rejected the shared file; no build did.
+Installing the CLI in the `validate` job, which must stay standard-library only.
+A floor of 2.1.242 or 2.1.285, neither of which loads the module without a flag
+or an environment variable. A floor of 2.1.289, which would refuse three builds
+that load and test the module without trouble today.
+
+**Revisit when.** A mod needs an API newer than the floor (raise
+`CLAUDE_CODE_FLOOR`, the CI matrix and this entry together); the npm `stable`
+tag reaches 2.1.286 or later; or the mods API leaves early access.
+
+**Refs.** Issue #101; `plugins/saga/com.infiquetra.claude/`,
+`plugins/orchestrate/com.infiquetra.claude/hooks/hooks.json`,
+`.github/workflows/ci.yml` (`claude-mods`), `scripts/check_repo.py`
+(`check_claude_module_sources`), `tests/test_claude_plugin_packaging.py`
+(`ModuleDeclarationTests`, `TypesContractTests`, `ClaudeCodeFloorTests`).
 
 ## 2026-09-22
 

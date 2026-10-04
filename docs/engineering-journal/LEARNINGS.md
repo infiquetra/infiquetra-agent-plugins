@@ -73,6 +73,43 @@ first draft had converted two writers while the reference said "every".
 
 **Generalizable rule.** When a shared record promises an open key set, test the promise at every
 writer that rewrites whole objects — round-trip a row carrying a key that writer does not own.
+### A Claude Code mod can share parsing across files, but never the engine handle `$`
+### A Claude Code mod cannot pass `$` across an import, but it can pass a closure over `$.process.run`
+
+**Evidence.** Issue #101. `claude plugin validate` (2.1.289) refused a mod file
+that passed `$` to a reader imported from a sibling file: `$ is passed to
+"readRunRecord", imported from "./shared.ts": $ is followed only into a
+function declared in this same file, never across an import`. The same reader
+declared at the top level of the mod's own file validated, and the validator
+reported `calls: $.process.run (via readRunRecord)`. In review cycle 2 a probe
+copy of saga whose `session.start` hook called the imported
+`readRunRecordWith((argv) => $.process.run(argv), $.plugin.root, 7)` passed
+`claude plugin validate --strict` on 2.1.286 and 2.1.289 and reported `calls:
+$.process.run`: the closure keeps `$` in the
+mod's own file, so the validator follows it there. The test kit's `$` has no
+`process` noun at all (`undefined is not an object (evaluating
+'$.process.run')`), so a test body cannot call `$.process.run` itself. A test
+can still drive a mod's hook that does: registering `on('process.run', async
+(_$, e) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated:
+false, isStderrTruncated: false } }))` stubs the engine's runner, and `e.argv`
+is the argv the mod built (a probe plugin passed under `claude plugin test` on
+2.1.289, 2026-10-04).
+
+**Mechanism.** The validator lists which engine calls a module makes (the
+`calls:` line) by following `$` through the module's source, and, as its own
+message says, it follows `$` only into functions declared at the top of the same
+file. A function in another file that takes `$` is refused, not followed. A
+function in another file that takes a plain runner function is not about `$` at
+all; the `$` use it wraps stays in the arrow function the mod writes, which the
+validator sees.
+
+**Generalizable rule.** Share guarded logic across mod files by passing it a
+closure over the engine call (`(argv) => $.process.run(argv)`), never `$`
+itself. Saga's `readRunRecordWith` in `mods/run-record.ts` holds the one
+try/catch every mod relies on for its plain fallback; test it with fake
+runners, test a mod end to end by stubbing `process.run` with
+`on('process.run', ...)`, and pin the script's real exit codes and output with
+a Python test (`plugins/saga/tests/test_mod_run_record_contract.py`).
 
 ## 2026-09-22
 

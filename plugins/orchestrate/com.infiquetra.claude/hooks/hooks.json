@@ -1,0 +1,6 @@
+{
+  "hooks": {},
+  "modules": [
+    "../mods/index.ts"
+  ]
+}

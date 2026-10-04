@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -252,6 +254,28 @@ class GateWiringTests(unittest.TestCase):
             root = Path(directory)
             self.undeclared_bundle(root)
             self.assertTrue(check_repo.check_fleet_bundle_outputs(root))
+
+    @staticmethod
+    def misplaced_module(root: Path) -> None:
+        plugin = make_plugin(root)
+        write(plugin / "skills" / "example" / "pane.ts", "export const x = 1\n")
+
+    def test_the_gate_reports_a_module_source_outside_the_claude_adapter(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.misplaced_module(root)
+            problems = check_repo.check_repo(root)
+        self.assertTrue(
+            any("pane.ts" in problem for problem in problems),
+            f"check_repo did not run the Claude module source check; it reported {problems}",
+        )
+
+    def test_the_module_source_check_finds_it_on_its_own_too(self) -> None:
+        """So a failure of the test above localizes to the wiring, not the check."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.misplaced_module(root)
+            self.assertTrue(check_repo.check_claude_module_sources(root))
 
 
 class ProvenanceManifestTests(unittest.TestCase):
@@ -1114,6 +1138,212 @@ class MachineSpecificPathTests(unittest.TestCase):
     def test_the_committed_repository_has_no_hits(self) -> None:
         """The real gate, against the real tree: no machine-specific path ships."""
         self.assertEqual(check_repo.check_machine_specific_paths(ROOT), [])
+
+
+class ClaudeModuleSourceTests(unittest.TestCase):
+    """A Claude Code mod is Claude-specific, so its source lives only in a Claude adapter."""
+
+    ADAPTER = check_repo.CLAUDE_ADAPTER_DIRECTORY_NAME
+
+    def findings(self, *relative_paths: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            make_plugin(root)
+            for relative in relative_paths:
+                write(root / relative, "export const x = 1\n")
+            return check_repo.check_claude_module_sources(root)
+
+    def test_a_module_inside_the_claude_adapter_is_accepted(self) -> None:
+        self.assertEqual(
+            self.findings(
+                f"plugins/example/{self.ADAPTER}/mods/index.ts",
+                f"plugins/example/{self.ADAPTER}/mods/index.test.ts",
+                f"plugins/example/{self.ADAPTER}/types/index.d.ts",
+                f"plugins/example/{self.ADAPTER}/mods/pane.tsx",
+            ),
+            [],
+        )
+
+    def test_typescript_outside_the_adapter_is_refused_and_named(self) -> None:
+        misplaced = (
+            "plugins/example/index.ts",
+            "plugins/example/skills/example/pane.ts",
+            "plugins/example/types/index.d.ts",
+            "scripts/tool.ts",
+            "tests/helper.mts",
+        )
+        problems = self.findings(*misplaced)
+        self.assertEqual(len(problems), len(misplaced), problems)
+        for relative in misplaced:
+            with self.subTest(path=relative):
+                self.assertTrue(
+                    any(problem.startswith(f"{relative}:") for problem in problems), problems
+                )
+                self.assertTrue(any(self.ADAPTER in problem for problem in problems))
+
+    #: Written out here rather than read from the gate, so narrowing the gate's
+    #: list fails this test instead of shrinking it.
+    ENGINE_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
+
+    def test_every_suffix_the_engine_loads_is_refused_outside_the_adapter(self) -> None:
+        for suffix in self.ENGINE_SUFFIXES:
+            with self.subTest(suffix=suffix):
+                self.assertEqual(len(self.findings(f"plugins/example/mod{suffix}")), 1)
+
+    def test_an_adapter_of_the_same_name_outside_a_package_is_not_an_adapter(self) -> None:
+        # Only plugins/<package>/com.infiquetra.claude/ is a Claude adapter. A
+        # directory that merely carries the name elsewhere does not launder a mod.
+        self.assertEqual(len(self.findings(f"docs/{self.ADAPTER}/mods/index.ts")), 1)
+        self.assertEqual(len(self.findings(f"vendor/example/{self.ADAPTER}/m.ts")), 1)
+        self.assertEqual(len(self.findings(f"plugins/example/x/{self.ADAPTER}/m.ts")), 1)
+
+    def test_engine_written_declarations_in_a_dot_directory_are_ignored(self) -> None:
+        # ``claude --plugin-dir`` lays its API types into .claude-plugin/types/;
+        # they ignore themselves in git and never ship.
+        self.assertEqual(
+            self.findings("plugins/example/.claude-plugin/types/claude-code/index.d.ts"), []
+        )
+
+    def test_committed_dot_directories_are_walked(self) -> None:
+        # .claude-plugin/ and .codex-plugin/ are committed and ship, so a module
+        # there is as misplaced as one at the package root; only the engine's
+        # own .claude-plugin/types/ is skipped.
+        misplaced = (
+            "plugins/example/.claude-plugin/x.ts",
+            "plugins/example/.claude-plugin/mods/index.ts",
+            "plugins/example/.codex-plugin/x.ts",
+            ".github/scripts/x.js",
+        )
+        problems = self.findings(
+            *misplaced, "plugins/example/.claude-plugin/types/claude-code/index.d.ts"
+        )
+        self.assertEqual(len(problems), len(misplaced), problems)
+        for relative in misplaced:
+            with self.subTest(path=relative):
+                self.assertTrue(any(p.startswith(f"{relative}:") for p in problems), problems)
+
+    def test_a_types_directory_elsewhere_is_still_walked(self) -> None:
+        self.assertEqual(len(self.findings("plugins/example/.codex-plugin/types/x.ts")), 1)
+
+    def test_ignored_local_state_directories_are_not_walked(self) -> None:
+        # Agent worktrees under .claude/ hold whole checkouts; walking them would
+        # flag every adapter in them as outside an adapter.
+        self.assertEqual(
+            self.findings(
+                ".git/hooks/x.js",
+                ".claude/worktrees/w/plugins/saga/com.infiquetra.claude/mods/index.ts",
+                ".venv/lib/x.js",
+                ".saga/x.ts",
+            ),
+            [],
+        )
+
+    def test_cache_and_build_directories_are_ignored(self) -> None:
+        self.assertEqual(
+            self.findings(
+                "plugins/example/__pycache__/x.js",
+                "htmlcov/coverage_html_cb_6fb7b396.js",
+                "dist/x.js",
+                "build/x.js",
+            ),
+            [],
+        )
+
+    def test_a_dependency_directory_is_walked_because_git_does_not_ignore_it(self) -> None:
+        misplaced = ("node_modules/pkg/index.js", "plugins/example/skills/node_modules/x.ts")
+        problems = self.findings(*misplaced)
+        self.assertEqual(len(problems), len(misplaced), problems)
+
+    def test_the_engine_written_package_tsconfig_is_refused(self) -> None:
+        problems = self.findings("plugins/example/tsconfig.json")
+        self.assertEqual(len(problems), 1, problems)
+        self.assertTrue(problems[0].startswith("plugins/example/tsconfig.json:"), problems)
+        # Inside the adapter, or deeper in the package, it is not the engine's file.
+        self.assertEqual(
+            self.findings(
+                f"plugins/example/{self.ADAPTER}/tsconfig.json",
+                "plugins/example/skills/example/tsconfig.json",
+            ),
+            [],
+        )
+
+    def test_every_pruned_directory_is_one_the_repository_ignores(self) -> None:
+        # The walk without git restates part of .gitignore; it must never prune a
+        # directory git would let a commit carry.
+        ignored = {
+            line.strip().strip("/")
+            for line in (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+            if line.strip().endswith("/") and not line.startswith("#")
+        }
+        unignored = set(check_repo.MODULE_SOURCE_PRUNED_DIRECTORY_NAMES) - ignored - {".git"}
+        self.assertEqual(unignored, set())
+
+    def test_the_repository_ignores_the_engine_written_package_tsconfig(self) -> None:
+        self.assertIn(
+            "plugins/*/tsconfig.json",
+            (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines(),
+        )
+
+
+    def test_other_files_are_not_module_sources(self) -> None:
+        self.assertEqual(
+            self.findings("plugins/example/scripts/tool.py", "plugins/example/README.md"), []
+        )
+
+    def test_the_repository_itself_keeps_its_mods_in_the_adapters(self) -> None:
+        self.assertEqual(check_repo.check_claude_module_sources(ROOT), [])
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class ClaudeModuleSourceGitTests(unittest.TestCase):
+    """In a git work tree the candidates come from git, so .gitignore is the one authority."""
+
+    ADAPTER = check_repo.CLAUDE_ADAPTER_DIRECTORY_NAME
+
+    def repository(self, directory: str, gitignore: str) -> Path:
+        root = Path(directory)
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        make_plugin(root)
+        write(root / ".gitignore", gitignore)
+        return root
+
+    def test_ignored_files_are_skipped_and_unignored_ones_are_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.repository(directory, "htmlcov/\nplugins/*/tsconfig.json\n")
+            for relative in (
+                "htmlcov/coverage_html.js",
+                "plugins/example/tsconfig.json",
+                f"plugins/example/{self.ADAPTER}/mods/index.ts",
+                "scripts/node_modules/hook.js",
+                "plugins/example/skills/example/pane.ts",
+            ):
+                write(root / relative, "{}\n")
+            problems = check_repo.check_claude_module_sources(root)
+        self.assertEqual(
+            sorted(problem.split(":")[0] for problem in problems),
+            ["plugins/example/skills/example/pane.ts", "scripts/node_modules/hook.js"],
+        )
+
+    def test_a_force_added_package_tsconfig_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.repository(directory, "plugins/*/tsconfig.json\n")
+            write(root / "plugins/example/tsconfig.json", "{}\n")
+            subprocess.run(
+                ["git", "-C", str(root), "add", "-f", "plugins/example/tsconfig.json"], check=True
+            )
+            problems = check_repo.check_claude_module_sources(root)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertTrue(problems[0].startswith("plugins/example/tsconfig.json:"), problems)
+
+    def test_a_root_below_the_top_of_some_other_work_tree_is_walked_instead(self) -> None:
+        # A directory inside another checkout must not borrow that checkout's
+        # .gitignore: here the outer repository ignores the whole root.
+        with tempfile.TemporaryDirectory() as directory:
+            outer = self.repository(directory, "inner/\n")
+            root = outer / "inner"
+            write(root / "scripts" / "hook.ts", "export const x = 1\n")
+            problems = check_repo.check_claude_module_sources(root)
+        self.assertEqual([problem.split(":")[0] for problem in problems], ["scripts/hook.ts"])
 
 
 class ContinuousIntegrationTests(unittest.TestCase):

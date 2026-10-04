@@ -1,0 +1,129 @@
+// The shared way a saga mod reads saga state and writes answers back.
+//
+// Saga's scripts own the run record. A mod never opens the files under
+// `.claude/saga/runs/` and never parses prose: it runs
+// `python3 <plugin root>/scripts/run_record.py show <issue>` and parses the
+// JSON that prints. (One pinned stderr prefix is the single exception; see
+// `EXIT_RECORD_ERROR`.) An answer goes back the same way, through a script's
+// command line, built with `sagaScriptArgv`.
+//
+// The engine's validator follows `$` only into functions declared in the same
+// file as the hook, never across an import, so nothing here takes `$` itself.
+// A closure over `$.process.run` can cross the import, though, so the guarded
+// reader lives here once and a mod's hook passes it the runner:
+//
+//   import { readRunRecordWith } from './run-record.ts'
+//
+//   const read = await readRunRecordWith((argv) => $.process.run(argv), $.plugin.root, issue)
+//
+// `readRunRecordWith` owns the catch: `$.process.run` rejects when the command
+// cannot start (no `python3` on the session's PATH) or outlasts its timeout (30
+// seconds by default), and the reader turns that into reason 'error' so the mod
+// falls back to its plain behaviour instead of throwing. No mod writes its own
+// try/catch around the run.
+//
+// A mod's test can drive the real path too: stub the engine's process runner
+// with `on('process.run', async (_$, e) => ({ value: { exitCode, stdout, stderr,
+// isStdoutTruncated, isStderrTruncated } }))`, see the argv the reader built in
+// `e.argv`, and drive the mod's hook. `plugins/saga/tests/test_mod_run_record_contract.py`
+// pins what the real script prints and exits with.
+
+import type { ProcessRunResult } from 'claude-code'
+import type { SagaRunRead, SagaRunRecord, SagaRunRecordSchema } from '../types/index.d.ts'
+
+/** The record version this module reads; `SCHEMA` in `scripts/run_record.py`. */
+export const KNOWN_SCHEMA: SagaRunRecordSchema = 'run_record.v1'
+
+/** What `$.process.run` resolves to, narrowed to the fields the parser reads. */
+export type ProcessResult = Pick<ProcessRunResult, 'exitCode' | 'stdout' | 'stderr' | 'isStdoutTruncated'>
+
+/** `run_record.py show` exits 3 when its loader meets a record version it does not know. */
+const EXIT_UNKNOWN_VERSION = 3
+
+/**
+ * Exit 2 covers both "no record" and every other loader failure, and the script
+ * has no exit code of its own for a missing record, so the start of its stderr
+ * message tells them apart. This is the one place the reader matches script
+ * text; `test_mod_run_record_contract.py` pins the prefix against the real
+ * script (DECISIONS.md, 2026-10-04).
+ */
+const EXIT_RECORD_ERROR = 2
+const NO_RECORD_PREFIX = 'run_record: no record for issue '
+
+/** A script under `scripts/` is named by its file name alone. */
+const SCRIPT_NAME = /^[A-Za-z0-9_][A-Za-z0-9_.-]*\.py$/
+
+function requireIssue(issue: number): void {
+  if (!Number.isInteger(issue) || issue <= 0) {
+    throw new RangeError(`not an issue number: ${issue}`)
+  }
+}
+
+/**
+ * The argv that runs one of saga's scripts. `$.process.run` takes argv with no
+ * shell, so nothing here is quoted; a script name that could leave `scripts/`
+ * is refused.
+ */
+export function sagaScriptArgv(pluginRoot: string, script: string, args: readonly string[]): string[] {
+  if (!SCRIPT_NAME.test(script) || script.includes('..')) {
+    throw new RangeError(`not a saga script name: ${script}`)
+  }
+  return ['python3', `${pluginRoot}/scripts/${script}`, ...args]
+}
+
+/** The argv that prints one issue's run record as JSON. */
+export function runRecordShowArgv(pluginRoot: string, issue: number): string[] {
+  requireIssue(issue)
+  return sagaScriptArgv(pluginRoot, 'run_record.py', ['show', String(issue)])
+}
+
+/** The read a mod reports when `$.process.run` rejected, so the script never ran to an exit. */
+export function runRecordRunFailed(err: unknown): SagaRunRead {
+  const detail = err instanceof Error ? err.message : String(err)
+  return { ok: false, reason: 'error', detail: `run_record show did not run: ${detail}` }
+}
+
+/** Turn what `run_record.py show` did into a record, or the reason there is none. */
+export function parseRunRecordShow(ran: ProcessResult): SagaRunRead {
+  const detail = ran.stderr.trim()
+  if (ran.exitCode === EXIT_UNKNOWN_VERSION) return { ok: false, reason: 'unknown-version', detail }
+  if (ran.exitCode === EXIT_RECORD_ERROR && detail.startsWith(NO_RECORD_PREFIX)) {
+    return { ok: false, reason: 'no-record', detail }
+  }
+  if (ran.exitCode !== 0) return { ok: false, reason: 'error', detail }
+  if (ran.isStdoutTruncated) {
+    // The engine keeps only the first 4 MiB of standard output; the JSON is cut.
+    return { ok: false, reason: 'unreadable', detail: 'run_record show printed more than the engine keeps (4 MiB); the record was cut off' }
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(ran.stdout)
+  } catch (err) {
+    return { ok: false, reason: 'unreadable', detail: String(err) }
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return { ok: false, reason: 'unreadable', detail: 'run_record show did not print a JSON object' }
+  }
+  const schema = (parsed as { schema?: unknown }).schema
+  if (schema !== KNOWN_SCHEMA) {
+    return { ok: false, reason: 'unknown-version', detail: `record version ${JSON.stringify(schema)} is not ${KNOWN_SCHEMA}` }
+  }
+  return { ok: true, record: parsed as SagaRunRecord }
+}
+
+/** Runs one argv and resolves to its result; a mod passes `(argv) => $.process.run(argv)`. */
+export type ProcessRunner = (argv: string[]) => Promise<ProcessResult>
+
+/**
+ * Read one issue's run record through `run`. Never rejects: a run that could
+ * not start or timed out, and an issue number that is not one, come back as
+ * reason 'error', so every mod keeps its plain fallback without a catch of its own.
+ */
+export async function readRunRecordWith(run: ProcessRunner, pluginRoot: string, issue: number): Promise<SagaRunRead> {
+  try {
+    return parseRunRecordShow(await run(runRecordShowArgv(pluginRoot, issue)))
+  } catch (err) {
+    return runRecordRunFailed(err)
+  }
+}
