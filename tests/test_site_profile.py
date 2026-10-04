@@ -1101,7 +1101,12 @@ class MutationProofBindingTest(unittest.TestCase):
         changes a graded file's bytes. Counting that as a kill made every
         mutation a kill by construction -- see the cycle-12 proof's header.
 
-        The document is cycle 21. Cycle 20 remains the proof of the bytes
+        The document is cycle 22. Cycle 21 remains the proof of the bytes
+        before review cycle 1 of issue #101 stopped the module-source walk from
+        pruning every dot-directory; cycle 22 re-grades only that guard (eleven
+        mutations, eleven killed) and carries the other four digests.
+
+        Cycle 21's account follows. Cycle 20 remains the proof of the bytes
         before issue #101 added ``check_claude_module_sources`` to
         ``scripts/check_repo.py``; cycle 21 grades only that guard (seven
         mutations, seven killed) and carries the other four digests.
@@ -1125,7 +1130,7 @@ class MutationProofBindingTest(unittest.TestCase):
         """
         root = self.EVIDENCE.parent.parent
         recorded = self._recorded(
-            "2026-10-04-cycle21-mutation-proof-claude-module-sources.txt"
+            "2026-10-04-cycle22-mutation-proof-claude-module-sources.txt"
         )
         self.assertEqual(set(recorded), set(self.GRADED), recorded)
         for relative in self.GRADED:

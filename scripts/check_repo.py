@@ -291,11 +291,33 @@ ENGINE_MODULE_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", 
 # The only directory a module source may sit in: a package's Claude adapter.
 CLAUDE_ADAPTER_DIRECTORY_NAME = "com.infiquetra.claude"
 
-# Directory names the module-source walk never enters. Dot-directories are
-# pruned as well, by rule rather than by name: they hold git's own data and the
-# ``.claude-plugin/types/`` declarations the engine writes into any folder it
-# loads with ``--plugin-dir``, which ignore themselves in git and never ship.
-MODULE_SOURCE_PRUNED_DIRECTORY_NAMES = frozenset({"node_modules", "__pycache__", "venv"})
+# Directory names the module-source walk never enters: git's own data, and the
+# dependency, cache and local agent-state directories the repository's
+# ``.gitignore`` keeps out of every commit. Other dot-directories are walked,
+# because several of them are committed and ship: ``.claude-plugin/``,
+# ``.codex-plugin/``, ``.github/`` and ``.agents/``.
+MODULE_SOURCE_PRUNED_DIRECTORY_NAMES = frozenset(
+    {
+        ".git",
+        "node_modules",
+        "__pycache__",
+        "venv",
+        ".venv",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".pytest_cache",
+        ".claude",
+        ".saga",
+        ".serena",
+        ".hermes",
+        ".qwen",
+    }
+)
+
+# The one committed-looking path the walk also skips: the API declarations
+# ``claude --plugin-dir`` writes into ``<package>/.claude-plugin/types/``. That
+# directory carries its own ``.gitignore`` and never ships.
+ENGINE_WRITTEN_TYPES_DIRECTORY = (".claude-plugin", "types")
 
 
 def sha256_bytes(payload: bytes) -> str:
@@ -1024,19 +1046,22 @@ def check_claude_module_sources(root: Path) -> list[str]:
     reads the package.
 
     The walk covers the whole repository rather than ``plugins/`` alone, because
-    a module dropped in ``scripts/`` or ``tests/`` is just as misplaced. It
-    prunes dot-directories and dependency or interpreter caches, which are never
-    committed.
+    a module dropped in ``scripts/`` or ``tests/`` is just as misplaced. It also
+    enters committed dot-directories such as ``.claude-plugin/``, which holds
+    distribution metadata only (DECISIONS.md, 2026-08-25). It prunes git's own
+    data, the ignored dependency, cache and agent-state directories, and the
+    engine-written ``.claude-plugin/types/``, none of which is ever committed.
     """
     errors: list[str] = []
     for current, directories, files in os.walk(root):
+        relative_directory = Path(current).relative_to(root)
+        parts = relative_directory.parts
         directories[:] = sorted(
             name
             for name in directories
-            if not name.startswith(".") and name not in MODULE_SOURCE_PRUNED_DIRECTORY_NAMES
+            if name not in MODULE_SOURCE_PRUNED_DIRECTORY_NAMES
+            and (parts[-1:] + (name,)) != ENGINE_WRITTEN_TYPES_DIRECTORY
         )
-        relative_directory = Path(current).relative_to(root)
-        parts = relative_directory.parts
         inside_adapter = (
             len(parts) >= 3 and parts[0] == "plugins" and parts[2] == CLAUDE_ADAPTER_DIRECTORY_NAME
         )

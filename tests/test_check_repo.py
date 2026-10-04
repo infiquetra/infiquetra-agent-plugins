@@ -1202,6 +1202,40 @@ class ClaudeModuleSourceTests(unittest.TestCase):
             self.findings("plugins/example/.claude-plugin/types/claude-code/index.d.ts"), []
         )
 
+    def test_committed_dot_directories_are_walked(self) -> None:
+        # .claude-plugin/ and .codex-plugin/ are committed and ship, so a module
+        # there is as misplaced as one at the package root; only the engine's
+        # own .claude-plugin/types/ is skipped.
+        misplaced = (
+            "plugins/example/.claude-plugin/x.ts",
+            "plugins/example/.claude-plugin/mods/index.ts",
+            "plugins/example/.codex-plugin/x.ts",
+            ".github/scripts/x.js",
+        )
+        problems = self.findings(
+            *misplaced, "plugins/example/.claude-plugin/types/claude-code/index.d.ts"
+        )
+        self.assertEqual(len(problems), len(misplaced), problems)
+        for relative in misplaced:
+            with self.subTest(path=relative):
+                self.assertTrue(any(p.startswith(f"{relative}:") for p in problems), problems)
+
+    def test_a_types_directory_elsewhere_is_still_walked(self) -> None:
+        self.assertEqual(len(self.findings("plugins/example/.codex-plugin/types/x.ts")), 1)
+
+    def test_ignored_local_state_directories_are_not_walked(self) -> None:
+        # Agent worktrees under .claude/ hold whole checkouts; walking them would
+        # flag every adapter in them as outside an adapter.
+        self.assertEqual(
+            self.findings(
+                ".git/hooks/x.js",
+                ".claude/worktrees/w/plugins/saga/com.infiquetra.claude/mods/index.ts",
+                ".venv/lib/x.js",
+                ".saga/x.ts",
+            ),
+            [],
+        )
+
     def test_dependency_and_cache_directories_are_ignored(self) -> None:
         self.assertEqual(
             self.findings(
