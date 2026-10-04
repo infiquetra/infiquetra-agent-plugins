@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [1.7.2] - 2026-10-04
+
+Re-pins the roles library to the infiquetra-sdlc revision that requires combined-branch functional testing, and makes roster writes lock-safe.
 
 ### Changed
 

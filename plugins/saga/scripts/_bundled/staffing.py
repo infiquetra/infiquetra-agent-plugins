@@ -1,6 +1,6 @@
 # --- generated bundle stamp: do not edit ---
 # generated-by: scripts/bundle_fleet_module.py
-# source-version: 0.32.0
+# source-version: 0.33.0
 # source-commit: authored
 # source-path: scripts/fleet_commons/staffing.py
 # source-sha256: 7851e97274d39fa200877ce1cdff2e72d2255ecab127513247c67708624eccab

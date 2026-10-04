@@ -1,6 +1,6 @@
 # --- generated bundle stamp: do not edit ---
 # generated-by: scripts/bundle_fleet_module.py
-# source-version: 0.32.0
+# source-version: 0.33.0
 # source-commit: authored
 # source-path: scripts/fleet_commons/bridge_receipt.py
 # source-sha256: 89c1521946b1f49fd028db97f839d5b68e4dadc6135f3634db222c3b894398ba

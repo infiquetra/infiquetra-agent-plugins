@@ -1,6 +1,6 @@
 # --- generated bundle stamp: do not edit ---
 # generated-by: scripts/bundle_fleet_module.py
-# source-version: 0.32.0
+# source-version: 0.33.0
 # source-commit: authored
 # source-path: scripts/fleet_commons/audit_store.py
 # source-sha256: 9b03380f23f3824c8a9e042ce75a5382440a46f60a42d159fb260aa9d697403d

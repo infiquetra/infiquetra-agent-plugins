@@ -1,6 +1,6 @@
 # --- generated bundle stamp: do not edit ---
 # generated-by: scripts/bundle_fleet_module.py
-# source-version: 0.32.0
+# source-version: 0.33.0
 # source-commit: authored
 # source-path: scripts/fleet_commons/typesafe_client.py
 # source-sha256: 3be5eab2a2ccc014357755566cb088108463ea1514d757cd5e3df571ce92b259

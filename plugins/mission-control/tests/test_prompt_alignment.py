@@ -44,7 +44,7 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "mission-control"
     assert (
-        plugin_json["version"] == "2.21.1"
+        plugin_json["version"] == "2.21.2"
     )  # 2.21.1: authored cut in this catalog; upstream at the import pin is 2.21.0.
     # 2.21.0: the Mount Olympus status vocabulary leaves agent-facing prose
     # and the board move --status help (issue 1042). Predecessor 2.20.0:

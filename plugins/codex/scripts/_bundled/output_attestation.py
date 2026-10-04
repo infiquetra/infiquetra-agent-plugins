@@ -1,6 +1,6 @@
 # --- generated bundle stamp: do not edit ---
 # generated-by: scripts/bundle_fleet_module.py
-# source-version: 0.32.0
+# source-version: 0.33.0
 # source-commit: authored
 # source-path: scripts/fleet_commons/output_attestation.py
 # source-sha256: 128b4a4c950ea53e7413bea69bbccc6f99e0bb1cb3125a45ee54fc97e936da0f

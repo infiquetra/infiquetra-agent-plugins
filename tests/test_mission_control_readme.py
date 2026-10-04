@@ -214,7 +214,7 @@ class PortableReadmeTests(unittest.TestCase):
         authored version the manifests declare. There is no provenance file
         to derive either number from."""
         manifest = json.loads((PACKAGE / "plugin.json").read_text(encoding="utf-8"))
-        self.assertEqual(manifest["version"], "2.21.1")
+        self.assertEqual(manifest["version"], "2.21.2")
         self.assertIn("(upstream plugin version 2.21.0)", self.text)
         self.assertFalse(PROVENANCE.is_file())
 

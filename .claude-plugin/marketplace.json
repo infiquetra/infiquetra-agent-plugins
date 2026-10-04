@@ -12,7 +12,7 @@
     {
       "name": "agent-launcher",
       "source": "./plugins/agent-launcher",
-      "version": "1.7.1",
+      "version": "1.7.2",
       "description": "Create one verified coding-agent session through the agents wrapper and Herdr. Orchestrate consumes this shared launch surface.",
       "author": {
         "name": "Infiquetra",
@@ -144,7 +144,7 @@
     {
       "name": "mission-control",
       "source": "./plugins/mission-control",
-      "version": "2.21.1",
+      "version": "2.21.2",
       "description": "SDLC management for Operations, Asgard, and CAMPPS: prepared issue drafts, live schema sync, board schemas, labels, project fields, metrics, and card validation.",
       "author": {
         "name": "Infiquetra",
@@ -167,7 +167,7 @@
     {
       "name": "orchestrate",
       "source": "./plugins/orchestrate",
-      "version": "6.0.1",
+      "version": "6.1.0",
       "description": "Run one piece of work across several herdr agent sessions, one git worktree per unit.",
       "author": {
         "name": "Infiquetra",
@@ -210,7 +210,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "1.2.2",
+      "version": "1.3.0",
       "description": "Infiquetra lifecycle plugin: one automatic run per issue — admission, plan, plan review, a build loop, a lensed code review, merge, release and retro capture.",
       "author": {
         "name": "Infiquetra",

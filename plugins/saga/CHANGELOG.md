@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [1.3.0] - 2026-10-04
+
+Adds the combined-branch functional-test gate before code review, with the functional-test declaration, plan checks and closeout evidence that feed it.
 
 ### Added
 

@@ -49,7 +49,13 @@
   `house-style` has no matrix: it declares no executable entrypoint, and
   [`scripts/assess_clients.py`](../scripts/assess_clients.py) refuses the
   package rather than recording an assessment of nothing.
-- [Agent Launcher ten-client compatibility matrix](evidence/2026-09-22-agent-launcher-compatibility-matrix.md)
+- The 2026-10-04 nine-client run replaced four of those records, for saga,
+  orchestrate, mission-control and agent-launcher, whose versions moved. It
+  assesses nine clients because Agy replaced Gemini CLI on the operator's
+  machine; the other eight 2026-09-22 records keep their ten rows until their
+  own versions move. Each new record is at
+  `evidence/2026-10-04-<package>-compatibility-matrix.md`.
+- [Agent Launcher nine-client compatibility matrix](evidence/2026-10-04-agent-launcher-compatibility-matrix.md)
   records what every installed coding-agent client did with the portable
   agent-launcher package across four stages with fingerprint-bound
   verification, with post-activation readback in
