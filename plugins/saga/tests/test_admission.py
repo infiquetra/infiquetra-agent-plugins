@@ -905,19 +905,33 @@ def _table_staffing(
 
     *sources* sets a role's decision ``source`` (``overlay`` for ``.saga/tier-defaults.json``);
     a role in *failing* raises from ``resolve_role``; *worker* sets the worker's default tier.
+    A ``jev_raise`` is checked by the real resolver's own raise validator against that default,
+    so these tests restate none of the raise rules; an overlay ``source`` outranks the raise.
     """
+    real = _load_bundled_staffing()
     tiers = {"planner": ("opus", "high"), "worker": worker}
+    shapes = {"planner": "judgment", "worker": "mechanical"}
 
     def roles() -> dict[str, Any]:
-        return {"planner": {"work_shape": "judgment"}, "worker": {"work_shape": "mechanical"}}
+        return {role: {"work_shape": shape} for role, shape in shapes.items()}
 
-    def resolve_role(role: str, **_kwargs: Any) -> SimpleNamespace:
+    def resolve_role(role: str, *, jev_raise: Any = None, **_kwargs: Any) -> SimpleNamespace:
         if role in failing:
             raise RuntimeError(f"cannot resolve {role}")
         model, effort = tiers[role]
         decision = SimpleNamespace(vendor="claude", model=model, effort=effort)
         if sources and role in sources:
             decision.source = sources[role]
+        if jev_raise is not None:
+            raised = real._validate_jev_raise(
+                shapes[role],
+                {"model": jev_raise.get("model"), "effort": jev_raise.get("effort")},
+                base={"model": model, "effort": effort},
+                registry=real.work_shapes(),
+            )
+            if getattr(decision, "source", None) != "overlay":
+                decision.model, decision.effort = raised["model"], raised["effort"]
+                decision.source = "jev-raise"
         return decision
 
     def lens_catalogue(**_kwargs: Any) -> tuple[dict[str, Any], str]:
@@ -932,8 +946,21 @@ def _table_staffing(
         return None
 
     return SimpleNamespace(
-        roles=roles, resolve_role=resolve_role, lens_catalogue=lens_catalogue, sdlc_root=sdlc_root
+        roles=roles,
+        resolve_role=resolve_role,
+        lens_catalogue=lens_catalogue,
+        sdlc_root=sdlc_root,
+        StaffingError=real.StaffingError,
     )
+
+
+def _load_bundled_staffing() -> ModuleType:
+    """The staffing resolver saga ships, loaded the way admission loads it."""
+    if str(SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(SCRIPTS))
+    import bundled_fleet  # noqa: PLC0415
+
+    return bundled_fleet.load("staffing")
 
 
 def _table_record(adm: ModuleType, staffing: Any) -> Any:
@@ -1325,10 +1352,10 @@ def test_a_repository_overlay_tier_is_named_in_the_why_column(adm: ModuleType) -
 @pytest.mark.parametrize(
     ("raise_", "reason"),
     [
-        ({"model": "fable", "effort": "max"}, "it names fable"),
-        ({"model": "opus", "effort": "max"}, "it names max"),
-        ({"model": "opus", "effort": "high"}, "it is not exactly one step above the default"),
-        ({"model": "sonnet", "effort": "xhigh"}, "it is not exactly one step above the default"),
+        ({"model": "fable", "effort": "max"}, "effort 'max' not in"),
+        ({"model": "opus", "effort": "max"}, "effort 'max' not in"),
+        ({"model": "opus", "effort": "high"}, "is not exactly one step above the default"),
+        ({"model": "sonnet", "effort": "xhigh"}, "is not exactly one step above the default"),
     ],
 )
 def test_an_out_of_policy_jev_raise_is_never_shown_as_proposed(
@@ -1342,10 +1369,12 @@ def test_an_out_of_policy_jev_raise_is_never_shown_as_proposed(
     }
     rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
     assert rows["worker"][3] == "claude sonnet/medium"
-    assert rows["worker"][4] == (
+    why = rows["worker"][4]
+    assert why.startswith(
         "staffing default (work shape mechanical); recorded Jev raise to "
-        f"{raise_['model']}/{raise_['effort']} refused: {reason}"
+        f"{raise_['model']}/{raise_['effort']} refused: jev raise for 'mechanical': "
     )
+    assert reason in why
 
 
 def test_a_jev_raise_from_a_default_at_the_ceiling_is_refused(adm: ModuleType) -> None:
@@ -1359,10 +1388,10 @@ def test_a_jev_raise_from_a_default_at_the_ceiling_is_refused(adm: ModuleType) -
     }
     rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
     assert rows["worker"][3] == "claude opus/xhigh"
-    assert rows["worker"][4] == (
+    assert rows["worker"][4].startswith(
         "staffing default (work shape mechanical); recorded Jev raise to opus/high refused: "
-        "it is not exactly one step above the default"
     )
+    assert "is not exactly one step above the default opus/xhigh" in rows["worker"][4]
 
 
 def test_a_one_step_model_raise_is_shown_as_proposed(adm: ModuleType) -> None:
@@ -1379,24 +1408,49 @@ def test_a_one_step_model_raise_is_shown_as_proposed(adm: ModuleType) -> None:
     assert rows["worker"][4] == "Jev raise: the change crosses a trust boundary"
 
 
-def test_a_jev_raise_is_refused_when_the_palette_cannot_be_read(
-    adm: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    staffing = _table_staffing()
-    record = _table_record(adm, staffing)
-    record.run_configuration["staffing_models_and_efforts"]["value"]["worker"]["jev_raise"] = {
-        "model": "sonnet",
-        "effort": "high",
-        "reason": "the change touches a gate",
+def test_the_table_shows_a_model_rung_raise_the_resolver_applied(adm: ModuleType) -> None:
+    """Review finding on #93: the table must word the resolver's answer, not a copy of its rules.
+
+    The real resolver accepts one model rung with the effort unchanged (sonnet/medium to
+    opus/medium for the merging worker); the Why cell must say the raise applied.
+    """
+    staffing = _load_bundled_staffing()
+    raise_ = {"model": "opus", "effort": "medium", "reason": "the merge crosses a gate"}
+    decision = staffing.resolve_role("merging-worker", jev_raise=raise_)
+    assert (decision.model, decision.effort, decision.source) == ("opus", "medium", "jev-raise")
+    record = _table_record(adm, _table_staffing())
+    record.run_configuration["staffing_models_and_efforts"]["value"] = {
+        "merging-worker": {
+            "vendor": "claude",
+            "model": "opus",
+            "effort": "medium",
+            "source": "jev-raise",
+            "jev_raise": raise_,
+        }
     }
+    (row,) = adm._staffing_rows(record, staffing)["rows"]
+    assert row["proposed"] == {"vendor": "claude", "model": "opus", "effort": "medium"}
+    assert row["why"] == "Jev raise: the merge crosses a gate"
 
-    def broken_load(_name: str) -> Any:
-        raise RuntimeError("palette unreadable")
 
-    monkeypatch.setitem(sys.modules, "bundled_fleet", SimpleNamespace(load=broken_load))
-    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
-    assert rows["worker"][3] == "claude sonnet/medium"
-    assert rows["worker"][4].endswith("refused: the tier palette could not be read to check it")
+def test_the_recorded_resolver_outcome_stands_in_when_staffing_is_unreachable(
+    adm: ModuleType,
+) -> None:
+    """Without a resolver, the row's recorded refusal is shown, never a re-derived one."""
+    row = {
+        "vendor": "claude",
+        "model": "sonnet",
+        "effort": "medium",
+        "source": "policy",
+        "jev_raise": {"model": "opus", "effort": "high", "reason": "r"},
+        "jev_raise_refused": "jev raise for 'mechanical': recorded refusal",
+    }
+    proposed, why = adm._proposed_and_why(row, "mechanical", None, operator=False)
+    assert proposed == {"vendor": "claude", "model": "sonnet", "effort": "medium"}
+    assert why == (
+        "staffing default (work shape mechanical); recorded Jev raise to opus/high refused: "
+        "jev raise for 'mechanical': recorded refusal"
+    )
 
 
 def test_a_one_step_jev_raise_is_shown_as_proposed(adm: ModuleType) -> None:
@@ -1731,6 +1785,7 @@ def test_a_partial_staffing_override_merges_role_by_role(adm: ModuleType) -> Non
         "vendor": "claude",
         "model": "opus",
         "effort": "low",
+        "source": "operator",
         "operator_override": True,
     }
     rows = {row[0]: row for row in _rows(_tables(adm, after, staffing))}
@@ -1951,3 +2006,475 @@ def test_the_lens_jev_cell_carries_its_band_for_a_pane(adm: ModuleType) -> None:
         "performance": "pre-checked",
         "privacy": "consider",
     }
+
+
+# ---------------------------------------------------------------------------
+# Issue #93 (staffing U1): admission, /plan and /work resolve one tier through
+# fleet-core's one staffing resolver. These use the bundled staffing component
+# admission really loads, never a fake, because the defect being closed was three
+# paths that each looked right alone and disagreed with each other.
+# ---------------------------------------------------------------------------
+
+import subprocess  # noqa: E402
+
+LIFECYCLE_STATE = SCRIPTS / "lifecycle_state.py"
+SAGA_SKILLS = REPO_ROOT / "plugins" / "saga" / "skills"
+TIER_DOCS = (
+    SAGA_SKILLS / "plan" / "SKILL.md",
+    SAGA_SKILLS / "work" / "SKILL.md",
+    SAGA_SKILLS / "work" / "references" / "execution-strategy.md",
+)
+
+
+def _bundled_staffing(adm: ModuleType) -> Any:
+    staffing = adm.load_staffing()
+    if staffing is None:
+        pytest.skip("saga's bundled staffing component is not reachable")
+    return staffing
+
+
+def _overlay(root: Path, model: str, effort: str) -> None:
+    (root / ".saga").mkdir(exist_ok=True)
+    (root / ".saga" / "tier-defaults.json").write_text(
+        json.dumps({"implementation": {"model": model, "effort": effort}}), encoding="utf-8"
+    )
+
+
+def _admitted_staffing(
+    adm: ModuleType, repo_root: Path, *, previous: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    run_record = _load("run_record")
+    record = run_record.RunRecord(issue=93, repo="infiquetra/infiquetra-agent-plugins")
+    if previous is not None:
+        configuration = {name: dict(block) for name, block in record.run_configuration.items()}
+        configuration["staffing_models_and_efforts"] = {"value": previous, "source": "staffing"}
+        record = run_record.RunRecord(**{**record.__dict__, "run_configuration": configuration})
+    filled = adm.fill_defaults(record, {}, _bundled_staffing(adm), repo_root=repo_root)
+    block = filled.run_configuration["staffing_models_and_efforts"]
+    assert block["source"] == "staffing"
+    return block["value"]
+
+
+def _plan_command(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run the command /plan and /work name, the way an agent runs it (AGENTS.md rule)."""
+    return subprocess.run(
+        [sys.executable, str(LIFECYCLE_STATE), "resolve-build-unit-tier", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_admission_staffs_the_worker_at_opus_medium(
+    adm: ModuleType, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(repo_root)
+    value = _admitted_staffing(adm, repo_root)
+    worker = value["worker"]
+    assert (worker["vendor"], worker["model"], worker["effort"]) == ("claude", "opus", "medium")
+    assert worker["source"] == "policy"
+    for role in ("merging-worker", "release-worker"):
+        row = value[role]
+        assert (row["vendor"], row["model"], row["effort"]) == ("claude", "sonnet", "medium")
+
+
+def _three_paths(adm: ModuleType, repo_root: Path) -> dict[str, tuple[str, str]]:
+    worker = _admitted_staffing(adm, repo_root)["worker"]
+    lifecycle_state = _load("lifecycle_state")
+    work = lifecycle_state.resolve_build_unit_tier(root=repo_root)
+    plan = _plan_command(repo_root)
+    assert plan.returncode == 0, plan.stderr
+    planned = json.loads(plan.stdout)
+    direct = _bundled_staffing(adm).resolve_shape("implementation", root=repo_root)
+    # /plan's second route: the run-start posture seeds a unit's proposed tier through
+    # intent_envelope's recommend, which must not step the implementation shape down.
+    posture = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS / "intent_envelope.py"),
+            "recommend",
+            "--work-shape",
+            "implementation",
+            "--run-mode",
+            "unattended",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert posture.returncode == 0, posture.stderr
+    seeded = json.loads(posture.stdout)
+    return {
+        "admission": (worker["model"], worker["effort"]),
+        "work": (work["model"], work["effort"]),
+        "plan": (planned["model"], planned["effort"]),
+        "plan-posture": (seeded["model"], seeded["effort"]),
+        "resolver": (direct.model, direct.effort),
+    }
+
+
+def test_admission_plan_and_work_agree_with_no_overlay(
+    adm: ModuleType, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(repo_root)
+    paths = _three_paths(adm, repo_root)
+    assert set(paths.values()) == {("opus", "medium")}, paths
+
+
+def test_admission_plan_and_work_agree_with_an_overlay(
+    adm: ModuleType, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Before #93 /work called the policy layer directly and skipped this overlay.
+    _overlay(repo_root, "sonnet", "high")
+    monkeypatch.chdir(repo_root)
+    paths = _three_paths(adm, repo_root)
+    assert set(paths.values()) == {("sonnet", "high")}, paths
+
+
+def test_admission_reads_the_overlay_from_its_repo_root(
+    adm: ModuleType, repo_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _overlay(repo_root, "sonnet", "high")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    worker = _admitted_staffing(adm, repo_root)["worker"]
+    assert (worker["model"], worker["effort"], worker["source"]) == ("sonnet", "high", "overlay")
+
+
+def test_admission_applies_and_keeps_a_recorded_raise(
+    adm: ModuleType, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(repo_root)
+    raise_ = {
+        "model": "opus",
+        "effort": "high",
+        "confidence": 0.86,
+        "reason": "refund logic",
+        "decision_id": "staffing/tier:93",
+    }
+    previous = {
+        "worker": {"vendor": "claude", "model": "opus", "effort": "high", "jev_raise": raise_}
+    }
+    worker = _admitted_staffing(adm, repo_root, previous=previous)["worker"]
+    assert (worker["model"], worker["effort"], worker["source"]) == ("opus", "high", "jev-raise")
+    assert worker["jev_raise"] == raise_
+
+
+@pytest.mark.parametrize(
+    "bad_raise",
+    [
+        {"model": "fable", "effort": "medium"},
+        {"model": "opus", "effort": "xhigh"},
+        {"model": "sonnet", "effort": "low"},
+    ],
+    ids=["strongest-model", "two-steps", "lowering"],
+)
+def test_admission_keeps_the_worker_and_shows_a_refused_raise(
+    adm: ModuleType, repo_root: Path, monkeypatch: pytest.MonkeyPatch, bad_raise: dict[str, str]
+) -> None:
+    # Before the review repair the refusal was swallowed and the worker vanished from the plan.
+    monkeypatch.chdir(repo_root)
+    previous = {"worker": {"vendor": "claude", "model": "opus", "effort": "medium",
+                           "jev_raise": bad_raise}}
+    value = _admitted_staffing(adm, repo_root, previous=previous)
+    assert "worker" in value, sorted(value)
+    worker = value["worker"]
+    assert (worker["model"], worker["effort"], worker["source"]) == ("opus", "medium", "policy")
+    assert worker["jev_raise"] == bad_raise
+    assert "jev raise" in worker["jev_raise_refused"]
+
+
+def test_admission_fails_loud_when_staffing_refuses_a_role(adm: ModuleType) -> None:
+    real = _bundled_staffing(adm)
+
+    def resolve_role(role: str, **kwargs: Any) -> Any:
+        # A worker pinned to another vendor while its work shape is Claude-only.
+        return real.resolve_shape("implementation", vendor="codex", root=kwargs.get("root"))
+
+    staffing = SimpleNamespace(
+        roles=lambda: {"worker": {}},
+        resolve_role=resolve_role,
+        StaffingError=real.StaffingError,
+    )
+    run_record = _load("run_record")
+    record = run_record.RunRecord(issue=93, repo="infiquetra/infiquetra-agent-plugins")
+    with pytest.raises(adm.AdmissionError, match=r"'worker'.*Claude-only.*codex"):
+        adm.fill_defaults(record, {}, staffing)
+
+
+def test_admission_does_not_blame_a_raise_that_did_not_cause_the_refusal(
+    adm: ModuleType,
+) -> None:
+    # A valid raise on a worker whose Claude-only shape refuses the codex pin: dropping the raise
+    # leaves the same refusal, so the raise is not named and the message appears once.
+    real = _bundled_staffing(adm)
+
+    def resolve_role(role: str, **kwargs: Any) -> Any:
+        return real.resolve_shape(
+            "implementation", vendor="codex", root=kwargs.get("root"),
+            jev_raise=kwargs.get("jev_raise"),
+        )
+
+    staffing = SimpleNamespace(
+        roles=lambda: {"worker": {}}, resolve_role=resolve_role, StaffingError=real.StaffingError
+    )
+    run_record = _load("run_record")
+    record = run_record.RunRecord(issue=93, repo="infiquetra/infiquetra-agent-plugins")
+    configuration = {name: dict(block) for name, block in record.run_configuration.items()}
+    configuration |= {
+        "staffing_models_and_efforts": {
+            "value": {"worker": {"jev_raise": {"model": "opus", "effort": "high"}}},
+            "source": "staffing",
+        }
+    }
+    record = run_record.RunRecord(**{**record.__dict__, "run_configuration": configuration})
+    with pytest.raises(adm.AdmissionError) as raised:
+        adm.fill_defaults(record, {}, staffing)
+    message = str(raised.value)
+    assert "Claude-only" in message
+    assert message.count("Claude-only") == 1, message
+    assert "recorded raise" not in message
+
+
+def test_admission_names_a_refused_raise_beside_the_role_refusal(adm: ModuleType) -> None:
+    # The raise and the default are refused for different reasons: both reasons, in order.
+    class Refusal(Exception):
+        pass
+
+    def resolve_role(role: str, **kwargs: Any) -> Any:
+        if kwargs.get("jev_raise") is not None:
+            raise Refusal("jev raise names the strongest model")
+        raise Refusal("work shape 'implementation' is Claude-only")
+
+    staffing = SimpleNamespace(
+        roles=lambda: {"worker": {}}, resolve_role=resolve_role, StaffingError=Refusal
+    )
+    run_record = _load("run_record")
+    record = run_record.RunRecord(issue=93, repo="infiquetra/infiquetra-agent-plugins")
+    configuration = {name: dict(block) for name, block in record.run_configuration.items()}
+    configuration |= {
+        "staffing_models_and_efforts": {
+            "value": {"worker": {"jev_raise": {"model": "fable", "effort": "medium"}}},
+            "source": "staffing",
+        }
+    }
+    record = run_record.RunRecord(**{**record.__dict__, "run_configuration": configuration})
+    with pytest.raises(
+        adm.AdmissionError,
+        match=r"'worker': work shape 'implementation' is Claude-only; "
+        r"its recorded raise was also refused: jev raise names the strongest model",
+    ):
+        adm.fill_defaults(record, {}, staffing)
+
+
+def test_admission_stays_fail_open_for_a_staffing_component_too_old_for_its_arguments(
+    adm: ModuleType,
+) -> None:
+    # The documented fail-open path: a component whose resolve_role takes only the role (no
+    # root= or jev_raise=) and has no StaffingError. Admission proceeds and the role is absent.
+    staffing = SimpleNamespace(
+        roles=lambda: {"worker": {}},
+        resolve_role=lambda role: SimpleNamespace(
+            vendor="claude", model="opus", effort="medium", source="policy"
+        ),
+    )
+    run_record = _load("run_record")
+    record = run_record.RunRecord(issue=93, repo="infiquetra/infiquetra-agent-plugins")
+    filled = adm.fill_defaults(record, {}, staffing)
+    block = filled.run_configuration.get("staffing_models_and_efforts")
+    assert block is None or "worker" not in (block.get("value") or {})
+
+
+def test_admission_still_skips_the_lens_reviewer_without_a_lens(
+    adm: ModuleType, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(repo_root)
+    staffing = _bundled_staffing(adm)
+    reviewers = [role for role in staffing.roles() if role not in _admitted_staffing(adm, repo_root)]
+    for role in reviewers:
+        with pytest.raises(staffing.StaffingError, match="needs a lens"):
+            staffing.resolve_role(role, root=repo_root)
+
+
+def test_the_build_unit_tier_passes_a_recorded_raise_to_the_resolver(tmp_path: Path) -> None:
+    lifecycle_state = _load("lifecycle_state")
+    raised = lifecycle_state.resolve_build_unit_tier(
+        root=tmp_path, jev_raise={"model": "opus", "effort": "high"}
+    )
+    assert raised == {"model": "opus", "effort": "high", "source": "jev-raise"}
+    command = _plan_command(
+        tmp_path, "--explain", "--jev-raise", '{"model": "opus", "effort": "high"}'
+    )
+    assert command.returncode == 0, command.stderr
+    assert json.loads(command.stdout) == {"model": "opus", "effort": "high", "source": "jev-raise"}
+    refused = _plan_command(tmp_path, "--jev-raise", '{"model": "fable", "effort": "medium"}')
+    assert refused.returncode == 2
+    assert "jev raise" in json.loads(refused.stderr)["error"]
+
+
+def test_the_build_unit_tier_reads_the_overlay_from_its_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkout = tmp_path / "checkout"
+    elsewhere = tmp_path / "elsewhere"
+    checkout.mkdir()
+    elsewhere.mkdir()
+    _overlay(checkout, "sonnet", "high")
+    monkeypatch.chdir(elsewhere)
+    lifecycle_state = _load("lifecycle_state")
+    assert lifecycle_state.resolve_build_unit_tier(root=checkout) == {
+        "model": "sonnet",
+        "effort": "high",
+        "source": "overlay",
+    }
+    command = _plan_command(elsewhere, "--explain", "--root", str(checkout))
+    assert command.returncode == 0, command.stderr
+    assert json.loads(command.stdout) == {"model": "sonnet", "effort": "high", "source": "overlay"}
+
+
+def test_the_build_unit_command_shows_a_raise_a_plan_tier_set_aside(tmp_path: Path) -> None:
+    # A plan-recorded tier is passed as the operator's answer and outranks a recorded raise; the
+    # command must say the raise was set aside rather than drop it without a trace.
+    command = _plan_command(
+        tmp_path,
+        "--explain",
+        "--plan-model", "opus", "--plan-effort", "medium",
+        "--jev-raise", '{"model": "opus", "effort": "high"}',
+    )
+    assert command.returncode == 0, command.stderr
+    assert json.loads(command.stdout) == {
+        "model": "opus",
+        "effort": "medium",
+        "source": "operator",
+        "jev_raise_set_aside": True,
+    }
+
+
+def test_the_build_unit_command_explains_the_winning_layer_only_when_asked(
+    tmp_path: Path,
+) -> None:
+    # The default output stays exactly {model, effort}; --explain adds the resolver's source and,
+    # when a passed raise was outranked, jev_raise_set_aside. Neither key leaks without the flag.
+    raise_json = '{"model": "opus", "effort": "high"}'
+    explained = _plan_command(tmp_path, "--explain")
+    assert explained.returncode == 0, explained.stderr
+    assert explained.stdout.strip() == (
+        '{"model": "opus", "effort": "medium", "source": "policy"}'
+    )
+    set_aside = _plan_command(
+        tmp_path, "--plan-model", "opus", "--plan-effort", "medium", "--jev-raise", raise_json
+    )
+    assert set_aside.returncode == 0, set_aside.stderr
+    assert json.loads(set_aside.stdout) == {"model": "opus", "effort": "medium"}
+    raised = _plan_command(tmp_path, "--jev-raise", raise_json)
+    assert json.loads(raised.stdout) == {"model": "opus", "effort": "high"}
+
+
+def test_the_build_unit_command_runs_as_an_agent_runs_it(tmp_path: Path) -> None:
+    undeclared = _plan_command(tmp_path)
+    assert undeclared.returncode == 0, undeclared.stderr
+    # Issue #93's acceptance criterion, literally: the default output is exactly the two-key tier.
+    assert undeclared.stdout.strip() == '{"model": "opus", "effort": "medium"}'
+
+    mechanical = _plan_command(tmp_path, "--work-shape", "mechanical")
+    assert json.loads(mechanical.stdout) == {"model": "sonnet", "effort": "medium"}
+
+    explicit = _plan_command(tmp_path, "--plan-model", "haiku", "--plan-effort", "low")
+    assert json.loads(explicit.stdout) == {"model": "haiku", "effort": "low"}
+
+    unknown = _plan_command(tmp_path, "--work-shape", "nope")
+    assert unknown.returncode == 2
+    assert "nope" in json.loads(unknown.stderr)["error"]
+
+    unrunnable = _plan_command(tmp_path, "--plan-model", "haiku", "--plan-effort", "xhigh")
+    assert unrunnable.returncode == 2
+    assert "unrunnable" in json.loads(unrunnable.stderr)["error"]
+
+
+@pytest.mark.parametrize("doc", TIER_DOCS, ids=lambda path: path.name)
+def test_the_skills_name_the_resolver_and_restate_no_precedence(doc: Path) -> None:
+    text = doc.read_text(encoding="utf-8")
+    for retired in (
+        "parse_tier_band",
+        "resolve_tier_for_plan",
+        "write_tier_default",
+        "tier_defaults",
+        "overlay >",
+        "issue band",
+    ):
+        assert retired not in text, f"{doc.name} still names {retired!r}"
+    assert "resolve-build-unit-tier" in text
+
+
+def test_the_table_reads_the_overlay_admission_staffs_from_repo_root(
+    adm: ModuleType,
+    store: Path,
+    repo_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Review finding on #93: admission staffs from ``--repo-root``, so its table must too.
+
+    The checkout named by ``--repo-root`` sets the mechanical shape to sonnet/high; the working
+    directory's own overlay sets it to sonnet/low. With a recorded Jev raise on the merging worker
+    (sonnet/medium to opus/medium, which the checkout's overlay outranks), the table's Default,
+    Proposed and Why must agree with the tier admission records, never with the working
+    directory's overlay and never with the outranked raise.
+    """
+    staffing = _bundled_staffing(adm)
+    (repo_root / ".saga").mkdir()
+    (repo_root / ".saga" / "tier-defaults.json").write_text(
+        json.dumps({"mechanical": {"model": "sonnet", "effort": "high"}}), encoding="utf-8"
+    )
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / ".saga").mkdir(parents=True)
+    (elsewhere / ".saga" / "tier-defaults.json").write_text(
+        json.dumps({"mechanical": {"model": "sonnet", "effort": "low"}}), encoding="utf-8"
+    )
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setattr(adm, "load_card_validator", lambda: _passing_validator)
+    monkeypatch.setattr(adm, "load_staffing", lambda: staffing)
+    monkeypatch.setattr(adm, "fetch_issue", lambda *_a, **_k: {"number": 102, "body": _good_card()})
+
+    # Seed the store with a record whose merging worker carries a recorded one-step raise.
+    run_record = _load("run_record")
+    seeded = adm.fill_defaults(
+        run_record.RunRecord(issue=102, repo="infiquetra/infiquetra-agent-plugins"),
+        {},
+        staffing,
+        repo_root=repo_root,
+    )
+    raise_ = {"model": "opus", "effort": "medium", "reason": "gate"}
+    seeded.run_configuration["staffing_models_and_efforts"]["value"]["merging-worker"][
+        "jev_raise"
+    ] = raise_
+    adm.save_admission(store, seeded)
+
+    assert _run_main(adm, store, repo_root, "--render", "json") == 0
+    data = json.loads(capsys.readouterr().out)
+    rows = {row["role"]: row for row in data["staffing"]["rows"]}
+    merging = rows["merging-worker"]
+
+    staffed = adm.admit(
+        102,
+        "infiquetra/infiquetra-agent-plugins",
+        store_root=store,
+        repo_root=repo_root,
+        body=_good_card(),
+        validator=_passing_validator,
+        staffing=staffing,
+    )[0].run_configuration["staffing_models_and_efforts"]["value"]["merging-worker"]
+    assert (staffed["model"], staffed["effort"], staffed["source"]) == ("sonnet", "high", "overlay")
+    assert staffed["jev_raise"] == raise_
+
+    tier = {"vendor": "claude", "model": "sonnet", "effort": "high"}
+    assert merging["default"] == tier
+    assert merging["proposed"] == tier
+    assert merging["why"] == (
+        "repository overlay (.saga/tier-defaults.json, work shape mechanical); "
+        "the overlay outranks the recorded Jev raise"
+    )

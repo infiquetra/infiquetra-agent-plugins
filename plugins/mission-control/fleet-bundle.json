@@ -27,6 +27,12 @@
       ]
     },
     {
+      "name": "staffing",
+      "destinations": [
+        "scripts/_bundled/staffing.py"
+      ]
+    },
+    {
       "name": "tier_palette",
       "destinations": [
         "scripts/_bundled/tier_palette.py"

@@ -41,6 +41,22 @@ once at session start through `run_status.py unit-for`, because orchestrate's un
 
 **Generalizable rule.** Capture cost at the event that names every attribute the ledger keys on,
 and record an unsplittable count at its most expensive rate rather than guess a split.
+### A display that re-asks a resolver must hand it the same inputs the real call got
+
+**Evidence.** The third review of issue #93 found that admission's staffing table in
+`plugins/saga/scripts/admission.py` (`_default_tier` and `_raise_outcome`) called the staffing
+resolver with no root, while `fill_defaults` staffed with `root=repo_root` from `--repo-root`.
+Fleet-core's `overlay_path` treats a missing root as the working directory, so a run from another
+directory showed an applied Jev raise the checkout's overlay had outranked.
+`test_the_table_reads_the_overlay_admission_staffs_from_repo_root` in
+`plugins/saga/tests/test_admission.py` pins the fix.
+
+**Mechanism.** The earlier repair moved the table onto the real resolver, but an optional
+parameter with a silent default (the working directory) let the two calls read different overlays.
+The table tests used a fake resolver that ignored `root`, so nothing could see the gap.
+
+**Generalizable rule.** When a display re-derives what a real call decided, thread every input of
+that call through, and test with the real component and a working directory that differs.
 
 ### Preserving unknown keys on load is not enough when the save writes back the copy it loaded
 
@@ -125,6 +141,22 @@ the Select does not list never reaches the chain or `onSelect` and resolves `und
 
 **Generalizable rule.** Hold a mod's dispatch open with a loop of short `$` calls, capped, and
 prove it with a test that waits past ten real seconds.
+### A display copy of a rule drifts the moment the rule's real home lands
+
+**Evidence.** Issue #93 built the one staffing resolver but left admission's display copy of the
+tier precedence (`_one_step_raise` and `_raise_refusal` in `plugins/saga/scripts/admission.py`).
+The copy stepped effort first; the resolver's `_validate_jev_raise` also accepts one model rung.
+For the merging worker with a recorded raise to opus/medium, the resolver staffed opus/medium
+while the admission table's Why cell said the raise was refused.
+`test_the_table_shows_a_model_rung_raise_the_resolver_applied` in
+`plugins/saga/tests/test_admission.py` now pins the resolver's answer.
+
+**Mechanism.** The copy's own tests checked the copy, not the resolver, so they stayed green while
+the two rules diverged. The repair has the table call `_resolve_one_role` (the call admission
+staffs with) and word the decision's `source` and the resolver's refusal message.
+
+**Generalizable rule.** When the change that builds a rule's real home lands, delete every interim
+copy in the same change, and test the display against the real component, not a fake of the rule.
 
 ### `$.ui.ask` hides a dialog that answered itself, and a plugin gets one unmatched `session.start`
 
@@ -283,6 +315,59 @@ last-writer-wins under it.
 **Generalizable rule.** A whole-document writer that shares its file with other writers must
 re-read under a shared lock at save time and merge its owned keys onto that fresh copy; keeping
 unknown keys from the load is necessary but not sufficient.
+### Diagnosing a refusal by retrying without one input blames that input unless the retry changes the answer
+
+**Evidence.** The second review of issue #93 found that `_resolve_one_role` in
+`plugins/saga/scripts/admission.py` retried a refused role without its recorded Jev raise and, when
+the retry was refused too, reported the first message as "its recorded raise was also refused". For
+a Claude-only shape on a codex-pinned worker both calls fail with the same message before any layer
+is read, so the error printed it twice and blamed the raise.
+`test_admission_does_not_blame_a_raise_that_did_not_cause_the_refusal` and
+`test_admission_names_a_refused_raise_beside_the_role_refusal` in
+`plugins/saga/tests/test_admission.py` now pin both outcomes.
+
+**Mechanism.** Removing an input and still failing proves only that the input was not sufficient
+for the failure; the original error is attributable to it only if it differs from the retry's.
+
+**Generalizable rule.** When you infer a cause by removing an input, name that input only if the
+result changed when you removed it.
+
+### A fail-open `except` around a resolver turns the resolver's new refusals into silent omissions
+
+**Evidence.** Review of issue #93 found that `_resolve_staffing` in
+`plugins/saga/scripts/admission.py` wrapped `staffing.resolve_role` in `except Exception: continue`.
+The change made the resolver refuse a malformed recorded Jev raise and a Claude-only work shape on a
+vendor-pinned role, and at admission both refusals made the role disappear from
+`staffing_models_and_efforts` with no message. A recorded `{"model": "fable"}` raise dropped the
+`worker` entirely. `test_admission_keeps_the_worker_and_shows_a_refused_raise` and
+`test_admission_fails_loud_when_staffing_refuses_a_role` in `plugins/saga/tests/test_admission.py`
+now pin the repaired behaviour.
+
+**Mechanism.** The broad `except` was written for one known case, the lens reviewer that cannot
+resolve without a lens. Every refusal added later to the callee inherited that skip, because a
+`continue` cannot tell "this role needs a lens" from "this input is wrong".
+
+**Generalizable rule.** When a callee gains a new refusal, read every caller's `except` around it,
+and keep a fail-open skip narrowed to the one case it was written for.
+
+### A caller that enters a layered resolver below its top layer drops every layer above it, silently
+
+**Evidence.** Before issue #93, `resolve_build_unit_tier` in `plugins/saga/scripts/lifecycle_state.py`
+called `tier_resolver.resolve(None, shape)` directly, while admission called
+`staffing.resolve_role`, which reads the `.saga/tier-defaults.json` overlay first. With an overlay
+naming `sonnet/high` for a shape, admission reported `sonnet/high` and `/work` launched at the
+registry default, with no error from either. `test_admission_plan_and_work_agree_with_an_overlay`
+in `plugins/saga/tests/test_admission.py` now pins the agreement. The same audit found that the
+`/plan` tier table's marker had named `test_skill_registry_sync` as its guard since the table was
+generated, and no test of that name existed until this change added it.
+
+**Mechanism.** `tier_resolver.resolve` is a complete, valid-looking answer on its own: it returns a
+palette member and never fails for a known shape. Nothing about its output says that the overlay
+and raise layers above it were skipped, so a caller reaching it directly gets a plausible tier
+that is wrong only when one of those layers is present.
+
+**Generalizable rule.** Call the top of a layered resolver, never a layer inside it, and when a
+document names the test that guards it, check that the test exists.
 
 ## 2026-09-22
 

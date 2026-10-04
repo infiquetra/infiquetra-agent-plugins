@@ -102,6 +102,39 @@
 
 ### Changed
 
+- The builder now defaults to Claude `opus/medium`: `resolve-build-unit-tier` with no plan tier and
+  no work shape resolves the `worker` role's work shape, `implementation`, instead of `mechanical`
+  (issue #93).
+- `resolve_build_unit_tier` resolves every input through fleet-core's `staffing.resolve_shape`. An
+  explicit plan tier is passed as the operator's answer; the repository overlay now applies, which
+  it silently did not before; and the function takes `root=` and `jev_raise=`.
+- Admission passes its repository root to staffing, so the overlay is read from `--repo-root`
+  rather than the working directory, records each role's tier `source`, and carries a role's
+  recorded `jev_raise` into the resolver and back onto the entry. A role a partial
+  `staffing_overrides` answer names records `source` `operator`, so the default's tier source does
+  not outlive the answer that replaced it.
+- `resolve-build-unit-tier` prints exactly `{"model", "effort"}` by default, the string issue #93's
+  acceptance criterion names. `--explain` adds the winning layer as `source`, and
+  `"jev_raise_set_aside": true` when a passed `--jev-raise` was outranked, such as by a
+  plan-recorded tier.
+- Admission names a recorded raise in a role refusal only when the resolver refused the raise for
+  its own reason; a refusal the raise did not cause (a Claude-only shape on a role pinned to
+  another vendor) is reported once, without blaming the raise.
+- Admission's staffing table no longer carries its own copy of the tier precedence. The Proposed
+  and Why columns ask the staffing resolver about a recorded Jev raise and show its answer, so a
+  one-model-rung raise the resolver applies (sonnet/medium to opus/medium) is no longer labelled
+  refused, and a refused raise shows the resolver's own message.
+- Admission's staffing table reads the repository overlay (`.saga/tier-defaults.json`) from the
+  same root admission staffs with, `--repo-root`, not from the working directory. Run from another
+  directory, the Default, Proposed and Why columns could show a tier, or an applied Jev raise, that
+  the checkout's overlay outranked (issue #93 review).
+- `intent-envelope.md` describes `recommend_tier` as it now works: its base is the staffing
+  resolver's answer, and the unattended step-down is skipped for the `implementation` shape.
+- `/plan`'s tier section no longer names `parse_tier_band`, `resolve_tier_for_plan` or
+  `write_tier_default`, none of which exist; it runs `resolve-build-unit-tier`. `/work` and its
+  execution-strategy reference name the resolver and restate no precedence order.
+- The generated effort-honouring note points at `resolve-build-unit-tier` instead of
+  `tier_resolver.resolve`, which skips the overlay.
 - `admission.py` validates the `staffing_overrides` and `lens_declaration` answers before it records
   anything (issue #103), exiting 2 with one line: an override names a role the run staffs, that
   role's own vendor, and a model and effort the tier palette lists together; a lens declaration has

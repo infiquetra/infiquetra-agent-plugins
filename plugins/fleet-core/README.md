@@ -31,7 +31,6 @@ declares it.
 | `tier_palette.py` | The closed model and effort vocabulary, derived at import from `staffing.json`. |
 | `tier_resolver.py` | Maps a work shape to a model and an effort, including the one-rung cheaper fallback. |
 | `render_tier_table.py` | Renders the tier table from `staffing.json`. |
-| `cost_weights.py` | Ordinal cost of a model/effort pair. Reads `cost_weights.json`. |
 | `effort_rider.py` | How a resolved effort is honored on each spawn path. |
 | `intent_envelope.py` | The one run-start posture schema: run mode, ceremony gates, spend envelope. |
 | `retry_backoff.py` | Shared 429 retry, backoff, and circuit breaker. |
@@ -46,8 +45,9 @@ declares it.
 | `jev_eval.py` | Scores recorded answers against labels, by confidence band. |
 | `jev_widen.py` | Widen-only union: a pattern floor a model may raise and may not lower. |
 
-Data files beside the modules: `staffing.json` (palette, work shapes, vendors,
-ratings, roles) and `cost_weights.json`. `models.json`, an earlier data file
+The data file beside the modules is `staffing.json` (palette, work shapes,
+vendors, ratings, roles). The ordinal cost table was removed on 2026-10-04
+because nothing read it. `models.json`, an earlier data file
 the palette stopped reading, was removed 2026-09-22 once no bundle declared it
 any more; see [`DEFERRED.md`](DEFERRED.md).
 

@@ -234,6 +234,7 @@ class LiveDeclarationTests(unittest.TestCase):
                 "jev_log",
                 "plugin_resolution",
                 "retry_backoff",
+                "staffing",
                 "tier_palette",
                 "tier_resolver",
                 "typesafe_client",

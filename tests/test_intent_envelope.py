@@ -140,6 +140,34 @@ class ResolverSiblingTests(unittest.TestCase):
         self.assertIn(recommendation.effort, palette.EFFORTS)
 
 
+class RecommendTierThroughStaffingTests(unittest.TestCase):
+    """Issue #93: the base comes from the one staffing resolver, and the builder keeps its tier."""
+
+    def test_implementation_is_not_stepped_down_unattended(self) -> None:
+        mod = envelope_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            for run_mode in ("attended", "unattended"):
+                rec = mod.recommend_tier("implementation", run_mode, root=Path(tmp))
+                self.assertEqual((rec.model, rec.effort), ("opus", "medium"), run_mode)
+
+    def test_other_shapes_still_step_one_rung_cheaper_unattended(self) -> None:
+        mod = envelope_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            attended = mod.recommend_tier("judgment", "attended", root=Path(tmp))
+            unattended = mod.recommend_tier("judgment", "unattended", root=Path(tmp))
+        self.assertEqual((attended.model, attended.effort), ("opus", "high"))
+        self.assertEqual((unattended.model, unattended.effort), ("sonnet", "high"))
+
+    def test_the_repository_overlay_reaches_the_recommendation(self) -> None:
+        mod = envelope_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            overlay = Path(tmp) / ".saga" / "tier-defaults.json"
+            overlay.parent.mkdir()
+            overlay.write_text('{"implementation": {"model": "sonnet", "effort": "high"}}')
+            rec = mod.recommend_tier("implementation", "attended", root=Path(tmp))
+        self.assertEqual((rec.model, rec.effort), ("sonnet", "high"))
+
+
 class RelocatedCopyTests(unittest.TestCase):
     def test_identical_file_works_in_a_bundled_style_copy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -149,6 +177,7 @@ class RelocatedCopyTests(unittest.TestCase):
             dest.mkdir()
             for name in (
                 "intent_envelope.py",
+                "staffing.py",
                 "tier_palette.py",
                 "tier_resolver.py",
                 "staffing.json",

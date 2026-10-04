@@ -112,14 +112,17 @@ headings as table titles: they break the gate-record lint as described above.
 coordinator ruling 7 (operator answer > repository overlay > a recorded Jev raise > work-shape
 default, refusing a raise that is not exactly one step up or that names fable or max) in one
 display-only function, `_proposed_and_why`, because the resolver issue #93 builds does not exist
-yet. Likewise the tier-judgment band names (issue #96) and the 0.8 / 0.6 lens bands (issue #110)
+yet. (Issue #93's review replaced that copy: `_proposed_and_why` now hands a recorded raise to
+the resolver through `_resolve_one_role` and words the decision's `source` and the resolver's own
+refusal message, after the copy was found showing a model-rung raise the resolver had applied as
+refused.) Likewise the tier-judgment band names (issue #96) and the 0.8 / 0.6 lens bands (issue #110)
 are copied, not imported. The JSON carries a `status` field (`unreachable`,
 `catalogue-unreadable`) instead of placeholder rows, so a pane never has to match display text.
 The keys the tables read are listed in `plugins/saga/references/run-record.md`.
 
 **Revisit when.** A harness needs a different format than Markdown tables, or the Jev data the
 tables read (the per-role tier judgment from issue #96, the lens proposal from issue #110) lands in
-a different place in the run record. Replace the interim copies when #93's resolver, #96's band
+a different place in the run record. Replace the remaining interim copies when #96's band
 constants and #110's thresholds land: call or import them and delete the copies here. When issue
 #96 merges a `staffing_overrides` answer per role, remove the plan skill's "complete role map"
 answer rule (SKILL.md §0.1b) and the matching caveat in `references/run-record.md`; the admission
@@ -306,6 +309,44 @@ tag reaches 2.1.286 or later; or the mods API leaves early access.
 `.github/workflows/ci.yml` (`claude-mods`), `scripts/check_repo.py`
 (`check_claude_module_sources`), `tests/test_claude_plugin_packaging.py`
 (`ModuleDeclarationTests`, `TypesContractTests`, `ClaudeCodeFloorTests`).
+### Saga's builder runs on Claude opus/medium through a Claude-only implementation work shape, resolved one way
+
+**Decision.** The `worker` role, which implements plan units, moves off the `mechanical` work shape
+(`sonnet/medium`) onto a new `implementation` work shape at `opus/medium` in
+`plugins/fleet-core/scripts/fleet_commons/staffing.json` (issue #93). The shape is declared
+`claude_only`, so a role pinned to another vendor through it fails loud instead of having `opus`
+translated into that vendor's execution class. Admission, `/plan`, `/work` and
+`intent_envelope.recommend_tier` all get a tier from `staffing.resolve_shape`, whose precedence is
+written once in `staffing.TIER_PRECEDENCE`: the operator's answer, then the repository overlay
+(`.saga/tier-defaults.json`), then a Jev-applied raise recorded in the run record, then the work
+shape's default. A recorded raise must be exactly one model rung or one effort rung above the
+default and never names `fable`; `max` is off the Claude palette. An unattended run does not step
+the `implementation` shape one rung cheaper. The ordinal cost table (`cost_weights.py` and
+`cost_weights.json`) is deleted.
+
+**Rationale.** The worker was filed in the wrong category: `mechanical` is defined as
+deterministic, scripted transforms, and implementing a plan unit that writes refund or IAM code is
+not that. On the price side, Anthropic's pricing as read on 2026-10-03 and this machine's 30-day
+transcript token mix (cache reads about 97 percent of input for both models) put Opus 5.5 at 1.36
+to 1.37 times Sonnet 5.5, not twice; the deleted ordinal table claimed 2.67 times and nothing but
+its own test read it. Three paths disagreed before this change: admission resolved role then shape,
+`/plan` named two functions that no longer existed, and `/work` called the policy layer directly,
+which also skipped the repository overlay admission honoured. One function with one written order
+is the only way to keep them agreeing.
+
+**Rejected alternatives.**
+
+- Re-tier `mechanical` globally to `opus/medium`. It would also move the merging and release
+  workers, the `contract-test` alias and every genuinely mechanical subagent, none of which the
+  evidence covers.
+- A per-repository overlay only. Every repository would have to opt in, the fleet default would
+  stay wrong, and `.saga/` is gitignored in this repository, so the overlay is not even shared here.
+- Keep the unattended one-rung step-down for `implementation`. Unattended runs would put the
+  builder back on Sonnet, so the cost-per-unit measurement (staffing U3) would never test the Opus
+  decision on those runs.
+
+**Revisit when.** Measured cost per completed unit (staffing U3, issue #95) shows Opus at medium
+losing to Sonnet at medium for the builder.
 
 ## 2026-09-22
 

@@ -3,17 +3,19 @@
 # source-version: 0.32.0
 # source-commit: authored
 # source-path: scripts/fleet_commons/tier_resolver.py
-# source-sha256: df54fea1a1ea41ab2ac65cba440b462e8ac12541ba7ac36af59463131e8bd661
-# output-sha256: df54fea1a1ea41ab2ac65cba440b462e8ac12541ba7ac36af59463131e8bd661
+# source-sha256: 256041491e942609da976791eff79bfd7021d909bcc6755728b7dcf700bc4d82
+# output-sha256: 256041491e942609da976791eff79bfd7021d909bcc6755728b7dcf700bc4d82
 # --- end generated bundle stamp ---
 #!/usr/bin/env python3
 """Dispatch-time tier resolver — maps a work shape to a ``{model, effort}`` tier (#362).
 
-One callable seam for tier decisions that today live scattered across team-execution's 25
-hardcoded agent ``model:`` literals, the prose-only heuristic table at
-``plugins/saga/skills/plan/SKILL.md:298-304``, and assorted per-call literals. ``resolve()``
-reads defaults from the ``work_shapes`` block of the machine-readable ``staffing.json`` registry
-(U1, merged there by issue #1021) and never hardcodes a heuristic in code.
+``resolve()`` is the policy layer: the bottom rung of the staffing precedence. It reads a work
+shape's default from the ``work_shapes`` block of the machine-readable ``staffing.json`` registry
+(U1, merged there by issue #1021) and never hardcodes a heuristic in code. A caller that wants a
+staffing answer calls ``staffing.resolve_shape`` or ``staffing.resolve_role`` instead: those apply
+the operator's answer, the repository overlay and a recorded Jev raise above this default, in the
+one order ``staffing.TIER_PRECEDENCE`` writes down (issue #93). Calling ``resolve()`` directly
+for a staffing answer skips every one of those layers without an error.
 
 Imports ``MODELS``, ``EFFORTS``, ``model_rank``, ``effort_rank`` from ``tier_palette`` via
 ``fleet_commons_shim`` — never re-declaring the tuples (KTD1/KTD2).
@@ -265,6 +267,14 @@ def resolve(
     key. ``envelope_ceiling``, when supplied, clamps the resolved model to no stronger than the
     ceiling (forward-compat for #366's spend envelope; ``None`` is honored as "no ceiling", never
     an error). ``operator_override`` replaces ``model``/``effort`` outright when supplied.
+
+    **Deprecated: ``envelope_ceiling`` and ``operator_override``** (issue #93). They predate the one
+    staffing precedence and no caller in this repository passes them. ``operator_override`` checks
+    only that each value is on the palette, not the per-model effort ceiling, so it can return a
+    tier no host runs (``haiku/xhigh``). An operator's answer belongs in
+    ``staffing.resolve_shape(..., answer=...)``, which validates it fully and reports its source.
+    Pass neither argument in new code; they stay only until their removal can be checked against
+    callers outside this repository.
     """
     if role_kind is not None and not isinstance(role_kind, str):
         raise TierResolverError("role_kind must be a string or None")

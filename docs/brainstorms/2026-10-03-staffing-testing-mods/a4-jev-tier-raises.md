@@ -37,7 +37,11 @@ Haiku, which contradicts `staffing.json`. Its choices also lack Fable and `xhigh
 4. **Apply by direction.**
    - A raise at 0.8 confidence or above applies automatically: one step, effort first, never to
      Fable or `max`. It is recorded in the run record with Jev's reason, and staffing U1's resolver
-     honors it.
+     honors it. Note from staffing U1 (issue #93): `/work` passes a plan-recorded unit tier to the
+     resolver as the operator's answer, which outranks a recorded raise, and `/plan` records a tier
+     for every unit. A raise on a units[] row therefore only reaches an undeclared unit unless this
+     card makes `/plan` record the raised tier itself (or record a tier only when the operator
+     changed it). `resolve-build-unit-tier` prints `"jev_raise_set_aside": true` when that happens.
    - A raise between 0.6 and 0.8 is pre-filled in admission question 4 for the operator to confirm.
    - A suggestion to lower a tier is shown as advisory only.
    - Anything below 0.6 is logged, not shown.

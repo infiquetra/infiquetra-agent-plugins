@@ -195,22 +195,27 @@ When Work directly launches a build unit (an Implementation Unit executed as a d
 resolve its `{model, effort}` by running the resolver:
 
 ```bash
-python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier \
+python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier --explain \
   --plan-model <model> --plan-effort <effort>      # explicit plan tier
-python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier \
+python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier --explain \
   --work-shape <shape>                             # no explicit tier
 ```
 
-An explicit `{model, effort}` on the plan unit wins on **precedence** — and is validated against the
-same vocabulary the shape path resolves from, so a model or effort the registry does not carry is
-refused rather than passed through to a spawn. Otherwise the work shape is selected and resolved
-through the shared registry: the `work_shapes` block of
-`plugins/fleet-core/scripts/fleet_commons/staffing.json` via
-`tier_resolver` / `tier_defaults`. When a unit declares neither a tier nor a work shape, the selected
-shape is `mechanical` — bounded, specified work per `/work`'s own execution context and the middle
-rung that bounds either-direction error (KTD7) — so the resolver with neither argument resolves the
-`mechanical` row from `staffing.json`, not a literal at the spawn site. Values stay in that
-registry; this file only names the shape-selection rule — `resolve_build_unit_tier` in
+`resolve_build_unit_tier` hands every input to fleet-core's staffing resolver,
+`staffing.resolve_shape` in `plugins/fleet-core/scripts/fleet_commons/staffing.py`, which owns the
+order in which the operator's answer, the repository overlay, a recorded raise and the registry
+default apply. This file does not restate that order. A recorded raise reaches it only through
+`--jev-raise '<json>'` (the unit row's `jev_raise`, written by staffing U4, issue #96), and
+`--root <checkout>` names where the overlay is read. An explicit `{model, effort}` on the plan unit
+is passed as the operator's answer and validated against the same vocabulary as every other layer,
+so a model or effort the registry does not carry is refused rather than passed through to a spawn.
+The command prints exactly `{"model", "effort"}`; with `--explain` it adds `source`, the layer that
+won, and `"jev_raise_set_aside": true` when a passed `--jev-raise` was outranked (a plan-recorded
+tier outranks a recorded raise), so the evidence never hides a raise that did not apply.
+When a unit declares neither a tier nor a work shape, the selected shape is the `worker` role's work
+shape, `implementation` (`staffing.unit_work_shape_default()`), not a literal at the spawn site.
+Values stay in the `work_shapes` block of `staffing.json`; this file only names the shape-selection
+rule — `resolve_build_unit_tier` in
 `lifecycle_state.py` is the single delegation seam behind the subcommand. **The resolver takes no
 host or session input at all**, which is what makes inheritance impossible: it cannot consult a host
 tier it is never given. Record the resolved tier in the Phase-4 work-session execution evidence for

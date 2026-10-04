@@ -370,18 +370,26 @@ hook (#677/U5). Direct `Agent`/`Task` spawns carry no lease admission.
 
   ```bash
   # explicit plan tier
-  python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier \
+  python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier --explain \
     --plan-model <model> --plan-effort <effort>
-  # or, with no explicit tier, from the work shape (default: mechanical)
-  python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier --work-shape <shape>
+  # or, with no explicit tier, from the work shape (default: the worker role's work shape,
+  # implementation)
+  python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier --explain \
+    --work-shape <shape>
   ```
 
-  It prints `{"model": ..., "effort": ...}` as JSON. An explicit plan tier wins on **precedence**,
-  and is still validated against the same vocabulary the shape path resolves from — a model or
-  effort the registry does not carry is refused rather than passed through to a spawn. Otherwise the
-  work shape (default `mechanical` when undeclared per `references/execution-strategy.md`) resolves
-  through the shared `work_shapes` registry in `staffing.json` via `tier_resolver` /
-  `tier_defaults`. **The
+  Without `--explain` it prints exactly `{"model": ..., "effort": ...}`. With `--explain` it adds
+  `source`, the layer that won, and, when a `--jev-raise` was passed but a higher layer won (for
+  example the plan tier), `"jev_raise_set_aside": true`. Record both in the execution evidence. Every form goes through fleet-core's staffing
+  resolver (`staffing.resolve_shape`), which weighs the repository overlay, any recorded raise and
+  the registry default and owns the order between them; do not restate it here. A raise reaches
+  it only when you pass the unit row's recorded `jev_raise` as `--jev-raise '<json>'` (staffing U4,
+  issue #96, writes it; until then there is none); `--root <checkout>` names where the overlay is
+  read when you are not running from the repository root. An explicit
+  plan tier is handed to that resolver as the operator's answer and validated against the same
+  vocabulary as every other layer, so a model or effort the registry does not carry is refused
+  rather than passed through to a spawn. An undeclared unit runs at the `worker` role's work shape,
+  `implementation`. **The
   resolver takes no host or session input at all**, so the dispatch never consults the host
   session's tier — it cannot read one it is never given. Record the resolved tier in the Phase-4
   work-session execution evidence.

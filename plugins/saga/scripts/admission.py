@@ -35,6 +35,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 _SCRIPTS = Path(__file__).resolve().parent
@@ -275,6 +276,7 @@ def fill_defaults(
     suggest: bool = False,
     suggest_ask: Callable[..., Any] | None = None,
     suggest_log_dir: Path | None = None,
+    repo_root: Path | None = None,
 ) -> run_record.RunRecord:
     """Fill every defaultable parameter, recording where each value came from (plan R7).
 
@@ -286,6 +288,9 @@ def fill_defaults(
     each beside its default. Advisory and fail-open: a suggestion never changes a value, and a
     component without a consult entry point — or a failed request — leaves the defaults exactly
     as they would have been.
+
+    ``repo_root`` is the checkout whose repository tier overlay staffing reads; ``None`` reads it
+    from the working directory.
     """
     configuration = {name: dict(block) for name, block in record.run_configuration.items()}
     admission = json.loads(json.dumps(record.admission))
@@ -311,7 +316,12 @@ def fill_defaults(
         and configuration["staffing_models_and_efforts"]["source"] != "operator"
     ):
         resolved = _resolve_staffing(
-            staffing, suggest=suggest, suggest_ask=suggest_ask, suggest_log_dir=suggest_log_dir
+            staffing,
+            root=repo_root,
+            recorded=configuration["staffing_models_and_efforts"].get("value"),
+            suggest=suggest,
+            suggest_ask=suggest_ask,
+            suggest_log_dir=suggest_log_dir,
         )
         if resolved is not None:
             _fill(configuration, "staffing_models_and_efforts", resolved, "staffing")
@@ -339,11 +349,20 @@ def fill_defaults(
 def _resolve_staffing(
     staffing: Any,
     *,
+    root: Path | None = None,
+    recorded: Any = None,
     suggest: bool = False,
     suggest_ask: Callable[..., Any] | None = None,
     suggest_log_dir: Path | None = None,
 ) -> dict[str, Any] | None:
     """Ask the staffing component for each role's vendor, model and effort.
+
+    The staffing component owns the tier precedence; this function restates none of it. It hands
+    over the repository root for the overlay and, for each role, any ``jev_raise`` already
+    recorded on that role's entry in ``recorded`` (the previous staffing value), and keeps that
+    raise on the entry it returns so a re-run does not drop it. A raise the resolver refuses is
+    kept too, beside a ``jev_raise_refused`` message, and the role falls back to its default; any
+    other refusal stops admission (see :func:`_resolve_one_role`).
 
     With ``suggest``, one batched tier consult covers every resolved role, and each role's
     suggestion is recorded beside its default. The consult is best-effort: a component without
@@ -355,20 +374,79 @@ def _resolve_staffing(
         return None
     resolved: dict[str, Any] = {}
     operator_set: dict[str, bool] = {}
+    previous = recorded if isinstance(recorded, dict) else {}
     for role in sorted(roles):
-        try:
-            decision = staffing.resolve_role(role)
-        except Exception:
+        entry = previous.get(role)
+        jev_raise = entry.get("jev_raise") if isinstance(entry, dict) else None
+        decision, refused = _resolve_one_role(staffing, role, root=root, jev_raise=jev_raise)
+        if decision is None:
             continue
         resolved[role] = {
             "vendor": getattr(decision, "vendor", None),
             "model": getattr(decision, "model", None),
             "effort": getattr(decision, "effort", None),
+            "source": getattr(decision, "source", None),
         }
+        if jev_raise is not None:
+            resolved[role]["jev_raise"] = jev_raise
+        if refused is not None:
+            resolved[role]["jev_raise_refused"] = refused
         operator_set[role] = getattr(decision, "source", "policy") == "overlay"
     if suggest and resolved:
         _attach_suggestions(staffing, resolved, operator_set, suggest_ask, suggest_log_dir)
     return resolved or None
+
+
+def _is_refusal(staffing: Any, exc: Exception) -> bool:
+    """Whether ``exc`` is the staffing resolver refusing an input, not a missing component."""
+    refusal = getattr(staffing, "StaffingError", None)
+    return isinstance(refusal, type) and isinstance(exc, refusal)
+
+
+def _resolve_one_role(
+    staffing: Any, role: str, *, root: Path | None, jev_raise: Any
+) -> tuple[Any, str | None]:
+    """Resolve one role, failing loud on every refusal except the known lens-reviewer skip.
+
+    Returns ``(decision, refused)``. ``decision`` is None only for a role admission cannot staff
+    without a lens (the lens reviewer), or for a staffing component that is missing or too old to
+    take these arguments, which stays fail-open as before.
+
+    A recorded ``jev_raise`` the resolver refuses (a lowering, a two-step jump, a raise to the
+    strongest model or off the palette) does not drop the role: the role resolves without the
+    raise, and ``refused`` carries the resolver's message so the record shows the refusal beside
+    the raise it kept. Any other refusal, such as a Claude-only work shape on a role pinned to
+    another vendor, raises :class:`AdmissionError` naming the role; the raise is named there only
+    when the resolver refused it with a message of its own, so a refusal the raise did not cause
+    is never blamed on it.
+    """
+    try:
+        return staffing.resolve_role(role, root=root, jev_raise=jev_raise), None
+    except Exception as exc:
+        if not _is_refusal(staffing, exc):
+            return None, None
+        first = exc
+    refused: str | None = None
+    if jev_raise is not None:
+        try:
+            return staffing.resolve_role(role, root=root), str(first)
+        except Exception as exc:
+            if not _is_refusal(staffing, exc):
+                return None, None
+            # Dropping the raise did not clear the refusal, so the raise was not its cause. Name
+            # it only when it was refused for a reason of its own, never by repeating the message.
+            if str(exc) != str(first):
+                refused = str(first)
+            first = exc
+    try:
+        staffing.resolve_role(role, root=root, require_lens=False)
+    except Exception as exc:
+        if not _is_refusal(staffing, exc):
+            return None, None
+        reason = f"; its recorded raise was also refused: {refused}" if refused else ""
+        raise AdmissionError(f"staffing refused role {role!r}: {first}{reason}") from first
+    # Only the lens requirement stood in the way: the lens reviewer is staffed per lens later.
+    return None, None
 
 
 def _attach_suggestions(
@@ -731,8 +809,10 @@ def validate_lens_declaration(value: Any, staffing: Any = None) -> None:
 def _merge_overrides(current: Any, overrides: dict[str, Any]) -> dict[str, Any]:
     """Lay *overrides* onto the recorded staffing map, role by role.
 
-    A role the answer names takes its vendor, model and effort and is marked
-    ``operator_override``; every other role, and every run-wide ``_`` key, keeps what the
+    A role the answer names takes its vendor, model and effort, is marked
+    ``operator_override`` and records ``source`` ``operator`` (the staffing resolver's top
+    layer, issue #93), so a tier source the resolver recorded for the default never outlives the
+    answer that replaced it; every other role, and every run-wide ``_`` key, keeps what the
     staffing component recorded. A partial answer therefore never drops a role.
     """
     merged = json.loads(json.dumps(current)) if isinstance(current, dict) else {}
@@ -741,6 +821,7 @@ def _merge_overrides(current: Any, overrides: dict[str, Any]) -> dict[str, Any]:
         merged[str(role)] = {
             **kept,
             **{key: row[key] for key in _OVERRIDE_KEYS},
+            "source": "operator",
             "operator_override": True,
         }
     return merged
@@ -868,6 +949,7 @@ def admit(
         suggest=suggest,
         suggest_ask=suggest_ask,
         suggest_log_dir=suggest_log_dir,
+        repo_root=repo_root,
     )
     if answers:
         record = apply_answers(record, answers, staffing)
@@ -1009,9 +1091,6 @@ _BAND_NOTES: dict[str, str] = {
 }
 _AT_CEILING = "raise-at-ceiling"
 
-#: The strongest model an automatic Jev raise may name (coordinator ruling 7): never fable.
-_RAISE_MODEL_CEILING = "opus"
-
 #: The staffing-table and lens-table states a pane branches on instead of matching display text.
 STAFFING_UNREACHABLE = "unreachable"
 LENS_CATALOGUE_UNREADABLE = "catalogue-unreadable"
@@ -1035,14 +1114,17 @@ def _tier(vendor: Any, model: Any, effort: Any) -> dict[str, Any] | None:
     return {"vendor": vendor, "model": model, "effort": effort}
 
 
-def _default_tier(staffing: Any, role: str) -> tuple[dict[str, Any] | None, str | None, str | None]:
+def _default_tier(
+    staffing: Any, role: str, repo_root: Path | None = None
+) -> tuple[dict[str, Any] | None, str | None, str | None]:
     """A fresh staffing resolve for *role*: its default tier, its work shape, and where the tier
     came from (``overlay`` for ``.saga/tier-defaults.json``, ``policy`` for the shared work-shape
-    registry), or ``None``s."""
+    registry), or ``None``s. *repo_root* is the checkout whose overlay is read, the same root
+    :func:`fill_defaults` staffs with; ``None`` reads the working directory's."""
     if staffing is None:
         return None, None, None
     try:
-        decision = staffing.resolve_role(role)
+        decision = staffing.resolve_role(role, root=repo_root)
     except Exception:
         return None, None, None
     tier = _tier(
@@ -1060,82 +1142,84 @@ def _default_tier(staffing: Any, role: str) -> tuple[dict[str, Any] | None, str 
     return tier, shape, source if isinstance(source, str) else None
 
 
-def _one_step_raise(base: dict[str, Any]) -> dict[str, Any] | None:
-    """The tier exactly one step above *base*, or ``None`` at the ceiling.
+def _raise_outcome(
+    staffing: Any,
+    role: str,
+    row: dict[str, Any],
+    raise_: dict[str, Any],
+    repo_root: Path | None = None,
+) -> tuple[Any, str | None]:
+    """What the staffing resolver makes of a recorded Jev raise for *role*.
 
-    An interim copy of fleet-core's ``one_step_raise`` as issue #96 designs it: effort first, up
-    to the model's own ceiling; then the model, never past opus. ``max`` is not a palette rung, so
-    it is excluded by construction. Raises when the palette cannot be loaded or *base* is unknown.
+    Returns ``(decision, refused)`` from :func:`_resolve_one_role`, the same call admission staffs
+    with, so the table reads the precedence and the raise rules from the resolver and restates
+    neither. ``decision.source`` names the rung that won (``jev-raise`` when the raise applied);
+    ``refused`` is the resolver's own message when it refused the raise. With the resolver
+    unreachable, the row's recorded ``source`` and ``jev_raise_refused`` (written by
+    :func:`_resolve_staffing` from the same resolver) stand in. *repo_root* is the overlay root
+    admission staffed with, so the table and the staffed tier read the same overlay.
     """
-    import bundled_fleet  # noqa: PLC0415
-
-    palette = bundled_fleet.load("tier_palette")
-    model, effort = str(base["model"]), str(base.get("effort") or "")
-    ceiling = palette.effort_ceiling(model)
-    if palette.effort_rank(effort) < palette.effort_rank(ceiling):
-        return {"model": model, "effort": palette.escalate("effort", effort, 1, ceiling=ceiling)}
-    if palette.model_rank(model) > palette.model_rank(_RAISE_MODEL_CEILING):
-        raised = palette.escalate("model", model, 1, ceiling=_RAISE_MODEL_CEILING)
-        return {"model": raised, "effort": palette.clamp_effort_to_model(raised, effort)[0]}
-    return None
-
-
-def _raise_refusal(raise_: dict[str, Any], base: dict[str, Any] | None) -> str | None:
-    """Why the staffing resolver would refuse a recorded Jev raise, or ``None`` when it passes."""
-    model, effort = raise_.get("model"), raise_.get("effort")
-    if model == "fable":
-        return "it names fable"
-    if effort == "max":
-        return "it names max"
-    if base is None:
-        return "there is no default to raise from"
-    try:
-        step = _one_step_raise(base)
-    except Exception:
-        return "the tier palette could not be read to check it"
-    if step is None or (step["model"], step["effort"]) != (model, effort):
-        return "it is not exactly one step above the default"
-    return None
+    if staffing is not None:
+        try:
+            decision, refused = _resolve_one_role(staffing, role, root=repo_root, jev_raise=raise_)
+        except AdmissionError:
+            decision, refused = None, None
+        if decision is not None or refused is not None:
+            return decision, refused
+    refused = row.get("jev_raise_refused")
+    if isinstance(refused, str) and refused:
+        return None, refused
+    source = row.get("source")
+    if isinstance(source, str):
+        recorded = {key: row.get(key) for key in ("vendor", "model", "effort")}
+        return SimpleNamespace(source=source, **recorded), None
+    return None, None
 
 
 def _proposed_and_why(
     row: dict[str, Any],
-    default: dict[str, Any] | None,
     shape: str | None,
     default_source: str | None,
     *,
     operator: bool,
+    staffing: Any = None,
+    role: str = "",
+    repo_root: Path | None = None,
 ) -> tuple[dict[str, Any] | None, str]:
     """Which tier wins for one role, and the Why cell that names where it came from.
 
-    DISPLAY-ONLY INTERIM COPY of the staffing precedence. Coordinator ruling 7 writes the
-    precedence once, in the resolver issue #93 builds: operator's admission answer > repository
-    overlay (``.saga/tier-defaults.json``) > a recorded Jev raise > work-shape default, refusing a
-    raise that is not exactly one step above its base or that names fable or max. This function
-    mirrors that order and those refusals so the table never shows a tier the run would not
-    staff; once #93's resolver exists, call it here instead and delete the copy.
+    The precedence and the raise rules are the staffing resolver's (issue #93); this function
+    only words its answer. An operator answer is shown as recorded. Otherwise a recorded Jev raise
+    is handed to the resolver: the decision's ``source`` says whether the raise applied
+    (``jev-raise``) or a higher rung outranked it (``overlay``), and a refused raise is shown with
+    the resolver's own message beside the default it fell back to.
     """
     recorded = _tier(row.get("vendor"), row.get("model"), row.get("effort"))
     shape_note = f"work shape {shape}" if shape else None
     if operator:
         return recorded, "operator answer"
-    raise_ = row.get("jev_raise") if isinstance(row.get("jev_raise"), dict) else {}
-    has_raise = bool(raise_.get("model"))
-    if default_source == "overlay":
-        why = "repository overlay (.saga/tier-defaults.json" + (
-            f", {shape_note})" if shape_note else ")"
-        )
-        if has_raise:
-            why += "; the overlay outranks the recorded Jev raise"
-        return recorded, why
+    overlay_why = "repository overlay (.saga/tier-defaults.json" + (
+        f", {shape_note})" if shape_note else ")"
+    )
     base_why = f"staffing default ({shape_note})" if shape_note else "staffing default"
-    if has_raise:
-        refusal = _raise_refusal(raise_, default or recorded)
-        if refusal is None:
-            proposed = _tier(row.get("vendor"), raise_.get("model"), raise_.get("effort"))
-            return proposed, f"Jev raise: {raise_.get('reason') or 'no reason recorded'}"
-        refused = _tier_text(raise_, with_vendor=False)
-        return recorded, f"{base_why}; recorded Jev raise to {refused} refused: {refusal}"
+    raise_ = row.get("jev_raise") if isinstance(row.get("jev_raise"), dict) else {}
+    if not raise_.get("model"):
+        return recorded, overlay_why if default_source == "overlay" else base_why
+    decision, refused = _raise_outcome(staffing, role, row, raise_, repo_root)
+    source = getattr(decision, "source", None) if decision is not None else default_source
+    layer_why = overlay_why if source == "overlay" else base_why
+    if refused is not None:
+        shown = _tier_text(raise_, with_vendor=False)
+        return recorded, f"{layer_why}; recorded Jev raise to {shown} refused: {refused}"
+    if source == "jev-raise":
+        proposed = _tier(
+            row.get("vendor") or getattr(decision, "vendor", None),
+            getattr(decision, "model", None),
+            getattr(decision, "effort", None),
+        )
+        return proposed, f"Jev raise: {raise_.get('reason') or 'no reason recorded'}"
+    if source == "overlay":
+        return recorded, f"{overlay_why}; the overlay outranks the recorded Jev raise"
     return recorded, base_why
 
 
@@ -1227,8 +1311,11 @@ def _jev_staffing_cell(row: dict[str, Any], consult: Any) -> dict[str, Any]:
     }
 
 
-def _staffing_rows(record: run_record.RunRecord, staffing: Any) -> dict[str, Any]:
-    """One row per role the record holds, in sorted order."""
+def _staffing_rows(
+    record: run_record.RunRecord, staffing: Any, repo_root: Path | None = None
+) -> dict[str, Any]:
+    """One row per role the record holds, in sorted order. *repo_root* is the overlay root
+    admission staffed with (``--repo-root``); ``None`` reads the working directory's."""
     block = record.run_configuration["staffing_models_and_efforts"]
     value = block.get("value")
     source = block.get("source", "unset")
@@ -1244,11 +1331,19 @@ def _staffing_rows(record: run_record.RunRecord, staffing: Any) -> dict[str, Any
     rows: list[dict[str, Any]] = []
     for role in sorted(key for key in value if not str(key).startswith("_")):
         row = value[role] if isinstance(value[role], dict) else {}
-        default, shape, default_source = _default_tier(staffing, role)
+        default, shape, default_source = _default_tier(staffing, role, repo_root)
         if default is None and source == "staffing":
             default = _tier(row.get("vendor"), row.get("model"), row.get("effort"))
         operator = row.get("operator_override") is True or (source == "operator" and not merged)
-        proposed, why = _proposed_and_why(row, default, shape, default_source, operator=operator)
+        proposed, why = _proposed_and_why(
+            row,
+            shape,
+            default_source,
+            operator=operator,
+            staffing=staffing,
+            role=role,
+            repo_root=repo_root,
+        )
         rows.append(
             {
                 "role": role,
@@ -1433,8 +1528,12 @@ def review_data(
     outstanding: list[Question],
     staffing: Any,
     path: Path | None,
+    repo_root: Path | None = None,
 ) -> dict[str, Any]:
-    """Everything the two tables show, machine-readable (schema ``admission_review.v1``)."""
+    """Everything the two tables show, machine-readable (schema ``admission_review.v1``).
+
+    *repo_root* must be the root admission staffed with, so the staffing table resolves tiers
+    against the same ``.saga/tier-defaults.json`` overlay as the recorded rows."""
     data: dict[str, Any] = {
         "schema": REVIEW_SCHEMA,
         "issue": record.issue,
@@ -1445,7 +1544,7 @@ def review_data(
             {"key": question.key, "prompt": question.prompt, "default": question.default}
             for question in outstanding
         ],
-        "staffing": _staffing_rows(record, staffing),
+        "staffing": _staffing_rows(record, staffing, repo_root),
         "lenses": _lens_rows(record, staffing),
         "palette": _palette(),
     }
@@ -1539,10 +1638,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         path = None if args.dry_run else save_admission(store_root, record)
         if args.render == "json":
-            data = review_data(record, outstanding, staffing, path)
+            data = review_data(record, outstanding, staffing, path, repo_root)
             print(json.dumps(data, indent=2, sort_keys=True))
         elif args.render == "tables":
-            data = review_data(record, outstanding, staffing, path)
+            data = review_data(record, outstanding, staffing, path, repo_root)
             print(render(record, outstanding, path) + "\n\n" + data["tables_markdown"])
         else:
             print(render(record, outstanding, path))

@@ -151,9 +151,12 @@ python3 plugins/saga/scripts/intent_envelope.py spend --run-mode attended --spen
 
 - `spend_posture(run_mode)` → `("cache-tight", "silent")` for unattended;
   `("interactive", "ask-on-spend-increase")` for attended (T12-F3-7).
-- `recommend_tier(work_shape, run_mode)` → attended = the tier-policy registry default;
-  unattended = exactly one rung cheaper via the ladder ops (`{#tier-vocab-ordering}`), floor
-  is a no-op (T12-F6-7).
+- `recommend_tier(work_shape, run_mode)` → the base is fleet-core's staffing resolver's answer
+  for the work shape (`staffing.resolve_shape`, so the repository overlay applies; its order is
+  written once in `plugins/fleet-core/references/staffing.md`, not here). Attended = that base;
+  unattended = one rung cheaper via the ladder ops (`{#tier-vocab-ordering}`), floor is a no-op
+  (T12-F6-7), unless the work shape's registry row sets `unattended_step_down: false`, as the
+  `implementation` shape does, in which case unattended keeps the base.
 - `self_select_posture(work_shape)` → an unattended run's full posture (envelope with all
   gates at `gate` + the unattended tier) from the same matrix, zero interactive answers
   (T1-F6-8).
