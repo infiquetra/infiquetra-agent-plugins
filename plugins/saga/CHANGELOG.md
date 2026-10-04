@@ -70,6 +70,14 @@
 
 ### Docs
 
+- `references/run-record.md` states the round-trip rule for a writer that rewrites whole unit
+  rows, which orchestrate's `Run.save` now follows under the record lock (issue #113), and adds
+  orchestrate to the table of locked writers in place of the caveat that it was the one writer
+  outside the lock. It marks every unit-row key table with `<!-- BEGIN UNIT ROW KEYS -->` (and
+  gives `usage` its own row) so a nested block's field table is not read as a row key, says the
+  lock is not re-entrant and is not the lease issue 1018 forbids, and says that `merge_state`,
+  written by both orchestrate and `merge_turn`, stays last-writer-wins on orchestrate's side.
+
 Four skill-instruction sentences named scripts that are not in this package at acc99fe7, marked
 "retired in the portable package" in place rather than deleted, because the step they describe is
 still the intended one once a replacement ships:

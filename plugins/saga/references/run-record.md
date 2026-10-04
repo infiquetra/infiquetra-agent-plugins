@@ -192,8 +192,28 @@ mechanical-check result". The key set is deliberately **not** fixed: a consumer 
 inside a row without a version bump, because a row is one consumer's working state rather than a
 cross-consumer contract. What is fixed is that a key another consumer does not know is left alone.
 
+Each key that sits directly on a unit row is listed in a table between `<!-- BEGIN UNIT ROW KEYS -->`
+and `<!-- END UNIT ROW KEYS -->` markers below, one block per consumer. Tables outside those markers
+describe keys nested inside a row's block (such as a `usage` entry's fields), not row keys.
+Orchestrate's tests read these blocks to keep its list of quietly carried keys matched to this
+contract, so a new row key belongs in a marked table.
+
+**The round-trip rule for every whole-row writer.** A writer that rewrites a whole unit row, or the
+whole `units` array, writes only the keys it owns from memory and carries every other key forward
+from the row as it is on disk when it writes, re-read under the record lock (see "Writing" below).
+Carrying them forward from the copy it loaded earlier is not enough: that copy misses whatever
+another writer added since. The same holds for top-level keys: everything the writer does not own
+comes from the fresh re-read. A writer that adds a key to one row in place follows the same
+lock-and-re-read sequence, as the build loop does under `file_lock`. Orchestrate's `Run.save`
+follows this rule since issue 113; before it, a load and save through orchestrate dropped
+`build_loop`, `usage` and every other key its `Unit` did not declare. Orchestrate owns the keys its
+`Unit` declares and which rows exist: a row `start` creates fresh carries nothing forward, and a row
+orchestrate does not hold is not written back.
+
 The orchestrate plugin is the first such consumer, and issue 1025 added three keys, documented here
 so the two do not drift:
+
+<!-- BEGIN UNIT ROW KEYS -->
 
 | Key | Holds |
 |---|---|
@@ -201,15 +221,30 @@ so the two do not drift:
 | `launch_started_at` | when the driver persisted this unit's launch, written **before** the launcher is called. This is what makes a repeated launch call launch the unit once; there is no reservation |
 | `shared_blockers` | blockers this unit meets, each naming the one unit that owns the repair, so two units never both repair the same thing. The driver only reads these; the producer is whoever notices the blocker |
 
+<!-- END UNIT ROW KEYS -->
+
 The build loop is the second such consumer, and issue 1027 added one key under the same rule:
+
+<!-- BEGIN UNIT ROW KEYS -->
 
 | Key | Holds |
 |---|---|
 | `build_loop` | the written exit criterion as it was read, one entry per loop iteration with every check's result, and — on the green iteration only — the full forty-character revision handed to code review. Its full contract, the three check statuses and the exit-code table are in `plugins/saga/references/mechanical-baseline.md`, documented there so the two do not drift |
 
+<!-- END UNIT ROW KEYS -->
+
 Cost measurement is the third consumer, and issue 95 added one key, `usage`, owned by
-`run_record.py` itself. It holds `{"entries": [...]}`, one entry per model session that worked the
-unit. `run_record.py usage add` is the one portable write path: any harness integration calls it
+`run_record.py` itself:
+
+<!-- BEGIN UNIT ROW KEYS -->
+
+| Key | Holds |
+|---|---|
+| `usage` | `{"entries": [...]}`, one entry per model session that worked the unit; the entry fields are in the next table |
+
+<!-- END UNIT ROW KEYS -->
+
+`run_record.py usage add` is the one portable write path: any harness integration calls it
 with the counts it read from its own session, including the Claude Code token-capture mod. Build
 loop passes and review cycles are not copied into it; the cost report reads them where they already
 live (`build_loop.iterations` on the row, and `review_cycles` at the top level).
@@ -278,13 +313,6 @@ without rates, so a row's per-unit figure divides only by the completed units wh
 row is fully priced, and the report names any row that left units out. A unit whose spend is all
 unpriced shows `unpriced`, never `$0.00`, and a total that leaves unpriced spend out is marked
 `+ unpriced`.
-
-**Caveat until issue 113 lands.** The orchestrate plugin's `read_unit` keeps only the row keys its
-`Unit` type declares, and its `Run.save` rewrites the whole `units` array from that copy. Until
-issue 113 makes orchestrate carry unknown row keys forward under the lock below, an
-orchestrate-driven run drops `usage` (and `build_loop`) on its next save. Orchestrate is the only
-writer outside the lock convention; every saga writer, and agent-launcher's roster writer, follows
-it (see the table below).
 
 Orchestrate also keeps its own run-level state under a top-level key named `orchestrate` — the run
 branch, the base commit, the issue mapping and its review state. That key is unknown to this module
@@ -363,7 +391,25 @@ or git merges would stall every unit session's `usage add`.
 | `merge_turn.py status`, `take` | unit rows' merge keys | wholly under `update` |
 | `merge_turn.py merge` | unit rows' `merge_state`, `merge_worktree`, `merged_tip` | git work runs unlocked; through `update`, each merge key it changed lands on a fresh read only if that row still holds the value the turn started from (the merged unit's own keys always land), and the keys it kept from another writer are listed as `kept_from_another_writer` |
 | agent-launcher `roster.py` | `roster` | `update` |
-| orchestrate `Run.save` | its unit rows and `orchestrate` | not yet: issue 113 |
+| orchestrate `Run.save` | the keys its `Unit` declares on its unit rows; the top-level `orchestrate` block | under `record_lock` (issue 113): re-reads the record, writes its own keys from memory and carries every other row and top-level key forward from the fresh read |
+
+The lock is not re-entrant: `flock` locks belong to an open file description, so a writer that
+already holds it and opens the lock file again waits on itself forever. `run_record.save` therefore
+never takes the lock itself; the caller of a read-modify-write does, once.
+
+This is a lock on the file, not on any unit: it has no owner token, no expiry and no record of who
+holds it, and it is held only for the length of one write. It is not the lease, reservation,
+receipt or ledger mechanism the parent issue 1018 forbids, and nothing about a unit's execution
+waits on it.
+
+**`merge_state` has two writers, and the lock does not order them.** Orchestrate owns `merge_state`
+and writes it from memory on every save; saga's `merge_turn.py` also sets it when a unit worker
+takes or finishes the merge turn. The lock makes the two writes happen one after the other, but it
+does not stop an older value from winning: orchestrate's `wait` loads the record, blocks for up to
+its timeout, then saves the `merge_state` it loaded, which can put back a value `merge_turn.py`
+replaced in the meantime. `merge_turn.py merge` guards its own writes by comparing against the
+value its turn started from; orchestrate's save does not, so the key stays last-writer-wins on
+orchestrate's side. This predates issue 113 and is not fixed by it.
 
 ## What this record replaces
 

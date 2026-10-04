@@ -11,6 +11,14 @@
   Claude Code 2.1.220 and 2.1.241 refuse a hooks file without that object, which would put
   orchestrate in a plugin-load error on those builds.
 
+### Fixed
+
+- Loading and saving a saga run record no longer erases unit-row keys Orchestrate does not own (issue #113). `read_unit` still keeps such a key off the `Unit`, but `Run.load` now holds it beside the unit in `Run.unit_passthrough`, and `Run.save` writes it back. The build loop's `build_loop` block and the `usage` block survived no Orchestrate-driven run before this.
+- `Run.save` no longer overwrites what another process wrote after the load. It takes the run record's shared lock (`fcntl.flock` on `<record path>.lock`, the convention in `plugins/saga/references/run-record.md`), re-reads the record, writes Orchestrate's own unit-row keys and `orchestrate` block from memory, and carries every other unit-row and top-level key forward from the copy on disk. Unit membership is unchanged: `start` still writes fresh rows that carry nothing, and a row the run does not hold is not written back.
+- `Run.save` takes the lock through saga's `run_record.record_lock` when the installed saga provides one (issue #95), so there is one definition of the lock file; an older saga gets Orchestrate's own copy, which names the same file.
+- The load notice for such a key now says it is kept unchanged on save, instead of saying this Orchestrate ignores it, and it is no longer printed for `build_loop`, which the run-record contract names, or for `usage`, which issue #95 added to it; a test holds the quiet list to the contract's unit-row key tables, read only between the `<!-- BEGIN UNIT ROW KEYS -->` markers so a nested block's field table (a `usage` entry's fields) is not mistaken for a row key. Without this the notice would repeat on every command for every unit.
+- `merge_state`, which Orchestrate and saga's `merge_turn` both write, stays last-writer-wins on Orchestrate's side even under the lock: a save writes back the value it loaded.
+
 ## [6.0.1] - 2026-09-22
 
 6.0.1 — imported from infiquetra-claude-plugins@acc99fe7 (upstream 6.0.0); authored here from this commit; no provenance manifest from now on.
