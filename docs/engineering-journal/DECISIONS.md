@@ -86,6 +86,7 @@ no pane is open.
 
 **Revisit when.** The mod API offers a free wait on a pane press, or `start` gains a digest check
 (then pass the approved `plan_sha256` to it).
+
 ### Admission renders the staffing and lens tables itself, from the same rows as its JSON
 
 **Decision.** `plugins/saga/scripts/admission.py --render tables` prints the operator-facing

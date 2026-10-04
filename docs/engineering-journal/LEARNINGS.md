@@ -128,6 +128,7 @@ an auto-resolved answer into a refusal. Put a plugin's one `session.start` in it
 have each mod export its command and tool specs as data. In `claude plugin test`, a `Text`
 element's `key` is not reported (find it by `text`), and the test's `$` has no `ui.close`; press
 the pane's own Close button instead.
+
 ### A test suite that reads live configuration spends the operator's API budget, not CI's
 
 **Evidence.** On 2026-10-04 the GitHub REST budget for the operator's account reached 0 of 5,000
