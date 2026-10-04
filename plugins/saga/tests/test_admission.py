@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -862,3 +863,697 @@ def test_the_catalogue_never_overwrites_an_operator_lens_declaration(
     )
     # The parameter the operator did NOT answer still fills from the catalogue.
     assert filled.run_configuration["per_lens_score_threshold"]["source"] == "staffing"
+
+
+# ---------------------------------------------------------------------------
+# The staffing and lens tables, in one fixed format (issue #102)
+# ---------------------------------------------------------------------------
+#
+# The golden block below IS the format. A change to it must be deliberate: edit this constant in
+# the same commit as the renderer, and the plan skill's instruction to print it verbatim still
+# holds.
+
+GOLDEN_TABLES = """\
+**Staffing (answer: staffing_overrides)**
+
+| Role | Default | Jev suggestion | Proposed | Why |
+|---|---|---|---|---|
+| planner | claude opus/high | not configured | claude opus/high | staffing default (work shape judgment) |
+| worker | claude sonnet/medium | not configured | claude sonnet/medium | staffing default (work shape mechanical) |
+
+**Lenses (answer: lens_declaration)**
+
+| Lens | Include | Reason | Jev probability |
+|---|---|---|---|
+| correctness | always on | always-on lens | not configured |
+| security | always on | always-on lens | not configured |
+| performance | undeclared | undeclared | not configured |
+| privacy | undeclared | undeclared | not configured |"""
+
+
+def _table_staffing(
+    *,
+    sources: dict[str, str] | None = None,
+    failing: tuple[str, ...] = (),
+    worker: tuple[str, str] = ("sonnet", "medium"),
+) -> SimpleNamespace:
+    """A staffing component with two roles and a four-lens catalogue, two of them conditional.
+
+    *sources* sets a role's decision ``source`` (``overlay`` for ``.saga/tier-defaults.json``);
+    a role in *failing* raises from ``resolve_role``; *worker* sets the worker's default tier.
+    """
+    tiers = {"planner": ("opus", "high"), "worker": worker}
+
+    def roles() -> dict[str, Any]:
+        return {"planner": {"work_shape": "judgment"}, "worker": {"work_shape": "mechanical"}}
+
+    def resolve_role(role: str, **_kwargs: Any) -> SimpleNamespace:
+        if role in failing:
+            raise RuntimeError(f"cannot resolve {role}")
+        model, effort = tiers[role]
+        decision = SimpleNamespace(vendor="claude", model=model, effort=effort)
+        if sources and role in sources:
+            decision.source = sources[role]
+        return decision
+
+    def lens_catalogue(**_kwargs: Any) -> tuple[dict[str, Any], str]:
+        return {
+            "correctness": {"always_on": True},
+            "security": {"always_on": True},
+            "performance": {"always_on": False},
+            "privacy": {"always_on": False},
+        }, "1.0.0"
+
+    def sdlc_root(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    return SimpleNamespace(
+        roles=roles, resolve_role=resolve_role, lens_catalogue=lens_catalogue, sdlc_root=sdlc_root
+    )
+
+
+def _table_record(adm: ModuleType, staffing: Any) -> Any:
+    run_record = _load("run_record")
+    record = run_record.RunRecord(issue=102, repo="infiquetra/infiquetra-agent-plugins")
+    return adm.fill_defaults(record, {}, staffing)
+
+
+def _tables(adm: ModuleType, record: Any, staffing: Any) -> str:
+    data = adm.review_data(record, adm.outstanding_questions(record), staffing, None)
+    return adm.render_tables(data)
+
+
+def _rows(tables: str) -> list[list[str]]:
+    """Every data row of both tables, split into cells (an escaped pipe stays in its cell)."""
+    rows = []
+    for line in tables.splitlines():
+        if not line.startswith("| ") or line.startswith(("| Role ", "| Lens ")):
+            continue
+        rows.append([cell.strip() for cell in re.split(r"(?<!\\)\|", line)[1:-1]])
+    return rows
+
+
+def _assert_no_empty_cell(tables: str) -> None:
+    for line in tables.splitlines():
+        if line.startswith("|"):
+            assert "||" not in line.replace("\\|", ""), line
+            assert "| |" not in line, line
+    for row in _rows(tables):
+        assert all(cell for cell in row), row
+
+
+def test_the_tables_match_the_golden_format(adm: ModuleType) -> None:
+    staffing = _table_staffing()
+    tables = _tables(adm, _table_record(adm, staffing), staffing)
+    assert tables == GOLDEN_TABLES
+    _assert_no_empty_cell(tables)
+
+
+def test_the_tables_are_titled_in_bold_and_never_with_a_heading(adm: ModuleType) -> None:
+    """A heading line pasted into a skill would split its gate-record sections."""
+    for line in GOLDEN_TABLES.splitlines():
+        assert not line.startswith("#"), line
+    assert GOLDEN_TABLES.splitlines()[0] == adm.STAFFING_TITLE
+
+
+def test_a_recorded_suggestion_renders_with_its_confidence(adm: ModuleType) -> None:
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    value = record.run_configuration["staffing_models_and_efforts"]["value"]
+    value["planner"]["suggestion"] = {
+        "suggested": "opus/xhigh",
+        "confidence": 0.72,
+        "usable": True,
+        "low_confidence": False,
+    }
+    value["worker"]["suggestion"] = {"suggested": None, "usable": False, "problem": "timeout"}
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["planner"][2] == "opus/xhigh (0.72)"
+    assert rows["worker"][2] == "no suggestion"
+    # A suggestion below the confidence floor, as ``--suggest`` records it, is not shown.
+    value["planner"]["suggestion"] = {
+        "suggested": "opus/xhigh",
+        "confidence": 0.55,
+        "usable": True,
+        "low_confidence": True,
+    }
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["planner"][2] == "no suggestion"
+
+
+def test_the_tier_judgment_block_is_read_when_present(adm: ModuleType) -> None:
+    """The per-role block issue #96 writes, and the raise it applies beside the default."""
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    value = record.run_configuration["staffing_models_and_efforts"]["value"]
+    value["planner"]["tier_judgment"] = {
+        "band": "auto-raise",
+        "confidence": 0.86,
+        "default": {"model": "opus", "effort": "high"},
+        "proposed": {"model": "opus", "effort": "xhigh"},
+        "applied": True,
+        "shown": True,
+        "reason": "the change is a gate",
+    }
+    value["planner"]["jev_raise"] = {
+        "model": "opus",
+        "effort": "xhigh",
+        "confidence": 0.86,
+        "reason": "the change is a gate",
+    }
+    value["worker"]["tier_judgment"] = {"band": "log-only", "confidence": 0.41, "shown": False}
+    value["_tier_judgment"] = {"status": "ok", "note": ""}
+    tables = _tables(adm, record, staffing)
+    rows = {row[0]: row for row in _rows(tables)}
+    assert rows["planner"][1:] == [
+        "claude opus/high",
+        "opus/xhigh (0.86, raise applied)",
+        "claude opus/xhigh",
+        "Jev raise: the change is a gate",
+    ]
+    assert rows["worker"][2] == "no suggestion"
+    assert "_tier_judgment" not in rows
+    _assert_no_empty_cell(tables)
+
+
+def test_a_switched_off_judgment_reads_not_configured(adm: ModuleType) -> None:
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    value = record.run_configuration["staffing_models_and_efforts"]["value"]
+    value["_tier_judgment"] = {"status": "off", "note": "INFIQUETRA_TYPESAFE_TIERING=off"}
+    for role in ("planner", "worker"):
+        value[role]["tier_judgment"] = {"band": "not-consulted"}
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["planner"][2] == rows["worker"][2] == "not configured"
+
+
+def test_an_operator_override_keeps_the_fresh_default_and_says_why(adm: ModuleType) -> None:
+    staffing = _table_staffing()
+    record = adm.apply_answers(
+        _table_record(adm, staffing),
+        {"staffing_overrides": {"worker": {"vendor": "claude", "model": "opus", "effort": "low"}}},
+    )
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["worker"][1] == "claude sonnet/medium"
+    assert rows["worker"][3] == "claude opus/low"
+    assert rows["worker"][4] == "operator answer"
+
+
+def test_an_operator_lens_declaration_renders_with_escaped_reasons(adm: ModuleType) -> None:
+    staffing = _table_staffing()
+    record = adm.apply_answers(
+        _table_record(adm, staffing),
+        {
+            "lens_declaration": {
+                "always_on": ["correctness", "security"],
+                "conditional_applies": {"performance": "a hot loop | per request"},
+                "conditional_does_not_apply": {"privacy": "no personal\ndata is touched"},
+            }
+        },
+    )
+    tables = _tables(adm, record, staffing)
+    assert "| performance | yes | a hot loop \\| per request | not configured |" in tables
+    assert "| privacy | no | no personal data is touched | not configured |" in tables
+    _assert_no_empty_cell(tables)
+
+
+def test_a_lens_proposal_renders_its_probability_bands(adm: ModuleType) -> None:
+    """The read contract with issue #110: ``admission.lens_proposal.probabilities``."""
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    record.admission["lens_proposal"] = {
+        "ok": True,
+        "probabilities": {"performance": 0.85, "privacy": 0.7, "security": 0.4},
+    }
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["performance"][3] == "0.85 (pre-checked)"
+    assert rows["privacy"][3] == "0.70 (consider)"
+    assert rows["security"][3] == "no suggestion"
+    assert rows["correctness"][3] == "no suggestion"
+    # Below 0.6 a probability is logged, not shown (issue #110); the JSON row keeps it.
+    record.admission["lens_proposal"]["probabilities"] = {"performance": 0.4}
+    data = adm.review_data(record, [], staffing, None)
+    rows = {row[0]: row for row in _rows(adm.render_tables(data))}
+    assert rows["performance"][3] == "no suggestion"
+    assert rows["privacy"][3] == "no suggestion"
+    performance = next(row for row in data["lenses"]["rows"] if row["lens"] == "performance")
+    assert performance["jev"] == {
+        "cell": "no suggestion",
+        "state": "below-threshold",
+        "probability": 0.4,
+    }
+
+
+@pytest.mark.parametrize(
+    ("probability", "cell"),
+    [
+        (0.8, "0.80 (pre-checked)"),
+        (0.79, "0.79 (consider)"),
+        (0.6, "0.60 (consider)"),
+        (0.59, "no suggestion"),
+    ],
+)
+def test_the_lens_probability_band_edges(adm: ModuleType, probability: float, cell: str) -> None:
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    record.admission["lens_proposal"] = {"probabilities": {"performance": probability}}
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["performance"][3] == cell
+
+
+def test_unreachable_staffing_and_catalogue_render_placeholder_rows(adm: ModuleType) -> None:
+    run_record = _load("run_record")
+    record = run_record.RunRecord(issue=102, repo="infiquetra/infiquetra-agent-plugins")
+    tables = _tables(adm, record, None)
+    rows = _rows(tables)
+    data = adm.review_data(record, [], None, None)
+    # The JSON carries a typed state and no placeholder rows, so a pane never parses prose.
+    assert data["staffing"]["status"] == "unreachable"
+    assert data["staffing"]["rows"] == []
+    assert data["lenses"]["status"] == "catalogue-unreadable"
+    assert data["lenses"]["rows"] == []
+    assert rows == [
+        [
+            "(staffing component unreachable)",
+            "not configured",
+            "not configured",
+            "not configured",
+            "not configured",
+        ],
+        [
+            "(lens catalogue unreadable)",
+            "undeclared",
+            "the lens catalogue could not be read",
+            "not configured",
+        ],
+    ]
+    _assert_no_empty_cell(tables)
+
+
+def _run_main(adm: ModuleType, store: Path, repo_root: Path, *extra: str) -> int:
+    return adm.main(
+        [
+            "--issue",
+            "102",
+            "--repo",
+            "infiquetra/infiquetra-agent-plugins",
+            "--store-root",
+            str(store),
+            "--repo-root",
+            str(repo_root),
+            "--dry-run",
+            *extra,
+        ]
+    )
+
+
+def _patch_main(adm: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(adm, "load_card_validator", lambda: _passing_validator)
+    monkeypatch.setattr(adm, "load_staffing", _table_staffing)
+    monkeypatch.setattr(adm, "fetch_issue", lambda *_a, **_k: {"number": 102, "body": _good_card()})
+
+
+def test_render_tables_prints_the_summary_then_the_golden_block(
+    adm: ModuleType,
+    store: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_main(adm, monkeypatch)
+    assert _run_main(adm, store, repo_root, "--render", "tables") == 0
+    out = capsys.readouterr().out
+    assert out.startswith("Admission for issue 102")
+    assert out.rstrip("\n").endswith("\n\n" + GOLDEN_TABLES)
+    assert list(store.glob("*.json")) == []
+
+
+def test_the_default_render_is_the_summary_alone(
+    adm: ModuleType,
+    store: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_main(adm, monkeypatch)
+    assert _run_main(adm, store, repo_root) == 0
+    assert adm.STAFFING_TITLE not in capsys.readouterr().out
+
+
+def test_render_json_carries_the_rows_and_the_palette(
+    adm: ModuleType,
+    store: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_main(adm, monkeypatch)
+    assert _run_main(adm, store, repo_root, "--render", "json") == 0
+    data = json.loads(capsys.readouterr().out)
+    tier_palette = _load("bundled_fleet").load("tier_palette")
+    assert data["schema"] == "admission_review.v1"
+    assert data["staffing"]["status"] == "ok"
+    assert data["lenses"]["status"] == "ok"
+    assert data["tables_markdown"] == GOLDEN_TABLES
+    assert "staffing_overrides" in data["pending_questions"]
+    assert [row["role"] for row in data["staffing"]["rows"]] == ["planner", "worker"]
+    assert data["staffing"]["rows"][0]["jev"]["state"] == "not-configured"
+    assert data["lenses"]["catalogue_version"] == "1.0.0"
+    assert data["palette"]["models"] == list(tier_palette.MODELS)
+    assert {"model": "haiku", "effort": "xhigh"} not in data["palette"]["pairs"]
+    assert {"model": "haiku", "effort": "high"} in data["palette"]["pairs"]
+
+
+def test_the_help_documents_the_render_option(adm: ModuleType) -> None:
+    text = adm.build_parser().format_help()
+    assert "--render" in text
+    for choice in ("summary", "tables", "json"):
+        assert choice in text
+
+
+def test_the_plan_skill_prints_the_tables_exactly_as_rendered(adm: ModuleType) -> None:
+    skill = (REPO_ROOT / "plugins" / "saga" / "skills" / "plan" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    section = skill.split("### 0.1b")[1].split("### 0.2")[0]
+    assert "--render tables" in section
+    assert "exactly as rendered" in section
+    assert adm.STAFFING_TITLE in section
+    # No heading inside the section: it would split the gate-record marker's coverage.
+    assert [line for line in section.splitlines()[1:] if line.startswith("#")] == []
+
+
+def _judgment(band: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "band": band,
+        "confidence": 0.71,
+        "default": {"model": "opus", "effort": "high"},
+        "proposed": {"model": "opus", "effort": "xhigh"},
+        "shown": True,
+        **extra,
+    }
+
+
+@pytest.mark.parametrize(
+    ("judgment", "cell"),
+    [
+        # 'agrees' shows the default, not the proposed tier.
+        (_judgment("agrees"), "opus/high (0.71, agrees)"),
+        (_judgment("auto-raise"), "opus/xhigh (0.71, raise applied)"),
+        (_judgment("confirm-raise"), "opus/xhigh (0.71, raise to confirm)"),
+        (
+            _judgment("advisory-lower", proposed={"model": "opus", "effort": "medium"}),
+            "opus/medium (0.71, advisory lower)",
+        ),
+        # issue #96 records no proposed tier at the ceiling.
+        (_judgment("raise-at-ceiling", proposed=None), "at ceiling (0.71)"),
+        # A known band the judgment says not to show.
+        (_judgment("confirm-raise", shown=False), "no suggestion"),
+        (_judgment("raise-at-ceiling", proposed=None, shown=False), "no suggestion"),
+        (_judgment("log-only", shown=False), "no suggestion"),
+        ({"band": "not-consulted"}, "not configured"),
+    ],
+)
+def test_every_tier_judgment_band_renders_its_cell(
+    adm: ModuleType, judgment: dict[str, Any], cell: str
+) -> None:
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    record.run_configuration["staffing_models_and_efforts"]["value"]["planner"]["tier_judgment"] = (
+        judgment
+    )
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["planner"][2] == cell
+
+
+@pytest.mark.parametrize(
+    ("status", "cell"),
+    [("failed", "no suggestion"), ("ok", "no suggestion"), ("off", "not configured")],
+)
+def test_the_run_wide_consult_status_decides_an_empty_jev_cell(
+    adm: ModuleType, status: str, cell: str
+) -> None:
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    value = record.run_configuration["staffing_models_and_efforts"]["value"]
+    value["_tier_judgment"] = {"status": status, "note": "timeout"}
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["planner"][2] == rows["worker"][2] == cell
+
+
+def test_a_repository_overlay_tier_is_named_in_the_why_column(adm: ModuleType) -> None:
+    """Coordinator ruling 7: the overlay is its own rung, and it outranks a recorded raise."""
+    staffing = _table_staffing(sources={"worker": "overlay", "planner": "policy"})
+    record = _table_record(adm, staffing)
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert (
+        rows["worker"][4] == "repository overlay (.saga/tier-defaults.json, work shape mechanical)"
+    )
+    assert rows["planner"][4] == "staffing default (work shape judgment)"
+    value = record.run_configuration["staffing_models_and_efforts"]["value"]
+    value["worker"]["jev_raise"] = {"model": "sonnet", "effort": "high", "reason": "risky"}
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["worker"][3] == "claude sonnet/medium"
+    assert rows["worker"][4].endswith("; the overlay outranks the recorded Jev raise")
+
+
+@pytest.mark.parametrize(
+    ("raise_", "reason"),
+    [
+        ({"model": "fable", "effort": "max"}, "it names fable"),
+        ({"model": "opus", "effort": "max"}, "it names max"),
+        ({"model": "opus", "effort": "high"}, "it is not exactly one step above the default"),
+        ({"model": "sonnet", "effort": "xhigh"}, "it is not exactly one step above the default"),
+    ],
+)
+def test_an_out_of_policy_jev_raise_is_never_shown_as_proposed(
+    adm: ModuleType, raise_: dict[str, str], reason: str
+) -> None:
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    record.run_configuration["staffing_models_and_efforts"]["value"]["worker"]["jev_raise"] = {
+        **raise_,
+        "reason": "bigger is better",
+    }
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["worker"][3] == "claude sonnet/medium"
+    assert rows["worker"][4] == (
+        "staffing default (work shape mechanical); recorded Jev raise to "
+        f"{raise_['model']}/{raise_['effort']} refused: {reason}"
+    )
+
+
+def test_a_jev_raise_from_a_default_at_the_ceiling_is_refused(adm: ModuleType) -> None:
+    """opus/xhigh has no step above it, so any recorded raise is refused."""
+    staffing = _table_staffing(worker=("opus", "xhigh"))
+    record = _table_record(adm, staffing)
+    record.run_configuration["staffing_models_and_efforts"]["value"]["worker"]["jev_raise"] = {
+        "model": "opus",
+        "effort": "high",
+        "reason": "bigger is better",
+    }
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["worker"][3] == "claude opus/xhigh"
+    assert rows["worker"][4] == (
+        "staffing default (work shape mechanical); recorded Jev raise to opus/high refused: "
+        "it is not exactly one step above the default"
+    )
+
+
+def test_a_one_step_model_raise_is_shown_as_proposed(adm: ModuleType) -> None:
+    """At the effort ceiling, the one step is to the next model: sonnet/xhigh to opus/xhigh."""
+    staffing = _table_staffing(worker=("sonnet", "xhigh"))
+    record = _table_record(adm, staffing)
+    record.run_configuration["staffing_models_and_efforts"]["value"]["worker"]["jev_raise"] = {
+        "model": "opus",
+        "effort": "xhigh",
+        "reason": "the change crosses a trust boundary",
+    }
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["worker"][3] == "claude opus/xhigh"
+    assert rows["worker"][4] == "Jev raise: the change crosses a trust boundary"
+
+
+def test_a_jev_raise_is_refused_when_the_palette_cannot_be_read(
+    adm: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    record.run_configuration["staffing_models_and_efforts"]["value"]["worker"]["jev_raise"] = {
+        "model": "sonnet",
+        "effort": "high",
+        "reason": "the change touches a gate",
+    }
+
+    def broken_load(_name: str) -> Any:
+        raise RuntimeError("palette unreadable")
+
+    monkeypatch.setitem(sys.modules, "bundled_fleet", SimpleNamespace(load=broken_load))
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["worker"][3] == "claude sonnet/medium"
+    assert rows["worker"][4].endswith("refused: the tier palette could not be read to check it")
+
+
+def test_a_one_step_jev_raise_is_shown_as_proposed(adm: ModuleType) -> None:
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    record.run_configuration["staffing_models_and_efforts"]["value"]["worker"]["jev_raise"] = {
+        "model": "sonnet",
+        "effort": "high",
+        "reason": "the change touches a gate",
+    }
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["worker"][3] == "claude sonnet/high"
+    assert rows["worker"][4] == "Jev raise: the change touches a gate"
+
+
+def test_a_merged_operator_answer_marks_only_the_overridden_rows(adm: ModuleType) -> None:
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    block = record.run_configuration["staffing_models_and_efforts"]
+    block["source"] = "operator"
+    block["value"]["worker"].update({"model": "opus", "effort": "low", "operator_override": True})
+    block["value"]["planner"]["operator_override"] = False
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["worker"][4] == "operator answer"
+    assert rows["planner"][4] == "staffing default (work shape judgment)"
+
+
+@pytest.mark.parametrize("merged", [False, True])
+def test_an_operator_answer_outranks_a_repository_overlay(adm: ModuleType, merged: bool) -> None:
+    """Coordinator ruling 7: the operator's answer is the top rung, above the overlay."""
+    staffing = _table_staffing(sources={"worker": "overlay"})
+    record = _table_record(adm, staffing)
+    if merged:
+        block = record.run_configuration["staffing_models_and_efforts"]
+        block["source"] = "operator"
+        block["value"]["worker"].update(
+            {"model": "opus", "effort": "low", "operator_override": True}
+        )
+    else:
+        record = adm.apply_answers(
+            record,
+            {
+                "staffing_overrides": {
+                    "planner": {"vendor": "claude", "model": "opus", "effort": "high"},
+                    "worker": {"vendor": "claude", "model": "opus", "effort": "low"},
+                }
+            },
+        )
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["worker"][3] == "claude opus/low"
+    assert rows["worker"][4] == "operator answer"
+
+
+def test_a_failed_role_resolve_falls_back_to_the_recorded_default(adm: ModuleType) -> None:
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    rows = {
+        row[0]: row for row in _rows(_tables(adm, record, _table_staffing(failing=("worker",))))
+    }
+    assert rows["worker"][1] == "claude sonnet/medium"
+
+
+def test_an_unreadable_catalogue_still_shows_the_operator_declaration(adm: ModuleType) -> None:
+    staffing = _table_staffing()
+    record = adm.apply_answers(
+        _table_record(adm, staffing),
+        {
+            "lens_declaration": {
+                "always_on": ["correctness"],
+                "conditional_applies": ["performance"],
+                "conditional_does_not_apply": {"privacy": "no personal data"},
+            }
+        },
+    )
+
+    def broken_catalogue(**_kwargs: Any) -> Any:
+        raise RuntimeError("catalogue unreadable")
+
+    broken = _table_staffing()
+    broken.lens_catalogue = broken_catalogue
+    data = adm.review_data(record, [], broken, None)
+    assert data["lenses"]["status"] == "catalogue-unreadable"
+    rows = {row[0]: row for row in _rows(adm.render_tables(data))}
+    assert rows["correctness"][1] == "always on"
+    assert rows["performance"][1:3] == ["yes", "included"]
+    assert rows["privacy"][1:3] == ["no", "no personal data"]
+
+
+def test_a_lens_in_both_maps_is_listed_once_and_excluded_without_a_catalogue(
+    adm: ModuleType,
+) -> None:
+    staffing = _table_staffing()
+    record = adm.apply_answers(
+        _table_record(adm, staffing),
+        {
+            "lens_declaration": {
+                "always_on": ["correctness"],
+                "conditional_applies": {"performance": "hot path"},
+                "conditional_does_not_apply": {"performance": "no hot path"},
+            }
+        },
+    )
+
+    def broken_catalogue(**_kwargs: Any) -> Any:
+        raise RuntimeError("catalogue unreadable")
+
+    broken = _table_staffing()
+    broken.lens_catalogue = broken_catalogue
+    rows = _rows(adm.render_tables(adm.review_data(record, [], broken, None)))
+    performance = [row for row in rows if row[0] == "performance"]
+    assert len(performance) == 1
+    assert performance[0][1:3] == ["no", "no hot path"]
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        {"conditional_applies": ["performance"], "conditional_does_not_apply": {"privacy": "x"}},
+        {"conditional_applies": {"performance": "hot"}, "conditional_does_not_apply": ["privacy"]},
+        {
+            "conditional_applies": {"performance": "hot path"},
+            "conditional_does_not_apply": {"performance": "no hot path"},
+        },
+    ],
+)
+def test_the_table_and_the_review_roster_agree_on_a_declaration(
+    adm: ModuleType, declaration: dict[str, Any]
+) -> None:
+    """A list for ``conditional_does_not_apply`` is ignored by the review, so the table too."""
+    roster = _load("review_roster")
+    staffing = _table_staffing()
+    record = adm.apply_answers(
+        _table_record(adm, staffing),
+        {"lens_declaration": {"always_on": ["correctness", "security"], **declaration}},
+    )
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    entries = roster._lens_entries(declaration)
+    for lens in ("performance", "privacy"):
+        if lens not in entries:
+            assert rows[lens][1] == "undeclared"
+        else:
+            assert rows[lens][1] == ("yes" if entries[lens]["applies"] else "no")
+            if entries[lens].get("reason"):
+                assert rows[lens][2] == entries[lens]["reason"]
+
+
+def test_an_override_answered_as_the_skill_documents_keeps_every_role(adm: ModuleType) -> None:
+    """The plan skill asks for the complete role map, because apply_answers replaces the map."""
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    data = adm.review_data(record, adm.outstanding_questions(record), staffing, None)
+    answer = {
+        row["role"]: {key: row["proposed"][key] for key in ("vendor", "model", "effort")}
+        for row in data["staffing"]["rows"]
+    }
+    answer["worker"] = {"vendor": "claude", "model": "opus", "effort": "low"}
+    after = adm.apply_answers(record, {"staffing_overrides": answer})
+    value = after.run_configuration["staffing_models_and_efforts"]["value"]
+    assert sorted(value) == ["planner", "worker"]
+    assert value["worker"]["model"] == "opus"
+    skill = (REPO_ROOT / "plugins" / "saga" / "skills" / "plan" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "the complete role map" in skill
+    assert "for each role the operator changes" not in skill

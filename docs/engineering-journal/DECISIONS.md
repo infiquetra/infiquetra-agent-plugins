@@ -1,5 +1,45 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-10-04
+
+### Admission renders the staffing and lens tables itself, from the same rows as its JSON
+
+**Decision.** `plugins/saga/scripts/admission.py --render tables` prints the operator-facing
+staffing table and lens table in one fixed Markdown format, and the plan skill tells the model to
+print that block exactly as rendered (issue #102). The Markdown is built only from the rows that
+`--render json` (schema `admission_review.v1`) emits, so the plain table every harness prints and
+the Claude Code review pane planned in issue #103 cannot disagree. The tables are titled in bold
+text, not Markdown headings, because a heading line quoted into a skill would split that skill's
+gate-record sections for `lint_gate_absence_contract.py`. A golden constant in
+`plugins/saga/tests/test_admission.py` pins the format.
+
+**Rationale.** The questions were already data, but the presentation was left to the model, and
+operators kept asking for the staffing layout again as a table because it came out differently
+every run. Rendering in the script makes the format a property a test can hold in every harness,
+not only Claude Code.
+
+**Rejected alternatives.** Letting the model format the tables from a stricter prompt: the drift
+this fixes is that very improvisation. A pane that parses the printed Markdown: the mods foundation
+(issue #101) rules that a mod never parses prose, so the pane reads the JSON instead. Markdown
+headings as table titles: they break the gate-record lint as described above.
+
+**Interim copies, deliberately.** The Proposed and Why columns apply the staffing precedence of
+coordinator ruling 7 (operator answer > repository overlay > a recorded Jev raise > work-shape
+default, refusing a raise that is not exactly one step up or that names fable or max) in one
+display-only function, `_proposed_and_why`, because the resolver issue #93 builds does not exist
+yet. Likewise the tier-judgment band names (issue #96) and the 0.8 / 0.6 lens bands (issue #110)
+are copied, not imported. The JSON carries a `status` field (`unreachable`,
+`catalogue-unreadable`) instead of placeholder rows, so a pane never has to match display text.
+The keys the tables read are listed in `plugins/saga/references/run-record.md`.
+
+**Revisit when.** A harness needs a different format than Markdown tables, or the Jev data the
+tables read (the per-role tier judgment from issue #96, the lens proposal from issue #110) lands in
+a different place in the run record. Replace the interim copies when #93's resolver, #96's band
+constants and #110's thresholds land: call or import them and delete the copies here. When issue
+#96 merges a `staffing_overrides` answer per role, remove the plan skill's "complete role map"
+answer rule (SKILL.md §0.1b) and the matching caveat in `references/run-record.md`; the admission
+question's own prompt was left unchanged, as the card requires.
+
 ## 2026-09-22
 
 ### A notice is corrected, never superseded, when its assessment finally lands

@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/admission.py --render {summary,tables,json}` (issue #102). `tables` prints the summary
+  followed by the staffing table (Role, Default, Jev suggestion, Proposed, Why) and the lens table
+  (Lens, Include, Reason, Jev probability) in one fixed Markdown format; an empty Jev cell reads
+  "not configured" or "no suggestion", never blank. `json` prints the same rows machine-readable
+  (schema `admission_review.v1`), with the tier palette, for a Claude Code review pane. The
+  default, `summary`, is unchanged. The staffing Jev cell reads the per-role `tier_judgment` block
+  when one is recorded, and the lens Jev cell reads `admission.lens_proposal.probabilities`.
+- `skills/plan/SKILL.md` §0.1b runs admission with `--render tables` and tells the model to print
+  the tables block exactly as rendered and collect the two answers against its rows.
+  The skill (not the admission question, whose prompt is unchanged) asks for a staffing override
+  as the complete role map, because the answer replaces the recorded map until issue #96 merges
+  per role. A lens named in both declaration maps shows as excluded, as the review treats it.
+- The staffing table's Why column names a repository overlay (`.saga/tier-defaults.json`) tier
+  as such, and a recorded Jev raise is shown as Proposed only when it is exactly one step above the
+  default and names neither fable nor max; otherwise the Why column says it was refused.
+- `references/run-record.md` lists `admission.lens_proposal` and the per-role staffing keys the
+  tables read (`suggestion`, `tier_judgment`, `jev_raise`, `operator_override`, `_tier_judgment`).
+
 ### Docs
 
 Four skill-instruction sentences named scripts that are not in this package at acc99fe7, marked
