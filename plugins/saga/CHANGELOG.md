@@ -56,9 +56,34 @@
   default and names neither fable nor max; otherwise the Why column says it was refused.
 - `references/run-record.md` lists `admission.lens_proposal` and the per-role staffing keys the
   tables read (`suggestion`, `tier_judgment`, `jev_raise`, `operator_override`, `_tier_judgment`).
+- The admission review pane (issue #103), the first saga mod. The tool `mcp__saga__review_admission`
+  runs `admission.py --dry-run --render json` and opens a pane with the staffing table (one model
+  and one effort dropdown per role) and the lens table (an include choice and a reason per
+  conditional lens), every choice taken from the palette the script printed. Submit and Accept all
+  hand the answers to `admission.py --answers -`, which validates and records them, and the tool
+  returns them as its result with status `submitted`; closing the pane returns `dismissed`. It
+  returns `not-placed`, `unavailable`, `nothing-to-review`, `timed-out` (after 30 minutes) or
+  `error` otherwise, and never records anything on those paths. `skills/plan/SKILL.md` §0.1b calls
+  the tool when it is listed and prints the `--render tables` block on every other status and in
+  every other harness. The state contract declares the pane's state as `saga.admissionReview`.
+- `admission.py --answers -` reads the answers JSON from standard input.
+- The lens rows of `--render json` carry `jev.band` (`pre-checked`, `consider` or null), so a pane
+  never reads the cell's display text.
 
 ### Changed
 
+- `admission.py` validates the `staffing_overrides` and `lens_declaration` answers before it records
+  anything (issue #103), exiting 2 with one line: an override names a role the run staffs, that
+  role's own vendor, and a model and effort the tier palette lists together; a lens declaration has
+  the shape the review reads, a reason for every lens left out, no lens in both maps and no
+  always-on lens in either, and, when the lens catalogue is readable, the catalogue's always-on set
+  and every conditional lens exactly once. `references/run-record.md` documents both shapes.
+- A partial `staffing_overrides` answer is merged role by role instead of replacing the recorded
+  map: the named roles take the answer and are marked `operator_override`, every other role keeps
+  its row. The plan skill still asks for the complete role map.
+- Admission recomputes a next step it wrote itself (`answer the N outstanding admission
+  question(s), then plan`), so answers recorded in two passes end at `plan`; a next step any later
+  step set is still never overwritten.
 - Every saga read-modify-write of a run record now holds an exclusive `fcntl.flock` on the sibling
   `issue-<N>.json.lock` and re-reads the record inside it: `set_next_step`, `usage add`,
   `build_loop.py`, `review_result.py --issue`, `admission.py`, `qa_strategies.py` and

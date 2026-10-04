@@ -6,9 +6,10 @@
 // saga's scripts own that state and enforce every policy (see `run-record.ts`).
 
 import type { Register } from 'claude-code'
-
+import { registerAdmissionReview } from './admission-review.tsx'
 import { registerPlanViewer } from './plan-viewer.tsx'
 
 export const register: Register = (on) => {
   registerPlanViewer(on)
+  registerAdmissionReview(on)
 }

@@ -6,8 +6,9 @@
 // (`SCHEMA` and `TOP_LEVEL_KEYS`); when that file adds a record version, this
 // contract and `mods/run-record.ts` change with it.
 //
-// Self-contained on purpose: no import and no reference, as the engine requires
-// of a plugin's `types` file. Every exported name is led by `Saga`.
+// It also declares the session state the saga mods keep (`PluginState`, at the
+// end). Self-contained on purpose: no import and no reference, as the engine
+// requires of a plugin's `types` file. Every exported name is led by `Saga`.
 
 /** The one record version this contract reads. */
 export type SagaRunRecordSchema = 'run_record.v1'
@@ -101,6 +102,102 @@ export type SagaPlanView = {
   sections: SagaPlanSection[]
 }
 
+// ---------------------------------------------------------------------------
+// The admission review pane (issue #103)
+// ---------------------------------------------------------------------------
+//
+// `scripts/admission.py --dry-run --render json` prints one document of schema
+// `admission_review.v1`; the pane draws from it and nothing else. The authority
+// is `review_data` in that script. A field the pane does not draw is left
+// untyped under the index signatures.
+
+/** The one review document version the pane reads. */
+export type SagaAdmissionReviewSchema = 'admission_review.v1'
+
+/** One tier as admission prints it: vendor, model and effort. */
+export type SagaAdmissionTier = { vendor: string | null; model: string; effort: string | null }
+
+/** A Jev cell: the text to show, and the state a pane branches on instead of the text. */
+export type SagaAdmissionJevCell = {
+  cell: string
+  state: string
+  [field: string]: unknown
+}
+
+/** One staffing row: a role, its default, Jev's cell, the tier proposed, and why. */
+export type SagaAdmissionStaffingRow = {
+  role: string
+  vendor: string | null
+  default: SagaAdmissionTier | null
+  proposed: SagaAdmissionTier | null
+  jev: SagaAdmissionJevCell
+  why: string
+}
+
+/** One lens row. `include` is `always on`, `yes`, `no` or `undeclared`. */
+export type SagaAdmissionLensRow = {
+  lens: string
+  always_on: boolean
+  include: string
+  reason: string
+  /** `band` is `pre-checked`, `consider` or null (issue #110's lens proposal). */
+  jev: SagaAdmissionJevCell & { probability: number | null; band?: string | null }
+}
+
+/** The tiers an operator may pick: models, efforts, and the pairs the palette allows. */
+export type SagaAdmissionPalette = {
+  vendor: string
+  models: string[]
+  efforts: string[]
+  effort_ceilings: Record<string, string>
+  pairs: { model: string; effort: string }[]
+}
+
+/** What `admission.py --render json` prints. */
+export type SagaAdmissionReviewData = {
+  schema: SagaAdmissionReviewSchema
+  issue: number
+  repo: string
+  pending_questions: string[]
+  staffing: { source: string; status: string; rows: SagaAdmissionStaffingRow[] }
+  lenses: { source: string; status: string; catalogue_version: string | null; rows: SagaAdmissionLensRow[] }
+  /** Null when the bundled tier palette could not be loaded. */
+  palette: SagaAdmissionPalette | null
+  [field: string]: unknown
+}
+
+/** The operator's picks while the pane is open: per role a tier, per conditional lens a decision. */
+export type SagaAdmissionSelections = {
+  staffing: Record<string, { model: string; effort: string }>
+  lenses: Record<string, { include: 'yes' | 'no'; reason: string }>
+}
+
+/** The pane's session state: the document it draws, the picks, and the last refusal shown. */
+export type SagaAdmissionReview = {
+  issue: number
+  repo: string | null
+  data: SagaAdmissionReviewData
+  selections: SagaAdmissionSelections
+  error: string | null
+}
+
+/** The answers the pane hands to `admission.py --answers -`. */
+export type SagaAdmissionAnswers = {
+  staffing_overrides: Record<string, { vendor: string; model: string; effort: string }>
+  lens_declaration: {
+    always_on: string[]
+    conditional_applies: Record<string, string>
+    conditional_does_not_apply: Record<string, string>
+  }
+}
+
+/** What `mcp__saga__review_admission` returns to the model. */
+export type SagaAdmissionReviewOutcome =
+  | { status: 'submitted'; issue: number; answers: SagaAdmissionAnswers; source: 'operator'; summary: string }
+  | { status: 'dismissed' | 'timed-out' | 'nothing-to-review' }
+  | { status: 'not-placed' | 'unavailable'; reason: string }
+  | { status: 'error'; reason: string; exitCode?: number; stderr?: string }
+
 declare module 'claude-code' {
   interface PluginState {
     saga: {
@@ -110,6 +207,8 @@ declare module 'claude-code' {
       planSelected: number
       /** The page of the shown section, from 0. */
       planPage: number
+      /** The admission review pane's state (issue #103), or null when no review is open. */
+      admissionReview: SagaAdmissionReview | null
     }
   }
 }
