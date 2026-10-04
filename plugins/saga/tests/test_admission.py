@@ -892,14 +892,17 @@ GOLDEN_TABLES = """\
 
 
 def _table_staffing(
-    *, sources: dict[str, str] | None = None, failing: tuple[str, ...] = ()
+    *,
+    sources: dict[str, str] | None = None,
+    failing: tuple[str, ...] = (),
+    worker: tuple[str, str] = ("sonnet", "medium"),
 ) -> SimpleNamespace:
     """A staffing component with two roles and a four-lens catalogue, two of them conditional.
 
     *sources* sets a role's decision ``source`` (``overlay`` for ``.saga/tier-defaults.json``);
-    a role in *failing* raises from ``resolve_role``.
+    a role in *failing* raises from ``resolve_role``; *worker* sets the worker's default tier.
     """
-    tiers = {"planner": ("opus", "high"), "worker": ("sonnet", "medium")}
+    tiers = {"planner": ("opus", "high"), "worker": worker}
 
     def roles() -> dict[str, Any]:
         return {"planner": {"work_shape": "judgment"}, "worker": {"work_shape": "mechanical"}}
@@ -1340,6 +1343,57 @@ def test_an_out_of_policy_jev_raise_is_never_shown_as_proposed(
     )
 
 
+def test_a_jev_raise_from_a_default_at_the_ceiling_is_refused(adm: ModuleType) -> None:
+    """opus/xhigh has no step above it, so any recorded raise is refused."""
+    staffing = _table_staffing(worker=("opus", "xhigh"))
+    record = _table_record(adm, staffing)
+    record.run_configuration["staffing_models_and_efforts"]["value"]["worker"]["jev_raise"] = {
+        "model": "opus",
+        "effort": "high",
+        "reason": "bigger is better",
+    }
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["worker"][3] == "claude opus/xhigh"
+    assert rows["worker"][4] == (
+        "staffing default (work shape mechanical); recorded Jev raise to opus/high refused: "
+        "it is not exactly one step above the default"
+    )
+
+
+def test_a_one_step_model_raise_is_shown_as_proposed(adm: ModuleType) -> None:
+    """At the effort ceiling, the one step is to the next model: sonnet/xhigh to opus/xhigh."""
+    staffing = _table_staffing(worker=("sonnet", "xhigh"))
+    record = _table_record(adm, staffing)
+    record.run_configuration["staffing_models_and_efforts"]["value"]["worker"]["jev_raise"] = {
+        "model": "opus",
+        "effort": "xhigh",
+        "reason": "the change crosses a trust boundary",
+    }
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["worker"][3] == "claude opus/xhigh"
+    assert rows["worker"][4] == "Jev raise: the change crosses a trust boundary"
+
+
+def test_a_jev_raise_is_refused_when_the_palette_cannot_be_read(
+    adm: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    staffing = _table_staffing()
+    record = _table_record(adm, staffing)
+    record.run_configuration["staffing_models_and_efforts"]["value"]["worker"]["jev_raise"] = {
+        "model": "sonnet",
+        "effort": "high",
+        "reason": "the change touches a gate",
+    }
+
+    def broken_load(_name: str) -> Any:
+        raise RuntimeError("palette unreadable")
+
+    monkeypatch.setitem(sys.modules, "bundled_fleet", SimpleNamespace(load=broken_load))
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["worker"][3] == "claude sonnet/medium"
+    assert rows["worker"][4].endswith("refused: the tier palette could not be read to check it")
+
+
 def test_a_one_step_jev_raise_is_shown_as_proposed(adm: ModuleType) -> None:
     staffing = _table_staffing()
     record = _table_record(adm, staffing)
@@ -1363,6 +1417,32 @@ def test_a_merged_operator_answer_marks_only_the_overridden_rows(adm: ModuleType
     rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
     assert rows["worker"][4] == "operator answer"
     assert rows["planner"][4] == "staffing default (work shape judgment)"
+
+
+@pytest.mark.parametrize("merged", [False, True])
+def test_an_operator_answer_outranks_a_repository_overlay(adm: ModuleType, merged: bool) -> None:
+    """Coordinator ruling 7: the operator's answer is the top rung, above the overlay."""
+    staffing = _table_staffing(sources={"worker": "overlay"})
+    record = _table_record(adm, staffing)
+    if merged:
+        block = record.run_configuration["staffing_models_and_efforts"]
+        block["source"] = "operator"
+        block["value"]["worker"].update(
+            {"model": "opus", "effort": "low", "operator_override": True}
+        )
+    else:
+        record = adm.apply_answers(
+            record,
+            {
+                "staffing_overrides": {
+                    "planner": {"vendor": "claude", "model": "opus", "effort": "high"},
+                    "worker": {"vendor": "claude", "model": "opus", "effort": "low"},
+                }
+            },
+        )
+    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
+    assert rows["worker"][3] == "claude opus/low"
+    assert rows["worker"][4] == "operator answer"
 
 
 def test_a_failed_role_resolve_falls_back_to_the_recorded_default(adm: ModuleType) -> None:
@@ -1400,11 +1480,41 @@ def test_an_unreadable_catalogue_still_shows_the_operator_declaration(adm: Modul
     assert rows["privacy"][1:3] == ["no", "no personal data"]
 
 
+def test_a_lens_in_both_maps_is_listed_once_and_excluded_without_a_catalogue(
+    adm: ModuleType,
+) -> None:
+    staffing = _table_staffing()
+    record = adm.apply_answers(
+        _table_record(adm, staffing),
+        {
+            "lens_declaration": {
+                "always_on": ["correctness"],
+                "conditional_applies": {"performance": "hot path"},
+                "conditional_does_not_apply": {"performance": "no hot path"},
+            }
+        },
+    )
+
+    def broken_catalogue(**_kwargs: Any) -> Any:
+        raise RuntimeError("catalogue unreadable")
+
+    broken = _table_staffing()
+    broken.lens_catalogue = broken_catalogue
+    rows = _rows(adm.render_tables(adm.review_data(record, [], broken, None)))
+    performance = [row for row in rows if row[0] == "performance"]
+    assert len(performance) == 1
+    assert performance[0][1:3] == ["no", "no hot path"]
+
+
 @pytest.mark.parametrize(
     "declaration",
     [
         {"conditional_applies": ["performance"], "conditional_does_not_apply": {"privacy": "x"}},
         {"conditional_applies": {"performance": "hot"}, "conditional_does_not_apply": ["privacy"]},
+        {
+            "conditional_applies": {"performance": "hot path"},
+            "conditional_does_not_apply": {"performance": "no hot path"},
+        },
     ],
 )
 def test_the_table_and_the_review_roster_agree_on_a_declaration(
@@ -1424,6 +1534,8 @@ def test_the_table_and_the_review_roster_agree_on_a_declaration(
             assert rows[lens][1] == "undeclared"
         else:
             assert rows[lens][1] == ("yes" if entries[lens]["applies"] else "no")
+            if entries[lens].get("reason"):
+                assert rows[lens][2] == entries[lens]["reason"]
 
 
 def test_an_override_answered_as_the_skill_documents_keeps_every_role(adm: ModuleType) -> None:

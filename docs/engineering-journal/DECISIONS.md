@@ -35,7 +35,10 @@ The keys the tables read are listed in `plugins/saga/references/run-record.md`.
 **Revisit when.** A harness needs a different format than Markdown tables, or the Jev data the
 tables read (the per-role tier judgment from issue #96, the lens proposal from issue #110) lands in
 a different place in the run record. Replace the interim copies when #93's resolver, #96's band
-constants and #110's thresholds land: call or import them and delete the copies here.
+constants and #110's thresholds land: call or import them and delete the copies here. When issue
+#96 merges a `staffing_overrides` answer per role, remove the plan skill's "complete role map"
+answer rule (SKILL.md §0.1b) and the matching caveat in `references/run-record.md`; the admission
+question's own prompt was left unchanged, as the card requires.
 
 ## 2026-09-22
 

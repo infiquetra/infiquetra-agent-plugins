@@ -13,8 +13,9 @@
   when one is recorded, and the lens Jev cell reads `admission.lens_proposal.probabilities`.
 - `skills/plan/SKILL.md` §0.1b runs admission with `--render tables` and tells the model to print
   the tables block exactly as rendered and collect the two answers against its rows.
-  A staffing override is asked for as the complete role map, because the answer replaces the
-  recorded map until issue #96 merges per role.
+  The skill (not the admission question, whose prompt is unchanged) asks for a staffing override
+  as the complete role map, because the answer replaces the recorded map until issue #96 merges
+  per role. A lens named in both declaration maps shows as excluded, as the review treats it.
 - The staffing table's Why column names a repository overlay (`.saga/tier-defaults.json`) tier
   as such, and a recorded Jev raise is shown as Proposed only when it is exactly one step above the
   default and names neither fable nor max; otherwise the Why column says it was refused.

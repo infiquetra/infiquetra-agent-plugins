@@ -114,7 +114,8 @@ remain, then prints the staffing and lens tables in one fixed format. Then:
    - `staffing_overrides`: `"none"` to take the Proposed column, or the complete role map,
      `{"<role>": {"vendor": ..., "model": ..., "effort": ...}}` with every role in the table and
      the operator's changes applied. Never send only the changed roles: the answer replaces the
-     whole recorded map, so a role left out loses its seat.
+     whole recorded map, so a role left out loses its seat. (Temporary: until issue #96 merges
+     overrides per role; #96 removes this rule.)
    - `lens_declaration`: `{"always_on": [...], "conditional_applies": {"<lens>": "<reason>"},
      "conditional_does_not_apply": {"<lens>": "<reason>"}}`, with every conditional lens in the
      table in exactly one of the two maps and a reason for each one left out.

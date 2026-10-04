@@ -108,9 +108,7 @@ QUESTIONS: tuple[Question, ...] = (
     ),
     Question("destination", "Destination: plan-only, pr, merge, or nonprod-deploy"),
     Question(
-        "staffing_overrides",
-        "Any staffing override, as the complete role map (every role, changes applied), "
-        "or 'none' to take the defaults",
+        "staffing_overrides", "Any staffing override, per role, or 'none' to take the defaults"
     ),
     Question(
         "lens_declaration",
@@ -1019,7 +1017,8 @@ def _lens_rows(record: run_record.RunRecord, staffing: Any) -> dict[str, Any]:
         ]
     elif isinstance(declaration, dict):
         lenses = [(str(lens), True) for lens in declaration.get("always_on") or []]
-        lenses += [(lens, False) for lens in [*applies, *excluded]]
+        # A lens in both maps is listed once (a malformed answer; the exclusion wins below).
+        lenses += [(lens, False) for lens in dict.fromkeys([*applies, *excluded])]
     else:
         lenses = []
 
@@ -1027,10 +1026,12 @@ def _lens_rows(record: run_record.RunRecord, staffing: Any) -> dict[str, Any]:
     for lens, always_on in lenses:
         if always_on:
             include, reason = "always on", "always-on lens"
+        elif lens in excluded:
+            # Checked first: review_roster._lens_entries writes the excluded map last, so a lens
+            # in both maps is excluded from the review, and the table must say so.
+            include, reason = "no", excluded[lens] or "no reason recorded"
         elif lens in applies:
             include, reason = "yes", applies[lens] or "included"
-        elif lens in excluded:
-            include, reason = "no", excluded[lens] or "no reason recorded"
         else:
             include, reason = "undeclared", "undeclared"
         rows.append(
