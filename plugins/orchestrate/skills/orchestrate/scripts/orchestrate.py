@@ -10,10 +10,13 @@ State is saga's per-issue run record, `run_record.v1`, under the primary checkou
 repository at once, and the store root is resolved from the git COMMON directory, so a unit's own
 worktree reads the same file the coordinator writes.
 
-There is no lock, lease, reservation or receipt anywhere in here, and adding one is out of bounds
-(issue #1018). What makes a repeated `go` launch a unit once is that the launch is persisted
-before the launcher is called; what makes a relaunch safe is that every launch gets its own fresh
-worktree; what serialises merges is a `merge_state` field checked against git rather than trusted.
+No lease, reservation or receipt governs a unit, and adding one is out of bounds (issue #1018).
+What makes a repeated `go` launch a unit once is that the launch is persisted before the launcher
+is called; what makes a relaunch safe is that every launch gets its own fresh worktree; what
+serialises merges is a `merge_state` field checked against git rather than trusted. The one lock
+here is the run record's shared write lock (issue #113), held only across a save's re-read and
+atomic replace so a save never erases what another writer put in the record; it guards the file,
+not a unit, and has no owner or expiry.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from __future__ import annotations
 import argparse
 import ast
 import contextlib
+import fcntl
 import functools
 import glob
 import importlib.util
@@ -480,6 +484,15 @@ class Run:
     """Where this run's record lives. Absolute, and the same from every linked worktree."""
     record: Any = field(default=None, repr=False)
     """The loaded ``run_record.v1`` document this run is a view over."""
+    unit_passthrough: dict[str, dict[str, Any]] = field(default_factory=dict, repr=False)
+    """Unit name -> the keys of that unit's row this Orchestrate does not own, as read at load.
+
+    Held beside each ``Unit`` rather than on it, so a key another writer owns (the build loop's
+    ``build_loop``, a ``usage`` block) never becomes a ``Unit`` attribute and is never mistaken for
+    orchestrate state. ``save`` carries those keys forward from the row as it is on disk at save
+    time and falls back to this copy only when the row has gone from disk. A unit absent from this
+    mapping -- one ``start`` planned or a review minted, before its first save -- is a fresh row
+    with nothing to carry; every save then records every unit here."""
     workspaces_created: list[str] = field(default_factory=list)
     """Herdr workspaces this run created, so ``clean`` can retire exactly those and no others."""
     workspace: str | None = None
@@ -547,6 +560,11 @@ class Run:
             source=str(block.get("source", "")),
             base=str(block.get("base", "")),
             units=[read_unit(u) for u in record.units],
+            unit_passthrough={
+                str(row.get("name")): unit_passthrough(row)
+                for row in record.units
+                if isinstance(row, dict)
+            },
             backend=str(block.get("backend", "inline")),
             branch=str(block.get("branch", "")),
             issue=int(issue),
@@ -646,24 +664,60 @@ class Run:
     def save(self) -> Path:
         """Write the unit rows and this run's own block back to the record, and nothing else.
 
-        ``admission``, ``approval_scope``, ``run_configuration``, ``review_cycles`` and ``roster``
-        pass through untouched, and so does every OTHER unknown top-level key a newer writer put
-        there -- the record module preserves them and this only replaces its own.
+        A read-modify-write under the run record's shared lock (``record_lock``): the record is
+        re-read from disk while the lock is held, so everything this Orchestrate does not own is
+        taken from the copy on disk NOW, not from the copy loaded earlier. That covers
+        ``admission``, ``approval_scope``, ``run_configuration``, ``review_cycles``, ``roster``,
+        every unknown top-level key a newer writer put there, and -- inside each unit row loaded
+        from the record -- every key the ``Unit`` dataclass does not declare, such as the build
+        loop's ``build_loop`` or a ``usage`` block another process wrote after this run loaded.
+        Orchestrate's own keys, the ``Unit`` fields and the ``orchestrate`` block, always take the
+        in-memory value. Unit membership is still this run's list: a row this run does not hold is
+        not written back.
         """
         if self.record is None or self.store_root is None:
             raise RecordError("this run is not attached to a record; nothing was written")
         module = _run_record_module()
-        extra = dict(self.record.extra)
-        extra[ORCHESTRATE_BLOCK] = self.block()
-        updated = module.RunRecord(
-            **{
-                **self.record.__dict__,
-                "units": [unit_row(u) for u in self.units],
-                "extra": extra,
+        path = Path(module.record_path(self.store_root, self.record.issue))
+        with record_lock(path):
+            on_disk = reread_record(self.store_root, self.record.issue)
+            base = on_disk if on_disk is not None else self.record
+            disk_rows = {
+                str(row.get("name")): row
+                for row in (on_disk.units if on_disk is not None else [])
+                if isinstance(row, dict)
             }
-        )
+            rows = [self._row_for_save(unit, disk_rows) for unit in self.units]
+            extra = dict(base.extra)
+            extra[ORCHESTRATE_BLOCK] = self.block()
+            updated = module.RunRecord(**{**base.__dict__, "units": rows, "extra": extra})
+            written = Path(module.save(self.store_root, updated))
         self.record = updated
-        return Path(module.save(self.store_root, updated))
+        # Every row is on disk now, fresh ones included, so the next save in this process -- a
+        # long ``wait`` saves many times -- carries forward whatever another writer adds to them.
+        self.unit_passthrough = {
+            unit.name: unit_passthrough(row) for unit, row in zip(self.units, rows, strict=True)
+        }
+        return written
+
+    def _row_for_save(self, unit: Unit, disk_rows: Mapping[str, dict[str, Any]]) -> dict[str, Any]:
+        """*unit*'s row: its own keys from memory, every other key carried forward.
+
+        Only a unit this run loaded from the record carries anything; a fresh row has nothing to
+        carry, even when a row of the same name is on disk.
+        """
+        row = unit_row(unit)
+        if unit.name not in self.unit_passthrough:
+            return row
+        disk_row = disk_rows.get(unit.name)
+        carried = (
+            unit_passthrough(disk_row)
+            if disk_row is not None
+            else self.unit_passthrough[unit.name]
+        )
+        for key, value in carried.items():
+            row.setdefault(key, value)
+        return row
 
     def unit(self, name: str) -> Unit:
         for u in self.units:
@@ -1036,6 +1090,40 @@ def load_record(store_root: Path, issue: int) -> Any:
     return record
 
 
+def reread_record(store_root: Path, issue: int) -> Any:
+    """Re-read *issue*'s record for a save, or ``None`` when it has gone from disk.
+
+    Quiet: the load this run was built from already named every unknown top-level field once.
+    """
+    module = _run_record_module()
+    try:
+        return module.load(store_root, issue, warn=None)
+    except module.UnknownRecordVersionError as exc:
+        raise UnknownRecordVersionError(str(exc)) from None
+    except module.RunRecordError as exc:
+        raise RecordError(str(exc)) from None
+
+
+@contextlib.contextmanager
+def record_lock(record_file: Path) -> Iterator[None]:
+    """Hold the run record's shared advisory lock for one read-modify-write.
+
+    The convention every writer of a saga run record follows (``run-record.md``, "Writing"): an
+    exclusive ``fcntl.flock`` on the sibling file ``<record path>.lock``, created when missing and
+    never deleted, held across the re-read, the change and the atomic replace. Saga's own
+    read-modify-writes take the same lock, so the two writers serialise rather than race. The
+    lock is not re-entrant across opens: nothing called while holding it may take it again.
+    """
+    lock_file = record_file.with_name(record_file.name + ".lock")
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock_file, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)  # closing the descriptor releases the lock
+
+
 def unit_row(unit: Unit) -> dict[str, Any]:
     """One unit's row for the record, with the in-memory-only fields left out."""
     return {key: value for key, value in asdict(unit).items() if key not in UNPERSISTED_UNIT_FIELDS}
@@ -1055,6 +1143,12 @@ def _orchestrate_version() -> str:
         return "unknown"
 
 
+def unit_passthrough(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """The keys of a unit row this Orchestrate does not own, which ``save`` carries forward."""
+    known = set(Unit.__dataclass_fields__)
+    return {key: value for key, value in raw.items() if key not in known}
+
+
 def read_unit(raw: dict[str, Any]) -> Unit:
     """One unit from its row in the record's ``units`` array.
 
@@ -1062,19 +1156,21 @@ def read_unit(raw: dict[str, Any]) -> Unit:
     existed because the old fixed-path run file was rewritten whole on every save and 83% of a
     75-unit record was task text; one issue's record is not that file.
 
-    A key this Unit does not know is dropped with a one-line notice naming the unit, the key
-    and this Orchestrate's version. That is a safety net for a hand-edited row, or one a newer
-    Orchestrate added a field to; the record's own ``schema`` token is what refuses a document
-    this version cannot read at all, before any unit row is reached.
+    A key this Unit does not know never reaches the ``Unit``: it is named in a one-line notice
+    (the unit, the key and this Orchestrate's version) and kept apart by ``unit_passthrough``, so
+    ``Run.save`` writes it back unchanged. A row's key set is open by the record's contract --
+    the build loop's ``build_loop`` and a ``usage`` block live there -- so another writer's key is
+    carried, never dropped. The record's own ``schema`` token is what refuses a document this
+    version cannot read at all, before any unit row is reached.
     """
     known = set(Unit.__dataclass_fields__)
     unknown = [key for key in raw if key not in known]
     if unknown:
         for key in unknown:
             print(
-                f"WARNING: unit {raw.get('name', '?')} carries unknown key {key!r}; this "
-                f"Orchestrate {_orchestrate_version()} ignores it (written by a newer "
-                "Orchestrate)",
+                f"NOTICE: unit {raw.get('name', '?')} carries key {key!r}, which this "
+                f"Orchestrate {_orchestrate_version()} does not own; it is kept unchanged on "
+                "save",
                 file=sys.stderr,
             )
         raw = {key: value for key, value in raw.items() if key in known}

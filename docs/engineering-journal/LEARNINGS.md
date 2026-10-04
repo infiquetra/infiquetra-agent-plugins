@@ -110,6 +110,27 @@ try/catch every mod relies on for its plain fallback; test it with fake
 runners, test a mod end to end by stubbing `process.run` with
 `on('process.run', ...)`, and pin the script's real exit codes and output with
 a Python test (`plugins/saga/tests/test_mod_run_record_contract.py`).
+### Preserving unknown keys on load is not enough when the save writes back the copy it loaded
+
+**Evidence.** Issue #113. Orchestrate's `read_unit`
+(`plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`) built each `Unit` from its
+declared fields only, and `Run.save` rewrote the whole `units` array from those units, so a run
+record row carrying `build_loop` and `usage` came back with neither after one `Run.load` and
+`Run.save`. The run-record contract already promised a row's unknown keys are left alone, and the
+top level was already safe through `run_record`'s `extra`. The new tests in
+`plugins/orchestrate/tests/test_orchestrate_record.py` (class `TestKeysOrchestrateDoesNotOwn`)
+fail on the old driver and pass on the fixed one.
+
+**Mechanism.** Two separate losses. Dropping keys at read time loses what was on disk at load.
+Writing back the loaded copy, even a key-preserving one, loses what another writer (the build
+loop, a unit session adding `usage`) put on disk between the load and the save, because a run's
+coordinator loads once and saves many times during a long `wait`. Only a re-read at save time,
+under a lock both writers take, closes the second gap: the save then takes every key it does not
+own from the fresh copy and only its own keys from memory.
+
+**Generalizable rule.** A whole-document writer that shares its file with other writers must
+re-read under a shared lock at save time and merge its owned keys onto that fresh copy; keeping
+unknown keys from the load is necessary but not sufficient.
 
 ## 2026-09-22
 

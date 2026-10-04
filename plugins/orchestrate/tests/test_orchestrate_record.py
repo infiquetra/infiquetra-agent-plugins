@@ -185,6 +185,185 @@ class TestRecordContract:
         assert "launch_receipt" not in read_record(store, 11)["units"][0]
 
 
+
+BUILD_LOOP = {
+    "criterion": "tests pass",
+    "iterations": [{"iteration": 1, "revision": "a" * 40, "green": True}],
+    "handed_to_code_review": {"revision": "a" * 40, "at": "2026-10-04T00:00:00+00:00"},
+}
+USAGE = {
+    "entries": [
+        {
+            "session_id": "s1",
+            "role": "worker",
+            "vendor": "claude",
+            "model": "opus",
+            "effort": "medium",
+            "counts": {"uncached_input": 10, "output": 5},
+        }
+    ]
+}
+
+
+def _rewrite_on_disk(store: Path, issue: int, change) -> None:
+    """Stand in for another process: change the record on disk after orchestrate loaded it."""
+    path = store / f"issue-{issue}.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    change(payload)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+class TestKeysOrchestrateDoesNotOwn:
+    """Issue #113: a load and save keeps every unit-row and top-level key orchestrate does not own,
+    including one another writer put on disk between orchestrate's load and its save."""
+
+    def test_build_loop_and_usage_survive_a_load_and_save(
+        self, orch, tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = make_repo(tmp_path)
+        monkeypatch.chdir(repo)
+        write_record(
+            store,
+            20,
+            units=[unit_row("u1", build_loop=BUILD_LOOP, usage=USAGE)],
+            branch="issue/20",
+        )
+        r = orch.Run.load(20, store)
+        unit = r.unit("u1")
+        assert not hasattr(unit, "build_loop")
+        assert not hasattr(unit, "usage")
+        r.save()
+        row = read_record(store, 20)["units"][0]
+        assert row["build_loop"] == BUILD_LOOP
+        assert row["usage"] == USAGE
+
+    def test_a_usage_entry_written_between_load_and_save_survives(
+        self, orch, tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = make_repo(tmp_path)
+        monkeypatch.chdir(repo)
+        write_record(store, 21, units=[unit_row("u1"), unit_row("u2")], branch="issue/21")
+        r = orch.Run.load(21, store)
+
+        def add_usage(payload: dict) -> None:
+            payload["units"][1]["usage"] = USAGE
+
+        _rewrite_on_disk(store, 21, add_usage)
+        r.unit("u1").status = "running"
+        r.save()
+        rows = {row["name"]: row for row in read_record(store, 21)["units"]}
+        assert rows["u2"]["usage"] == USAGE
+        assert "usage" not in rows["u1"]
+        assert rows["u1"]["status"] == "running"
+
+    def test_a_key_added_after_an_earlier_save_survives_the_next_save(
+        self, orch, tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A long ``wait`` saves many times from one load; each save re-reads the disk."""
+        repo = make_repo(tmp_path)
+        monkeypatch.chdir(repo)
+        write_record(store, 22, units=[unit_row("u1")], branch="issue/22")
+        r = orch.Run.load(22, store)
+        r.save()
+
+        def add_build_loop(payload: dict) -> None:
+            payload["units"][0]["build_loop"] = BUILD_LOOP
+
+        _rewrite_on_disk(store, 22, add_build_loop)
+        r.save()
+        assert read_record(store, 22)["units"][0]["build_loop"] == BUILD_LOOP
+
+    def test_an_unknown_top_level_key_written_after_load_survives(
+        self, orch, tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = make_repo(tmp_path)
+        monkeypatch.chdir(repo)
+        write_record(
+            store,
+            23,
+            units=[unit_row("u1")],
+            branch="issue/23",
+            extra_top_level={"loaded_with": 1},
+        )
+        r = orch.Run.load(23, store)
+
+        def add_top_level(payload: dict) -> None:
+            payload["written_later"] = {"by": "another process"}
+            payload["roster"] = [{"name": "worker-1", "state": "open"}]
+
+        _rewrite_on_disk(store, 23, add_top_level)
+        r.save()
+        after = read_record(store, 23)
+        assert after["loaded_with"] == 1
+        assert after["written_later"] == {"by": "another process"}
+        assert after["roster"] == [{"name": "worker-1", "state": "open"}]
+
+    def test_orchestrates_own_keys_take_the_in_memory_value(
+        self, orch, tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = make_repo(tmp_path)
+        monkeypatch.chdir(repo)
+        write_record(store, 24, units=[unit_row("u1", usage=USAGE)], branch="issue/24")
+        r = orch.Run.load(24, store)
+
+        def change_owned_keys(payload: dict) -> None:
+            payload["units"][0]["status"] = "failed"
+            payload["units"][0]["merge_state"] = "merging"
+            payload["orchestrate"]["branch"] = "someone-else"
+
+        _rewrite_on_disk(store, 24, change_owned_keys)
+        r.unit("u1").status = "done"
+        r.save()
+        after = read_record(store, 24)
+        row = after["units"][0]
+        assert row["status"] == "done"
+        assert row["merge_state"] == "ready"
+        assert row["usage"] == USAGE
+        assert after["orchestrate"]["branch"] == "issue/24"
+
+    def test_a_fresh_unit_carries_nothing_from_a_same_named_row_on_disk(
+        self, orch, tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``start`` replacing the planned units is unchanged: a row it creates starts clean."""
+        repo = make_repo(tmp_path)
+        monkeypatch.chdir(repo)
+        write_record(store, 25, units=[unit_row("u1", usage=USAGE)], branch="issue/25")
+        r = orch.Run.load(25, store)
+        r.units = [orch.Unit(name="u1", vendor="claude", task="new work")]
+        r.unit_passthrough = {}
+        r.save()
+        assert "usage" not in read_record(store, 25)["units"][0]
+
+    def test_save_waits_for_the_shared_record_lock(
+        self, orch, tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Another holder of ``<record>.lock`` makes the save wait, then the save sees its write."""
+        import fcntl
+        import os
+        import threading
+
+        repo = make_repo(tmp_path)
+        monkeypatch.chdir(repo)
+        path = write_record(store, 26, units=[unit_row("u1")], branch="issue/26")
+        r = orch.Run.load(26, store)
+        lock_file = path.with_name(path.name + ".lock")
+        fd = os.open(lock_file, os.O_RDWR | os.O_CREAT, 0o644)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        saver = threading.Thread(target=r.save)
+        saver.start()
+        saver.join(timeout=0.5)
+        assert saver.is_alive(), "save must wait while another writer holds the record lock"
+
+        def add_usage(payload: dict) -> None:
+            payload["units"][0]["usage"] = USAGE
+
+        _rewrite_on_disk(store, 26, add_usage)
+        os.close(fd)
+        saver.join(timeout=10)
+        assert not saver.is_alive()
+        assert read_record(store, 26)["units"][0]["usage"] == USAGE
+        assert lock_file.is_file(), "the lock file is never deleted"
+
 class TestStartRequiresTheRecord:
     def test_start_with_no_record_refuses_and_names_the_admission_command(
         self, orch, tmp_path: Path, store: Path, monkeypatch: pytest.MonkeyPatch, capsys
