@@ -20,6 +20,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -49,6 +50,9 @@ def _load(name: str) -> ModuleType:
 #: shipped module was broken, which is the shape `scripts/lint_test_shape.py` exists to reject.
 build_loop = _load("build_loop")
 run_record = _load("run_record")
+#: The lease module exactly as ``build_loop`` imported it, so a fake backend's holders are the
+#: classes ``build_loop`` checks against rather than a second copy of them.
+environment_lease = build_loop.environment_lease
 
 
 # ---------------------------------------------------------------------------
@@ -834,6 +838,7 @@ def test_the_exit_codes_match_the_reference_document() -> None:
         build_loop.EXIT_REFUSED,
         build_loop.EXIT_UNKNOWN_VERSION,
         build_loop.EXIT_NOT_GREEN,
+        build_loop.EXIT_ENVIRONMENT_STOP,
     }
 
 
@@ -1020,3 +1025,777 @@ def test_an_iteration_is_numbered_against_the_record_read_under_the_lock(tmp_pat
     assert build_loop.main(["--record", str(path), "--unit", "U1"], runner=runner) == 0
     iterations = _block(path)["iterations"]
     assert [entry["iteration"] for entry in iterations] == [1, 2]
+
+
+# ---------------------------------------------------------------------------
+# The combined-branch pass (issue #99, pre-review testing U4).
+# ---------------------------------------------------------------------------
+
+_SHARED = {
+    "mode": "declared",
+    "kind": "shared-nonprod",
+    "deploy_command": "deploy-stack --env nonprod",
+    "test_command": "run-functional",
+    "teardown_command": "teardown-stack",
+    "scope": "shared",
+    "source": "profile",
+}
+
+_PRIVATE = {**_DECLARED, "deploy_command": "deploy-stack", "test_command": "run-functional",
+            "teardown_command": "teardown-stack"}
+
+
+class FakeLeaseBackend:
+    """An in-memory lease store with the git backend's semantics: one holder per name, a
+    compare-and-swap release, and a run that re-acquires its own lease. Shared between two runs,
+    it stands in for the one remote both hosts see."""
+
+    def __init__(self) -> None:
+        self.refs: dict[str, tuple[str, Any]] = {}
+        self.calls: list[tuple[str, str]] = []
+        self._next = 0
+
+    def _token(self) -> str:
+        self._next += 1
+        return f"{self._next:040x}"
+
+    def hold(self, name: str, holder: Any) -> str:
+        token = self._token()
+        self.refs[name] = (token, holder)
+        return token
+
+    def acquire(self, name: str, holder: Any) -> Any:
+        self.calls.append(("acquire", name))
+        current = self.refs.get(name)
+        if current is not None:
+            seen = current[1]
+            if isinstance(seen, environment_lease.LeaseHolder) and seen.left_by_earlier_pass_of(
+                holder
+            ):
+                token = self.hold(name, holder)
+                return environment_lease.AcquireResult(
+                    environment_lease.REACQUIRED, token=token, holder=holder
+                )
+            return environment_lease.AcquireResult(
+                environment_lease.HELD, token=current[0], holder=seen
+            )
+        token = self.hold(name, holder)
+        return environment_lease.AcquireResult(environment_lease.ACQUIRED, token=token, holder=holder)
+
+    def read(self, name: str) -> Any:
+        current = self.refs.get(name)
+        if current is None:
+            return environment_lease.LeaseState(name=name, held=False)
+        return environment_lease.LeaseState(
+            name=name, held=True, token=current[0], holder=current[1]
+        )
+
+    def release(self, name: str, token: str) -> Any:
+        self.calls.append(("release", name))
+        current = self.refs.get(name)
+        if current is None or current[0] != token:
+            return environment_lease.ReleaseResult(environment_lease.NOT_HELD)
+        del self.refs[name]
+        return environment_lease.ReleaseResult(environment_lease.RELEASED)
+
+
+def _combined_record(
+    environment: dict[str, Any] | None = _SHARED,
+    *,
+    issue: int = 1027,
+    units: list[dict[str, Any]] | None = None,
+    baseline: list[str] | None = None,
+) -> dict[str, Any]:
+    payload = _record_dict(baseline=baseline, units=units)
+    payload["issue"] = issue
+    if environment is not None:
+        payload["admission"]["functional_test_environment"] = dict(environment)
+    return payload
+
+
+def _combined(
+    path: Path,
+    runner: FakeRunner,
+    backend: Any = None,
+    *extra: str,
+    repo_root: Path | None = None,
+) -> int:
+    argv = ["--record", str(path), "--combined", "--lease-wait", "0", *extra]
+    if repo_root is not None:
+        argv += ["--repo-root", str(repo_root)]
+    code: int = build_loop.main(argv, runner=runner, lease_backend=backend, sleep=lambda _: None)
+    return code
+
+
+def _combined_block(path: Path) -> dict[str, Any]:
+    block: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))["combined_branch"]
+    return block
+
+
+def _commands(runner: FakeRunner) -> list[str]:
+    return [" ".join(call) for call in runner.calls if call[:1] != ["git"]]
+
+
+def test_a_combined_pass_runs_baseline_deploy_test_teardown_in_order_and_records_each(
+    tmp_path: Path,
+) -> None:
+    """Acceptance criteria 1 and 2: the order, and every step's result on the run record."""
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    runner, backend = FakeRunner(), FakeLeaseBackend()
+    assert _combined(path, runner, backend) == build_loop.EXIT_GREEN
+
+    assert _commands(runner) == [
+        "uv run ruff check .",
+        "deploy-stack --env nonprod",
+        "run-functional",
+        "teardown-stack",
+    ]
+    assert [call[0] for call in backend.calls] == ["acquire", "release"]
+    block = _combined_block(path)
+    entry = block["passes"][-1]
+    assert entry["pass"] == 1 and entry["status"] == "pass" and entry["green"] is True
+    for step, command in (
+        ("deploy", "deploy-stack --env nonprod"),
+        ("test", "run-functional"),
+        ("teardown", "teardown-stack"),
+    ):
+        assert entry[step]["command"] == command
+        assert entry[step]["status"] == "pass"
+        assert entry[step]["exit_code"] == 0
+        assert {"duration_seconds", "detail"} <= set(entry[step])
+    assert entry["lease"]["status"] == "acquired"
+    assert entry["lease"]["release_status"] == "released"
+    assert entry["lease"]["ref"] == "refs/saga/leases/shared-nonprod"
+    assert block["environment"]["kind"] == "shared-nonprod"
+    handed = block["handed_to_code_review"]
+    assert len(handed["revision"]) == 40 and handed["pass"] == 1 and handed["waived"] is False
+    assert backend.refs == {}, "the lease is released after teardown"
+
+
+def test_teardown_runs_after_a_failing_test_and_the_pass_is_a_loop_pass(tmp_path: Path) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    runner, backend = FakeRunner(verdicts={"run-functional": 1}), FakeLeaseBackend()
+    assert _combined(path, runner, backend) == build_loop.EXIT_NOT_GREEN
+
+    assert _commands(runner)[-1] == "teardown-stack"
+    entry = _combined_block(path)["passes"][-1]
+    assert entry["status"] == "fail"
+    assert entry["test"]["status"] == "fail"
+    assert entry["teardown"]["status"] == "pass"
+    assert entry["lease"]["release_status"] == "released"
+    assert "handed_to_code_review" not in _combined_block(path)
+
+
+def test_a_failed_deploy_is_could_not_execute_skips_the_test_and_still_tears_down(
+    tmp_path: Path,
+) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    runner, backend = FakeRunner(verdicts={"deploy-stack": 1}), FakeLeaseBackend()
+    assert _combined(path, runner, backend) == build_loop.EXIT_NOT_GREEN
+
+    assert "run-functional" not in _commands(runner)
+    assert _commands(runner)[-1] == "teardown-stack"
+    entry = _combined_block(path)["passes"][-1]
+    assert entry["deploy"]["status"] == "could-not-execute"
+    assert entry["deploy"]["exit_code"] == 1
+    assert entry["test"] is None
+    assert entry["status"] == "could-not-execute"
+    assert entry["environment_problems"][0].startswith("deploy:")
+    assert entry["lease"]["release_status"] == "released"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        subprocess.TimeoutExpired(cmd="deploy-stack", timeout=1),
+        FileNotFoundError("deploy-stack"),
+    ],
+    ids=["timeout", "missing-program"],
+)
+def test_teardown_runs_after_a_deploy_timeout_or_a_missing_deploy_program(
+    tmp_path: Path, failure: BaseException
+) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    runner, backend = FakeRunner(verdicts={"deploy-stack": failure}), FakeLeaseBackend()
+    assert _combined(path, runner, backend) == build_loop.EXIT_NOT_GREEN
+
+    entry = _combined_block(path)["passes"][-1]
+    assert entry["deploy"]["status"] == "could-not-execute"
+    assert entry["teardown"]["status"] == "pass"
+    assert _commands(runner)[-1] == "teardown-stack"
+    assert backend.refs == {}
+
+
+def test_an_interrupt_mid_test_still_tears_down_releases_and_records_the_pass(
+    tmp_path: Path,
+) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    runner = FakeRunner(verdicts={"run-functional": KeyboardInterrupt()})
+    backend = FakeLeaseBackend()
+    with pytest.raises(KeyboardInterrupt):
+        _combined(path, runner, backend)
+
+    assert _commands(runner)[-1] == "teardown-stack"
+    assert backend.refs == {}
+    entry = _combined_block(path)["passes"][-1]
+    assert entry["interrupted"] is True
+    assert entry["status"] == "could-not-execute"
+    assert entry["teardown"]["status"] == "pass"
+
+
+def test_no_declared_teardown_is_recorded_not_declared_and_the_pass_can_be_green(
+    tmp_path: Path,
+) -> None:
+    environment = {**_SHARED, "teardown_command": None}
+    path = _write(tmp_path / "issue-1027.json", _combined_record(environment))
+    runner = FakeRunner()
+    assert _combined(path, runner, FakeLeaseBackend()) == build_loop.EXIT_GREEN
+    entry = _combined_block(path)["passes"][-1]
+    assert entry["teardown"]["status"] == "not-declared"
+
+
+def test_a_failing_teardown_is_an_environment_problem_and_the_lease_is_still_released(
+    tmp_path: Path,
+) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    runner, backend = FakeRunner(verdicts={"teardown-stack": 2}), FakeLeaseBackend()
+    assert _combined(path, runner, backend) == build_loop.EXIT_NOT_GREEN
+    entry = _combined_block(path)["passes"][-1]
+    assert entry["status"] == "could-not-execute"
+    assert entry["teardown"]["exit_code"] == 2
+    assert any(problem.startswith("teardown:") for problem in entry["environment_problems"])
+    assert backend.refs == {}
+
+
+def test_three_consecutive_could_not_execute_passes_stop_the_loop_with_exit_five(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The environment stop names the problem; it is an exit code, not a refusal to run again."""
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    backend = FakeLeaseBackend()
+    broken = FakeRunner(verdicts={"deploy-stack": FileNotFoundError("deploy-stack")})
+    assert _combined(path, broken, backend) == build_loop.EXIT_NOT_GREEN
+    assert _combined(path, broken, backend) == build_loop.EXIT_NOT_GREEN
+    capsys.readouterr()
+    assert _combined(path, broken, backend) == build_loop.EXIT_ENVIRONMENT_STOP
+    out = capsys.readouterr().out
+    assert "Environment stop: 3 consecutive combined passes could not execute" in out
+    assert "the program is not installed" in out
+
+    # A fourth invocation still runs: the stop is reported, never a refusal.
+    again = FakeRunner(verdicts={"deploy-stack": FileNotFoundError("deploy-stack")})
+    assert _combined(path, again, backend) == build_loop.EXIT_ENVIRONMENT_STOP
+    assert "uv run ruff check ." in _commands(again)
+    # And a fixed environment resets the streak.
+    assert _combined(path, FakeRunner(), backend) == build_loop.EXIT_GREEN
+
+
+def test_a_failing_pass_resets_the_could_not_execute_streak(tmp_path: Path) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    backend = FakeLeaseBackend()
+    broken = FakeRunner(verdicts={"deploy-stack": 1})
+    assert _combined(path, broken, backend) == build_loop.EXIT_NOT_GREEN
+    assert _combined(path, broken, backend) == build_loop.EXIT_NOT_GREEN
+    failing = FakeRunner(verdicts={"run-functional": 1})
+    assert _combined(path, failing, backend) == build_loop.EXIT_NOT_GREEN
+    assert _combined(path, broken, backend) == build_loop.EXIT_NOT_GREEN
+    statuses = [entry["status"] for entry in _combined_block(path)["passes"]]
+    assert statuses == ["could-not-execute", "could-not-execute", "fail", "could-not-execute"]
+
+
+def _other_holder(**overrides: Any) -> Any:
+    fields: dict[str, Any] = {
+        "repo": "infiquetra/other-repo",
+        "issue": 77,
+        "revision": "b" * 40,
+        "host": "builder-2",
+        "started_at": environment_lease.iso_utc(environment_lease.utc_now()),
+        "bound_seconds": 5400,
+    }
+    fields.update(overrides)
+    return environment_lease.LeaseHolder(**fields)
+
+
+def test_a_second_run_cannot_take_a_held_shared_lease(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Acceptance criterion 1, lease exclusion: nothing deploys while another run holds it."""
+    backend = FakeLeaseBackend()
+    token = backend.hold("shared-nonprod", _other_holder())
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    runner = FakeRunner()
+    assert _combined(path, runner, backend) == build_loop.EXIT_NOT_GREEN
+
+    assert "deploy-stack --env nonprod" not in _commands(runner)
+    assert "teardown-stack" not in _commands(runner)
+    assert backend.refs["shared-nonprod"][0] == token, "another run's lease is never touched"
+    assert ("release", "shared-nonprod") not in backend.calls
+    entry = _combined_block(path)["passes"][-1]
+    assert entry["status"] == "could-not-execute"
+    assert entry["lease"]["status"] == "held"
+    assert entry["lease"]["holder"]["issue"] == 77
+    assert "infiquetra/other-repo#77" in entry["lease"]["detail"]
+    assert "Waiting on the shared environment" in capsys.readouterr().out
+
+
+def test_a_waiting_run_polls_and_says_what_it_waits_on(tmp_path: Path) -> None:
+    backend = FakeLeaseBackend()
+    backend.hold("shared-nonprod", _other_holder())
+    record = run_record.from_dict(_combined_record(), warn=None)
+    elapsed = [0.0]
+    sleeps: list[float] = []
+    reports: list[str] = []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        elapsed[0] += seconds
+    entry, green = build_loop.run_combined_pass(
+        record,
+        _SHARED,
+        [],
+        "c" * 40,
+        runner=FakeRunner(),
+        lease_backend=backend,
+        lease_wait=90,
+        clock=lambda: elapsed[0],
+        sleep=sleep,
+        report=reports.append,
+        host="builder-1",
+    )
+    assert green is False
+    assert sleeps == [30.0, 30.0, 30.0]
+    assert len(reports) == 4
+    assert all("infiquetra/other-repo#77" in line and "builder-2" in line for line in reports)
+    assert entry["lease"]["waited_seconds"] == 90
+
+
+def test_a_released_lease_admits_the_next_run(tmp_path: Path) -> None:
+    """Run A holds, passes and releases; run B on the same remote then deploys."""
+    backend = FakeLeaseBackend()
+    first = _write(tmp_path / "issue-1027.json", _combined_record(issue=1027))
+    second = _write(tmp_path / "issue-2000.json", _combined_record(issue=2000))
+    order: list[str] = []
+
+    def deploy_while_held(argv: Sequence[str], timeout: int) -> tuple[int, str]:
+        # While run A deploys, run B is refused.
+        blocked = FakeRunner()
+        assert _combined(second, blocked, backend) == build_loop.EXIT_NOT_GREEN
+        assert "deploy-stack --env nonprod" not in _commands(blocked)
+        order.append("A deployed")
+        return 0, ""
+
+    assert _combined(first, FakeRunner(verdicts={"deploy-stack": deploy_while_held}), backend) == 0
+    runner_b = FakeRunner()
+    assert _combined(second, runner_b, backend) == build_loop.EXIT_GREEN
+    assert "deploy-stack --env nonprod" in _commands(runner_b)
+    assert order == ["A deployed"]
+    passes_b = _combined_block(second)["passes"]
+    assert [entry["lease"]["status"] for entry in passes_b] == ["held", "acquired"]
+
+
+def test_the_lease_is_released_on_every_exit_path(tmp_path: Path) -> None:
+    for verdicts in ({"run-functional": 1}, {"deploy-stack": 1}, {"teardown-stack": 1}):
+        path = _write(tmp_path / "issue-1027.json", _combined_record())
+        backend = FakeLeaseBackend()
+        _combined(path, FakeRunner(verdicts=verdicts), backend)
+        assert backend.refs == {}, verdicts
+        assert backend.calls[-1] == ("release", "shared-nonprod"), verdicts
+
+
+def test_a_private_environment_never_takes_a_lease(tmp_path: Path) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record(_PRIVATE))
+    backend = FakeLeaseBackend()
+    assert _combined(path, FakeRunner(), backend) == build_loop.EXIT_GREEN
+    assert backend.calls == []
+    lease = _combined_block(path)["passes"][-1]["lease"]
+    assert lease == {"required": False, "status": "not-required"}
+
+
+def _record_after_an_interrupted_pass() -> dict[str, Any]:
+    payload = _combined_record()
+    payload["combined_branch"] = {
+        "environment": dict(_SHARED),
+        "passes": [
+            {
+                "pass": 1,
+                "status": "could-not-execute",
+                "interrupted": True,
+                "environment_problems": ["the pass was interrupted: KeyboardInterrupt"],
+            }
+        ],
+    }
+    return payload
+
+
+def test_a_later_pass_replaces_the_lease_left_by_an_interrupted_pass_on_this_host(
+    tmp_path: Path,
+) -> None:
+    backend = FakeLeaseBackend()
+    backend.hold(
+        "shared-nonprod",
+        _other_holder(
+            repo="infiquetra/infiquetra-claude-plugins",
+            issue=1027,
+            host=environment_lease.host_label(),
+            pass_number=1,
+        ),
+    )
+    path = _write(tmp_path / "issue-1027.json", _record_after_an_interrupted_pass())
+    runner = FakeRunner()
+    assert _combined(path, runner, backend) == build_loop.EXIT_GREEN
+    assert "deploy-stack --env nonprod" in _commands(runner)
+    assert _combined_block(path)["passes"][-1]["lease"]["status"] == "re-acquired"
+    assert backend.refs == {}
+
+
+def test_a_second_invocation_of_the_same_run_does_not_take_a_live_lease(tmp_path: Path) -> None:
+    """The same run's pass still deploying, on this host or another, is waited on, not replaced."""
+    for host in (environment_lease.host_label(), "another-host"):
+        backend = FakeLeaseBackend()
+        live = _other_holder(
+            repo="infiquetra/infiquetra-claude-plugins", issue=1027, host=host, pass_number=1
+        )
+        token = backend.hold("shared-nonprod", live)
+        path = _write(tmp_path / "issue-1027.json", _combined_record())
+        runner = FakeRunner()
+        assert _combined(path, runner, backend) == build_loop.EXIT_NOT_GREEN, host
+        assert "deploy-stack --env nonprod" not in _commands(runner), host
+        assert _combined_block(path)["passes"][-1]["lease"]["status"] == "held", host
+        assert backend.refs["shared-nonprod"] == (token, live), host
+
+
+def test_a_lease_won_after_waiting_is_stamped_when_taken_and_is_not_stale() -> None:
+    """The wait is not counted as time held: the pushed start time is the moment of the win."""
+    start = datetime(2026, 10, 4, tzinfo=UTC)
+    elapsed = [0.0]
+    backend = FakeLeaseBackend()
+    backend.hold("shared-nonprod", _other_holder())
+    pushed: list[Any] = []
+    original = backend.acquire
+
+    def acquire(name: str, holder: Any) -> Any:
+        pushed.append(holder)
+        if elapsed[0] >= 1470:
+            backend.refs.pop(name, None)
+        return original(name, holder)
+
+    backend.acquire = acquire  # type: ignore[method-assign]
+
+    def sleep(seconds: float) -> None:
+        elapsed[0] += seconds
+
+    def wall_now() -> datetime:
+        return start + timedelta(seconds=elapsed[0])
+
+    ours = environment_lease.LeaseHolder(
+        repo="infiquetra/example",
+        issue=1,
+        revision="c" * 40,
+        host="builder-1",
+        started_at=environment_lease.iso_utc(start),
+        bound_seconds=600,
+        pass_number=1,
+    )
+    result, waited = build_loop.acquire_lease(
+        backend,
+        "shared-nonprod",
+        ours,
+        lease_wait=1800,
+        remote="origin",
+        repo_root=Path("."),
+        clock=lambda: elapsed[0],
+        sleep=sleep,
+        wall_now=wall_now,
+        report=lambda _: None,
+    )
+    assert result.status == environment_lease.ACQUIRED
+    assert waited >= 1470
+    won = result.holder
+    assert won.started_at == environment_lease.iso_utc(wall_now())
+    assert won.started_at == pushed[-1].started_at
+    assert not environment_lease.is_stale(won, wall_now())
+    state = backend.read("shared-nonprod")
+    assert "STALE" not in environment_lease.describe(state, wall_now())
+
+
+def test_a_stale_holder_is_reported_with_the_release_command_and_is_never_released(
+    tmp_path: Path,
+) -> None:
+    backend = FakeLeaseBackend()
+    token = backend.hold(
+        "shared-nonprod",
+        _other_holder(started_at="2026-10-01T00:00:00Z", bound_seconds=600),
+    )
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    assert _combined(path, FakeRunner(), backend) == build_loop.EXIT_NOT_GREEN
+    detail = _combined_block(path)["passes"][-1]["lease"]["detail"]
+    assert "STALE" in detail
+    assert f"environment_lease.py --repo-root" in detail
+    assert f"release --name shared-nonprod --expect {token}" in detail
+    assert backend.refs["shared-nonprod"][0] == token
+
+
+def test_a_multi_lane_run_with_an_unmerged_unit_is_refused_by_name(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    units = [
+        {"name": "U1", "branch": "issue/1-u1", "merge_state": "merged", "merged_tip": "d" * 40},
+        {"name": "U2", "branch": "issue/1-u2", "merge_state": "ready"},
+    ]
+    path = _write(tmp_path / "issue-1027.json", _combined_record(units=units))
+    runner = FakeRunner()
+    assert _combined(path, runner, FakeLeaseBackend()) == build_loop.EXIT_REFUSED
+    assert "still to merge: U2" in capsys.readouterr().err
+    assert _commands(runner) == []
+
+
+def test_a_revision_missing_a_recorded_merge_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    units = [
+        {"name": "U1", "branch": "issue/1-u1", "merge_state": "merged", "merged_tip": "d" * 40},
+        {"name": "U2", "branch": "issue/1-u2", "merge_state": "merged", "merged_tip": "e" * 40},
+    ]
+    path = _write(tmp_path / "issue-1027.json", _combined_record(units=units))
+    runner = FakeRunner(verdicts={"merge-base --is-ancestor " + "e" * 40: 1})
+    assert _combined(path, runner, FakeLeaseBackend()) == build_loop.EXIT_REFUSED
+    assert "does not contain unit U2's merge" in capsys.readouterr().err
+
+    merged = FakeRunner()
+    assert _combined(path, merged, FakeLeaseBackend()) == build_loop.EXIT_GREEN
+
+
+def test_a_one_unit_run_runs_the_pass_on_its_own_branch(tmp_path: Path) -> None:
+    units = [{"name": "U1", "branch": "issue/1-u1", "merge_state": "ready"}]
+    path = _write(tmp_path / "issue-1027.json", _combined_record(units=units))
+    assert _combined(path, FakeRunner(), FakeLeaseBackend()) == build_loop.EXIT_GREEN
+
+
+def test_a_waived_repository_runs_the_baseline_only_and_records_the_waiver(
+    tmp_path: Path,
+) -> None:
+    waiver = {"mode": "waived", "level": "repository", "reason": "docs only", "source": "profile"}
+    path = _write(tmp_path / "issue-1027.json", _combined_record(waiver))
+    runner, backend = FakeRunner(), FakeLeaseBackend()
+    assert _combined(path, runner, backend) == build_loop.EXIT_GREEN
+    assert _commands(runner) == ["uv run ruff check ."]
+    assert backend.calls == []
+    block = _combined_block(path)
+    assert block["passes"][-1]["waiver"] == {"level": "repository", "reason": "docs only"}
+    assert block["handed_to_code_review"]["waived"] is True
+
+
+def test_no_declaration_and_no_waiver_is_a_refusal(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    empty = tmp_path / "repo"
+    empty.mkdir()
+    path = _write(tmp_path / "issue-1027.json", _combined_record(None))
+    runner = FakeRunner()
+    assert _combined(path, runner, FakeLeaseBackend(), repo_root=empty) == build_loop.EXIT_REFUSED
+    assert "no functional-test environment and no waiver" in capsys.readouterr().err
+    assert runner.calls == []
+
+
+def test_a_declaration_that_names_production_is_refused_before_anything_runs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    environment = {**_SHARED, "deploy_command": "deploy-stack --env production"}
+    path = _write(tmp_path / "issue-1027.json", _combined_record(environment))
+    runner = FakeRunner()
+    assert _combined(path, runner, FakeLeaseBackend()) == build_loop.EXIT_REFUSED
+    assert "names production" in capsys.readouterr().err
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize(
+    ("command", "trips"),
+    [
+        ("deploy --env prod", True),
+        ("./deploy-prod.sh", True),
+        ("deploy --env=PRODUCTION", True),
+        ("deploy --env nonprod", False),
+        ("deploy --env non-prod", False),
+        ("deploy --env pre-prod", False),
+        ("deploy --env preprod", False),
+        ("make product-demo", False),
+    ],
+)
+def test_the_production_tripwire_reads_words_not_substrings(command: str, trips: bool) -> None:
+    environment = {**_PRIVATE, "deploy_command": command}
+    assert (build_loop.production_tripwire(environment) is not None) is trips
+
+
+def test_environment_bound_plan_checks_run_once_after_the_test_command(tmp_path: Path) -> None:
+    smoke = [{"name": "smoke", "command": "smoke-run", "runs": "environment"}]
+    units = [
+        {
+            "id": "U1",
+            "functional_checks": [
+                {"name": "local", "command": "local-check", "runs": "local"},
+                {"name": "api", "command": "api-check", "runs": "environment"},
+            ],
+            "scenario_smoke": smoke,
+        },
+        {"id": "U2", "scenario_smoke": smoke},
+    ]
+    path = _write(tmp_path / "issue-1027.json", _combined_record(_PRIVATE, units=units))
+    runner = FakeRunner(verdicts={"smoke-run": 1})
+    assert _combined(path, runner, FakeLeaseBackend()) == build_loop.EXIT_NOT_GREEN
+    assert _commands(runner) == [
+        "uv run ruff check .",
+        "deploy-stack",
+        "run-functional",
+        "api-check",
+        "smoke-run",
+        "teardown-stack",
+    ]
+    entry = _combined_block(path)["passes"][-1]
+    assert [result["status"] for result in entry["environment_checks"]] == ["pass", "fail"]
+    assert entry["status"] == "fail"
+
+
+def test_a_red_baseline_deploys_nothing(tmp_path: Path) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    runner, backend = FakeRunner(verdicts={"ruff": 1}), FakeLeaseBackend()
+    assert _combined(path, runner, backend) == build_loop.EXIT_NOT_GREEN
+    assert _commands(runner) == ["uv run ruff check ."]
+    assert backend.calls == []
+    entry = _combined_block(path)["passes"][-1]
+    assert entry["status"] == "fail" and entry["deploy"] is None
+    assert "baseline is not green" in entry["skipped_reason"]
+
+
+def test_a_shared_lease_on_a_remote_the_checkout_lacks_is_a_refusal(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The card's stop condition: no lease location every deploying host can see, no pass."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    runner = FakeRunner()
+    assert _combined(path, runner, None, repo_root=repo) == build_loop.EXIT_REFUSED
+    assert "is not configured" in capsys.readouterr().err
+    assert _commands(runner) == []
+
+
+def test_the_combined_dry_run_prints_the_environment_lease_and_integration(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    units = [
+        {"name": "U1", "branch": "issue/1-u1", "merge_state": "merged", "merged_tip": "d" * 40},
+        {"name": "U2", "branch": "issue/1-u2", "merge_state": "ready"},
+    ]
+    path = _write(tmp_path / "issue-1027.json", _combined_record(units=units))
+    before = path.read_text(encoding="utf-8")
+    runner = FakeRunner()
+    assert _combined(path, runner, None, "--dry-run") == build_loop.EXIT_GREEN
+    out = capsys.readouterr().out
+    assert "kind: shared-nonprod (scope: shared)" in out
+    assert "Lease: refs/saga/leases/shared-nonprod on remote origin" in out
+    assert "still to merge: U2" in out
+    assert runner.calls == []
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_unit_and_combined_are_alternatives(tmp_path: Path) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    with pytest.raises(SystemExit):
+        build_loop.main(["--record", str(path), "--unit", "U1", "--combined"])
+
+
+def test_loading_a_record_with_a_combined_block_warns_about_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    assert _combined(path, FakeRunner(), FakeLeaseBackend()) == build_loop.EXIT_GREEN
+    capsys.readouterr()
+    build_loop.load_record_file(path)
+    assert "unknown top-level field" not in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# The evidence code review reads (the parent's second criterion).
+# ---------------------------------------------------------------------------
+
+
+def test_a_run_cannot_reach_code_review_without_a_passing_combined_run_at_that_revision(
+    tmp_path: Path,
+) -> None:
+    """Issue #91's criterion: a green unit loop alone admits nothing; the combined pass does."""
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    assert build_loop.main(["--record", str(path), "--unit", "U1"], runner=FakeRunner()) == 0
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert raw["units"][0]["build_loop"]["handed_to_code_review"]
+    evidence = build_loop.functional_evidence(raw, "a" * 40)
+    assert evidence["admits"] is False and evidence["status"] == "missing"
+
+    assert _combined(path, FakeRunner(verdicts={"run-functional": 1}), FakeLeaseBackend()) == 4
+    failed = build_loop.functional_evidence(build_loop.load_record_file(path), "a" * 40)
+    assert failed["admits"] is False and failed["status"] == "failed"
+    assert failed["test"] == "fail"
+
+    assert _combined(path, FakeRunner(), FakeLeaseBackend()) == 0
+    for record in (json.loads(path.read_text(encoding="utf-8")), build_loop.load_record_file(path)):
+        passed = build_loop.functional_evidence(record, "a" * 40)
+        assert passed["admits"] is True and passed["status"] == "passed"
+        assert passed["environment"] == {"kind": "shared-nonprod", "scope": "shared"}
+        assert (passed["deploy"], passed["test"], passed["teardown"]) == ("pass", "pass", "pass")
+        stale = build_loop.functional_evidence(record, "f" * 40)
+        assert stale["admits"] is False and stale["status"] == "missing"
+
+
+def test_a_waived_combined_pass_is_admitted_as_waived(tmp_path: Path) -> None:
+    waiver = {"mode": "waived", "level": "repository", "reason": "docs only", "source": "profile"}
+    path = _write(tmp_path / "issue-1027.json", _combined_record(waiver))
+    assert _combined(path, FakeRunner(), FakeLeaseBackend()) == 0
+    evidence = build_loop.functional_evidence(build_loop.load_record_file(path), "a" * 40)
+    assert evidence["admits"] is True
+    assert evidence["status"] == "waived" and evidence["waiver_reason"] == "docs only"
+
+
+# ---------------------------------------------------------------------------
+# The combined-branch drift guards.
+# ---------------------------------------------------------------------------
+
+
+def test_the_combined_block_key_set_matches_the_reference_document(tmp_path: Path) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    assert _combined(path, FakeRunner(), FakeLeaseBackend()) == 0
+    documented = set(_marked_table(REFERENCE.read_text(encoding="utf-8"), "COMBINED-BRANCH BLOCK"))
+    assert set(_combined_block(path)) == documented
+
+
+def test_the_combined_pass_key_set_matches_the_reference_document(tmp_path: Path) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    assert _combined(path, FakeRunner(), FakeLeaseBackend()) == 0
+    documented = set(_marked_table(REFERENCE.read_text(encoding="utf-8"), "COMBINED PASS KEYS"))
+    written = set(_combined_block(path)["passes"][0])
+    # `waiver`, `skipped_reason` and `interrupted` are conditional and documented in prose.
+    assert written - {"waiver", "skipped_reason", "interrupted"} == documented
+
+
+def test_the_combined_key_is_named_in_the_run_record_reference() -> None:
+    text = RUN_RECORD_REFERENCE.read_text(encoding="utf-8")
+    assert build_loop.COMBINED_KEY in text
+    top_level = text.split("<!-- BEGIN TOP-LEVEL KEYS -->")[1].split("<!-- END TOP-LEVEL KEYS -->")[0]
+    assert build_loop.COMBINED_KEY not in top_level, "it is an extension key, not a v1 key"
+
+
+def test_the_lease_block_is_named_in_the_profile_reference() -> None:
+    text = PROFILE_REFERENCE.read_text(encoding="utf-8")
+    assert '"lease"' in text and "refs/saga/leases/" in text
+
+
+def test_the_work_skill_integrates_then_runs_the_combined_pass_before_review() -> None:
+    """Acceptance criterion 3: after integration, before review, and exit 5 named."""
+    text = WORK_SKILL.read_text(encoding="utf-8")
+    phase_3 = text.index("## Phase 3")
+    merge = text.index("merge_turn.py", phase_3)
+    combined = text.index("--combined", phase_3)
+    review = text.index("### 5.1 ")
+    assert phase_3 < merge < combined < review
+    collapsed = " ".join(text.split())
+    assert "5 — environment stop" in collapsed
+    assert "single-lane run" in collapsed

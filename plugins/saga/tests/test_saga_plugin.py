@@ -1466,20 +1466,26 @@ def test_ae10_status_card_single_emitter_routing() -> None:
     assert "tests:<pass|fail|skip>" not in work_doc
     # PRESENT (substantive): the card render is the LEAD status step of §5.4 — proving the card is
     # the operator status HEADER, not an afterthought — and a fourth step still follows it, which
-    # proves a real reorder rather than a keyword sprinkle. THREE cards have now changed this
+    # proves a real reorder rather than a keyword sprinkle. FOUR cards have now changed this
     # section's wording: issue #1029 made the step continue the run rather than present routing,
-    # issue #1027 removed the ship ceremony it used to continue into, and issue #1028 replaced the
-    # hand-over with the merge turn, release, functional test and close it hands over TO. That is
-    # the argument for holding the POSITION and the property, not the prose.
+    # issue #1027 removed the ship ceremony it used to continue into, issue #1028 replaced the
+    # hand-over with the merge turn, release, functional test and close it hands over TO, and
+    # issue #99 moved the merge turn out of §5.4 into Phase 3, before code review, because the
+    # lifecycle brings work together (run-model step 6) before it reviews it (step 7). That is the
+    # argument for holding the POSITION and the property, not the prose.
     assert "1. **Render the operator status header**" in work_doc
     assert re.search(r"^4\. \*\*[^*]+\*\*", work_doc, flags=re.MULTILINE), (
         "section 5.4 must still carry a fourth step after the status-card render"
     )
     section = work_doc[work_doc.index("### 5.4 ") :]
     body = section[section.index("\n") :]  # past the heading, which names the steps too
-    assert body.index("**Render the operator status header**") < body.index(
-        "Take the merge turn"
-    ), "the status card must lead §5.4, not trail the steps it heads"
+    assert body.index("**Render the operator status header**") < body.index("2. **Release"), (
+        "the status card must lead §5.4, not trail the steps it heads"
+    )
+    phase_3 = work_doc.index("## Phase 3")
+    assert phase_3 < work_doc.index("**Take the merge turn.**") < work_doc.index("### 5.1 "), (
+        "the merge turn brings the units together in Phase 3, before code review"
+    )
     assert "Run `/qa` in this turn" in work_doc, (
         "issue 1029's continuation contract: the functional test is run, not recommended"
     )

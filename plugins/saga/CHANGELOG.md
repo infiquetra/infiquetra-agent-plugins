@@ -4,6 +4,33 @@
 
 ### Added
 
+- **`/work` proves the combined branch works before code review** (issue #99, pre-review testing
+  U4). `build_loop.py --combined` runs one pass after integration: the mechanical baseline on the
+  combined revision, then the declared deploy-or-start command, the test command and every plan
+  check marked `runs: environment` (the scenario smoke included), then the teardown, which runs on
+  every exit path once the deploy step was reached, an interrupt or `SIGTERM` included. Each pass
+  lands on the run record's new top-level `combined_branch` block under the record lock; a green
+  pass writes `combined_branch.handed_to_code_review`. A failing test is exit 4; a deploy or
+  teardown that does not succeed, a timeout or a missing tool is `could-not-execute`, and the third
+  consecutive one is the new **exit 5, environment stop**, which names the problems for the
+  operator. A repository-level waiver runs the baseline only. Refused with exit 2: no declaration
+  and no waiver, a declaration that names production, a unit still to merge, a revision missing a
+  recorded merge, or a shared lease whose remote the checkout lacks. `--dry-run --combined` prints
+  the pass, and `--lease-wait` bounds the wait on a held lease. `build_loop.functional_evidence`
+  answers whether a revision carries a passing combined run, for the code-review gate.
+- New `scripts/environment_lease.py`: a shared environment takes one run at a time through the
+  git reference `refs/saga/leases/<name>` on the declared remote, acquired by a compare-and-swap
+  push and released by a compare-and-swap delete. The holder names the repository, issue,
+  revision, a short host label, start time and bound; a waiting run prints it, a later pass of
+  the same run on the same host replaces a lease left by an earlier pass (any other holder, the
+  same run's included, is waited on), and a stale lease is reported with the exact `release`
+  command and never broken automatically. `status` and `release --expect <oid>` are the operator's
+  commands.
+- `functional_test_environment` takes an optional `lease` block, `{remote, name}`, defaulting to
+  `origin` and `shared-nonprod`, refused on a private scope.
+- `merge_turn.integration_state(record)` says how many lanes a run has and which units are still to
+  merge; `status` prints it as `integration` and each merge reports `integration_complete`.
+
 - **`/plan` turns acceptance criteria into functional checks, and `/doc-review` refuses a plan
   that leaves one unproven** (issue #98, pre-review testing U3). Each plan unit carries a fenced
   `functional-checks` block of `{name, command, proves, runs}` entries, `proves` naming the issue's
@@ -186,6 +213,12 @@
 
 ### Changed
 
+- `/work` brings the units together before code review: the merge turn moved from §5.4 to the
+  new Phase 3.2, and Phase 3.3 runs the combined-branch loop, so review starts only on a revision
+  whose combined functional run passed, including a repaired branch returning from review or from
+  the post-merge `/qa` loop (issue #99). §5.1 reads the reviewed revision from
+  `combined_branch.handed_to_code_review`. §5.4 keeps four steps: the status header, the release,
+  the deploy and its board move, and the functional test and close.
 - `build_loop.py` keeps a check's `proves` and `runs` in the recorded criterion. A unit iteration
   runs only local checks; a `runs: environment` check or smoke entry is recorded and deferred to
   the combined-branch run, and a list holding only such entries records the reason

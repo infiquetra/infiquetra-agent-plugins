@@ -8,7 +8,9 @@ drift apart silently.
 
 **Source of the check map:** `infiquetra/infiquetra-sdlc` at revision `5efc869f` —
 `config/lens-catalogue.json` for `mechanical_checks` (the check-to-dimension map and its six rules)
-and `docs/lifecycle/run-model.md` step 5 for the exit criterion and the branch-preview rule.
+and `docs/lifecycle/run-model.md` step 5 for the exit criterion and the branch-preview rule. The
+combined-branch pass follows the run model at revision `e5a2be10`, section "Prove the combined
+branch works, before review", which issue #174 there added.
 
 ## What the criterion is made of
 
@@ -119,8 +121,8 @@ could not use (an unknown kind, no test command) is a refusal, exit 2, naming th
 **A unit iteration does not run it.** The lifecycle at infiquetra-sdlc `e5a2be10` runs the
 deployed or started check once, on the combined branch, before code review, and a shared
 non-production stack only ever receives the combined branch. Running it per unit would break that,
-so the combined-branch pass belongs to pre-review testing U4. Until then the per-unit branch
-preview below still runs for records admitted before issue #97.
+so it runs in the combined-branch pass below (issue #99). The per-unit branch preview below still
+runs for records admitted before issue #97.
 
 ## The branch preview
 
@@ -180,6 +182,153 @@ An absent or empty list reads as an **empty list** and the iteration records the
 for a unit the plan gave no checks, and for a run whose functional testing is waived. Without that
 reason a reader of a green iteration could not tell "the plan prescribed none" from "the plan
 prescribed three and the loop lost them", and those are very different facts about the same green.
+
+## The combined-branch pass
+
+After integration and before code review, the combined branch is built, deployed or started,
+tested and torn down through the environment the repository declared, and that pass is repeated
+until it is green (issue #99, the lifecycle's combined-branch functional run). `/work` runs it once
+the merge turn reports every lane merged; a single-lane run, with nothing to integrate, runs it on
+its one branch. Every entry into code review goes through it, including a repaired branch coming
+back from review or from the post-merge `/qa` repair loop.
+
+```bash
+uv run python plugins/saga/scripts/build_loop.py --record <path> --repo-root <combined checkout> --combined
+```
+
+**One invocation is one pass**, in this order:
+
+1. **Build.** The mechanical baseline runs on the combined revision. When it is not green, nothing
+   is deployed and the pass records why in `skipped_reason`.
+2. **Lease**, when the environment's scope is `shared`. See the next section. A private
+   environment records `{"required": false, "status": "not-required"}`.
+3. **Deploy or start**, through `deploy_command`. A `local` environment may declare none, and the
+   step records `not-declared`.
+4. **Test.** The declared `test_command`, then every plan check marked `runs: environment` on any
+   unit row and the plan's scenario smoke, each once (`environment_checks`). They run only when the
+   deploy succeeded or was not declared.
+5. **Tear down**, through `teardown_command`, whenever the deploy step was reached: after a pass, a
+   failed deploy, a failed test, a timeout, a missing program or an interrupt. A missing teardown
+   records `not-declared`. The lease is released after it.
+
+Each step is classified so an environment problem never reads as a defect in the code:
+
+| Step | Exits zero | Exits non-zero | Missing program, timeout, unparseable |
+|---|---|---|---|
+| baseline | `pass` | `fail` | `could-not-execute` |
+| deploy | `pass` | `could-not-execute`, with its exit code kept | `could-not-execute` |
+| test and environment checks | `pass` | `fail` | `could-not-execute` |
+| teardown | `pass` | `could-not-execute`, an environment problem | `could-not-execute` |
+| lease | acquired | held by another run, or the remote unreachable: `could-not-execute` | — |
+
+A pass is `fail` when any baseline, test or environment check failed; otherwise
+`could-not-execute` when any step could not execute, the lease was not taken or not released, or
+the pass was interrupted; otherwise `pass`. Every environment detail is listed in
+`environment_problems`. **A failing test is a loop pass, exit 4**, fixed on the combined branch as
+ordinary implementation work and never a review finding.
+
+**Three consecutive could-not-execute passes are an environment stop, exit 5.** The loop prints
+the three passes' environment problems for the operator. It is an exit code, not a refusal to run:
+the next invocation still runs, and a pass that is not could-not-execute resets the streak.
+Waiting on a held lease counts toward it, so a lease left by a dead run surfaces to the operator
+after three passes rather than looping forever.
+
+**A repository-level waiver runs the baseline only.** The pass records `waiver` with the level and
+reason, and a green pass hands the revision to review with `waived: true`. A run-level waiver (the
+Planner's, for a change that carries no code) is not on the run record yet and is not read here.
+
+**Refusals, exit 2**, before anything runs: no declaration and no waiver, an incomplete
+declaration, a declaration that names production in its kind, a command or its lease (a tripwire
+that reads `prod` and `production` as words, not `nonprod`, `non-prod`, `pre-prod` or `product`;
+the declaration stays the authority), a multi-lane run with a unit still to merge or a revision
+that does not contain a recorded merge, and a shared lease whose remote the checkout does not have.
+No production deployment exists on any path.
+
+`--dry-run --combined` prints the baseline, the environment, the environment-bound plan checks, the
+lease's reference and remote, and whether integration is complete, and runs and writes nothing.
+`--lease-wait <seconds>` bounds the wait on a held lease, defaulting to 1,800.
+
+### The shared-environment lease
+
+A shared environment takes one run at a time, and the lease must be visible to every host that can
+deploy to it, so a lock file in one checkout is not enough. `plugins/saga/scripts/environment_lease.py`
+keeps it as the git reference `refs/saga/leases/<name>` on the declared remote, which every
+deploying host already pushes to. `<name>` and the remote come from the declaration's optional
+`lease` block and default to `shared-nonprod` on `origin`
+(`plugins/saga/references/repository-profile.md`).
+
+- **Acquire** is a compare-and-swap push: a commit on the empty tree whose message is the holder,
+  pushed with `--force-with-lease=<ref>:` (an empty expected value: only if the reference does not
+  exist) and `--no-verify`, so a repository's pre-push hook does not run for it.
+- **The holder** names the repository, the issue, the revision under test, a short host label, the
+  start time and the bound the pass expected to finish within.
+- **Release** is a compare-and-swap delete with the object id acquire returned. Another run's lease
+  is never deleted by a release.
+- **A second run waits**, polling every 30 seconds up to `--lease-wait`, and prints the holder on
+  each poll. When the wait runs out the pass is could-not-execute and names the holder.
+- **A later pass of the same run replaces a lease left by an earlier pass**, and only then: the
+  holder must name this repository and issue, this host, and a lower pass number. A pass number
+  comes from the run record, which hands out the next one only after the earlier pass recorded its
+  result. A holder from another host, or with the same pass number (a concurrent invocation, or a
+  pass killed before it recorded anything), is held like any other run's lease.
+- **The start time is stamped when the lease is taken**, not when the wait began, so a lease won
+  after waiting is not reported stale the moment it is taken.
+- **A stale lease is reported, never broken.** Past its bound it is described as `STALE` with the
+  command that releases it, and the operator decides:
+
+```bash
+python3 plugins/saga/scripts/environment_lease.py --repo-root . --remote origin status --name shared-nonprod
+python3 plugins/saga/scripts/environment_lease.py --repo-root . --remote origin release --name shared-nonprod --expect <object id>
+```
+
+This lease is not the run record's lock, and the run record stays a file with no lease in it
+(`references/run-record.md`).
+
+### The combined-branch record
+
+One run-level key, `combined_branch`, at the top of the run record, because the combined branch is
+not a unit. `run_record.v1` does not change: the key round-trips as an unknown top-level field, as
+orchestrate's `orchestrate` block does. The pass is landed on a record re-read under the record's
+file lock, after the pass ran with no lock held.
+
+<!-- BEGIN COMBINED-BRANCH BLOCK -->
+
+| Key | Type | Holds |
+|---|---|---|
+| `environment` | object | the declared environment or waiver the latest pass ran with |
+| `passes` | array | one entry per invocation, in order, never replaced |
+| `handed_to_code_review` | object | `{revision, at, pass, waived}`, written on a green pass only |
+
+<!-- END COMBINED-BRANCH BLOCK -->
+
+<!-- BEGIN COMBINED PASS KEYS -->
+
+| Key | Type | Holds |
+|---|---|---|
+| `pass` | integer | 1 upward |
+| `revision` | string | the full forty-character commit identifier the pass ran at |
+| `branch` | string | the checked-out branch, or null |
+| `started_at` | string | ISO-8601 timestamp in UTC |
+| `finished_at` | string | ISO-8601 timestamp in UTC |
+| `status` | string | `pass`, `fail` or `could-not-execute` |
+| `green` | boolean | the status is `pass` |
+| `baseline` | array | one result per baseline command |
+| `lease` | object | `required`, `status`; when required also `remote`, `ref`, `token`, `holder`, `waited_seconds`, `release_status`, `detail` |
+| `deploy` | object | the deploy result, `not-declared`, or null when not reached |
+| `test` | object | the declared test command's result, or null when not reached |
+| `environment_checks` | array | one result per environment-bound plan check and scenario smoke |
+| `teardown` | object | the teardown result, `not-declared`, or null when the deploy step was not reached |
+| `environment_problems` | array | one line per environment problem, for the operator |
+
+<!-- END COMBINED PASS KEYS -->
+
+Three keys appear only when they apply: `waiver` (`{level, reason}`) on a waived pass,
+`skipped_reason` when a step was not reached, and `interrupted: true` on a pass an interrupt or
+`SIGTERM` cut short, which is recorded before the interrupt is re-raised.
+
+`build_loop.functional_evidence(record, revision)` is how a reader asks whether a revision carries
+a passing combined-branch functional run: it admits a green pass at exactly that revision, waived
+or not, and reports `missing` or `failed` otherwise.
 
 ## The record block
 
@@ -246,16 +395,18 @@ collapsing it into `pass` would let a missing tool report green.
 |---|---|
 | 0 | green — every check passed, or `--dry-run` printed the criterion |
 | 1 | an unexpected internal error |
-| 2 | a refusal: an unresolvable store root, an unreadable record, no record at that path, no such unit, or an unnamed unit where one is required |
+| 2 | a refusal: an unresolvable store root, an unreadable record, no record at that path, no such unit, or an unnamed unit where one is required; for `--combined`, also no declaration and no waiver, a production tripwire, units still to merge, or no lease remote |
 | 3 | an unknown record version |
 | 4 | **not green yet** — the iteration ran and at least one entry is `fail` or `could-not-execute` |
+| 5 | **environment stop** — the third consecutive could-not-execute combined pass; it names the environment problems for the operator |
 
 <!-- END EXIT CODES -->
 
 The first four are `run_record.py`'s table unchanged, so a caller learns one set of codes for both
 modules. **Exit 4 is not a refusal**, and it is a distinct code precisely so a caller cannot read
 it as one: the instruction on seeing it is to implement again and run the loop again. A build loop
-that refused would be the gate the loop replaced, wearing a new name.
+that refused would be the gate the loop replaced, wearing a new name. **Exit 5 is not a refusal
+either**: the code is not the problem, the environment is, and only the operator can fix that.
 
 ## Command line
 
@@ -266,6 +417,10 @@ uv run python plugins/saga/scripts/build_loop.py --record <path> --dry-run
 # run one iteration against a unit and record it
 uv run python plugins/saga/scripts/build_loop.py --issue <N> --unit <id>
 uv run python plugins/saga/scripts/build_loop.py --record <path> --unit <id>
+
+# after integration, before review: one combined-branch pass, or print it
+uv run python plugins/saga/scripts/build_loop.py --record <path> --repo-root <combined checkout> --combined
+uv run python plugins/saga/scripts/build_loop.py --record <path> --combined --dry-run
 ```
 
 `--store-root <dir>` overrides the record store's resolution; `--repo-root <dir>` names the

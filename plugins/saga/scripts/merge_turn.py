@@ -30,6 +30,13 @@ record's lock convention (``references/run-record.md``, issue 95): ``status`` an
 wholly under the record's lock, and ``merge`` does its git work with no lock held, then re-reads
 the record under the lock and lands only the merge keys it changed.
 
+**Integration ends before code review** (issue #99). The lifecycle's run model brings the units
+together (step 6) before code review (step 7), and code review runs on the combined branch only
+after its functional run passed. So ``integration_state`` says when every lane is merged, the
+``status`` subcommand and every merge report it, and ``/work`` then runs the build loop's
+combined-branch pass. A run with one lane has nothing to integrate and runs that pass on its own
+branch.
+
 House pattern: pure functions over explicit values, an injectable runner so tests drive real git in
 a temporary repository, lazy imports of the sibling modules, and no I/O at import.
 """
@@ -192,6 +199,43 @@ def find_unit(record: Any, name: str) -> dict[str, Any]:
             return unit
     known = ", ".join(sorted(filter(None, (unit_name(u) for u in record.units)))) or "none"
     raise MergeTurnError(f"no unit named {name!r} in this run record; it carries: {known}")
+
+
+def integration_state(record: Any) -> dict[str, Any]:
+    """Whether the units are brought together: how many lanes, which are still to merge.
+
+    A lane is a distinct unit branch. Rows that record no branch have nothing to merge
+    (``merge_unit`` refuses them for the same reason), and two rows on one branch are one lane. A
+    run with at most one lane is ``single_lane``: integration is complete by definition and the
+    combined-branch pass runs on that one branch. Otherwise integration is complete when every
+    lane's row is ``merged``; ``merged_tips`` lets the caller check that the branch under test
+    actually contains each merge.
+    """
+    lanes: dict[str, list[dict[str, Any]]] = {}
+    for unit in record.units:
+        if not isinstance(unit, dict):
+            continue
+        branch = str(unit.get("branch") or "")
+        if branch:
+            lanes.setdefault(branch, []).append(unit)
+    single_lane = len(lanes) <= 1
+    pending: list[str] = []
+    merged_tips: dict[str, str] = {}
+    for rows in lanes.values():
+        for unit in rows:
+            name = unit_name(unit) or str(unit.get("branch"))
+            if str(unit.get("merge_state") or MERGE_READY) == MERGE_MERGED:
+                if unit.get("merged_tip"):
+                    merged_tips[name] = str(unit["merged_tip"])
+            else:
+                pending.append(name)
+    return {
+        "lanes": len(lanes),
+        "single_lane": single_lane,
+        "complete": single_lane or not pending,
+        "pending": [] if single_lane else pending,
+        "merged_tips": merged_tips,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +405,7 @@ def merge_unit(
         "merged_tip": merged_tip,
         "merge_state": MERGE_MERGED,
         "reintegration": reintegration,
+        "integration_complete": integration_state(record)["complete"],
     }
 
 
@@ -560,7 +605,11 @@ def main(argv: list[str] | None = None) -> int:
                 if args.cmd == "status":
                     live, released = holder(record)
                     outcome.update(
-                        {"holder": unit_name(live) if live else None, "released": released}
+                        {
+                            "holder": unit_name(live) if live else None,
+                            "released": released,
+                            "integration": integration_state(record),
+                        }
                     )
                 else:
                     outcome.update(take_turn(record, args.unit))

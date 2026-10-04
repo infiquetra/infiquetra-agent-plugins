@@ -414,6 +414,18 @@ and carry every other entry and key forward:
 | `jev_raise` | `{model, effort, confidence, reason, decision_id}` for an automatic raise only; `/work` reads it with `tier_judgment.py raise --issue <N> --unit <id>` and passes it to `lifecycle_state.py resolve-build-unit-tier --jev-raise` |
 | `planned_tier` | `{model, effort}`, the tier `/plan` finally recorded for the unit after the operator confirmed the table |
 
+### `combined_branch` — the combined-branch functional run
+
+The build loop's combined-branch mode (issue #99) runs once the units are brought together and
+before code review: it builds the combined branch, deploys or starts it through the repository's
+declared environment, runs the functional suite and tears it down. The combined branch is not a
+unit, so its passes do not live on a unit row. `build_loop.py --combined` keeps a top-level key of
+its own, `combined_branch`, with the declared environment, one entry per pass and, on a green pass,
+`handed_to_code_review`. Like `tier_judgments` it is an unknown top-level field to
+`run_record.py`, preserved unchanged by every reader and writer, and `build_loop.py` lands each pass
+under the record lock on a fresh read. Its full contract, the pass keys and the exit codes are in
+`plugins/saga/references/mechanical-baseline.md`, documented there so the two do not drift.
+
 ## `approval_scope`
 
 The seven categories, verbatim from the lifecycle repository's escalations chapter and from
@@ -483,6 +495,7 @@ or git merges would stall every unit session's `usage add`.
 |---|---|---|
 | `run_record.set_next_step`, `usage add` | `next_step`; one unit row's `usage` | `update` |
 | `build_loop.py` | one unit row's `build_loop` | checks run unlocked; the iteration lands on a row re-read under `file_lock` |
+| `build_loop.py --combined` | the top-level `combined_branch` block | the pass runs unlocked; it lands on a record re-read under `file_lock` |
 | `review_result.py --issue` | `review_cycles` | `update` |
 | `admission.py` | `repo`, `admission`, `run_configuration`, `approval_scope` | admission runs unlocked; those fields land on a fresh read through `update` |
 | `qa_strategies.py` | the top-level `qa` block | `update` |
@@ -505,6 +518,13 @@ This is a lock on the file, not on any unit: it has no owner token, no expiry an
 holds it, and it is held only for the length of one write. It is not the lease, reservation,
 receipt or ledger mechanism the parent issue 1018 forbids, and nothing about a unit's execution
 waits on it.
+
+**The one lease saga holds is not in this file.** Issue #91's operator ruling 3 requires that a
+shared non-production environment take one run at a time, through a hold every deploying host can
+see. `environment_lease.py` keeps that lease as a reference on the git remote
+(`refs/saga/leases/<name>`), and the combined-branch pass takes it around its deploy, test and
+teardown. The record itself still carries no lease, no reservation and no owner token, and the
+merge turn still needs none.
 
 **`merge_state` has two writers, and the lock does not order them.** Orchestrate owns `merge_state`
 and writes it from memory on every save; saga's `merge_turn.py` also sets it when a unit worker

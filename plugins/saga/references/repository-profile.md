@@ -87,11 +87,38 @@ combined-branch functional run).
 | `test_command` | yes | what runs the functional suite against it |
 | `teardown_command` | no | what tears it down; when present it runs on every exit path, including a failed pass |
 | `scope` | yes, except for `shared-nonprod` | `private` to the branch, or `shared`. `shared-nonprod` is always `shared`: omit the scope or say `shared`; `private` is refused |
+| `lease` | no, and only for a `shared` scope | where the one-run-at-a-time lease lives: `{"remote": ..., "name": ...}`, defaulting to `origin` and `shared-nonprod` |
 
 On a `shared-nonprod` stack only the combined branch is deployed, one run at a time, right before
-review; units still run their local checks first (parent ruling 3 of issue #91). Running the
-commands is pre-review testing U4: admission and the build loop read, check, record and print the
-declaration, and nothing in this change runs it.
+review; units still run their local checks first (parent ruling 3 of issue #91). The build loop's
+combined-branch pass runs the commands (issue #99; `plugins/saga/references/mechanical-baseline.md`).
+
+**How the commands run.** Each command is an argument vector run without a shell, split the way a
+shell would split it, from the repository root. A compound command (`a && b`, a pipe, a variable
+that must be expanded) belongs in a script the command names. `deploy_command` must **return once
+the environment is ready**: a start command that blocks would run until the timeout and be
+recorded could-not-execute, so start a long-lived process detached and let `teardown_command` stop
+it. A deploy or teardown that exits non-zero is an environment problem, never a code defect; a test
+command that exits non-zero is a failing test.
+
+**The lease, for a shared environment.** A shared environment takes one run at a time, through a
+lease every deploying host can see: the git reference `refs/saga/leases/<name>` on a remote every
+deploying host already pushes to.
+
+```json
+"functional_test_environment": {
+  "kind": "shared-nonprod",
+  "deploy_command": "scripts/deploy-nonprod.sh",
+  "test_command": "scripts/functional-nonprod.sh",
+  "teardown_command": "scripts/teardown-nonprod.sh",
+  "lease": {"remote": "origin", "name": "shared-nonprod"}
+}
+```
+
+Both keys default as shown, so the block is only needed to change them. Every repository that
+deploys to the same shared stack must name the same remote and the same name, or two runs from two
+repositories can still collide: name the remote by URL when the repositories differ. A lease is
+refused on a `private` scope, where it would serialise nothing.
 
 ### The waiver
 
