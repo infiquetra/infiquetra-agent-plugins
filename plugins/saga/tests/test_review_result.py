@@ -379,3 +379,78 @@ def test_the_result_declares_v2_and_carries_its_provenance(rr: ModuleType) -> No
     assert row["executor"]["model"] == "claude-opus-5"
     assert row["hosting"]["session"] == "review-a"
     assert row["threshold"]["derived_overall_minimum"] == 9.0
+
+
+def test_appending_through_the_command_line_keeps_a_usage_entry_and_holds_the_lock(
+    rr: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue 95's lock convention: the append is applied to a record read under the lock."""
+    import fcntl
+    import json
+    import os
+
+    module = rr.run_record
+    store = tmp_path / "store"
+    module.save(
+        store,
+        module.RunRecord(
+            issue=1001, units=[{"id": "issue-1001", "usage": {"entries": [{"session_id": "s"}]}}]
+        ),
+    )
+    result_file = tmp_path / "result.json"
+    result_file.write_text(json.dumps(_result(rr).to_dict()), encoding="utf-8")
+    held: list[bool] = []
+    real_save = module.save
+
+    def save(store_root, record, **kwargs):
+        fd = os.open(module.lock_path(store_root, record.issue), os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            held.append(False)
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except BlockingIOError:
+            held.append(True)
+        finally:
+            os.close(fd)
+        return real_save(store_root, record, **kwargs)
+
+    monkeypatch.setattr(module, "save", save)
+    code = rr.main(["--result", str(result_file), "--issue", "1001", "--store-root", str(store)])
+    assert code == rr.EXIT_OK
+    assert held == [True]
+    reread = module.load(store, 1001, warn=None)
+    assert reread.units[0]["usage"] == {"entries": [{"session_id": "s"}]}
+    assert [entry["cycle"] for entry in reread.review_cycles] == [1]
+
+
+def test_a_write_landing_after_any_read_before_the_lock_survives_the_append(
+    rr: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The append is applied to a copy read under the lock, never to one read before it.
+
+    Another writer lands just before ``update`` takes the lock, so a copy read any earlier lacks
+    it, and only a writer that re-reads under the lock keeps it.
+    """
+    import json
+
+    module = rr.run_record
+    store = tmp_path / "store"
+    module.save(store, module.RunRecord(issue=1002, units=[{"id": "issue-1002"}]))
+    result_file = tmp_path / "result.json"
+    result_file.write_text(json.dumps(_result(rr).to_dict()), encoding="utf-8")
+    real_update = module.update
+
+    def update(store_root, issue, change, **kwargs):
+        def another_writer(record):
+            record.units[0]["usage"] = {"entries": [{"session_id": "landed-meanwhile"}]}
+            return record
+
+        real_update(store_root, issue, another_writer)
+        return real_update(store_root, issue, change, **kwargs)
+
+    monkeypatch.setattr(module, "update", update)
+    code = rr.main(["--result", str(result_file), "--issue", "1002", "--store-root", str(store)])
+    assert code == rr.EXIT_OK
+    reread = module.load(store, 1002, warn=None)
+    assert reread.units[0]["usage"] == {"entries": [{"session_id": "landed-meanwhile"}]}
+    assert [entry["cycle"] for entry in reread.review_cycles] == [1]

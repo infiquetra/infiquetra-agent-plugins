@@ -1485,10 +1485,19 @@ def require_record(store_root: Path, issue: int) -> run_record.RunRecord:
 
 def write_block(store_root: Path, issue: int, block: Mapping[str, Any]) -> Path:
     """Write the qa block under the record's top-level extension point."""
-    record = require_record(store_root, issue)
-    record.extra[RECORD_KEY] = dict(block)
-    run_record.save(store_root, record)
-    return run_record.record_path(store_root, issue)
+    require_record(store_root, issue)
+
+    # Under the record's lock, onto a copy read under it (issue 95's lock convention).
+    def change(record: run_record.RunRecord | None) -> run_record.RunRecord:
+        if record is None:
+            raise ProfileRefusalError(
+                f"issue {issue}'s run record under {store_root} disappeared before the qa block "
+                "could be written"
+            )
+        record.extra[RECORD_KEY] = dict(block)
+        return record
+
+    return run_record.update(store_root, issue, change)
 
 
 # ---------------------------------------------------------------------------

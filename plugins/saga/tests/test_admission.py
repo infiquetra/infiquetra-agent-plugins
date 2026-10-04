@@ -1557,3 +1557,44 @@ def test_an_override_answered_as_the_skill_documents_keeps_every_role(adm: Modul
     )
     assert "the complete role map" in skill
     assert "for each role the operator changes" not in skill
+
+
+def test_saving_admission_lands_only_admission_fields_on_a_fresh_read(
+    adm: ModuleType, store: Path
+) -> None:
+    """Issue 95's lock convention: a unit row or usage entry written meanwhile survives."""
+    rr = adm.run_record
+    rr.save(store, rr.RunRecord(issue=1023, repo="o/r"))
+    admitted = rr.RunRecord(
+        issue=1023,
+        repo="o/r",
+        admission={**rr.empty_admission(), "pending_questions": []},
+        next_step="plan",
+    )
+    # Another writer lands after admission read the record and before it writes.
+    rr.update(
+        store,
+        1023,
+        lambda current: rr.RunRecord(
+            **{
+                **current.__dict__,
+                "units": [{"id": "u1", "usage": {"entries": [{"session_id": "s"}]}}],
+                "next_step": "build u1",
+            }
+        ),
+    )
+    adm.save_admission(store, admitted)
+    reread = rr.load(store, 1023, warn=None)
+    assert reread is not None
+    assert reread.units == [{"id": "u1", "usage": {"entries": [{"session_id": "s"}]}}]
+    assert reread.admission["pending_questions"] == []
+    assert reread.next_step == "build u1", "a fresh next_step wins over admission's suggestion"
+
+
+def test_saving_admission_creates_the_record_when_there_is_none(
+    adm: ModuleType, store: Path
+) -> None:
+    rr = adm.run_record
+    adm.save_admission(store, rr.RunRecord(issue=1023, repo="o/r", next_step="plan"))
+    reread = rr.load(store, 1023, warn=None)
+    assert reread is not None and reread.next_step == "plan"

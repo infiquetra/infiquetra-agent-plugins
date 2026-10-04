@@ -36,6 +36,43 @@ ones.
 
 **Generalizable rule.** When a renderer stops emitting a trailing section, keep
 its header in the strip list for as long as old drafts can still be revised.
+### Landing "only the keys this writer changed" is not lost-update safe without a compare
+
+**Evidence.** Review cycle 2 of issue 95 found `land_merge_keys` in
+`plugins/saga/scripts/merge_turn.py` wrote every merge key the turn changed between its unlocked
+starting copy and its finished copy onto the record re-read under the lock. `holder()` releases a
+stale `merging` row on that unlocked copy, so when the released unit finished its own merge in the
+meantime, the landing wrote `ready` over its `merged`.
+
+**Mechanism.** A diff between "before" and "after" tells a writer what it changed, not whether
+anyone else changed the same key since "before". Re-reading under the lock protects keys this
+writer did not touch; for keys it did touch, the fresh value must still equal "before"
+(compare-and-set), or the writer is overwriting a newer value with one derived from a stale copy.
+The fix lands a key only on that condition, except on the merged unit's own row, whose git outcome
+is the truth.
+
+**Generalizable rule.** A writer that does slow work unlocked and lands a delta later must
+compare-and-set each key it lands against the value it started from.
+
+### An open row key set is only open if every whole-row writer carries unknown keys forward
+
+**Evidence.** The 2026-10-04 survey for issue 95 loaded a run record whose unit row carried
+`usage` and `build_loop` with orchestrate's `Run.load` and saved it with `Run.save`: both keys were
+gone, after a warning that orchestrate "ignores" the unknown key. `read_unit` in
+`plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py` keeps only the fields its `Unit`
+type declares, and `Run.save` rewrites the whole `units` array from that in-memory copy.
+
+**Mechanism.** `plugins/saga/references/run-record.md` says a consumer may add a key to a unit row
+and that a key another consumer does not know is left alone. The first half is a promise to
+writers of new keys; the second is an obligation on every writer of whole rows, and nothing
+enforced it. A writer that reconstructs rows from its own type, or saves a copy it read before
+someone else wrote, breaks the contract silently. Issue 113 fixes orchestrate. Issue 95 adds the
+record lock and moves every saga writer onto it, which stops the stale-copy half for saga; the
+lock is advisory, so it protects only the writers that take it, and a review of issue 95 found the
+first draft had converted two writers while the reference said "every".
+
+**Generalizable rule.** When a shared record promises an open key set, test the promise at every
+writer that rewrites whole objects — round-trip a row carrying a key that writer does not own.
 
 ## 2026-09-22
 

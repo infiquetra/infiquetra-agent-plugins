@@ -4,6 +4,18 @@
 
 ### Added
 
+- Issue 95: cost per completed unit. Each unit row in the run record can carry a `usage` block,
+  one entry per model session that worked the unit (session id, role, vendor, model, effort, and
+  counts in five billing categories: `uncached_input`, `cache_read`, `cache_write_5m`,
+  `cache_write_1h`, `output`). `run_record.py usage add` is the one portable writer; a repeat add
+  for the same session, role, vendor, model and effort adds into that entry. It refuses an unknown
+  category, a negative count and a unit the record does not have.
+- `scripts/cost_report.py` prints cost per completed unit grouped by role and tier (`--json` for
+  the same data). A completed unit has a green build loop and a latest code review of `accepted` or
+  `cycle_cap_best_available`. The report always prints the price table's age and warns when it is
+  more than 30 days old; a model without verified rates is named as unpriced, never priced at zero.
+- `references/model-prices.yaml`, the dated price table (`model_prices.v1`), with Claude Opus 5.5,
+  Sonnet 5.5, Haiku 4.5 and Fable 5.1 rates read from Anthropic's pricing page on 2026-10-03.
 - `scripts/admission.py --render {summary,tables,json}` (issue #102). `tables` prints the summary
   followed by the staffing table (Role, Default, Jev suggestion, Proposed, Why) and the lens table
   (Lens, Include, Reason, Jev probability) in one fixed Markdown format; an empty Jev cell reads
@@ -21,6 +33,28 @@
   default and names neither fable nor max; otherwise the Why column says it was refused.
 - `references/run-record.md` lists `admission.lens_proposal` and the per-role staffing keys the
   tables read (`suggestion`, `tier_judgment`, `jev_raise`, `operator_override`, `_tier_judgment`).
+
+### Changed
+
+- Every saga read-modify-write of a run record now holds an exclusive `fcntl.flock` on the sibling
+  `issue-<N>.json.lock` and re-reads the record inside it: `set_next_step`, `usage add`,
+  `build_loop.py`, `review_result.py --issue`, `admission.py`, `qa_strategies.py` and
+  `merge_turn.py` (`run_record.update`, or `run_record.file_lock` for a record named by path). Slow
+  writers (the build loop's checks, admission, a merge) do their work unlocked and land only their
+  own keys on a record re-read under the lock. Orchestrate takes the convention in issue 113.
+  `references/run-record.md` documents it once. This replaces the record's earlier "atomic replace,
+  no lock" rule.
+- Every run-record write goes through a uniquely named temporary file, so two writers saving at
+  once can no longer move each other's half-written file.
+  The write keeps an existing record's mode and gives a new one what the user's umask allows,
+  rather than widening it.
+- `merge_turn.py merge` lands a merge key on another unit's row only if that row still holds the
+  value the turn started from, so a release of a stale holder never overwrites that holder's own
+  finished merge.
+- `cost_report.py`: a role-and-tier row divides only by the completed units whose spend in it is
+  fully priced, marks a total that leaves unpriced spend out, and the JSON row carries
+  `fully_priced_units` and `total_is_partial`.
+- A unit row's identity (`run_record.unit_key`) falls back to `unit_id` after `id` and `name`.
 
 ### Docs
 

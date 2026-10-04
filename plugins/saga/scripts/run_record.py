@@ -23,9 +23,19 @@ argues for rather than a preference:
 * **Unknown top-level fields round-trip and are warned about by name** (plan KTD3), the way
   ``saga.py``'s ``Saga.extra`` already preserves unknown frontmatter. Issue 989's finding F138 is
   the silent-drop half of this.
-* **Writes are an atomic replace and take no lock** (plan KTD4b). The parent issue 1018 forbids
-  adding a lease, reservation or lock, and one coordinator owns one run record, so ``updated_at``
-  is what a reader compares rather than a lock it takes.
+* **Writes are an atomic replace** (plan KTD4b), and **every read-modify-write holds the record's
+  advisory lock** (issue 95). Issue 1018 shipped this module with no lock because one coordinator
+  owned one record. Issue 95 broke that assumption: unit sessions append their own ``usage``
+  entries while the coordinator writes, so ``update`` takes ``fcntl.flock(LOCK_EX)`` on the sibling
+  ``<record>.lock``, re-reads the record from disk while holding it, applies the change and writes
+  through the same atomic replace. The lock file is created when missing and never deleted. It is
+  advisory: a writer that calls ``save`` on a copy it loaded earlier still loses other writers'
+  changes, which is why every saga read-modify-write goes through ``update`` (or ``file_lock``
+  plus a re-read, for a caller that names the record by path). Orchestrate's writer is the one
+  writer outside this convention until issue 113 lands.
+
+Issue 95 also adds the one key this module owns on a unit row, ``usage``: one entry per model
+session that worked the unit, written by ``usage add`` and read by ``cost_report.py``.
 
 House testability pattern, mirroring ``saga.py`` and ``outcome_store.py``: every filesystem
 function takes its root as an explicit argument, ``now`` and ``runner`` are injectable, and nothing
@@ -35,11 +45,17 @@ does I/O at import.
 from __future__ import annotations
 
 import argparse
+import copy
+import fcntl
 import json
 import os
+import re
+import stat
 import subprocess  # nosec B404 - fixed argv, no shell
 import sys
-from collections.abc import Callable
+import tempfile
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -147,6 +163,53 @@ PARAMETER_CHOSEN_BY: dict[str, str] = {
     "repair_custody": "delivery_manager",
     "preflight_checks": "planner",
 }
+
+#: The key this module owns on a unit row (issue 95). Other consumers own ``build_loop``,
+#: ``merge_state`` and the rest; ``usage`` is the only one ``usage add`` touches.
+USAGE_KEY = "usage"
+
+#: The five billing categories a usage entry counts, in the order Anthropic's pricing table lists
+#: rates. Each maps to one field of a Messages API ``usage`` object; ``run-record.md`` holds the
+#: mapping, and ``cost_report.py`` prices each one separately. No stored key carries the word
+#: "token": the repository's credential scanner reads such a key as a credential.
+#:
+#: Each category is listed once, in ``USAGE_FLAGS`` below, beside its ``usage add`` flag and the
+#: Messages API field it carries; this tuple is derived from it so the two can never disagree.
+USAGE_FLAGS: tuple[tuple[str, str, str], ...] = (
+    ("uncached_input", "--uncached-input", "input_tokens"),
+    ("cache_read", "--cache-read", "cache_read_input_tokens"),
+    ("cache_write_5m", "--cache-write-5m", "cache_creation.ephemeral_5m_input_tokens"),
+    ("cache_write_1h", "--cache-write-1h", "cache_creation.ephemeral_1h_input_tokens"),
+    ("output", "--output", "output_tokens"),
+)
+TOKEN_CATEGORIES: tuple[str, ...] = tuple(category for category, _, _ in USAGE_FLAGS)
+
+#: The keys of one usage entry, in write order.
+USAGE_ENTRY_KEYS: tuple[str, ...] = (
+    "session_id",
+    "role",
+    "vendor",
+    "model",
+    "effort",
+    "counts",
+    "first_added_at",
+    "last_added_at",
+    "additions",
+)
+
+#: A staffing role name: ``worker``, ``lens-reviewer``, ``merging-worker``. Checked by shape, not
+#: against ``staffing.json``, so a staffing change can never break the writer.
+ROLE_PATTERN = re.compile(r"^[a-z][a-z0-9-]*$")
+
+#: A vendor, model or effort name: printable, no whitespace, no control characters. These strings
+#: reach the cost report's lines, so a newline or an escape sequence in one could forge a line.
+IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$")
+
+#: A session id: any printable characters without whitespace.
+SESSION_ID_PATTERN = re.compile(r"^[!-~]+$")
+
+#: The suffix of the sibling file every read-modify-write locks (issue 95).
+LOCK_SUFFIX = ".lock"
 
 #: Where a filled value came from. ``operator`` is an answer given; everything else is a default.
 VALUE_SOURCES: tuple[str, ...] = ("operator", "profile", "staffing", "lifecycle-default", "unset")
@@ -417,19 +480,115 @@ def save(
 ) -> Path:
     """Write *record* into *store_root* with an atomic replace, and return the path (KTD4b).
 
-    No lock, no lease, no reservation: the parent issue 1018 forbids adding one and one coordinator
-    owns one record. ``updated_at`` is refreshed on every write so a reader can tell whether the
-    copy it holds is the newest.
+    ``save`` takes no lock itself: it writes the copy it is given. A caller that read the record
+    and now writes a changed copy is a read-modify-write and goes through ``update``, which holds
+    the record's lock across the read and this write (issue 95). ``updated_at`` is refreshed on
+    every write so a reader can tell whether the copy it holds is the newest.
     """
     stamp = _timestamp(now or _utc_now())
     created = record.created_at or stamp
     payload = to_dict(RunRecord(**{**record.__dict__, "created_at": created, "updated_at": stamp}))
     path = record_path(store_root, record.issue)
+    return write_json_atomic(path, payload)
+
+
+def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> Path:
+    """Write *payload* to *path* as JSON through a uniquely named temporary file and a replace.
+
+    The temporary name is unique per write (``mkstemp`` in the same directory), so two writers
+    saving at once can never move each other's half-written file: a fixed ``<record>.tmp`` name let
+    one writer's ``os.replace`` take the other's file and the second replace fail.
+
+    The replace carries the temporary file's mode onto the record, so the write never widens it:
+    an existing record keeps its own mode, and a new one gets what the user's umask allows, as a
+    plain ``write_text`` would have given it.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        os.fchmod(fd, _record_mode(path))
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+        os.replace(tmp_name, path)
+    except BaseException:
+        with suppress(FileNotFoundError):
+            os.unlink(tmp_name)
+        raise
     return path
+
+
+def _record_mode(path: Path) -> int:
+    """The mode a write of *path* gives it: the existing file's, else ``0o666`` less the umask."""
+    try:
+        return stat.S_IMODE(os.stat(path).st_mode)
+    except FileNotFoundError:
+        mask = os.umask(0)
+        os.umask(mask)
+        return 0o666 & ~mask
+
+
+def lock_path_for(record_file: Path) -> Path:
+    """Return the sibling lock file of the record at *record_file*: ``<record>.lock``."""
+    return record_file.with_name(record_file.name + LOCK_SUFFIX)
+
+
+def lock_path(store_root: Path, issue: int) -> Path:
+    """Return the sibling lock file of *issue*'s record: ``issue-<N>.json.lock``."""
+    return lock_path_for(record_path(store_root, issue))
+
+
+@contextmanager
+def record_lock(store_root: Path, issue: int) -> Iterator[Path]:
+    """Hold the exclusive advisory lock on *issue*'s record for the body of the ``with``."""
+    with file_lock(record_path(store_root, issue)) as path:
+        yield path
+
+
+@contextmanager
+def file_lock(record_file: Path) -> Iterator[Path]:
+    """Hold the exclusive advisory lock on the record at *record_file* for the ``with`` body.
+
+    The lock is ``fcntl.flock(LOCK_EX)`` on ``<record>.lock``, created when missing and never
+    deleted: deleting it would let a second writer lock a fresh inode while the first still holds
+    the old one. The lock file is not the record, so a reader that never locks still sees a whole
+    record, because the write itself stays an atomic replace. Callers that name a record by path
+    rather than by store root and issue (``build_loop.py --record``) lock through this.
+    """
+    path = lock_path_for(record_file)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            yield path
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def update(
+    store_root: Path,
+    issue: int,
+    change: Callable[[RunRecord | None], RunRecord],
+    *,
+    now: datetime | None = None,
+) -> Path:
+    """Apply *change* to *issue*'s record under its lock, and return the path (issue 95).
+
+    The record is re-read from disk after the lock is taken, never passed in, so *change* always
+    sees every write that finished before it. *change* receives ``None`` when there is no record
+    yet; it returns the record to write, or raises to write nothing.
+    """
+    with record_lock(store_root, issue):
+        current = load(store_root, issue, warn=None)
+        changed = change(current)
+        if int(changed.issue) != int(issue):
+            raise RunRecordError(
+                f"the record locked is issue {issue}'s, but the change returned issue "
+                f"{changed.issue}'s; refusing to write a record other than the one locked"
+            )
+        return save(store_root, changed, now=now)
 
 
 def set_next_step(
@@ -441,9 +600,12 @@ def set_next_step(
     log is append-only history whose older ticks are MEANT to hold stale values, while the record is
     the one file every role reads.
     """
-    existing = load(store_root, issue, warn=None)
-    record = existing or RunRecord(issue=int(issue))
-    return save(store_root, RunRecord(**{**record.__dict__, "next_step": next_step}), now=now)
+
+    def change(existing: RunRecord | None) -> RunRecord:
+        record = existing or RunRecord(issue=int(issue))
+        return RunRecord(**{**record.__dict__, "next_step": next_step})
+
+    return update(store_root, issue, change, now=now)
 
 
 def get_next_step(store_root: Path, issue: int) -> str:
@@ -453,8 +615,154 @@ def get_next_step(store_root: Path, issue: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Usage: one entry per model session that worked a unit (issue 95)
+# ---------------------------------------------------------------------------
+
+
+def unit_key(row: Mapping[str, Any]) -> str:
+    """A unit row's identity: its ``id``, else its ``name``, else its ``unit_id``.
+
+    ``build_loop.py``, ``usage add`` and the cost report all key on this. ``merge_turn.py`` reads
+    the same three keys name-first (see its ``unit_name``), so the two agree on every row that
+    carries one of them, or carries ``id`` and ``name`` with the same value.
+    """
+    return str(row.get("id") or row.get("name") or row.get("unit_id") or "")
+
+
+def find_unit_row(units: list[dict[str, Any]], unit_id: str) -> dict[str, Any]:
+    """Return the row whose identity is *unit_id*, refusing rather than creating a missing one."""
+    for row in units:
+        if isinstance(row, dict) and unit_key(row) == unit_id:
+            return row
+    known = ", ".join(sorted(unit_key(row) or "?" for row in units if isinstance(row, dict)))
+    raise RunRecordError(
+        f"no unit {unit_id!r} in the record" + (f"; it has {known}" if known else "")
+    )
+
+
+def _usage_counts(counts: Mapping[str, Any]) -> dict[str, int]:
+    """Validate *counts* and return all five categories, a missing one as 0."""
+    for key in counts:
+        if key not in TOKEN_CATEGORIES:
+            raise RunRecordError(
+                f"unknown token category {key!r}; the categories are {', '.join(TOKEN_CATEGORIES)}"
+            )
+    result: dict[str, int] = {}
+    for category in TOKEN_CATEGORIES:
+        value = counts.get(category, 0)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise RunRecordError(
+                f"token category {category!r} must be a non-negative integer, not {value!r}"
+            )
+        result[category] = value
+    return result
+
+
+def _stored_count(value: Any, unit_id: str, name: str) -> int:
+    """A count already on the record, refused by one line when another writer stored a non-count."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise RunRecordError(
+            f"a usage entry on unit {unit_id!r} stores {name} as {value!r}, "
+            "not a non-negative integer"
+        )
+    return value
+
+
+def add_usage(
+    record: RunRecord,
+    unit_id: str,
+    *,
+    session_id: str,
+    role: str,
+    vendor: str,
+    model: str,
+    effort: str,
+    counts: Mapping[str, Any],
+    now: datetime | None = None,
+) -> RunRecord:
+    """Return a copy of *record* with one usage addition on unit *unit_id*'s row.
+
+    An entry is identified by ``(session_id, role, vendor, model, effort)``. The first addition
+    appends an entry; a later one with the same identity adds its counts into that entry, so a
+    harness can report a long session as several deltas and the record still holds one entry per
+    model session. A blind retry of the same delta therefore counts twice.
+
+    Every other key survives: the row's other consumers' keys, unknown keys inside the usage block
+    and on its entries, and every other row.
+    """
+    if not SESSION_ID_PATTERN.fullmatch(str(session_id)):
+        raise RunRecordError(
+            f"the session id {session_id!r} must be printable characters with no whitespace"
+        )
+    for name, value in (("vendor", vendor), ("model", model), ("effort", effort)):
+        if not IDENTIFIER_PATTERN.fullmatch(str(value)):
+            raise RunRecordError(
+                f"the {name} {value!r} is not a name (letters, digits and . _ : / @ + -, "
+                "starting with a letter or digit)"
+            )
+    if not ROLE_PATTERN.fullmatch(role):
+        raise RunRecordError(
+            f"role {role!r} is not a staffing role name (lowercase letters, digits and hyphens)"
+        )
+    clean = _usage_counts(counts)
+    stamp = _timestamp(now or _utc_now())
+
+    units = copy.deepcopy(record.units)
+    row = find_unit_row(units, unit_id)
+    block = row.setdefault(USAGE_KEY, {})
+    if not isinstance(block, dict):
+        raise RunRecordError(f"unit {unit_id!r} has a {USAGE_KEY!r} key that is not an object")
+    entries = block.setdefault("entries", [])
+    if not isinstance(entries, list):
+        raise RunRecordError(f"unit {unit_id!r} has a {USAGE_KEY}.entries key that is not a list")
+
+    identity = (session_id, role, vendor, model, effort)
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if tuple(entry.get(key) for key in USAGE_ENTRY_KEYS[:5]) != identity:
+            continue
+        stored = entry.setdefault("counts", {})
+        if not isinstance(stored, dict):
+            raise RunRecordError(
+                f"a usage entry on unit {unit_id!r} has counts that are not an object"
+            )
+        for category in TOKEN_CATEGORIES:
+            stored[category] = _stored_count(stored.get(category, 0), unit_id, category)
+            stored[category] += clean[category]
+        entry["last_added_at"] = stamp
+        entry["additions"] = _stored_count(entry.get("additions", 0), unit_id, "additions") + 1
+        break
+    else:
+        entries.append(
+            {
+                "session_id": session_id,
+                "role": role,
+                "vendor": vendor,
+                "model": model,
+                "effort": effort,
+                "counts": clean,
+                "first_added_at": stamp,
+                "last_added_at": stamp,
+                "additions": 1,
+            }
+        )
+    return RunRecord(**{**record.__dict__, "units": units})
+
+
+# ---------------------------------------------------------------------------
 # Command line
 # ---------------------------------------------------------------------------
+
+
+def _non_negative_int(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"{text!r} is not an integer") from exc
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"{value} is negative; counts are never negative")
+    return value
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -474,6 +782,46 @@ def build_parser() -> argparse.ArgumentParser:
 
     where = sub.add_parser("path", help="Print the record's absolute path.")
     where.add_argument("issue", type=int)
+
+    usage = sub.add_parser("usage", help="Record what a model session spent on a unit.")
+    usage_sub = usage.add_subparsers(dest="usage_command", required=True)
+    categories = "\n".join(
+        f"  {category:<15} {flag:<17} Messages API usage.{api_field}"
+        for category, flag, api_field in USAGE_FLAGS
+    )
+    add = usage_sub.add_parser(
+        "add",
+        help="Add one model session's token counts to a unit's usage block.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Add one model session's token counts to a unit's usage block, under the record's "
+            "lock.\n\nThe five token categories (an omitted one counts 0):\n"
+            f"{categories}\n\n"
+            "A repeat add with the same session id, role, vendor, model and effort adds into that "
+            "entry, so a retry of the same delta counts twice. Exit 2 refuses: no record, no such "
+            "unit, an unknown category flag, a negative count. Exit 3: an unknown record version."
+        ),
+    )
+    add.add_argument("issue", type=int)
+    add.add_argument(
+        "--unit", required=True, help="The unit row's id, or its name when the row has no id."
+    )
+    add.add_argument("--session-id", required=True, help="The model session's identifier.")
+    add.add_argument(
+        "--role", required=True, help="The staffing role, e.g. worker or lens-reviewer."
+    )
+    add.add_argument("--vendor", required=True, help="The vendor, e.g. claude.")
+    add.add_argument("--model", required=True, help="The model id, e.g. claude-opus-5-5.")
+    add.add_argument("--effort", required=True, help="The effort level, e.g. medium.")
+    for category, flag, api_field in USAGE_FLAGS:
+        add.add_argument(
+            flag,
+            dest=category,
+            type=_non_negative_int,
+            default=0,
+            metavar="N",
+            help=f"{category}: the count from usage.{api_field} (default 0).",
+        )
 
     return parser
 
@@ -502,6 +850,35 @@ def _cmd_path(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_usage_add(args: argparse.Namespace) -> int:
+    root = _store_root(args)
+
+    def change(existing: RunRecord | None) -> RunRecord:
+        if existing is None:
+            raise RunRecordError(
+                f"no record for issue {args.issue} at {record_path(root, args.issue)}"
+            )
+        return add_usage(
+            existing,
+            args.unit,
+            session_id=args.session_id,
+            role=args.role,
+            vendor=args.vendor,
+            model=args.model,
+            effort=args.effort,
+            counts={category: getattr(args, category) for category in TOKEN_CATEGORIES},
+        )
+
+    if not record_path(root, args.issue).is_file():
+        print(
+            f"run_record: no record for issue {args.issue} at {record_path(root, args.issue)}",
+            file=sys.stderr,
+        )
+        return 2
+    update(root, args.issue, change)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the command line. Every loader call is inside this one catch (KTD2).
 
@@ -510,9 +887,13 @@ def main(argv: list[str] | None = None) -> int:
     six-frame traceback.
     """
     args = build_parser().parse_args(argv)
-    handlers = {"show": _cmd_show, "path": _cmd_path}
+    handlers = {
+        ("show", None): _cmd_show,
+        ("path", None): _cmd_path,
+        ("usage", "add"): _cmd_usage_add,
+    }
     try:
-        return handlers[args.command](args)
+        return handlers[(args.command, getattr(args, "usage_command", None))](args)
     except UnknownRecordVersionError as exc:
         print(f"run_record: {exc}", file=sys.stderr)
         return 3

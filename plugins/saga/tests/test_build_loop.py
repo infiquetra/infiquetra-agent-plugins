@@ -12,8 +12,10 @@ module is a fake.
 
 from __future__ import annotations
 
+import fcntl
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -687,3 +689,77 @@ def test_a_check_runs_from_the_repository_root_not_the_caller_s_directory(tmp_pa
         == 0
     )
     assert runner.cwds and all(cwd == repo for cwd in runner.cwds)
+
+
+# ---------------------------------------------------------------------------
+# The run-record lock convention (issue 95)
+# ---------------------------------------------------------------------------
+
+
+def test_a_usage_entry_added_while_the_checks_run_survives_the_iteration_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The checks run with no lock held; the iteration lands on a record re-read under the lock.
+
+    Before issue 95 the build loop saved the copy it read before the checks, so a unit session's
+    ``usage add`` that landed while they ran was silently erased.
+    """
+    path = _write(tmp_path / "issue-1027.json", _record_dict(baseline=["uv run ruff check ."]))
+
+    def usage_lands_mid_check(argv: Sequence[str], timeout: int) -> tuple[int, str]:
+        run_record.update(
+            tmp_path,
+            1027,
+            lambda record: run_record.add_usage(
+                record,
+                "U1",
+                session_id="reviewer-1",
+                role="lens-reviewer",
+                vendor="claude",
+                model="claude-opus-5-5",
+                effort="high",
+                counts={"output": 10},
+            ),
+        )
+        return 0, ""
+
+    held: list[bool] = []
+    real_save = build_loop.save_record_file
+
+    def save_record_file(record_path: Path, record: run_record.RunRecord) -> Path:
+        # A non-blocking probe: it fails to take the lock only if build_loop holds it now.
+        fd = os.open(record_path.with_name(record_path.name + ".lock"), os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            held.append(False)
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except BlockingIOError:
+            held.append(True)
+        finally:
+            os.close(fd)
+        return real_save(record_path, record)
+
+    monkeypatch.setattr(build_loop, "save_record_file", save_record_file)
+    runner = FakeRunner(verdicts={"ruff": usage_lands_mid_check})
+    assert build_loop.main(["--record", str(path), "--unit", "U1"], runner=runner) == 0
+
+    assert held == [True], "the re-read and the write happen under the record's lock"
+    row = json.loads(path.read_text(encoding="utf-8"))["units"][0]
+    assert [entry["session_id"] for entry in row["usage"]["entries"]] == ["reviewer-1"]
+    assert row["build_loop"]["iterations"][0]["green"] is True
+    assert row["build_loop"]["handed_to_code_review"]["revision"] == "a" * 40
+
+
+def test_an_iteration_is_numbered_against_the_record_read_under_the_lock(tmp_path: Path) -> None:
+    path = _write(tmp_path / "issue-1027.json", _record_dict(baseline=["uv run ruff check ."]))
+
+    def another_iteration_lands(argv: Sequence[str], timeout: int) -> tuple[int, str]:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw["units"][0]["build_loop"] = {"iterations": [{"iteration": 1, "green": False}]}
+        path.write_text(json.dumps(raw), encoding="utf-8")
+        return 0, ""
+
+    runner = FakeRunner(verdicts={"ruff": another_iteration_lands})
+    assert build_loop.main(["--record", str(path), "--unit", "U1"], runner=runner) == 0
+    iterations = _block(path)["iterations"]
+    assert [entry["iteration"] for entry in iterations] == [1, 2]

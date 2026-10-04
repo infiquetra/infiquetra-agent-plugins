@@ -1164,20 +1164,26 @@ def main(argv: list[str] | None = None) -> int:
                 if args.store_root
                 else run_record.resolve_store_root()
             )
-            record = run_record.load(store_root, args.issue, warn=None)
-            if record is None:
-                raise ReviewResultError(
-                    f"review_result: no run record for issue {args.issue} under {store_root}"
-                )
-            for entry in legacy_entries(record):
-                print(
-                    f"review_result: entry for cycle {entry.get('cycle')} declares "
-                    f"{LEGACY_RESULT_SCHEMA}; preserved unchanged and counted toward no "
-                    f"allowance (this saga writes {RESULT_SCHEMA})",
-                    file=sys.stderr,
-                )
-            updated = append_result(record, result)
-            path = run_record.save(store_root, updated)
+            issue = args.issue
+
+            # The append is a read-modify-write, so it goes through the record's lock and is
+            # applied to a copy read under it (issue 95): a usage entry a unit session added a
+            # moment ago survives.
+            def change(record: run_record.RunRecord | None) -> run_record.RunRecord:
+                if record is None:
+                    raise ReviewResultError(
+                        f"review_result: no run record for issue {issue} under {store_root}"
+                    )
+                for entry in legacy_entries(record):
+                    print(
+                        f"review_result: entry for cycle {entry.get('cycle')} declares "
+                        f"{LEGACY_RESULT_SCHEMA}; preserved unchanged and counted toward no "
+                        f"allowance (this saga writes {RESULT_SCHEMA})",
+                        file=sys.stderr,
+                    )
+                return append_result(record, result)
+
+            path = run_record.update(store_root, issue, change)
             print(f"appended cycle {result.cycle} ({result.outcome}) to {path}")
     except run_record.UnknownRecordVersionError as exc:
         print(str(exc), file=sys.stderr)

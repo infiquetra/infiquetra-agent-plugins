@@ -207,6 +207,85 @@ The build loop is the second such consumer, and issue 1027 added one key under t
 |---|---|
 | `build_loop` | the written exit criterion as it was read, one entry per loop iteration with every check's result, and — on the green iteration only — the full forty-character revision handed to code review. Its full contract, the three check statuses and the exit-code table are in `plugins/saga/references/mechanical-baseline.md`, documented there so the two do not drift |
 
+Cost measurement is the third consumer, and issue 95 added one key, `usage`, owned by
+`run_record.py` itself. It holds `{"entries": [...]}`, one entry per model session that worked the
+unit. `run_record.py usage add` is the one portable write path: any harness integration calls it
+with the counts it read from its own session, including the Claude Code token-capture mod. Build
+loop passes and review cycles are not copied into it; the cost report reads them where they already
+live (`build_loop.iterations` on the row, and `review_cycles` at the top level).
+
+An entry is identified by its session id, role, vendor, model and effort. The first `usage add`
+for that identity appends an entry; a later one adds its counts into the same entry, increments
+`additions` and moves `last_added_at`, so a harness may report a long session as several deltas.
+A blind retry of the same delta therefore counts twice. Each entry records its own role, vendor,
+model and effort because nothing else in the record says which role and tier worked a unit.
+
+<!-- BEGIN USAGE ENTRY KEYS -->
+
+| Key | Holds |
+|---|---|
+| `session_id` | the model session's identifier, as the harness names it |
+| `role` | the staffing role that ran the session: `worker`, `lens-reviewer`, `functional-tester`, and so on |
+| `vendor` | the vendor, e.g. `claude` |
+| `model` | the model id, e.g. `claude-opus-5-5`, or a staffing alias such as `opus` |
+| `effort` | the effort level the session ran at, e.g. `medium` |
+| `counts` | an object holding all five categories below, each a non-negative integer |
+| `first_added_at` | ISO-8601 timestamp in UTC of the first addition |
+| `last_added_at` | ISO-8601 timestamp in UTC of the latest addition |
+| `additions` | how many `usage add` calls have added into this entry |
+
+<!-- END USAGE ENTRY KEYS -->
+
+The five categories are billed at five different rates, so they are counted apart. The names carry
+no "token" suffix on purpose: the repository's credential scanner reads any key containing that word
+as a credential.
+
+<!-- BEGIN TOKEN CATEGORIES -->
+
+| Category | `usage add` flag | Messages API `usage` field | Pricing-page rate |
+|---|---|---|---|
+| `uncached_input` | `--uncached-input` | `input_tokens` | Base input |
+| `cache_read` | `--cache-read` | `cache_read_input_tokens` | Cache hits and refreshes |
+| `cache_write_5m` | `--cache-write-5m` | `cache_creation.ephemeral_5m_input_tokens` | 5m cache writes |
+| `cache_write_1h` | `--cache-write-1h` | `cache_creation.ephemeral_1h_input_tokens` | 1h cache writes |
+| `output` | `--output` | `output_tokens` | Output |
+
+<!-- END TOKEN CATEGORIES -->
+
+`usage add` refuses, with exit 2 and one line, an unknown category flag, a negative count, a
+session id that is empty or holds whitespace or a control character, a vendor, model or effort that
+is not a name (letters, digits and `. _ : / @ + -`, starting with a letter or digit), a role that is
+not lowercase letters, digits and hyphens, a unit the record does not have (it names the units the
+record does have, and never creates a row), a stored entry whose counts are not non-negative
+integers, and an issue with no record. `--unit` takes the row's `id`, else its `name`, else its
+`unit_id` (`run_record.unit_key`), the rule `build_loop.py --unit` and the cost report also use.
+`merge_turn.py --unit` reads the same three keys in the order `name`, `unit_id`, `id`, so the two
+rules name a row differently only when it carries both an `id` and a `name` that differ; give such
+a row the same value in both. Every other key survives an addition: the row's other consumers'
+keys, unknown keys inside the usage block, and every other row.
+
+**What a completed unit is.** `scripts/cost_report.py` prices usage from the dated table in
+`references/model-prices.yaml` and divides by completed units. A unit is completed when its build
+loop went green (`build_loop.handed_to_code_review` is present) and its latest `review_result.v2`
+code-review entry has the outcome `accepted` or `cycle_cap_best_available`. A review that ended
+`review_incomplete` is terminal for the review controller but did not finish, so that unit is not
+completed; the report shows its spend apart, with the reason.
+
+The **all roles** line divides only over completed units whose usage is recorded and fully priced,
+and names how many completed units it left out (no usage recorded, or some usage unpriced). Each
+role-and-tier row does the same within the row: two models can share a tier while one is listed
+without rates, so a row's per-unit figure divides only by the completed units whose spend in that
+row is fully priced, and the report names any row that left units out. A unit whose spend is all
+unpriced shows `unpriced`, never `$0.00`, and a total that leaves unpriced spend out is marked
+`+ unpriced`.
+
+**Caveat until issue 113 lands.** The orchestrate plugin's `read_unit` keeps only the row keys its
+`Unit` type declares, and its `Run.save` rewrites the whole `units` array from that copy. Until
+issue 113 makes orchestrate carry unknown row keys forward under the lock below, an
+orchestrate-driven run drops `usage` (and `build_loop`) on its next save. Orchestrate is the only
+writer outside the lock convention; every saga writer, and agent-launcher's roster writer, follows
+it (see the table below).
+
 Orchestrate also keeps its own run-level state under a top-level key named `orchestrate` — the run
 branch, the base commit, the issue mapping and its review state. That key is unknown to this module
 and is preserved unchanged across a read and a write, which is exactly the extension point the
@@ -242,16 +321,49 @@ falls back to the envelope only when there is no record. `saga.mirror_next_step_
 one write in the other direction: a tick that sets a next step updates the authority. Nothing
 reconciles a stale tick back onto a live record.
 
-## Writing: atomic replace, no lock
+## Writing: atomic replace, under the record's lock
 
-A write goes to a sibling temporary file and is then moved into place with `os.replace`, the same
-pattern `saga.py` uses for its envelopes.
+A write goes to a uniquely named temporary file in the same directory and is then moved into place
+with `os.replace`, the same pattern `saga.py` uses for its envelopes. A reader therefore always sees
+a whole record. The temporary name is unique per write, so two writers saving at once can never
+move each other's half-written file. The write never widens the record's mode: an existing record
+keeps its own, and a new one gets what the user's umask allows.
 
-There is **no lock, no lease and no reservation**, and adding one is out of bounds: the parent issue
-1018 forbids a new lease, reservation, receipt or ledger mechanism, and its stop conditions say to
-stop and report if a child needs one to pass its own tests. One coordinator owns one run record and
-the roles it dispatches report back to it, so simultaneous writers are not the normal case. A reader
-that needs to know it holds the newest copy re-reads and compares `updated_at`.
+**Every read-modify-write takes the record's lock.** Issue 1018 shipped this record with no lock,
+because one coordinator owned one record. Issue 95 ended that: unit sessions add their own `usage`
+entries while the coordinator writes, and a writer that saves a copy it read earlier silently drops
+every change made since. The convention, shared by saga and orchestrate:
+
+1. Open the sibling file `<record path>.lock` (`issue-<N>.json.lock`), creating it if missing. It
+   is never deleted: deleting it would let a second writer lock a fresh file while the first still
+   holds the old one.
+2. Take an exclusive advisory lock on it with `fcntl.flock(fd, LOCK_EX)`.
+3. Re-read the record from disk while holding the lock. Never apply a change to a copy read before
+   the lock was taken.
+4. Apply the change and write through the atomic replace above.
+5. Release the lock.
+
+`run_record.update(store_root, issue, change)` does all five, and refuses a change that returns a
+different issue's record, so the file written is always the file locked. `run_record.file_lock(path)`
+is the same lock for a caller that names the record by path. The lock is advisory: it protects only
+writers that take it, and `run_record.save` on its own writes whatever copy it is handed. A reader
+that never writes needs no lock.
+
+A writer whose work is slow does the work with no lock held, then takes the lock, re-reads the
+record and lands only the keys it owns on that fresh copy. Holding the lock across minutes of checks
+or git merges would stall every unit session's `usage add`.
+
+| Writer | What it changes | How it follows the convention |
+|---|---|---|
+| `run_record.set_next_step`, `usage add` | `next_step`; one unit row's `usage` | `update` |
+| `build_loop.py` | one unit row's `build_loop` | checks run unlocked; the iteration lands on a row re-read under `file_lock` |
+| `review_result.py --issue` | `review_cycles` | `update` |
+| `admission.py` | `repo`, `admission`, `run_configuration`, `approval_scope` | admission runs unlocked; those fields land on a fresh read through `update` |
+| `qa_strategies.py` | the top-level `qa` block | `update` |
+| `merge_turn.py status`, `take` | unit rows' merge keys | wholly under `update` |
+| `merge_turn.py merge` | unit rows' `merge_state`, `merge_worktree`, `merged_tip` | git work runs unlocked; through `update`, each merge key it changed lands on a fresh read only if that row still holds the value the turn started from (the merged unit's own keys always land), and the keys it kept from another writer are listed as `kept_from_another_writer` |
+| agent-launcher `roster.py` | `roster` | `update` |
+| orchestrate `Run.save` | its unit rows and `orchestrate` | not yet: issue 113 |
 
 ## What this record replaces
 
@@ -282,6 +394,14 @@ rather than a store.
 ```bash
 python3 plugins/saga/scripts/run_record.py show <issue>   # print the record as JSON
 python3 plugins/saga/scripts/run_record.py path <issue>   # print the record's absolute path
+
+# add one model session's counts to a unit's usage block, under the lock
+python3 plugins/saga/scripts/run_record.py usage add <issue> --unit <id> --session-id <id> \
+    --role worker --vendor claude --model claude-opus-5-5 --effort medium \
+    --cache-read 98000 --output 4000
+
+# cost per completed unit by role and tier, from every record in the store
+python3 plugins/saga/scripts/cost_report.py [--issue <issue>] [--today YYYY-MM-DD] [--json]
 ```
 
 `--store-root <dir>` overrides the resolution above. It exists for the tests and for reading a

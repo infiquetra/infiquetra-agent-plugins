@@ -23,9 +23,12 @@ Four properties are load-bearing, and each one is a test:
   branch the freshly fetched comparison branch is merged into it. A conflict in either is named and
   left for the worker who owns it.
 
-**No lock, no lease, no reservation, no receipt.** The parent issue 1018 forbids adding one and
-card 1028's stop condition says to stop and report if a merge-turn case would need one to be
-correct. None of the cases here does: every refusal above is derived from git or from the record.
+**No lease, no reservation, no receipt.** Card 1028's stop condition says to stop and report if a
+merge-turn case would need one to be correct, and none does: every refusal above is derived from
+git or from the record. Writing the record is a separate matter. Every write here follows the run
+record's lock convention (``references/run-record.md``, issue 95): ``status`` and ``take`` run
+wholly under the record's lock, and ``merge`` does its git work with no lock held, then re-reads
+the record under the lock and lands only the merge keys it changed.
 
 House pattern: pure functions over explicit values, an injectable runner so tests drive real git in
 a temporary repository, lazy imports of the sibling modules, and no I/O at import.
@@ -34,6 +37,7 @@ a temporary repository, lazy imports of the sibling modules, and no I/O at impor
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import subprocess
@@ -481,24 +485,91 @@ def _load_record(path: Path) -> tuple[Any, Any, Path]:
     return module, record, store_root
 
 
+#: The unit-row keys a merge turn writes. Every other key on a row belongs to another writer.
+MERGE_KEYS: tuple[str, ...] = ("merge_state", "merge_worktree", "merged_tip")
+
+_ABSENT = object()
+
+
+def _row_keys(units: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Index unit rows by name, or by position for a row with no name."""
+    return {
+        (unit_name(row) or f"#{index}"): row
+        for index, row in enumerate(units)
+        if isinstance(row, dict)
+    }
+
+
+def land_merge_keys(
+    fresh_units: list[dict[str, Any]],
+    before: list[dict[str, Any]],
+    after: list[dict[str, Any]],
+    *,
+    owner: str | None = None,
+) -> list[str]:
+    """Copy onto *fresh_units* each merge key the turn changed, unless another writer beat it.
+
+    *fresh_units* were read under the record's lock; *before* is the copy the turn started from
+    and *after* the copy it finished with. A key is written only when the turn changed it AND the
+    fresh row still holds the turn's starting value: a compare-and-set, so a key another writer
+    changed meanwhile keeps that writer's value even when this turn changed it too (a stale holder
+    this turn released may have finished its own merge in the meantime). Non-merge keys are never
+    touched.
+
+    The row named *owner*, the unit this turn merged, is the exception: the git merge already
+    happened, so its outcome lands whatever the row says now. Returns the ``row.key`` names the
+    compare-and-set skipped, for the caller to report.
+    """
+    old = _row_keys(before)
+    new = _row_keys(after)
+    target = _row_keys(fresh_units)
+    skipped: list[str] = []
+    for key, row in new.items():
+        if key not in target:
+            continue
+        previous = old.get(key, {})
+        for name in MERGE_KEYS:
+            value = row.get(name, _ABSENT)
+            started = previous.get(name, _ABSENT)
+            if value == started:
+                continue
+            if key != owner and target[key].get(name, _ABSENT) != started:
+                skipped.append(f"{key}.{name}")
+                continue
+            if value is _ABSENT:
+                target[key].pop(name, None)
+            else:
+                target[key][name] = value
+    return skipped
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        module, record, store_root = _load_record(Path(args.record).resolve())
-        if args.cmd == "status":
-            live, released = holder(record)
-            module.save(store_root, record)
-            print(
-                json.dumps(
-                    {"holder": unit_name(live) if live else None, "released": released}, indent=1
-                )
-            )
+        path = Path(args.record).resolve()
+        if args.cmd in ("status", "take"):
+            # Both are quick record decisions, so they run wholly under the record's lock and on a
+            # copy read under it (issue 95's lock convention).
+            module, _, store_root = _load_record(path)
+            issue = int(path.stem.rsplit("-", 1)[-1])
+            outcome: dict[str, Any] = {}
+
+            def change(record: Any) -> Any:
+                if record is None:
+                    raise MergeTurnError(f"no run record at {path}")
+                if args.cmd == "status":
+                    live, released = holder(record)
+                    outcome.update(
+                        {"holder": unit_name(live) if live else None, "released": released}
+                    )
+                else:
+                    outcome.update(take_turn(record, args.unit))
+                return record
+
+            module.update(store_root, issue, change)
+            print(json.dumps(outcome, indent=1))
             return 0
-        if args.cmd == "take":
-            result = take_turn(record, args.unit)
-            module.save(store_root, record)
-            print(json.dumps(result, indent=1))
-            return 0
+        module, record, store_root = _load_record(path)
         if args.dry_run:
             destination = destination_branch(
                 record,
@@ -519,6 +590,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             return 0
+        before = copy.deepcopy(record.units)
         result = merge_unit(
             record,
             args.unit,
@@ -527,7 +599,17 @@ def main(argv: list[str] | None = None) -> int:
             remote=args.remote,
             default_branch=args.default_branch,
         )
-        module.save(store_root, record)
+        issue = int(path.stem.rsplit("-", 1)[-1])
+
+        def land(fresh: Any) -> Any:
+            if fresh is None:
+                raise MergeTurnError(f"the run record at {path} disappeared during the merge")
+            skipped = land_merge_keys(fresh.units, before, record.units, owner=args.unit)
+            if skipped:
+                result["kept_from_another_writer"] = skipped
+            return fresh
+
+        module.update(store_root, issue, land)
         print(json.dumps(result, indent=1))
         return 0
     except MergeTurnError as exc:

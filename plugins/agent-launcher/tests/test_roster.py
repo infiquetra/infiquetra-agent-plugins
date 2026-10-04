@@ -845,3 +845,23 @@ def test_the_helper_never_creates_a_worktree(
         assert "worktree" not in call, f"a worktree command was issued: {' '.join(call)}"
     assert runner.commands("git", "worktree") == []
     assert runner.commands("herdr", "worktree") == []
+
+
+def test_saving_the_roster_lands_on_a_fresh_read_under_the_record_lock(
+    roster: ModuleType, rr: ModuleType, store: Path
+) -> None:
+    """Saga's run-record lock convention (issue 95): only ``roster`` is replaced on a fresh copy."""
+    rr.save(store, rr.RunRecord(issue=95, units=[{"id": "u1"}]))
+    stale = rr.load(store, 95, warn=None)
+    rr.update(
+        store,
+        95,
+        lambda current: rr.RunRecord(
+            **{**current.__dict__, "units": [{"id": "u1", "usage": {"entries": [{"x": 1}]}}]}
+        ),
+    )
+    roster.save_record(store, stale, [{"role": "worker"}])
+    reread = rr.load(store, 95, warn=None)
+    assert reread.roster == [{"role": "worker"}]
+    assert reread.units == [{"id": "u1", "usage": {"entries": [{"x": 1}]}}]
+    assert rr.lock_path(store, 95).is_file()
