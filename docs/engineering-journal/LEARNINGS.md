@@ -2,6 +2,34 @@
 
 ## 2026-10-04
 
+### Preserving unknown keys on load is not enough when the save writes back the copy it loaded
+
+**Evidence.** Issue #113. Orchestrate's `read_unit`
+(`plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`) built each `Unit` from its
+declared fields only, and `Run.save` rewrote the whole `units` array from those units, so a run
+record row carrying `build_loop` and `usage` came back with neither after one `Run.load` and
+`Run.save`. The run-record contract already promised a row's unknown keys are left alone, and the
+top level was already safe through `run_record`'s `extra`. The new tests in
+`plugins/orchestrate/tests/test_orchestrate_record.py` (class `TestKeysOrchestrateDoesNotOwn`)
+fail on the old driver and pass on the fixed one.
+
+**Mechanism.** Two separate losses. Dropping keys at read time loses what was on disk at load.
+Writing back the loaded copy, even a key-preserving one, loses what another writer (the build
+loop, a unit session adding `usage`) put on disk between the load and the save, because a run's
+coordinator loads once and saves many times during a long `wait`. Only a re-read at save time,
+under a lock every writer takes, closes the second gap: the save then takes every key it does not
+own from the fresh copy and only its own keys from memory. The lock protects only writers that
+take it, which is why issue #95 moved every saga writer onto it and #113 moved orchestrate's save.
+A lock orders writes but does not merge them: `merge_state`, which orchestrate and `merge_turn`
+both write, stays last-writer-wins under it. A test that held orchestrate's quiet-key list to
+run-record.md by reading every backticked first column in the units section broke once issue #95
+added the `usage` entry's field tables there; it now reads only the tables between
+`<!-- BEGIN UNIT ROW KEYS -->` markers.
+
+**Generalizable rule.** A whole-document writer that shares its file with other writers must
+re-read under a shared lock at save time and merge its owned keys onto that fresh copy; keeping
+unknown keys from the load is necessary but not sufficient.
+
 ### A test suite that reads live configuration spends the operator's API budget, not CI's
 
 **Evidence.** On 2026-10-04 the GitHub REST budget for the operator's account reached 0 of 5,000

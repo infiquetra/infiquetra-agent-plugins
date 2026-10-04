@@ -450,13 +450,13 @@ class RunBranchResolutionError(RuntimeError):
 UNPERSISTED_UNIT_FIELDS = frozenset({"launch_receipt"})
 DOCUMENTED_FOREIGN_ROW_KEYS = frozenset({"build_loop", "usage"})
 """Unit-row keys other writers own that the run-record contract names: the build loop's block
-(``plugins/saga/references/run-record.md``) and the ``usage`` block issue 95 adds.
+(``plugins/saga/references/run-record.md``) and the ``usage`` block issue 95 added.
 
 They are carried across a save like any key this Orchestrate does not own, but ``read_unit`` does
 not print a notice for them: they are expected on every row, and repeating the notice on every
 load would bury the one that matters, a key nothing documents (issue #113). The test
-``test_documented_foreign_row_keys_match_the_run_record_contract`` holds this set to the row-key
-tables in run-record.md, so a key a later issue documents there fails until it is added here."""
+``test_documented_foreign_row_keys_match_the_run_record_contract`` holds this set to the marked
+unit-row key tables (``<!-- BEGIN UNIT ROW KEYS -->``) in run-record.md, so a key a later issue documents there fails until it is added here."""
 
 
 class RecordError(RuntimeError):
@@ -1114,7 +1114,7 @@ def reread_record(store_root: Path, issue: int) -> Any:
 def shared_record_lock(module: Any, store_root: Path, issue: int) -> Any:
     """The run record's shared lock, taken through saga's own ``record_lock`` when it has one.
 
-    Saga's ``run_record`` gains ``record_lock(store_root, issue)`` in issue 95. Using it whenever
+    Saga's ``run_record`` gained ``record_lock(store_root, issue)`` in issue 95. Using it whenever
     the installed saga provides it keeps one definition of the lock file, so a later change to its
     name cannot leave the two writers locking different files. An older saga without it gets the
     local copy below, which names the same file.

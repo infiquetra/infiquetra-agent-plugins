@@ -11,6 +11,7 @@ them resolves the real store, because that is the developer's live ``.claude/sag
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -527,18 +528,39 @@ RUN_RECORD_REFERENCE = (
     Path(__file__).resolve().parents[3] / "plugins" / "saga" / "references" / "run-record.md"
 )
 
-#: Row keys orchestrate quiets before the contract on this branch documents them. ``usage`` is
-#: documented in run-record.md by issue 95; drop it from here when that lands.
-_FOREIGN_ROW_KEYS_PENDING_DOCUMENTATION = frozenset({"usage"})
+_UNIT_ROW_KEY_BLOCK = re.compile(
+    r"<!-- BEGIN UNIT ROW KEYS -->\n(.*?)<!-- END UNIT ROW KEYS -->", re.DOTALL
+)
 
 
-def _documented_row_keys() -> set[str]:
-    """Every key named in the unit-row tables of saga's run-record contract."""
-    import re
+def _documented_row_keys(text: str | None = None) -> set[str]:
+    """Every key the run-record contract lists as sitting directly on a unit row.
 
-    text = RUN_RECORD_REFERENCE.read_text(encoding="utf-8")
-    section = text.split("## `units` — the keys a unit row carries", 1)[1].split("\n## ", 1)[0]
-    return set(re.findall(r"^\| `([a-z_]+)` \|", section, re.MULTILINE))
+    Only the tables between ``<!-- BEGIN UNIT ROW KEYS -->`` and ``<!-- END UNIT ROW KEYS -->``
+    count. The units section also holds tables of keys nested inside a row's block (a ``usage``
+    entry's fields, the token categories), and those are not row keys.
+    """
+    if text is None:
+        text = RUN_RECORD_REFERENCE.read_text(encoding="utf-8")
+    keys: set[str] = set()
+    for block in _UNIT_ROW_KEY_BLOCK.findall(text):
+        keys.update(re.findall(r"^\| `([a-z_]+)` \|", block, re.MULTILINE))
+    return keys
+
+
+def test_only_marked_unit_row_key_tables_count_as_row_keys() -> None:
+    """A field table of a nested block, even one headed ``| Key | Holds |``, is not a row key."""
+    text = (
+        "<!-- BEGIN UNIT ROW KEYS -->\n\n| Key | Holds |\n|---|---|\n| `usage` | the block |\n\n"
+        "<!-- END UNIT ROW KEYS -->\n\n| Key | Holds |\n|---|---|\n| `session_id` | an entry field |\n"
+    )
+    assert _documented_row_keys(text) == {"usage"}
+
+
+def test_the_contract_marks_no_usage_entry_field_as_a_row_key() -> None:
+    documented = _documented_row_keys()
+    assert {"build_loop", "usage", "merge_state"} <= documented
+    assert not documented & {"session_id", "counts", "additions", "uncached_input", "output"}
 
 
 def test_documented_foreign_row_keys_match_the_run_record_contract(orch) -> None:
@@ -548,15 +570,11 @@ def test_documented_foreign_row_keys_match_the_run_record_contract(orch) -> None
 
     owned = {field.name for field in dataclasses.fields(orch.Unit)}
     documented = _documented_row_keys()
-    assert documented, "the run-record contract's unit-row tables were not found"
+    assert documented, "the run-record contract's marked unit-row key tables were not found"
     foreign = documented - owned
-    assert foreign <= orch.DOCUMENTED_FOREIGN_ROW_KEYS, (
-        f"run-record.md documents row keys orchestrate does not quiet: "
-        f"{sorted(foreign - orch.DOCUMENTED_FOREIGN_ROW_KEYS)}"
-    )
-    undocumented = orch.DOCUMENTED_FOREIGN_ROW_KEYS - foreign
-    assert undocumented <= _FOREIGN_ROW_KEYS_PENDING_DOCUMENTATION, (
-        f"DOCUMENTED_FOREIGN_ROW_KEYS names keys run-record.md does not: {sorted(undocumented)}"
+    assert foreign == orch.DOCUMENTED_FOREIGN_ROW_KEYS, (
+        f"run-record.md's marked unit-row keys orchestrate does not own {sorted(foreign)} differ "
+        f"from DOCUMENTED_FOREIGN_ROW_KEYS {sorted(orch.DOCUMENTED_FOREIGN_ROW_KEYS)}"
     )
 
 
