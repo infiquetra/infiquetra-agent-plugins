@@ -370,6 +370,25 @@ and is preserved unchanged across a read and a write, which is exactly the exten
 "Unknown top-level fields" rule above describes. Orchestrate never writes `admission`,
 `approval_scope`, `run_configuration`, `review_cycles` or `roster`.
 
+The plan is the fourth consumer, and issue #98 added two keys. `/plan` writes them through
+`functional_checks.py write` and `build_loop.py` reads them; the entry shape is in
+`plugins/saga/references/mechanical-baseline.md`:
+
+<!-- BEGIN UNIT ROW KEYS -->
+
+| Key | Holds |
+|---|---|
+| `functional_checks` | the unit's functional checks from its plan section, each `{name, command, proves, runs}` |
+| `scenario_smoke` | the plan-level scenario smoke, the same list on every row the plan names |
+
+<!-- END UNIT ROW KEYS -->
+
+The writer adds a `{"id": "U<N>"}` row for a plan unit no row names, except in a record that
+carries the `orchestrate` key: orchestrate owns which rows exist there, and a row without its
+`name`, `vendor` and `task` would not load. It refuses instead, and is run again after
+`orchestrate start` creates rows named by the plan's U-IDs. A row `start` creates is fresh and
+carries nothing forward, so the checks are written after it, never before.
+
 ### `tier_judgments` — `/plan`'s per-unit tier judgments
 
 The tier judgment in `/plan` (issue #96) does **not** write unit rows. `/plan` defines its units

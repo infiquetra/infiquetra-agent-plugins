@@ -2,6 +2,21 @@
 
 ## 2026-10-04
 
+### A dry run that cannot pick a unit reported the plan's checks as absent
+
+**Evidence.** Issue #98. `build_loop.find_unit` (`plugins/saga/scripts/build_loop.py`) returns
+`None` when no `--unit` is named and the record has more than one row, and `read_criterion` then
+read an empty row: `build_loop.py --issue <N> --dry-run` printed "none prescribed in the run
+record" for a two-unit record whose U1 carried a check. The dry run now lists every row's checks
+under its id; `test_the_dry_run_of_a_record_with_several_units_lists_each_unit_s_checks` covers it.
+
+**Mechanism.** `None` meant "no unit was chosen", and the reader treated it as "a unit with nothing
+on it". Both print the same absence message, so a choice the caller never made looked like a fact
+about the plan.
+
+**Generalizable rule.** When a reader cannot resolve its subject, report that it could not, or
+report every candidate; never let "not chosen" fall through to the empty case.
+
 ### A run resolved from the branch name is not an active run
 
 **Evidence.** Issue #105, review cycle 1. `run_status.py summary --all-active` filtered only the

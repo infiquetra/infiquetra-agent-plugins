@@ -114,6 +114,37 @@ def extract_handoff(body: str) -> dict[str, object]:
     }
 
 
+#: The issue section whose items are the acceptance criteria a plan's functional checks prove.
+ACCEPTANCE_HEADING = "Acceptance criteria"
+_CHECKBOX_ITEM_RE = re.compile(r"^\s*[-*]\s+\[[ xX]\]\s+(.+?)\s*$")
+_BULLET_ITEM_RE = re.compile(r"^\s*[-*]\s+(.+?)\s*$")
+_ANY_HEADING_RE = re.compile(r"^#{1,6}\s")
+
+
+def acceptance_criteria(body: str) -> list[dict[str, str]]:
+    """The issue's acceptance criteria as ``[{"id": "AC-<n>", "text": ...}]``, in document order.
+
+    The items are read from the ``### Acceptance criteria`` section: its checkbox items (checked
+    or not), or, when it has none, its plain ``-`` or ``*`` bullets. ``AC-<n>`` is the item's
+    1-based position, the same ``AC-<n>`` vocabulary ``extract`` reports as ``ac_refs``. A missing
+    section, or one with no items, returns an empty list. The section ends at the next heading of
+    any level, so a following ``##`` section is never read as criteria.
+
+    Deliberately separate from ``extract``: that function's output key set is a contract other
+    skills read, and adding a key there would change it.
+    """
+    section = split_h3_sections(body).get(ACCEPTANCE_HEADING, "")
+    lines: list[str] = []
+    for line in section.splitlines():
+        if _ANY_HEADING_RE.match(line):
+            break
+        lines.append(line)
+    items = [m.group(1) for m in map(_CHECKBOX_ITEM_RE.match, lines) if m]
+    if not items:
+        items = [m.group(1) for m in map(_BULLET_ITEM_RE.match, lines) if m]
+    return [{"id": f"AC-{index}", "text": text} for index, text in enumerate(items, start=1)]
+
+
 def extract(body: str) -> dict[str, object]:
     adrs = unique_sorted_ints(ADR_RE.findall(body))
     acceptance = unique_sorted_ints(AC_RE.findall(body))

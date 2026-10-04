@@ -26,10 +26,13 @@ Five decisions here are contract for every later reader.
   invented deployment command. The functional-test environment the repository declares (issue #97)
   is read from the record, or the profile, and reported; this module never picks one, and a unit
   iteration does not run it (the combined-branch run is pre-review testing U4).
-* **Absence is recorded, not shown as nothing** (plan KTD9). No card in this tree yet writes the
-  plan's child-scoped functional checks or its scenario smoke onto a unit's row. An absent key
-  reads as an empty list carrying the reason ``none-prescribed``, so a reader of a green iteration
-  can tell "the plan prescribed none" from "the plan prescribed three and the loop lost them".
+* **Absence is recorded, not shown as nothing** (plan KTD9). ``/plan`` writes the plan's
+  child-scoped functional checks and its scenario smoke onto each unit's row through
+  ``functional_checks.py write`` (issue #98). An absent key reads as an empty list carrying the
+  reason ``none-prescribed``, so a reader of a green iteration can tell "the plan prescribed none"
+  from "the plan prescribed three and the loop lost them". A check marked ``runs: environment`` is
+  recorded in the criterion but not run in a unit iteration; a list holding only such checks
+  carries the reason ``deferred-to-combined-branch`` instead.
 * **The record's version does not change** (plan KTD2). ``run-record.md`` states that a unit row's
   key set is deliberately not fixed, because a row is one consumer's working state rather than a
   cross-consumer contract; issue 1025 added three keys under that rule. This module adds one,
@@ -77,6 +80,15 @@ STATUS_COULD_NOT_EXECUTE = "could-not-execute"
 
 #: Recorded in place of a check list the plan never prescribed (KTD9).
 REASON_NONE_PRESCRIBED = "none-prescribed"
+
+#: Recorded when every check in a prescribed list runs against the declared environment. Those
+#: run once, on the combined branch before code review (pre-review testing U4), never in a unit
+#: iteration: a shared environment only ever receives the combined branch.
+REASON_DEFERRED = "deferred-to-combined-branch"
+
+#: A check entry's ``runs`` value for the declared environment, as ``functional_checks.py`` writes
+#: it. An entry with no ``runs`` runs locally, which is every entry written before issue #98.
+RUNS_ENVIRONMENT = "environment"
 
 #: Recorded on the preview entry where the repository declares no branch preview. The lifecycle
 #: repository's run model: "Where the repository declares no preview, the criterion does not apply
@@ -271,19 +283,44 @@ def read_environment(
 
 
 def _normalise_checks(raw: Any) -> list[dict[str, Any]]:
-    """Accept a list of ``{name, command}`` objects or bare command strings; absent reads empty."""
+    """Accept a list of ``{name, command}`` objects or bare command strings; absent reads empty.
+
+    An object's ``proves`` (the acceptance criteria it proves) and ``runs`` (``local`` or
+    ``environment``) are kept when present, so the recorded criterion still says what each check
+    is for and where it runs. Every other key is dropped.
+    """
     if not raw:
         return []
     out: list[dict[str, Any]] = []
     for index, entry in enumerate(raw, start=1):
         if isinstance(entry, dict):
             command = str(entry.get("command", ""))
-            out.append(
-                {"name": str(entry.get("name") or command or f"check-{index}"), "command": command}
-            )
+            check: dict[str, Any] = {
+                "name": str(entry.get("name") or command or f"check-{index}"),
+                "command": command,
+            }
+            if isinstance(entry.get("proves"), list):
+                check["proves"] = [str(ref) for ref in entry["proves"]]
+            if entry.get("runs") is not None:
+                check["runs"] = str(entry["runs"])
+            out.append(check)
         else:
             out.append({"name": str(entry), "command": str(entry)})
     return out
+
+
+def runs_in_unit(entry: dict[str, Any]) -> bool:
+    """Whether a unit iteration runs *entry*: every check but one bound for the environment."""
+    return entry.get("runs") != RUNS_ENVIRONMENT
+
+
+def _absence_reason(entries: Sequence[dict[str, Any]]) -> str | None:
+    """Why a check list produced no result in a unit iteration, or ``None`` when one ran."""
+    if not entries:
+        return REASON_NONE_PRESCRIBED
+    if not any(runs_in_unit(entry) for entry in entries):
+        return REASON_DEFERRED
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -535,6 +572,7 @@ def run_iteration(
             entry["name"], entry["command"], runner=runner, timeout=timeout, cwd=cwd, clock=clock
         )
         for entry in criterion.functional_checks
+        if runs_in_unit(entry)
     ]
     preview_result = run_preview(
         criterion.preview, runner=runner, timeout=timeout, cwd=cwd, clock=clock
@@ -544,6 +582,7 @@ def run_iteration(
             entry["name"], entry["command"], runner=runner, timeout=timeout, cwd=cwd, clock=clock
         )
         for entry in criterion.scenario_smoke
+        if runs_in_unit(entry)
     ]
 
     green = all(
@@ -561,10 +600,12 @@ def run_iteration(
         "preview": preview_result,
         "scenario_smoke": smoke_results,
     }
-    if not criterion.functional_checks:
-        iteration["functional_checks_reason"] = REASON_NONE_PRESCRIBED
-    if not criterion.scenario_smoke:
-        iteration["scenario_smoke_reason"] = REASON_NONE_PRESCRIBED
+    functional_reason = _absence_reason(criterion.functional_checks)
+    if functional_reason is not None:
+        iteration["functional_checks_reason"] = functional_reason
+    smoke_reason = _absence_reason(criterion.scenario_smoke)
+    if smoke_reason is not None:
+        iteration["scenario_smoke_reason"] = smoke_reason
     return iteration, green
 
 
@@ -633,8 +674,40 @@ def save_record_file(path: Path, record: run_record.RunRecord) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def format_dry_run(criterion: Criterion, mapping: dict[str, Any]) -> str:
-    """The criterion as a reader sees it, run nothing and write nothing."""
+def format_check(entry: dict[str, Any]) -> str:
+    """One prescribed check as the dry run prints it: name, command, and what it proves and where.
+
+    An entry written before issue #98 carries neither ``proves`` nor ``runs`` and prints as it
+    always did, ``<name>: <command>``.
+    """
+    line = f"{entry['name']}: {entry['command']}"
+    notes: list[str] = []
+    if entry.get("proves"):
+        notes.append("proves " + ", ".join(entry["proves"]))
+    if entry.get("runs") == RUNS_ENVIRONMENT:
+        notes.append("runs against the declared environment, on the combined branch")
+    elif entry.get("runs"):
+        notes.append("runs locally")
+    return f"{line}  ({'; '.join(notes)})" if notes else line
+
+
+def _check_lines(entries: Sequence[dict[str, Any]], indent: str = "  ") -> list[str]:
+    if not entries:
+        return [f"{indent}none prescribed in the run record"]
+    return [f"{indent}{format_check(entry)}" for entry in entries]
+
+
+def format_dry_run(
+    criterion: Criterion,
+    mapping: dict[str, Any],
+    units: Sequence[tuple[str, Criterion]] | None = None,
+) -> str:
+    """The criterion as a reader sees it, run nothing and write nothing.
+
+    *units*, when given, is every unit row's ``(id, criterion)``: the dry run of a record with more
+    than one row and no ``--unit`` lists each unit's functional checks under its id, and the
+    scenario smoke once when every unit carries the same list, otherwise per unit.
+    """
     lines = ["The build loop's exit criterion for this repository.", ""]
 
     lines.append("Mechanical baseline, from the repository profile:")
@@ -665,19 +738,22 @@ def format_dry_run(criterion: Criterion, mapping: dict[str, Any]) -> str:
 
     lines.append("")
     lines.append("Child-scoped functional checks, from the plan:")
-    if criterion.functional_checks:
-        for entry in criterion.functional_checks:
-            lines.append(f"  {entry['name']}: {entry['command']}")
+    if units:
+        for unit_id, unit_criterion in units:
+            lines.append(f"  Unit {unit_id}:")
+            lines.extend(_check_lines(unit_criterion.functional_checks, "    "))
     else:
-        lines.append("  none prescribed in the run record")
+        lines.extend(_check_lines(criterion.functional_checks))
 
     lines.append("")
     lines.append("Scenario smoke, from the plan:")
-    if criterion.scenario_smoke:
-        for entry in criterion.scenario_smoke:
-            lines.append(f"  {entry['name']}: {entry['command']}")
+    smokes = [list(unit_criterion.scenario_smoke) for _, unit_criterion in units or ()]
+    if units and any(smoke != smokes[0] for smoke in smokes):
+        for unit_id, unit_criterion in units:
+            lines.append(f"  Unit {unit_id}:")
+            lines.extend(_check_lines(unit_criterion.scenario_smoke, "    "))
     else:
-        lines.append("  none prescribed in the run record")
+        lines.extend(_check_lines(smokes[0] if units else criterion.scenario_smoke))
 
     lines.append("")
     environment = criterion.environment
@@ -719,13 +795,15 @@ def format_iteration(iteration: dict[str, Any]) -> str:
     for entry in iteration["functional_checks"]:
         lines.append(f"  [{entry['status']}] functional: {entry['name']}")
     if not iteration["functional_checks"]:
-        lines.append(f"  [{REASON_NONE_PRESCRIBED}] functional checks")
+        reason = iteration.get("functional_checks_reason", REASON_NONE_PRESCRIBED)
+        lines.append(f"  [{reason}] functional checks")
     preview = iteration["preview"]
     lines.append(f"  [{preview['status']}] branch preview")
     for entry in iteration["scenario_smoke"]:
         lines.append(f"  [{entry['status']}] scenario smoke: {entry['name']}")
     if not iteration["scenario_smoke"]:
-        lines.append(f"  [{REASON_NONE_PRESCRIBED}] scenario smoke")
+        reason = iteration.get("scenario_smoke_reason", REASON_NONE_PRESCRIBED)
+        lines.append(f"  [{reason}] scenario smoke")
     return "\n".join(lines)
 
 
@@ -796,7 +874,17 @@ def main(argv: list[str] | None = None, *, runner: Runner = subprocess_runner) -
         criterion = read_criterion(record, unit, profile)
 
         if args.dry_run:
-            print(format_dry_run(criterion, check_map(criterion.baseline)))
+            per_unit = None
+            if unit is None and len(record.units) > 1:
+                per_unit = [
+                    (
+                        run_record.unit_key(row) or f"row {index}",
+                        read_criterion(record, row, profile),
+                    )
+                    for index, row in enumerate(record.units, start=1)
+                    if isinstance(row, dict)
+                ]
+            print(format_dry_run(criterion, check_map(criterion.baseline), per_unit))
             return EXIT_GREEN
 
         if unit is None:

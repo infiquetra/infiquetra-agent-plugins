@@ -30,6 +30,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -71,6 +72,7 @@ KIND_LEGACY_NO_BACKEND = CONFORMANCE.KIND_LEGACY_NO_BACKEND
 KIND_MISSING_REQUIRED_FIELD = CONFORMANCE.KIND_MISSING_REQUIRED_FIELD
 KIND_BACKEND_NOT_IN_ENUM = CONFORMANCE.KIND_BACKEND_NOT_IN_ENUM
 KIND_MARKER_MISSING = CONFORMANCE.KIND_MARKER_MISSING
+KIND_FUNCTIONAL_CHECK_MALFORMED = CONFORMANCE.KIND_FUNCTIONAL_CHECK_MALFORMED
 Finding = CONFORMANCE.Finding
 check_document = CONFORMANCE.check_document
 check_plan_corpus = CONFORMANCE.check_plan_corpus
@@ -349,3 +351,66 @@ def test_required_field_set_is_pinned_to_both_declarations() -> None:
     assert "`backend:` is required on every newly created plan" in skill_collapsed, (
         "plan/SKILL.md lost its required-backend sentence"
     )
+
+
+# --- issue #98: a unit's functional checks name a command and a criterion -------------
+
+
+def _with_checks(entry: str) -> str:
+    """MARKER_BODY with one functional-checks block under its U1 unit."""
+    block = f"Do the thing.\n\n**Functional checks:**\n\n```functional-checks\n{entry}```\n"
+    return MARKER_BODY.replace("Do the thing.\n", block, 1)
+
+
+WELL_FORMED_CHECK = (
+    "- name: the-thing-runs\n"
+    "  command: python3 -m pytest tests/test_thing.py -q\n"
+    "  proves: [AC-1]\n"
+    "  runs: local\n"
+)
+
+
+def _check_findings(tmp_path: Path, body: str, *, legacy: bool = False) -> list[Any]:
+    fields = dict(NEW_CONTRACT_FRONTMATTER)
+    if legacy:
+        fields.pop("backend")
+    doc = tmp_path / "plan.md"
+    doc.write_text(_frontmatter(**fields) + body, encoding="utf-8")
+    return [f for f in check_document(doc) if f.kind == KIND_FUNCTIONAL_CHECK_MALFORMED]
+
+
+def test_a_well_formed_functional_checks_block_adds_no_finding(tmp_path: Path) -> None:
+    assert _check_findings(tmp_path, _with_checks(WELL_FORMED_CHECK)) == []
+
+
+@pytest.mark.parametrize(
+    ("entry", "detail"),
+    [
+        (
+            WELL_FORMED_CHECK.replace("  command: python3 -m pytest tests/test_thing.py -q\n", ""),
+            "needs a command",
+        ),
+        (WELL_FORMED_CHECK.replace("  proves: [AC-1]\n", ""), "needs proves"),
+        (WELL_FORMED_CHECK.replace("AC-1", "R1"), "not AC-<n>"),
+        (WELL_FORMED_CHECK.replace("runs: local", "runs: anywhere"), "runs must be"),
+    ],
+)
+def test_a_check_without_a_command_or_a_criterion_fails_naming_the_unit(
+    tmp_path: Path, entry: str, detail: str
+) -> None:
+    findings = _check_findings(tmp_path, _with_checks(entry))
+    assert findings, f"a check missing its {detail!r} passed the contract"
+    assert any(detail in f.detail and "unit U1" in f.detail for f in findings)
+    assert all(f.failing for f in findings)
+    assert corpus_exit(findings) == 1
+
+
+def test_a_malformed_check_in_a_legacy_plan_is_reported_and_never_fails(tmp_path: Path) -> None:
+    entry = WELL_FORMED_CHECK.replace("  proves: [AC-1]\n", "")
+    findings = _check_findings(tmp_path, _with_checks(entry), legacy=True)
+    assert findings and all(f.legacy and not f.failing for f in findings)
+
+
+def test_a_plan_with_no_checks_block_is_not_a_conformance_finding(tmp_path: Path) -> None:
+    """Absence is the mapping check's call, with the issue in hand; the corpus stays at exit 0."""
+    assert _check_findings(tmp_path, MARKER_BODY) == []
