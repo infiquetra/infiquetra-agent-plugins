@@ -2032,10 +2032,30 @@ def _three_paths(adm: ModuleType, repo_root: Path) -> dict[str, tuple[str, str]]
     assert plan.returncode == 0, plan.stderr
     planned = json.loads(plan.stdout)
     direct = _bundled_staffing(adm).resolve_shape("implementation", root=repo_root)
+    # /plan's second route: the run-start posture seeds a unit's proposed tier through
+    # intent_envelope's recommend, which must not step the implementation shape down.
+    posture = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS / "intent_envelope.py"),
+            "recommend",
+            "--work-shape",
+            "implementation",
+            "--run-mode",
+            "unattended",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert posture.returncode == 0, posture.stderr
+    seeded = json.loads(posture.stdout)
     return {
         "admission": (worker["model"], worker["effort"]),
         "work": (work["model"], work["effort"]),
         "plan": (planned["model"], planned["effort"]),
+        "plan-posture": (seeded["model"], seeded["effort"]),
         "resolver": (direct.model, direct.effort),
     }
 
@@ -2086,6 +2106,92 @@ def test_admission_applies_and_keeps_a_recorded_raise(
     worker = _admitted_staffing(adm, repo_root, previous=previous)["worker"]
     assert (worker["model"], worker["effort"], worker["source"]) == ("opus", "high", "jev-raise")
     assert worker["jev_raise"] == raise_
+
+
+@pytest.mark.parametrize(
+    "bad_raise",
+    [
+        {"model": "fable", "effort": "medium"},
+        {"model": "opus", "effort": "xhigh"},
+        {"model": "sonnet", "effort": "low"},
+    ],
+    ids=["strongest-model", "two-steps", "lowering"],
+)
+def test_admission_keeps_the_worker_and_shows_a_refused_raise(
+    adm: ModuleType, repo_root: Path, monkeypatch: pytest.MonkeyPatch, bad_raise: dict[str, str]
+) -> None:
+    # Before the review repair the refusal was swallowed and the worker vanished from the plan.
+    monkeypatch.chdir(repo_root)
+    previous = {"worker": {"vendor": "claude", "model": "opus", "effort": "medium",
+                           "jev_raise": bad_raise}}
+    value = _admitted_staffing(adm, repo_root, previous=previous)
+    assert "worker" in value, sorted(value)
+    worker = value["worker"]
+    assert (worker["model"], worker["effort"], worker["source"]) == ("opus", "medium", "policy")
+    assert worker["jev_raise"] == bad_raise
+    assert "jev raise" in worker["jev_raise_refused"]
+
+
+def test_admission_fails_loud_when_staffing_refuses_a_role(adm: ModuleType) -> None:
+    real = _bundled_staffing(adm)
+
+    def resolve_role(role: str, **kwargs: Any) -> Any:
+        # A worker pinned to another vendor while its work shape is Claude-only.
+        return real.resolve_shape("implementation", vendor="codex", root=kwargs.get("root"))
+
+    staffing = SimpleNamespace(
+        roles=lambda: {"worker": {}},
+        resolve_role=resolve_role,
+        StaffingError=real.StaffingError,
+    )
+    run_record = _load("run_record")
+    record = run_record.RunRecord(issue=93, repo="infiquetra/infiquetra-agent-plugins")
+    with pytest.raises(adm.AdmissionError, match=r"'worker'.*Claude-only.*codex"):
+        adm.fill_defaults(record, {}, staffing)
+
+
+def test_admission_still_skips_the_lens_reviewer_without_a_lens(
+    adm: ModuleType, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(repo_root)
+    staffing = _bundled_staffing(adm)
+    reviewers = [role for role in staffing.roles() if role not in _admitted_staffing(adm, repo_root)]
+    for role in reviewers:
+        with pytest.raises(staffing.StaffingError, match="needs a lens"):
+            staffing.resolve_role(role, root=repo_root)
+
+
+def test_the_build_unit_tier_passes_a_recorded_raise_to_the_resolver(tmp_path: Path) -> None:
+    lifecycle_state = _load("lifecycle_state")
+    raised = lifecycle_state.resolve_build_unit_tier(
+        root=tmp_path, jev_raise={"model": "opus", "effort": "high"}
+    )
+    assert raised == {"model": "opus", "effort": "high"}
+    command = _plan_command(tmp_path, "--jev-raise", '{"model": "opus", "effort": "high"}')
+    assert command.returncode == 0, command.stderr
+    assert json.loads(command.stdout) == {"model": "opus", "effort": "high"}
+    refused = _plan_command(tmp_path, "--jev-raise", '{"model": "fable", "effort": "medium"}')
+    assert refused.returncode == 2
+    assert "jev raise" in json.loads(refused.stderr)["error"]
+
+
+def test_the_build_unit_tier_reads_the_overlay_from_its_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkout = tmp_path / "checkout"
+    elsewhere = tmp_path / "elsewhere"
+    checkout.mkdir()
+    elsewhere.mkdir()
+    _overlay(checkout, "sonnet", "high")
+    monkeypatch.chdir(elsewhere)
+    lifecycle_state = _load("lifecycle_state")
+    assert lifecycle_state.resolve_build_unit_tier(root=checkout) == {
+        "model": "sonnet",
+        "effort": "high",
+    }
+    command = _plan_command(elsewhere, "--root", str(checkout))
+    assert command.returncode == 0, command.stderr
+    assert json.loads(command.stdout) == {"model": "sonnet", "effort": "high"}
 
 
 def test_the_build_unit_command_runs_as_an_agent_runs_it(tmp_path: Path) -> None:

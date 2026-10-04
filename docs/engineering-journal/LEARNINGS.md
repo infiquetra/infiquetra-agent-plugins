@@ -283,6 +283,24 @@ last-writer-wins under it.
 **Generalizable rule.** A whole-document writer that shares its file with other writers must
 re-read under a shared lock at save time and merge its owned keys onto that fresh copy; keeping
 unknown keys from the load is necessary but not sufficient.
+### A fail-open `except` around a resolver turns the resolver's new refusals into silent omissions
+
+**Evidence.** Review of issue #93 found that `_resolve_staffing` in
+`plugins/saga/scripts/admission.py` wrapped `staffing.resolve_role` in `except Exception: continue`.
+The change made the resolver refuse a malformed recorded Jev raise and a Claude-only work shape on a
+vendor-pinned role, and at admission both refusals made the role disappear from
+`staffing_models_and_efforts` with no message. A recorded `{"model": "fable"}` raise dropped the
+`worker` entirely. `test_admission_keeps_the_worker_and_shows_a_refused_raise` and
+`test_admission_fails_loud_when_staffing_refuses_a_role` in `plugins/saga/tests/test_admission.py`
+now pin the repaired behaviour.
+
+**Mechanism.** The broad `except` was written for one known case, the lens reviewer that cannot
+resolve without a lens. Every refusal added later to the callee inherited that skip, because a
+`continue` cannot tell "this role needs a lens" from "this input is wrong".
+
+**Generalizable rule.** When a callee gains a new refusal, read every caller's `except` around it,
+and keep a fail-open skip narrowed to the one case it was written for.
+
 ### A caller that enters a layered resolver below its top layer drops every layer above it, silently
 
 **Evidence.** Before issue #93, `resolve_build_unit_tier` in `plugins/saga/scripts/lifecycle_state.py`

@@ -259,6 +259,14 @@ def resolve(
     key. ``envelope_ceiling``, when supplied, clamps the resolved model to no stronger than the
     ceiling (forward-compat for #366's spend envelope; ``None`` is honored as "no ceiling", never
     an error). ``operator_override`` replaces ``model``/``effort`` outright when supplied.
+
+    **Deprecated: ``envelope_ceiling`` and ``operator_override``** (issue #93). They predate the one
+    staffing precedence and no caller in this repository passes them. ``operator_override`` checks
+    only that each value is on the palette, not the per-model effort ceiling, so it can return a
+    tier no host runs (``haiku/xhigh``). An operator's answer belongs in
+    ``staffing.resolve_shape(..., answer=...)``, which validates it fully and reports its source.
+    Pass neither argument in new code; they stay only until their removal can be checked against
+    callers outside this repository.
     """
     if role_kind is not None and not isinstance(role_kind, str):
         raise TierResolverError("role_kind must be a string or None")

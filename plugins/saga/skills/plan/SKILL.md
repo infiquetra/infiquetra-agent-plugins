@@ -498,11 +498,13 @@ and ask the operator to confirm or override before proceeding. Do not lock tiers
 (`ExecutionSpec.intent`, or the parent outcome's `OutcomeSpec.intent` — see
 `plugins/saga/references/intent-envelope.md`), derive each unit's PROPOSED tier through
 `intent_envelope.seeded_tier(spec, work_shape)` (equivalently `intent_envelope.py recommend
---work-shape <shape> --run-mode <mode>`): the posture was asked ONCE at run start, and an
+--work-shape <shape> --run-mode <mode>`) instead of the command in the next paragraph. This is the
+one exception to that paragraph, and it wins on any run with an envelope: the posture was asked ONCE at run start, and an
 unattended posture proposes one rung cheaper than the attended default for the same work shape,
 except for a work shape whose registry row turns that step-down off (the `implementation` shape:
 the builder's default is what the run's cost measurement checks, so a posture heuristic does not
-move it). The attended default comes from the same staffing resolver as the command below.
+move it). `recommend` takes its base from the same staffing resolver as the command below, so on
+an attended run the two give the same tier; on an unattended run `recommend` is the one to use.
 This changes only the table's proposed defaults — the table itself, the operator-override flow,
 and the `VERIFY_N_CAP` mechanics are unchanged, and no per-unit posture question is ever asked
 (the fleet drift guard fails on one).
@@ -516,7 +518,8 @@ operator who wants a different tier mid-run re-plans the unit; there is no longe
 clamps an already-emitted spec.
 
 **Resolve each unit's proposed tier through the one staffing resolver (#93).** Do not derive a
-tier from the table above by eye. Run, for each unit:
+tier from the table above by eye. When the run carries no committed intent envelope (the posture
+paragraph above covers a run that does), run, for each unit:
 
 ```bash
 python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier --work-shape <shape>

@@ -359,7 +359,9 @@ def _resolve_staffing(
     The staffing component owns the tier precedence; this function restates none of it. It hands
     over the repository root for the overlay and, for each role, any ``jev_raise`` already
     recorded on that role's entry in ``recorded`` (the previous staffing value), and keeps that
-    raise on the entry it returns so a re-run does not drop it.
+    raise on the entry it returns so a re-run does not drop it. A raise the resolver refuses is
+    kept too, beside a ``jev_raise_refused`` message, and the role falls back to its default; any
+    other refusal stops admission (see :func:`_resolve_one_role`).
 
     With ``suggest``, one batched tier consult covers every resolved role, and each role's
     suggestion is recorded beside its default. The consult is best-effort: a component without
@@ -375,9 +377,8 @@ def _resolve_staffing(
     for role in sorted(roles):
         entry = previous.get(role)
         jev_raise = entry.get("jev_raise") if isinstance(entry, dict) else None
-        try:
-            decision = staffing.resolve_role(role, root=root, jev_raise=jev_raise)
-        except Exception:
+        decision, refused = _resolve_one_role(staffing, role, root=root, jev_raise=jev_raise)
+        if decision is None:
             continue
         resolved[role] = {
             "vendor": getattr(decision, "vendor", None),
@@ -387,10 +388,58 @@ def _resolve_staffing(
         }
         if jev_raise is not None:
             resolved[role]["jev_raise"] = jev_raise
+        if refused is not None:
+            resolved[role]["jev_raise_refused"] = refused
         operator_set[role] = getattr(decision, "source", "policy") == "overlay"
     if suggest and resolved:
         _attach_suggestions(staffing, resolved, operator_set, suggest_ask, suggest_log_dir)
     return resolved or None
+
+
+def _is_refusal(staffing: Any, exc: Exception) -> bool:
+    """Whether ``exc`` is the staffing resolver refusing an input, not a missing component."""
+    refusal = getattr(staffing, "StaffingError", None)
+    return isinstance(refusal, type) and isinstance(exc, refusal)
+
+
+def _resolve_one_role(
+    staffing: Any, role: str, *, root: Path | None, jev_raise: Any
+) -> tuple[Any, str | None]:
+    """Resolve one role, failing loud on every refusal except the known lens-reviewer skip.
+
+    Returns ``(decision, refused)``. ``decision`` is None only for a role admission cannot staff
+    without a lens (the lens reviewer), or for a staffing component that is missing or too old to
+    take these arguments, which stays fail-open as before.
+
+    A recorded ``jev_raise`` the resolver refuses (a lowering, a two-step jump, a raise to the
+    strongest model or off the palette) does not drop the role: the role resolves without the
+    raise, and ``refused`` carries the resolver's message so the record shows the refusal beside
+    the raise it kept. Any other refusal, such as a Claude-only work shape on a role pinned to
+    another vendor, raises :class:`AdmissionError` naming the role.
+    """
+    try:
+        return staffing.resolve_role(role, root=root, jev_raise=jev_raise), None
+    except Exception as exc:
+        if not _is_refusal(staffing, exc):
+            return None, None
+        first = exc
+    refused: str | None = None
+    if jev_raise is not None:
+        try:
+            return staffing.resolve_role(role, root=root), str(first)
+        except Exception as exc:
+            if not _is_refusal(staffing, exc):
+                return None, None
+            refused, first = str(first), exc
+    try:
+        staffing.resolve_role(role, root=root, require_lens=False)
+    except Exception as exc:
+        if not _is_refusal(staffing, exc):
+            return None, None
+        reason = f"; its recorded raise was also refused: {refused}" if refused else ""
+        raise AdmissionError(f"staffing refused role {role!r}: {first}{reason}") from first
+    # Only the lens requirement stood in the way: the lens reviewer is staffed per lens later.
+    return None, None
 
 
 def _attach_suggestions(

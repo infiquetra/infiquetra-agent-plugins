@@ -118,8 +118,9 @@ RATINGS: tuple[str, ...] = ("STRONG", "MODERATE", "WEAK")
 DEFAULT_VENDOR = "claude"
 
 #: The tier layers :func:`resolve_shape` consults, first match wins. Each name is also the
-#: ``source`` a decision reports. ``operator`` is the operator's explicit answer (admission's
-#: answer, or the tier a plan unit records after the operator confirmed it); ``overlay`` is the
+#: ``source`` a decision reports. ``operator`` is the operator's explicit answer (today the tier a
+#: plan unit records after the operator confirmed it; admission's ``staffing_overrides`` answer is
+#: stored as-is and does not pass through here yet); ``overlay`` is the
 #: repository's ``.saga/tier-defaults.json``; ``jev-raise`` is a raise the tier judgment applied
 #: and the run record keeps (written by staffing U4, issue #96); ``policy`` is the work shape's
 #: registry default. This tuple and ``resolve_shape`` are the only places the order is written.

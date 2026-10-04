@@ -102,9 +102,12 @@ than guessing. Giving the vendor palettes a fourth execution class is what close
 **Precedence — written here and in `staffing.py`, nowhere else.** For a work shape,
 `resolve_shape` takes the first of these that is present (`staffing.TIER_PRECEDENCE`):
 
-1. `operator` — the operator's explicit answer, passed as `answer=`: admission's answer, or the
+1. `operator` — the operator's explicit answer, passed as `answer=`. Today the one caller is the
    tier a plan unit records after the operator confirmed it in `/plan`'s table (`/work` passes it
-   as `--plan-model` / `--plan-effort`).
+   as `--plan-model` / `--plan-effort`). Admission's `staffing_overrides` answer does not reach
+   this layer yet: admission stores it with source `operator` and skips resolution for it, so it
+   wins by admission's own rule and is not checked against the palette. Routing it through
+   `answer=` is follow-up work.
 2. `overlay` — the per-repository overlay at `.saga/tier-defaults.json`.
 3. `jev-raise` — a raise the tier judgment applied, recorded in the run record and passed as
    `jev_raise=` (written by staffing U4, issue #96; absent until then). The resolver refuses a
@@ -112,6 +115,11 @@ than guessing. Giving the vendor palettes a fourth execution class is what close
    one effort rung, not both — or that names `fable`; `max` is off the Claude palette and fails
    the palette check.
 4. `policy` — the shared `work_shapes` default.
+
+One modifier applies after this order, never inside it: on an unattended run,
+`intent_envelope.recommend_tier` takes the resolved tier and steps it one rung cheaper, unless the
+work shape's row says `"unattended_step_down": false` (see below). It is the only tier modifier
+outside `resolve_shape`.
 
 Every layer is validated whether or not it wins. Admission, `/plan` (through
 `lifecycle_state.py resolve-build-unit-tier`), `/work` and `intent_envelope.recommend_tier` all call
@@ -237,9 +245,12 @@ Most specific wins, in this order:
 2. Team-level default (an optional team-wide effort override; usually absent today).
 3. Per-teammate agent-frontmatter default (`effort:`).
 
-The cascade wraps `staffing.resolve_shape(work_shape, root=…, answer=…)` — it is not a fourth
-standalone resolver. A plan-unit tier is passed as the operator's `answer` when present, which wins
-over every other tier layer.
+This cascade is the order a team-execution spawn picks a teammate's effort in. It is applied by
+the spawning skill, not by code, and it is not a second tier precedence. Its first layer is the
+precedence above: a plan-authored unit tier is resolved through `staffing.resolve_shape(work_shape,
+root=…, answer=…)` as the operator's answer, which wins over every other tier layer. The team
+default and the agent frontmatter apply only to a teammate with no plan-authored tier; no code
+passes either one to `resolve_shape`.
 
 Any `plugins/*/agents/*.md` file may carry an `effort:` frontmatter field, and its value must be one
 of `EFFORTS`. A required lint (`tests/test_agent_tier_lint.py`, reused by

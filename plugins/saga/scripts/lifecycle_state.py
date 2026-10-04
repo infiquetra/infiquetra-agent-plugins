@@ -556,6 +556,18 @@ def _build_parser() -> argparse.ArgumentParser:
             "role's work shape, implementation)"
         ),
     )
+    build_tier.add_argument(
+        "--jev-raise",
+        help=(
+            "a recorded tier raise as JSON ({\"model\", \"effort\", ...}), read from the unit's "
+            "run-record row; the resolver refuses one that is not exactly one step up"
+        ),
+    )
+    build_tier.add_argument(
+        "--root",
+        type=Path,
+        help="checkout whose .saga/tier-defaults.json overlay applies (default: working directory)",
+    )
 
     recheck = subparsers.add_parser(
         "recheck-capability",
@@ -628,7 +640,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             {"model": args.plan_model, "effort": args.plan_effort} if args.plan_model else None
         )
         try:
-            resolved = resolve_build_unit_tier(plan_tier=plan_tier, work_shape=args.work_shape)
+            jev_raise = json.loads(args.jev_raise) if args.jev_raise else None
+            resolved = resolve_build_unit_tier(
+                plan_tier=plan_tier,
+                work_shape=args.work_shape,
+                root=args.root,
+                jev_raise=jev_raise,
+            )
         except (ValueError, KeyError) as exc:
             print(json.dumps({"error": str(exc)}), file=sys.stderr)
             return 2

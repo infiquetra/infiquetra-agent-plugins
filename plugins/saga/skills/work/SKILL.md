@@ -379,7 +379,10 @@ hook (#677/U5). Direct `Agent`/`Task` spawns carry no lease admission.
 
   It prints `{"model": ..., "effort": ...}` as JSON. Every form goes through fleet-core's staffing
   resolver (`staffing.resolve_shape`), which weighs the repository overlay, any recorded raise and
-  the registry default and owns the order between them; do not restate it here. An explicit
+  the registry default and owns the order between them; do not restate it here. A raise reaches
+  it only when you pass the unit row's recorded `jev_raise` as `--jev-raise '<json>'` (staffing U4,
+  issue #96, writes it; until then there is none); `--root <checkout>` names where the overlay is
+  read when you are not running from the repository root. An explicit
   plan tier is handed to that resolver as the operator's answer and validated against the same
   vocabulary as every other layer, so a model or effort the registry does not carry is refused
   rather than passed through to a spawn. An undeclared unit runs at the `worker` role's work shape,

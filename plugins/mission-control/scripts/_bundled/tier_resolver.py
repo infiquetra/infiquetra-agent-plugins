@@ -3,8 +3,8 @@
 # source-version: 0.32.0
 # source-commit: authored
 # source-path: scripts/fleet_commons/tier_resolver.py
-# source-sha256: 29caad9d8a3190335f8c8a03f06261c6a5a3c47bf9b8227b1ef4803fc069de82
-# output-sha256: 29caad9d8a3190335f8c8a03f06261c6a5a3c47bf9b8227b1ef4803fc069de82
+# source-sha256: 256041491e942609da976791eff79bfd7021d909bcc6755728b7dcf700bc4d82
+# output-sha256: 256041491e942609da976791eff79bfd7021d909bcc6755728b7dcf700bc4d82
 # --- end generated bundle stamp ---
 #!/usr/bin/env python3
 """Dispatch-time tier resolver — maps a work shape to a ``{model, effort}`` tier (#362).
@@ -267,6 +267,14 @@ def resolve(
     key. ``envelope_ceiling``, when supplied, clamps the resolved model to no stronger than the
     ceiling (forward-compat for #366's spend envelope; ``None`` is honored as "no ceiling", never
     an error). ``operator_override`` replaces ``model``/``effort`` outright when supplied.
+
+    **Deprecated: ``envelope_ceiling`` and ``operator_override``** (issue #93). They predate the one
+    staffing precedence and no caller in this repository passes them. ``operator_override`` checks
+    only that each value is on the palette, not the per-model effort ceiling, so it can return a
+    tier no host runs (``haiku/xhigh``). An operator's answer belongs in
+    ``staffing.resolve_shape(..., answer=...)``, which validates it fully and reports its source.
+    Pass neither argument in new code; they stay only until their removal can be checked against
+    callers outside this repository.
     """
     if role_kind is not None and not isinstance(role_kind, str):
         raise TierResolverError("role_kind must be a string or None")

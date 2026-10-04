@@ -38,10 +38,12 @@ The catalog requires `python>=3.12`.
 - `intent_envelope.recommend_tier` takes its base from `staffing.resolve_shape` (so the repository
   overlay applies) and accepts `root=`.
 - `render_tier_table.py` renders an `implementation` row.
+- `tier_resolver.resolve`'s `envelope_ceiling` and `operator_override` arguments are documented as
+  deprecated; an operator's tier goes through `staffing.resolve_shape(answer=...)`.
 
 ### Removed
 
-- `cost_weights.py`, `cost_weights.json` and `test_cost_weights.py`. The ordinal cost table rated
+- The ordinal cost-weight module, its JSON table and its test. The ordinal cost table rated
   `opus/medium` at 2.67 times `sonnet/medium`, about double the measured gap, and nothing outside
   its own test read it.
 

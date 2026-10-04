@@ -3,8 +3,8 @@
 # source-version: 0.32.0
 # source-commit: authored
 # source-path: scripts/fleet_commons/staffing.py
-# source-sha256: aae868248d6dd2dc5c3c4dc2912de375e0f9632b8c867c500b75da1db02debf9
-# output-sha256: aae868248d6dd2dc5c3c4dc2912de375e0f9632b8c867c500b75da1db02debf9
+# source-sha256: 698d43651973b885b64abbfb1bbb4963cfe9b0747d9f4c62755081defaf5074f
+# output-sha256: 698d43651973b885b64abbfb1bbb4963cfe9b0747d9f4c62755081defaf5074f
 # --- end generated bundle stamp ---
 #!/usr/bin/env python3
 """The one staffing resolver — "role or work shape, and for review the lens, to a tier" (#1021).
@@ -126,8 +126,9 @@ RATINGS: tuple[str, ...] = ("STRONG", "MODERATE", "WEAK")
 DEFAULT_VENDOR = "claude"
 
 #: The tier layers :func:`resolve_shape` consults, first match wins. Each name is also the
-#: ``source`` a decision reports. ``operator`` is the operator's explicit answer (admission's
-#: answer, or the tier a plan unit records after the operator confirmed it); ``overlay`` is the
+#: ``source`` a decision reports. ``operator`` is the operator's explicit answer (today the tier a
+#: plan unit records after the operator confirmed it; admission's ``staffing_overrides`` answer is
+#: stored as-is and does not pass through here yet); ``overlay`` is the
 #: repository's ``.saga/tier-defaults.json``; ``jev-raise`` is a raise the tier judgment applied
 #: and the run record keeps (written by staffing U4, issue #96); ``policy`` is the work shape's
 #: registry default. This tuple and ``resolve_shape`` are the only places the order is written.
