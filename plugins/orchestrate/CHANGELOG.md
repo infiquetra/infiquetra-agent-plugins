@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- The Claude adapter carries an empty hooks module, `com.infiquetra.claude/mods/index.ts`, named
+  from a new `com.infiquetra.claude/hooks/hooks.json` that `.claude-plugin/plugin.json` now names.
+  It registers no hook yet; it exists so continuous integration validates and tests the adapter
+  before the fleet pane lands (issue #101).
+
 ## [6.0.1] - 2026-09-22
 
 6.0.1 — imported from infiquetra-claude-plugins@acc99fe7 (upstream 6.0.0); authored here from this commit; no provenance manifest from now on.
