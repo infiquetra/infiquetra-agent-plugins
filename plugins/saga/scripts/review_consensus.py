@@ -173,6 +173,7 @@ __all__ = [
     "AgentCallTranscript",
     "IndependentGateResult",
     "LensReviewResult",
+    "LensOutcome",
     "LensScore",
     "ResidualSummary",
     "ReviewConsensusError",
@@ -184,9 +185,12 @@ __all__ = [
     "ScoreRegression",
     "ReviewScoringError",
     "ReviewScoringPolicy",
+    "REASON_NOT_EXECUTED",
+    "REASON_NO_THRESHOLD",
     "UnsupportedReviewResultSchemaError",
     "consolidate_fix_requests",
     "evaluate_review_readiness",
+    "lens_outcomes_for_result",
     "score_lens_review",
 ]
 
@@ -2148,6 +2152,12 @@ class LensOutcome:
     reason: str = ""
 
 
+#: Why a lens row is not usable: the lens did not run, so it says nothing about the code.
+REASON_NOT_EXECUTED = "could not execute"
+#: Why a lens row is not usable: it ran and reported findings but sets no bar to meet.
+REASON_NO_THRESHOLD = "establishes no threshold: no fixtures, or no qualified executor"
+
+
 def lens_is_met(
     *,
     derived_overall: float | None,
@@ -2211,18 +2221,19 @@ def compute_verdict(
     return "repairs_requested"
 
 
-def verdict_for_result(payload: Mapping[str, Any]) -> ReviewOutcome:
-    """Compute the verdict for a serialised ``review_result.v2`` document.
+def lens_outcomes_for_result(payload: Mapping[str, Any]) -> list[LensOutcome]:
+    """Each lens row of a serialised ``review_result.v2`` document, judged against its bar.
 
-    The result's own ``outcome`` field is deliberately ignored: this recomputes from
-    the per-lens evidence, which is what makes it a check on the writer rather than
-    an echo of it.
+    One ``LensOutcome`` per row that is an object, in the result's order. This is the rule
+    :func:`verdict_for_result` applies, exposed so a display (``run_status.py review``) shows the
+    same answer the verdict used rather than recomputing it. A row that did not execute carries
+    :data:`REASON_NOT_EXECUTED`; one that ran but establishes no threshold carries
+    :data:`REASON_NO_THRESHOLD`. Neither is usable, and neither is a low score.
     """
     rows = payload.get("per_lens_results")
-    if not isinstance(rows, list) or not rows:
-        return "review_incomplete"
-
     outcomes: list[LensOutcome] = []
+    if not isinstance(rows, list):
+        return outcomes
     for row in rows:
         if not isinstance(row, Mapping):
             continue
@@ -2233,7 +2244,7 @@ def verdict_for_result(payload: Mapping[str, Any]) -> ReviewOutcome:
 
         if not executed:
             outcomes.append(
-                LensOutcome(lens_id, met=False, usable=False, reason="could not execute")
+                LensOutcome(lens_id, met=False, usable=False, reason=REASON_NOT_EXECUTED)
             )
             continue
         if not scorable or not scored:
@@ -2242,12 +2253,7 @@ def verdict_for_result(payload: Mapping[str, Any]) -> ReviewOutcome:
             # threshold. It is not a usable result for consensus — which is the
             # honest answer while the verification ledger is empty.
             outcomes.append(
-                LensOutcome(
-                    lens_id,
-                    met=False,
-                    usable=False,
-                    reason="establishes no threshold: no fixtures, or no qualified executor",
-                )
+                LensOutcome(lens_id, met=False, usable=False, reason=REASON_NO_THRESHOLD)
             )
             continue
 
@@ -2273,6 +2279,21 @@ def verdict_for_result(payload: Mapping[str, Any]) -> ReviewOutcome:
             dimension_minimum=dimension_minimum,
         )
         outcomes.append(LensOutcome(lens_id, met=met, usable=True))
+    return outcomes
+
+
+def verdict_for_result(payload: Mapping[str, Any]) -> ReviewOutcome:
+    """Compute the verdict for a serialised ``review_result.v2`` document.
+
+    The result's own ``outcome`` field is deliberately ignored: this recomputes from
+    the per-lens evidence, which is what makes it a check on the writer rather than
+    an echo of it.
+    """
+    rows = payload.get("per_lens_results")
+    if not isinstance(rows, list) or not rows:
+        return "review_incomplete"
+
+    outcomes = lens_outcomes_for_result(payload)
 
     allowances = payload.get("allowances")
     standard = STANDARD_CYCLE_ALLOWANCE
