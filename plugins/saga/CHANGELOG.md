@@ -14,9 +14,9 @@
   compares the model and effort sent with the type's tier; a mismatch shows a toast and writes one
   `tiering-drift[claude-agent-type]` line into the transcript. The mod never rewrites a request.
 - `scripts/role_agent_types.py --json` (`saga_role_agent_types.v1`) is the portable answer behind
-  the mod: the active-run rule from `next_step_context`, each role's tier from the run record's
-  staffing (completed by `staffing.py resolve --role <role> --json` for a role the record does not
-  staff), and each prompt read from agent-launcher's roles library at call time through roster's own
+  the mod: the active-run rule from `next_step_context`, each role's tier from fleet-core's
+  staffing resolver, handed the run record's operator answer and recorded Jev raise for the role
+  so its one precedence order decides (a resolver too old to apply a raise skips the role by name), and each prompt read from agent-launcher's roles library at call time through roster's own
   role mapping. Requires fleet-core's `claude-agent-type` spawn kind, added in the same release.
 - **A repository declares its functional-test environment once, in `.saga-profile.json`** (issue
   #97, pre-review testing U2). The `functional_test_environment` block names the `kind` (`local`,

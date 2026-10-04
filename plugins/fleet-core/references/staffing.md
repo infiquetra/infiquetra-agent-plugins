@@ -275,8 +275,10 @@ call but no effort. A plugin can, though, register an agent type whose definitio
 Claude Code, saga's mod registers one type per role of the active run, named `saga:<role>`
 (`saga:worker`, `saga:planner`, `saga:plan-reviewer`, `saga:functional-tester`,
 `saga:release-worker`). Each type carries the role's roles-library prompt and the model and effort
-the run is staffed at. Saga's `scripts/role_agent_types.py` decides what to register: the run
-record's staffing first, then the resolver for any role the record does not staff. `/work`
+the run is staffed at. Saga's `scripts/role_agent_types.py` decides what to register, and asks
+this resolver (`resolve_role`) for every role's tier. It hands the resolver what the run record
+holds for the role, an operator's answer or a recorded Jev raise, and applies no order of its own,
+so the tier precedence stays written once, here. `/work`
 dispatches a build unit as `saga:worker` when the type's tier is the unit's resolved tier, and
 passes no `model` parameter, because the Agent call's model overrides the type's for that call.
 Nothing is registered in a session with no active saga run. The lens reviewer and the merging

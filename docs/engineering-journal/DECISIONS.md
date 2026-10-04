@@ -147,11 +147,13 @@ no pane is open.
 **Decision.** In Claude Code, saga's mod registers one agent type per role of the active run
 (`saga:worker`, `saga:planner`, `saga:plan-reviewer`, `saga:functional-tester`,
 `saga:release-worker`) through `$.agent.register`, with the role's model and effort (issue #106).
-`plugins/saga/scripts/role_agent_types.py` decides what to register. A role's tier comes from the
-run record's `staffing_models_and_efforts` first, because admission filled it through the resolver
-and an operator's answer replaced it there. A role the record does not staff, and any field a
-partial operator answer left out, comes from `staffing.py resolve --role <role> --json`, run from
-the checkout. Each prompt is the roles-library file, read at call time through agent-launcher's
+`plugins/saga/scripts/role_agent_types.py` decides what to register. Every role's tier comes from
+fleet-core's staffing resolver (`staffing.resolve_role`, from the bundle, run from the checkout so
+the overlay applies). The script hands the resolver what the run record's
+`staffing_models_and_efforts` holds for the role: a row the operator wrote goes in as the
+operator's answer, and a recorded `jev_raise` goes in as the raise. The script writes no
+precedence order of its own; the resolver's one order decides. A resolver too old to take a raise
+refuses the role by name rather than registering it below the run's tier. Each prompt is the roles-library file, read at call time through agent-launcher's
 roster helper, behind a short saga hosting preamble: report the handoff as the final message and
 post nothing on the issue. `/work` dispatches a build unit as `saga:worker`, with no `model`
 parameter, only when the type's tier equals the unit's resolved tier; otherwise the effort rider
@@ -163,14 +165,15 @@ the card's example had it, so no third spelling joins `worker` and `implementer`
 
 **Rationale.** The Agent tool takes a model per call but no effort, so effort on that path was a
 prompt instruction, the labeled proxy. A registered type carries a real effort. Reading the tier
-from the run record keeps the types, the drift check and agent-launcher's roster sessions on one
-answer, including an operator's.
+from the resolver, with the record's operator answer and Jev raise as its inputs, keeps the types,
+the drift check and `/work`'s unit tier on one answer, including an operator's and a raise's.
 
 **Rejected alternatives.** Static plugin agent files (`agents/saga-worker.md`): Claude Code honors
 their `effort:`, but a file cannot carry a per-run tier and would hold a copy of the library prompt
-that drifts. Calling `staffing.py resolve --role` for every role: it ignores admission's operator
-answers, so the drift check would flag runs staffed exactly as the operator chose, and it costs one
-process per role on every refresh. Running the library prompt verbatim: the implementer prompt tells
+that drifts. Reading the record's row first and the resolver only for gaps: it wrote a second precedence
+order, and it registered a role one step below a recorded Jev raise. Calling the
+`staffing.py resolve --role` command line: it takes neither an operator answer nor a raise, and it
+costs one process per role on every refresh. Running the library prompt verbatim: the implementer prompt tells
 the subagent to post handoff comments, which `/work` routes through mission-control instead. A mod
 that rewrites the request's model or effort: the mods parent rules that a mod never enforces policy.
 A `saga:builder` alias: a third name for one role, with a mapping to keep in sync.

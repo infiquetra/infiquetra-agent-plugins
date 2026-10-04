@@ -51,14 +51,21 @@ def store(tmp_path: Path) -> Path:
     return path
 
 
-def _staff(store: Path, staffing: Any, *, next_step: str = "run /work on the plan") -> None:
+def _staff(
+    store: Path,
+    staffing: Any,
+    *,
+    next_step: str = "run /work on the plan",
+    source: str = "operator",
+) -> None:
+    """Record *staffing* as the run's map; ``source="operator"`` is a ``staffing_overrides`` answer."""
     run_record.set_next_step(store, ISSUE, next_step)
 
     def change(record: run_record.RunRecord | None) -> run_record.RunRecord:
         assert record is not None
         configuration = {k: dict(v) for k, v in record.run_configuration.items()}
         configuration["staffing_models_and_efforts"]["value"] = staffing
-        configuration["staffing_models_and_efforts"]["source"] = "staffing"
+        configuration["staffing_models_and_efforts"]["source"] = source
         return run_record.RunRecord(**{**record.__dict__, "run_configuration": configuration})
 
     run_record.update(store, ISSUE, change)
@@ -79,14 +86,33 @@ FULL = {
 
 
 class Resolver:
-    """A stand-in for `staffing.py resolve --role <role> --json` that records what it was asked."""
+    """A stand-in for `staffing.resolve_role` that records what it was asked.
+
+    It answers the operator's answer when given one, else the raise, else its default, the way
+    the real resolver does when no overlay is present. The script under test must not apply that
+    order itself; the stub is where it lives in these tests.
+    """
 
     def __init__(self, answer: Mapping[str, str] | None = None) -> None:
         self.answer = dict(answer or _row("sonnet", "medium"))
         self.asked: list[tuple[str, Path]] = []
+        self.inputs: dict[str, dict[str, Any]] = {}
 
-    def __call__(self, role: str, cwd: Path) -> Mapping[str, Any]:
+    def __call__(
+        self,
+        role: str,
+        cwd: Path,
+        *,
+        answer: Mapping[str, str] | None = None,
+        jev_raise: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Any]:
         self.asked.append((role, cwd))
+        self.inputs[role] = {"answer": answer, "jev_raise": jev_raise}
+        if answer is not None:
+            return {**self.answer, **answer, "role": role, "source": "operator"}
+        if jev_raise is not None:
+            tier = {"model": jev_raise["model"], "effort": jev_raise["effort"]}
+            return {**self.answer, **tier, "role": role, "source": "jev-raise"}
         return {**self.answer, "role": role, "source": "policy"}
 
 
@@ -121,9 +147,13 @@ def test_an_active_run_answers_every_briefed_role_at_its_recorded_tier(repo: Pat
     assert types["worker"]["role_id"] == "implementer"
     assert types["worker"]["readable_role"] == "Initial Implementation Worker"
     assert Path(types["worker"]["prompt_path"]) == ROLES / "implementer.md"
-    assert types["worker"]["source"] == "run-record"
+    assert types["worker"]["source"] == "operator"
     assert "opus/medium" in types["worker"]["description"]
-    assert resolver.asked == []  # the record staffed every role; the resolver was not asked
+    # The operator's map reaches the resolver as the operator's answer; the script applies none.
+    assert resolver.inputs["worker"] == {
+        "answer": {"model": "opus", "effort": "medium"},
+        "jev_raise": None,
+    }
 
 
 def test_the_prompt_is_the_library_file_body_behind_the_hosting_preamble(repo: Path, store: Path) -> None:
@@ -191,7 +221,7 @@ def test_a_role_staffed_on_another_vendor_is_skipped_not_translated(repo: Path, 
 def test_a_role_the_resolver_cannot_answer_is_skipped_with_its_reason(repo: Path, store: Path) -> None:
     _staff(store, {})
 
-    def failing(role: str, cwd: Path) -> Mapping[str, Any]:
+    def failing(role: str, cwd: Path, **_: Any) -> Mapping[str, Any]:
         if role == "planner":
             raise role_agent_types.RoleTypesError("error: unknown role")
         return {**_row("sonnet", "medium"), "role": role}
@@ -214,7 +244,7 @@ def test_unstaffed_roles_are_asked_of_the_resolver_from_the_checkout(repo: Path,
     answer = _answer(repo, store, resolver)
 
     assert sorted(_by_role(answer)) == CLAUDE_ROLES
-    assert all(t["source"] == "resolver" for t in answer["types"])
+    assert all(t["source"] == "policy" for t in answer["types"])
     assert sorted(role for role, _ in resolver.asked) == CLAUDE_ROLES
     assert {cwd for _, cwd in resolver.asked} == {repo}
 
@@ -225,12 +255,113 @@ def test_a_partial_operator_answer_is_completed_by_the_resolver(repo: Path, stor
     types = _by_role(_answer(repo, store, resolver))
 
     assert (types["worker"]["model"], types["worker"]["effort"]) == ("opus", "xhigh")
-    assert types["worker"]["source"] == "run-record+resolver"
-    assert (types["planner"]["model"], types["planner"]["source"]) == ("sonnet", "resolver")
+    assert types["worker"]["source"] == "operator"
+    assert (types["planner"]["model"], types["planner"]["source"]) == ("sonnet", "policy")
 
 
-def test_the_real_resolver_command_answers_a_role(repo: Path) -> None:
-    decision = role_agent_types.resolve_with_script("worker", repo)
+def test_an_admission_filled_row_is_answered_again_by_the_resolver(repo: Path, store: Path) -> None:
+    _staff(store, FULL, source="staffing")
+    resolver = Resolver(_row("sonnet", "high"))
+    types = _by_role(_answer(repo, store, resolver))
+
+    # Admission's row is the resolver's earlier answer, not an operator's: it is not passed in.
+    assert resolver.inputs["worker"] == {"answer": None, "jev_raise": None}
+    assert (types["worker"]["model"], types["worker"]["effort"]) == ("sonnet", "high")
+
+
+def test_a_row_marked_operator_override_goes_in_as_the_operators_answer(
+    repo: Path, store: Path
+) -> None:
+    worker = {**_row("opus", "xhigh"), "operator_override": True}
+    _staff(store, {**FULL, "worker": worker}, source="staffing")
+    resolver = Resolver()
+    types = _by_role(_answer(repo, store, resolver))
+
+    assert resolver.inputs["worker"]["answer"] == {"model": "opus", "effort": "xhigh"}
+    assert resolver.inputs["planner"]["answer"] is None
+    assert (types["worker"]["model"], types["worker"]["effort"]) == ("opus", "xhigh")
+
+
+RAISE = {"model": "opus", "effort": "high", "confidence": 0.86, "reason": "r", "decision_id": "d"}
+
+
+def test_a_recorded_jev_raise_reaches_the_registered_type(repo: Path, store: Path) -> None:
+    worker = {**_row("opus", "medium"), "jev_raise": RAISE}
+    _staff(store, {**FULL, "worker": worker}, source="staffing")
+    resolver = Resolver(_row("opus", "medium"))
+    types = _by_role(_answer(repo, store, resolver))
+
+    assert resolver.inputs["worker"] == {"answer": None, "jev_raise": RAISE}
+    assert (types["worker"]["model"], types["worker"]["effort"]) == ("opus", "high")
+    assert types["worker"]["source"] == "jev-raise"
+    assert "opus/high" in types["worker"]["description"]
+
+
+def test_a_raise_the_resolver_refuses_skips_the_role_by_name(repo: Path, store: Path) -> None:
+    bad = {**RAISE, "model": "fable", "effort": "max"}
+    _staff(store, {**FULL, "worker": {**_row("opus", "medium"), "jev_raise": bad}}, source="staffing")
+
+    def refusing(role: str, cwd: Path, *, answer: Any = None, jev_raise: Any = None) -> Any:
+        if jev_raise is not None:
+            raise role_agent_types.RoleTypesError("jev raise is not exactly one step above")
+        return {**_row("opus", "medium"), "role": role, "source": "policy"}
+
+    answer = _answer(repo, store, refusing)
+    assert "worker" not in _by_role(answer)
+    assert {
+        "role": "worker",
+        "reason": "its tier could not be resolved: jev raise is not exactly one step above",
+    } in answer["skipped"]
+
+
+class _FakeDecision:
+    def __init__(self, record: dict[str, Any]) -> None:
+        self.record = record
+
+    def as_dict(self) -> dict[str, Any]:
+        return dict(self.record)
+
+
+def test_the_default_resolver_hands_the_raise_to_staffing_resolve_role(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: dict[str, Any] = {}
+
+    class Staffing:
+        @staticmethod
+        def resolve_role(role: str, *, root: Path, require_lens: bool, answer: Any = None,
+                         jev_raise: Any = None) -> _FakeDecision:
+            seen.update(role=role, root=root, require_lens=require_lens, answer=answer,
+                        jev_raise=jev_raise)
+            return _FakeDecision({**_row("opus", "high"), "source": "jev-raise"})
+
+    monkeypatch.setattr(role_agent_types, "_load_staffing", lambda: Staffing)
+    decision = role_agent_types.resolve_with_staffing("worker", repo, jev_raise=RAISE)
+    assert seen == {"role": "worker", "root": repo, "require_lens": False, "answer": None,
+                    "jev_raise": RAISE}
+    assert (decision["model"], decision["effort"], decision["source"]) == ("opus", "high", "jev-raise")
+
+
+def test_a_resolver_that_cannot_apply_a_raise_refuses_it_rather_than_dropping_it(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Staffing:
+        @staticmethod
+        def resolve_role(role: str, *, root: Path, require_lens: bool) -> _FakeDecision:
+            return _FakeDecision({**_row("opus", "medium"), "source": "policy"})
+
+    monkeypatch.setattr(role_agent_types, "_load_staffing", lambda: Staffing)
+    with pytest.raises(role_agent_types.RoleTypesError, match="cannot apply one"):
+        role_agent_types.resolve_with_staffing("worker", repo, jev_raise=RAISE)
+    # An operator answer outranks every layer, so an older resolver returns it as given.
+    decision = role_agent_types.resolve_with_staffing(
+        "worker", repo, answer={"model": "sonnet", "effort": "low"}
+    )
+    assert (decision["model"], decision["effort"], decision["source"]) == ("sonnet", "low", "operator")
+
+
+def test_the_real_resolver_answers_a_role(repo: Path) -> None:
+    decision = role_agent_types.resolve_with_staffing("worker", repo)
     assert decision["role"] == "worker"
     assert decision["vendor"] == "claude"
     assert decision["model"] and decision["effort"]

@@ -371,7 +371,7 @@ export type SagaRoleAgentType = {
   prompt: string
   model: string
   effort: string
-  /** `run-record`, `resolver`, or `run-record+resolver` where the record named only some fields. */
+  /** The resolver's tier source: `operator`, `overlay`, `jev-raise` or `policy`. */
   source: string
   description: string
 }
