@@ -407,6 +407,154 @@ def test_review_an_unknown_record_version_exits_3(
 
 
 # --------------------------------------------------------------------------------------------
+# unit-for: which unit row a session is working (issue #107, the token-capture mod)
+# --------------------------------------------------------------------------------------------
+
+
+def _units(
+    store: Path, issue: int, units: list[dict[str, object]], next_step: str = "work"
+) -> None:
+    def change(existing: run_record.RunRecord | None) -> run_record.RunRecord:
+        record = existing or run_record.RunRecord(issue=issue)
+        return run_record.RunRecord(**{**record.__dict__, "units": units, "next_step": next_step})
+
+    run_record.update(store, issue, change)
+
+
+def _unit_for(cwd: Path, store: Path, capsys: pytest.CaptureFixture[str]) -> dict[str, object]:
+    code, out, _ = _run(cwd, store, "unit-for", "--json", capsys=capsys)
+    assert code == 0
+    view = json.loads(out)
+    assert view["schema"] == run_status.SCHEMA
+    return view
+
+
+def test_unit_for_matches_the_row_whose_worktree_is_the_checkout(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _units(
+        store,
+        412,
+        [
+            {"name": "u1", "worktree": "/elsewhere"},
+            {"name": "u2", "worktree": str(repo)},
+        ],
+    )
+    match = _unit_for(repo, store, capsys)["match"]
+    assert match == {
+        "issue": 412,
+        "unit": "u2",
+        "role": "worker",
+        "matched_by": "worktree",
+        "record_path": str(run_record.record_path(store, 412)),
+        "store_root": str(store),
+        "ambiguous": False,
+    }
+
+
+def test_unit_for_matches_from_a_subdirectory_of_the_worktree(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _units(store, 412, [{"name": "u2", "worktree": str(repo)}])
+    sub = repo / "src"
+    sub.mkdir()
+    assert _unit_for(sub, store, capsys)["match"]["unit"] == "u2"
+
+
+def test_unit_for_falls_back_to_the_branch_when_no_worktree_matches(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _units(
+        store,
+        412,
+        [{"name": "u1", "branch": "orch/r1-u1"}, {"name": "u2", "branch": "issue/104"}],
+    )
+    view = _unit_for(repo, store, capsys)
+    assert view["branch"] == "issue/104"
+    assert (view["match"]["unit"], view["match"]["matched_by"]) == ("u2", "branch")
+
+
+def test_unit_for_reads_unit_id_and_the_rows_own_role(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _units(
+        store,
+        412,
+        [{"unit_id": "fix-1", "role": "review-fixer", "worktree": str(repo)}],
+    )
+    match = _unit_for(repo, store, capsys)["match"]
+    assert (match["unit"], match["role"]) == ("fix-1", "review-fixer")
+
+
+def test_unit_for_names_the_merging_worker_in_a_merge_turn_worktree(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _units(
+        store,
+        412,
+        [{"name": "u2", "worktree": "/elsewhere", "merge_worktree": str(repo)}],
+    )
+    match = _unit_for(repo, store, capsys)["match"]
+    assert (match["unit"], match["role"]) == ("u2", "merging-worker")
+
+
+def test_unit_for_ignores_a_role_that_is_not_a_role_name(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _units(store, 412, [{"name": "u2", "role": "Bad Role\n", "worktree": str(repo)}])
+    assert _unit_for(repo, store, capsys)["match"]["role"] == "worker"
+
+
+def test_unit_for_prefers_a_worktree_match_then_an_active_record(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _units(store, 300, [{"name": "by-branch", "branch": "issue/104"}])
+    _units(store, 301, [{"name": "finished", "worktree": str(repo)}], next_step="")
+    _units(store, 302, [{"name": "active", "worktree": str(repo)}])
+    match = _unit_for(repo, store, capsys)["match"]
+    assert (match["issue"], match["unit"], match["ambiguous"]) == (302, "active", True)
+
+
+def test_unit_for_is_null_for_an_unrelated_directory(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _units(store, 412, [{"name": "u2", "worktree": "/elsewhere", "branch": "orch/r1-u2"}])
+    assert _unit_for(repo, store, capsys)["match"] is None
+
+
+def test_unit_for_is_null_outside_a_git_checkout(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    code = run_status.main(["--repo-root", str(plain), "unit-for", "--json"])
+    out, err = capsys.readouterr()
+    assert (code, err) == (0, "")
+    assert json.loads(out)["match"] is None
+
+
+def test_unit_for_skips_an_unreadable_record_with_a_warning(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (store / "issue-201.json").write_text(json.dumps({"schema": "run_record.v9"}))
+    _units(store, 412, [{"name": "u2", "worktree": str(repo)}])
+    code, out, err = _run(repo, store, "unit-for", "--json", capsys=capsys)
+    assert code == 0
+    assert json.loads(out)["match"]["unit"] == "u2"
+    assert "issue-201.json" in err
+
+
+def test_unit_for_text_form_is_one_line(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, out, _ = _run(repo, store, "unit-for", capsys=capsys)
+    assert (code, out.strip()) == (0, "run_status: no saga unit for this checkout")
+    _units(store, 412, [{"name": "u2", "worktree": str(repo)}])
+    _, out, _ = _run(repo, store, "unit-for", capsys=capsys)
+    assert out.strip() == "#412 unit u2 (worker, by worktree)"
+
+
+# --------------------------------------------------------------------------------------------
 # The Claude Code mods read this output; nothing type-checks their TypeScript in continuous
 # integration (DECISIONS.md, 2026-10-04), so these tie the contract to what the script prints.
 # --------------------------------------------------------------------------------------------
@@ -454,3 +602,14 @@ def test_the_contract_declares_exactly_the_fields_a_review_finding_carries() -> 
     assert body, "the contract no longer declares SagaReviewFinding"
     declared = set(re.findall(r"^\s+(\w+):", body.group(1), re.MULTILINE))
     assert declared == set(run_status.FINDING_FIELDS)
+
+
+def test_the_contract_declares_exactly_the_fields_unit_for_matches(repo: Path, store: Path) -> None:
+    _units(store, 412, [{"name": "u2", "worktree": str(repo)}])
+    match = run_status.unit_for(store, repo, "")
+    assert match is not None
+    contract = (ADAPTER / "types" / "index.d.ts").read_text(encoding="utf-8")
+    body = re.search(r"export type SagaUsageTarget = \{(.*?)\n\}", contract, re.S)
+    assert body, "the contract no longer declares SagaUsageTarget"
+    declared = set(re.findall(r"^\s+(\w+):", body.group(1), re.MULTILINE))
+    assert declared == set(match)
