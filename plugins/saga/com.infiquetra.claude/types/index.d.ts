@@ -56,10 +56,46 @@ export type SagaRunRead =
 export type SagaRunStatusSchema = 'run_status.v1'
 
 /**
+ * Where a run's build loop stands (issue #105). One unit is described (`unit`
+ * and the iteration fields set) when its worktree is the checkout or it is the
+ * only unit that ran the loop; otherwise only the green count is.
+ */
+export type SagaRunBuildLoop = {
+  unit: string | null
+  /** The latest iteration's number. */
+  pass: number | null
+  failing: number | null
+  /** Checks that could not execute, never counted as failing. */
+  could_not_execute: number | null
+  green: boolean | null
+  units_total: number
+  units_green: number
+}
+
+/**
+ * The latest code review cycle against its allowance, and how many lenses met
+ * their bar by the verdict's own rule (issue #105).
+ */
+export type SagaRunReviewProgress = {
+  unit: string | null
+  cycle: number | null
+  standard_allowance: number
+  escalated_allowance: number
+  /** The cycle is past the standard allowance. */
+  is_escalated: boolean
+  outcome: string | null
+  lenses_met: number
+  lenses_total: number
+  lenses_not_run: number
+}
+
+/**
  * One run as `run_status.py summary --json` prints it. The run record supplies
- * `next_step`, `updated_at` and `record_path`; the saga envelope supplies
- * `phase`, `plan_path` (as recorded, relative to the checkout) and `plan_file`
- * (absolute). Each is null when its store does not know the run.
+ * `next_step`, `updated_at`, `record_path`, `build_loop` and `review`; the saga
+ * envelope supplies `phase`, `plan_path` (as recorded, relative to the
+ * checkout) and `plan_file` (absolute). Each is null when its store does not
+ * know the run. `band_line` is the status band's line, rendered by the script
+ * so every harness shows the same words.
  */
 export type SagaRunStatus = {
   issue: number
@@ -70,6 +106,9 @@ export type SagaRunStatus = {
   phase: string | null
   plan_path: string | null
   plan_file: string | null
+  build_loop: SagaRunBuildLoop | null
+  review: SagaRunReviewProgress | null
+  band_line: string
 }
 
 /** What `run_status.py summary --json` prints. */
@@ -310,6 +349,13 @@ export type SagaUsageBucket = {
   steps: number
 }
 
+/** The raw run record pane: the record as JSON, cut into pages a Code block can hold. */
+export type SagaRecordView = {
+  issue: number
+  pages: string[]
+  page: number
+}
+
 declare module 'claude-code' {
   interface PluginState {
     saga: {
@@ -331,6 +377,12 @@ declare module 'claude-code' {
       usageTarget: SagaUsageTarget | null
       /** Usage read from `turn.step` and not yet written through `usage add`. */
       usageQueue: SagaUsageBucket[]
+      /** This checkout's active runs as the status band last read them (issue #105). */
+      runStatus: SagaRunStatus[]
+      /** The operator pressed the band's Hide; it stays hidden for the session. */
+      bandHidden: boolean
+      /** The raw run record the band's Record button opened, or null. */
+      recordView: SagaRecordView | null
     }
   }
 }

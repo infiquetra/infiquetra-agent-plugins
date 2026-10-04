@@ -4,6 +4,19 @@
 
 ### Added
 
+- The run status band in Claude Code (issue #105): above the prompt, one line per active saga run,
+  as in `#412 · work · build loop pass 3, 2 failing · review cycle 1/3 · 7/10 lenses met`, with
+  buttons that open the plan viewer, the review findings pane and the raw run record (paged under
+  the 10,000-character limit), and Hide, which hides the band for the session. Saga's status-line
+  entry shows the first run's issue and phase. It refreshes after the session starts, every minute,
+  after each main-loop turn and after a Bash call that ran a saga or orchestrate state script, and
+  draws nothing when no run is active: `summary --all-active` leaves out a closed run (empty
+  `next_step`) even when the checkout is still on its `issue/N` branch. It is read-only.
+- `scripts/run_status.py summary` rows now carry `build_loop` (the unit in this checkout, or the
+  only one, with its latest pass, failing and could-not-execute counts; otherwise units green),
+  `review` (the latest code review cycle against the standard and escalated allowances, and lenses
+  met by the verdict's rule) and `band_line`, the band's line. `summary --band` prints that line per
+  run as the plain fallback. The keys are additive within `run_status.v1`.
 - Live token capture for Claude Code unit sessions (issue #107). `mods/usage-capture.ts` asks
   `scripts/run_status.py unit-for` at session start which unit row the session's directory works
   (the row whose `worktree` or `merge_worktree` is that checkout, else the row whose `branch` is
@@ -102,6 +115,8 @@
 
 ### Changed
 
+- `/plan-view` and `/review-view` keep their behaviour; each now opens through one function that
+  the slash command and the band's button press share (issue #105).
 - The builder now defaults to Claude `opus/medium`: `resolve-build-unit-tier` with no plan tier and
   no work shape resolves the `worker` role's work shape, `implementation`, instead of `mechanical`
   (issue #93).

@@ -503,13 +503,25 @@ python3 plugins/saga/scripts/run_record.py usage add <issue> --unit <id> --sessi
 python3 plugins/saga/scripts/cost_report.py [--issue <issue>] [--today YYYY-MM-DD] [--json]
 
 # a read-only view of this checkout's runs: phase, next step and plan path
-python3 plugins/saga/scripts/run_status.py [--repo-root <dir>] summary [--issue <issue>] [--all-active] [--json]
+python3 plugins/saga/scripts/run_status.py [--repo-root <dir>] summary [--issue <issue>] [--all-active] [--json | --band]
 ```
 
 `run_status.py summary` is the display view the Claude Code mods and other harnesses read. It joins
 this record (`next_step`, `updated_at`) with the per-worktree saga envelope (the lifecycle phase and
 the plan path, which this record does not carry) and writes nothing. `--json` prints
-`run_status.v1`; its exit codes match `show` above.
+`run_status.v1`; its exit codes match `show` above. `--all-active` lists only active runs, the
+way `next_step_context` defines them: a record whose `next_step` is empty is a closed run and is
+left out, even when it is the issue this checkout's `issue/N` branch resolves to. A run only the
+envelope knows (no record yet) stays. Named with `--issue` alone, a closed run still prints.
+
+Each row also carries where the run stands, for the run status band (issue #105): `build_loop`
+(from the unit rows' `build_loop.iterations`: the unit whose `worktree` is this checkout, or the
+only unit that ran the loop, with its latest iteration's number, failing and could-not-execute
+counts; otherwise how many units are green), `review` (the latest `review_result.v2` code review
+cycle against `standard_cycle_allowance` and `escalated_cycle_allowance`, and how many lenses met
+their bar by `review_consensus.lens_outcomes_for_result`) and `band_line`, the one line every
+harness shows, such as `#412 · work · build loop pass 3, 2 failing · review cycle 1/3 · 7/10
+lenses met`. `--band` prints that line per run; it is the plain fallback for the Claude Code band.
 
 `--store-root <dir>` overrides the resolution above. It exists for the tests and for reading a
 record that belongs to another checkout; every test that touches a store passes it, because nothing

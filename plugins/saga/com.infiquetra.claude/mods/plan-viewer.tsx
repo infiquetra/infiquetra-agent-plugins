@@ -16,6 +16,9 @@
 // - When `/plan` saves a plan tick, the pane opens unasked. The engine places
 //   an unasked pane only from 144 columns; below that it is closed again and a
 //   toast names the command instead.
+// - The run status band's Plan button (issue #105) opens the run's plan here:
+//   this module answers the press on `band-plan-<issue>` itself, because a
+//   plugin's own `$.command.run` never reaches its own command hook.
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
@@ -35,6 +38,9 @@ import { readRunStatusWith } from './run-record.ts'
 
 /** The pane's id, and the `requestId` its `ui.render` hook matches. */
 export const PLAN_PANE = 'saga-plan'
+
+/** The run status band's Plan button, `band-plan-<issue>` (issue #105). */
+export const BAND_PLAN_ELEMENT = /^band-plan-\d+$/
 
 /** How often an open pane checks the plan file's modification time. */
 export const PLAN_POLL_MS = 3_000
@@ -103,6 +109,46 @@ async function fillPrompt($: EngineInterface, text: string): Promise<void> {
   if (!filled.isFilled) $.ui.toast('plan-view: the prompt cannot take text right now')
 }
 
+/**
+ * Open the pane on `args` as `/plan-view` takes them: nothing, `#N` or a path.
+ * Says what it did; `isOpened` is false when there was nothing to open.
+ */
+async function openPlanView($: EngineInterface, args: string): Promise<{ text: string; isOpened: boolean }> {
+  const cwd = await $.session.cwd()
+  const target = args.trim()
+  let path: string
+  let file: string
+  let repoRoot = cwd
+
+  const issueArg = /^#?(\d+)$/.exec(target)
+  if (target === '' || issueArg !== null) {
+    const issue = issueArg === null ? undefined : Number(issueArg[1])
+    const ran = await readRunStatusWith((argv) => $.process.run(argv), $.plugin.root, { repoRoot: cwd, issue })
+    if (!ran.ok) return { text: `plan-view: could not read the saga run (${ran.reason}): ${ran.detail}`, isOpened: false }
+    const run = ran.view.runs[0]
+    if (run === undefined) {
+      const which = issue === undefined ? 'for this checkout' : `for #${issue} in this checkout`
+      return { text: `plan-view: no saga run ${which}. Name the plan instead: /plan-view docs/plans/<file>.md`, isOpened: false }
+    }
+    if (run.plan_file === null || run.plan_path === null) {
+      return { text: `plan-view: #${run.issue} has no plan recorded yet. Name one: /plan-view docs/plans/<file>.md`, isOpened: false }
+    }
+    path = run.plan_path
+    file = run.plan_file
+    repoRoot = ran.view.repo_root
+  } else {
+    path = target
+    file = absolutePath(cwd, target)
+  }
+
+  const loaded = await loadPlan($, path, file, repoRoot)
+  if (!loaded.ok) return { text: `plan-view: ${loaded.detail}`, isOpened: false }
+  await showPlan($, loaded.view)
+  await $.ui.open({ id: PLAN_PANE, title: `Plan · ${path.split('/').pop()}` })
+  const count = loaded.view.sections.length
+  return { text: `plan-view: ${path}, ${count} section${count === 1 ? '' : 's'}.`, isOpened: true }
+}
+
 export function registerPlanViewer(on: On): void {
   on('session.start', { cwd: /^/ }, async ($, e, next) => {
     await $.command.register({
@@ -134,39 +180,16 @@ export function registerPlanViewer(on: On): void {
   })
 
   on('command.run', { command: 'plan-view' }, async ($, e) => {
-    const cwd = await $.session.cwd()
-    const target = e.args.trim()
-    let path: string
-    let file: string
-    let repoRoot = cwd
+    const opened = await openPlanView($, e.args)
+    return { text: opened.text }
+  })
 
-    const issueArg = /^#?(\d+)$/.exec(target)
-    if (target === '' || issueArg !== null) {
-      const issue = issueArg === null ? undefined : Number(issueArg[1])
-      const ran = await readRunStatusWith((argv) => $.process.run(argv), $.plugin.root, { repoRoot: cwd, issue })
-      if (!ran.ok) return { text: `plan-view: could not read the saga run (${ran.reason}): ${ran.detail}` }
-      const run = ran.view.runs[0]
-      if (run === undefined) {
-        const which = issue === undefined ? 'for this checkout' : `for #${issue} in this checkout`
-        return { text: `plan-view: no saga run ${which}. Name the plan instead: /plan-view docs/plans/<file>.md` }
-      }
-      if (run.plan_file === null || run.plan_path === null) {
-        return { text: `plan-view: #${run.issue} has no plan recorded yet. Name one: /plan-view docs/plans/<file>.md` }
-      }
-      path = run.plan_path
-      file = run.plan_file
-      repoRoot = ran.view.repo_root
-    } else {
-      path = target
-      file = absolutePath(cwd, target)
-    }
-
-    const loaded = await loadPlan($, path, file, repoRoot)
-    if (!loaded.ok) return { text: `plan-view: ${loaded.detail}` }
-    await showPlan($, loaded.view)
-    await $.ui.open({ id: PLAN_PANE, title: `Plan · ${path.split('/').pop()}` })
-    const count = loaded.view.sections.length
-    return { text: `plan-view: ${path}, ${count} section${count === 1 ? '' : 's'}.` }
+  // The run status band's Plan button (issue #105): a press on `band-plan-N` opens #N's plan.
+  on('ui.press', { plugin: 'saga', element: BAND_PLAN_ELEMENT }, async ($, e) => {
+    const issue = /(\d+)$/.exec(e.element)?.[1] ?? ''
+    const opened = await openPlanView($, `#${issue}`)
+    if (!opened.isOpened) $.ui.toast(opened.text)
+    return { element: e.element }
   })
 
   // An edit of the plan file reloads the pane.

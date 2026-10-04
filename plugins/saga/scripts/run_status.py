@@ -14,7 +14,12 @@ nothing. Two stores feed it, and neither is complete alone:
 ``summary`` prints one row per run. With ``--issue`` it is that issue; with neither flag it is the
 issue ``next_step_context.resolve_issue`` finds (this worktree's active saga, then an ``issue/N``
 branch); ``--all-active`` lists every record whose ``next_step`` is not empty, the resolved issue
-first, then newest first. A run appears when either store knows it.
+first, then newest first. Under ``--all-active`` the resolved issue follows the same rule: a record
+whose ``next_step`` is empty is a closed run and is left out, while a run only the envelope knows
+(no record yet) stays. A run appears when either store knows it. Each row also carries where the
+run stands for the run status band (issue #105): its build loop, its latest code review cycle
+against the allowance and how many lenses met their bar, and ``band_line``, the one line every
+harness shows. ``summary --band`` prints that line per run.
 
 ``review`` prints the latest code review result in the run record, lens by lens (issue #108): for
 each selected lens whether it met its bar, did not, did not run, or ran without a bar to meet, and
@@ -136,7 +141,11 @@ def run_view(store_root: Path, repo_root: Path, issue: int) -> dict[str, Any] | 
     envelope = envelope_view(repo_root, issue)
     if record is None and envelope is None:
         return None
-    return {
+    build_loop = review = None
+    if record is not None:
+        build_loop = build_loop_view(record, repo_root)
+        review = review_progress(record, build_loop["unit"] if build_loop else None)
+    row: dict[str, Any] = {
         "issue": issue,
         "repo": record.repo if record is not None else None,
         "next_step": record.next_step if record is not None else "",
@@ -147,7 +156,11 @@ def run_view(store_root: Path, repo_root: Path, issue: int) -> dict[str, Any] | 
         "phase": envelope["phase"] if envelope else None,
         "plan_path": envelope["plan_path"] if envelope else None,
         "plan_file": envelope["plan_file"] if envelope else None,
+        "build_loop": build_loop,
+        "review": review,
     }
+    row["band_line"] = band_line(row)
+    return row
 
 
 def active_issues(store_root: Path) -> list[int]:
@@ -325,6 +338,11 @@ def summary(
     if all_active:
         issues += [number for number in active_issues(store_root) if number != resolved]
     runs = [row for row in (run_view(store_root, repo_root, n) for n in issues) if row is not None]
+    if all_active:
+        # ``next_step_context`` treats an empty next step as a closed run: announce nothing. A
+        # checkout left on its ``issue/N`` branch must not keep a closed run on the band. A row
+        # with no record (``record_path`` null) is a run the envelope alone knows, so it stays.
+        runs = [row for row in runs if row["record_path"] is None or row["next_step"].strip()]
     return {"schema": SCHEMA, "repo_root": str(repo_root), "runs": runs}
 
 
@@ -531,6 +549,196 @@ def render_review(view: dict[str, Any]) -> list[str]:
     return lines
 
 
+# ---------------------------------------------------------------------------
+# Where a run stands, for the run status band (issue #105)
+# ---------------------------------------------------------------------------
+
+#: The repair allowances the lifecycle defaults to when the run configuration names none.
+DEFAULT_STANDARD_ALLOWANCE = 3
+DEFAULT_ESCALATED_ALLOWANCE = 2
+
+#: How much of ``next_step`` stands in for the phase when no saga envelope names one.
+PHASE_FALLBACK_CHARS = 40
+
+#: The result arrays of one build-loop iteration (``references/mechanical-baseline.md``).
+ITERATION_RESULT_KEYS = ("baseline", "functional_checks", "scenario_smoke")
+
+
+def _same_path(left: Any, right: Path) -> bool:
+    if not isinstance(left, str) or not left.strip():
+        return False
+    try:
+        return Path(left).resolve() == Path(right).resolve()
+    except (OSError, RuntimeError):
+        return False
+
+
+def _iteration_counts(iteration: dict[str, Any]) -> tuple[int, int]:
+    """How many checks of *iteration* failed, and how many could not execute.
+
+    The preview counts as one more check. ``could-not-execute`` is never folded into ``fail``: an
+    environment problem is not a defect in the code (mechanical-baseline.md, "The three statuses").
+    """
+    statuses: list[str] = []
+    for key in ITERATION_RESULT_KEYS:
+        results = iteration.get(key)
+        if isinstance(results, list):
+            statuses += [str(r.get("status", "")) for r in results if isinstance(r, dict)]
+    preview = iteration.get("preview")
+    if isinstance(preview, dict):
+        statuses.append(str(preview.get("status", "")))
+    failing = sum(1 for status in statuses if status == "fail")
+    unexecuted = sum(1 for status in statuses if status == "could-not-execute")
+    return failing, unexecuted
+
+
+def _last_iteration(row: dict[str, Any]) -> dict[str, Any] | None:
+    block = row.get("build_loop")
+    iterations = block.get("iterations") if isinstance(block, dict) else None
+    if not isinstance(iterations, list):
+        return None
+    entries = [entry for entry in iterations if isinstance(entry, dict)]
+    return entries[-1] if entries else None
+
+
+def build_loop_view(record: run_record.RunRecord, checkout: Path) -> dict[str, Any] | None:
+    """Where the run's build loop stands, or ``None`` when no unit has run it.
+
+    One unit is described when its row's ``worktree`` is *checkout*, or when it is the only unit
+    with a build loop: its latest iteration's number, failing and unexecuted checks, and whether it
+    was green. Otherwise the view counts the units whose latest iteration was green, and ``unit``
+    and the iteration fields are ``None``.
+    """
+    looped = [
+        (row, last)
+        for row in record.units
+        if isinstance(row, dict) and (last := _last_iteration(row)) is not None
+    ]
+    if not looped:
+        return None
+    mine = [pair for pair in looped if _same_path(pair[0].get("worktree"), checkout)]
+    chosen = mine[0] if mine else (looped[0] if len(looped) == 1 else None)
+    view: dict[str, Any] = {
+        "unit": None,
+        "pass": None,
+        "failing": None,
+        "could_not_execute": None,
+        "green": None,
+        "units_total": len(looped),
+        "units_green": sum(1 for _, last in looped if last.get("green") is True),
+    }
+    if chosen is not None:
+        row, last = chosen
+        failing, unexecuted = _iteration_counts(last)
+        number = last.get("iteration")
+        view.update(
+            unit=run_record.unit_key(row) or None,
+            failing=failing,
+            could_not_execute=unexecuted,
+            green=last.get("green") is True,
+        )
+        view["pass"] = number if isinstance(number, int) else None
+    return view
+
+
+def _allowance(record: run_record.RunRecord, key: str, fallback: int) -> int:
+    """A cycle allowance from the run configuration (``{"value": n}`` or a bare number)."""
+    entry = record.run_configuration.get(key)
+    raw = entry.get("value") if isinstance(entry, dict) else entry
+    if isinstance(raw, bool):
+        return fallback
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return fallback
+    return value if value >= 0 else fallback
+
+
+def review_progress(record: run_record.RunRecord, unit: str | None) -> dict[str, Any] | None:
+    """The latest code review cycle against its allowance, and how many lenses met their bar.
+
+    The entry is *unit*'s latest ``review_result.v2`` code review when it has one, else the run's
+    latest. Whether a lens met its bar is the verdict's own rule, through :func:`lens_views`; a
+    selected lens with no row counts in the total as not run.
+    """
+    loop = review_result.LOOP_CODE_REVIEW
+    entry = latest_review(record, loop=loop, unit=unit) if unit else None
+    if entry is None:
+        entry = latest_review(record, loop=loop)
+    if entry is None:
+        return None
+    lenses, _ = lens_views(entry, selected_lenses(record))
+    standard = _allowance(record, "standard_cycle_allowance", DEFAULT_STANDARD_ALLOWANCE)
+    escalated = _allowance(record, "escalated_cycle_allowance", DEFAULT_ESCALATED_ALLOWANCE)
+    cycle = entry.get("cycle")
+    cycle = cycle if isinstance(cycle, int) and not isinstance(cycle, bool) else None
+    return {
+        "unit": entry.get("unit"),
+        "cycle": cycle,
+        "standard_allowance": standard,
+        "escalated_allowance": escalated,
+        "is_escalated": cycle is not None and cycle > standard,
+        "outcome": entry.get("outcome"),
+        "lenses_met": sum(1 for lens in lenses if lens["state"] == "met"),
+        "lenses_total": len(lenses),
+        "lenses_not_run": sum(1 for lens in lenses if lens["state"] == "not_run"),
+    }
+
+
+def _plural(count: int, word: str) -> str:
+    return f"{count} {word}" if count == 1 else f"{count} {word}s"
+
+
+def _build_loop_part(view: dict[str, Any]) -> str:
+    if view["unit"] is None or view["pass"] is None:
+        return f"build loop {view['units_green']}/{view['units_total']} units green"
+    part = f"build loop pass {view['pass']}"
+    if view["green"]:
+        return f"{part}, green"
+    details = []
+    if view["failing"]:
+        details.append(f"{view['failing']} failing")
+    if view["could_not_execute"]:
+        details.append(f"{view['could_not_execute']} could not run")
+    return f"{part}, {', '.join(details) if details else 'not green'}"
+
+
+def _review_part(view: dict[str, Any]) -> list[str]:
+    parts: list[str] = []
+    if view["cycle"] is not None:
+        if view["is_escalated"]:
+            budget = view["standard_allowance"] + view["escalated_allowance"]
+            parts.append(f"review cycle {view['cycle']}/{budget} (escalated)")
+        else:
+            parts.append(f"review cycle {view['cycle']}/{view['standard_allowance']}")
+    if view["lenses_total"]:
+        parts.append(f"{view['lenses_met']}/{view['lenses_total']} lenses met")
+    return parts
+
+
+def band_line(row: dict[str, Any]) -> str:
+    """One run as the status band's line, the single renderer every harness shows.
+
+    ``#412 · work · build loop pass 3, 2 failing · review cycle 1/3 · 7/10 lenses met``. A part
+    the run has no data for is left out. With no saga envelope the phase is the start of
+    ``next_step``.
+    """
+    parts = [f"#{row['issue']}"]
+    phase = row.get("phase")
+    if not phase:
+        step = " ".join(str(row.get("next_step") or "").split())
+        if len(step) > PHASE_FALLBACK_CHARS:
+            step = step[: PHASE_FALLBACK_CHARS - 1] + "…"
+        phase = step
+    if phase:
+        parts.append(phase)
+    if row.get("build_loop"):
+        parts.append(_build_loop_part(row["build_loop"]))
+    if row.get("review"):
+        parts += _review_part(row["review"])
+    return " · ".join(parts)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="run_status.py",
@@ -552,9 +760,14 @@ def build_parser() -> argparse.ArgumentParser:
     summ.add_argument(
         "--all-active",
         action="store_true",
-        help="Every run whose next step is not empty, the resolved issue first.",
+        help="Every run whose next step is not empty (the resolved issue too), the resolved issue first.",
     )
     summ.add_argument("--json", action="store_true", help=f"Print the {SCHEMA} document.")
+    summ.add_argument(
+        "--band",
+        action="store_true",
+        help="Print each run's status band line instead of its phase, next step and plan.",
+    )
     rev = sub.add_parser("review", help="The latest code review result, lens by lens.")
     rev.add_argument("--issue", type=int, default=None, help="This issue (default: resolved).")
     rev.add_argument("--unit", default=None, help="This unit's history only.")
@@ -635,7 +848,7 @@ def main(argv: list[str] | None = None, *, runner: Callable[..., Any] | None = N
         print("\n".join(render_review(view)))
     elif view["runs"]:
         for run in view["runs"]:
-            print(render_line(run))
+            print(run["band_line"] if args.band else render_line(run))
     else:
         print("run_status: no saga run for this checkout")
     return 0

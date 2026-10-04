@@ -123,6 +123,11 @@ function fake(on: On): Fake {
       const none = JSON.stringify({ schema: 'run_status.v1', repo_root: CWD, branch: '', match: null })
       return { value: { exitCode: 0, stdout: none, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     }
+    // The run status band (issue #105) reads every active run on its own clock; it has none here.
+    if (e.argv.includes('--all-active')) {
+      const none = JSON.stringify({ schema: 'run_status.v1', repo_root: CWD, runs: [] })
+      return { value: { exitCode: 0, stdout: none, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     state.runs.push([...e.argv])
     return { value: { ...state.review, isStdoutTruncated: false, isStderrTruncated: false } }
   })
