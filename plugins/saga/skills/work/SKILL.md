@@ -383,11 +383,21 @@ hook (#677/U5). Direct `Agent`/`Task` spawns carry no lease admission.
   example the plan tier), `"jev_raise_set_aside": true`. Record both in the execution evidence. Every form goes through fleet-core's staffing
   resolver (`staffing.resolve_shape`), which weighs the repository overlay, any recorded raise and
   the registry default and owns the order between them; do not restate it here. A raise reaches
-  it only when you pass the plan unit's recorded `jev_raise` as `--jev-raise '<json>'`. `/plan`'s
-  `tier_judgment.py plan` (issue #96) records it, only for an automatic raise, under the run
-  record's `tier_judgments` map; read it with `python3 plugins/saga/scripts/tier_judgment.py raise
-  --issue <N> --unit <id>`, which prints the JSON to pass or `null` when there is none to pass; `--root <checkout>` names where the overlay is
-  read when you are not running from the repository root. An explicit
+  it only when the plan unit's recorded `jev_raise` reaches `--jev-raise -`, which reads it from
+  stdin. `/plan`'s `tier_judgment.py plan` (issue #96) records it, only for an automatic raise,
+  under the run record's `tier_judgments` map; `tier_judgment.py raise` prints it, or `null` when
+  there is none, so pipe one into the other:
+
+  ```bash
+  python3 plugins/saga/scripts/tier_judgment.py raise --issue <N> --unit <id> \
+    | python3 plugins/saga/scripts/lifecycle_state.py resolve-build-unit-tier --explain \
+        --work-shape <shape> --jev-raise -
+  ```
+
+  Never copy the printed JSON into a quoted `--jev-raise` argument: its `reason` is built from a
+  TypeSafe answer, and a single quote in it would end the argument early (issue #133). Empty stdin
+  is refused, so a failed `tier_judgment.py raise` is not read as "no raise". `--root <checkout>`
+  names where the overlay is read when you are not running from the repository root. An explicit
   plan tier is handed to that resolver as the operator's answer and validated against the same
   vocabulary as every other layer, so a model or effort the registry does not carry is refused
   rather than passed through to a spawn. An undeclared unit runs at the `worker` role's work shape,

@@ -16,7 +16,7 @@ This module is saga's half, shared by ``admission.py`` and ``/plan``:
   automatic raise as ``jev_raise``, under the plan unit's id in the run record's top-level
   ``tier_judgments`` map. The ``label`` command records the tier ``/plan`` finally chose for each
   unit there as ``planned_tier`` and logs the labels. The ``raise`` command prints one unit's
-  recorded ``jev_raise`` (or ``null``) for ``/work`` to pass to ``--jev-raise``.
+  recorded ``jev_raise`` (or ``null``) for ``/work`` to pipe into ``--jev-raise -``.
 
 The plan-unit judgments live in a top-level map of their own, never on the ``units`` rows: those
 rows belong to the writers that run units (orchestrate, the build loop), and a row this module
@@ -299,8 +299,8 @@ def run_plan(
     """Judge every plan unit in one request and record each judgment under ``tier_judgments``.
 
     Each plan unit's entry, keyed by its id, gets its ``tier_judgment`` block and, for an
-    automatic raise, its ``jev_raise``, which ``/work`` passes to
-    ``lifecycle_state.py resolve-build-unit-tier --jev-raise``. The ``units`` rows are never
+    automatic raise, its ``jev_raise``, which ``/work`` pipes into
+    ``lifecycle_state.py resolve-build-unit-tier --jev-raise -``. The ``units`` rows are never
     touched. Returns the rows to show in ``/plan``'s tier table.
     """
     if not dry_run and run_record.load(store_root, issue, warn=None) is None:

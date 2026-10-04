@@ -8,7 +8,7 @@ import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 DESTINATION_ALIASES = {
     "plan": "plan-only",
@@ -498,6 +498,34 @@ def resolve_build_unit_tier(
     return resolved
 
 
+#: The ``--jev-raise`` value that reads the raise from stdin instead of the argument.
+JEV_RAISE_STDIN = "-"
+
+
+def _read_jev_raise(value: str | None, stdin: TextIO) -> dict[str, Any] | None:
+    """The ``--jev-raise`` raise as a mapping, or ``None`` when there is none (issue #133).
+
+    ``-`` reads the JSON from *stdin*, so ``/work`` pipes ``tier_judgment.py raise`` straight in
+    and never splices run-record JSON into a quoted shell argument; the printed ``null`` of a unit
+    with no raise means no raise. Any other non-empty value is the JSON itself, the form a caller
+    holding trusted JSON keeps using. Empty stdin is refused rather than read as "no raise": a
+    failed ``tier_judgment.py raise`` upstream of the pipe prints nothing, and that must not pass
+    as a unit with no raise. A value that is neither an object nor ``null`` is refused.
+    """
+    if not value:
+        return None
+    if value == JEV_RAISE_STDIN:
+        text = stdin.read()
+        if not text.strip():
+            raise ValueError("--jev-raise - read nothing from stdin; expected JSON or null")
+    else:
+        text = value
+    parsed = json.loads(text)
+    if parsed is not None and not isinstance(parsed, dict):
+        raise ValueError(f"--jev-raise must be a JSON object or null, got {type(parsed).__name__}")
+    return parsed
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -572,8 +600,9 @@ def _build_parser() -> argparse.ArgumentParser:
     build_tier.add_argument(
         "--jev-raise",
         help=(
-            "a recorded tier raise as JSON ({\"model\", \"effort\", ...}), read from the unit's "
-            "run-record row; the resolver refuses one that is not exactly one step up"
+            "a recorded tier raise as JSON ({\"model\", \"effort\", ...}), or '-' to read it "
+            "from stdin, piped from `tier_judgment.py raise` (a printed null means no raise); "
+            "the resolver refuses one that is not exactly one step up"
         ),
     )
     build_tier.add_argument(
@@ -661,7 +690,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             {"model": args.plan_model, "effort": args.plan_effort} if args.plan_model else None
         )
         try:
-            jev_raise = json.loads(args.jev_raise) if args.jev_raise else None
+            jev_raise = _read_jev_raise(args.jev_raise, sys.stdin)
             resolved = resolve_build_unit_tier(
                 plan_tier=plan_tier,
                 work_shape=args.work_shape,

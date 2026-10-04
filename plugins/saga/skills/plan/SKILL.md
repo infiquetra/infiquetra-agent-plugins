@@ -581,8 +581,8 @@ It sends the issue and each unit's goal, files and work shape to TypeSafe Jev in
 prints one row per unit: `default`, `proposed`, `band`, `confidence`, `applied`, `reason`, and
 `tier`, the tier the unit runs at. It records each answer, and any applied raise as `jev_raise`, under
 the unit's id in the run record's top-level `tier_judgments` map (never on the `units` rows, which
-belong to the writers that run units); `/work` reads it with `tier_judgment.py raise` and passes it
-to `resolve-build-unit-tier --jev-raise`. Add `band` and `proposed` columns to the Step 1 table:
+belong to the writers that run units); `/work` pipes `tier_judgment.py raise` into
+`resolve-build-unit-tier --jev-raise -`, never splicing the JSON into a quoted argument. Add `band` and `proposed` columns to the Step 1 table:
 
 - `auto-raise`: already applied, one step, with its reason. Show it as the unit's tier.
 - `confirm-raise`: proposed for the operator to confirm or decline in the Step 1 table.

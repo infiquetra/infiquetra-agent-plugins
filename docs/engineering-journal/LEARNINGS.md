@@ -45,6 +45,24 @@ about the plan.
 
 **Generalizable rule.** When a reader cannot resolve its subject, report that it could not, or
 report every candidate; never let "not chosen" fall through to the empty case.
+### `json.dumps` output is not shell-safe, so a skill must pipe JSON, not quote it
+
+**Evidence.** Issue #133, a follow-up to #96 (PR #134). `staffing._probabilities_text` in
+`plugins/fleet-core/scripts/fleet_commons/staffing.py` copied every probability key of the TypeSafe
+answer into the tier judgment's `reason`; `staffing.jev_raise_from` copied that reason into
+`jev_raise`; `tier_judgment.py raise` printed it with `json.dumps`; and `/work`'s skill text told the
+agent to run `resolve-build-unit-tier --jev-raise '<json>'`. The reason now lists only the
+direction choices (`staffing.DIRECTION_CHOICES`), and `--jev-raise -` reads the raise from stdin,
+piped from `tier_judgment.py raise`. `test_a_probability_key_outside_the_choices_never_reaches_the_reason`
+and `test_work_pipes_a_raise_whose_reason_holds_a_single_quote_into_the_resolver` cover both ends.
+
+**Mechanism.** `json.dumps` escapes double quotes and control characters, never single quotes, so
+JSON pasted between single quotes ends at the first `'` inside any string value. The TypeSafe client
+passes answer mappings through unchecked, so the keys are vendor-controlled text, and three hops of
+"copy the field along" carried that text from a network response to a shell command line.
+
+**Generalizable rule.** Render only the keys your own question defined from a vendor answer, and
+hand JSON between commands through stdin or a file, never through a quoted shell argument.
 
 ### A run resolved from the branch name is not an active run
 
