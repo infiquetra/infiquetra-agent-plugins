@@ -252,10 +252,13 @@ as a credential.
 
 <!-- END TOKEN CATEGORIES -->
 
-`usage add` refuses, with exit 2 and one line, an unknown category flag, a negative count, an empty
-session id, vendor, model or effort, a role that is not lowercase letters, digits and hyphens, a
-unit the record does not have (it names the units the record does have, and never creates a row),
-and an issue with no record. Every other key survives an addition: the row's other consumers' keys,
+`usage add` refuses, with exit 2 and one line, an unknown category flag, a negative count, a
+session id that is empty or holds whitespace or a control character, a vendor, model or effort that
+is not a name (letters, digits and `. _ : / @ + -`, starting with a letter or digit), a role that is
+not lowercase letters, digits and hyphens, a unit the record does not have (it names the units the
+record does have, and never creates a row), a stored entry whose counts are not non-negative
+integers, and an issue with no record. `--unit` takes the row's `id`, or its `name` when the row
+has no `id`: the same identity rule `build_loop.py` and the cost report use. Every other key survives an addition: the row's other consumers' keys,
 unknown keys inside the usage block, and every other row.
 
 **What a completed unit is.** `scripts/cost_report.py` prices usage from the dated table in
@@ -265,10 +268,17 @@ code-review entry has the outcome `accepted` or `cycle_cap_best_available`. A re
 `review_incomplete` is terminal for the review controller but did not finish, so that unit is not
 completed; the report shows its spend apart, with the reason.
 
+The **all roles** line divides only over completed units whose usage is recorded and fully priced,
+and names how many completed units it left out (no usage recorded, or some usage unpriced). A unit
+whose spend is all unpriced shows `unpriced`, never `$0.00`, and a total that leaves unpriced spend
+out is marked `+ unpriced`.
+
 **Caveat until issue 113 lands.** The orchestrate plugin's `read_unit` keeps only the row keys its
 `Unit` type declares, and its `Run.save` rewrites the whole `units` array from that copy. Until
 issue 113 makes orchestrate carry unknown row keys forward under the lock below, an
-orchestrate-driven run drops `usage` (and `build_loop`) on its next save.
+orchestrate-driven run drops `usage` (and `build_loop`) on its next save. Orchestrate is the only
+writer outside the lock convention; every saga writer, and agent-launcher's roster writer, follows
+it (see the table below).
 
 Orchestrate also keeps its own run-level state under a top-level key named `orchestrate` — the run
 branch, the base commit, the issue mapping and its review state. That key is unknown to this module
@@ -307,8 +317,10 @@ reconciles a stale tick back onto a live record.
 
 ## Writing: atomic replace, under the record's lock
 
-A write goes to a sibling temporary file and is then moved into place with `os.replace`, the same
-pattern `saga.py` uses for its envelopes. A reader therefore always sees a whole record.
+A write goes to a uniquely named temporary file in the same directory and is then moved into place
+with `os.replace`, the same pattern `saga.py` uses for its envelopes. A reader therefore always sees
+a whole record. The temporary name is unique per write, so two writers saving at once can never
+move each other's half-written file.
 
 **Every read-modify-write takes the record's lock.** Issue 1018 shipped this record with no lock,
 because one coordinator owned one record. Issue 95 ended that: unit sessions add their own `usage`
@@ -324,9 +336,27 @@ every change made since. The convention, shared by saga and orchestrate:
 4. Apply the change and write through the atomic replace above.
 5. Release the lock.
 
-`run_record.update(store_root, issue, change)` does all five; `set_next_step` and `usage add` use
-it. The lock is advisory: it protects only writers that take it, and `run_record.save` on its own
-writes whatever copy it is handed. A reader that never writes needs no lock.
+`run_record.update(store_root, issue, change)` does all five, and refuses a change that returns a
+different issue's record, so the file written is always the file locked. `run_record.file_lock(path)`
+is the same lock for a caller that names the record by path. The lock is advisory: it protects only
+writers that take it, and `run_record.save` on its own writes whatever copy it is handed. A reader
+that never writes needs no lock.
+
+A writer whose work is slow does the work with no lock held, then takes the lock, re-reads the
+record and lands only the keys it owns on that fresh copy. Holding the lock across minutes of checks
+or git merges would stall every unit session's `usage add`.
+
+| Writer | What it changes | How it follows the convention |
+|---|---|---|
+| `run_record.set_next_step`, `usage add` | `next_step`; one unit row's `usage` | `update` |
+| `build_loop.py` | one unit row's `build_loop` | checks run unlocked; the iteration lands on a row re-read under `file_lock` |
+| `review_result.py --issue` | `review_cycles` | `update` |
+| `admission.py` | `repo`, `admission`, `run_configuration`, `approval_scope` | admission runs unlocked; those fields land on a fresh read through `update` |
+| `qa_strategies.py` | the top-level `qa` block | `update` |
+| `merge_turn.py status`, `take` | unit rows' merge keys | wholly under `update` |
+| `merge_turn.py merge` | unit rows' `merge_state`, `merge_worktree`, `merged_tip` | git work runs unlocked; only the merge keys it changed land on a fresh read through `update` |
+| agent-launcher `roster.py` | `roster` | `update` |
+| orchestrate `Run.save` | its unit rows and `orchestrate` | not yet: issue 113 |
 
 ## What this record replaces
 

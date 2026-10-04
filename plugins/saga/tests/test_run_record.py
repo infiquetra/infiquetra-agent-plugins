@@ -703,6 +703,14 @@ def test_an_unknown_token_category_flag_is_refused_on_the_command_line(
         {"model": "  "},
         {"role": "Worker"},
         {"role": "lens reviewer"},
+        {"role": "worker\n"},
+        {"model": "evil\n  forged line"},
+        {"model": "claude-opus-5-5\n"},
+        {"model": "\x1b[2Kclaude"},
+        {"vendor": "claude anthropic"},
+        {"effort": "medium\tx"},
+        {"session_id": "s 1"},
+        {"session_id": "s-1\n"},
     ],
 )
 def test_bad_usage_values_are_refused(rr: ModuleType, overrides: dict) -> None:
@@ -790,6 +798,86 @@ def _marked_table(name: str) -> list[str]:
     return re.findall(r"^\| `([a-z0-9_]+)` \|", block, flags=re.MULTILINE)
 
 
+def test_reference_documents_the_flag_and_api_field_of_each_category(rr: ModuleType) -> None:
+    text = REFERENCE.read_text(encoding="utf-8")
+    block = text.split("<!-- BEGIN TOKEN CATEGORIES -->")[1].split("<!-- END TOKEN CATEGORIES")[0]
+    rows = re.findall(r"^\| `([a-z0-9_]+)` \| `([^`]+)` \| `([^`]+)` \|", block, flags=re.MULTILINE)
+    assert tuple(rows) == rr.USAGE_FLAGS
+    assert rr.TOKEN_CATEGORIES == tuple(category for category, _, _ in rr.USAGE_FLAGS)
+
+
+def test_a_unit_is_named_by_its_name_only_when_the_row_has_no_id(
+    rr: ModuleType, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    record = rr.RunRecord(issue=95, units=[{"id": "u1", "name": "first"}, {"name": "u2"}])
+    rr.save(store, record)
+    argv = _usage_argv(store, "--output", "1")
+    assert rr.main([*argv[:6], "first", *argv[7:]]) == 2
+    assert "no unit 'first'" in capsys.readouterr().err
+    assert rr.main([*argv[:6], "u2", *argv[7:]]) == 0
+
+
+def test_a_stored_count_that_is_not_an_integer_refuses_with_one_line(
+    rr: ModuleType, store: Path
+) -> None:
+    record = _add(rr, _units_record(rr))
+    record.units[0]["usage"]["entries"][0]["counts"]["output"] = "lots"
+    rr.save(store, record)
+    result = subprocess.run(
+        [sys.executable, str(USAGE_SCRIPT), *_usage_argv(store, "--output", "1")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert result.stderr.count("\n") == 1 and "Traceback" not in result.stderr
+    assert "'lots'" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("usage", "message"),
+    [
+        ([], "that is not an object"),
+        ({"entries": {}}, "that is not a list"),
+    ],
+)
+def test_a_malformed_usage_block_is_refused(rr: ModuleType, usage: object, message: str) -> None:
+    record = _units_record(rr)
+    record.units[0]["usage"] = usage
+    with pytest.raises(rr.RunRecordError, match=message):
+        _add(rr, record)
+
+
+def test_update_refuses_a_change_that_returns_another_issues_record(
+    rr: ModuleType, store: Path
+) -> None:
+    rr.save(store, _units_record(rr))
+    with pytest.raises(rr.RunRecordError, match="refusing to write a record other than"):
+        rr.update(store, 95, lambda current: rr.RunRecord(**{**current.__dict__, "issue": 7}))
+    assert not rr.record_path(store, 7).exists()
+
+
+def test_save_uses_a_unique_temporary_file_per_write(
+    rr: ModuleType, store: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fixed ``<record>.tmp`` let two writers move each other's half-written file."""
+    import os
+
+    names: list[str] = []
+    real_replace = os.replace
+
+    def spy(src, dst):
+        names.append(str(src))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(rr.os, "replace", spy)
+    rr.save(store, rr.RunRecord(issue=95))
+    rr.save(store, rr.RunRecord(issue=95))
+    assert len(set(names)) == 2
+    assert all(Path(name).parent == store and name.endswith(".tmp") for name in names)
+    assert not any(name.endswith("issue-95.json.tmp") for name in names)
+
+
 def test_reference_documents_exactly_the_usage_entry_keys_written(rr: ModuleType) -> None:
     entry = _add(rr, _units_record(rr)).units[0]["usage"]["entries"][0]
     assert _marked_table("USAGE ENTRY KEYS") == list(entry) == list(rr.USAGE_ENTRY_KEYS)
@@ -804,6 +892,36 @@ def test_reference_documents_the_lock_convention(rr: ModuleType) -> None:
     assert "fcntl.flock(fd, LOCK_EX)" in text
     assert "<record path>.lock" in text
     assert rr.lock_path(Path("/s"), 95).name == "issue-95.json.lock"
+
+
+def test_update_reads_the_record_only_after_the_lock_is_taken(rr: ModuleType, store: Path) -> None:
+    """Deterministic: a write made while ``update`` waits for the lock is what its change sees."""
+    import fcntl
+    import os
+    import threading
+
+    rr.save(store, _units_record(rr))
+    rr.lock_path(store, 95).touch()
+    seen: dict = {}
+
+    def change(current):
+        seen["next_step"] = current.next_step
+        return current
+
+    fd = os.open(rr.lock_path(store, 95), os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        worker = threading.Thread(target=rr.update, args=(store, 95, change))
+        worker.start()
+        worker.join(timeout=0.5)
+        assert worker.is_alive(), "update must wait for the lock"
+        assert seen == {}, "the change ran before the lock was free"
+        rr.save(store, rr.RunRecord(**{**_units_record(rr).__dict__, "next_step": "while waiting"}))
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+    worker.join(timeout=10)
+    assert seen["next_step"] == "while waiting"
 
 
 def test_update_holds_the_lock_and_rereads_inside_it(rr: ModuleType, store: Path) -> None:

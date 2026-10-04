@@ -48,8 +48,10 @@ type declares, and `Run.save` rewrites the whole `units` array from that in-memo
 and that a key another consumer does not know is left alone. The first half is a promise to
 writers of new keys; the second is an obligation on every writer of whole rows, and nothing
 enforced it. A writer that reconstructs rows from its own type, or saves a copy it read before
-someone else wrote, breaks the contract silently. Issue 113 fixes orchestrate; issue 95 adds the
-record lock that stops the stale-copy half.
+someone else wrote, breaks the contract silently. Issue 113 fixes orchestrate. Issue 95 adds the
+record lock and moves every saga writer onto it, which stops the stale-copy half for saga; the
+lock is advisory, so it protects only the writers that take it, and a review of issue 95 found the
+first draft had converted two writers while the reference said "every".
 
 **Generalizable rule.** When a shared record promises an open key set, test the promise at every
 writer that rewrites whole objects — round-trip a row carrying a key that writer does not own.

@@ -634,6 +634,34 @@ def admit(
     return record, outstanding
 
 
+#: The record fields ``admit`` writes. Everything else on the record belongs to another writer.
+ADMISSION_FIELDS: tuple[str, ...] = ("repo", "admission", "run_configuration", "approval_scope")
+
+
+def save_admission(store_root: Path, admitted: run_record.RunRecord) -> Path:
+    """Write what ``admit`` decided onto the record, under its lock (issue 95).
+
+    ``admit`` can consult the tier judgment, so it runs with no lock held. The write then re-reads
+    the record under the lock and lands only the admission-owned fields on that fresh copy, so a
+    unit row, a review result or a usage entry written meanwhile survives. A fresh ``next_step``
+    wins over admission's suggestion, the same rule ``admit`` applies to the copy it read.
+    """
+
+    def change(current: run_record.RunRecord | None) -> run_record.RunRecord:
+        if current is None:
+            return admitted
+        owned = {name: getattr(admitted, name) for name in ADMISSION_FIELDS}
+        return run_record.RunRecord(
+            **{
+                **current.__dict__,
+                **owned,
+                "next_step": current.next_step or admitted.next_step,
+            }
+        )
+
+    return run_record.update(store_root, admitted.issue, change)
+
+
 def render(record: run_record.RunRecord, outstanding: list[Question], path: Path | None) -> str:
     """The operator-facing summary: what was filled, and the one message still to answer."""
     lines: list[str] = []
@@ -1198,7 +1226,7 @@ def main(argv: list[str] | None = None) -> int:
             answers=answers,
             suggest=args.suggest,
         )
-        path = None if args.dry_run else run_record.save(store_root, record)
+        path = None if args.dry_run else save_admission(store_root, record)
         if args.render == "json":
             data = review_data(record, outstanding, staffing, path)
             print(json.dumps(data, indent=2, sort_keys=True))

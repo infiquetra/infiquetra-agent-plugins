@@ -16,14 +16,19 @@ Three rules are contract, and the header of every report states the first two:
   cheap. Spend on units that are not completed is shown apart, with each unit's reason.
 * **Cost per completed unit** for a (role, tier) group is the group's total cost on completed units
   divided by the number of completed units that have at least one entry in that group.
+  The **all roles** line divides only over completed units whose usage is recorded and fully
+  priced, and names how many completed units it left out and why (no usage recorded, or some usage
+  unpriced), so the bottom line is never spend divided by units that recorded none.
 * **The price table is dated.** Its age is always printed. Older than ``--max-age-days`` (30) and
   the report warns on standard output and standard error, then still prints: the warning is the
   point, not a refusal. A model the table does not price is named as unpriced and left out of the
-  dollar figures, never priced at zero.
+  dollar figures, never priced at zero: a unit whose spend is all unpriced shows ``unpriced``, and
+  a figure that leaves unpriced spend out is marked ``+ unpriced``.
 
 Exit codes follow ``run_record.py``: 0 a report was printed (stale or not); 2 a refusal (a bad or
-missing price table, PyYAML missing, no records, a record that is not JSON); 3 an unknown record
-version. Each refusal is one line on standard error from ``main``'s single catch.
+missing price table, PyYAML missing, no records, a record that is not JSON, a usage entry whose
+counts are not non-negative integers); 3 an unknown record version. Each refusal is one line on
+standard error from ``main``'s single catch.
 """
 
 from __future__ import annotations
@@ -212,9 +217,16 @@ def entry_cost(entry: Mapping[str, Any], price: ModelPrice) -> Decimal | None:
     if price.rates is None:
         return None
     counts = entry.get("counts") or {}
+    if not isinstance(counts, Mapping):
+        raise CostReportError(f"a usage entry's counts are not an object: {counts!r}")
     total = Decimal(0)
     for category in run_record.TOKEN_CATEGORIES:
-        total += Decimal(int(counts.get(category, 0))) * price.rates[category]
+        value = counts.get(category, 0)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise CostReportError(
+                f"a usage entry stores {category} as {value!r}, not a non-negative integer"
+            )
+        total += Decimal(value) * price.rates[category]
     return total / MILLION
 
 
@@ -258,11 +270,46 @@ def _usd(value: Decimal) -> str:
     return str(value.quantize(MICRO))
 
 
-def _money(value: Decimal | str | None) -> str:
-    """Dollars to the cent, or ``unpriced`` — never ``$0.00`` for a cost nobody priced."""
+def _money(value: Decimal | str | None, *, partial: bool = False) -> str:
+    """Dollars to the cent, or ``unpriced`` — never ``$0.00`` for a cost nobody priced.
+
+    *partial* marks a figure that leaves some unpriced spend out: ``$1.20 + unpriced``.
+    """
     if value is None:
         return "unpriced"
-    return f"${Decimal(value).quantize(Decimal('0.01'))}"
+    text = f"${Decimal(value).quantize(Decimal('0.01'))}"
+    return f"{text} + unpriced" if partial else text
+
+
+def _text(value: Any) -> str:
+    """A record-derived string made safe for one report line.
+
+    Model names, roles, units and reasons come from records other writers produced. A newline or an
+    escape sequence in one would forge or hide a report line, so a string holding any character
+    that is not printable is shown through ``repr`` instead.
+    """
+    text = str(value)
+    return text if text.isprintable() else repr(text)
+
+
+#: How much of a unit's recorded usage the price table priced.
+PRICING_NONE = "no usage"
+PRICING_FULL = "priced"
+PRICING_PARTIAL = "partial"
+PRICING_UNPRICED = "unpriced"
+
+
+def _pricing(priced: int, unpriced: int) -> str:
+    if not priced and not unpriced:
+        return PRICING_NONE
+    if not unpriced:
+        return PRICING_FULL
+    return PRICING_PARTIAL if priced else PRICING_UNPRICED
+
+
+def _unit_cost(cost: Decimal, pricing: str) -> str | None:
+    """A unit's cost for the report's data: ``None`` when nothing it spent was priced."""
+    return None if pricing in (PRICING_NONE, PRICING_UNPRICED) else _usd(cost)
 
 
 def build_report(
@@ -275,6 +322,9 @@ def build_report(
     """Assemble the report as plain data; ``render`` turns it into text."""
     groups: dict[tuple[str, str], dict[str, Any]] = {}
     overall_cost = Decimal(0)
+    fully_priced_cost = Decimal(0)
+    fully_priced_units = 0
+    excluded = {PRICING_NONE: 0, PRICING_UNPRICED: 0}
     completed_units: list[dict[str, Any]] = []
     not_completed: list[dict[str, Any]] = []
     unpriced: dict[str, int] = {}
@@ -287,6 +337,7 @@ def build_report(
             unit = run_record.unit_key(row)
             done, reason = unit_completed(record, row)
             unit_cost = Decimal(0)
+            priced_entries = unpriced_entries = 0
             unit_groups: dict[tuple[str, str], Decimal | None] = {}
             for entry in entries:
                 label = tier_label(entry, table)
@@ -299,9 +350,12 @@ def build_report(
                     model = str(entry.get("model", ""))
                     unpriced[model] = unpriced.get(model, 0) + 1
                     unit_groups.setdefault(key, None)
+                    unpriced_entries += 1
                     continue
                 unit_groups[key] = (unit_groups.get(key) or Decimal(0)) + cost
                 unit_cost += cost
+                priced_entries += 1
+            pricing = _pricing(priced_entries, unpriced_entries)
             if not done:
                 if entries:
                     not_completed.append(
@@ -309,7 +363,8 @@ def build_report(
                             "issue": record.issue,
                             "unit": unit,
                             "reason": reason,
-                            "cost_usd": _usd(unit_cost),
+                            "cost_usd": _unit_cost(unit_cost, pricing),
+                            "pricing": pricing,
                         }
                     )
                 continue
@@ -319,12 +374,20 @@ def build_report(
                 {
                     "issue": record.issue,
                     "unit": unit,
-                    "cost_usd": _usd(unit_cost),
+                    "cost_usd": _unit_cost(unit_cost, pricing),
+                    "pricing": pricing,
                     "build_loop_iterations": len(iterations),
                     "code_review_cycles": cycles,
                 }
             )
             overall_cost += unit_cost
+            if pricing == PRICING_FULL:
+                fully_priced_cost += unit_cost
+                fully_priced_units += 1
+            elif pricing == PRICING_NONE:
+                excluded[PRICING_NONE] += 1
+            else:
+                excluded[PRICING_UNPRICED] += 1
             for key, cost in unit_groups.items():
                 group = groups.setdefault(
                     key,
@@ -365,7 +428,13 @@ def build_report(
         "groups": rows,
         "overall": {
             "total_usd": _usd(overall_cost),
-            "per_completed_unit_usd": _usd(overall_cost / count) if count else None,
+            "total_is_partial": excluded[PRICING_UNPRICED] > 0,
+            "fully_priced_units": fully_priced_units,
+            "per_completed_unit_usd": (
+                _usd(fully_priced_cost / fully_priced_units) if fully_priced_units else None
+            ),
+            "excluded_no_usage": excluded[PRICING_NONE],
+            "excluded_unpriced": excluded[PRICING_UNPRICED],
         },
         "completed_units": completed_units,
         "not_completed": not_completed,
@@ -404,6 +473,9 @@ def render(report: Mapping[str, Any]) -> str:
         lines.append("no completed units yet")
     else:
         lines.append(f"Cost per completed unit ({report['completed_unit_count']} completed units)")
+        lines.append(
+            "All roles = priced spend / completed units whose usage is recorded and fully priced."
+        )
         header = (
             f"{'role':<18} {'tier':<24} {'units':>5} {'per unit':>10} {'total':>10} "
             f"{'loop passes':>11} {'review cycles':>13}"
@@ -411,30 +483,40 @@ def render(report: Mapping[str, Any]) -> str:
         lines.append(header)
         for row in report["groups"]:
             lines.append(
-                f"{row['role']:<18} {row['tier']:<24} {row['completed_units']:>5} "
+                f"{_text(row['role']):<18} {_text(row['tier']):<24} {row['completed_units']:>5} "
                 f"{_money(row['per_completed_unit_usd']):>10} "
                 f"{_money(row['total_usd']):>10} "
                 f"{row['mean_build_loop_iterations']:>11.1f} {row['mean_code_review_cycles']:>13.1f}"
             )
         overall = report["overall"]
         lines.append(
-            f"{'all roles':<18} {'':<24} {report['completed_unit_count']:>5} "
+            f"{'all roles':<18} {'':<24} {overall['fully_priced_units']:>5} "
             f"{_money(overall['per_completed_unit_usd']):>10} "
-            f"{_money(overall['total_usd']):>10}"
+            f"{_money(overall['total_usd'], partial=overall['total_is_partial']):>10}"
         )
+        left_out = []
+        if overall["excluded_no_usage"]:
+            left_out.append(f"{overall['excluded_no_usage']} with no usage recorded")
+        if overall["excluded_unpriced"]:
+            left_out.append(f"{overall['excluded_unpriced']} with some usage unpriced")
+        if left_out:
+            lines.append(
+                "  completed units left out of the all-roles per-unit figure: "
+                + ", ".join(left_out)
+            )
     if report["not_completed"]:
         lines.append("")
         lines.append("Not completed (excluded from the figures above)")
         for row in report["not_completed"]:
             lines.append(
-                f"  issue {row['issue']} unit {row['unit']}: {row['reason']}; "
-                f"spent {_money(row['cost_usd'])}"
+                f"  issue {row['issue']} unit {_text(row['unit'])}: {_text(row['reason'])}; "
+                f"spent {_money(row['cost_usd'], partial=row['pricing'] == PRICING_PARTIAL)}"
             )
     if report["unpriced"]:
         lines.append("")
         lines.append("Unpriced (not in the price table, or listed without rates; left out of $)")
         for row in report["unpriced"]:
-            lines.append(f"  {row['model']}: {row['entries']} entries")
+            lines.append(f"  {_text(row['model'])}: {row['entries']} entries")
     return "\n".join(lines) + "\n"
 
 
@@ -513,14 +595,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         table = load_prices(Path(args.prices))
         records = collect_records(args)
+        today = args.today or datetime.now(UTC).date()
+        report = build_report(records, table, today, max_age_days=args.max_age_days)
     except run_record.UnknownRecordVersionError as exc:
         print(f"cost_report: {exc}", file=sys.stderr)
         return 3
     except run_record.RunRecordError as exc:
         print(f"cost_report: {exc}", file=sys.stderr)
         return 2
-    today = args.today or datetime.now(UTC).date()
-    report = build_report(records, table, today, max_age_days=args.max_age_days)
     warning = stale_warning(report)
     if warning:
         print(warning, file=sys.stderr)

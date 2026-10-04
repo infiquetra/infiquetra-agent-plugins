@@ -44,8 +44,11 @@ question's own prompt was left unchanged, as the card requires.
 **Decision.** Issue 95 gives the saga run record (`run_record.v1`) a lock. Every read-modify-write
 takes `fcntl.flock(LOCK_EX)` on the sibling `<record>.lock`, re-reads the record while holding it,
 applies its change, writes through the existing atomic replace and releases. The lock file is
-created when missing and never deleted. `run_record.update` is the saga implementation;
-orchestrate takes the same convention in issue 113.
+created when missing and never deleted. `run_record.update` (and `run_record.file_lock` for a
+record named by path) is the saga implementation, and every saga writer uses it: the build loop,
+review results, admission, the qa block, merge turns, `set_next_step` and `usage add`, plus
+agent-launcher's roster writer. A slow writer does its work unlocked and lands only its own keys on
+a record re-read under the lock. Orchestrate takes the same convention in issue 113.
 
 **Rationale.** The record was built with no lock on the premise that one coordinator owns one
 record. Usage capture breaks the premise: unit sessions write their own `usage` entries while the

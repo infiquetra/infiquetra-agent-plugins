@@ -36,10 +36,16 @@
 
 ### Changed
 
-- Every read-modify-write of a run record now holds an exclusive `fcntl.flock` on the sibling
-  `issue-<N>.json.lock` and re-reads the record inside it (`run_record.update`, used by
-  `set_next_step` and `usage add`). `references/run-record.md` documents the convention once, for
-  saga and orchestrate alike. This replaces the record's earlier "atomic replace, no lock" rule.
+- Every saga read-modify-write of a run record now holds an exclusive `fcntl.flock` on the sibling
+  `issue-<N>.json.lock` and re-reads the record inside it: `set_next_step`, `usage add`,
+  `build_loop.py`, `review_result.py --issue`, `admission.py`, `qa_strategies.py` and
+  `merge_turn.py` (`run_record.update`, or `run_record.file_lock` for a record named by path). Slow
+  writers (the build loop's checks, admission, a merge) do their work unlocked and land only their
+  own keys on a record re-read under the lock. Orchestrate takes the convention in issue 113.
+  `references/run-record.md` documents it once. This replaces the record's earlier "atomic replace,
+  no lock" rule.
+- Every run-record write goes through a uniquely named temporary file, so two writers saving at
+  once can no longer move each other's half-written file.
 
 ### Docs
 

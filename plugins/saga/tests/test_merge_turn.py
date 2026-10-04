@@ -443,3 +443,52 @@ class TestCommandLine:
         assert captured.out == ""
         assert captured.err.startswith("merge_turn: ")
         assert len(captured.err.strip().splitlines()) == 1
+
+
+class TestRecordLock:
+    """Issue 95's run-record lock convention, as merge_turn follows it."""
+
+    def test_a_merge_lands_only_the_merge_keys_it_changed_on_a_fresh_row(self) -> None:
+        before = [_unit("unit-a", "a"), _unit("unit-b", "b")]
+        after = [
+            {**_unit("unit-a", "a"), "merge_state": MT.MERGE_MERGED, "merged_tip": "f" * 40},
+            _unit("unit-b", "b"),
+        ]
+        fresh = [
+            {**_unit("unit-a", "a"), "usage": {"entries": [{"session_id": "s"}]}},
+            {**_unit("unit-b", "b"), "merge_state": MT.MERGE_MERGING},
+        ]
+        MT.land_merge_keys(fresh, before, after)
+        assert fresh[0]["merge_state"] == MT.MERGE_MERGED
+        assert fresh[0]["merged_tip"] == "f" * 40
+        assert fresh[0]["usage"] == {"entries": [{"session_id": "s"}]}, "other keys survive"
+        assert fresh[1]["merge_state"] == MT.MERGE_MERGING, "an unchanged key is not rewritten"
+
+    def test_status_writes_under_the_record_lock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import fcntl
+        import os
+
+        store = tmp_path / "store"
+        _record(store, units=[_unit("unit-a", "unit-a")])
+        held: list[bool] = []
+        module = MT._run_record()
+        real_save = module.save
+
+        def save(store_root, record, **kwargs):
+            fd = os.open(module.lock_path(store_root, record.issue), os.O_RDWR)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                held.append(False)
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except BlockingIOError:
+                held.append(True)
+            finally:
+                os.close(fd)
+            return real_save(store_root, record, **kwargs)
+
+        monkeypatch.setattr(module, "save", save)
+        assert MT.main(["--record", str(store / "issue-1028.json"), "status"]) == 0
+        assert held == [True]
+        assert json.loads(capsys.readouterr().out)["holder"] is None

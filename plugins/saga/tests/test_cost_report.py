@@ -1,6 +1,9 @@
 """Tests for the cost-per-completed-unit report (issue 95).
 
 Every record lives under ``tmp_path``; nothing here reads or writes the primary checkout's store.
+The report-logic tests price against a fixture table written under ``tmp_path``, so re-verifying
+the shipped table (which the staleness warning asks for monthly) changes only the tests that pin
+the shipped table itself.
 """
 
 from __future__ import annotations
@@ -22,8 +25,45 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = REPO_ROOT / "plugins" / "saga" / "scripts"
 SCRIPT = SCRIPTS / "cost_report.py"
 SHIPPED_PRICES = REPO_ROOT / "plugins" / "saga" / "references" / "model-prices.yaml"
-VERIFIED = date(2026, 10, 3)
+#: The date the shipped table was verified. Only the shipped-table pinning test reads it.
+SHIPPED_VERIFIED = date(2026, 10, 3)
+#: The fixture table's date, deliberately not the shipped one.
+VERIFIED = date(2026, 9, 1)
 SHA = "a" * 40
+
+#: A fixture price table: Opus and Sonnet priced, Haiku listed without rates.
+FIXTURE_PRICES = f"""schema: model_prices.v1
+verified_on: {VERIFIED.isoformat()}
+source: test fixture
+currency: USD
+
+models:
+  claude-opus-5-5:
+    vendor: claude
+    tier: opus
+    aliases: [opus]
+    usd_per_million:
+      uncached_input: 4.00
+      cache_read: 0.20
+      cache_write_5m: 5.00
+      cache_write_1h: 8.00
+      output: 20.00
+  claude-sonnet-5-5:
+    vendor: claude
+    tier: sonnet
+    aliases: [sonnet]
+    usd_per_million:
+      uncached_input: 2.00
+      cache_read: 0.20
+      cache_write_5m: 2.50
+      cache_write_1h: 4.00
+      output: 10.00
+  claude-haiku-4-5:
+    vendor: claude
+    tier: haiku
+    aliases: [haiku]
+    usd_per_million: null
+"""
 
 
 def _load(name: str) -> ModuleType:
@@ -47,6 +87,14 @@ def store(tmp_path: Path) -> Path:
     root = tmp_path / "store" / "runs"
     root.mkdir(parents=True)
     return root
+
+
+@pytest.fixture
+def prices(tmp_path: Path) -> Path:
+    path = tmp_path / "fixture-prices" / "model-prices.yaml"
+    path.parent.mkdir()
+    path.write_text(FIXTURE_PRICES, encoding="utf-8")
+    return path
 
 
 def _entry(session: str, role: str, model: str, effort: str, **counts: int) -> dict[str, Any]:
@@ -136,17 +184,16 @@ def _fixture(store: Path) -> Path:
     return _write(store, 95, units, reviews)
 
 
-def _run(store: Path, *extra: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, str(SCRIPT), "--store-root", str(store), *extra],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+def _run(store: Path, prices: Path | None, *extra: str) -> subprocess.CompletedProcess[str]:
+    """Run the script on *store*, pricing from *prices* (``None``: the script's default table)."""
+    argv = [sys.executable, str(SCRIPT), "--store-root", str(store)]
+    if prices is not None:
+        argv += ["--prices", str(prices)]
+    return subprocess.run([*argv, *extra], capture_output=True, text=True, check=False)
 
 
-def _report(cr: ModuleType, store: Path, today: date = VERIFIED) -> dict:
-    table = cr.load_prices(SHIPPED_PRICES)
+def _report(cr: ModuleType, store: Path, prices: Path, today: date = VERIFIED) -> dict:
+    table = cr.load_prices(prices)
     rr = sys.modules["run_record"]
     records = [
         rr.load(store, int(p.stem.split("-")[1]), warn=None)
@@ -160,9 +207,11 @@ def _report(cr: ModuleType, store: Path, today: date = VERIFIED) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_cost_per_completed_unit_is_grouped_by_role_and_tier(cr: ModuleType, store: Path) -> None:
+def test_cost_per_completed_unit_is_grouped_by_role_and_tier(
+    cr: ModuleType, store: Path, prices: Path
+) -> None:
     _fixture(store)
-    report = _report(cr, store)
+    report = _report(cr, store, prices)
     groups = {(g["role"], g["tier"]): g for g in report["groups"]}
     assert set(groups) == {
         ("worker", "claude opus/medium"),
@@ -185,12 +234,12 @@ def test_cost_per_completed_unit_is_grouped_by_role_and_tier(cr: ModuleType, sto
     assert Decimal(report["overall"]["per_completed_unit_usd"]) == Decimal("18.40")
 
 
-def test_the_report_prints_the_groups_on_a_fixture_record(store: Path) -> None:
+def test_the_report_prints_the_groups_on_a_fixture_record(store: Path, prices: Path) -> None:
     _fixture(store)
-    result = _run(store, "--today", "2026-10-03")
+    result = _run(store, prices, "--today", VERIFIED.isoformat())
     assert result.returncode == 0, result.stderr
     out = result.stdout
-    assert "Prices: model-prices.yaml verified 2026-10-03 (0 days old)" in out
+    assert f"Prices: model-prices.yaml verified {VERIFIED.isoformat()} (0 days old)" in out
     assert "Cost per completed unit (2 completed units)" in out
     assert "claude opus/medium" in out and "$24.00" in out
     assert "claude sonnet/medium" in out and "$12.00" in out
@@ -251,15 +300,18 @@ def test_unit_identity_matches_by_id_then_name(cr: ModuleType) -> None:
     assert cr.unit_completed(record, both) == (True, "")
 
 
-def test_spend_on_incomplete_units_is_shown_apart(cr: ModuleType, store: Path) -> None:
+def test_spend_on_incomplete_units_is_shown_apart(
+    cr: ModuleType, store: Path, prices: Path
+) -> None:
     _fixture(store)
-    report = _report(cr, store)
+    report = _report(cr, store, prices)
     assert report["not_completed"] == [
         {
             "issue": 95,
             "unit": "u3",
             "reason": "latest code review is repairs_requested",
             "cost_usd": "10.000000",
+            "pricing": "priced",
         }
     ]
     out = cr.render(report)
@@ -267,11 +319,13 @@ def test_spend_on_incomplete_units_is_shown_apart(cr: ModuleType, store: Path) -
     assert "issue 95 unit u3: latest code review is repairs_requested; spent $10.00" in out
 
 
-def test_no_completed_units_says_so_and_never_prints_zero_dollars(store: Path) -> None:
+def test_no_completed_units_says_so_and_never_prints_zero_dollars(
+    store: Path, prices: Path
+) -> None:
     _write(
         store, 7, [_row("u1", _entry("w", "worker", "opus", "medium", output=1), green=False)], []
     )
-    result = _run(store, "--today", "2026-10-03")
+    result = _run(store, prices, "--today", VERIFIED.isoformat())
     assert result.returncode == 0, result.stderr
     assert "no completed units yet" in result.stdout
     assert "Cost per completed unit (" not in result.stdout
@@ -282,20 +336,21 @@ def test_no_completed_units_says_so_and_never_prints_zero_dollars(store: Path) -
 # ---------------------------------------------------------------------------
 
 
-def test_a_table_exactly_30_days_old_is_not_flagged(store: Path) -> None:
+def test_a_table_exactly_30_days_old_is_not_flagged(store: Path, prices: Path) -> None:
     _fixture(store)
-    result = _run(store, "--today", (VERIFIED + timedelta(days=30)).isoformat())
+    result = _run(store, prices, "--today", (VERIFIED + timedelta(days=30)).isoformat())
     assert result.returncode == 0
     assert "WARNING" not in result.stdout and "WARNING" not in result.stderr
     assert "(30 days old)" in result.stdout
 
 
-def test_a_table_31_days_old_is_flagged_on_stdout_and_stderr(store: Path) -> None:
+def test_a_table_31_days_old_is_flagged_on_stdout_and_stderr(store: Path, prices: Path) -> None:
     _fixture(store)
-    result = _run(store, "--today", (VERIFIED + timedelta(days=31)).isoformat())
+    result = _run(store, prices, "--today", (VERIFIED + timedelta(days=31)).isoformat())
     assert result.returncode == 0
     warning = (
-        "WARNING: the price table was verified 2026-10-03, 31 days ago (more than 30); "
+        f"WARNING: the price table was verified {VERIFIED.isoformat()}, 31 days ago "
+        "(more than 30); "
         "re-verify plugins/saga/references/model-prices.yaml before trusting these figures"
     )
     assert result.stdout.splitlines()[0] == warning
@@ -303,8 +358,8 @@ def test_a_table_31_days_old_is_flagged_on_stdout_and_stderr(store: Path) -> Non
     assert "$24.00" in result.stdout, "a stale table still prints the report"
 
 
-def test_is_stale_boundary(cr: ModuleType) -> None:
-    table = cr.load_prices(SHIPPED_PRICES)
+def test_is_stale_boundary(cr: ModuleType, prices: Path) -> None:
+    table = cr.load_prices(prices)
     assert not cr.is_stale(table, VERIFIED + timedelta(days=30))
     assert cr.is_stale(table, VERIFIED + timedelta(days=31))
     assert cr.is_stale(table, VERIFIED + timedelta(days=8), max_age_days=7)
@@ -316,18 +371,8 @@ def test_is_stale_boundary(cr: ModuleType) -> None:
 
 
 def test_unpriced_and_unknown_models_are_named_and_never_shown_as_zero(
-    cr: ModuleType, tmp_path: Path, store: Path
+    cr: ModuleType, store: Path, prices: Path
 ) -> None:
-    prices = tmp_path / "prices.yaml"
-    prices.write_text(
-        SHIPPED_PRICES.read_text(encoding="utf-8").replace(
-            "    usd_per_million:\n      uncached_input: 1.00\n      cache_read: 0.10\n"
-            "      cache_write_5m: 1.25\n      cache_write_1h: 2.00\n      output: 5.00\n",
-            "    usd_per_million: null\n",
-        ),
-        encoding="utf-8",
-    )
-    assert "usd_per_million: null" in prices.read_text(encoding="utf-8")
     units = [
         _row(
             "u1",
@@ -337,7 +382,7 @@ def test_unpriced_and_unknown_models_are_named_and_never_shown_as_zero(
         )
     ]
     _write(store, 3, units, [_review("u1", "accepted")])
-    result = _run(store, "--prices", str(prices), "--today", "2026-10-03", "--json")
+    result = _run(store, prices, "--today", VERIFIED.isoformat(), "--json")
     assert result.returncode == 0, result.stderr
     report = json.loads(result.stdout)
     assert report["unpriced"] == [
@@ -347,12 +392,134 @@ def test_unpriced_and_unknown_models_are_named_and_never_shown_as_zero(
     groups = {g["tier"]: g for g in report["groups"]}
     assert groups["claude haiku/low"]["per_completed_unit_usd"] is None
     assert groups["claude claude-unknown-9/low"]["total_usd"] is None
+    # The $20 of Opus spend is priced; the rest is not, so the total is marked partial and the
+    # unit is left out of the all-roles per-unit figure rather than divided into it.
     assert Decimal(report["overall"]["total_usd"]) == Decimal("20")
+    assert report["overall"]["total_is_partial"] is True
+    assert report["overall"]["per_completed_unit_usd"] is None
+    assert report["overall"]["excluded_unpriced"] == 1
+    assert report["completed_units"][0]["pricing"] == "partial"
 
-    text = _run(store, "--prices", str(prices), "--today", "2026-10-03").stdout
+    text = _run(store, prices, "--today", VERIFIED.isoformat()).stdout
     haiku_line = next(line for line in text.splitlines() if "claude haiku/low" in line)
     assert "unpriced" in haiku_line and "$0.00" not in haiku_line
     assert "claude-unknown-9: 1 entries" in text
+    all_roles = next(line for line in text.splitlines() if line.startswith("all roles"))
+    assert "$20.00 + unpriced" in all_roles and "$0.00" not in all_roles
+    assert "1 with some usage unpriced" in text
+
+
+def test_all_roles_divides_only_over_fully_priced_completed_units(
+    store: Path, prices: Path
+) -> None:
+    units = [
+        _row("u1", _entry("w1", "worker", "claude-opus-5-5", "medium", output=1_000_000)),
+        _row("u2", _entry("w2", "worker", "claude-opus-4-1", "medium", output=1_000_000)),
+        _row("u3"),
+    ]
+    reviews = [_review(unit, "accepted") for unit in ("u1", "u2", "u3")]
+    _write(store, 7, units, reviews)
+    result = _run(store, prices, "--today", VERIFIED.isoformat(), "--json")
+    assert result.returncode == 0, result.stderr
+    overall = json.loads(result.stdout)["overall"]
+    assert Decimal(overall["per_completed_unit_usd"]) == Decimal("20")  # $20 / 1, never / 3
+    assert overall["fully_priced_units"] == 1
+    assert overall["excluded_no_usage"] == 1 and overall["excluded_unpriced"] == 1
+    completed = {row["unit"]: row for row in json.loads(result.stdout)["completed_units"]}
+    assert completed["u2"]["cost_usd"] is None and completed["u2"]["pricing"] == "unpriced"
+    assert completed["u3"]["cost_usd"] is None and completed["u3"]["pricing"] == "no usage"
+
+    text = _run(store, prices, "--today", VERIFIED.isoformat()).stdout
+    assert "$6.67" not in text
+    all_roles = next(line for line in text.splitlines() if line.startswith("all roles"))
+    assert all_roles.split()[2:4] == ["1", "$20.00"]
+    assert (
+        "completed units left out of the all-roles per-unit figure: "
+        "1 with no usage recorded, 1 with some usage unpriced"
+    ) in text
+
+
+def test_a_not_completed_unit_with_only_unpriced_spend_is_never_shown_as_zero(
+    store: Path, prices: Path
+) -> None:
+    units = [
+        _row("u1", _entry("w", "worker", "claude-unknown-9", "low", output=5), green=False),
+        _row(
+            "u2",
+            _entry("w", "worker", "claude-unknown-9", "low", output=5),
+            _entry("w2", "worker", "claude-opus-5-5", "low", output=1_000_000),
+            green=False,
+        ),
+    ]
+    _write(store, 7, units, [])
+    text = _run(store, prices, "--today", VERIFIED.isoformat()).stdout
+    assert "issue 7 unit u1: build loop not green; spent unpriced" in text
+    assert "issue 7 unit u2: build loop not green; spent $20.00 + unpriced" in text
+    assert "$0.00" not in text
+
+
+def test_record_strings_with_control_characters_cannot_forge_report_lines(
+    store: Path, prices: Path
+) -> None:
+    forged = "evil\n  forged line"
+    units = [_row("u1", _entry("w", "worker", forged, "low", output=5))]
+    _write(store, 7, units, [_review("u1", "accepted")])
+    text = _run(store, prices, "--today", VERIFIED.isoformat()).stdout
+    assert not any(line.startswith("  forged line") for line in text.splitlines())
+    assert repr(forged) in text
+
+
+def test_a_usage_entry_with_a_non_integer_count_refuses_with_one_line(
+    store: Path, prices: Path
+) -> None:
+    entry = _entry("w", "worker", "claude-opus-5-5", "low")
+    entry["counts"]["output"] = "lots"
+    _write(store, 7, [_row("u1", entry)], [_review("u1", "accepted")])
+    result = _run(store, prices)
+    assert result.returncode == 2
+    assert result.stderr.count("\n") == 1 and "Traceback" not in result.stderr
+    assert "'lots'" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# Choosing records
+# ---------------------------------------------------------------------------
+
+
+def test_issue_picks_only_that_record(store: Path, prices: Path) -> None:
+    _fixture(store)
+    _write(store, 7, [_row("x1", _entry("w", "worker", "opus", "low", output=1))], [])
+    result = _run(store, prices, "--issue", "7", "--json")
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["completed_unit_count"] == 0
+    assert [row["issue"] for row in report["not_completed"]] == [7]
+
+
+def test_record_reads_a_record_outside_the_store(tmp_path: Path, store: Path, prices: Path) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    path = _fixture(elsewhere)
+    result = _run(store, prices, "--record", str(path), "--json")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["completed_unit_count"] == 2
+
+
+def test_a_missing_issue_and_a_record_that_is_not_json_refuse_with_one_line(
+    store: Path, prices: Path
+) -> None:
+    result = _run(store, prices, "--issue", "404")
+    assert result.returncode == 2
+    assert result.stderr.startswith("cost_report: no run record at")
+    assert result.stderr.count("\n") == 1
+    (store / "issue-5.json").write_text("{not json", encoding="utf-8")
+    result = _run(store, prices)
+    assert result.returncode == 2
+    assert "is not valid JSON" in result.stderr
+    assert result.stderr.count("\n") == 1 and "Traceback" not in result.stderr
+    (store / "issue-5.json").write_text("[1, 2]", encoding="utf-8")
+    result = _run(store, prices)
+    assert result.returncode == 2 and "does not hold a JSON object" in result.stderr
 
 
 # ---------------------------------------------------------------------------
@@ -362,7 +529,7 @@ def test_unpriced_and_unknown_models_are_named_and_never_shown_as_zero(
 
 def _table_with(tmp_path: Path, old: str, new: str) -> Path:
     path = tmp_path / "bad.yaml"
-    text = SHIPPED_PRICES.read_text(encoding="utf-8")
+    text = FIXTURE_PRICES
     assert old in text
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
     return path
@@ -375,31 +542,34 @@ def _table_with(tmp_path: Path, old: str, new: str) -> Path:
         ("      output: 20.00\n", "      output: 20.00\n      cache_write_2h: 9.00\n"),
         ("      output: 20.00\n", "      output: -20.00\n"),
         ("schema: model_prices.v1", "schema: model_prices.v2"),
-        ("verified_on: 2026-10-03", "verified_on: last tuesday"),
+        (f"verified_on: {VERIFIED.isoformat()}", "verified_on: last tuesday"),
     ],
 )
 def test_a_malformed_price_table_exits_2_with_one_line(
     tmp_path: Path, store: Path, old: str, new: str
 ) -> None:
     _fixture(store)
-    result = _run(store, "--prices", str(_table_with(tmp_path, old, new)))
+    result = _run(store, _table_with(tmp_path, old, new))
     assert result.returncode == 2
     assert result.stdout == ""
     assert result.stderr.count("\n") == 1 and "Traceback" not in result.stderr
 
 
-def test_no_records_and_an_unknown_record_version_refuse_with_one_line(store: Path) -> None:
-    result = _run(store)
+def test_no_records_and_an_unknown_record_version_refuse_with_one_line(
+    store: Path, prices: Path
+) -> None:
+    result = _run(store, prices)
     assert result.returncode == 2 and result.stderr.startswith("cost_report: no run records found")
     (store / "issue-1.json").write_text(json.dumps({"schema": "run_record.v2"}), encoding="utf-8")
-    result = _run(store)
+    result = _run(store, prices)
     assert result.returncode == 3
     assert result.stderr.count("\n") == 1 and "run_record.v2" in result.stderr
 
 
 def test_the_shipped_table_carries_the_verified_rates(cr: ModuleType) -> None:
+    """The one test that pins the shipped data: a re-verification updates it, and only it."""
     table = cr.load_prices(SHIPPED_PRICES)
-    assert table.verified_on == VERIFIED
+    assert table.verified_on == SHIPPED_VERIFIED
     opus = cr.resolve_price(table, "claude", "claude-opus-5-5")
     sonnet = cr.resolve_price(table, "claude", "sonnet")
     assert opus is not None and sonnet is not None
@@ -441,14 +611,14 @@ def test_the_shipped_table_prices_exactly_the_record_categories(cr: ModuleType) 
         assert row.rates is None or tuple(row.rates) == rr.TOKEN_CATEGORIES
 
 
-def test_json_output_carries_the_groups_and_the_staleness_fields(store: Path) -> None:
+def test_json_output_carries_the_groups_and_the_staleness_fields(store: Path, prices: Path) -> None:
     _fixture(store)
-    result = _run(store, "--today", "2026-11-04", "--json")
+    result = _run(store, prices, "--today", (VERIFIED + timedelta(days=32)).isoformat(), "--json")
     assert result.returncode == 0
     report = json.loads(result.stdout)
     assert report["prices"] == {
-        "path": str(SHIPPED_PRICES),
-        "verified_on": "2026-10-03",
+        "path": str(prices),
+        "verified_on": VERIFIED.isoformat(),
         "age_days": 32,
         "max_age_days": 30,
         "stale": True,

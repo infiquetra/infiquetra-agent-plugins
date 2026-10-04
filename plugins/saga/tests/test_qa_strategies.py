@@ -1206,3 +1206,41 @@ class TestCommandLine:
             ]
         )
         assert code == QA.EXIT_REFUSED
+
+
+class TestRunRecordLock:
+    """Issue 95's run-record lock convention: the qa block is written onto a fresh read."""
+
+    def test_the_block_write_keeps_a_usage_entry_and_holds_the_lock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import fcntl
+        import os
+
+        RUN_RECORD.save(
+            tmp_path,
+            RUN_RECORD.RunRecord(
+                issue=11, repo="o/r", units=[{"id": "u1", "usage": {"entries": [{"x": 1}]}}]
+            ),
+        )
+        held: list[bool] = []
+        real_save = QA.run_record.save
+
+        def save(store_root, record, **kwargs):
+            fd = os.open(QA.run_record.lock_path(store_root, record.issue), os.O_RDWR)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                held.append(False)
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except BlockingIOError:
+                held.append(True)
+            finally:
+                os.close(fd)
+            return real_save(store_root, record, **kwargs)
+
+        monkeypatch.setattr(QA.run_record, "save", save)
+        QA.write_block(tmp_path, 11, {"verdict": "pass"})
+        assert held == [True]
+        reread = RUN_RECORD.load(tmp_path, 11)
+        assert reread is not None
+        assert reread.units[0]["usage"] == {"entries": [{"x": 1}]}

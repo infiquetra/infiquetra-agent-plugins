@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- `roster.py` writes the run record's `roster` through saga's `run_record.update` (issue 95): it
+  takes the record's lock, re-reads the record and replaces only `roster` on that fresh copy, so a
+  unit row or usage entry written since the roster was read survives. With a saga older than issue
+  95, which has no `update`, it falls back to the old unlocked write.
+
 ## [1.7.1] - 2026-09-22
 
 1.7.1 — imported from infiquetra-claude-plugins@acc99fe71e25ad8a898eace7033051a7f1c3079e (upstream 1.7.0); authored here from this commit; no provenance manifest from now on.

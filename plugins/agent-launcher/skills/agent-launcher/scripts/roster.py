@@ -261,10 +261,24 @@ def load_record(store_root: Path, issue: int) -> Any:
 
 
 def save_record(store_root: Path, record: Any, roster_rows: list[dict[str, Any]]) -> Path:
-    """Write *roster_rows* onto the record's ``roster`` array, and nothing else (plan R11)."""
+    """Write *roster_rows* onto the record's ``roster`` array, and nothing else (plan R11).
+
+    The write follows saga's run-record lock convention: ``run_record.update`` re-reads the record
+    under its lock and only ``roster`` is replaced on that fresh copy, so a unit row or usage entry
+    another writer added since *record* was read survives. A saga older than issue 95 has no
+    ``update``; then the old unlocked write is the only one available.
+    """
     module = _run_record_module()
-    updated = module.RunRecord(**{**record.__dict__, "roster": roster_rows})
-    return Path(module.save(store_root, updated))
+    update = getattr(module, "update", None)
+    if update is None:
+        updated = module.RunRecord(**{**record.__dict__, "roster": roster_rows})
+        return Path(module.save(store_root, updated))
+
+    def change(current: Any) -> Any:
+        base = current if current is not None else record
+        return module.RunRecord(**{**base.__dict__, "roster": roster_rows})
+
+    return Path(update(store_root, int(record.issue), change))
 
 
 # --------------------------------------------------------------------------- the roles library

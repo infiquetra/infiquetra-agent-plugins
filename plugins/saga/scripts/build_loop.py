@@ -41,6 +41,7 @@ nothing does I/O at import.
 from __future__ import annotations
 
 import argparse
+import copy
 import glob as globlib
 import json
 import os
@@ -201,16 +202,14 @@ def find_unit(record: run_record.RunRecord, unit_id: str | None) -> dict[str, An
 
     Naming no unit is legal for a dry run, which reports the repository-wide half of the criterion.
     For a real iteration the caller must land on exactly one row, and ambiguity refuses rather than
-    picking: writing an iteration onto the wrong unit is worse than stopping.
+    picking: writing an iteration onto the wrong unit is worse than stopping. A unit's identity is
+    ``run_record.unit_key``, the one definition the cost report also reads.
     """
     if unit_id is not None:
-        for unit in record.units:
-            if str(unit.get("id") or unit.get("name") or "") == unit_id:
-                return unit
-        known = ", ".join(sorted(str(u.get("id") or u.get("name") or "?") for u in record.units))
-        raise BuildLoopError(
-            f"no unit {unit_id!r} in the record" + (f"; it has {known}" if known else "")
-        )
+        try:
+            return run_record.find_unit_row(record.units, unit_id)
+        except run_record.RunRecordError as exc:
+            raise BuildLoopError(str(exc)) from None
     if len(record.units) == 1:
         return record.units[0]
     return None
@@ -554,6 +553,33 @@ def run_iteration(
     return iteration, green
 
 
+def apply_iteration(
+    unit: dict[str, Any], criterion: Criterion, iteration: dict[str, Any], green: bool
+) -> dict[str, Any]:
+    """Write one finished *iteration* onto *unit*, a row read after the record's lock was taken.
+
+    ``main`` runs the checks on a scratch copy of the row, outside the lock, because they can take
+    minutes; then it takes the lock, re-reads the record and lands the result here (issue 95). The
+    iteration is renumbered against the fresh row, and every other key on it survives, including a
+    ``usage`` entry a unit session added while the checks ran.
+    """
+    block = unit.setdefault(UNIT_KEY, {})
+    if not isinstance(block, dict):
+        raise BuildLoopError(f"the unit's {UNIT_KEY!r} key is not an object")
+    block["exit_criterion"] = criterion.as_record()
+    iterations = block.setdefault("iterations", [])
+    if not isinstance(iterations, list):
+        raise BuildLoopError(f"the unit's {UNIT_KEY}.iterations key is not a list")
+    landed = {**iteration, "iteration": len(iterations) + 1}
+    iterations.append(landed)
+    if green:
+        block["handed_to_code_review"] = {
+            "revision": landed["revision"],
+            "at": landed["finished_at"],
+        }
+    return landed
+
+
 # ---------------------------------------------------------------------------
 # Reading and writing a record by path.
 # ---------------------------------------------------------------------------
@@ -583,11 +609,7 @@ def save_record_file(path: Path, record: run_record.RunRecord) -> Path:
             }
         )
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
-    return path
+    return run_record.write_json_atomic(path, payload)
 
 
 # ---------------------------------------------------------------------------
@@ -752,10 +774,28 @@ def main(argv: list[str] | None = None, *, runner: Runner = subprocess_runner) -
                 f"{len(record.units)} unit rows, so which one this iteration belongs to is not implied"
             )
         revision = head_revision(repo_root, runner=runner)
+        # The checks run on a scratch copy of the row, with no lock held: they can take minutes.
+        # The result lands on a row re-read under the record's lock, so nothing another writer
+        # added meanwhile (a unit session's usage entry, a review result) is lost (issue 95).
         iteration, green = run_iteration(
-            record, unit, criterion, revision, runner=runner, timeout=args.timeout, cwd=repo_root
+            record,
+            copy.deepcopy(unit),
+            criterion,
+            revision,
+            runner=runner,
+            timeout=args.timeout,
+            cwd=repo_root,
         )
-        save_record_file(path, record)
+        with run_record.file_lock(path):
+            fresh = load_record_file(path)
+            fresh_unit = find_unit(fresh, args.unit)
+            if fresh_unit is None:
+                raise BuildLoopError(
+                    f"the record at {path} changed while the checks ran and no longer implies "
+                    "one unit; name it with --unit <id>"
+                )
+            iteration = apply_iteration(fresh_unit, criterion, iteration, green)
+            save_record_file(path, fresh)
         print(format_iteration(iteration))
         if green:
             print("")
