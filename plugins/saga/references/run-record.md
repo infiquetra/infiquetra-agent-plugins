@@ -397,6 +397,12 @@ The lock is not re-entrant: `flock` locks belong to an open file description, so
 already holds it and opens the lock file again waits on itself forever. `run_record.save` therefore
 never takes the lock itself; the caller of a read-modify-write does, once.
 
+Two tests in `tests/test_run_record.py` hold these rules in place (issue 117). One parses every
+saga script and fails on a `run_record.save` or `run_record.write_json_atomic` call outside
+`run_record.py`, or on a `build_loop.save_record_file` call outside `file_lock`. The other fails if
+`run_record.save` waits on a lock its caller already holds. A new writer therefore goes through
+`update`, or takes `file_lock` for a record it names by path.
+
 This is a lock on the file, not on any unit: it has no owner token, no expiry and no record of who
 holds it, and it is held only for the length of one write. It is not the lease, reservation,
 receipt or ledger mechanism the parent issue 1018 forbids, and nothing about a unit's execution

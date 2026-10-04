@@ -67,6 +67,12 @@
   own keys on a record re-read under the lock. Orchestrate takes the convention in issue 113.
   `references/run-record.md` documents it once. This replaces the record's earlier "atomic replace,
   no lock" rule.
+- Issue 117: the lock convention is now enforced rather than only documented. A test in
+  `tests/test_run_record.py` parses every saga script (and the Claude adapter's Python) and fails
+  on a `run_record.save` or `run_record.write_json_atomic` call outside `run_record.py`, under any
+  alias the module binds, and on a `build_loop.save_record_file` call outside `file_lock`. A second
+  test pins that `run_record.save` takes no lock, so a caller already holding it (orchestrate's
+  `Run.save`, `update` itself) can still save.
 - Every run-record write goes through a uniquely named temporary file, so two writers saving at
   once can no longer move each other's half-written file.
   The write keeps an existing record's mode and gives a new one what the user's umask allows,

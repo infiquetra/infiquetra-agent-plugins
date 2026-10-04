@@ -949,6 +949,164 @@ def test_update_holds_the_lock_and_rereads_inside_it(rr: ModuleType, store: Path
     assert rr.lock_path(store, 95).is_file(), "the lock file is never deleted"
 
 
+def test_save_takes_no_lock_so_a_caller_holding_it_can_save(rr: ModuleType, store: Path) -> None:
+    """``save`` never locks: the lock is not re-entrant, and orchestrate saves while holding it.
+
+    ``flock`` locks belong to an open file description, so a ``save`` that opened the lock file and
+    locked it would wait here on the lock this test holds, and the worker would still be running.
+    """
+    import threading
+
+    rr.save(store, _units_record(rr))
+    finished = threading.Event()
+
+    def save_while_held() -> None:
+        rr.save(store, rr.RunRecord(**{**_units_record(rr).__dict__, "next_step": "saved"}))
+        finished.set()
+
+    with rr.record_lock(store, 95):
+        worker = threading.Thread(target=save_while_held, daemon=True)
+        worker.start()
+        saved_under_the_lock = finished.wait(timeout=5)
+    worker.join(timeout=10)
+    assert saved_under_the_lock, "save waited on the record lock a caller already held"
+    assert rr.get_next_step(store, 95) == "saved"
+
+
+#: Where a saga script could write a run record. ``run_record.py`` owns the write itself, and
+#: ``_bundled`` is fleet-core's generated copy, which never touches a saga record.
+_SAGA_PYTHON = sorted(
+    path
+    for root in (SCRIPTS, REPO_ROOT / "plugins" / "saga" / "com.infiquetra.claude")
+    for path in root.rglob("*.py")
+    if path.name != "run_record.py" and "_bundled" not in path.parts
+)
+#: The calls that replace a record wholesale with whatever copy they are handed.
+_UNLOCKED_WRITES = frozenset({"save", "write_json_atomic"})
+#: The context managers that hold the record's lock.
+_LOCKS = frozenset({"record_lock", "file_lock"})
+
+
+def _run_record_names(tree) -> set[str]:
+    """Names a module binds to ``run_record``: imports, aliases, and ``x = _run_record()``."""
+    import ast
+
+    names = {"run_record"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(a.asname for a in node.names if a.name == "run_record" and a.asname)
+        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            func = node.value.func
+            if isinstance(func, ast.Name) and func.id == "_run_record":
+                names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    return names
+
+
+def _is_run_record(node, names: set[str]) -> bool:
+    import ast
+
+    if isinstance(node, ast.Name):
+        return node.id in names
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_run_record"
+    )
+
+
+def _unlocked_record_writes(path: Path, label: str | None = None) -> list[str]:
+    """Each place in *path* that replaces a run record without holding the record's lock.
+
+    A direct ``save`` or ``write_json_atomic`` call on the run-record module is a replace of a
+    copy read earlier, so it must go through ``update`` instead. The one by-path helper,
+    ``build_loop.save_record_file``, may call ``write_json_atomic``, but every call of it must sit
+    inside a ``with`` over ``file_lock`` or ``record_lock``.
+    """
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    names = _run_record_names(tree)
+    label = label or str(path.relative_to(REPO_ROOT))
+    found: list[str] = []
+
+    def visit(node, function: str | None, locked: bool) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            function, locked = node.name, False
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                call = item.context_expr
+                if (
+                    isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Attribute)
+                    and call.func.attr in _LOCKS
+                    and _is_run_record(call.func.value, names)
+                ):
+                    locked = True
+        elif isinstance(node, ast.Call):
+            func = node.func
+            where = f"{label}:{node.lineno}"
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr in _UNLOCKED_WRITES
+                and _is_run_record(func.value, names)
+                and not (func.attr == "write_json_atomic" and function == "save_record_file")
+            ):
+                found.append(f"{where} calls run_record.{func.attr} outside update")
+            called = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            if called == "save_record_file" and not locked:
+                found.append(f"{where} calls save_record_file without holding file_lock")
+        for child in ast.iter_child_nodes(node):
+            visit(child, function, locked)
+
+    visit(tree, None, False)
+    return found
+
+
+def test_no_saga_script_replaces_a_run_record_outside_the_lock() -> None:
+    """Issue 117: every saga read-modify-write of a run record goes through the record's lock."""
+    assert any(path.name == "build_loop.py" for path in _SAGA_PYTHON)
+    offenders = [hit for path in _SAGA_PYTHON for hit in _unlocked_record_writes(path)]
+    assert offenders == []
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("import run_record\nrun_record.save(root, record)\n", 1),
+        ("import run_record as rr\nrr.save(root, record)\n", 1),
+        ("def f():\n    m = _run_record()\n    m.save(root, record)\n", 1),
+        ("def f():\n    _run_record().write_json_atomic(path, {})\n", 1),
+        ("def f(path, record):\n    save_record_file(path, record)\n", 1),
+        ("import run_record\nrun_record.update(root, 1, change)\n", 0),
+        (
+            (
+                "import run_record\n"
+                "def f(path, record):\n"
+                "    with run_record.file_lock(path):\n"
+                "        save_record_file(path, record)\n"
+            ),
+            0,
+        ),
+        (
+            (
+                "import run_record\n"
+                "def save_record_file(path, payload):\n"
+                "    return run_record.write_json_atomic(path, payload)\n"
+            ),
+            0,
+        ),
+        ("class Engine:\n    pass\nengine.save(workspace)\n", 0),
+    ],
+)
+def test_the_lock_guard_catches_an_unlocked_write(
+    tmp_path: Path, source: str, expected: int
+) -> None:
+    """The guard above is only as good as what it notices; prove it notices each spelling."""
+    sample = tmp_path / "sample.py"
+    sample.write_text(source, encoding="utf-8")
+    assert len(_unlocked_record_writes(sample, "sample.py")) == expected
+
+
 def test_concurrent_usage_adds_lose_no_update(rr: ModuleType, store: Path) -> None:
     """Eight processes adding at once all land: the lock serialises the read-modify-writes."""
     rr.save(store, _units_record(rr))
