@@ -448,7 +448,15 @@ python3 plugins/saga/scripts/run_record.py usage add <issue> --unit <id> --sessi
 
 # cost per completed unit by role and tier, from every record in the store
 python3 plugins/saga/scripts/cost_report.py [--issue <issue>] [--today YYYY-MM-DD] [--json]
+
+# a read-only view of this checkout's runs: phase, next step and plan path
+python3 plugins/saga/scripts/run_status.py [--repo-root <dir>] summary [--issue <issue>] [--all-active] [--json]
 ```
+
+`run_status.py summary` is the display view the Claude Code mods and other harnesses read. It joins
+this record (`next_step`, `updated_at`) with the per-worktree saga envelope (the lifecycle phase and
+the plan path, which this record does not carry) and writes nothing. `--json` prints
+`run_status.v1`; its exit codes match `show` above.
 
 `--store-root <dir>` overrides the resolution above. It exists for the tests and for reading a
 record that belongs to another checkout; every test that touches a store passes it, because nothing

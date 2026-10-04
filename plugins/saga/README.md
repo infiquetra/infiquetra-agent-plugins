@@ -86,6 +86,10 @@ git-ignored saga ticks. `maturity` is derived at handoff time and is not stored
 as saga state. The run record is one JSON file per issue, written by
 `scripts/run_record.py`. The contract is [references/run-record.md](references/run-record.md).
 
+In Claude Code, `/plan-view` reads the run's plan one section at a time in a
+pane. Every other harness reads the plan file itself; `python3
+plugins/saga/scripts/run_status.py summary` prints its path.
+
 ## Tests
 
 ```bash

@@ -4,6 +4,17 @@
 
 ### Added
 
+- `/plan-view`, a plan viewer pane in Claude Code (issue #104). It opens the run's plan, issue N's
+  (`/plan-view #N`) or a named Markdown file, lists the sections by heading and draws the chosen
+  one as Markdown, paged under the engine's 10,000-character limit. Backticked `path:line`
+  references become links; a press on one, or on its button, puts the reference in the prompt, and
+  "Discuss this" quotes the shown page there. An Edit or Write of the plan file, or a change of its
+  modification time, reloads the pane. When `/plan` saves a plan tick the pane opens unasked if the
+  terminal is at least 144 columns wide; otherwise a toast names `/plan-view`. It is read-only.
+- `scripts/run_status.py summary`, a read-only view of this checkout's runs: phase, next step and
+  plan path, joined from the run record and the saga envelope. `--json` prints `run_status.v1`,
+  which `mods/run-record.ts` reads through `readRunStatusWith`; the text form is the plain
+  fallback for other harnesses.
 - The Claude adapter carries a hooks module for Claude Code mods. `com.infiquetra.claude/hooks/hooks.json`
   names `../mods/index.ts` under `modules`, beside the existing command hooks; it registers no hook
   yet. `mods/run-record.ts` is the shared reader every saga mod builds on: it runs

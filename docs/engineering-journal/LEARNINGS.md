@@ -29,6 +29,24 @@ added the `usage` entry's field tables there; it now reads only the tables betwe
 **Generalizable rule.** A whole-document writer that shares its file with other writers must
 re-read under a shared lock at save time and merge its owned keys onto that fresh copy; keeping
 unknown keys from the load is necessary but not sufficient.
+### A Claude Code Markdown element answers presses only on links it drew itself
+
+**Evidence.** The plan viewer pane (issue #104) in
+`plugins/saga/com.infiquetra.claude/mods/plan-viewer.tsx`. Claude Code 2.1.289's declarations
+(`MarkdownProps` in the build's `claude-code.d.ts`) say a `Markdown` element draws at most 10,000
+characters, draws a link whose scheme is not `https:`, `http:` or `file:` as plain text, and raises
+`ui.press` for a link only where the surface reports clicks (the fullscreen terminal); the
+main-screen terminal opens the link instead. Saga plans cite files as backticked code, which is no
+link at all. `plan-viewer.test.tsx` presses both routes on terminal and desktop.
+
+**Mechanism.** `linkifyRefs` in `mods/plan-sections.ts` rewrites each backticked `path:line` into a
+`file://` link and names it in `pressableLinks`, so a press quotes the reference into the prompt
+instead of opening it. It stops adding links before the page would pass 10,000 characters, which
+is why pages are cut at 9,000. The pane also draws one button per reference, because the keyboard
+and the main screen never raise a link press.
+
+**Generalizable rule.** A mod that makes text pressable must create the links itself, keep the
+page under the element's limit after linking, and offer a button route for surfaces without clicks.
 
 ### A test suite that reads live configuration spends the operator's API budget, not CI's
 

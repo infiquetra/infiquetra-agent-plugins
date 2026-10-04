@@ -50,3 +50,66 @@ export type SagaRunReadFailure =
 export type SagaRunRead =
   | { ok: true; record: SagaRunRecord }
   | { ok: false; reason: SagaRunReadFailure; detail: string }
+
+/** The version token `scripts/run_status.py summary --json` prints. */
+export type SagaRunStatusSchema = 'run_status.v1'
+
+/**
+ * One run as `run_status.py summary --json` prints it. The run record supplies
+ * `next_step`, `updated_at` and `record_path`; the saga envelope supplies
+ * `phase`, `plan_path` (as recorded, relative to the checkout) and `plan_file`
+ * (absolute). Each is null when its store does not know the run.
+ */
+export type SagaRunStatus = {
+  issue: number
+  repo: string | null
+  next_step: string
+  updated_at: string | null
+  record_path: string | null
+  phase: string | null
+  plan_path: string | null
+  plan_file: string | null
+}
+
+/** What `run_status.py summary --json` prints. */
+export type SagaRunStatusView = {
+  schema: SagaRunStatusSchema
+  repo_root: string
+  runs: SagaRunStatus[]
+}
+
+/**
+ * One section of a plan as the plan viewer splits it: the frontmatter
+ * (`level` 0), or a heading of level 1 to 3 and the text up to the next
+ * heading of the same or a higher level. `text` starts with the heading line.
+ */
+export type SagaPlanSection = {
+  level: 0 | 1 | 2 | 3
+  title: string
+  text: string
+}
+
+/** The plan the viewer pane shows: where it is, when it was read, its sections. */
+export type SagaPlanView = {
+  /** The path as the operator or the run named it. */
+  path: string
+  /** The file, every link resolved; what an edit's `file_path` is compared with. */
+  absPath: string
+  /** The checkout a `path:line` reference in the plan is relative to. */
+  repoRoot: string
+  mtimeMs: number
+  sections: SagaPlanSection[]
+}
+
+declare module 'claude-code' {
+  interface PluginState {
+    saga: {
+      /** The plan the `/plan-view` pane shows, or null before one is loaded. */
+      planView: SagaPlanView | null
+      /** The section shown, by index into `planView.sections`; -1 is the section list. */
+      planSelected: number
+      /** The page of the shown section, from 0. */
+      planPage: number
+    }
+  }
+}
