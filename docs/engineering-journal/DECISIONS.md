@@ -2,6 +2,29 @@
 
 ## 2026-10-04
 
+### Claude Code installs this catalog from the GitHub repository, not the local checkout
+
+**Decision.** `scripts/install_client.py` registers Claude Code's `infiquetra-agent-plugins`
+marketplace with `claude plugin marketplace add infiquetra/infiquetra-agent-plugins`, which Claude
+Code 2.1.289 records as `{"source": "github", "repo": "infiquetra/infiquetra-agent-plugins"}`.
+`registration_is_catalog` decides whether an existing registration is this catalog: a `github`
+source naming this repository, a `git` or `url` source with this repository's https or ssh URL, or
+a `directory` source that resolves to this checkout. `plan_claude` skips the add for any of those,
+and `check_claude` reports an enabled install under any of them as `installed-from-catalog`.
+
+**Rationale.** A directory registration makes the installed plugins follow whatever the checkout
+holds. On 2026-10-04 the operator's checkout was one commit behind after a release, so the installed
+plugins missed the release; a checked-out branch or uncommitted work would leak in the same way.
+The operator switched this machine's registration to GitHub by hand, after which `--check`
+reported every Claude package as `absent`, because it recognised only a directory registration.
+
+**Rejected alternatives.** Keep the checkout and pull it automatically: branch checkouts and
+uncommitted work still leak into the installed plugins. Install from a release tag: the repository
+has no release tags.
+
+**Revisit when.** The repository becomes private (a GitHub source then needs credentials on every
+machine), or plugin development needs the installed copy to track unmerged work.
+
 ### The client assessment drops Gemini CLI from 2026-10-04, and earlier records keep their roster
 
 **Decision.** Agy replaced Gemini CLI on the operator's machine, so `scripts/assess_clients.py`

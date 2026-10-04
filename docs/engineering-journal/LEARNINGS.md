@@ -2,6 +2,23 @@
 
 ## 2026-10-04
 
+### Claude Code cannot change a marketplace's source in place
+
+**Evidence.** The 2026-10-04 switch of this machine's `infiquetra-agent-plugins` marketplace from
+the local checkout to GitHub, and the installer change that followed (`registration_is_catalog` in
+`scripts/install_client.py`). Claude Code 2.1.289 offers `claude plugin marketplace add` and
+`remove` and nothing that edits a source. The operator changed the entry by hand in both
+`extraKnownMarketplaces` in `~/.claude/settings.json` and `~/.claude/plugins/known_marketplaces.json`.
+After that, `claude plugin marketplace update infiquetra-agent-plugins` cloned from GitHub, and
+`claude plugin update` kept each plugin's previous version folder for sessions still running.
+
+**Mechanism.** Removing a marketplace uninstalls the plugins installed from it, so remove-then-add
+is not a retarget; it is an uninstall and a reinstall. The registration is stored twice, and Claude
+Code reads both, so editing one file leaves the other to restore or contradict it.
+
+**Generalizable rule.** To retarget a Claude Code marketplace without losing its plugins, edit both
+registration files together, then run `marketplace update` and `plugin update`.
+
 ### A count read before a wait is not proof that the earlier holder finished
 
 **Evidence.** Issues #139 and #140, filed at #99's review cycle limit. `run_combined` in
