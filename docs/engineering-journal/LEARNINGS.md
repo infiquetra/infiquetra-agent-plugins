@@ -17,6 +17,25 @@ machine `gh` is logged in, so each test that loads config spends one REST call.
 
 **Generalizable rule.** A suite that passes in CI can still be non-hermetic locally; give every
 live read a test seam the suite's conftest turns on, and count calls with a stub to prove it.
+### Retiring a machine-rendered body section must keep it in the revision strip list
+
+**Evidence.** Issue #94 removed mission-control's issue-type tier band stamp.
+`_strip_trailing_handoff_context` in
+`plugins/mission-control/scripts/sdlc_manager.py` strips only trailing headings
+listed in `_HANDOFF_CONTEXT_SECTIONS`, and every draft prepared before #94 ends
+with the band. With the band dropped from that list,
+`test_revision_of_a_pre_94_draft_drops_the_retired_band` in
+`plugins/mission-control/tests/test_sdlc_draft_revision.py` fails with two
+`### Source context` sections instead of one.
+
+**Mechanism.** The strip loop walks back from the end of the body and stops at
+the first heading it does not recognise. One unrecognised trailing section
+therefore shields every machine-rendered section above it, and a `--from`
+revision carries the stale handoff sections forward next to freshly rendered
+ones.
+
+**Generalizable rule.** When a renderer stops emitting a trailing section, keep
+its header in the strip list for as long as old drafts can still be revised.
 
 ## 2026-09-22
 

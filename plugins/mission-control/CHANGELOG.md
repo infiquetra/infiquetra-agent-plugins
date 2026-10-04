@@ -10,6 +10,20 @@
   `INFIQUETRA_SDLC_SCHEMA_OFFLINE=1`, skips that read; `tests/conftest.py` sets it for every test,
   and the four tests of the live-read path clear it and stub `gh`. Production callers never set it.
 
+### Removed
+
+- `issue prepare` no longer stamps a `### Recommended Tier Band` section on new issues (#94). The band came from the issue type alone, admission never read it, and the saga `/plan` functions meant to apply it no longer exist. Jev's per-issue judgment replaces it.
+- `_ISSUE_TYPE_TIER_BANDS`, `derive_tier_band`, `_has_tier_band_section`, `_open_fence_closer` and `_append_tier_band` are gone. `_source_to_issue_body_unstamped` is now `_source_to_issue_body`, since nothing wraps it any more.
+- The issues skill no longer documents the band.
+
+### Changed
+
+- Existing issues keep their band section. Nothing reads it, so it is inert and is not rewritten. A `--from` revision of a draft prepared before #94 still strips the section, through the `_RETIRED_TIER_BAND_SECTION` entry in the handoff strip list.
+
+### Tests
+
+- The four stamping tests in `tests/test_card_validator.py` are replaced by tests that no issue type gets the band, that a body carrying the legacy section still validates, and that the retired helpers are gone. `tests/test_issue_prepare.py` checks a prepared draft of each issue type, and `tests/test_sdlc_draft_revision.py` checks that revising a pre-#94 draft leaves one Source context and one Handoff maturity section.
+
 ## [2.21.1] - 2026-09-22
 
 2.21.1 — imported from infiquetra-claude-plugins@acc99fe7 (upstream 2.21.0); authored here from this commit; no provenance manifest from now on.

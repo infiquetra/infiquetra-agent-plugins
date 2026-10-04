@@ -103,6 +103,36 @@ def test_prepare_olympus_writes_ready_draft_and_sidecar(tmp_path) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("issue_type", "source"),
+    [
+        ("capability", OLYMPUS_BODY),
+        ("enhancement", OLYMPUS_BODY),
+        ("defect", OLYMPUS_BODY),
+        ("exploration", "Find out whether the router can batch issue intake."),
+        ("context-update", "Record the router's issue intake conventions."),
+    ],
+)
+def test_prepared_draft_has_no_tier_band(tmp_path, issue_type: str, source: str) -> None:
+    """#94: a prepared draft carries no issue-type tier band section for any type."""
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type=issue_type,
+        team="campps",
+        project="campps",
+        source=source,
+        title="Tier band probe",
+        status=None,
+        risk="medium",
+        mode=None,
+        draft_dir=tmp_path,
+        stage="Intake",
+    )
+
+    assert draft.exists()
+    assert sdlc_manager._RETIRED_TIER_BAND_SECTION not in draft.read_text()
+
+
 def test_prepare_olympus_blocks_missing_verification(tmp_path) -> None:
     draft = sdlc_manager.issue_prepare(
         repo="hermes-claude-code-router",

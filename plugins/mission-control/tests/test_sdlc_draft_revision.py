@@ -141,6 +141,53 @@ def test_prepare_revision_twice_yields_single_document(tmp_path: Path) -> None:
     assert sidecar3["title"] == "Second revision"
 
 
+def _prepare_capability(tmp_path: Path, source: str, title: str, artifact=None) -> Path:
+    return sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="campps",
+        project="campps",
+        source=source,
+        title=title,
+        status=None,
+        risk="medium",
+        mode=None,
+        source_artifact=artifact,
+        draft_dir=tmp_path,
+        stage="Intake",
+    )
+
+
+def test_revision_of_a_pre_94_draft_drops_the_retired_band(tmp_path: Path) -> None:
+    """#94: a draft prepared before the band was retired still revises cleanly.
+
+    Pre-#94 drafts end with the band section, below their handoff sections. The
+    strip loop walks back from the tail and stops at the first heading it does
+    not know, so without the legacy strip entry the stale Source context and
+    Handoff maturity above the band would be carried into the revision.
+    """
+    draft1 = _prepare_capability(tmp_path, OLYMPUS_BODY, "Initial draft")
+    source2, artifact2 = sdlc_manager._resolve_prepare_source(
+        [], source_file=None, from_ref=str(draft1), root=tmp_path
+    )
+    draft2 = _prepare_capability(tmp_path, source2, "First revision", artifact2)
+    # Simulate a pre-#94 draft: the band was stamped after the handoff sections.
+    draft2.write_text(
+        draft2.read_text().rstrip()
+        + f"\n\n{sdlc_manager._RETIRED_TIER_BAND_SECTION}\nopus/high\n"
+    )
+
+    source3, artifact3 = sdlc_manager._resolve_prepare_source(
+        [], source_file=None, from_ref=str(draft2), root=tmp_path
+    )
+    text3 = _prepare_capability(tmp_path, source3, "Second revision", artifact3).read_text()
+
+    assert text3.count("### Source context") == 1
+    assert text3.count("### Handoff maturity") == 1
+    assert sdlc_manager._RETIRED_TIER_BAND_SECTION not in text3
+    assert "- Source title: First revision" in text3
+
+
 def test_revision_replaces_content_instead_of_appending(tmp_path: Path) -> None:
     """AC2: The revision path is shown to replace draft content rather than append."""
     initial_body = OLYMPUS_BODY.replace(
