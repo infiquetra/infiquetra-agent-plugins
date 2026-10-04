@@ -4,6 +4,18 @@
 
 ### Added
 
+- Issue 95: cost per completed unit. Each unit row in the run record can carry a `usage` block,
+  one entry per model session that worked the unit (session id, role, vendor, model, effort, and
+  counts in five billing categories: `uncached_input`, `cache_read`, `cache_write_5m`,
+  `cache_write_1h`, `output`). `run_record.py usage add` is the one portable writer; a repeat add
+  for the same session, role, vendor, model and effort adds into that entry. It refuses an unknown
+  category, a negative count and a unit the record does not have.
+- `scripts/cost_report.py` prints cost per completed unit grouped by role and tier (`--json` for
+  the same data). A completed unit has a green build loop and a latest code review of `accepted` or
+  `cycle_cap_best_available`. The report always prints the price table's age and warns when it is
+  more than 30 days old; a model without verified rates is named as unpriced, never priced at zero.
+- `references/model-prices.yaml`, the dated price table (`model_prices.v1`), with Claude Opus 5.5,
+  Sonnet 5.5, Haiku 4.5 and Fable 5.1 rates read from Anthropic's pricing page on 2026-10-03.
 - `scripts/admission.py --render {summary,tables,json}` (issue #102). `tables` prints the summary
   followed by the staffing table (Role, Default, Jev suggestion, Proposed, Why) and the lens table
   (Lens, Include, Reason, Jev probability) in one fixed Markdown format; an empty Jev cell reads
@@ -21,6 +33,13 @@
   default and names neither fable nor max; otherwise the Why column says it was refused.
 - `references/run-record.md` lists `admission.lens_proposal` and the per-role staffing keys the
   tables read (`suggestion`, `tier_judgment`, `jev_raise`, `operator_override`, `_tier_judgment`).
+
+### Changed
+
+- Every read-modify-write of a run record now holds an exclusive `fcntl.flock` on the sibling
+  `issue-<N>.json.lock` and re-reads the record inside it (`run_record.update`, used by
+  `set_next_step` and `usage add`). `references/run-record.md` documents the convention once, for
+  saga and orchestrate alike. This replaces the record's earlier "atomic replace, no lock" rule.
 
 ### Docs
 

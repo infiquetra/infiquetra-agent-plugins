@@ -1,0 +1,66 @@
+# Model prices for saga's cost report (issue 95).
+#
+# Read by plugins/saga/scripts/cost_report.py, which prices the usage entries in run records with
+# it. This table is authored, not measured: every rate was read by hand from Anthropic's pricing
+# page on the date in verified_on. The report prints that date and how old it is, and warns when
+# the table is more than 30 days old. Re-verify every rate and move verified_on together; never
+# move the date without reading the page.
+#
+# Rates are US dollars per million of each category. The five categories are the ones run_record.py
+# defines: uncached_input ("Base input"), cache_read ("Cache hits and refreshes"),
+# cache_write_5m ("5m cache writes"), cache_write_1h ("1h cache writes") and output ("Output").
+# A model whose rates were not verified on verified_on carries usd_per_million: null; the report
+# names its entries as unpriced and never prices them at zero.
+#
+# Standard first-party rates only: no batch discount, no fast mode, no inference_geo multiplier.
+
+schema: model_prices.v1
+verified_on: 2026-10-03
+source: https://platform.claude.com/docs/en/about-claude/pricing (Model pricing table), read 2026-10-03
+currency: USD
+
+models:
+  claude-opus-5-5:
+    vendor: claude
+    tier: opus
+    aliases: [opus]
+    usd_per_million:
+      uncached_input: 4.00
+      cache_read: 0.20
+      cache_write_5m: 5.00
+      cache_write_1h: 8.00
+      output: 20.00
+    note: Claude Opus 5.5. Cache reads are 0.05 times input on this model.
+  claude-sonnet-5-5:
+    vendor: claude
+    tier: sonnet
+    aliases: [sonnet]
+    usd_per_million:
+      uncached_input: 2.00
+      cache_read: 0.20
+      cache_write_5m: 2.50
+      cache_write_1h: 4.00
+      output: 10.00
+    note: Claude Sonnet 5.5.
+  claude-haiku-4-5:
+    vendor: claude
+    tier: haiku
+    aliases: [haiku]
+    usd_per_million:
+      uncached_input: 1.00
+      cache_read: 0.10
+      cache_write_5m: 1.25
+      cache_write_1h: 2.00
+      output: 5.00
+    note: Claude Haiku 4.5.
+  claude-fable-5-1:
+    vendor: claude
+    tier: fable
+    aliases: [fable]
+    usd_per_million:
+      uncached_input: 10.00
+      cache_read: 0.25
+      cache_write_5m: 12.50
+      cache_write_1h: 20.00
+      output: 50.00
+    note: Claude Fable 5.1. Cache reads are 0.025 times input on this model.

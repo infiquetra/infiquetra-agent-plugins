@@ -36,6 +36,23 @@ ones.
 
 **Generalizable rule.** When a renderer stops emitting a trailing section, keep
 its header in the strip list for as long as old drafts can still be revised.
+### An open row key set is only open if every whole-row writer carries unknown keys forward
+
+**Evidence.** The 2026-10-04 survey for issue 95 loaded a run record whose unit row carried
+`usage` and `build_loop` with orchestrate's `Run.load` and saved it with `Run.save`: both keys were
+gone, after a warning that orchestrate "ignores" the unknown key. `read_unit` in
+`plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py` keeps only the fields its `Unit`
+type declares, and `Run.save` rewrites the whole `units` array from that in-memory copy.
+
+**Mechanism.** `plugins/saga/references/run-record.md` says a consumer may add a key to a unit row
+and that a key another consumer does not know is left alone. The first half is a promise to
+writers of new keys; the second is an obligation on every writer of whole rows, and nothing
+enforced it. A writer that reconstructs rows from its own type, or saves a copy it read before
+someone else wrote, breaks the contract silently. Issue 113 fixes orchestrate; issue 95 adds the
+record lock that stops the stale-copy half.
+
+**Generalizable rule.** When a shared record promises an open key set, test the promise at every
+writer that rewrites whole objects — round-trip a row carrying a key that writer does not own.
 
 ## 2026-09-22
 

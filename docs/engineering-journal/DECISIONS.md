@@ -39,6 +39,51 @@ constants and #110's thresholds land: call or import them and delete the copies 
 #96 merges a `staffing_overrides` answer per role, remove the plan skill's "complete role map"
 answer rule (SKILL.md §0.1b) and the matching caveat in `references/run-record.md`; the admission
 question's own prompt was left unchanged, as the card requires.
+### Run records take a lock for every read-modify-write
+
+**Decision.** Issue 95 gives the saga run record (`run_record.v1`) a lock. Every read-modify-write
+takes `fcntl.flock(LOCK_EX)` on the sibling `<record>.lock`, re-reads the record while holding it,
+applies its change, writes through the existing atomic replace and releases. The lock file is
+created when missing and never deleted. `run_record.update` is the saga implementation;
+orchestrate takes the same convention in issue 113.
+
+**Rationale.** The record was built with no lock on the premise that one coordinator owns one
+record. Usage capture breaks the premise: unit sessions write their own `usage` entries while the
+coordinator and the build loop write the same file, and a writer that saves a copy it read
+earlier silently drops every change made since. `flock` is released by the kernel when the
+process dies, so there is nothing to expire, steal or reconcile — the objections issue 1018 had to
+leases and reservations do not apply to it.
+
+**Rejected alternatives.** Re-read and compare `updated_at` before the replace, retrying on a
+mismatch: it narrows the window but cannot close it, because the compare and the replace are two
+steps. A lease or reservation recorded in the file: it needs expiry and recovery, which is what
+issue 1018 forbade. One usage file per unit session: it would split the record the run-record
+design exists to unify.
+
+**Revisit when.** A writer runs on a filesystem where `flock` is not honoured (a network mount),
+or the record moves off the local disk.
+
+### Usage entries accumulate per session; review_incomplete is not a completed unit
+
+**Decision.** A usage entry is identified by session id, role, vendor, model and effort; a repeat
+`usage add` adds into it. The price table is YAML with `usd_per_million: null` for a model whose
+rates were not verified, and the cost report never prices such a model at zero. A unit counts as
+completed only when its build loop is green and its latest code review is `accepted` or
+`cycle_cap_best_available`; `review_incomplete` does not count.
+
+**Rationale.** The card asks for one entry per model session, and the live-capture mod will
+report a long session as several deltas, so accumulation satisfies both. Each entry records its
+own role and tier because no per-unit role exists anywhere else in the record. Counting
+`review_incomplete` as completed would make a unit whose review never finished look cheap — the
+opposite of what the measurement is for (checking issue 90's Opus builder decision).
+
+**Rejected alternatives.** Append one entry per call: the record grows with every capture tick and
+a session's spend has to be summed by every reader. Price an unverified model from a cached table:
+a guessed rate looks exactly like a verified one in the output.
+
+**Revisit when.** A vendor reports cost directly in its usage data, or the price table's
+`verified_on` passes 30 days (the report warns), or review_incomplete units turn out to be a
+material share of spend.
 
 ## 2026-09-22
 

@@ -301,7 +301,7 @@ def test_a_common_directory_that_is_not_a_dot_git_refuses_with_one_line(
 
 
 # ---------------------------------------------------------------------------
-# Writing: atomic, no lock, round-trip stable (plan KTD4b)
+# Writing: atomic, round-trip stable (plan KTD4b)
 # ---------------------------------------------------------------------------
 
 
@@ -544,3 +544,309 @@ def test_reference_document_states_the_exit_codes_the_code_uses(rr: ModuleType) 
     text = REFERENCE.read_text(encoding="utf-8")
     for line in ("exit 0", "exit 2", "exit 3"):
         assert line in text, f"run-record.md does not state {line}"
+
+
+# ---------------------------------------------------------------------------
+# Issue 95: the usage block, usage add, and the read-modify-write lock
+# ---------------------------------------------------------------------------
+
+USAGE_SCRIPT = SCRIPTS / "run_record.py"
+
+
+def _units_record(rr: ModuleType):
+    """A record with two unit rows carrying other consumers' keys, and an unknown top-level key."""
+    return rr.RunRecord(
+        issue=95,
+        units=[
+            {
+                "id": "u1",
+                "branch": "issue/95-u1",
+                "merge_state": "ready",
+                "build_loop": {"iterations": [{"iteration": 1, "green": True}]},
+                "a_future_key": {"kept": True},
+            },
+            {"name": "u2", "merge_state": "merged"},
+        ],
+        extra={"orchestrate": {"run_branch": "orch/95"}},
+    )
+
+
+def _add(rr: ModuleType, record, unit: str = "u1", **overrides):
+    arguments = {
+        "session_id": "s-1",
+        "role": "worker",
+        "vendor": "claude",
+        "model": "claude-opus-5-5",
+        "effort": "medium",
+        "counts": {"cache_read": 98000, "output": 4000},
+    }
+    arguments.update(overrides)
+    return rr.add_usage(record, unit, **arguments)
+
+
+def _usage_argv(store: Path, *extra: str, session: str = "s-1") -> list[str]:
+    return [
+        "--store-root",
+        str(store),
+        "usage",
+        "add",
+        "95",
+        "--unit",
+        "u1",
+        "--session-id",
+        session,
+        "--role",
+        "worker",
+        "--vendor",
+        "claude",
+        "--model",
+        "claude-opus-5-5",
+        "--effort",
+        "medium",
+        *extra,
+    ]
+
+
+def test_usage_add_appends_one_entry_with_all_five_categories(rr: ModuleType, store: Path) -> None:
+    rr.save(store, _units_record(rr))
+    before = rr.load(store, 95, warn=None)
+    assert rr.main(_usage_argv(store, "--cache-read", "98000", "--output", "4000")) == 0
+
+    after = rr.load(store, 95, warn=None)
+    entries = after.units[0]["usage"]["entries"]
+    assert len(entries) == 1
+    entry = entries[0]
+    assert tuple(entry) == rr.USAGE_ENTRY_KEYS
+    assert entry["counts"] == {
+        "uncached_input": 0,
+        "cache_read": 98000,
+        "cache_write_5m": 0,
+        "cache_write_1h": 0,
+        "output": 4000,
+    }
+    assert entry["additions"] == 1
+    assert entry["first_added_at"] == entry["last_added_at"]
+    assert after.updated_at >= before.updated_at
+    assert list(store.glob("*.tmp")) == []
+
+
+def test_a_repeat_add_accumulates_and_a_new_session_appends(rr: ModuleType) -> None:
+    from datetime import UTC, datetime
+
+    first = datetime(2026, 10, 3, 12, 0, tzinfo=UTC)
+    later = datetime(2026, 10, 3, 13, 0, tzinfo=UTC)
+    record = _add(rr, _units_record(rr), now=first)
+    record = _add(rr, record, counts={"uncached_input": 10, "output": 6}, now=later)
+    entries = record.units[0]["usage"]["entries"]
+    assert len(entries) == 1
+    assert entries[0]["additions"] == 2
+    assert entries[0]["counts"]["output"] == 4006
+    assert entries[0]["counts"]["uncached_input"] == 10
+    assert entries[0]["first_added_at"] == first.isoformat()
+    assert entries[0]["last_added_at"] == later.isoformat()
+
+    record = _add(rr, record, session_id="s-2")
+    assert [e["session_id"] for e in record.units[0]["usage"]["entries"]] == ["s-1", "s-2"]
+    record = _add(rr, record, role="lens-reviewer", effort="high")
+    assert len(record.units[0]["usage"]["entries"]) == 3
+
+
+def test_usage_add_preserves_every_other_consumers_keys(rr: ModuleType, store: Path) -> None:
+    original = _units_record(rr)
+    original.units[0]["usage"] = {"entries": [], "a_usage_extension": [1, 2]}
+    rr.save(store, original)
+    path = rr.record_path(store, 95)
+    before = json.loads(path.read_text(encoding="utf-8"))
+
+    assert rr.main(_usage_argv(store, "--output", "1")) == 0
+    after = json.loads(path.read_text(encoding="utf-8"))
+
+    row_before, row_after = before["units"][0], after["units"][0]
+    for key in ("branch", "merge_state", "build_loop", "a_future_key"):
+        assert row_after[key] == row_before[key]
+    assert row_after["usage"]["a_usage_extension"] == [1, 2]
+    assert after["units"][1] == before["units"][1]
+    assert after["orchestrate"] == before["orchestrate"]
+
+
+def test_add_usage_does_not_mutate_the_record_it_was_given(rr: ModuleType) -> None:
+    record = _units_record(rr)
+    _add(rr, record)
+    assert "usage" not in record.units[0]
+
+
+def test_an_unknown_token_category_is_refused_through_the_api(rr: ModuleType) -> None:
+    with pytest.raises(rr.RunRecordError) as excinfo:
+        _add(rr, _units_record(rr), counts={"cache_write_2h": 5})
+    message = str(excinfo.value)
+    assert "cache_write_2h" in message
+    for category in rr.TOKEN_CATEGORIES:
+        assert category in message
+
+
+def test_an_unknown_token_category_flag_is_refused_on_the_command_line(
+    rr: ModuleType, store: Path
+) -> None:
+    rr.save(store, _units_record(rr))
+    with pytest.raises(SystemExit) as excinfo:
+        rr.main(_usage_argv(store, "--cache-write-2h", "5"))
+    assert excinfo.value.code == 2
+    assert "usage" not in rr.load(store, 95, warn=None).units[0]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"counts": {"output": -1}},
+        {"counts": {"output": 1.5}},
+        {"session_id": ""},
+        {"model": "  "},
+        {"role": "Worker"},
+        {"role": "lens reviewer"},
+    ],
+)
+def test_bad_usage_values_are_refused(rr: ModuleType, overrides: dict) -> None:
+    with pytest.raises(rr.RunRecordError):
+        _add(rr, _units_record(rr), **overrides)
+
+
+def test_a_negative_count_is_refused_on_the_command_line(rr: ModuleType, store: Path) -> None:
+    rr.save(store, _units_record(rr))
+    with pytest.raises(SystemExit) as excinfo:
+        rr.main(_usage_argv(store, "--output", "-3"))
+    assert excinfo.value.code == 2
+
+
+def test_a_unit_the_record_does_not_have_is_refused_naming_the_known_units(
+    rr: ModuleType, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rr.save(store, _units_record(rr))
+    argv = _usage_argv(store)
+    argv[argv.index("u1")] = "u9"
+    assert rr.main(argv) == 2
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1
+    assert "'u9'" in err and "u1, u2" in err
+    assert all("usage" not in row for row in rr.load(store, 95, warn=None).units)
+
+
+def test_usage_add_with_no_record_exits_2_with_one_line(
+    rr: ModuleType, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert rr.main(_usage_argv(store, "--output", "1")) == 2
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1
+    assert err.startswith("run_record: no record for issue 95")
+    assert not rr.record_path(store, 95).exists()
+
+
+def test_usage_add_on_an_unknown_record_version_exits_3_with_one_line(
+    rr: ModuleType, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = rr.record_path(store, 95)
+    path.write_text(json.dumps({"schema": "run_record.v2", "issue": 95}), encoding="utf-8")
+    assert rr.main(_usage_argv(store, "--output", "1")) == 3
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1 and "Traceback" not in err
+
+
+def test_usage_add_help_documents_the_five_categories() -> None:
+    result = subprocess.run(
+        [sys.executable, str(USAGE_SCRIPT), "usage", "add", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    for flag in (
+        "--uncached-input",
+        "--cache-read",
+        "--cache-write-5m",
+        "--cache-write-1h",
+        "--output",
+    ):
+        assert flag in result.stdout
+    for category in ("uncached_input", "cache_read", "cache_write_5m", "cache_write_1h", "output"):
+        assert category in result.stdout
+
+
+def test_usage_add_runs_as_a_user_runs_it(rr: ModuleType, store: Path) -> None:
+    """The real script, a real subprocess, an explicit store root (the AGENTS.md rule)."""
+    rr.save(store, _units_record(rr))
+    result = subprocess.run(
+        [sys.executable, str(USAGE_SCRIPT), *_usage_argv(store, "--cache-write-1h", "7")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    entry = rr.load(store, 95, warn=None).units[0]["usage"]["entries"][0]
+    assert entry["counts"]["cache_write_1h"] == 7
+
+
+def _marked_table(name: str) -> list[str]:
+    text = REFERENCE.read_text(encoding="utf-8")
+    block = text.split(f"<!-- BEGIN {name} -->")[1].split(f"<!-- END {name} -->")[0]
+    return re.findall(r"^\| `([a-z0-9_]+)` \|", block, flags=re.MULTILINE)
+
+
+def test_reference_documents_exactly_the_usage_entry_keys_written(rr: ModuleType) -> None:
+    entry = _add(rr, _units_record(rr)).units[0]["usage"]["entries"][0]
+    assert _marked_table("USAGE ENTRY KEYS") == list(entry) == list(rr.USAGE_ENTRY_KEYS)
+
+
+def test_reference_documents_exactly_the_token_categories(rr: ModuleType) -> None:
+    assert _marked_table("TOKEN CATEGORIES") == list(rr.TOKEN_CATEGORIES)
+
+
+def test_reference_documents_the_lock_convention(rr: ModuleType) -> None:
+    text = REFERENCE.read_text(encoding="utf-8")
+    assert "fcntl.flock(fd, LOCK_EX)" in text
+    assert "<record path>.lock" in text
+    assert rr.lock_path(Path("/s"), 95).name == "issue-95.json.lock"
+
+
+def test_update_holds_the_lock_and_rereads_inside_it(rr: ModuleType, store: Path) -> None:
+    """A change sees the on-disk record as of lock time, and the lock is held while it runs."""
+    import fcntl
+    import os
+
+    rr.save(store, _units_record(rr))
+    seen: dict = {}
+
+    def change(current):
+        fd = os.open(rr.lock_path(store, 95), os.O_RDWR)
+        try:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(fd)
+        seen["next_step"] = current.next_step
+        return rr.RunRecord(**{**current.__dict__, "next_step": "after"})
+
+    rr.set_next_step(store, 95, "written by another writer")
+    rr.update(store, 95, change)
+    assert seen["next_step"] == "written by another writer"
+    assert rr.get_next_step(store, 95) == "after"
+    assert rr.lock_path(store, 95).is_file(), "the lock file is never deleted"
+
+
+def test_concurrent_usage_adds_lose_no_update(rr: ModuleType, store: Path) -> None:
+    """Eight processes adding at once all land: the lock serialises the read-modify-writes."""
+    rr.save(store, _units_record(rr))
+    processes = [
+        subprocess.Popen(
+            [
+                sys.executable,
+                str(USAGE_SCRIPT),
+                *_usage_argv(store, "--output", "1", session=f"s-{n}"),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        for n in range(8)
+    ]
+    for process in processes:
+        assert process.wait(timeout=60) == 0
+    entries = rr.load(store, 95, warn=None).units[0]["usage"]["entries"]
+    assert sorted(e["session_id"] for e in entries) == [f"s-{n}" for n in range(8)]
