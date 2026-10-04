@@ -88,6 +88,12 @@ starts with only what can launch now, and `expand` appends the rest once the ope
 them — same run, so `after` still reaches back and one parent branch carries everything. `expand` refuses
 a duplicate name or a dependency that is in no run.
 
+**Name each `/work` unit in an expansion by the plan U-ID it builds** (`U1`, `U2`, ...). Saga's
+`/plan` runs before these rows exist, so its write of the plan's functional checks leaves them
+pending; `/work` writes them onto its own row before its first build-loop iteration
+(`plugins/saga/scripts/functional_checks.py write`), and that write finds the row by its name.
+A row with any other name gets no checks.
+
 **Single launch seam and no-focus invariant.** Every run unit, including units added at a later
 phase boundary, must be persisted through `start` or `expand` before any worktree or session is
 created, and must launch only through `go` via the shared `agent-launcher` plugin (`agent_argv`).

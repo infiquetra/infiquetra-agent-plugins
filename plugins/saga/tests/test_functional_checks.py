@@ -321,16 +321,46 @@ def test_write_of_a_malformed_plan_refuses_and_writes_nothing(
     assert record.read_bytes() == before
 
 
-def test_write_refuses_to_add_rows_to_a_record_orchestrate_drives(
+def test_write_reports_pending_units_in_a_record_orchestrate_drives(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    rows = [{"name": "U1", "vendor": "claude", "task": "/work #98"}]
+    """An orchestrate record gains no row; units without one are pending (exit 5), not refused."""
+    rows = [
+        {"name": "plan", "vendor": "claude", "task": "/plan #98"},
+        {"name": "U1", "vendor": "claude", "task": "/work #98"},
+    ]
     plan = _write(tmp_path / "plan.md", PLAN)
     record = _write(tmp_path / "issue-98.json", _record(units=rows, orchestrate={"run_id": "r"}))
-    before = record.read_bytes()
-    assert functional_checks.main(["write", "--plan", str(plan), "--record", str(record)]) == 2
-    assert "U2" in capsys.readouterr().err
-    assert record.read_bytes() == before
+    assert functional_checks.main(["write", "--plan", str(plan), "--record", str(record)]) == 5
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["pending"] == ["U2"] and payload["updated"] == ["U1"]
+    assert "pending, not refused" in captured.err and "orchestrate expand" in captured.err
+    units = _units(record)
+    assert len(units) == 2
+    assert "functional_checks" not in units[0]
+    assert units[1]["functional_checks"][0]["name"] == "writer-lists-checks"
+
+
+def test_write_after_expand_adds_the_rows_that_were_pending(tmp_path: Path) -> None:
+    """The /plan lane's record has only its own row; the write after expand lands every unit."""
+    plan = _write(tmp_path / "plan.md", PLAN)
+    record = _write(
+        tmp_path / "issue-98.json",
+        _record(
+            units=[{"name": "plan", "vendor": "claude", "task": "/plan #98"}],
+            orchestrate={"run_id": "r"},
+        ),
+    )
+    assert functional_checks.main(["write", "--plan", str(plan), "--record", str(record)]) == 5
+    raw = json.loads(record.read_text(encoding="utf-8"))
+    raw["units"] += [
+        {"name": "U1", "vendor": "claude", "task": "/work #98 U1"},
+        {"name": "U2", "vendor": "claude", "task": "/work #98 U2"},
+    ]
+    record.write_text(json.dumps(raw), encoding="utf-8")
+    assert functional_checks.main(["write", "--plan", str(plan), "--record", str(record)]) == 0
+    assert [bool(row.get("functional_checks")) for row in _units(record)] == [False, True, True]
 
 
 def test_write_lands_on_orchestrate_rows_named_by_their_unit(tmp_path: Path) -> None:

@@ -446,6 +446,20 @@ The criterion was written before the work started. Read it, run it, and repeat â
 of this phase. Its contract, the check map with every divergence this repository has, the three
 statuses and the exit codes are in `plugins/saga/references/mechanical-baseline.md`.
 
+**Write the plan's checks onto the record first.** `/plan` already did this in a run it drove
+itself; in an orchestrate-driven run the `/work` rows did not exist then (`orchestrate expand`
+created them afterwards), so `/plan`'s write left them pending. The write is idempotent, so run it
+every time:
+
+```bash
+python3 plugins/saga/scripts/functional_checks.py write --plan <plan path> --issue <N>
+```
+
+Exit 0 means every plan unit's row carries its checks. Exit 5 means a plan unit still has no row:
+this run's orchestrate units are not named by the plan's U-IDs, so the build loop would record
+none-prescribed. Stop and surface it to the operator. Exit 2 is a refusal (no record, or a
+malformed check block): stop and surface it.
+
 **Read it first, before implementing.** A worker that has seen the finish line writes toward it:
 
 ```bash

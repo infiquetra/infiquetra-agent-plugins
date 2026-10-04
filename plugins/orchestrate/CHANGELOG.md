@@ -33,7 +33,8 @@
 
 - `functional_checks` and `scenario_smoke`, the unit-row keys saga's `/plan` writes (issue #98),
   join `DOCUMENTED_FOREIGN_ROW_KEYS`: a run record carrying them loads with no notice, and a save
-  keeps them as it keeps `build_loop` and `usage`.
+  keeps them as it keeps `build_loop` and `usage`. The skill now says to name each `/work` unit in
+  an expansion by the plan U-ID it builds, so saga's `/work` can write that unit's checks onto it.
 - `status` asks herdr once per call for every running unit, instead of once per running unit, so
   an unresponsive herdr costs its timeout once (issue #109).
 - `expand`'s checks moved into `validate_expansion`, which `launch-table --issue` calls too, so

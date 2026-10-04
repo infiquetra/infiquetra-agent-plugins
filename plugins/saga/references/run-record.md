@@ -385,9 +385,13 @@ The plan is the fourth consumer, and issue #98 added two keys. `/plan` writes th
 
 The writer adds a `{"id": "U<N>"}` row for a plan unit no row names, except in a record that
 carries the `orchestrate` key: orchestrate owns which rows exist there, and a row without its
-`name`, `vendor` and `task` would not load. It refuses instead, and is run again after
-`orchestrate start` creates rows named by the plan's U-IDs. A row `start` creates is fresh and
-carries nothing forward, so the checks are written after it, never before.
+`name`, `vendor` and `task` would not load. There it writes the rows that exist, lists the rest
+as `pending` and exits 5, which is not a refusal. In an orchestrate run `/plan` runs inside one of
+the rows `orchestrate start` created, so the `/work` rows do not exist yet; `orchestrate expand`
+adds them after `/plan` finishes. Each `/work` unit in the expansion table is named by the plan
+U-ID it builds, and `/work` runs the write again before its first build-loop iteration, which is
+when those rows first exist. A row `expand` creates is fresh and carries nothing forward, so the
+checks are written after it, never before.
 
 ### `tier_judgments` — `/plan`'s per-unit tier judgments
 

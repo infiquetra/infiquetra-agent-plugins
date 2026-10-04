@@ -24,7 +24,9 @@ Three subcommands:
 * ``write --plan P (--issue N | --record PATH)`` sets each matched unit row's ``functional_checks``
   to that unit's entries and its ``scenario_smoke`` to the plan's smoke, in exactly the shape
   ``build_loop.py`` reads. Every other key on every row is left alone, and the write is idempotent.
-  It holds the record's lock across the read and the write (``references/run-record.md``).
+  It holds the record's lock across the read and the write (``references/run-record.md``). In a
+  record orchestrate drives, a plan unit with no row yet is reported as pending (exit 5), not
+  refused: its row arrives with ``orchestrate expand``, and ``/work`` re-runs the write then.
 * ``map --plan P (--issue N | --body-file F)`` says which criterion each check proves, and names
   each criterion no check proves. ``/doc-review`` turns every unmapped criterion into a blocking
   finding. A run whose functional testing is waived skips the mapping and says so.
@@ -94,6 +96,11 @@ EXIT_OK = 0
 EXIT_NOT_READY = 1
 EXIT_REFUSED = build_loop.EXIT_REFUSED
 EXIT_UNKNOWN_VERSION = build_loop.EXIT_UNKNOWN_VERSION
+#: ``write`` only, and not a refusal: the record is driven by orchestrate and some plan units have
+#: no row yet. The rows that exist were written; the rest wait for the ``/work`` unit that
+#: orchestrate's ``expand`` adds, which re-runs ``write`` before its first build-loop iteration.
+#: Distinct from every ``build_loop.py`` code (0 to 4) so a caller can tell it apart.
+EXIT_PENDING = 5
 
 
 class FunctionalChecksError(ValueError):
@@ -370,20 +377,20 @@ def apply_checks(record: run_record.RunRecord, plan: PlanChecks) -> dict[str, li
     Each plan unit lands on the row it matches, or on a new ``{"id": "U<N>"}`` row when none does.
     Only the two keys this module owns change; every other key on every row is left alone, and a
     row the plan does not name is not touched. A record orchestrate drives (it carries a top-level
-    ``orchestrate`` block) is refused a new row: orchestrate owns which rows exist, and a row
-    without its ``name``, ``vendor`` and ``task`` would not load there.
+    ``orchestrate`` block) never gains a row: orchestrate owns which rows exist, and a row without
+    its ``name``, ``vendor`` and ``task`` would not load there. A plan unit with no row there is
+    listed as ``pending`` instead; ``orchestrate expand`` adds its ``/work`` row after ``/plan``
+    finishes, named by the U-ID, and ``/work`` runs the write again before its first iteration.
     """
-    unmatched = [uid for uid in plan.units if not any(_row_matches(r, uid) for r in record.units)]
-    if unmatched and "orchestrate" in record.extra:
-        raise FunctionalChecksError(
-            "the record is driven by orchestrate, which owns its unit rows, and has no row for "
-            f"{', '.join(unmatched)}; run this again after `orchestrate start` names those units, "
-            "or name each orchestrate unit by its plan U-ID"
-        )
+    driven = "orchestrate" in record.extra
     updated: list[str] = []
     added: list[str] = []
+    pending: list[str] = []
     for uid, entries in plan.units.items():
         row = next((r for r in record.units if _row_matches(r, uid)), None)
+        if row is None and driven:
+            pending.append(uid)
+            continue
         if row is None:
             row = {"id": uid}
             record.units.append(row)
@@ -397,7 +404,7 @@ def apply_checks(record: run_record.RunRecord, plan: PlanChecks) -> dict[str, li
         for r in record.units
         if isinstance(r, dict) and not any(_row_matches(r, uid) for uid in plan.units)
     ]
-    return {"updated": updated, "added": added, "untouched": untouched}
+    return {"updated": updated, "added": added, "pending": pending, "untouched": untouched}
 
 
 def write_checks(path: Path, plan: PlanChecks) -> dict[str, list[str]]:
@@ -438,7 +445,8 @@ def waiver_for(
     The repository-level waiver admission recorded comes first (``admission.
     functional_test_environment`` with ``mode: waived``); a record admitted before issue #97 falls
     back to the profile. Failing both, the plan's own run-level waiver, which plan review checks
-    against the change: it applies only to a change that carries no code.
+    against the change: it applies only to a change that carries no code, so a plan that also
+    declares a check or a smoke has none (``parse_plan`` names that as a problem).
     """
     recorded = record.admission.get(functional_environment.PROFILE_KEY) if record else None
     resolved: dict[str, Any] | None
@@ -457,7 +465,7 @@ def waiver_for(
             "reason": resolved.get("reason"),
             "source": resolved.get("source"),
         }
-    if plan.waiver is not None:
+    if plan.waiver is not None and not plan.smoke and not any(plan.units.values()):
         return {"level": "run", "reason": plan.waiver["reason"], "source": "plan"}
     return None
 
@@ -468,8 +476,13 @@ def map_criteria(
     *,
     waiver: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Map every criterion to the checks that prove it, and name what is unmapped or unknown."""
-    if waiver is not None:
+    """Map every criterion to the checks that prove it, and name what is unmapped or unknown.
+
+    A waiver skips the mapping only for a plan whose blocks are well formed. Malformed blocks are
+    never hidden behind one: under a repository-level waiver the result is not ready and lists
+    only the problems; any other waiver is ignored and the full mapping runs.
+    """
+    if waiver is not None and not plan.problems:
         return {
             "status": STATUS_WAIVED,
             "waiver": dict(waiver),
@@ -477,6 +490,16 @@ def map_criteria(
             "unmapped": [],
             "unknown_refs": [],
             "problems": [],
+        }
+    if waiver is not None and waiver.get("level") != "run":
+        return {
+            "status": STATUS_NOT_READY,
+            "waiver": None,
+            "waiver_withheld": dict(waiver),
+            "criteria": [{**dict(c), "mapped_by": []} for c in criteria],
+            "unmapped": [],
+            "unknown_refs": [],
+            "problems": list(plan.problems),
         }
     known = {criterion["id"] for criterion in criteria}
     proving: dict[str, list[dict[str, Any]]] = {cid: [] for cid in known}
@@ -511,6 +534,18 @@ def format_mapping(result: dict[str, Any]) -> str:
         return (
             f"Functional testing is waived for this run ({waiver['level']} level: "
             f"{waiver['reason']}); the mapping check was skipped."
+        )
+    if result.get("waiver_withheld"):
+        waiver = result["waiver_withheld"]
+        return "\n".join(
+            [
+                (
+                    f"Not ready: malformed check entries: {len(result['problems'])}. The "
+                    f"{waiver['level']}-level waiver ({waiver['reason']}) does not skip a plan "
+                    "whose blocks are malformed."
+                ),
+                *(f"  malformed: {problem}" for problem in result["problems"]),
+            ]
         )
     lines: list[str] = []
     for criterion in result["criteria"]:
@@ -646,6 +681,15 @@ def main(
                 raise FunctionalChecksError("name the record with --record <path> or --issue <N>")
             summary = write_checks(path, read_plan(Path(args.plan)))
             print(json.dumps({"record": str(path), **summary}, indent=2))
+            if summary["pending"]:
+                print(
+                    "functional_checks: pending, not refused: orchestrate drives this record and "
+                    f"has no row yet for {', '.join(summary['pending'])}. `orchestrate expand` "
+                    "adds them after /plan; /work runs this write again before its first "
+                    "build-loop iteration. Name each /work unit by its plan U-ID.",
+                    file=sys.stderr,
+                )
+                return EXIT_PENDING
             return EXIT_OK
         return _run_map(args, fetch)
     except run_record.UnknownRecordVersionError as exc:

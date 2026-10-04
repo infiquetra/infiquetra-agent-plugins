@@ -15,7 +15,13 @@
   idempotently, keeping every other key (`/plan` §5.3a); `map` maps the checks to the issue's
   acceptance criteria and exits 1 naming each unmapped criterion, or reports the waiver that skips
   the check. `/doc-review` makes each unmapped criterion a `P1` finding, and `/plan` §5.4 runs
-  `map` before dispatching the review.
+  `map` before dispatching the review. A waiver never hides a malformed plan: a run-level waiver
+  beside a check or a smoke is not honoured, and a repository-level one still reports malformed
+  blocks as not ready.
+- In a record orchestrate drives, `write` adds no row; a plan unit with no row yet is listed as
+  `pending` and the command exits 5, which is not a refusal, so `/plan` continues. `/work` runs
+  the write again before its first build-loop iteration, once `orchestrate expand` has created
+  the `/work` rows, each named by the plan U-ID it builds.
 - `parse_issue.acceptance_criteria(body)` reads the `### Acceptance criteria` list as `AC-1`,
   `AC-2`, ...; `extract`'s output is unchanged.
 - `plan_artifact_conformance.py` reports a malformed check block as `functional-check-malformed`.

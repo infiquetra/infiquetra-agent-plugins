@@ -416,6 +416,47 @@ def test_a_run_level_waiver_in_the_plan_skips_the_mapping_and_says_so(
     assert "the mapping check was skipped" in out
 
 
+def test_a_run_level_waiver_beside_checks_does_not_skip_the_mapping(
+    tmp_path: Path, capsys
+) -> None:
+    """A plan carrying checks is code-bearing by its own evidence, so its waiver is not honoured."""
+    plan = (
+        "# Plan\n\n## Implementation Units\n\n### U1. The only unit\n\n"
+        "```functional-checks\n- name: unit-check\n  command: python3 -m pytest -q\n"
+        "  proves: [AC-1]\n  runs: local\n```\n\n## Scenario Smoke\n\n"
+        "```functional-test-waiver\nreason: docs only\n```\n"
+    )
+    argv = [arg for arg in _map(tmp_path, plan) if arg != "--json"]
+    assert functional_checks.main(argv) == 1
+    out = capsys.readouterr().out
+    assert "waived" not in out.splitlines()[0]
+    assert "the plan carries a functional-test waiver and functional checks; keep one" in out
+    assert "AC-2 NOT MAPPED" in out and "AC-3 NOT MAPPED" in out
+
+
+def test_a_repository_waiver_does_not_hide_a_malformed_block(tmp_path: Path, capsys) -> None:
+    record = {
+        "schema": "run_record.v1",
+        "issue": 98,
+        "admission": {
+            "functional_test_environment": {
+                "mode": "waived",
+                "level": "repository",
+                "reason": "nothing here runs",
+                "source": "operator",
+            }
+        },
+        "units": [],
+    }
+    plan = _plan("[AC-1]").replace("  runs: local\n", "  runs: nowhere\n")
+    argv = _map(tmp_path, plan, record=record)
+    assert functional_checks.main(argv) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "not-ready"
+    assert result["unmapped"] == []
+    assert any("runs must be" in problem for problem in result["problems"])
+
+
 def test_an_issue_with_no_acceptance_criteria_section_is_a_refusal(
     tmp_path: Path, capsys
 ) -> None:

@@ -714,9 +714,17 @@ Each `### U<N>.` unit's checks land on the row whose `id`, `name` or `unit_id` i
 row is added when none matches), as `functional_checks`, and the plan's smoke as
 `scenario_smoke`; every other key on every row is left alone. The write holds the record's lock
 and is idempotent, so **re-run it after every §5.4 repair batch** that changes a check. Exit 2
-means it refused — no record yet, a malformed check block (it names the unit and the field), or a
-record orchestrate drives that has no row for a unit — and nothing was written: STOP and surface
-it. In an orchestrate-driven run, re-run it after `orchestrate start` creates the unit rows.
+means it refused — no record yet, or a malformed check block (it names the unit and the field) —
+and nothing was written: STOP and surface it.
+
+**Exit 5 is pending, not a refusal: continue.** In an orchestrate-driven run `/plan` is itself one
+of orchestrate's unit lanes, and the record has no rows for the plan's units yet: `orchestrate
+expand` adds the `/work` rows after this plan is finished. The writer adds no row to a record
+orchestrate drives, so it writes the rows that already exist and lists the rest as `pending`.
+Say in the plan's handoff line that the checks for those units are pending, and go on to §5.4.
+`/work` runs the same write again before its first build-loop iteration, once `expand` has
+created the rows. For the write to land, each `/work` unit in the expansion table is named by the
+plan U-ID it builds (`U1`, `U2`, ...).
 `python3 plugins/saga/scripts/build_loop.py --issue <N> --dry-run` then lists every unit's checks.
 
 ### 5.4 Dispatch the plan review, and loop until it passes
