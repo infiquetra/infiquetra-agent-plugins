@@ -28,6 +28,7 @@ import contextlib
 import fcntl
 import functools
 import glob
+import hashlib
 import importlib.util
 import json
 import os
@@ -3198,18 +3199,13 @@ def assert_dependencies_reachable(incoming: list[Unit], existing: set[str] | Non
                 )
 
 
-def cmd_expand(args: argparse.Namespace) -> int:
-    """Add units to a run already in flight.
+def validate_expansion(r: Run, added: Mapping[str, Any]) -> list[Unit]:
+    """Every check ``expand`` runs before it appends anything, and NOTHING else (issue #109).
 
-    The up-front table can only name the later phases, never their units: what ``/work`` splits into
-    is decided by the plan, which does not exist yet when the operator approves. So a phase that
-    produces the next phase's units is read when it finishes, the operator approves the new rows,
-    and they are appended to the same run -- not started as a second one. That keeps ``after``
-    reaching back to the units they depend on, and keeps one ``collect`` for the whole thing.
+    The expansion counterpart of ``validate_plan``: ``expand`` calls it and goes on to write,
+    ``launch-table --issue`` calls it and stops, so the table the operator approves was refused or
+    accepted by exactly the checks the append will run.
     """
-    assert_agent_launcher_available()
-    r = Run.load(args.issue, args.store_root)
-    added = load_plan(args.plan)
     assert_no_engine_prefs(added)
     incoming = plan_units(added)
     assert_safe_unit_names(incoming)
@@ -3225,6 +3221,22 @@ def cmd_expand(args: argparse.Namespace) -> int:
 
     assert_vendors_available(incoming)
     assert_saga_reachable(incoming)
+    return incoming
+
+
+def cmd_expand(args: argparse.Namespace) -> int:
+    """Add units to a run already in flight.
+
+    The up-front table can only name the later phases, never their units: what ``/work`` splits into
+    is decided by the plan, which does not exist yet when the operator approves. So a phase that
+    produces the next phase's units is read when it finishes, the operator approves the new rows,
+    and they are appended to the same run -- not started as a second one. That keeps ``after``
+    reaching back to the units they depend on, and keeps one ``collect`` for the whole thing.
+    """
+    assert_agent_launcher_available()
+    r = Run.load(args.issue, args.store_root)
+    added = load_plan(args.plan)
+    incoming = validate_expansion(r, added)
     r.units.extend(incoming)
     r.issues.update(added.get("issues", {}))
     r.status_map.update(added.get("status_map", {}))
@@ -3238,6 +3250,201 @@ def cmd_expand(args: argparse.Namespace) -> int:
     r.save()
     print(f"added {len(incoming)}: {', '.join(u.name for u in incoming)}")
     print("`orchestrate.py go` to launch whatever is now eligible.")
+    return 0
+
+
+#: The version of ``launch-table --json``'s shape. A reader refuses any other value.
+LAUNCH_TABLE_SCHEMA = "orchestrate.launch_table.v1"
+
+#: The saga capability a task invokes: ``/saga:plan #48``, ``/plan``, ``$saga:doc-review x``.
+_TASK_CAPABILITY = re.compile(r"^\s*[/$](?:saga:)?([a-z][a-z0-9-]*)")
+
+#: An effort delivered by a slash command in ``setup`` rather than a launch flag.
+_SETUP_EFFORT = re.compile(r"^/effort\s+(\S+)")
+
+LAUNCH_TABLE_HEADERS = (
+    "unit",
+    "cap",
+    "agent",
+    "model",
+    "effort",
+    "perm",
+    "after",
+    "serialize",
+    "role",
+    "task",
+)
+LATER_PHASE_HEADERS = ("phase", "what", "cap", "after")
+
+
+def _display_only_keys(plan: Mapping[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
+    """Shape-check the plan keys only the launch table reads: ``vendors_allowed``, ``later_phases``.
+
+    ``start`` and ``expand`` read named keys and never these, so a plan carrying them starts
+    exactly as one without. They exist so the approved table can show the allow-list and the
+    phases that have no units yet, which the operator approves along with the rows that launch.
+    """
+    vendors = plan.get("vendors_allowed", [])
+    if not isinstance(vendors, list) or not all(isinstance(v, str) for v in vendors):
+        raise SystemExit("plan `vendors_allowed` must be a list of vendor names")
+    phases = plan.get("later_phases", [])
+    if not isinstance(phases, list):
+        raise SystemExit("plan `later_phases` must be a list")
+    later: list[dict[str, Any]] = []
+    for raw in phases:
+        if not isinstance(raw, dict):
+            raise SystemExit("every plan `later_phases` row must be an object")
+        phase, what = raw.get("phase"), raw.get("what")
+        cap, after = raw.get("cap"), raw.get("after", [])
+        if not isinstance(phase, str) or not phase or not isinstance(what, str) or not what:
+            raise SystemExit("every plan `later_phases` row needs a `phase` and a `what`")
+        if cap is not None and not isinstance(cap, str):
+            raise SystemExit(f"later phase {phase!r}: `cap` must be text")
+        if not isinstance(after, list) or not all(isinstance(a, str) for a in after):
+            raise SystemExit(f"later phase {phase!r}: `after` must be a list of names")
+        later.append({"phase": phase, "what": what, "cap": cap, "after": list(after)})
+    return list(vendors), later
+
+
+def task_capability(task: str) -> str | None:
+    """The saga capability a task opens with, as ``/<cap>``, or None for prose."""
+    found = _TASK_CAPABILITY.match(task)
+    return f"/{found.group(1)}" if found else None
+
+
+def _launch_row(unit: Unit) -> dict[str, Any]:
+    via_setup = next(
+        (
+            found.group(1)
+            for line in unit.setup
+            if (found := _SETUP_EFFORT.match(str(line).strip()))
+        ),
+        None,
+    )
+    return {
+        "name": unit.name,
+        "cap": task_capability(unit.task),
+        "vendor": unit.vendor,
+        "model": unit.model,
+        "effort": unit.effort or via_setup,
+        "effort_via_setup": unit.effort is None and via_setup is not None,
+        "permission": unit.permission,
+        "permission_declared": unit.permission_declared,
+        "after": list(unit.after),
+        "serialize": list(unit.serialize),
+        "role": unit.role,
+        "task": one_line(unit.task),
+    }
+
+
+def _padded_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> list[str]:
+    widths = [
+        max([len(headers[index]), *(len(row[index]) for row in rows)])
+        for index in range(len(headers))
+    ]
+
+    def format_row(values: Sequence[str]) -> str:
+        return " ".join(value.ljust(widths[index]) for index, value in enumerate(values)).rstrip()
+
+    return [
+        format_row(headers),
+        "-" * (sum(widths) + len(widths) - 1),
+        *(format_row(row) for row in rows),
+    ]
+
+
+def render_launch_table(table: Mapping[str, Any]) -> str:
+    """The table the operator approves, in one fixed format (issue #109).
+
+    Column order and cell spelling are pinned by a golden test, so every harness shows the same
+    table and the model never redraws it. ``*`` after an effort marks one delivered by an
+    ``/effort`` line in ``setup`` rather than a launch flag; ``(default)`` marks a permission the
+    plan did not declare.
+    """
+    vendors = ", ".join(table["vendors_allowed"]) or "-"
+    workspace, account = table["workspace"] or "-", table["account"] or "-"
+    out = [
+        f"run {table['run_id']}   <- {one_line(table['source']) or '-'}",
+        f"plan {table['plan']}   sha256 {table['plan_sha256'][:12]}",
+        f"vendors allowed: {vendors}   workspace: {workspace}   account: {account}",
+        "",
+    ]
+    rows = [
+        (
+            unit["name"],
+            unit["cap"] or "-",
+            unit["vendor"],
+            unit["model"] or "-",
+            (f"{unit['effort']}*" if unit["effort_via_setup"] else unit["effort"]) or "-",
+            unit["permission"] + ("" if unit["permission_declared"] else " (default)"),
+            " ".join(unit["after"]) or "-",
+            " ".join(unit["serialize"]) or "-",
+            unit["role"] or "-",
+            status_cell(unit["task"]),
+        )
+        for unit in table["units"]
+    ]
+    out += _padded_table(LAUNCH_TABLE_HEADERS, rows)
+    if table["later_phases"]:
+        later = [
+            (
+                phase["phase"],
+                status_cell(phase["what"]),
+                phase["cap"] or "-",
+                " ".join(phase["after"]) or "-",
+            )
+            for phase in table["later_phases"]
+        ]
+        out += ["", "later phases (no units yet):", *_padded_table(LATER_PHASE_HEADERS, later)]
+    return "\n".join(out) + "\n"
+
+
+def cmd_launch_table(args: argparse.Namespace) -> int:
+    """Print the launch table for a plan, validated exactly as it will run, and create nothing.
+
+    Without ``--issue`` the plan is checked as ``start`` checks it (``validate_plan``); with
+    ``--issue`` it is checked as ``expand`` checks an addition to that run
+    (``validate_expansion``). Either way nothing is written: no branch, worktree, tab, session or
+    record. A refusal exits non-zero with the message ``start`` or ``expand`` would print.
+    """
+    assert_agent_launcher_ingested()
+    plan = load_plan(args.plan)
+    # plan_units names undeclared permissions on stdout for start's benefit; here that line would
+    # break the fixed format a reader parses, and the table's `(default)` already says it.
+    with contextlib.redirect_stdout(sys.stderr):
+        vendors_allowed, later_phases = _display_only_keys(plan)
+        review_ceiling_from_plan(plan)
+        if args.issue is None:
+            r = None
+            units = validate_plan(plan)
+        else:
+            r = Run.load(args.issue, args.store_root)
+            units = validate_expansion(r, plan)
+
+    def run_default(key: str) -> Any:
+        # `expand` replaces the run's workspace and account only when the addition names them.
+        if key in plan or r is None:
+            return plan.get(key) or None
+        return getattr(r, key)
+
+    table: dict[str, Any] = {
+        "schema": LAUNCH_TABLE_SCHEMA,
+        "issue": args.issue,
+        "run_id": r.run_id if r is not None else str(plan.get("run_id", "")),
+        "source": r.source if r is not None else str(plan.get("source", "")),
+        "plan": args.plan,
+        "plan_sha256": hashlib.sha256(Path(args.plan).read_bytes()).hexdigest(),
+        "vendors_allowed": vendors_allowed,
+        "workspace": run_default("workspace"),
+        "account": run_default("account"),
+        "units": [_launch_row(unit) for unit in units],
+        "later_phases": later_phases,
+    }
+    text = render_launch_table(table)
+    if args.json:
+        print(json.dumps({**table, "text": text}, indent=2, sort_keys=True))
+    else:
+        sys.stdout.write(text)
     return 0
 
 
@@ -3541,18 +3748,156 @@ def status_cell(text: str) -> str:
     return f"{collapsed[: STATUS_TEXT_WIDTH - 1]}…"
 
 
-def cmd_status(args: argparse.Namespace) -> int:
-    r = Run.load(args.issue, args.store_root)
-    if _AGENT_LAUNCHER_AVAILABLE:
-        live = {u.name: poll(u) for u in r.units if u.status == RUNNING}
-    else:
+#: The version of ``status --json``'s shape. A reader refuses any other value rather than guessing.
+STATUS_SCHEMA = "orchestrate.status.v1"
+
+
+def _review_state(r: Run, owner: Unit | None, slot: Mapping[str, Any]) -> str:
+    """The one phrase ``status`` shows for where a recorded Code Review result stands."""
+    outstanding_work = any(unit.fix_requests for unit in _lifecycle_units(r, owner))
+    pending = slot["review_resubmit_pending"]
+    operator_held = bool(slot["operator_fix_requests"])
+    if pending and outstanding_work and operator_held:
+        return "awaiting landed Work repairs and operator-owned fix requests"
+    if pending and outstanding_work:
+        return "awaiting landed Work repairs"
+    if pending and operator_held:
+        return "resubmission held by operator-owned fix requests"
+    if pending:
+        return "awaiting Code Review resubmission"
+    if operator_held:
+        return "operator-owned fix requests outstanding"
+    return "recorded"
+
+
+def _contradicting_note_token(owner: Unit | None, typed_outcome: str) -> str | None:
+    """The outcome word a controller's note claims when it is not the typed outcome (#895)."""
+    if owner is None or not owner.note:
+        return None
+    for token in sorted(REVIEW_OUTCOMES, key=len, reverse=True):
+        if re.search(rf"\b{re.escape(token)}\b", owner.note, flags=re.IGNORECASE):
+            return token if token != typed_outcome else None
+    return None
+
+
+def status_snapshot(r: Run) -> dict[str, Any]:
+    """Everything ``status`` reports about one run, read once, as plain data (issue #109).
+
+    The text table and ``status --json`` are both drawn from this, so the two can never disagree.
+    It asks herdr once for every running unit, not once a unit: a pane polling ``status --json``
+    would otherwise pay herdr's timeout once a row whenever herdr stops answering.
+
+    ``commits`` is a whole number where git could count, and null where the text shows ``?``
+    (the count is unknown) or ``-`` (the unit has no branch; ``landed`` is null then too).
+    ``waits_on`` is what holds a pending unit, and empty for every other unit.
+    """
+    running = [u for u in r.units if u.status == RUNNING]
+    live: dict[str, str]
+    if not _AGENT_LAUNCHER_AVAILABLE:
         # The companion was not ingested, so Herdr cannot be asked: print the fault once and
         # read liveness as unknown -- absence must not read as gone (the API-04 trade).
         _print_companion_fault_once()
-        live = {u.name: "unknown" for u in r.units if u.status == RUNNING}
-    print(f"run {r.run_id}   base {r.base[:8]}   {r.source}\n")
-    if r.unresolvable_branch:
-        print(f"WARNING: run branch {r.unresolvable_branch!r} does not resolve\n")
+        live = {u.name: "unknown" for u in running}
+    elif running:
+        live = settle_reading(running)
+    else:
+        live = {}
+
+    units: list[dict[str, Any]] = []
+    for unit, (commits, landed) in zip(r.units, unit_commit_statuses(r.units, r), strict=True):
+        units.append(
+            {
+                "name": unit.name,
+                "vendor": unit.vendor,
+                "model": unit.model,
+                "effort": unit.effort,
+                "state": unit.status,
+                "herdr": live.get(unit.name),
+                "branch": unit.branch,
+                "commits": int(commits) if commits.isdigit() else None,
+                "landed": None if landed == "-" else landed,
+                "waits_on": r.wait_reason(unit) if unit.status == PENDING else "",
+                "task": one_line(unit.task),
+                "note": one_line(unit.note),
+                "role": unit.role,
+                "lifecycle": unit.lifecycle,
+                "merge_state": unit.merge_state,
+                "after": list(unit.after),
+                "serialize": list(unit.serialize),
+            }
+        )
+
+    # Read every controller's own slot. Consulting only the run-level fields would show a scoped
+    # run as having no Code Review result at all, which is exactly when the operator needs one (#877).
+    scoped_controllers = [unit for unit in r.review_controllers() if unit.lifecycle]
+    # Carry the Unit itself. Matching a label back to its controller by name prefix attributes one
+    # controller's Work to another whenever one name prefixes the other (#877).
+    slots: list[tuple[Unit | None, dict[str, Any]]] = [
+        (unit, r.review_slot(unit)) for unit in scoped_controllers
+    ]
+    if not slots:
+        only = r.review_controllers()[0] if r.review_controllers() else None
+        slots = [(only, r.review_slot(only))]
+
+    reviews: list[dict[str, Any]] = []
+    operator_actions: list[dict[str, Any]] = []
+    for owner, slot in slots:
+        operator_actions.extend(
+            {
+                "owner": str(request.get("owner", "?")),
+                "fix_id": str(request.get("fix_id", "?")),
+                "touched_paths": [str(path) for path in request.get("touched_paths", [])],
+            }
+            for request in slot["operator_fix_requests"]
+        )
+        review: dict[str, Any] = {
+            "controller": owner.name if owner is not None else None,
+            "lifecycle": (owner.lifecycle or None) if owner is not None else None,
+            "outcome": None,
+            "state": "",
+            "recorded_unrouted": False,
+            "note_contradicts": None,
+        }
+        if not slot["review_outcome"]:
+            if slot.get("review_result"):
+                reviews.append(
+                    {**review, "state": "recorded-but-unrouted", "recorded_unrouted": True}
+                )
+            continue
+        typed_outcome = str(slot["review_outcome"])
+        reviews.append(
+            {
+                **review,
+                "outcome": typed_outcome,
+                "state": _review_state(r, owner, slot),
+                "note_contradicts": _contradicting_note_token(owner, typed_outcome),
+            }
+        )
+
+    return {
+        "schema": STATUS_SCHEMA,
+        "issue": r.issue,
+        "run_id": r.run_id,
+        "source": r.source,
+        "base": r.base,
+        "branch": r.branch,
+        "unresolvable_branch": r.unresolvable_branch or None,
+        "companion_available": bool(_AGENT_LAUNCHER_AVAILABLE),
+        "units": units,
+        "unrecorded": [{"name": name, "branch": branch} for name, branch in discover_unrecorded(r)],
+        "reviews": reviews,
+        "operator_actions": operator_actions,
+    }
+
+
+def render_status_text(snapshot: Mapping[str, Any]) -> str:
+    """The operator's ``status`` table, drawn from ``status_snapshot`` and nothing else."""
+    out: list[str] = [
+        f"run {snapshot['run_id']}   base {snapshot['base'][:8]}   {snapshot['source']}",
+        "",
+    ]
+    if snapshot["unresolvable_branch"]:
+        out += [f"WARNING: run branch {snapshot['unresolvable_branch']!r} does not resolve", ""]
     headers = (
         "unit",
         "vendor",
@@ -3566,28 +3911,29 @@ def cmd_status(args: argparse.Namespace) -> int:
         "note",
     )
     rows: list[tuple[str, ...]] = []
-    commit_statuses = unit_commit_statuses(r.units, r)
-    for unit, (commits, is_landed) in zip(r.units, commit_statuses, strict=True):
-        tail = one_line(unit.task)[:STATUS_TEXT_WIDTH]
-        if unit.status == PENDING:
-            why = r.wait_reason(unit)
-            if why:
-                # The wait is the interesting thing about a blocked unit -- its task is in the
-                # plan. Naming the kind of edge is the fix for a run that looked blocked for a
-                # reason that does not exist.
-                tail = f"[{why}]"
+    for unit in snapshot["units"]:
+        tail = unit["task"][:STATUS_TEXT_WIDTH]
+        if unit["waits_on"]:
+            # The wait is the interesting thing about a blocked unit -- its task is in the
+            # plan. Naming the kind of edge is the fix for a run that looked blocked for a
+            # reason that does not exist.
+            tail = f"[{unit['waits_on']}]"
+        if unit["landed"] is None:
+            commits = "-"
+        else:
+            commits = "?" if unit["commits"] is None else str(unit["commits"])
         rows.append(
             (
-                unit.name,
-                unit.vendor,
-                unit.model or "-",
-                unit.effort or "-",
-                unit.status,
-                live.get(unit.name, "-"),
+                unit["name"],
+                unit["vendor"],
+                unit["model"] or "-",
+                unit["effort"] or "-",
+                unit["state"],
+                unit["herdr"] or "-",
                 commits,
-                is_landed,
+                unit["landed"] or "-",
                 tail,
-                status_cell(unit.note),
+                status_cell(unit["note"]),
             )
         )
     widths = [
@@ -3598,66 +3944,47 @@ def cmd_status(args: argparse.Namespace) -> int:
     def format_row(values: Sequence[str]) -> str:
         return " ".join(value.ljust(widths[index]) for index, value in enumerate(values)).rstrip()
 
-    head = format_row(headers)
-    print(head)
-    print("-" * (sum(widths) + len(widths) - 1))
-    for row in rows:
-        print(format_row(row))
-    for name, branch in discover_unrecorded(r):
-        print(f"UNRECORDED {name} -- branch {branch} is not a unit in this run")
-    # Read every controller's own slot. Consulting only the run-level fields would show a scoped
-    # run as having no Code Review result at all, which is exactly when the operator needs one (#877).
-    scoped_controllers = [unit for unit in r.review_controllers() if unit.lifecycle]
-    # Carry the Unit itself. Matching a label back to its controller by name prefix attributes one
-    # controller's Work to another whenever one name prefixes the other (#877).
-    slots: list[tuple[Unit | None, str, dict[str, Any]]] = [
-        (unit, f"{unit.name} (lifecycle {unit.lifecycle})", r.review_slot(unit))
-        for unit in scoped_controllers
-    ]
-    if not slots:
-        only = r.review_controllers()[0] if r.review_controllers() else None
-        slots = [(only, "", r.review_slot(only))]
-
-    operator_requests: list[dict[str, Any]] = []
-    for owner, label, slot in slots:
-        operator_requests.extend(slot["operator_fix_requests"])
-        scope = f" [{label}]" if label else ""
-        if not slot["review_outcome"]:
-            if slot.get("review_result"):
-                print(f"\nCode Review result{scope}: recorded-but-unrouted")
+    out.append(format_row(headers))
+    out.append("-" * (sum(widths) + len(widths) - 1))
+    out.extend(format_row(row) for row in rows)
+    for found in snapshot["unrecorded"]:
+        out.append(
+            f"UNRECORDED {found['name']} -- branch {found['branch']} is not a unit in this run"
+        )
+    for review in snapshot["reviews"]:
+        scope = (
+            f" [{review['controller']} (lifecycle {review['lifecycle']})]"
+            if review["lifecycle"]
+            else ""
+        )
+        if review["recorded_unrouted"]:
+            out += ["", f"Code Review result{scope}: recorded-but-unrouted"]
             continue
-        outstanding_work = any(unit.fix_requests for unit in _lifecycle_units(r, owner))
-        pending = slot["review_resubmit_pending"]
-        operator_held = bool(slot["operator_fix_requests"])
-        if pending and outstanding_work and operator_held:
-            state = "awaiting landed Work repairs and operator-owned fix requests"
-        elif pending and outstanding_work:
-            state = "awaiting landed Work repairs"
-        elif pending and operator_held:
-            state = "resubmission held by operator-owned fix requests"
-        elif pending:
-            state = "awaiting Code Review resubmission"
-        elif operator_held:
-            state = "operator-owned fix requests outstanding"
-        else:
-            state = "recorded"
-        typed_outcome = str(slot["review_outcome"])
-        print(f"\nCode Review result{scope}: {one_line(typed_outcome)} ({state})")
-        if owner is not None and owner.note:
-            for token in sorted(REVIEW_OUTCOMES, key=len, reverse=True):
-                if re.search(rf"\b{re.escape(token)}\b", owner.note, flags=re.IGNORECASE):
-                    if token != typed_outcome:
-                        print(
-                            f"note contradicts typed outcome: note has {token}, "
-                            f"slot has {typed_outcome}"
-                        )
-                    break
+        out += ["", f"Code Review result{scope}: {one_line(review['outcome'])} ({review['state']})"]
+        if review["note_contradicts"]:
+            out.append(
+                f"note contradicts typed outcome: note has {review['note_contradicts']}, "
+                f"slot has {review['outcome']}"
+            )
+    for action in snapshot["operator_actions"]:
+        out.append(
+            f"OPERATOR ACTION: {one_line(action['owner'])} owns fix {one_line(action['fix_id'])} "
+            f"for {one_line(', '.join(action['touched_paths']))}"
+        )
+    return "\n".join(out) + "\n"
 
-    for request in operator_requests:
-        request_owner = one_line(str(request.get("owner", "?")))
-        fix_id = one_line(str(request.get("fix_id", "?")))
-        touched_paths = one_line(", ".join(str(path) for path in request.get("touched_paths", [])))
-        print(f"OPERATOR ACTION: {request_owner} owns fix {fix_id} for {touched_paths}")
+
+def cmd_status(args: argparse.Namespace) -> int:
+    """Show one run: the operator's table, or with ``--json`` the same reading as data.
+
+    In JSON mode nothing but the JSON reaches standard output; the companion fault and every
+    record notice go to standard error, so a reader can parse what it is handed.
+    """
+    snapshot = status_snapshot(Run.load(args.issue, args.store_root))
+    if getattr(args, "json", False):
+        print(json.dumps(snapshot, indent=2, sort_keys=True))
+    else:
+        sys.stdout.write(render_status_text(snapshot))
     return 0
 
 
@@ -5689,6 +6016,26 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--plan", required=True)
     s.set_defaults(func=cmd_plan_check)
 
+    s = sub.add_parser(
+        "launch-table",
+        help="print the table the operator approves for a plan, validated as it will run; "
+        "creates nothing",
+    )
+    s.add_argument("--plan", required=True)
+    s.add_argument(
+        "--issue",
+        type=int,
+        default=None,
+        help="validate the plan as an expansion of this issue's run, as `expand` would",
+    )
+    s.add_argument("--store-root", default=None, help="override the resolved run-record store")
+    s.add_argument(
+        "--json",
+        action="store_true",
+        help=f"print the table and its rows as JSON (schema {LAUNCH_TABLE_SCHEMA})",
+    )
+    s.set_defaults(func=cmd_launch_table)
+
     s = stateful("start", "create the parent branch and the unit rows from a plan")
     s.add_argument("--plan", required=True)
     s.add_argument("--base", help="commit to branch every unit from (default HEAD)")
@@ -5736,6 +6083,11 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(func=cmd_go)
 
     s = stateful("status", "show the table")
+    s.add_argument(
+        "--json",
+        action="store_true",
+        help=f"print the run as JSON (schema {STATUS_SCHEMA}) instead of the table",
+    )
     s.set_defaults(func=cmd_status)
 
     s = stateful("settle", "mark running units done when their session goes idle")

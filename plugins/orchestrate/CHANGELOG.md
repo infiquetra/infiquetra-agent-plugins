@@ -4,12 +4,37 @@
 
 ### Added
 
+- `orchestrate.py status --issue <N> --json` prints the run as JSON (schema
+  `orchestrate.status.v1`): every unit's vendor, model, effort, state, live herdr reading, branch,
+  commit count, landed state and what it waits on, plus unrecorded branches, Code Review results
+  and operator-owned fix requests. The text table is now drawn from the same snapshot and is
+  unchanged byte for byte (issue #109).
+- `orchestrate.py launch-table --plan <file> [--issue <N>] [--json]` prints the table the
+  operator approves in one fixed format, with the plan file's sha256 in its header. It validates
+  the plan with `start`'s checks, or with `--issue` with `expand`'s, and creates nothing. Two
+  display-only plan keys, `vendors_allowed` and `later_phases`, feed it; `start` and `expand`
+  ignore them. The `/orchestrate` command and the skill now show this output verbatim instead of
+  a table the model draws (issue #109).
+- Two Claude Code mods in the Claude adapter, on by default: `/fleet-view <issue>` opens a pane
+  drawn from `status --json`, refreshed every 15 seconds while open, with only Refresh and Close
+  buttons; and the tool `mcp__orchestrate__review_launch_table` shows `launch-table`'s output in a
+  pane and returns the operator's Approve, Change or Cancel as its result. Neither runs anything
+  but those two read-only subcommands. An auto-resolved dialog is returned as dismissed, never
+  approved, and a pane that waits undrawn (a narrow terminal) asks nothing and returns dismissed
+  with the table's text, so the operator never approves a table they cannot see. `.claude-plugin/plugin.json` names the adapter's new types contract (issue #109).
 - The Claude adapter carries an empty hooks module, `com.infiquetra.claude/mods/index.ts`, named
   from a new `com.infiquetra.claude/hooks/hooks.json` that `.claude-plugin/plugin.json` now names.
-  It registers no hook yet; it exists so continuous integration validates and tests the adapter
-  before the fleet pane lands (issue #101). The hooks file also carries an empty `"hooks": {}`:
+  It registered no hook at first; it existed so continuous integration validated and tested the
+  adapter before the fleet pane landed (issue #101). The hooks file also carries an empty `"hooks": {}`:
   Claude Code 2.1.220 and 2.1.241 refuse a hooks file without that object, which would put
   orchestrate in a plugin-load error on those builds.
+
+### Changed
+
+- `status` asks herdr once per call for every running unit, instead of once per running unit, so
+  an unresponsive herdr costs its timeout once (issue #109).
+- `expand`'s checks moved into `validate_expansion`, which `launch-table --issue` calls too, so
+  the table and the append cannot disagree (issue #109).
 
 ### Fixed
 

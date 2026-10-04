@@ -164,23 +164,55 @@ not ask Orchestrate to decide review policy.
 
 ## Phase 3 — hand over the table
 
-Show phases and policy. **Later phases have no units yet** — what `/work` splits into is decided by
-the plan, which does not exist when the operator is reading this. Say so rather than guessing:
+**The table is printed by the script, never drawn by you.** Write the plan JSON first (Phase 4
+shows its shape), then let `launch-table` print the table from it. It validates the plan with the
+same checks `start` runs and creates nothing, so what the operator approves is exactly what will
+run, and its header carries the plan file's sha256.
+
+Write only the units that can actually launch now. **Later phases have no units yet** — what
+`/work` splits into is decided by the plan, which does not exist when the operator is reading this.
+Name them in the display-only `later_phases` key instead of guessing, and put the allow-list from
+question 3 in `vendors_allowed`. `start` and `expand` ignore both keys. Beside the run's own keys
+and its `units` (Phase 4 shows them), the plan then carries:
+
+```json
+{
+  "vendors_allowed": ["claude", "codex", "grok", "qwen"],
+  "later_phases": [
+    {"phase": "build", "what": "build it", "cap": "/work", "after": ["docreview-grok", "docreview-qwen"]},
+    {"phase": "review", "what": "review the build", "cap": "/code-review", "after": ["build"]}
+  ]
+}
+```
+
+```bash
+python3 "$S" launch-table --plan .orchestrate/plan.json   # add --json for the rows as data
+```
+
+It prints, in one fixed format:
 
 ```
-run <run_id>   <-  <what the input was>
-vendors allowed: claude, codex, grok, qwen        document reviewers: 2; Code Review controller: 1
+run orch-2026-08-16-a   <- #48 deploy-guard remediation
+plan .orchestrate/plan.json   sha256 47c2736ec164
+vendors allowed: claude, codex, grok, qwen   workspace: issue-48   account: -
 
- phase  what it does                    saga cap       agent     model         effort  after     serialize
- -----  -----------------------------   ------------   -------   -----------   ------  -----     ---------
- p1a    plan #48                        /plan          claude    opus          high    -         -
- p1b    plan #48, independently         /plan          codex     gpt-5.6-sol   xhigh   -         -
- (merge of p1a and p1b happens in this session — no unit)
- p2a    tear up the merged plan         /doc-review    grok      grok-4.6      xhigh   p1a p1b   -
- p2b    tear up the merged plan         /doc-review    qwen      qwen3-max     high*   p1a p1b   -
- p3     build it                        /work          <from the plan>                 p2a p2b   -
- p4     review the build                /code-review   one non-builder                 p3        -
+unit           cap         agent  model       effort perm   after                  serialize role task
+----------------------------------------------------------------------------------------------------------------------------------------------
+plan-claude    /plan       claude opus        high   bypass -                      -         -    /saga:plan #48 — write the plan to docs/pla…
+plan-codex     /plan       codex  gpt-5.6-sol xhigh  auto   -                      -         -    $saga:plan #48, independently
+docreview-grok /doc-review grok   grok-4.6    xhigh  auto   plan-claude plan-codex -         -    /doc-review docs/plans/....md
+docreview-qwen /doc-review qwen   qwen3-max   high*  auto   plan-claude plan-codex -         -    /doc-review docs/plans/....md
+
+later phases (no units yet):
+phase  what             cap          after
+------------------------------------------------------------------
+build  build it         /work        docreview-grok docreview-qwen
+review review the build /code-review build
 ```
+
+A `*` marks an effort delivered by an `/effort` line in `setup` rather than a launch flag; `(default)`
+after a permission marks one the plan did not declare. A plan `launch-table` refuses would not have
+started: fix the plan and run it again before showing anything.
 
 Rules for the table:
 
@@ -216,10 +248,21 @@ Rules for the table:
 
 Then ask to approve, edit, or cancel. **Nothing launches before the operator says yes.**
 
-**Editing is plain language, not a form.** "Make p1b grok", "swap the two document reviewers",
-"drop p2b", "opus on the builder", "add a third plan from qwen" — take it, redraw the whole table,
-and show it again. Any cell is fair game, including which vendor sits in a competing-plan row.
-Redraw rather than describing the change, so what they approve is what runs.
+- **When the tool `mcp__orchestrate__review_launch_table` is listed** (Claude Code with this
+  plugin's mods), call it with `{"plan": "<the plan file>"}`. It shows `launch-table`'s output in a
+  pane, asks the operator, and returns their answer as `decision`; it launches nothing. `approved`
+  → run `start` with that same plan file. `change` → apply `request` (null means ask what to
+  change), rewrite the plan file, and call the tool again. `cancelled` → stop. `refused` → the plan
+  does not validate; fix it from `reason`. `dismissed` → nobody answered (the dialog was closed,
+  or resolved itself while the operator was away, or the pane could not be drawn and `text`
+  carries the table): print the table verbatim and ask in plain text below, never treat it as yes.
+- **Otherwise**, print `launch-table`'s output verbatim in a fenced block and ask in plain text.
+
+**Editing is plain language, not a form.** "Make plan-codex grok", "swap the two document
+reviewers", "drop docreview-qwen", "opus on the builder", "add a third plan from qwen" — take it,
+change the plan file, re-run `launch-table`, and show the new table. Any cell is fair game,
+including which vendor sits in a competing-plan row. Re-run rather than describing the change, so
+what they approve is what runs.
 
 ### Workspaces: one per lifecycle, once a run outgrows a screen
 
@@ -249,8 +292,9 @@ run in one.
 
 ## Phase 4 — run it
 
-Write only the units that can actually launch now — the `<from the plan>` rows are not units yet and
-do not belong in the JSON. `task` is the literal text sent to the session.
+The plan file the operator approved in Phase 3 is the one `start` reads. Only units that can
+launch now are in `units`; later phases stay in `later_phases`. `task` is the literal text sent to
+the session.
 
 ```json
 {
@@ -341,6 +385,12 @@ a unit marked done whose work is not on the run branch, a session that vanished,
 working. `status` also reports unrecorded unit branches on every poll. They write nothing, and `check`
 exits non-zero when it finds something.
 
+`status --issue <N> --json` prints the same reading as JSON (schema `orchestrate.status.v1`): every
+unit's vendor, model, effort, state, live herdr reading, branch, commit count, landed state and what
+it waits on. In Claude Code, `/fleet-view <N>` opens a pane drawn from it that refreshes every 15
+seconds while open; it is read-only, and every launch, settle, merge and clean still goes through
+the commands here.
+
 ```bash
 python3 "$S" check                                 # does the record still describe reality?
 python3 "$S" adopt                                 # what would it take back?
@@ -408,7 +458,10 @@ and bring the operator a table for **those rows only**:
 2. Derive the next phase's units from it: what `/work` splits into, which vendor and tier each piece
    wants, what depends on what. The plan is human prose; read it and propose. If it is vague, say
    so and propose the best reading — the operator is about to edit it anyway.
-3. Show that table alone. Approve or edit.
+3. Write those rows as an expansion plan and show that table alone, the same way as Phase 3 but
+   with the run's issue: `launch-table --plan .orchestrate/expand-p3.json --issue <N>` (or the tool
+   with `{"plan": ..., "issue": <N>}`). It applies `expand`'s checks, so a duplicate name or a
+   dependency in no run is refused before the operator sees it. Approve or edit.
 4. Append and launch:
 
 ```bash

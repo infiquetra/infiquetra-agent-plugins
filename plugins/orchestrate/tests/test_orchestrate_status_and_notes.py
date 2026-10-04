@@ -474,3 +474,243 @@ def test_settle_finishes_a_warned_unit_with_commits_and_clears_warning(
     saved = _read_unit(repo, "alpha")
     assert saved["status"] == "done"
     assert saved["note"] == ""
+
+
+# --- issue #109: `status --json`, the reading a pane polls ---------------------------------------
+
+STATUS_UNIT_FIELDS = {
+    "name",
+    "vendor",
+    "model",
+    "effort",
+    "state",
+    "herdr",
+    "branch",
+    "commits",
+    "landed",
+    "waits_on",
+    "task",
+    "note",
+    "role",
+    "lifecycle",
+    "merge_state",
+    "after",
+    "serialize",
+}
+
+
+def _status_json(orchestrate: ModuleType, capsys: pytest.CaptureFixture[str]) -> dict[str, Any]:
+    assert orchestrate.cmd_status(NS(json=True)) == 0
+    payload: dict[str, Any] = json.loads(capsys.readouterr().out)
+    return payload
+
+
+def _two_unit_run(orchestrate: ModuleType, repo: Path) -> None:
+    _make_unit_branch(repo, "alpha", commit=True)
+    _make_unit_branch(repo, "beta", commit=True, land=True)
+    _write_run(
+        repo,
+        [
+            _unit("alpha", model="opus", effort="high", status="done", task="first\nsecond"),
+            _unit("beta", vendor="codex", model="gpt", effort="low", status="done", task="landed"),
+            # Each holds the other, so both stay pending whatever the run does.
+            _unit("gamma", status="pending", branch=None, after=["delta"], task="after delta"),
+            _unit("delta", status="pending", branch=None, serialize=["gamma"], task="beside"),
+        ],
+    )
+
+
+def test_status_json_emits_every_unit_with_the_documented_fields(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _two_unit_run(orchestrate, repo)
+    monkeypatch.chdir(repo)
+
+    payload = _status_json(orchestrate, capsys)
+
+    assert payload["schema"] == "orchestrate.status.v1"
+    assert payload["issue"] == TEST_ISSUE
+    assert payload["run_id"] == "r1"
+    assert payload["branch"] == "orch/r1"
+    assert [unit["name"] for unit in payload["units"]] == ["alpha", "beta", "gamma", "delta"]
+    for unit in payload["units"]:
+        assert set(unit) == STATUS_UNIT_FIELDS
+    alpha, beta, gamma, delta = payload["units"]
+    assert (alpha["vendor"], alpha["model"], alpha["effort"]) == ("claude", "opus", "high")
+    assert (beta["vendor"], beta["model"], beta["effort"]) == ("codex", "gpt", "low")
+    # The recorded branch is in the JSON, though the text table has no column for it.
+    assert alpha["branch"] == "orch/r1-alpha"
+    assert gamma["branch"] is None
+    assert (alpha["commits"], alpha["landed"]) == (1, "no")
+    assert (beta["commits"], beta["landed"]) == (1, "yes")
+    # No branch: the text shows "-" for both, the JSON null for both.
+    assert (gamma["commits"], gamma["landed"]) == (None, None)
+    assert alpha["task"] == "first second"
+    assert alpha["state"] == "done"
+    assert alpha["herdr"] is None
+    assert gamma["waits_on"] == "needs output from delta"
+    assert delta["waits_on"] == "serialized behind gamma"
+    assert alpha["waits_on"] == ""
+    assert gamma["after"] == ["delta"] and delta["serialize"] == ["gamma"]
+
+
+def test_status_json_reports_an_uncountable_branch_as_null_commits(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A recorded branch git cannot find: the text shows "?" and "missing".
+    _write_run(repo, [_unit("ghost", status="done")])
+    monkeypatch.chdir(repo)
+
+    (ghost,) = _status_json(orchestrate, capsys)["units"]
+
+    assert (ghost["commits"], ghost["landed"]) == (None, "missing")
+
+
+def test_status_json_prints_only_json_when_the_companion_is_missing(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _make_unit_branch(repo, "alpha", commit=True)
+    _write_run(repo, [_unit("alpha")])
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(orchestrate, "_AGENT_LAUNCHER_AVAILABLE", False)
+    monkeypatch.setattr(orchestrate, "_COMPANION_FAULT_PRINTED", False)
+
+    assert orchestrate.cmd_status(NS(json=True)) == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert payload["companion_available"] is False
+    assert payload["units"][0]["herdr"] == "unknown"
+    assert captured.err.strip(), "the companion fault goes to stderr"
+
+
+def test_status_asks_herdr_once_for_every_running_unit(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _make_unit_branch(repo, "alpha", commit=True)
+    _make_unit_branch(repo, "beta", commit=True)
+    _write_run(repo, [_unit("alpha"), _unit("beta")])
+    monkeypatch.chdir(repo)
+    calls: list[int] = []
+
+    def counted() -> list[dict[str, str]]:
+        calls.append(1)
+        return _agents(("alpha", "working"), ("beta", "idle"))
+
+    monkeypatch.setattr(orchestrate, "live_agents", counted)
+
+    payload = _status_json(orchestrate, capsys)
+
+    assert len(calls) == 1
+    assert [unit["herdr"] for unit in payload["units"]] == ["working", "idle"]
+
+
+def test_status_json_carries_reviews_and_unrecorded_branches(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _make_unit_branch(repo, "alpha", commit=True)
+    _make_unit_branch(repo, "stray", commit=True)
+    controller = orchestrate.Unit(
+        name="code-review-controller",
+        vendor="grok",
+        task="/saga:code-review review",
+        role="review-controller",
+        merge=False,
+        status="done",
+        note="cycle 4 ACCEPTED 0 fix requests",
+    )
+    _write_run(repo, [_unit("alpha", status="done")])
+    run = orchestrate.Run.load(TEST_ISSUE, test_store())
+    run.units.append(controller)
+    raw = json.dumps({"schema": "review_result.v1", "outcome": "cycle_cap_best_available"})
+    run.write_review_slot(controller, review_result=raw, review_outcome="cycle_cap_best_available")
+    run.save()
+    monkeypatch.chdir(repo)
+
+    payload = _status_json(orchestrate, capsys)
+
+    assert payload["unrecorded"] == [{"name": "stray", "branch": "orch/r1-stray"}]
+    (review,) = payload["reviews"]
+    assert review["controller"] == "code-review-controller"
+    assert review["outcome"] == "cycle_cap_best_available"
+    assert review["note_contradicts"] == "accepted"
+    assert review["recorded_unrouted"] is False
+
+
+def test_status_json_marks_a_recorded_but_unrouted_result(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    controller = orchestrate.Unit(
+        name="code-review-controller",
+        vendor="grok",
+        task="/saga:code-review review",
+        role="review-controller",
+        merge=False,
+        status="done",
+    )
+    run = orchestrate.Run(run_id="review-run", source="test", base="base", units=[controller])
+    raw = json.dumps({"schema": "review_result.v1", "outcome": "accepted"}, sort_keys=True)
+    run.write_review_slot(controller, review_result=raw, review_outcome=None)
+    _support.save_run(run, test_store())
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        orchestrate, "unit_commit_statuses", lambda units, r: [("-", "-")] * len(units)
+    )
+
+    (review,) = _status_json(orchestrate, capsys)["reviews"]
+
+    assert review["recorded_unrouted"] is True
+    assert review["outcome"] is None
+
+
+def test_status_text_is_drawn_from_the_same_snapshot_as_the_json(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _two_unit_run(orchestrate, repo)
+    monkeypatch.chdir(repo)
+
+    assert orchestrate.cmd_status(NS()) == 0
+    text = capsys.readouterr().out
+    payload = _status_json(orchestrate, capsys)
+
+    assert text == orchestrate.render_status_text(payload)
+    gamma = next(line for line in text.splitlines() if line.startswith("gamma "))
+    assert "[needs output from delta]" in gamma
+
+
+def test_status_json_on_a_missing_record_exits_2_with_nothing_on_stdout(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    code = orchestrate.main(
+        ["status", "--issue", "999", "--store-root", str(test_store()), "--json"]
+    )
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.out == ""
+    assert captured.err.strip()
