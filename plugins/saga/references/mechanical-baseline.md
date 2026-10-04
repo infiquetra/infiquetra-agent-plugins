@@ -334,8 +334,29 @@ Three keys appear only when they apply: `waiver` (`{level, reason}`) on a waived
 `SIGTERM` cut short, which is recorded before the interrupt is re-raised.
 
 `build_loop.functional_evidence(record, revision)` is how a reader asks whether a revision carries
-a passing combined-branch functional run: it admits a green pass at exactly that revision, waived
-or not, and reports `missing` or `failed` otherwise.
+a passing combined-branch functional run: it admits a revision whose latest pass is green, waived
+or not, and reports `missing` or `failed` otherwise. A green pass at another revision admits
+nothing, and a later pass at the same revision that did not go green withdraws an earlier green
+one. Three readers ask it (issue #100): the review gate `--handoff`, the cycle-cap check in
+`review_result.py`, and the closeout in `release_step.py close`.
+
+### The review gate
+
+Code review starts only from `--handoff`, which reads the record and writes nothing:
+
+```bash
+uv run python plugins/saga/scripts/build_loop.py --record <path> --repo-root <combined checkout> --handoff
+uv run python plugins/saga/scripts/build_loop.py --record <path> --handoff --revision <full sha>
+```
+
+It checks the checkout's `HEAD`, or the revision `--revision` names. **Exit 0** prints one JSON
+object, `{revision, pass, status, waived, waiver_reason, environment, deploy, test, teardown}`,
+only when the latest combined pass at that revision is green, or green under the repository's
+waiver. **Exit 2** prints one line naming what is missing: no combined pass and no waiver at the
+revision, a latest pass that is `fail` or `could-not-execute`, or `HEAD` having moved some number
+of commits since the green pass. A green unit loop alone admits nothing. The review-gate override
+is an acceptance override and does not reach this gate; the recorded waiver is the only exception,
+and the closeout prints its reason.
 
 ## The record block
 
@@ -402,7 +423,7 @@ collapsing it into `pass` would let a missing tool report green.
 |---|---|
 | 0 | green — every check passed, or `--dry-run` printed the criterion |
 | 1 | an unexpected internal error |
-| 2 | a refusal: an unresolvable store root, an unreadable record, no record at that path, no such unit, or an unnamed unit where one is required; for `--combined`, also no declaration and no waiver, a production tripwire, units still to merge, or no lease remote |
+| 2 | a refusal: an unresolvable store root, an unreadable record, no record at that path, no such unit, or an unnamed unit where one is required; for `--combined`, also no declaration and no waiver, a production tripwire, units still to merge, or no lease remote; for `--handoff`, no green combined pass at the revision under review |
 | 3 | an unknown record version |
 | 4 | **not green yet** — the iteration ran and at least one entry is `fail` or `could-not-execute` |
 | 5 | **environment stop** — the third consecutive could-not-execute combined pass; it names the environment problems for the operator |
@@ -428,6 +449,10 @@ uv run python plugins/saga/scripts/build_loop.py --record <path> --unit <id>
 # after integration, before review: one combined-branch pass, or print it
 uv run python plugins/saga/scripts/build_loop.py --record <path> --repo-root <combined checkout> --combined
 uv run python plugins/saga/scripts/build_loop.py --record <path> --combined --dry-run
+
+# the review gate: print the revision to review, or refuse; writes nothing
+uv run python plugins/saga/scripts/build_loop.py --record <path> --repo-root <combined checkout> --handoff
+uv run python plugins/saga/scripts/build_loop.py --record <path> --handoff --revision <full sha>
 ```
 
 `--store-root <dir>` overrides the record store's resolution; `--repo-root <dir>` names the

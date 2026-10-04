@@ -426,6 +426,12 @@ its own, `combined_branch`, with the declared environment, one entry per pass an
 under the record lock on a fresh read. Its full contract, the pass keys and the exit codes are in
 `plugins/saga/references/mechanical-baseline.md`, documented there so the two do not drift.
 
+Three readers depend on it (issue #100). The review gate, `build_loop.py --handoff`, admits a
+revision to code review only when the latest combined pass at it is green or waived. The cycle-cap
+invariant, `review_result.cap_refusal`, refuses to write a `code_review` entry with the outcome
+`cycle_cap_best_available` at a revision without that evidence. And `release_step.py close` cites
+the evidence, or the waiver and its reason, in the closeout.
+
 ## `approval_scope`
 
 The seven categories, verbatim from the lifecycle repository's escalations chapter and from

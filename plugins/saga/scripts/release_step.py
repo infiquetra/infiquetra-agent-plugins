@@ -26,7 +26,10 @@ Three commands, and what each one refuses:
   cycles plus exactly one recorded extension.
 * ``close`` composes the closeout comment the lifecycle repository's ``terminal-outcomes.md``
   requires, and REFUSES to compose one that would state an environment, a deployment or an
-  acceptance result the record does not carry.
+  acceptance result the record does not carry. Two parts follow the required ones (issue #100):
+  the pre-review functional evidence, or the waiver and its reason, and the residual issues filed
+  when review ended at its cycle cap. A ``delivered`` close is refused when a cap revision has no
+  passing functional run, or when the cap left more open findings than it filed issues for.
 
 No production deployment exists anywhere in this module, and there is no argument that would
 produce one.
@@ -44,6 +47,8 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 Runner = Callable[..., Any]
 
@@ -73,6 +78,16 @@ CLOSEOUT_PARTS = (
     "closure_reason",
     "disposition",
 )
+
+#: The review outcome that proceeds without acceptance, from ``review_result.py``.
+CYCLE_CAP_OUTCOME = "cycle_cap_best_available"
+
+#: Parts that follow the required ones (issue #100). They are not in ``CLOSEOUT_PARTS`` because that
+#: tuple mirrors ``terminal-outcomes.md``, which does not name them yet.
+EVIDENCE_PARTS = ("pre_review_functional_evidence", "residual_issues")
+
+#: A finding in one of these states needs no residual issue at the cycle cap.
+RESOLVED_FINDING_STATES = ("fixed-verified", "withdrawn", "duplicate-of")
 
 #: The five dispositions and the GitHub closure reason each maps to. The mapping is fixed by the
 #: lifecycle repository; this module never invents a sixth.
@@ -478,6 +493,11 @@ def closeout_comment(
     }
     if replacement.strip():
         parts["replacement"] = replacement.strip()
+    capped = _capped_cycles(record)
+    if disposition == "delivered":
+        _refuse_unproven_cap(record, capped)
+    parts["pre_review_functional_evidence"] = _evidence_line(record)
+    parts["residual_issues"] = _residual_line(capped)
     missing = [part for part in CLOSEOUT_PARTS if not parts.get(part)]
     if missing:
         raise ReleaseStepError(
@@ -492,6 +512,108 @@ def closeout_comment(
         "parts": parts,
         "body": body,
     }
+
+
+def _code_review_cycles(record: dict[str, Any]) -> list[dict[str, Any]]:
+    cycles = record.get("review_cycles")
+    return [
+        entry
+        for entry in (cycles if isinstance(cycles, list) else [])
+        if isinstance(entry, dict) and entry.get("loop", "code_review") == "code_review"
+        and entry.get("schema") != "review_result.v1"
+    ]
+
+
+def _capped_cycles(record: dict[str, Any]) -> list[dict[str, Any]]:
+    """Each unit's latest code-review entry, where it ended at the cycle cap."""
+    latest: dict[str, dict[str, Any]] = {}
+    for entry in _code_review_cycles(record):
+        latest[str(entry.get("unit") or "")] = entry
+    return [entry for entry in latest.values() if entry.get("outcome") == CYCLE_CAP_OUTCOME]
+
+
+def _functional_evidence(record: dict[str, Any], revision: str) -> dict[str, Any]:
+    import build_loop  # noqa: PLC0415  (lazy: the build loop's reader of the combined block)
+
+    evidence: dict[str, Any] = build_loop.functional_evidence(record, revision)
+    return evidence
+
+
+def _evidence_revision(record: dict[str, Any]) -> str:
+    """The revision whose functional evidence the closeout cites: the last one reviewed, else the
+    last one the combined-branch loop handed to review."""
+    cycles = _code_review_cycles(record)
+    if cycles and cycles[-1].get("revision"):
+        return str(cycles[-1]["revision"])
+    block = record.get("combined_branch")
+    handed = block.get("handed_to_code_review") if isinstance(block, dict) else None
+    return str(handed.get("revision") or "") if isinstance(handed, dict) else ""
+
+
+def _evidence_line(record: dict[str, Any]) -> str:
+    revision = _evidence_revision(record)
+    if not revision:
+        return (
+            "not recorded: this run's record carries no pre-review functional pass and no waiver"
+        )
+    evidence = _functional_evidence(record, revision)
+    if evidence["status"] == "waived":
+        return f"waived: {evidence['waiver_reason']} (pass {evidence['pass']} at {revision})"
+    if evidence["status"] == "passed":
+        environment = evidence["environment"]
+        return (
+            f"pass {evidence['pass']} at {revision} ({environment['kind']}, "
+            f"{environment['scope']}): deploy {evidence['deploy']}, test {evidence['test']}, "
+            f"teardown {evidence['teardown']}"
+        )
+    if evidence["status"] == "failed":
+        return (
+            f"not passing at {revision}: the latest combined pass there, pass "
+            f"{evidence['pass']}, is {evidence['pass_status']}"
+        )
+    return f"not recorded: no combined-branch functional pass at {revision}"
+
+
+def _unresolved(entry: dict[str, Any]) -> int:
+    findings = entry.get("findings")
+    return sum(
+        1
+        for finding in (findings if isinstance(findings, list) else [])
+        if isinstance(finding, dict) and finding.get("status") not in RESOLVED_FINDING_STATES
+    )
+
+
+def _refuse_unproven_cap(record: dict[str, Any], capped: list[dict[str, Any]]) -> None:
+    for entry in capped:
+        revision = str(entry.get("revision") or "")
+        if not _functional_evidence(record, revision)["admits"]:
+            raise ReleaseStepError(
+                f"review ended {CYCLE_CAP_OUTCOME} at {revision}, which has no passing "
+                "combined-branch functional run and no waiver; a delivered close needs one"
+            )
+        filed = entry.get("residual_issues")
+        count = len(filed) if isinstance(filed, list) else 0
+        open_findings = _unresolved(entry)
+        if open_findings > count:
+            raise ReleaseStepError(
+                f"review ended {CYCLE_CAP_OUTCOME} at {revision} with {open_findings} open "
+                f"finding(s) and {count} residual issue(s) filed; every leftover finding is "
+                "filed as a linked issue before a delivered close"
+            )
+
+
+def _residual_line(capped: list[dict[str, Any]]) -> str:
+    if not capped:
+        return f"none: review did not end at the cycle cap ({CYCLE_CAP_OUTCOME})"
+    numbers = [
+        number
+        for entry in capped
+        for number in (entry.get("residual_issues") or [])
+        if isinstance(number, int)
+    ]
+    if not numbers:
+        return "none: review ended at the cycle cap with no open finding left to file"
+    return ", ".join(f"#{number}" for number in numbers)
 
 
 def _acceptance_line(test_state: dict[str, Any]) -> str:

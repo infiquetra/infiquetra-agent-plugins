@@ -879,20 +879,29 @@ Call `/code-review` in `programmatic` / `report-only` mode. In that mode `/code-
 structured findings envelope to the caller and writes nothing durable — **the caller owns persistence**
 (its own contract).
 
-**The reviewed revision is the one the combined-branch loop went green at, read from the record —
-not a fresh `git rev-parse`.** The build loop wrote it into `combined_branch.handed_to_code_review`
-on the green pass (3.3), and that is the whole point of recording it: the revision the review
-covers must be the revision the functional run passed at, and re-reading `HEAD` here would silently
-hand over a later commit that nothing has checked.
+**Review does not start without a passing combined-branch functional run** on the revision under
+review, or the repository's recorded waiver, whose reason the closeout prints (issue #100). The
+gate is a command, and the reviewed revision comes only from it — not from a fresh `git rev-parse`
+and not from any unit row:
 
 ```bash
-REVIEWED_SHA=$(uv run python plugins/saga/scripts/run_record.py show <N> \
-  | python3 -c 'import json,sys; r=json.load(sys.stdin); print(r["combined_branch"]["handed_to_code_review"]["revision"])')
+REVIEWED_SHA=$(uv run python plugins/saga/scripts/build_loop.py --record <run record path> \
+  --repo-root <combined branch checkout> --handoff \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["revision"])')
 ```
 
-It is a full forty-character commit identifier, which is the only shape `/code-review` accepts. If
-the record carries no `combined_branch.handed_to_code_review`, the combined branch never went
-green: go back to Phase 3 rather than reviewing unchecked work.
+`--handoff` reads the record and writes nothing. It exits 0 and prints the revision, the pass, the
+environment and its deploy, test and teardown results only when the latest combined pass at the
+checkout's `HEAD` is green, waived or not. Otherwise it exits 2 with one line saying what is
+missing: no combined pass at that revision, a latest pass that is `fail` or `could-not-execute`, or
+`HEAD` having moved since the green pass. Each of those means go back to Phase 3.3 and run the
+combined-branch loop until it is green; a green unit loop alone never admits a revision. The
+revision is a full forty-character commit identifier, which is the only shape `/code-review`
+accepts. The same gate admits every entry into review: a repair batch coming back from review, or
+from the post-merge `/qa` repair loop, passes 3.3 and `--handoff` again first.
+
+The review-gate override (`--review-gate-override`, 5.3) is an acceptance override and does not
+apply to this gate. No role may skip it; the recorded waiver is the only exception.
 
 The findable saga `/work` minted in Phase 1.4 (`issue_ref` / `plan_path` / branch) is what a *standalone*
 `/code-review` would later append `review_paths` to. For this in-loop gate, `/work` reads the envelope
@@ -917,9 +926,12 @@ Route the complete typed outcome set as follows:
 
 - **`accepted`** — proceed to PR-ready even when the result still carries findings, including Priority 2
   findings.
-- **`repairs_requested`** — block PR-ready and route the consolidated fix requests through Work.
-- **`cycle_cap_best_available`** — proceed with the cycle-three best-available revision and surface
-  every residual.
+- **`repairs_requested`** — block PR-ready and route the consolidated fix requests through Work; the
+  repaired branch passes Phase 3.3 and the 5.1 gate before the next review.
+- **`cycle_cap_best_available`** — proceed with the best-available revision only when it passed the
+  combined-branch functional run, and hand every residual to mission-control so the closeout lists
+  them. The record refuses a cap result at an unproven revision: run Phase 3.3 on it, then record
+  the result again.
 - **`review_incomplete`** — block PR-ready and say that the review did not run: delivery did not
   establish a review, so do not invent acceptance.
 
@@ -1010,7 +1022,9 @@ That prints the honest absence rather than a move. What follows it are four step
    makes it only on a PASS: starting a step and deciding its verdict are different authorities, and
    only the first moved. A failure re-enters the build loop and counts against the post-merge
    allowance, which keeps its own counter of three standard and two escalated cycles plus exactly
-   one recorded extension that no role may grant twice. An unrun scenario is never folded into a
+   one recorded extension that no role may grant twice. A repair batch from that loop that goes
+   back to code review passes Phase 3.3 and the 5.1 `--handoff` gate first, like any other entry
+   into review; this `/qa` run itself is unchanged. An unrun scenario is never folded into a
    pass.
 
    The closeout comment is then composed from the record, and refuses to state an environment, a
@@ -1022,7 +1036,11 @@ That prints the honest absence rather than a move. What follows it are four step
    ```
 
    It is posted before the close, carries every link the lifecycle repository requires, and records
-   each inapplicable practice with a reason. The journal entries ship in the commit that ships the
+   each inapplicable practice with a reason. It also cites the pre-review functional evidence — the
+   combined pass, its environment and its deploy, test and teardown results, or the waiver and its
+   reason — and lists the residual issues filed at the cycle cap. A `delivered` close is refused
+   when review ended at the cap on a revision with no passing functional run, or with more open
+   findings than residual issues filed. The journal entries ship in the commit that ships the
    change — not afterwards, and not in a separate pass. Then the close move:
 
    ```bash

@@ -34,6 +34,7 @@ REFERENCE = REPO_ROOT / "plugins" / "saga" / "references" / "mechanical-baseline
 RUN_RECORD_REFERENCE = REPO_ROOT / "plugins" / "saga" / "references" / "run-record.md"
 PROFILE_REFERENCE = REPO_ROOT / "plugins" / "saga" / "references" / "repository-profile.md"
 WORK_SKILL = REPO_ROOT / "plugins" / "saga" / "skills" / "work" / "SKILL.md"
+CODE_REVIEW_SKILL = REPO_ROOT / "plugins" / "saga" / "skills" / "code-review" / "SKILL.md"
 
 
 def _load(name: str) -> ModuleType:
@@ -1881,6 +1882,176 @@ def test_a_waived_combined_pass_is_admitted_as_waived(tmp_path: Path) -> None:
     evidence = build_loop.functional_evidence(build_loop.load_record_file(path), "a" * 40)
     assert evidence["admits"] is True
     assert evidence["status"] == "waived" and evidence["waiver_reason"] == "docs only"
+
+
+# ---------------------------------------------------------------------------
+# The review gate: `--handoff` (issue #100, pre-review testing U5).
+# ---------------------------------------------------------------------------
+
+
+def _gate(
+    path: Path, capsys: pytest.CaptureFixture[str], *extra: str, runner: FakeRunner | None = None
+) -> tuple[int, str, str]:
+    capsys.readouterr()
+    code: int = build_loop.main(
+        ["--record", str(path), "--handoff", *extra], runner=runner or FakeRunner()
+    )
+    captured = capsys.readouterr()
+    return code, captured.out, captured.err
+
+
+def test_with_no_combined_run_and_no_waiver_work_does_not_hand_the_revision_to_review(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Issue #100's first criterion: the gate prints no revision, so `/work` §5.1 has none."""
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    before = path.read_bytes()
+    code, out, err = _gate(path, capsys)
+    assert code == build_loop.EXIT_REFUSED
+    assert out == ""
+    assert err.startswith("build_loop: no passing combined-branch functional run and no waiver")
+    assert "a" * 40 in err
+    assert len(err.strip().splitlines()) == 1
+    assert path.read_bytes() == before, "the gate writes nothing"
+
+
+def test_a_failing_or_unexecutable_latest_pass_does_not_hand_off(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    assert _combined(path, FakeRunner(verdicts={"run-functional": 1}), FakeLeaseBackend()) == 4
+    code, out, err = _gate(path, capsys)
+    assert code == build_loop.EXIT_REFUSED and out == ""
+    assert f"the latest combined pass at {'a' * 40} is fail" in err
+
+    assert _combined(path, FakeRunner(verdicts={"deploy-stack": 1}), FakeLeaseBackend()) == 4
+    code, out, err = _gate(path, capsys)
+    assert code == build_loop.EXIT_REFUSED and out == ""
+    assert "is could-not-execute" in err
+
+
+def test_a_later_failing_pass_at_the_same_revision_withdraws_the_green_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    assert _combined(path, FakeRunner(), FakeLeaseBackend()) == 0
+    assert _combined(path, FakeRunner(verdicts={"run-functional": 1}), FakeLeaseBackend()) == 4
+    code, out, _ = _gate(path, capsys)
+    assert code == build_loop.EXIT_REFUSED and out == ""
+
+
+def test_a_green_pass_at_head_hands_off_its_full_revision(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    assert _combined(path, FakeRunner(), FakeLeaseBackend()) == 0
+    code, out, err = _gate(path, capsys)
+    assert code == build_loop.EXIT_GREEN, err
+    admitted = json.loads(out)
+    assert admitted["revision"] == "a" * 40
+    assert admitted["pass"] == 1 and admitted["status"] == "passed"
+    assert admitted["waived"] is False and admitted["waiver_reason"] is None
+    assert admitted["environment"] == {"kind": "shared-nonprod", "scope": "shared"}
+    assert (admitted["deploy"], admitted["test"], admitted["teardown"]) == ("pass",) * 3
+
+
+def test_head_moved_since_the_green_pass_is_refused_naming_the_commit_count(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    assert _combined(path, FakeRunner(), FakeLeaseBackend()) == 0
+    moved = FakeRunner(
+        verdicts={"rev-parse": lambda *_: (0, "c" * 40), "rev-list": lambda *_: (0, "2")}
+    )
+    code, out, err = _gate(path, capsys, runner=moved)
+    assert code == build_loop.EXIT_REFUSED and out == ""
+    assert f"HEAD moved 2 commits since the green pass at {'a' * 40}" in err
+    assert "run the combined-branch loop again" in err
+    assert ["git", "-C", str(Path.cwd()), "rev-list", f"{'a' * 40}..{'c' * 40}", "--count"] in (
+        moved.calls
+    )
+
+
+def test_a_waived_pass_hands_off_with_its_reason(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    waiver = {"mode": "waived", "level": "repository", "reason": "docs only", "source": "profile"}
+    path = _write(tmp_path / "issue-1027.json", _combined_record(waiver))
+    assert _combined(path, FakeRunner(), FakeLeaseBackend()) == 0
+    code, out, err = _gate(path, capsys)
+    assert code == build_loop.EXIT_GREEN, err
+    admitted = json.loads(out)
+    assert admitted["waived"] is True and admitted["status"] == "waived"
+    assert admitted["waiver_reason"] == "docs only"
+
+
+def test_handoff_revision_checks_the_named_revision_instead_of_head(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    assert _combined(path, FakeRunner(), FakeLeaseBackend()) == 0
+    never_head = FakeRunner(verdicts={"rev-parse": lambda *_: (0, "c" * 40)})
+    code, out, _ = _gate(path, capsys, "--revision", "a" * 40, runner=never_head)
+    assert code == build_loop.EXIT_GREEN
+    assert json.loads(out)["revision"] == "a" * 40
+    assert not any("rev-parse" in call for call in never_head.calls)
+
+    code, out, err = _gate(path, capsys, "--revision", "f" * 40)
+    assert code == build_loop.EXIT_REFUSED and out == ""
+    assert f"no passing combined-branch functional run and no waiver at {'f' * 40}" in err
+
+    code, _, err = _gate(path, capsys, "--revision", "HEAD")
+    assert code == build_loop.EXIT_REFUSED
+    assert "not a full forty-character commit identifier" in err
+
+
+def test_revision_without_handoff_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    assert build_loop.main(["--record", str(path), "--revision", "a" * 40, "--dry-run"]) == 2
+    assert "--revision belongs to --handoff" in capsys.readouterr().err
+
+
+def test_handoff_is_an_alternative_to_unit_and_combined(tmp_path: Path) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    for other in (["--unit", "U1"], ["--combined"]):
+        with pytest.raises(SystemExit):
+            build_loop.main(["--record", str(path), "--handoff", *other])
+
+
+def test_a_declared_shared_environment_with_only_unit_green_cannot_obtain_a_handoff(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Parent #91's second criterion, at the command `/work` §5.1 runs."""
+    units = [{"id": "U1"}, {"id": "U2"}]
+    path = _write(tmp_path / "issue-1027.json", _combined_record(units=units))
+    for unit in ("U1", "U2"):
+        assert build_loop.main(["--record", str(path), "--unit", unit], runner=FakeRunner()) == 0
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert all(row["build_loop"]["handed_to_code_review"] for row in raw["units"])
+    code, out, _ = _gate(path, capsys)
+    assert code == build_loop.EXIT_REFUSED and out == ""
+
+
+def test_the_work_skill_takes_the_reviewed_revision_only_from_the_handoff_gate() -> None:
+    text = WORK_SKILL.read_text(encoding="utf-8")
+    section = text[text.index("### 5.1 ") : text.index("### 5.2 ")]
+    assert "build_loop.py" in section and "--handoff" in section
+    assert 'units"][0]' not in section and "units[0]" not in section
+    collapsed = " ".join(section.split()).lower()
+    assert "review does not start without a passing combined-branch functional run" in collapsed
+    assert "--review-gate-override" in collapsed and "does not apply to this gate" in collapsed
+
+
+def test_the_code_review_skill_reads_the_functional_evidence_and_stops_without_it() -> None:
+    text = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    assert "show --issue" not in text
+    phase_0 = text[text.index("## Phase 0") : text.index("## Phase 1")]
+    assert "--handoff" in phase_0 and '--revision "$REVIEWED_SHA"' in phase_0
+    collapsed = " ".join(phase_0.split())
+    assert "no passing combined-branch functional run and no waiver" in collapsed
+    assert "stop" in collapsed.lower()
 
 
 # ---------------------------------------------------------------------------
