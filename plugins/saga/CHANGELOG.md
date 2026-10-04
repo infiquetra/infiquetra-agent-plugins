@@ -14,7 +14,10 @@
   records nothing. Claude Code reports cache writes without a TTL split, so they are recorded as
   one-hour writes, the upper bound.
 - `scripts/run_status.py unit-for`, which prints the matched unit as `run_status.v1` JSON
-  (`--json`) or one line, and `null` (exit 0) for a directory that works no unit or is no checkout.
+  (`--json`) or one line, and `null` (exit 0) for a directory that works no unit or is no checkout. The
+  matched role is always a staffing role: orchestrate's review-loop roles map to `worker` (fixer,
+  resolver) or `lens-reviewer` (controller, external reviewer), and a name `staffing.json` does
+  not list records as `worker`.
 - `/review-view`, a review findings pane in Claude Code (issue #108). It opens the run's latest code
   review result (`/review-view #N` for issue N) with one row per selected lens: met, not met, not
   run or unscored, its finding count and its top findings. A lens that did not execute, or a

@@ -238,13 +238,13 @@ describe('usage capture', () => {
 
   test("a saga agent type records its own role; the row's role names the main thread", async ($, on) => {
     const fakes = fake(on)
-    fakes.match = { ...TARGET, role: 'review-fixer' }
+    fakes.match = { ...TARGET, role: 'functional-tester' }
     fakes.agents = [{ id: 'r1', type: 'saga:lens-reviewer' }]
     await start($)
     await step($)
     await step($, { agentId: 'r1' })
     await end($)
-    expect(adds(fakes).map((flags) => flags.get('--role'))).toEqual(['review-fixer', 'lens-reviewer'])
+    expect(adds(fakes).map((flags) => flags.get('--role'))).toEqual(['functional-tester', 'lens-reviewer'])
   })
 })
 
@@ -274,7 +274,7 @@ describe('pure helpers', () => {
     expect(subagentRole('saga:functional-tester', 'worker')).toBe('functional-tester')
     expect(subagentRole('general-purpose', 'worker')).toBe('worker')
     expect(subagentRole('saga:Bad Role', 'worker')).toBe('worker')
-    expect(subagentRole(undefined, 'review-fixer')).toBe('review-fixer')
+    expect(subagentRole(undefined, 'merging-worker')).toBe('merging-worker')
   })
 
   const step = { sessionId: 's', agentId: null, role: 'worker', model: 'm', effort: 'high', uncachedInput: 1, cacheRead: 2, cacheWrite: 3, output: 4 }

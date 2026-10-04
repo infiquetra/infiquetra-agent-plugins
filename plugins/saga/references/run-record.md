@@ -273,7 +273,7 @@ live (`build_loop.iterations` on the row, and `review_cycles` at the top level).
 **Claude Code sessions write live (issue #107).** The saga adapter's token-capture mod
 (`com.infiquetra.claude/mods/usage-capture.ts`) runs `run_status.py --repo-root <session directory>
 unit-for --json` once at session start. It matches the unit row whose `worktree` is the session's
-checkout (role: the row's `role`, else `worker`), whose `merge_worktree` is (role
+checkout (role: the row's `role` as a staffing role, else `worker`), whose `merge_worktree` is (role
 `merging-worker`), or, failing both, whose `branch` is checked out there, across every record in
 the store; a worktree match outranks a branch match, then an active record, then the newest. No
 match, and the session records nothing. A matched session sums each model request's usage, main
@@ -286,6 +286,11 @@ Code reports cache writes as one count with no five-minute or one-hour split, so
 them under `cache_write_1h`, the dearer rate: the cost report can overstate cache-write spend from
 these sessions, never understate it. A subagent whose agent type is `saga:<role>` records as that
 role; any other subagent records as the session's role. A request with no effort records `none`.
+A row's `role` is recorded only as a staffing role from `staffing.json`, the vocabulary the cost
+report groups spend by: orchestrate's review-loop roles map to the staffing role whose work they
+do (`review-fixer` and `downstream-resolver` to `worker`, `review-controller` and
+`external-reviewer` to `lens-reviewer`), and any other name `staffing.json` does not list records
+as `worker`.
 
 An entry is identified by its session id, role, vendor, model and effort. The first `usage add`
 for that identity appends an entry; a later one adds its counts into the same entry, increments

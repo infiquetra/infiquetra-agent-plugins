@@ -204,9 +204,42 @@ def _is_path(value: Any, target: Path) -> bool:
 #: How a unit row matched, strongest first: its own worktree outranks a shared branch name.
 MATCHED_BY: tuple[str, ...] = ("worktree", "branch")
 
-#: The role a matched session records when its row names none: orchestrate's rows carry ``role``
-#: only for review-loop units, and the session in a unit's worktree is the unit's worker.
+#: The role a matched session records when its row names no staffing role: orchestrate's rows
+#: carry ``role`` only for review-loop units, and the session in a unit's worktree is its worker.
 DEFAULT_ROLE = "worker"
+
+#: Orchestrate's review-loop roles (``Unit.role``) are a different vocabulary from the staffing
+#: roles ``usage add --role`` records and ``cost_report.py`` groups spend by, so each is mapped
+#: to the staffing role whose work it does: a fixer or resolver edits code like a worker, and a
+#: review controller or external reviewer reviews like a lens reviewer.
+REVIEW_LOOP_ROLES: dict[str, str] = {
+    "review-fixer": "worker",
+    "downstream-resolver": "worker",
+    "review-controller": "lens-reviewer",
+    "external-reviewer": "lens-reviewer",
+}
+
+
+def staffing_roles() -> frozenset[str]:
+    """The staffing role names ``staffing.json`` lists; empty when the registry is unreadable."""
+    import bundled_fleet  # noqa: PLC0415  (loaded on use: nothing does I/O at import)
+
+    staffing = bundled_fleet.load("staffing")
+    try:
+        return frozenset(staffing.roles())
+    except staffing.StaffingError as exc:
+        print(f"run_status: staffing roles unreadable: {exc}", file=sys.stderr)
+        return frozenset()
+
+
+def staffing_role(named: Any, known: frozenset[str]) -> str:
+    """The staffing role a row's ``role`` key records as: mapped from a review-loop role, kept
+    when *known* lists it, and otherwise ``worker``."""
+    if not isinstance(named, str):
+        return DEFAULT_ROLE
+    role = REVIEW_LOOP_ROLES.get(named, named)
+    return role if role in known else DEFAULT_ROLE
+
 
 #: The role of a session in a unit's merge-turn worktree (``merge_worktree``, issue 1025).
 MERGE_ROLE = "merging-worker"
@@ -217,7 +250,8 @@ def unit_for(store_root: Path, repo_root: Path, branch: str) -> dict[str, Any] |
 
     Every record in *store_root* is read; one this saga cannot read is skipped with one line on
     standard error, so a stale or foreign record never hides the unit. A row matches when its
-    ``worktree`` is *repo_root* (role: the row's ``role``, else ``worker``), when its
+    ``worktree`` is *repo_root* (role: the row's ``role`` as a staffing role, see
+    ``staffing_role``, else ``worker``), when its
     ``merge_worktree`` is (role ``merging-worker``), or, failing both, when its ``branch`` is
     *branch*. Of several matches the strongest kind wins, then an active record (a non-empty
     ``next_step``), then the newest ``updated_at``; ``ambiguous`` says there was more than one.
@@ -226,6 +260,7 @@ def unit_for(store_root: Path, repo_root: Path, branch: str) -> dict[str, Any] |
     if not root.is_dir():
         return None
     target = Path(repo_root).resolve()
+    known = staffing_roles()
     found: list[tuple[int, bool, str, dict[str, Any]]] = []
     for path in sorted(root.glob("issue-*.json")):
         number = path.stem.removeprefix("issue-")
@@ -244,12 +279,7 @@ def unit_for(store_root: Path, repo_root: Path, branch: str) -> dict[str, Any] |
             unit = run_record.unit_key(row)
             if not unit:
                 continue
-            named = row.get("role")
-            role = (
-                named
-                if isinstance(named, str) and run_record.ROLE_PATTERN.fullmatch(named)
-                else DEFAULT_ROLE
-            )
+            role = staffing_role(row.get("role"), known)
             if _is_path(row.get("worktree"), target):
                 how = "worktree"
             elif _is_path(row.get("merge_worktree"), target):

@@ -474,16 +474,47 @@ def test_unit_for_falls_back_to_the_branch_when_no_worktree_matches(
     assert (view["match"]["unit"], view["match"]["matched_by"]) == ("u2", "branch")
 
 
-def test_unit_for_reads_unit_id_and_the_rows_own_role(
+def test_unit_for_reads_unit_id_and_the_rows_own_staffing_role(
     repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _units(
         store,
         412,
-        [{"unit_id": "fix-1", "role": "review-fixer", "worktree": str(repo)}],
+        [{"unit_id": "test-1", "role": "functional-tester", "worktree": str(repo)}],
     )
     match = _unit_for(repo, store, capsys)["match"]
-    assert (match["unit"], match["role"]) == ("fix-1", "review-fixer")
+    assert (match["unit"], match["role"]) == ("test-1", "functional-tester")
+
+
+@pytest.mark.parametrize(
+    ("review_loop_role", "staffing_role"),
+    [
+        ("review-fixer", "worker"),
+        ("downstream-resolver", "worker"),
+        ("review-controller", "lens-reviewer"),
+        ("external-reviewer", "lens-reviewer"),
+    ],
+)
+def test_unit_for_maps_orchestrates_review_loop_role_to_a_staffing_role(
+    repo: Path,
+    store: Path,
+    capsys: pytest.CaptureFixture[str],
+    review_loop_role: str,
+    staffing_role: str,
+) -> None:
+    _units(store, 412, [{"unit_id": "r-1", "role": review_loop_role, "worktree": str(repo)}])
+    assert _unit_for(repo, store, capsys)["match"]["role"] == staffing_role
+
+
+def test_every_mapped_review_loop_role_lands_on_a_listed_staffing_role() -> None:
+    assert set(run_status.REVIEW_LOOP_ROLES.values()) <= run_status.staffing_roles()
+
+
+def test_unit_for_records_a_role_staffing_does_not_list_as_the_worker(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _units(store, 412, [{"name": "u2", "role": "made-up-role", "worktree": str(repo)}])
+    assert _unit_for(repo, store, capsys)["match"]["role"] == "worker"
 
 
 def test_unit_for_names_the_merging_worker_in_a_merge_turn_worktree(
