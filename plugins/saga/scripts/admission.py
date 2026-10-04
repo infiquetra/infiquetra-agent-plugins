@@ -809,8 +809,10 @@ def validate_lens_declaration(value: Any, staffing: Any = None) -> None:
 def _merge_overrides(current: Any, overrides: dict[str, Any]) -> dict[str, Any]:
     """Lay *overrides* onto the recorded staffing map, role by role.
 
-    A role the answer names takes its vendor, model and effort and is marked
-    ``operator_override``; every other role, and every run-wide ``_`` key, keeps what the
+    A role the answer names takes its vendor, model and effort, is marked
+    ``operator_override`` and records ``source`` ``operator`` (the staffing resolver's top
+    layer, issue #93), so a tier source the resolver recorded for the default never outlives the
+    answer that replaced it; every other role, and every run-wide ``_`` key, keeps what the
     staffing component recorded. A partial answer therefore never drops a role.
     """
     merged = json.loads(json.dumps(current)) if isinstance(current, dict) else {}
@@ -819,6 +821,7 @@ def _merge_overrides(current: Any, overrides: dict[str, Any]) -> dict[str, Any]:
         merged[str(role)] = {
             **kept,
             **{key: row[key] for key in _OVERRIDE_KEYS},
+            "source": "operator",
             "operator_override": True,
         }
     return merged

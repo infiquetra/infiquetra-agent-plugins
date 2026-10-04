@@ -110,7 +110,9 @@
   it silently did not before; and the function takes `root=` and `jev_raise=`.
 - Admission passes its repository root to staffing, so the overlay is read from `--repo-root`
   rather than the working directory, records each role's tier `source`, and carries a role's
-  recorded `jev_raise` into the resolver and back onto the entry.
+  recorded `jev_raise` into the resolver and back onto the entry. A role a partial
+  `staffing_overrides` answer names records `source` `operator`, so the default's tier source does
+  not outlive the answer that replaced it.
 - `resolve-build-unit-tier` prints exactly `{"model", "effort"}` by default, the string issue #93's
   acceptance criterion names. `--explain` adds the winning layer as `source`, and
   `"jev_raise_set_aside": true` when a passed `--jev-raise` was outranked, such as by a

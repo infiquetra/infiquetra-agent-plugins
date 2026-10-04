@@ -1785,6 +1785,7 @@ def test_a_partial_staffing_override_merges_role_by_role(adm: ModuleType) -> Non
         "vendor": "claude",
         "model": "opus",
         "effort": "low",
+        "source": "operator",
         "operator_override": True,
     }
     rows = {row[0]: row for row in _rows(_tables(adm, after, staffing))}
