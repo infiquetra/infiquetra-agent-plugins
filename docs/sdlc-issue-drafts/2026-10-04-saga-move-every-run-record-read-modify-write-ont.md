@@ -106,4 +106,3 @@ opus/medium
 - URL: https://github.com/infiquetra/infiquetra-agent-plugins/issues/117
 - Number: 117
 - Created at: 2026-10-04T03:56:06.765982+00:00
-
