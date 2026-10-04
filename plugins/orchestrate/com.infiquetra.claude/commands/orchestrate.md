@@ -458,6 +458,13 @@ and bring the operator a table for **those rows only**:
 2. Derive the next phase's units from it: what `/work` splits into, which vendor and tier each piece
    wants, what depends on what. The plan is human prose; read it and propose. If it is vague, say
    so and propose the best reading — the operator is about to edit it anyway.
+   **An expansion creates exactly one `/work` row per plan unit, named by that unit's U-ID**
+   (`U1`, `U2`, ... from the plan's Implementation Units). A lane that builds several plan units
+   carries several rows, one per U-ID, never one row under a lane name. `/plan` could not write the
+   plan's functional checks onto rows that did not exist yet, so `/work` writes them before its
+   first build-loop iteration (`plugins/saga/scripts/functional_checks.py write`) and finds each
+   row by its name. A plan unit with no row of its name stays pending, the write exits 5, and
+   `/work` stops and surfaces it to the operator instead of building.
 3. Write those rows as an expansion plan and show that table alone, the same way as Phase 3 but
    with the run's issue: `launch-table --plan .orchestrate/expand-p3.json --issue <N>` (or the tool
    with `{"plan": ..., "issue": <N>}`). It applies `expand`'s checks, so a duplicate name or a
@@ -490,10 +497,12 @@ When the expansion includes Work and Code Review, make ownership executable in t
 ```json
 {
   "units": [
-    {"name": "build-api", "vendor": "claude", "task": "/saga:work docs/plans/x.md",
+    {"name": "U1", "vendor": "claude", "task": "/saga:work docs/plans/x.md — build U1",
      "role": "review-fixer", "paths": ["src/api", "tests/api"], "after": ["docreview"]},
+    {"name": "U2", "vendor": "claude", "task": "/saga:work docs/plans/x.md — build U2",
+     "role": "review-fixer", "paths": ["src/cli", "tests/cli"], "after": ["docreview"]},
     {"name": "review-controller", "vendor": "grok", "task": "/saga:code-review the build",
-     "role": "review-controller", "after": ["build-api"], "merge": false}
+     "role": "review-controller", "after": ["U1", "U2"], "merge": false}
   ]
 }
 ```

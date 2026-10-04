@@ -42,6 +42,13 @@
 
 ### Fixed
 
+- The `/orchestrate` command's Phase 5 now states the `/work` row naming rule the skill already
+  carried, and both say it the same way: an expansion creates exactly one `/work` row per plan
+  unit, named by that unit's U-ID (`U1`, `U2`, ...), and a lane that builds several plan units
+  carries one row per U-ID. The command's expansion example named its `/work` row `build-api`, so
+  following it left that unit's functional checks pending and `/work` stopped on exit 5; it now
+  shows rows `U1` and `U2`. A test in `test_orchestrate_authoring_contract.py` fails if either
+  surface shows a `/work` row named anything else (issue #135).
 - Loading and saving a saga run record no longer erases unit-row keys Orchestrate does not own (issue #113). `read_unit` still keeps such a key off the `Unit`, but `Run.load` now holds it beside the unit in `Run.unit_passthrough`, and `Run.save` writes it back. The build loop's `build_loop` block and the `usage` block survived no Orchestrate-driven run before this.
 - `Run.save` no longer overwrites what another process wrote after the load. It takes the run record's shared lock (`fcntl.flock` on `<record path>.lock`, the convention in `plugins/saga/references/run-record.md`), re-reads the record, writes Orchestrate's own unit-row keys and `orchestrate` block from memory, and carries every other unit-row and top-level key forward from the copy on disk. Unit membership is unchanged: `start` still writes fresh rows that carry nothing, and a row the run does not hold is not written back.
 - `Run.save` takes the lock through saga's `run_record.record_lock` when the installed saga provides one (issue #95), so there is one definition of the lock file; an older saga gets Orchestrate's own copy, which names the same file.

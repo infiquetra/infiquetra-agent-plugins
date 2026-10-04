@@ -88,11 +88,13 @@ starts with only what can launch now, and `expand` appends the rest once the ope
 them — same run, so `after` still reaches back and one parent branch carries everything. `expand` refuses
 a duplicate name or a dependency that is in no run.
 
-**Name each `/work` unit in an expansion by the plan U-ID it builds** (`U1`, `U2`, ...). Saga's
-`/plan` runs before these rows exist, so its write of the plan's functional checks leaves them
-pending; `/work` writes them onto its own row before its first build-loop iteration
-(`plugins/saga/scripts/functional_checks.py write`), and that write finds the row by its name.
-A row with any other name gets no checks.
+**An expansion creates exactly one `/work` row per plan unit, named by that unit's U-ID**
+(`U1`, `U2`, ...). A lane that builds several plan units carries several rows, one per U-ID, never
+one row under a lane name. Saga's `/plan` runs before these rows exist, so its write of the plan's
+functional checks leaves them pending; `/work` writes them onto the rows before its first
+build-loop iteration (`plugins/saga/scripts/functional_checks.py write`), and that write finds
+each row by its name. A plan unit with no row of its name stays pending, the write exits 5, and
+`/work` stops and surfaces it to the operator instead of building.
 
 **Single launch seam and no-focus invariant.** Every run unit, including units added at a later
 phase boundary, must be persisted through `start` or `expand` before any worktree or session is
