@@ -1,0 +1,76 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-04T03:07:45.177354+00:00",
+  "created_at": "2026-10-04T03:07:49.468108+00:00",
+  "created_issue_number": 113,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/113",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-04-orchestrate-loading-and-saving-a-saga-run-record.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-03-staffing-testing-mods/f0-orchestrate-unit-row-keys.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-04-orchestrate-loading-and-saving-a-saga-run-record.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-04\ntopic: saga-staffing-testing-mods\nmaturity: requirements-ready\n---\n\n# orchestrate: loading and saving a saga run record erases unit-row keys orchestrate does not own\n\n### Objective\n\nMake orchestrate keep every unit-row key it does not own when it loads and saves a saga run\nrecord, and stop its whole-record save from overwriting what another writer recorded since the\nload. Saga's build loop, the cost-per-unit usage block, and the planned functional checks all\nlive in those rows.\n\n### Intent\n\n**Observed 2026-10-04** by the survey for the staffing, testing and mods program, and reproduced in\na scratch copy: a run record whose unit row carried `build_loop` and `usage` was loaded with\norchestrate's `Run.load` and saved with `Run.save`, and came back with neither key. Orchestrate\nprinted \"unit u1 carries unknown key 'usage'; this Orchestrate 6.0.1 ignores it\".\n\n**Cause.** In `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`:\n\n- `read_unit` builds a `Unit` from only the keys the dataclass declares and drops the rest.\n- `Run.save` rewrites the whole `units` array from the in-memory `Unit` list, so every dropped key\n  is gone, and anything another process ",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-03-staffing-testing-mods/f0-orchestrate-unit-row-keys.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-03-staffing-testing-mods/f0-orchestrate-unit-row-keys.md",
+    "ref": "docs/brainstorms/2026-10-03-staffing-testing-mods/f0-orchestrate-unit-row-keys.md",
+    "title": "orchestrate: loading and saving a saga run record erases unit-row keys orchestrate does not own",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "orchestrate: loading and saving a saga run record erases unit-row keys orchestrate does not own",
+  "updated_at": "2026-10-04T03:08:05.600286+00:00"
+}

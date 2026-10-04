@@ -1,0 +1,76 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-04T03:07:45.678047+00:00",
+  "created_at": "2026-10-04T03:08:08.893651+00:00",
+  "created_issue_number": 114,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/114",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-04-give-infiquetra-agent-plugins-its-own-saga-profi.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-03-staffing-testing-mods/f1-repository-saga-profile.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-04-give-infiquetra-agent-plugins-its-own-saga-profi.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-04\ntopic: saga-staffing-testing-mods\nmaturity: requirements-ready\n---\n\n# Give infiquetra-agent-plugins its own saga profile, including its functional-test declaration\n\n### Objective\n\nAdd a `.saga-profile.json` at this repository's root so saga runs here stop asking the profile\nquestions, and so this repository declares how its own changes are functionally tested before\nreview, under the contract issue #97 adds.\n\n### Intent\n\nIssue #97 adds the `functional_test_environment` block and the waiver to the saga profile. Its card\nlisted this repository's own profile as a file to change, but the survey on 2026-10-04 found that\nadding any root profile switches on three live-profile tests in `plugins/saga/tests/`, and those\nneed the whole profile rather than the new block alone:\n\n- all four profile parameters;\n- `main_consumed_directly`;\n- `nonproduction_destination` set to `none`;\n- a `qa` section.\n\nThat is a separate decision about how saga treats this repository, so it moved out of #97.\n\nThe likely declaration is `kind: local`, `scope: private`, with the plugin test suite as the test\ncommand. The operator confirms each profile value when this card is planned.\n\n### Risk\n\nl",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-03-staffing-testing-mods/f1-repository-saga-profile.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-03-staffing-testing-mods/f1-repository-saga-profile.md",
+    "ref": "docs/brainstorms/2026-10-03-staffing-testing-mods/f1-repository-saga-profile.md",
+    "title": "Give infiquetra-agent-plugins its own saga profile, including its functional-test declaration",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "Give infiquetra-agent-plugins its own saga profile, including its functional-test declaration",
+  "updated_at": "2026-10-04T03:08:23.715427+00:00"
+}
