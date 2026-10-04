@@ -105,11 +105,31 @@ package's Claude adapter:
   path-only change, as the 2026-08-25 decision "Claude installs the package
   root" requires.
 - Mods read saga state only by running `run_record.py show <issue>` through
-  `$.process.run` and parsing its JSON (`mods/run-record.ts`), and write back
-  only through a script's command line.
+  `$.process.run` and parsing its JSON, and write back only through a script's
+  command line. The guarded reader is written once, `readRunRecordWith` in
+  `mods/run-record.ts`; a mod passes it `(argv) => $.process.run(argv)`, and it
+  turns a run that could not start or timed out into reason `'error'`, so no
+  mod carries its own catch.
+- One departure from "never parse prose": `run_record.py show` exits 2 both for
+  a missing record and for every other loader failure, with no exit code of its
+  own for the missing case. The reader tells them apart by the start of the
+  script's stderr message (`NO_RECORD_PREFIX`), and
+  `plugins/saga/tests/test_mod_run_record_contract.py` pins that prefix and
+  both exit codes against the real script. Revisit when `run_record.py` gains
+  a distinct exit code for a missing record; the reader then matches the code.
+- Loading a package that has a hooks module with `--plugin-dir` makes the
+  engine write `<package>/tsconfig.json` (and `.claude-plugin/types/`, which
+  carries its own `.gitignore`). The repository `.gitignore` ignores
+  `plugins/*/tsconfig.json`, and `scripts/check_repo.py` refuses one that is
+  committed anyway, so the Claude-only file never lands in the portable root.
 - `scripts/check_repo.py` refuses every suffix the engine loads as a module
   (`.ts .tsx .mts .cts .js .jsx .mjs .cjs`) outside
-  `plugins/<package>/com.infiquetra.claude/`.
+  `plugins/<package>/com.infiquetra.claude/`. In a git work tree it takes its
+  candidates from `git ls-files --cached --others --exclude-standard`, so
+  `.gitignore` is the one authority on what could be committed; without git it
+  walks the tree, pruning a directory list a test checks against `.gitignore`.
+  `node_modules` is not ignored, so a committed dependency directory is checked
+  like any other.
 - The minimum build is **Claude Code 2.1.286**, held as `CLAUDE_CODE_FLOOR` in
   `tests/test_claude_plugin_packaging.py`. A new `claude-mods` CI job installs
   2.1.286 and 2.1.289 from npm and runs `claude plugin validate --strict` and

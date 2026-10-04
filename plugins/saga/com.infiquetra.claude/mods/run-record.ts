@@ -3,33 +3,29 @@
 // Saga's scripts own the run record. A mod never opens the files under
 // `.claude/saga/runs/` and never parses prose: it runs
 // `python3 <plugin root>/scripts/run_record.py show <issue>` and parses the
-// JSON that prints. An answer goes back the same way, through a script's
+// JSON that prints. (One pinned stderr prefix is the single exception; see
+// `EXIT_RECORD_ERROR`.) An answer goes back the same way, through a script's
 // command line, built with `sagaScriptArgv`.
 //
-// Everything here is a pure function. The engine's validator follows `$` only
-// into functions declared in the same file as the hook, never across an
-// import, so a shared module cannot take `$` itself. Each mod file therefore
-// declares its own small reader at its top level and calls these helpers:
+// The engine's validator follows `$` only into functions declared in the same
+// file as the hook, never across an import, so nothing here takes `$` itself.
+// A closure over `$.process.run` can cross the import, though, so the guarded
+// reader lives here once and a mod's hook passes it the runner:
 //
-//   import type { EngineInterface } from 'claude-code'
-//   import { parseRunRecordShow, runRecordRunFailed, runRecordShowArgv } from './run-record.ts'
+//   import { readRunRecordWith } from './run-record.ts'
 //
-//   async function readRunRecord($: EngineInterface, issue: number) {
-//     try {
-//       return parseRunRecordShow(await $.process.run(runRecordShowArgv($.plugin.root, issue)))
-//     } catch (err) {
-//       return runRecordRunFailed(err)
-//     }
-//   }
+//   const read = await readRunRecordWith((argv) => $.process.run(argv), $.plugin.root, issue)
 //
-// The catch matters: `$.process.run` rejects when the command cannot start
-// (no `python3` on the session's PATH) or outlasts its timeout (30 seconds by
-// default), and a mod must fall back to its plain behaviour then, not throw.
+// `readRunRecordWith` owns the catch: `$.process.run` rejects when the command
+// cannot start (no `python3` on the session's PATH) or outlasts its timeout (30
+// seconds by default), and the reader turns that into reason 'error' so the mod
+// falls back to its plain behaviour instead of throwing. No mod writes its own
+// try/catch around the run.
 //
-// That reader is testable too. A mod's test stubs the engine's process runner
+// A mod's test can drive the real path too: stub the engine's process runner
 // with `on('process.run', async (_$, e) => ({ value: { exitCode, stdout, stderr,
-// isStdoutTruncated, isStderrTruncated } }))`, sees the argv the mod built in
-// `e.argv`, and drives the mod's hook. `plugins/saga/tests/test_mod_run_record_contract.py`
+// isStdoutTruncated, isStderrTruncated } }))`, see the argv the reader built in
+// `e.argv`, and drive the mod's hook. `plugins/saga/tests/test_mod_run_record_contract.py`
 // pins what the real script prints and exits with.
 
 import type { ProcessRunResult } from 'claude-code'
@@ -44,7 +40,13 @@ export type ProcessResult = Pick<ProcessRunResult, 'exitCode' | 'stdout' | 'stde
 /** `run_record.py show` exits 3 when its loader meets a record version it does not know. */
 const EXIT_UNKNOWN_VERSION = 3
 
-/** Exit 2 covers both "no record" and every other loader failure; stderr tells them apart. */
+/**
+ * Exit 2 covers both "no record" and every other loader failure, and the script
+ * has no exit code of its own for a missing record, so the start of its stderr
+ * message tells them apart. This is the one place the reader matches script
+ * text; `test_mod_run_record_contract.py` pins the prefix against the real
+ * script (DECISIONS.md, 2026-10-04).
+ */
 const EXIT_RECORD_ERROR = 2
 const NO_RECORD_PREFIX = 'run_record: no record for issue '
 
@@ -108,4 +110,20 @@ export function parseRunRecordShow(ran: ProcessResult): SagaRunRead {
     return { ok: false, reason: 'unknown-version', detail: `record version ${JSON.stringify(schema)} is not ${KNOWN_SCHEMA}` }
   }
   return { ok: true, record: parsed as SagaRunRecord }
+}
+
+/** Runs one argv and resolves to its result; a mod passes `(argv) => $.process.run(argv)`. */
+export type ProcessRunner = (argv: string[]) => Promise<ProcessResult>
+
+/**
+ * Read one issue's run record through `run`. Never rejects: a run that could
+ * not start or timed out, and an issue number that is not one, come back as
+ * reason 'error', so every mod keeps its plain fallback without a catch of its own.
+ */
+export async function readRunRecordWith(run: ProcessRunner, pluginRoot: string, issue: number): Promise<SagaRunRead> {
+  try {
+    return parseRunRecordShow(await run(runRecordShowArgv(pluginRoot, issue)))
+  } catch (err) {
+    return runRecordRunFailed(err)
+  }
 }

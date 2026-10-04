@@ -12,19 +12,25 @@
 /** The one record version this contract reads. */
 export type SagaRunRecordSchema = 'run_record.v1'
 
-/** One issue's saga run record, as `run_record.py show` prints it. */
+/**
+ * One issue's saga run record, as `run_record.py show` prints it. `to_dict`
+ * always writes all twelve keys, so every one is required here;
+ * `plugins/saga/tests/test_mod_run_record_contract.py` checks this list against
+ * `TOP_LEVEL_KEYS`. Fields a newer writer added are kept under the index
+ * signature.
+ */
 export type SagaRunRecord = {
   schema: SagaRunRecordSchema
   issue: number
-  repo?: string
-  created_at?: string
-  updated_at?: string
-  admission?: Record<string, unknown>
-  run_configuration?: Record<string, unknown>
-  approval_scope?: unknown
-  roster?: unknown
-  units?: unknown[]
-  review_cycles?: unknown[]
+  repo: string
+  created_at: string
+  updated_at: string
+  admission: Record<string, unknown>
+  run_configuration: Record<string, unknown>
+  approval_scope: Record<string, unknown>
+  roster: unknown[]
+  units: unknown[]
+  review_cycles: unknown[]
   next_step: string
   [field: string]: unknown
 }

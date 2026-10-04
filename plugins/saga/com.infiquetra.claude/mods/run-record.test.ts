@@ -2,6 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   KNOWN_SCHEMA,
   parseRunRecordShow,
+  readRunRecordWith,
   runRecordRunFailed,
   runRecordShowArgv,
   sagaScriptArgv,
@@ -74,6 +75,54 @@ describe('parseRunRecordShow', () => {
       expect(read.ok).toBe(false)
       if (!read.ok) expect(read.reason).toBe('unreadable')
     }
+  })
+})
+
+describe('readRunRecordWith', () => {
+  test('runs show for the issue from the plugin root and parses what it printed', async () => {
+    const seen: string[][] = []
+    const read = await readRunRecordWith(
+      async (argv) => {
+        seen.push(argv)
+        return ran(0, JSON.stringify(record))
+      },
+      '/root',
+      7,
+    )
+    expect(seen).toEqual([['python3', '/root/scripts/run_record.py', 'show', '7']])
+    expect(read).toEqual({ ok: true, record })
+  })
+
+  test('passes a failing exit through the parser', async () => {
+    const stderr = 'run_record: no record for issue 7 at /repo/.claude/saga/runs/7.json\n'
+    const read = await readRunRecordWith(async () => ran(2, '', stderr), '/root', 7)
+    expect(read).toEqual({ ok: false, reason: 'no-record', detail: stderr.trim() })
+  })
+
+  test('resolves to error, not a rejection, when the runner rejects', async () => {
+    const read = await readRunRecordWith(
+      async () => {
+        throw new Error('spawn python3 ENOENT')
+      },
+      '/root',
+      7,
+    )
+    expect(read).toEqual({ ok: false, reason: 'error', detail: 'run_record show did not run: spawn python3 ENOENT' })
+  })
+
+  test('resolves to error without running anything for an issue number that is not one', async () => {
+    let calls = 0
+    const read = await readRunRecordWith(
+      async () => {
+        calls += 1
+        return ran(0, JSON.stringify(record))
+      },
+      '/root',
+      0,
+    )
+    expect(calls).toBe(0)
+    expect(read.ok).toBe(false)
+    if (!read.ok) expect(read.reason).toBe('error')
   })
 })
 
