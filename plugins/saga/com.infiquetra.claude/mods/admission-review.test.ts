@@ -205,6 +205,52 @@ describe('the review pane', () => {
     }
   })
 
+  test('Accept all restores every proposal and keeps the operator\'s answer for a lens with none', async ($, on) => {
+    const w = world(on)
+    for (const surface of SURFACES) {
+      w.runs.length = 0
+      const { pending } = await startReview($, w)
+      const ui = await mountPane($, surface)
+      // performance is pre-checked, so leaving it out with no reason is the operator's
+      // own unexplained exclusion; the privacy reason and the worker pick are theirs too.
+      await ui.select({ key: 'lens:performance:include', value: 'no' })
+      await ui.select({ key: 'lens:privacy:include', value: 'yes' })
+      await ui.input({ key: 'lens:privacy:reason', text: PRIVACY_REASON })
+      await ui.select({ key: 'staff:worker:model', value: 'opus' })
+      await ui.press({ key: 'accept-all' })
+      // Accept all restores performance to Jev's pre-check, so it submits; privacy has
+      // no proposal and keeps the operator's yes and reason.
+      await pending
+      const answers = JSON.parse(w.answerRuns()[0]?.stdin ?? 'null')
+      expect(answers.lens_declaration.conditional_applies).toEqual({ performance: '', privacy: PRIVACY_REASON })
+      expect(answers.lens_declaration.conditional_does_not_apply).toEqual({})
+      expect(answers.staffing_overrides.worker).toEqual({ vendor: 'claude', model: 'sonnet', effort: 'xhigh' })
+    }
+  })
+
+  test('Accept all with a lens left out and no reason changes nothing in the pane', async ($, on) => {
+    const w = world(on)
+    for (const surface of SURFACES) {
+      w.runs.length = 0
+      const { pending } = await startReview($, w)
+      const ui = await mountPane($, surface)
+      await ui.input({ key: 'lens:performance:reason', text: 'a hot loop' })
+      await ui.select({ key: 'staff:worker:model', value: 'opus' })
+      await ui.press({ key: 'accept-all' })
+      expect((await ui.find({ key: 'error' }))?.text).toContain('privacy')
+      expect(w.answerRuns()).toHaveLength(0)
+      expect((await ui.find({ key: 'lens:performance:reason' }))?.props.value).toBe('a hot loop')
+      expect((await ui.find({ key: 'staff:worker:model' }))?.props.value).toBe('opus')
+
+      // A typed privacy reason survives a second Accept all, which now submits.
+      await ui.input({ key: 'lens:privacy:reason', text: PRIVACY_REASON })
+      await ui.press({ key: 'accept-all' })
+      await pending
+      const answers = JSON.parse(w.answerRuns()[0]?.stdin ?? 'null')
+      expect(answers.lens_declaration.conditional_does_not_apply).toEqual({ privacy: PRIVACY_REASON })
+    }
+  })
+
   // Closing the pane as the person does: an inline plugin's `$.ui.close` of the
   // pane's id raises the same `ui.close` chain the close mark and Escape do.
   const closer = {

@@ -142,7 +142,7 @@ function pickFrom(palette: SagaAdmissionPalette, tier: SagaAdmissionTier | null)
 }
 
 /**
- * The picks the pane opens with, which "Accept all" also restores: each role's
+ * The picks the pane opens with: each role's
  * proposed tier, and each conditional lens as declared; an undeclared lens is
  * included when Jev pre-checked it (issue #110) and left out, with no reason
  * yet, otherwise.
@@ -163,6 +163,27 @@ export function initialSelections(data: SagaAdmissionReviewData): SagaAdmissionS
     }
   }
   return { staffing, lenses }
+}
+
+/**
+ * The picks "Accept all" submits: every proposal that exists, applied over the
+ * operator's current picks. Each role takes its proposed tier, and each lens
+ * that is declared or that Jev pre-checked takes that answer; a lens with no
+ * proposal keeps the operator's own include choice and reason.
+ */
+export function acceptAllSelections(
+  data: SagaAdmissionReviewData,
+  current: SagaAdmissionSelections,
+): SagaAdmissionSelections {
+  const proposed = initialSelections(data)
+  const lenses: SagaAdmissionSelections['lenses'] = { ...proposed.lenses }
+  for (const row of data.lenses.rows) {
+    if (row.always_on) continue
+    const hasProposal = row.include === 'yes' || row.include === 'no' || row.jev.band === 'pre-checked'
+    const own = current.lenses[row.lens]
+    if (!hasProposal && own) lenses[row.lens] = own
+  }
+  return { staffing: proposed.staffing, lenses }
 }
 
 /** The conditional lenses left out with no reason yet, in table order. */
@@ -360,13 +381,13 @@ export function registerAdmissionReview(on: On): void {
     const submit = async (acceptAll: boolean) => {
       const current = await read($, review)
       if (!current || current.issue !== issue) return
-      const picks = acceptAll ? initialSelections(current.data) : current.selections
-      if (acceptAll) await update($, review, (now) => now && { ...now, selections: picks })
+      const picks = acceptAll ? acceptAllSelections(current.data, current.selections) : current.selections
       const missing = unexplainedExclusions(picks)
       if (missing.length > 0) {
         await setError(`Give a reason for each lens left out: ${missing.join(', ')}`)
         return
       }
+      if (acceptAll) await update($, review, (now) => now && { ...now, selections: picks })
       const answers = buildAnswers(current.data, picks)
       let ran: ProcessRunResult
       try {

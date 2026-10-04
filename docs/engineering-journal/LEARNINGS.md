@@ -67,6 +67,24 @@ and the main screen never raise a link press.
 
 **Generalizable rule.** A mod that makes text pressable must create the links itself, keep the
 page under the element's limit after linking, and offer a button route for surfaces without clicks.
+### "Accept all" must apply only the proposals that exist, and validate before it writes
+
+**Evidence.** Review cycle 1 of issue #103 found that the admission pane's Accept all
+(`plugins/saga/com.infiquetra.claude/mods/admission-review.tsx`, `submit(true)`) replaced the
+operator's picks with `initialSelections` and wrote them to state before checking for lenses left
+out with no reason. The fix is `acceptAllSelections`, and the check now runs first. The tests
+`Accept all restores every proposal and keeps the operator's answer for a lens with none` and
+`Accept all with a lens left out and no reason changes nothing in the pane` in
+`admission-review.test.ts` fail against the earlier code.
+
+**Mechanism.** Until issue #110 supplies Jev lens proposals, every undeclared conditional lens
+opens as left out with an empty reason. Restoring the opening picks therefore discarded every
+reason the operator had typed, and the reason check then refused. Accept all could never succeed
+while the lens declaration was pending.
+
+**Generalizable rule.** A bulk "accept" action overwrites only fields that have a proposal, and a
+refused action leaves the form exactly as it was.
+
 ### A Claude Code mod that waits for a person must wait on `$` calls, never on a bare Promise
 
 **Evidence.** Issue #103's tool `mcp__saga__review_admission`
