@@ -128,7 +128,10 @@ coordinator loads once and saves many times during a long `wait`. Only a re-read
 under a lock every writer takes, closes the second gap: the save then takes every key it does not
 own from the fresh copy and only its own keys from memory. The lock protects only writers that take
 it: saga's build loop, `merge_turn`, `review_result`, `qa_strategies` and `admission` still write a
-whole stale copy without it, so they can still erase an orchestrate save until issue #117 lands.
+whole stale copy without it, so they can still erase an orchestrate save until issue #95 (built in
+parallel) moves them onto it; issue #117 covers only what #95 leaves. A lock orders writes but does
+not merge them: `merge_state`, which orchestrate and `merge_turn` both write, stays
+last-writer-wins under it.
 
 **Generalizable rule.** A whole-document writer that shares its file with other writers must
 re-read under a shared lock at save time and merge its owned keys onto that fresh copy; keeping

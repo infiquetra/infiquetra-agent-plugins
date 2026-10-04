@@ -74,7 +74,9 @@
   `<record>.lock`, re-read under the lock, then the atomic replace) and the round-trip rule for a
   writer that rewrites whole unit rows, which orchestrate's `Run.save` now follows (issue #113). It
   also lists the saga writers that do not take the lock yet (`build_loop`, `merge_turn`,
-  `review_result`, `qa_strategies`, `admission`); issue #117 moves them onto it.
+  `review_result`, `qa_strategies`, `admission`) until issue #95 moves them onto it (issue #117
+  covers whatever #95 leaves), and says that `merge_state`, written by both orchestrate and
+  `merge_turn`, stays last-writer-wins even under the lock.
 
 Four skill-instruction sentences named scripts that are not in this package at acc99fe7, marked
 "retired in the portable package" in place rather than deleted, because the step they describe is
