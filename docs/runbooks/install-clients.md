@@ -86,21 +86,43 @@ check.
 Command, for each name listed in `.claude-plugin/marketplace.json`:
 
 ```text
-claude plugin marketplace add <catalog>
+claude plugin marketplace add infiquetra/infiquetra-agent-plugins
 claude plugin install <name>@infiquetra-agent-plugins
 ```
+
+The marketplace is registered from the GitHub repository, not from the local
+checkout, so the installed plugins follow `main` on GitHub rather than whatever
+branch or uncommitted work the checkout holds. Claude Code records it as
+`{"source": "github", "repo": "infiquetra/infiquetra-agent-plugins"}`. The
+marketplace refreshes itself when Claude Code starts (its `autoUpdate`
+setting), so a merged release reaches the installed plugins without a pull.
 
 The marketplace add is skipped when `infiquetra-agent-plugins` is already
 present in `~/.claude/plugins/known_marketplaces.json` (or, if that file has no
 entry, in `extraKnownMarketplaces` in `~/.claude/settings.json`). The existing
-registration is not rewritten to point at a different checkout.
+registration is not rewritten to point somewhere else.
 
 `--check` reads `~/.claude/plugins/installed_plugins.json` and
 `enabledPlugins` in `~/.claude/settings.json`. A package is from this catalog
-only when the install id is `<name>@infiquetra-agent-plugins`, that marketplace's
-directory source is this checkout, and the id is enabled. A disabled install is
-reported as elsewhere. A package that is not listed in the marketplace file is
-not given an install command.
+only when the install id is `<name>@infiquetra-agent-plugins`, the id is
+enabled, and that marketplace's registration is this catalog. Any of these
+registrations counts as this catalog:
+
+- a `github` source whose repo is `infiquetra/infiquetra-agent-plugins`
+  (compared without regard to case);
+- a `git` or `url` source whose URL is this repository, as
+  `https://github.com/infiquetra/infiquetra-agent-plugins` with or without
+  `.git`, or `git@github.com:infiquetra/infiquetra-agent-plugins.git`;
+- a `directory` source whose path resolves to this checkout, so an older local
+  registration still reads correctly.
+
+Any other registration is reported as elsewhere, naming the path, URL or repo
+it points at. A disabled install is reported as elsewhere. A package that is
+not listed in the marketplace file is not given an install command.
+
+To test plugin changes that are not merged yet, start a session with
+`claude --plugin-dir <checkout>/plugins/<name>`. The installed copy only
+carries what is on GitHub.
 
 Known limitation, from the matrices: user-scope install needs the marketplace
 file. Session `--plugin-dir` is how the assessment proved the package loads. It

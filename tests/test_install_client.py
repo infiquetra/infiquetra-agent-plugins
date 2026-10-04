@@ -151,9 +151,12 @@ class ClaudeInstallTest(InstallFixture):
         code, out, err = self.invoke("--client", "claude", "--dry-run")
         self.assertEqual(code, 0, err)
         self.assertIn(
-            self.command("claude", "plugin", "marketplace", "add", str(self.catalog.resolve())),
+            self.command(
+                "claude", "plugin", "marketplace", "add", "infiquetra/infiquetra-agent-plugins"
+            ),
             out,
         )
+        self.assertNotIn(str(self.catalog.resolve()), out)
         self.assertIn(self.command("claude", "plugin", "install", "unifi@infiquetra-agent-plugins"), out)
         self.assertIn(self.command("claude", "plugin", "install", "voice@infiquetra-agent-plugins"), out)
         self.assertIn("fleet-core is not listed in .claude-plugin/marketplace.json", out)
@@ -178,7 +181,7 @@ class ClaudeInstallTest(InstallFixture):
         code, out, err = self.invoke("--client", "claude", "--dry-run")
         self.assertEqual(code, 0, err)
         self.assertNotIn("marketplace add", out)
-        self.assertIn(f"already registered at {self.catalog.resolve()}", out)
+        self.assertIn(f"already registered from {self.catalog.resolve()}", out)
         self.assertIn(self.command("claude", "plugin", "install", "voice@infiquetra-agent-plugins"), out)
 
     def test_a_different_registration_is_not_retargeted(self) -> None:
@@ -196,6 +199,74 @@ class ClaudeInstallTest(InstallFixture):
         self.assertNotIn("marketplace add", out)
         self.assertIn("not retargeting", out)
         self.assertIn(str(other), out)
+
+    def _register_claude(self, source: dict) -> None:
+        write_json(
+            self.home / ".claude/plugins/known_marketplaces.json",
+            {"infiquetra-agent-plugins": {"source": source}},
+        )
+
+    def _install_claude_voice(self) -> None:
+        write_json(
+            self.home / ".claude/plugins/installed_plugins.json",
+            {"version": 2, "plugins": {"voice@infiquetra-agent-plugins": [{"scope": "user"}]}},
+        )
+        write_json(
+            self.home / ".claude/settings.json",
+            {"enabledPlugins": {"voice@infiquetra-agent-plugins": True}},
+        )
+
+    def test_a_github_registration_of_this_repository_is_not_added_again(self) -> None:
+        self._register_claude({"source": "github", "repo": "infiquetra/infiquetra-agent-plugins"})
+        code, out, err = self.invoke("--client", "claude", "--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("marketplace add", out)
+        self.assertIn("already registered from infiquetra/infiquetra-agent-plugins", out)
+        self.assertNotIn("not retargeting", out)
+
+    def test_check_counts_a_github_registration_of_this_repository_as_catalog(self) -> None:
+        self._register_claude({"source": "github", "repo": "Infiquetra/Infiquetra-Agent-Plugins"})
+        self._install_claude_voice()
+        code, out, err = self.invoke("--client", "claude", "--package", "voice", "--check")
+        self.assertEqual(code, 0, err)
+        self.assertIn("claude voice installed-from-catalog", out)
+
+    def test_check_counts_a_directory_registration_of_this_checkout_as_catalog(self) -> None:
+        self._register_claude({"source": "directory", "path": str(self.catalog.resolve())})
+        self._install_claude_voice()
+        code, out, err = self.invoke("--client", "claude", "--package", "voice", "--check")
+        self.assertEqual(code, 0, err)
+        self.assertIn("claude voice installed-from-catalog", out)
+
+    def test_check_counts_this_repository_url_forms_as_catalog(self) -> None:
+        for source in (
+            {"source": "git", "url": "https://github.com/infiquetra/infiquetra-agent-plugins"},
+            {"source": "git", "url": "https://github.com/infiquetra/infiquetra-agent-plugins.git"},
+            {"source": "git", "url": "git@github.com:infiquetra/infiquetra-agent-plugins.git"},
+            {"source": "url", "url": "https://github.com/infiquetra/infiquetra-agent-plugins.git"},
+        ):
+            with self.subTest(source=source):
+                self._register_claude(source)
+                self._install_claude_voice()
+                code, out, err = self.invoke("--client", "claude", "--package", "voice", "--check")
+                self.assertEqual(code, 0, err)
+                self.assertIn("claude voice installed-from-catalog", out)
+
+    def test_check_names_a_registration_that_is_not_this_catalog(self) -> None:
+        other = self.base / "other-checkout"
+        for source, shown in (
+            ({"source": "directory", "path": str(other)}, str(other)),
+            (
+                {"source": "github", "repo": "infiquetra/infiquetra-codex-plugins"},
+                "infiquetra/infiquetra-codex-plugins",
+            ),
+        ):
+            with self.subTest(source=source):
+                self._register_claude(source)
+                self._install_claude_voice()
+                code, out, err = self.invoke("--client", "claude", "--package", "voice", "--check")
+                self.assertEqual(code, 0, err)
+                self.assertIn(f"claude voice installed-from-elsewhere ({shown})", out)
 
     def test_execute_invokes_the_stub_and_does_not_edit_the_marketplace_file(self) -> None:
         code, _out, err = self.invoke("--client", "claude", "--package", "voice", "--execute")

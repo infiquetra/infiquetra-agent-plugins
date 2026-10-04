@@ -69,7 +69,7 @@ SKILL_CLIENTS = frozenset({"opencode", "gemini", "muse", "hermes"})
 
 CATALOG_GIT_URL = "https://github.com/infiquetra/infiquetra-agent-plugins"
 LEGACY_GIT_URL = "https://github.com/infiquetra/infiquetra-claude-plugins"
-CATALOG_SLUG = "infiquetra/infiquetra-agent-plugins"
+CATALOG_SLUG = CATALOG_GIT_URL.removeprefix("https://github.com/")
 LEGACY_SLUG = "infiquetra/infiquetra-claude-plugins"
 LEGACY_DIR = "infiquetra-claude-plugins"
 LEGACY_MARKETPLACE = "infiquetra-plugins"
@@ -679,13 +679,31 @@ def claude_registration(home: Path, name: str) -> dict | None:
     return None
 
 
-def registration_directory(entry: dict) -> str | None:
+def registration_is_catalog(entry: dict, catalog: Path) -> bool:
+    """True when a Claude marketplace entry is this catalog.
+
+    A ``directory`` source must resolve to this checkout. A ``github`` source
+    must name this repository, and a ``git`` or ``url`` source must be its URL
+    (https or ssh, with or without ``.git``). Repository names compare
+    case-insensitively, as GitHub does.
+    """
     source = entry.get("source")
-    if isinstance(source, dict) and source.get("source") == "directory":
+    if not isinstance(source, dict):
+        return False
+    kind = source.get("source")
+    if kind == "directory":
         path = source.get("path")
-        if isinstance(path, str):
-            return path
-    return None
+        return isinstance(path, str) and Path(path).resolve() == catalog.resolve()
+    if kind == "github":
+        value = source.get("repo")
+    elif kind in ("git", "url"):
+        value = source.get("url")
+    else:
+        return False
+    if not isinstance(value, str):
+        return False
+    slug = github_repo(value)
+    return slug is not None and slug.lower() == CATALOG_SLUG.lower()
 
 
 def registration_summary(entry: dict) -> str:
@@ -718,22 +736,18 @@ def plan_claude(
         actions.append(
             command_action(
                 "claude",
-                ("plugin", "marketplace", "add", str(catalog.resolve())),
+                ("plugin", "marketplace", "add", CATALOG_SLUG),
                 overrides,
                 required=required,
             )
         )
     else:
-        recorded = registration_directory(entry)
-        registered_here = (
-            recorded is not None and Path(recorded).resolve() == catalog.resolve()
-        )
-        if registered_here:
+        if registration_is_catalog(entry, catalog):
             actions.append(
                 Action(
                     "skip",
                     "claude",
-                    message=f"marketplace {name} already registered at {recorded}",
+                    message=f"marketplace {name} already registered from {registration_summary(entry)}",
                 )
             )
         else:
@@ -1936,8 +1950,8 @@ def check_claude(packages: list[Package], catalog: Path, home: Path) -> list[Rea
     settings = load_object(home / ".claude" / "settings.json") or {}
     enabled = settings.get("enabledPlugins") if isinstance(settings.get("enabledPlugins"), dict) else {}
     entry = claude_registration(home, name)
-    directory = registration_directory(entry) if entry else None
-    directory_matches = bool(directory) and Path(directory).resolve() == catalog.resolve()
+    registered_here = entry is not None and registration_is_catalog(entry, catalog)
+    elsewhere = registration_summary(entry) if entry and not registered_here else ""
     rows = []
     for package in packages:
         catalog_id = f"{package.name}@{name}"
@@ -1945,11 +1959,11 @@ def check_claude(packages: list[Package], catalog: Path, home: Path) -> list[Rea
             key for key in plugins if key.startswith(f"{package.name}@") and key != catalog_id
         )
         has_catalog = catalog_id in plugins and bool(plugins.get(catalog_id))
-        if has_catalog and directory_matches and enabled.get(catalog_id) is True:
+        if has_catalog and registered_here and enabled.get(catalog_id) is True:
             rows.append(Readback("claude", package.name, "installed-from-catalog"))
             continue
-        if has_catalog and directory and not directory_matches:
-            rows.append(Readback("claude", package.name, "installed-from-elsewhere", directory))
+        if has_catalog and elsewhere:
+            rows.append(Readback("claude", package.name, "installed-from-elsewhere", elsewhere))
             continue
         if has_catalog and enabled.get(catalog_id) is not True:
             rows.append(
