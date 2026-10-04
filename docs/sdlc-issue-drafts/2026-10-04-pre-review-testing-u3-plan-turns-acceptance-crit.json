@@ -1,0 +1,214 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-04T01:49:33.742620+00:00",
+  "created_at": "2026-10-04T01:52:28.071518+00:00",
+  "created_issue_number": 98,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/98",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-04-pre-review-testing-u3-plan-turns-acceptance-crit.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-03-staffing-testing-mods/c3-plan-writes-functional-tests.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "medium",
+    "confidence": 0.81,
+    "distribution": {
+      "high": 0.18,
+      "low": 0.01,
+      "medium": 0.81,
+      "very-high": 0.0
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": false,
+    "overridden": false,
+    "score": 1.17,
+    "suggested": "medium"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-04-pre-review-testing-u3-plan-turns-acceptance-crit.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-03\ntopic: saga-staffing-testing-mods\nmaturity: requirements-ready\n---\n\n# pre-review testing U3 \u2014 /plan turns acceptance criteria into functional tests, and /doc-review rejects unproven criteria\n\n### Objective\n\nBuild the writer the build loop has always lacked. `/plan` turns each acceptance criterion into\nnamed functional tests and records them on the units in the run record. `/doc-review` refuses a\nplan that leaves any acceptance criterion without a test.\n\n### Intent\n\n`build_loop.py` already reads `functional_checks` and `scenario_smoke` from each unit's row in the\nrun record. It records \"none prescribed\" because no step writes them.\n`plugins/saga/references/mechanical-baseline.md` says so: \"No step in saga writes these onto a\nunit's row yet.\"\n\n1. In the plan's unit sections, each unit lists its functional checks. Each check names the command\n   that runs it, the acceptance criterion it proves, and whether it runs locally or against the\n   declared environment. The combined-branch scenario smoke is listed once, at the plan level.\n2. When the plan is saved, a writer copies those checks onto the units' rows as `functional_checks`\n   and the plan-level smoke as `scen",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-03-staffing-testing-mods/c3-plan-writes-functional-tests.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-03-staffing-testing-mods/c3-plan-writes-functional-tests.md",
+    "ref": "docs/brainstorms/2026-10-03-staffing-testing-mods/c3-plan-writes-functional-tests.md",
+    "title": "pre-review testing U3 \u2014 /plan turns acceptance criteria into functional tests, and /doc-review rejects unproven criteria",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "capability",
+        "confidence": 0.41,
+        "distribution": {
+          "capability": 0.53,
+          "context-update": 0.0,
+          "defect": 0.0,
+          "enhancement": 0.47,
+          "exploration": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": false,
+        "suggested": "capability"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-03-staffing-testing-mods/c3-plan-writes-functional-tests.md",
+        "confidence": 0.35,
+        "distribution": {
+          "Fleet Telemetry Baseline Build-Out": 0.03,
+          "improve-agent-plugins": 0.35,
+          "improve-claude-plugins": 0.15,
+          "improve-codex-plugins": 0.01,
+          "infiquetra-maintentance": 0.01,
+          "none": 0.44,
+          "system-updates": 0.01
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "none"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "medium",
+        "confidence": 0.81,
+        "distribution": {
+          "high": 0.18,
+          "low": 0.01,
+          "medium": 0.81,
+          "very-high": 0.0
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": false,
+        "overridden": false,
+        "score": 1.17,
+        "suggested": "medium"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.73,
+        "distribution": {
+          "Awaiting operator input": 0.01,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.01,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.09,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.01,
+          "Discovering": 0.0,
+          "Execution planning": 0.03,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.01,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.1,
+          "Ready for Planning": 0.74,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "pre-review testing U3 \u2014 /plan turns acceptance criteria into functional tests, and /doc-review rejects unproven criteria",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "capability",
+    "confidence": 0.41,
+    "distribution": {
+      "capability": 0.53,
+      "context-update": 0.0,
+      "defect": 0.0,
+      "enhancement": 0.47,
+      "exploration": 0.0
+    },
+    "floor": 0.6,
+    "low_confidence": true,
+    "overridden": false,
+    "suggested": "capability"
+  },
+  "updated_at": "2026-10-04T01:52:41.699224+00:00"
+}

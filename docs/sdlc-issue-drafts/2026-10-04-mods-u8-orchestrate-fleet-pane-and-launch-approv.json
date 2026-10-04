@@ -1,0 +1,214 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-04T01:49:32.261356+00:00",
+  "created_at": "2026-10-04T01:56:06.458288+00:00",
+  "created_issue_number": 109,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/109",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-04-mods-u8-orchestrate-fleet-pane-and-launch-approv.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-03-staffing-testing-mods/d08-orchestrate-fleet-pane.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "medium",
+    "confidence": 0.88,
+    "distribution": {
+      "high": 0.1,
+      "low": 0.01,
+      "medium": 0.89,
+      "very-high": 0.0
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": false,
+    "overridden": false,
+    "score": 1.1,
+    "suggested": "medium"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-04-mods-u8-orchestrate-fleet-pane-and-launch-approv.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-03\ntopic: saga-staffing-testing-mods\nmaturity: requirements-ready\n---\n\n# mods U8 \u2014 Orchestrate fleet pane and launch-approval table\n\n### Objective\n\nGive orchestrate a machine-readable status. Show every unit of a run in a Claude Code pane. Present\nthe table the operator approves before launch in one fixed format, interactively where Claude Code\nallows it.\n\n### Intent\n\n1. **Portable first.** Add `orchestrate.py status --json`, printing every unit's vendor, model,\n   effort, state, branch, commit count and what it waits on. `status` has no machine-readable form\n   today. The approval table in `plugins/orchestrate/com.infiquetra.claude/commands/orchestrate.md`\n   is printed by the script in one fixed format and shown as printed. This is the same problem and\n   the same fix as mods U1.\n2. **Fleet pane.** A `/fleet-view` command opens a pane from `status --json`, refreshed on a timer.\n   It holds no launch, settle or merge actions.\n3. **Approval pane.** When orchestrate presents a launch table, the mod shows it with Approve and\n   Change buttons. The result returns to the model as the operator's answer. The mod itself never\n   launches anything. \"Nothing launches until",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-03-staffing-testing-mods/d08-orchestrate-fleet-pane.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-03-staffing-testing-mods/d08-orchestrate-fleet-pane.md",
+    "ref": "docs/brainstorms/2026-10-03-staffing-testing-mods/d08-orchestrate-fleet-pane.md",
+    "title": "mods U8 \u2014 Orchestrate fleet pane and launch-approval table",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "capability",
+        "confidence": 0.82,
+        "distribution": {
+          "capability": 0.87,
+          "context-update": 0.0,
+          "defect": 0.0,
+          "enhancement": 0.13,
+          "exploration": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "capability"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-03-staffing-testing-mods/d08-orchestrate-fleet-pane.md",
+        "confidence": 0.34,
+        "distribution": {
+          "Fleet Telemetry Baseline Build-Out": 0.18,
+          "improve-agent-plugins": 0.24,
+          "improve-claude-plugins": 0.44,
+          "improve-codex-plugins": 0.0,
+          "infiquetra-maintentance": 0.0,
+          "none": 0.14,
+          "system-updates": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "improve-claude-plugins"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "medium",
+        "confidence": 0.88,
+        "distribution": {
+          "high": 0.1,
+          "low": 0.01,
+          "medium": 0.89,
+          "very-high": 0.0
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": false,
+        "overridden": false,
+        "score": 1.1,
+        "suggested": "medium"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.85,
+        "distribution": {
+          "Awaiting operator input": 0.0,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.0,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.05,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.0,
+          "Discovering": 0.0,
+          "Execution planning": 0.01,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.08,
+          "Ready for Planning": 0.86,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "mods U8 \u2014 Orchestrate fleet pane and launch-approval table",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "capability",
+    "confidence": 0.82,
+    "distribution": {
+      "capability": 0.87,
+      "context-update": 0.0,
+      "defect": 0.0,
+      "enhancement": 0.13,
+      "exploration": 0.0
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": false,
+    "suggested": "capability"
+  },
+  "updated_at": "2026-10-04T01:56:21.597961+00:00"
+}

@@ -1,0 +1,190 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-04T01:49:32.761777+00:00",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-04-pre-review-testing-u1-lifecycle-policy-require-f.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-03-staffing-testing-mods/c1-sdlc-run-model.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "repo": "infiquetra-sdlc",
+  "risk": "high",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "high",
+    "confidence": 0.64,
+    "distribution": {
+      "high": 0.64,
+      "low": 0.0,
+      "medium": 0.0,
+      "very-high": 0.36
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": false,
+    "overridden": false,
+    "score": 2.36,
+    "suggested": "high"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-04-pre-review-testing-u1-lifecycle-policy-require-f.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-03\ntopic: saga-staffing-testing-mods\nmaturity: requirements-ready\n---\n\n# pre-review testing U1 \u2014 Lifecycle policy: require functional testing before code review\n\n### Objective\n\nAmend the lifecycle run model so functional testing before code review is required for\ncode-bearing work, using a mechanism the repository declares. Skipping it needs a recorded waiver.\nToday the deployed part applies only \"where the repository declares a branch preview\".\n\n### Intent\n\nChange the run model in four places, keeping prose, data and the data test in agreement:\n\n1. **Step 5, assign and implement.** A unit's exit criterion includes its locally runnable\n   functional checks. These are derived from the acceptance criteria, and the plan names which\n   criterion each check proves.\n2. **Between step 6 (bring work together) and step 7 (review).** The combined branch is built,\n   then deployed or started through the repository's declared environment, then tested with the\n   functional suite, and torn down. This repeats until green, before review.\n3. **The declaration.** Each repository declares its functional-test environment, or records a\n   waiver with a reason, such as a documentation",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-03-staffing-testing-mods/c1-sdlc-run-model.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-03-staffing-testing-mods/c1-sdlc-run-model.md",
+    "ref": "docs/brainstorms/2026-10-03-staffing-testing-mods/c1-sdlc-run-model.md",
+    "title": "pre-review testing U1 \u2014 Lifecycle policy: require functional testing before code review",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "enhancement",
+        "confidence": 0.86,
+        "distribution": {
+          "capability": 0.04,
+          "context-update": 0.06,
+          "defect": 0.0,
+          "enhancement": 0.9,
+          "exploration": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "enhancement"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-03-staffing-testing-mods/c1-sdlc-run-model.md",
+        "confidence": 0.3,
+        "distribution": {
+          "Fleet Telemetry Baseline Build-Out": 0.0,
+          "improve-agent-plugins": 0.01,
+          "improve-claude-plugins": 0.01,
+          "improve-codex-plugins": 0.01,
+          "infiquetra-maintentance": 0.28,
+          "none": 0.4,
+          "system-updates": 0.29
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "none"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "high",
+        "confidence": 0.64,
+        "distribution": {
+          "high": 0.64,
+          "low": 0.0,
+          "medium": 0.0,
+          "very-high": 0.36
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": false,
+        "overridden": false,
+        "score": 2.36,
+        "suggested": "high"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.89,
+        "distribution": {
+          "Awaiting operator input": 0.0,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.0,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.06999999999999999,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.0,
+          "Discovering": 0.0,
+          "Execution planning": 0.01,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.01,
+          "Ready for Planning": 0.91,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "pre-review testing U1 \u2014 Lifecycle policy: require functional testing before code review",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "enhancement",
+    "confidence": 0.86,
+    "distribution": {
+      "capability": 0.04,
+      "context-update": 0.06,
+      "defect": 0.0,
+      "enhancement": 0.9,
+      "exploration": 0.0
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": false,
+    "suggested": "enhancement"
+  },
+  "updated_at": "2026-10-04T01:49:32.761920+00:00",
+  "created_issue_number": 174,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-sdlc/issues/174",
+  "created_at": "2026-10-04T02:10:16.732440+00:00",
+  "creation_note": "created with gh issue create: infiquetra-sdlc is unmapped, and create-prepared would open a mapping PR"
+}

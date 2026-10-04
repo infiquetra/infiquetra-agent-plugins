@@ -1,0 +1,214 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-04T01:49:29.356057+00:00",
+  "created_at": "2026-10-04T01:54:07.907881+00:00",
+  "created_issue_number": 103,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/103",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-04-mods-u2-staffing-and-lens-review-pane.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-03-staffing-testing-mods/d02-staffing-review-pane.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "medium",
+    "confidence": 0.94,
+    "distribution": {
+      "high": 0.05,
+      "low": 0.01,
+      "medium": 0.94,
+      "very-high": 0.0
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": false,
+    "overridden": false,
+    "score": 1.04,
+    "suggested": "medium"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-04-mods-u2-staffing-and-lens-review-pane.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-03\ntopic: saga-staffing-testing-mods\nmaturity: requirements-ready\n---\n\n# mods U2 \u2014 Staffing and lens review pane\n\n### Objective\n\nIn Claude Code, show admission's staffing answers (question 4) and lens answers (question 5) in a\npane with a proper table and per-row controls. The operator's answers go straight back through\nadmission's script instead of the model retyping a table.\n\n### Intent\n\n1. The mod registers a tool the model can call when admission reaches question 4. It is listed as\n   `mcp__saga__review_admission`.\n2. The tool opens a pane with two tables built from mods U1's render output:\n   - **Staffing:** role, default, Jev suggestion and confidence, proposed tier, and reason, with a\n     dropdown per row for model and effort. The choices come from the staffing palette through a\n     script call, never a hard-coded list.\n   - **Lenses:** each conditional lens with include toggles, Jev's probability, and the reason.\n3. \"Accept all\" and \"Submit\" write the answers through admission's answers path. The pane returns\n   them to the model as the tool's structured result. Closing the pane returns \"dismissed\", and the\n   skill falls back to mods U1's printed table.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-03-staffing-testing-mods/d02-staffing-review-pane.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-03-staffing-testing-mods/d02-staffing-review-pane.md",
+    "ref": "docs/brainstorms/2026-10-03-staffing-testing-mods/d02-staffing-review-pane.md",
+    "title": "mods U2 \u2014 Staffing and lens review pane",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "capability",
+        "confidence": 0.93,
+        "distribution": {
+          "capability": 0.95,
+          "context-update": 0.0,
+          "defect": 0.0,
+          "enhancement": 0.05,
+          "exploration": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "capability"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-03-staffing-testing-mods/d02-staffing-review-pane.md",
+        "confidence": 0.45,
+        "distribution": {
+          "Fleet Telemetry Baseline Build-Out": 0.0,
+          "improve-agent-plugins": 0.17,
+          "improve-claude-plugins": 0.53,
+          "improve-codex-plugins": 0.0,
+          "infiquetra-maintentance": 0.0,
+          "none": 0.3,
+          "system-updates": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "improve-claude-plugins"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "medium",
+        "confidence": 0.94,
+        "distribution": {
+          "high": 0.05,
+          "low": 0.01,
+          "medium": 0.94,
+          "very-high": 0.0
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": false,
+        "overridden": false,
+        "score": 1.04,
+        "suggested": "medium"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.86,
+        "distribution": {
+          "Awaiting operator input": 0.0,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.0,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.02,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.0,
+          "Discovering": 0.0,
+          "Execution planning": 0.03,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.07,
+          "Ready for Planning": 0.88,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "mods U2 \u2014 Staffing and lens review pane",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "capability",
+    "confidence": 0.93,
+    "distribution": {
+      "capability": 0.95,
+      "context-update": 0.0,
+      "defect": 0.0,
+      "enhancement": 0.05,
+      "exploration": 0.0
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": false,
+    "suggested": "capability"
+  },
+  "updated_at": "2026-10-04T01:54:23.244196+00:00"
+}

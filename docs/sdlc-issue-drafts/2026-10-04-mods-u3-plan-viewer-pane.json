@@ -1,0 +1,214 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-04T01:49:29.851485+00:00",
+  "created_at": "2026-10-04T01:54:28.330871+00:00",
+  "created_issue_number": 104,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/104",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-04-mods-u3-plan-viewer-pane.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-03-staffing-testing-mods/d03-plan-viewer-pane.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "low",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "low",
+    "confidence": 0.87,
+    "distribution": {
+      "high": 0.01,
+      "low": 0.87,
+      "medium": 0.12,
+      "very-high": 0.0
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": false,
+    "overridden": false,
+    "score": 0.13,
+    "suggested": "low"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-04-mods-u3-plan-viewer-pane.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-03\ntopic: saga-staffing-testing-mods\nmaturity: requirements-ready\n---\n\n# mods U3 \u2014 Plan viewer pane\n\n### Objective\n\nLet the operator read a saga plan inside Claude Code, one section at a time, without opening\nanother tool.\n\n### Intent\n\n1. A `/plan-view` command opens a pane for the run's plan, or for a named path or issue. The pane\n   lists the plan's sections by heading. Choosing one renders it as Markdown. A section longer than\n   the 10,000-character Markdown limit is paged.\n2. The pane refreshes when the model edits the plan file, detected from the edit tool calls that\n   touch that path, or when the file's modification time changes.\n3. File links in a section can be pressed. A press quotes the file and line into the prompt rather\n   than leaving Claude Code.\n4. A \"discuss this\" button quotes the shown section into the prompt for the operator to annotate.\n5. When `/plan` saves a plan, the pane opens on its own if the terminal is at least 144 columns\n   wide. Otherwise a toast names the command.\n\n### Risk\n\nlow\nIt is read-only display; the only writes are into the operator's own prompt.\n\n### Out-of-scope / non-goals\n\n- No editing of the plan from the pane.\n\n### ",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-03-staffing-testing-mods/d03-plan-viewer-pane.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-03-staffing-testing-mods/d03-plan-viewer-pane.md",
+    "ref": "docs/brainstorms/2026-10-03-staffing-testing-mods/d03-plan-viewer-pane.md",
+    "title": "mods U3 \u2014 Plan viewer pane",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "capability",
+        "confidence": 0.98,
+        "distribution": {
+          "capability": 0.99,
+          "context-update": 0.0,
+          "defect": 0.0,
+          "enhancement": 0.01,
+          "exploration": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "capability"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-03-staffing-testing-mods/d03-plan-viewer-pane.md",
+        "confidence": 0.48,
+        "distribution": {
+          "Fleet Telemetry Baseline Build-Out": 0.0,
+          "improve-agent-plugins": 0.19,
+          "improve-claude-plugins": 0.56,
+          "improve-codex-plugins": 0.0,
+          "infiquetra-maintentance": 0.0,
+          "none": 0.25,
+          "system-updates": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "improve-claude-plugins"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "low",
+        "confidence": 0.87,
+        "distribution": {
+          "high": 0.01,
+          "low": 0.87,
+          "medium": 0.12,
+          "very-high": 0.0
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": false,
+        "overridden": false,
+        "score": 0.13,
+        "suggested": "low"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.46,
+        "distribution": {
+          "Awaiting operator input": 0.01,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.01,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.16,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.01,
+          "Discovering": 0.0,
+          "Execution planning": 0.03,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.01,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.28,
+          "Ready for Planning": 0.49,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "mods U3 \u2014 Plan viewer pane",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "capability",
+    "confidence": 0.98,
+    "distribution": {
+      "capability": 0.99,
+      "context-update": 0.0,
+      "defect": 0.0,
+      "enhancement": 0.01,
+      "exploration": 0.0
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": false,
+    "suggested": "capability"
+  },
+  "updated_at": "2026-10-04T01:54:44.637665+00:00"
+}

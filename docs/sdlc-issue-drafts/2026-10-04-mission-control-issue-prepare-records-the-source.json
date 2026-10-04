@@ -1,0 +1,214 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-04T01:49:27.914674+00:00",
+  "created_at": "2026-10-04T01:56:44.637281+00:00",
+  "created_issue_number": 111,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/111",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-04-mission-control-issue-prepare-records-the-source.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-03-staffing-testing-mods/e0-prepare-objective-defect.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "low",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "low",
+    "confidence": 0.86,
+    "distribution": {
+      "high": 0.02,
+      "low": 0.88,
+      "medium": 0.1,
+      "very-high": 0.0
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": false,
+    "overridden": false,
+    "score": 0.14,
+    "suggested": "low"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-04-mission-control-issue-prepare-records-the-source.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-03\ntopic: saga-staffing-testing-mods\nmaturity: requirements-ready\n---\n\n# mission-control: issue prepare records the source file path as the card's Objective and logs it as the operator's Jev choice\n\n### Objective\n\nStop `issue prepare` from writing the source artifact's path into the card's `Objective` project\nfield. Stop the suggestion step from logging that path to the TypeSafe verdict log as the operator's\nchosen Objective.\n\n### Intent\n\n**Observed 2026-10-03** while preparing cards for this repository with\n`issue prepare --from docs/brainstorms/... --suggest --objective-option ...`:\n\n- The sidecar's `project_fields.Objective` held\n  `docs/brainstorms/2026-10-03-staffing-testing-mods/a0-staffing-parent.md`, a file path rather than\n  an Objective option.\n- The suggestion output read \"objective: improve-claude-plugins ...; you chose\n  docs/brainstorms/.../a0-staffing-parent.md (OVERRIDDEN by your flag)\". So an override record\n  naming that path as the operator's choice went into `~/.claude/typesafe/verdicts.jsonl`.\n- The 2026-08-30 drafts in `docs/sdlc-issue-drafts/` show the same: their `project_fields.Objective`\n  is a scratchpad path.\n\n**Cause.** `_prepared_proj",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-03-staffing-testing-mods/e0-prepare-objective-defect.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-03-staffing-testing-mods/e0-prepare-objective-defect.md",
+    "ref": "docs/brainstorms/2026-10-03-staffing-testing-mods/e0-prepare-objective-defect.md",
+    "title": "mission-control: issue prepare records the source file path as the card's Objective and logs it as the operator's Jev choice",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "defect",
+        "confidence": 0.95,
+        "distribution": {
+          "capability": 0.0,
+          "context-update": 0.01,
+          "defect": 0.96,
+          "enhancement": 0.02,
+          "exploration": 0.01
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "defect"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-03-staffing-testing-mods/e0-prepare-objective-defect.md",
+        "confidence": 0.32,
+        "distribution": {
+          "Fleet Telemetry Baseline Build-Out": 0.0,
+          "improve-agent-plugins": 0.41,
+          "improve-claude-plugins": 0.14,
+          "improve-codex-plugins": 0.01,
+          "infiquetra-maintentance": 0.14,
+          "none": 0.29,
+          "system-updates": 0.01
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "improve-agent-plugins"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "low",
+        "confidence": 0.86,
+        "distribution": {
+          "high": 0.02,
+          "low": 0.88,
+          "medium": 0.1,
+          "very-high": 0.0
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": false,
+        "overridden": false,
+        "score": 0.14,
+        "suggested": "low"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.74,
+        "distribution": {
+          "Awaiting operator input": 0.01,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.01,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.15000000000000002,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.0,
+          "Discovering": 0.0,
+          "Execution planning": 0.01,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.06,
+          "Ready for Planning": 0.76,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "mission-control: issue prepare records the source file path as the card's Objective and logs it as the operator's Jev choice",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "defect",
+    "confidence": 0.95,
+    "distribution": {
+      "capability": 0.0,
+      "context-update": 0.01,
+      "defect": 0.96,
+      "enhancement": 0.02,
+      "exploration": 0.01
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": false,
+    "suggested": "defect"
+  },
+  "updated_at": "2026-10-04T01:56:59.199241+00:00"
+}

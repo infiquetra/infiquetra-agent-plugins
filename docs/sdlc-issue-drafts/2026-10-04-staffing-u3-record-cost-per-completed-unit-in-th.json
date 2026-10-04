@@ -1,0 +1,214 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-04T01:49:37.258492+00:00",
+  "created_at": "2026-10-04T01:51:26.665910+00:00",
+  "created_issue_number": 95,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/95",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-04-staffing-u3-record-cost-per-completed-unit-in-th.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-03-staffing-testing-mods/a3-cost-per-unit.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "medium",
+    "confidence": 0.96,
+    "distribution": {
+      "high": 0.02,
+      "low": 0.02,
+      "medium": 0.96,
+      "very-high": 0.0
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": false,
+    "overridden": false,
+    "score": 1.0,
+    "suggested": "medium"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-04-staffing-u3-record-cost-per-completed-unit-in-th.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-03\ntopic: saga-staffing-testing-mods\nmaturity: requirements-ready\n---\n\n# staffing U3 \u2014 Record cost per completed unit in the run record\n\n### Objective\n\nGive every unit in a saga run record a usage block, and add a report that compares cost per\ncompleted unit by role and tier, so the Opus builder decision is checked against measured cost.\n\n### Intent\n\n**The record.** Each unit row in `run_record.v1` gains a `usage` block. It holds one entry per\nmodel session that worked the unit: vendor, model, effort, and token counts by category (uncached\ninput, cache read, 5-minute cache write, 1-hour cache write, output). Build-loop passes and review\ncycles are already in the record and are read, not copied. A row's key set is deliberately not\nfixed in `plugins/saga/references/run-record.md`, so this needs no record version bump.\n\n**The writer.** A `run_record.py usage add` subcommand appends one entry. It is the one portable\nwrite path. Any harness integration can call it, including the Claude Code token-capture mod that\nlives under the mods parent.\n\n**The report.** A cost report reads run records and prints cost per completed unit grouped by role\nand tier. It prices tokens fr",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-03-staffing-testing-mods/a3-cost-per-unit.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-03-staffing-testing-mods/a3-cost-per-unit.md",
+    "ref": "docs/brainstorms/2026-10-03-staffing-testing-mods/a3-cost-per-unit.md",
+    "title": "staffing U3 \u2014 Record cost per completed unit in the run record",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "capability",
+        "confidence": 0.93,
+        "distribution": {
+          "capability": 0.95,
+          "context-update": 0.0,
+          "defect": 0.0,
+          "enhancement": 0.05,
+          "exploration": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "capability"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-03-staffing-testing-mods/a3-cost-per-unit.md",
+        "confidence": 0.28,
+        "distribution": {
+          "Fleet Telemetry Baseline Build-Out": 0.21,
+          "improve-agent-plugins": 0.38,
+          "improve-claude-plugins": 0.05,
+          "improve-codex-plugins": 0.01,
+          "infiquetra-maintentance": 0.0,
+          "none": 0.34,
+          "system-updates": 0.01
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "improve-agent-plugins"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "medium",
+        "confidence": 0.96,
+        "distribution": {
+          "high": 0.02,
+          "low": 0.02,
+          "medium": 0.96,
+          "very-high": 0.0
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": false,
+        "overridden": false,
+        "score": 1.0,
+        "suggested": "medium"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.87,
+        "distribution": {
+          "Awaiting operator input": 0.0,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.0,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.04,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.0,
+          "Discovering": 0.0,
+          "Execution planning": 0.01,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.060000000000000005,
+          "Ready for Planning": 0.89,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "staffing U3 \u2014 Record cost per completed unit in the run record",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "capability",
+    "confidence": 0.93,
+    "distribution": {
+      "capability": 0.95,
+      "context-update": 0.0,
+      "defect": 0.0,
+      "enhancement": 0.05,
+      "exploration": 0.0
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": false,
+    "suggested": "capability"
+  },
+  "updated_at": "2026-10-04T01:51:42.176239+00:00"
+}

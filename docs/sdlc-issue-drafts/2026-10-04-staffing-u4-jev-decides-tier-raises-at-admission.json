@@ -1,0 +1,76 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-04T01:49:37.730616+00:00",
+  "created_at": "2026-10-04T01:51:46.952081+00:00",
+  "created_issue_number": 96,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/96",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-04-staffing-u4-jev-decides-tier-raises-at-admission.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-03-staffing-testing-mods/a4-jev-tier-raises.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-04-staffing-u4-jev-decides-tier-raises-at-admission.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-03\ntopic: saga-staffing-testing-mods\nmaturity: requirements-ready\n---\n\n# staffing U4 \u2014 Jev decides tier raises at admission and in /plan's tier table, from the real issue and unit\n\n### Objective\n\nMake TypeSafe Jev's tier judgment a default part of saga staffing whenever it is configured. It\njudges from the actual issue and plan unit, it may raise a tier automatically when confident, and\nit may only suggest lowering one until the evaluation harness has measured it.\n\n### Intent\n\n**Today.** `staffing.py resolve --suggest` and admission's batched `--suggest` record Jev's tier\nsuggestion beside the default and never apply it. No skill or command passes `--suggest`, and the\nverdict log holds exactly one tier verdict. Even when run, admission sends Jev only a label such as\n`role 'worker' (staffing default sonnet/medium)`. The `tier` verb in\n`plugins/fleet-core/scripts/fleet_commons/jev_verbs.py` also tells Jev that mechanical work goes to\nHaiku, which contradicts `staffing.json`. Its choices also lack Fable and `xhigh`.\n\n**Change.**\n\n1. **On by default when configured.** It runs when `TYPESAFE_API_KEY` is present, and\n   `INFIQUETRA_TYPESAFE_TIERING=off` switches it off.",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-03-staffing-testing-mods/a4-jev-tier-raises.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-03-staffing-testing-mods/a4-jev-tier-raises.md",
+    "ref": "docs/brainstorms/2026-10-03-staffing-testing-mods/a4-jev-tier-raises.md",
+    "title": "staffing U4 \u2014 Jev decides tier raises at admission and in /plan's tier table, from the real issue and unit",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "staffing U4 \u2014 Jev decides tier raises at admission and in /plan's tier table, from the real issue and unit",
+  "updated_at": "2026-10-04T01:52:02.492637+00:00"
+}
