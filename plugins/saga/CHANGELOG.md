@@ -4,6 +4,22 @@
 
 ### Added
 
+- `/review-view`, a review findings pane in Claude Code (issue #108). It opens the run's latest code
+  review result (`/review-view #N` for issue N) with one row per selected lens: met, not met, not
+  run or unscored, its finding count and its top findings. A lens that did not execute, or a
+  selected lens with no recorded result, reads "not run" with its reason and never shows a number;
+  a lens that ran but sets no bar reads "unscored". Choosing a lens lists its findings with
+  `path:line`, and a finding's Quote puts it in the prompt. A Bash call that ran
+  `review_result.py`, or a change of the run record's modification time (polled every five seconds
+  while the pane is open), reloads it. It is read-only: no acceptance decision and no finding edits.
+  `review-view` is the command the run status band (issue #105) runs to open it.
+- `scripts/run_status.py review`, the plain fallback: the latest `review_result.v2` entry in a loop
+  (`--loop`, default `code_review`; `--unit` for one unit's history), lens by lens, as a
+  fixed-width table, or as `review_view.v1` with `--json`, which `mods/run-record.ts` reads through
+  `readReviewViewWith`. Legacy `review_result.v1` entries are counted, never shown as the latest.
+- `review_consensus.lens_outcomes_for_result`, the per-lens rule `verdict_for_result` applies,
+  extracted so a display shows the verdict's own answer. No behaviour change; the two reasons a
+  lens is unusable are now the named constants `REASON_NOT_EXECUTED` and `REASON_NO_THRESHOLD`.
 - `/plan-view`, a plan viewer pane in Claude Code (issue #104). It opens the run's plan, issue N's
   (`/plan-view #N`) or a named Markdown file, lists the sections by heading and draws the chosen
   one as Markdown, paged under the engine's 10,000-character limit. Backticked `path:line`

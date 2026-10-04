@@ -419,3 +419,62 @@ def test_the_default_policy_declares_no_lens_dimensions() -> None:
     assert CONSENSUS.DEFAULT_SCORING_POLICY.dimensions_for("correctness") == ()
     assert CONSENSUS.DEFAULT_SCORING_POLICY.overall_minimum == 9.0
     assert CONSENSUS.DEFAULT_SCORING_POLICY.dimension_floor == 7.0
+
+
+# ---------------------------------------------------------------------------
+# lens_outcomes_for_result: the per-lens rule verdict_for_result applies (issue #108)
+# ---------------------------------------------------------------------------
+
+
+def _row(lens: str, **fields: Any) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "lens": lens,
+        "scorable": True,
+        "scored": True,
+        "executed": True,
+        "dimension_scores": {"a": 10, "b": 9},
+        "derived_overall": 9.5,
+        "threshold": {"derived_overall_minimum": 9.0, "applicable_dimension_minimum": 7.0},
+    }
+    row.update(fields)
+    return row
+
+
+def test_lens_outcomes_for_result_judges_each_row_with_a_reason_for_the_unusable() -> None:
+    payload = {
+        "cycle": 1,
+        "per_lens_results": [
+            _row("correctness"),
+            _row("security", dimension_scores={"a": 5}, derived_overall=5.0),
+            _row("testing", executed=False),
+            _row("performance", scorable=False),
+            _row("docs", scored=False),
+            "not a row",
+        ],
+    }
+    outcomes = CONSENSUS.lens_outcomes_for_result(payload)
+    assert [(o.lens_id, o.met, o.usable, o.reason) for o in outcomes] == [
+        ("correctness", True, True, ""),
+        ("security", False, True, ""),
+        ("testing", False, False, CONSENSUS.REASON_NOT_EXECUTED),
+        ("performance", False, False, CONSENSUS.REASON_NO_THRESHOLD),
+        ("docs", False, False, CONSENSUS.REASON_NO_THRESHOLD),
+    ]
+    assert CONSENSUS.lens_outcomes_for_result({}) == []
+
+
+def test_verdict_for_result_answers_from_the_same_lens_outcomes() -> None:
+    met = {"cycle": 1, "per_lens_results": [_row("correctness"), _row("security")]}
+    assert CONSENSUS.verdict_for_result(met) == "accepted"
+    not_met = {
+        "cycle": 1,
+        "per_lens_results": [_row("correctness"), _row("security", derived_overall=8.0)],
+    }
+    assert CONSENSUS.verdict_for_result(not_met) == "repairs_requested"
+    not_run = {"cycle": 1, "per_lens_results": [_row("correctness"), _row("x", executed=False)]}
+    assert CONSENSUS.verdict_for_result(not_run) == "review_incomplete"
+    assert CONSENSUS.verdict_for_result({"per_lens_results": []}) == "review_incomplete"
+    for payload in (met, not_met, not_run):
+        assert CONSENSUS.verdict_for_result(payload) == CONSENSUS.compute_verdict(
+            lens_outcomes=CONSENSUS.lens_outcomes_for_result(payload), cycles_used=1
+        )

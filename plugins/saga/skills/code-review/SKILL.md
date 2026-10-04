@@ -327,6 +327,10 @@ severity (`# | File | Issue | Reviewer | Confidence | Route`). Include the built
 summary, the scope-check result, the suppressed count, and coverage — residual risks and testing
 gaps. `references/findings-schema.md` carries the full output contract.
 
+The written result can be read back lens by lens on any harness: `scripts/run_status.py review`
+prints each selected lens as met, not met, not run or unscored, with its findings, from the verdict's
+own per-lens rule. In Claude Code, `/review-view` shows the same view in a pane.
+
 ### 5.2 One comment
 
 Exactly one pull-request comment, naming the reviewed revision as a full forty-character commit

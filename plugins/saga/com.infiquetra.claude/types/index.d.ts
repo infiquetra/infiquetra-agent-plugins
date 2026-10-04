@@ -198,6 +198,69 @@ export type SagaAdmissionReviewOutcome =
   | { status: 'not-placed' | 'unavailable'; reason: string }
   | { status: 'error'; reason: string; exitCode?: number; stderr?: string }
 
+/** The version token `scripts/run_status.py review --json` prints. */
+export type SagaReviewViewSchema = 'review_view.v1'
+
+/**
+ * Where a lens stands against its bar. `not_run` (the lens did not execute, or
+ * the result has no row for a selected lens) and `unscored` (it ran and
+ * reported findings but sets no bar) carry no score, so neither can read as a
+ * low one.
+ */
+export type SagaReviewLensState = 'met' | 'not_met' | 'not_run' | 'unscored'
+
+/** One finding as `run_status.py review` prints it; `FINDING_FIELDS` there. */
+export type SagaReviewFinding = {
+  id: string
+  severity: string
+  path: string
+  line: number | string
+  category: string
+  dimension: string
+  evidence: string
+  impact: string
+  status: string
+  confidence: string
+}
+
+/** One lens of the review: its state, why when it has no usable result, and its findings. */
+export type SagaReviewLens = {
+  lens: string
+  state: SagaReviewLensState
+  reason: string | null
+  /** Only a `met` or `not_met` lens carries its score. */
+  derived_overall: number | null
+  finding_count: number
+  /** The first few findings, most severe first. */
+  top: SagaReviewFinding[]
+  findings: SagaReviewFinding[]
+}
+
+/** The latest review result in one loop of the run record. */
+export type SagaReview = {
+  unit: string
+  cycle: number
+  loop: string
+  revision: string
+  outcome: string
+  reason: string | null
+  lenses: SagaReviewLens[]
+  /** Findings whose lens is not one of `lenses`. */
+  unattributed_findings: SagaReviewFinding[]
+  advisory_count: number
+  duplicate_count: number
+}
+
+/** What `run_status.py review --json` prints. `review` is null when no result is recorded. */
+export type SagaReviewView = {
+  schema: SagaReviewViewSchema
+  repo_root: string
+  issue: number | null
+  record_path: string | null
+  legacy_entries: number
+  review: SagaReview | null
+}
+
 declare module 'claude-code' {
   interface PluginState {
     saga: {
@@ -209,6 +272,12 @@ declare module 'claude-code' {
       planPage: number
       /** The admission review pane's state (issue #103), or null when no review is open. */
       admissionReview: SagaAdmissionReview | null
+      /** The review the `/review-view` pane shows, or null before one is loaded. */
+      reviewView: SagaReviewView | null
+      /** The lens whose findings are listed; null is the lens list. */
+      reviewLens: string | null
+      /** The run record's modification time when `reviewView` was read. */
+      reviewMtimeMs: number
     }
   }
 }
