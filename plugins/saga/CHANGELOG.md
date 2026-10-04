@@ -4,6 +4,17 @@
 
 ### Added
 
+- Live token capture for Claude Code unit sessions (issue #107). `mods/usage-capture.ts` asks
+  `scripts/run_status.py unit-for` at session start which unit row the session's directory works
+  (the row whose `worktree` or `merge_worktree` is that checkout, else the row whose `branch` is
+  checked out there) and, when one matches, sums every model request's usage from `turn.step`, on
+  the main thread and in every subagent's loop, per session, role, model and effort. Every minute
+  and at session end it writes each sum through `run_record.py usage add`, one process per sum,
+  never one per request; a failed write is kept for the next tick. A session that works no unit
+  records nothing. Claude Code reports cache writes without a TTL split, so they are recorded as
+  one-hour writes, the upper bound.
+- `scripts/run_status.py unit-for`, which prints the matched unit as `run_status.v1` JSON
+  (`--json`) or one line, and `null` (exit 0) for a directory that works no unit or is no checkout.
 - `/review-view`, a review findings pane in Claude Code (issue #108). It opens the run's latest code
   review result (`/review-view #N` for issue N) with one row per selected lens: met, not met, not
   run or unscored, its finding count and its top findings. A lens that did not execute, or a

@@ -261,6 +261,55 @@ export type SagaReviewView = {
   review: SagaReview | null
 }
 
+/**
+ * The unit row a session is working, as `run_status.py --repo-root <cwd>
+ * unit-for --json` prints it under `match` (issue #107). The token-capture mod
+ * appends this session's usage to that row through `run_record.py usage add`.
+ */
+export type SagaUsageTarget = {
+  issue: number
+  /** The row's identity as `usage add --unit` takes it: `id`, else `name`, else `unit_id`. */
+  unit: string
+  /** The staffing role the session records: the row's `role`, else `worker` (`merging-worker` in a merge turn). */
+  role: string
+  /** How the row matched: its worktree, or only its branch. */
+  matched_by: 'worktree' | 'branch'
+  record_path: string
+  /** The record store, passed back as `--store-root` so a write resolves nothing again. */
+  store_root: string
+  /** More than one row matched; this is the strongest, active and newest. */
+  ambiguous: boolean
+}
+
+/** What `run_status.py unit-for --json` prints. */
+export type SagaUnitForView = {
+  schema: SagaRunStatusSchema
+  repo_root: string
+  branch: string
+  match: SagaUsageTarget | null
+}
+
+/**
+ * Token counts not yet written to the run record, summed per model session:
+ * one bucket per session id (a subagent's loop is its own), role, model and
+ * effort, the identity of a `usage add` entry. The four counts are the ones a
+ * Claude Code `turn.step` result reports.
+ */
+export type SagaUsageBucket = {
+  sessionId: string
+  /** The subagent's id, or null on the main thread. */
+  agentId: string | null
+  role: string
+  model: string
+  effort: string
+  uncachedInput: number
+  cacheRead: number
+  cacheWrite: number
+  output: number
+  /** How many model requests the counts sum. */
+  steps: number
+}
+
 declare module 'claude-code' {
   interface PluginState {
     saga: {
@@ -278,6 +327,10 @@ declare module 'claude-code' {
       reviewLens: string | null
       /** The run record's modification time when `reviewView` was read. */
       reviewMtimeMs: number
+      /** The unit this session's usage goes to; null when it works none (or before it is resolved). */
+      usageTarget: SagaUsageTarget | null
+      /** Usage read from `turn.step` and not yet written through `usage add`. */
+      usageQueue: SagaUsageBucket[]
     }
   }
 }
