@@ -285,6 +285,80 @@ def test_a_row_marked_operator_override_goes_in_as_the_operators_answer(
 RAISE = {"model": "opus", "effort": "high", "confidence": 0.86, "reason": "r", "decision_id": "d"}
 
 
+def test_a_merged_operator_answer_marks_only_the_overridden_rows(repo: Path, store: Path) -> None:
+    # Admission's per-role merge (issue #103) sets the block's source to `operator` and marks
+    # only the roles the answer named. The planner's row is not the operator's: it keeps its
+    # recorded raise and goes to the resolver with no answer, exactly as admission reads it.
+    planner = {**_row("opus", "medium"), "operator_override": False, "jev_raise": RAISE}
+    worker = {**_row("opus", "xhigh"), "operator_override": True}
+    _staff(store, {**FULL, "planner": planner, "worker": worker}, source="operator")
+    resolver = Resolver(_row("opus", "medium"))
+    types = _by_role(_answer(repo, store, resolver))
+
+    assert resolver.inputs["worker"] == {
+        "answer": {"model": "opus", "effort": "xhigh"},
+        "jev_raise": None,
+    }
+    assert resolver.inputs["planner"] == {"answer": None, "jev_raise": RAISE}
+    assert resolver.inputs["release-worker"]["answer"] is None
+    assert (types["worker"]["effort"], types["worker"]["source"]) == ("xhigh", "operator")
+    assert (types["planner"]["effort"], types["planner"]["source"]) == ("high", "jev-raise")
+    assert types["release-worker"]["source"] == "policy"
+
+
+def test_the_operator_rows_come_from_run_records_one_rule(repo: Path, store: Path) -> None:
+    # Admission's staffing table reads the same record through run_record.operator_answered_roles,
+    # so the registered type and the table cannot disagree about whose row it is.
+    planner = {**_row("opus", "medium"), "operator_override": False, "jev_raise": RAISE}
+    worker = {**_row("opus", "xhigh"), "operator_override": True}
+    _staff(store, {**FULL, "planner": planner, "worker": worker}, source="operator")
+    record = run_record.load(store, ISSUE, warn=None)
+    rows, operator_roles = role_agent_types.staffing_rows(record)
+
+    assert operator_roles == {"worker"}
+    assert operator_roles == run_record.operator_answered_roles(
+        record.run_configuration["staffing_models_and_efforts"]
+    )
+    assert "planner" in rows
+
+
+def test_a_whole_map_operator_answer_is_the_operators_for_every_role(store: Path) -> None:
+    _staff(store, FULL, source="operator")
+    record = run_record.load(store, ISSUE, warn=None)
+    _, operator_roles = role_agent_types.staffing_rows(record)
+    assert operator_roles == set(FULL)
+
+
+def test_the_real_resolver_carries_a_recorded_raise_overlay_and_operator_rows_through(
+    repo: Path, store: Path
+) -> None:
+    # No stub: the bundled staffing resolver (issue #93's single precedence order) decides.
+    # The planner is the operator's row, the worker records a one-step raise over its
+    # implementation default, the release worker meets the repository overlay, and the
+    # plan reviewer has nothing but the policy default.
+    (repo / ".saga").mkdir()
+    (repo / ".saga" / "tier-defaults.json").write_text(
+        json.dumps({"mechanical": {"model": "sonnet", "effort": "high"}}), encoding="utf-8"
+    )
+    staffing = {
+        **FULL,
+        "planner": {**_row("opus", "xhigh"), "operator_override": True},
+        "worker": {**_row("opus", "medium"), "operator_override": False, "jev_raise": RAISE},
+    }
+    _staff(store, staffing, source="operator")
+    answer = role_agent_types.role_agent_types(repo, store_root=store, agent_launcher=AGENT_LAUNCHER)
+    types = _by_role(answer)
+
+    def tier(role: str) -> tuple[str, str, str]:
+        return types[role]["model"], types[role]["effort"], types[role]["source"]
+
+    assert tier("planner") == ("opus", "xhigh", "operator")
+    assert tier("worker") == ("opus", "high", "jev-raise")
+    assert tier("release-worker") == ("sonnet", "high", "overlay")
+    assert tier("plan-reviewer") == ("opus", "high", "policy")
+
+
+
 def test_a_recorded_jev_raise_reaches_the_registered_type(repo: Path, store: Path) -> None:
     worker = {**_row("opus", "medium"), "jev_raise": RAISE}
     _staff(store, {**FULL, "worker": worker}, source="staffing")
@@ -340,24 +414,6 @@ def test_the_default_resolver_hands_the_raise_to_staffing_resolve_role(
     assert seen == {"role": "worker", "root": repo, "require_lens": False, "answer": None,
                     "jev_raise": RAISE}
     assert (decision["model"], decision["effort"], decision["source"]) == ("opus", "high", "jev-raise")
-
-
-def test_a_resolver_that_cannot_apply_a_raise_refuses_it_rather_than_dropping_it(
-    repo: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    class Staffing:
-        @staticmethod
-        def resolve_role(role: str, *, root: Path, require_lens: bool) -> _FakeDecision:
-            return _FakeDecision({**_row("opus", "medium"), "source": "policy"})
-
-    monkeypatch.setattr(role_agent_types, "_load_staffing", lambda: Staffing)
-    with pytest.raises(role_agent_types.RoleTypesError, match="cannot apply one"):
-        role_agent_types.resolve_with_staffing("worker", repo, jev_raise=RAISE)
-    # An operator answer outranks every layer, so an older resolver returns it as given.
-    decision = role_agent_types.resolve_with_staffing(
-        "worker", repo, answer={"model": "sonnet", "effort": "low"}
-    )
-    assert (decision["model"], decision["effort"], decision["source"]) == ("sonnet", "low", "operator")
 
 
 def test_the_real_resolver_answers_a_role(repo: Path) -> None:

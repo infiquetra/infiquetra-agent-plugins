@@ -16,8 +16,10 @@
 - `scripts/role_agent_types.py --json` (`saga_role_agent_types.v1`) is the portable answer behind
   the mod: the active-run rule from `next_step_context`, each role's tier from fleet-core's
   staffing resolver, handed the run record's operator answer and recorded Jev raise for the role
-  so its one precedence order decides (a resolver too old to apply a raise skips the role by name), and each prompt read from agent-launcher's roles library at call time through roster's own
-  role mapping. Requires fleet-core's `claude-agent-type` spawn kind, added in the same release.
+  so its one precedence order decides. Only the rows the operator actually answered go in as the
+  operator's (`run_record.operator_answered_roles`, which admission's staffing table now reads
+  too), so every other role keeps its repository overlay or recorded raise. Each prompt is read
+  from agent-launcher's roles library at call time through roster's own role mapping. Requires fleet-core's `claude-agent-type` spawn kind, added in the same release.
 - **A repository declares its functional-test environment once, in `.saga-profile.json`** (issue
   #97, pre-review testing U2). The `functional_test_environment` block names the `kind` (`local`,
   `emulator`, `ephemeral-stack` or `shared-nonprod`), the `deploy_command` (optional for `local`),

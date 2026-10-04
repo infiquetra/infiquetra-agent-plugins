@@ -1424,15 +1424,15 @@ def _staffing_rows(
 
     consult = value.get("_tier_judgment")
     # An operator answer either replaced the whole map (no row carries ``operator_override``) or
-    # was merged per role (the overridden rows carry it).
-    merged = any(isinstance(row, dict) and "operator_override" in row for row in value.values())
+    # was merged per role (the overridden rows carry it); run_record tells the two apart once.
+    answered = run_record.operator_answered_roles(block)
     rows: list[dict[str, Any]] = []
     for role in sorted(key for key in value if not str(key).startswith("_")):
         row = value[role] if isinstance(value[role], dict) else {}
         default, shape, default_source = _default_tier(staffing, role, repo_root)
         if default is None and source == "staffing":
             default = _tier(row.get("vendor"), row.get("model"), row.get("effort"))
-        operator = row.get("operator_override") is True or (source == "operator" and not merged)
+        operator = role in answered
         proposed, why = _proposed_and_why(
             row,
             shape,

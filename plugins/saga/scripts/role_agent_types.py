@@ -15,10 +15,13 @@ no types, so a session with no saga run is left exactly as it was.
 build-time bundle, asked from the checkout so its per-repository overlay applies. This script
 writes no precedence order of its own: it hands the resolver what the run record holds for the
 role in ``run_configuration.staffing_models_and_efforts`` and lets the resolver's one order apply.
-A row the operator wrote (a ``staffing_overrides`` answer, or a row marked ``operator_override``)
-goes in as the operator's answer; a recorded ``jev_raise`` goes in as the raise, which the
-resolver refuses unless it is exactly one step above its base. A row admission filled from the
-resolver is simply answered again.
+A row the operator answered goes in as the operator's answer. Which rows those are is
+``run_record.operator_answered_roles``'s call, the rule admission reads the same record by: a
+per-role merge marks only the roles the operator named with ``operator_override``, and only a
+whole map with no such marker is the operator's throughout. A recorded ``jev_raise`` goes in as
+the raise, which the resolver refuses unless it is exactly one step above its base. Every other
+row, admission's fill from the resolver included, is simply answered again, so the repository
+overlay and a recorded raise apply to it exactly as they do everywhere else.
 
 **Which roles.** Every role agent-launcher's roster maps to a roles-library prompt
 (``roster.STAFFING_ROLE_TO_ROLE_ID``, imported, never copied), except two. The lens reviewer's
@@ -42,7 +45,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.util
-import inspect
 import json
 import os
 import sys
@@ -168,13 +170,6 @@ def _load_staffing() -> Any:
     return bundled_fleet.load("staffing")
 
 
-def _accepts(function: Callable[..., Any], name: str) -> bool:
-    try:
-        return name in inspect.signature(function).parameters
-    except (TypeError, ValueError):  # pragma: no cover - a builtin with no signature
-        return False
-
-
 def resolve_with_staffing(
     role: str,
     cwd: Path,
@@ -185,40 +180,31 @@ def resolve_with_staffing(
     """Ask the staffing resolver for *role*'s tier, with the run's recorded inputs.
 
     ``staffing.resolve_role`` applies the one precedence order (operator answer, repository
-    overlay under *cwd*, recorded Jev raise, work-shape default) and refuses a raise that is not
-    exactly one step above its base. This function hands it the inputs and interprets none of
-    them. A resolver that predates those inputs (issue #93) cannot apply them: a recorded raise is
-    then refused by name rather than dropped, and an operator answer, which outranks every other
-    layer, is returned as the operator gave it.
+    overlay under *cwd*, recorded Jev raise, work-shape default; issue #93) and refuses a raise
+    that is not exactly one step above its base. This function hands it the inputs and interprets
+    none of them.
     """
     staffing = _load_staffing()
-    kwargs: dict[str, Any] = {"root": cwd, "require_lens": False}
-    if jev_raise is not None:
-        if not _accepts(staffing.resolve_role, "jev_raise"):
-            raise RoleTypesError(
-                "the run records a Jev raise and this build's staffing resolver cannot apply one"
-            )
-        kwargs["jev_raise"] = jev_raise
-    operator_answer: dict[str, str] | None = None
-    if answer is not None:
-        if _accepts(staffing.resolve_role, "answer"):
-            kwargs["answer"] = answer
-        else:
-            operator_answer = {"model": str(answer["model"]), "effort": str(answer["effort"])}
-    decision = staffing.resolve_role(role, **kwargs).as_dict()
+    decision = staffing.resolve_role(
+        role, root=cwd, require_lens=False, answer=answer, jev_raise=jev_raise
+    ).as_dict()
     if not isinstance(decision, Mapping):
         raise RoleTypesError("the resolver did not answer with a mapping")
-    if operator_answer is not None:
-        decision = {**decision, **operator_answer, "source": "operator"}
     return decision
 
 
-def staffing_rows(record: Any) -> tuple[Mapping[str, Any], bool]:
-    """The record's staffing plan (``{}`` while unset), and whether the operator wrote all of it."""
+def staffing_rows(record: Any) -> tuple[Mapping[str, Any], frozenset[str]]:
+    """The record's staffing plan (``{}`` while unset), and the roles the operator answered.
+
+    The second part is ``run_record.operator_answered_roles``: under a per-role merge only the
+    rows marked ``operator_override: true``, under a whole-map answer every role. A row the
+    operator did not answer keeps its overlay and its recorded raise.
+    """
     entry = record.run_configuration.get("staffing_models_and_efforts")
     value = entry.get("value") if isinstance(entry, Mapping) else entry
-    whole_map_is_operator = isinstance(entry, Mapping) and entry.get("source") == "operator"
-    return (value if isinstance(value, Mapping) else {}), whole_map_is_operator
+    rows = value if isinstance(value, Mapping) else {}
+    rows = {role: row for role, row in rows.items() if not str(role).startswith("_")}
+    return rows, run_record.operator_answered_roles(entry)
 
 
 def tier_for(
@@ -227,17 +213,16 @@ def tier_for(
     """The role's vendor, model and effort, as the staffing resolver answers it for this run.
 
     This function decides no precedence. It gathers the run's recorded inputs for the role and
-    hands them to the resolver: the row as the operator's answer when the operator wrote it (the
-    whole map from a ``staffing_overrides`` answer, or a row marked ``operator_override``), and
-    the row's ``jev_raise`` when one is recorded. A row admission filled from the resolver is
+    hands them to the resolver: the row as the operator's answer when *operator* says the operator
+    answered this role (``staffing_rows`` decides that, through ``run_record``), and the row's
+    ``jev_raise`` when one is recorded. A row admission filled from the resolver is
     answered again by the resolver, so the overlay and a recorded raise apply exactly as they do
     everywhere else.
     """
     row = row if isinstance(row, Mapping) else {}
-    by_operator = operator or row.get("operator_override") is True
     answer = (
         {"model": str(row["model"]), "effort": str(row["effort"])}
-        if by_operator and row.get("model") and row.get("effort")
+        if operator and row.get("model") and row.get("effort")
         else None
     )
     raise_ = row.get("jev_raise")
@@ -328,7 +313,7 @@ def role_agent_types(
     except Exception as exc:  # noqa: BLE001
         return _empty(True, issue, error=str(exc))
 
-    rows, operator_map = staffing_rows(record)
+    rows, operator_roles = staffing_rows(record)
     mapping: Mapping[str, str] = roster.STAFFING_ROLE_TO_ROLE_ID
     readable = {
         str(row.get("role_id")): str(row.get("role") or row.get("role_id"))
@@ -350,7 +335,7 @@ def role_agent_types(
             continue
         role_id = mapping[role]
         try:
-            tier = tier_for(role, rows.get(role), cwd, resolver, operator=operator_map)
+            tier = tier_for(role, rows.get(role), cwd, resolver, operator=role in operator_roles)
         except Exception as exc:  # noqa: BLE001
             skipped.append({"role": role, "reason": f"its tier could not be resolved: {exc}"})
             continue

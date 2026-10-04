@@ -38,6 +38,25 @@ it, and the module that owns a pane answers before the Button's own `onPress` wo
 **Generalizable rule.** To trigger one mod's behaviour from another mod in the same plugin, hook an
 engine-raised event (`ui.press` on a known element key) in the owning module; never route through
 `$.command.run` or another call to the plugin's own hooks.
+### A staffing block's `source: operator` does not mean the operator wrote every row
+
+**Evidence.** Issue #106, `plugins/saga/scripts/role_agent_types.py` `staffing_rows`. Review found
+that the script read every row as the operator's answer whenever the block's `source` was
+`operator`. Admission's per-role merge (`admission.py` `_merge_overrides`) sets that source on the
+whole block but marks only the named roles with `operator_override: true`. An unmarked row then
+reached the staffing resolver as an operator answer, which outranks everything, so its repository
+overlay and its recorded Jev raise were dropped. The rule now lives once, in
+`run_record.operator_answered_roles`, read by both the script and admission's staffing table;
+`test_a_merged_operator_answer_marks_only_the_overridden_rows` and
+`test_the_real_resolver_carries_a_recorded_raise_overlay_and_operator_rows_through` in
+`plugins/saga/tests/test_role_agent_types.py` pin it.
+
+**Mechanism.** The record carries two operator-answer shapes under one block source: a whole map
+(no row marked) and a per-role merge (only the named rows marked). A reader that checks only the
+block source cannot tell them apart.
+
+**Generalizable rule.** When two readers must agree about whose value a record row is, put the
+rule in the record's own module and have both call it, rather than letting each re-derive it.
 
 ### A card filed from a pull request's follow-ups can be closed by that same pull request
 

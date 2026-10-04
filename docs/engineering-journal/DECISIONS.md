@@ -150,10 +150,12 @@ no pane is open.
 `plugins/saga/scripts/role_agent_types.py` decides what to register. Every role's tier comes from
 fleet-core's staffing resolver (`staffing.resolve_role`, from the bundle, run from the checkout so
 the overlay applies). The script hands the resolver what the run record's
-`staffing_models_and_efforts` holds for the role: a row the operator wrote goes in as the
-operator's answer, and a recorded `jev_raise` goes in as the raise. The script writes no
-precedence order of its own; the resolver's one order decides. A resolver too old to take a raise
-refuses the role by name rather than registering it below the run's tier. Each prompt is the roles-library file, read at call time through agent-launcher's
+`staffing_models_and_efforts` holds for the role: a row the operator answered goes in as the
+operator's answer, and a recorded `jev_raise` goes in as the raise. Which rows the operator
+answered is `run_record.operator_answered_roles`, the one rule admission's staffing table also
+reads: under a per-role merge only the rows marked `operator_override: true`, under a whole-map
+answer every row. The script writes no precedence order of its own; the resolver's one order
+(issue #93) decides. Each prompt is the roles-library file, read at call time through agent-launcher's
 roster helper, behind a short saga hosting preamble: report the handoff as the final message and
 post nothing on the issue. `/work` dispatches a build unit as `saga:worker`, with no `model`
 parameter, only when the type's tier equals the unit's resolved tier; otherwise the effort rider
