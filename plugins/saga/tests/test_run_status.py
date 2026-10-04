@@ -644,3 +644,239 @@ def test_the_contract_declares_exactly_the_fields_unit_for_matches(repo: Path, s
     assert body, "the contract no longer declares SagaUsageTarget"
     declared = set(re.findall(r"^\s+(\w+):", body.group(1), re.MULTILINE))
     assert declared == set(match)
+
+
+# --------------------------------------------------------------------------------------------
+# The run status band's line (issue #105)
+# --------------------------------------------------------------------------------------------
+
+BAND_LENSES = [f"lens-{n}" for n in range(1, 11)]
+
+
+def _check(name: str, status: str) -> dict[str, object]:
+    return {"name": name, "command": name, "catalogue_check": None, "status": status}
+
+
+def _iteration(number: int, *statuses: str, green: bool = False) -> dict[str, object]:
+    return {
+        "iteration": number,
+        "revision": REVISION,
+        "green": green,
+        "baseline": [_check(f"check-{i}", status) for i, status in enumerate(statuses)],
+        "functional_checks": [],
+        "scenario_smoke": [],
+        "preview": {"declared": False, "status": "no-preview-declared"},
+    }
+
+
+def _unit(name: str, worktree: str, *iterations: dict[str, object]) -> dict[str, object]:
+    return {"id": name, "worktree": worktree, "build_loop": {"iterations": list(iterations)}}
+
+
+def _band_result(*, cycle: int, unit: str = "u1", met: int = 7) -> object:
+    return review_result.ReviewResult(
+        revision=REVISION,
+        roster_hash="sha256:test",
+        outcome="repairs_requested",
+        cycle=cycle,
+        loop="code_review",
+        unit=unit,
+        lens_results=[
+            _lens(lens, scores={"a": 10, "b": 9} if i < met else {"a": 5, "b": 4})
+            for i, lens in enumerate(BAND_LENSES)
+        ],
+        findings=[],
+    )
+
+
+def _band_record(
+    store: Path,
+    *,
+    units: list[dict[str, object]],
+    results: tuple[object, ...] = (),
+    configuration: dict[str, object] | None = None,
+    next_step: str = "run /work on the plan",
+) -> None:
+    run_record.set_next_step(store, 412, next_step)
+    record = run_record.load(store, 412)
+    assert record is not None
+    config = dict(record.run_configuration)
+    config["applicable_lenses"] = {"value": {"always_on": BAND_LENSES}, "source": "operator"}
+    config.update(configuration or {})
+    run_record.save(
+        store,
+        run_record.RunRecord(
+            **{
+                **record.__dict__,
+                "run_configuration": config,
+                "units": units,
+                "review_cycles": [result.to_dict() for result in results],  # type: ignore[attr-defined]
+            }
+        ),
+    )
+
+
+def _band(repo: Path, store: Path, capsys: pytest.CaptureFixture[str]) -> dict[str, object]:
+    code, out, err = _run(repo, store, "summary", "--issue", "412", "--json", capsys=capsys)
+    assert (code, err) == (0, "")
+    [row] = json.loads(out)["runs"]
+    return row
+
+
+def test_band_line_reads_build_loop_review_cycle_and_lenses_met(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _band_record(
+        store,
+        units=[
+            _unit(
+                "u1",
+                str(repo),
+                _iteration(1, "fail", "fail", "fail"),
+                _iteration(2, "fail", "fail", "pass"),
+                _iteration(3, "fail", "pass", "fail"),
+            )
+        ],
+        results=(_band_result(cycle=1),),
+    )
+    _tick(repo, 412, lifecycle_phase="work")
+    row = _band(repo, store, capsys)
+    assert (
+        row["band_line"]
+        == "#412 · work · build loop pass 3, 2 failing · review cycle 1/3 · 7/10 lenses met"
+    )
+    assert row["build_loop"] == {
+        "unit": "u1",
+        "pass": 3,
+        "failing": 2,
+        "could_not_execute": 0,
+        "green": False,
+        "units_total": 1,
+        "units_green": 0,
+    }
+    assert row["review"] == {
+        "unit": "u1",
+        "cycle": 1,
+        "standard_allowance": 3,
+        "escalated_allowance": 2,
+        "is_escalated": False,
+        "outcome": "repairs_requested",
+        "lenses_met": 7,
+        "lenses_total": 10,
+        "lenses_not_run": 0,
+    }
+
+
+def test_band_text_form_prints_the_band_line(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _band_record(store, units=[_unit("u1", str(repo), _iteration(1, "pass", green=True))])
+    _tick(repo, 412, lifecycle_phase="work")
+    code, out, _ = _run(repo, store, "summary", "--issue", "412", "--band", capsys=capsys)
+    assert code == 0
+    assert out.splitlines() == ["#412 · work · build loop pass 1, green"]
+
+
+def test_band_line_leaves_out_the_review_when_none_is_recorded(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _band_record(store, units=[_unit("u1", str(repo), _iteration(1, "fail"))])
+    _tick(repo, 412, lifecycle_phase="work")
+    row = _band(repo, store, capsys)
+    assert row["review"] is None
+    assert row["band_line"] == "#412 · work · build loop pass 1, 1 failing"
+
+
+def test_band_line_marks_a_cycle_past_the_standard_allowance_as_escalated(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _band_record(
+        store,
+        units=[],
+        results=(_band_result(cycle=3), _band_result(cycle=4, met=10)),
+        configuration={
+            "standard_cycle_allowance": {"value": 3},
+            "escalated_cycle_allowance": 2,
+        },
+    )
+    _tick(repo, 412, lifecycle_phase="code-review")
+    row = _band(repo, store, capsys)
+    assert row["build_loop"] is None
+    assert (
+        row["band_line"] == "#412 · code-review · review cycle 4/5 (escalated) · 10/10 lenses met"
+    )
+
+
+def test_band_line_counts_green_units_when_the_checkout_is_none_of_them(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _band_record(
+        store,
+        units=[
+            _unit("u1", "/elsewhere/u1", _iteration(1, "pass", green=True)),
+            _unit("u2", "/elsewhere/u2", _iteration(2, "pass", green=True)),
+            _unit("u3", "/elsewhere/u3", _iteration(1, "fail")),
+            {"id": "u4", "worktree": "/elsewhere/u4"},
+        ],
+    )
+    _tick(repo, 412, lifecycle_phase="work")
+    row = _band(repo, store, capsys)
+    assert row["band_line"] == "#412 · work · build loop 2/3 units green"
+    assert row["build_loop"]["unit"] is None
+
+
+def test_band_line_picks_the_unit_whose_worktree_is_this_checkout(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _band_record(
+        store,
+        units=[
+            _unit("u1", "/elsewhere/u1", _iteration(5, "pass", green=True)),
+            _unit("u2", str(repo), _iteration(2, "fail", "pass")),
+        ],
+        results=(_band_result(cycle=2, unit="u2", met=4), _band_result(cycle=1, unit="u1")),
+    )
+    _tick(repo, 412, lifecycle_phase="work")
+    row = _band(repo, store, capsys)
+    assert row["band_line"] == (
+        "#412 · work · build loop pass 2, 1 failing · review cycle 2/3 · 4/10 lenses met"
+    )
+
+
+def test_band_line_counts_could_not_execute_apart_from_fail(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _band_record(
+        store,
+        units=[_unit("u1", str(repo), _iteration(1, "fail", "could-not-execute", "pass"))],
+    )
+    _tick(repo, 412, lifecycle_phase="work")
+    row = _band(repo, store, capsys)
+    assert (row["build_loop"]["failing"], row["build_loop"]["could_not_execute"]) == (1, 1)
+    assert row["band_line"] == "#412 · work · build loop pass 1, 1 failing, 1 could not run"
+
+
+def test_band_line_falls_back_to_next_step_without_a_saga_envelope(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _band_record(store, units=[], next_step="address the review findings on the parser module")
+    row = _band(repo, store, capsys)
+    assert row["phase"] is None
+    assert row["band_line"] == "#412 · address the review findings on the pars…"
+
+
+def test_the_contract_declares_the_band_blocks_the_script_prints(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _band_record(
+        store,
+        units=[_unit("u1", str(repo), _iteration(1, "fail"))],
+        results=(_band_result(cycle=1),),
+    )
+    row = _band(repo, store, capsys)
+    contract = (ADAPTER / "types" / "index.d.ts").read_text(encoding="utf-8")
+    for name, key in (("SagaRunBuildLoop", "build_loop"), ("SagaRunReviewProgress", "review")):
+        body = re.search(rf"export type {name} = \{{(.*?)\n\}}", contract, re.S)
+        assert body, f"the contract no longer declares {name}"
+        declared = set(re.findall(r"^\s+(\w+):", body.group(1), re.MULTILINE))
+        assert declared == set(row[key]), name

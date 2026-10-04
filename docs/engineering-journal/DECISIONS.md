@@ -2,6 +2,34 @@
 
 ## 2026-10-04
 
+### The run status band's words are rendered by `run_status.py`, not by the mod
+
+**Decision.** The run status band (issue #105) draws `band_line` exactly as
+`plugins/saga/scripts/run_status.py summary --json` prints it, one line per active run, for example
+`#412 · work · build loop pass 3, 2 failing · review cycle 1/3 · 7/10 lenses met`. The script
+computes each part from the run record: the build loop's latest iteration (for the unit whose
+`worktree` is this checkout, or the only unit that ran the loop; otherwise "2/3 units green"), the
+latest code review cycle against `standard_cycle_allowance` (past it, "4/5 (escalated)" against
+standard plus escalated), and lenses met through `lens_views`, which applies
+`review_consensus.lens_outcomes_for_result`. `summary --band` prints the same line as the plain
+fallback. The keys are additive inside `run_status.v1`, so the version token did not change. The
+band says "build loop", the record's term, where the card's example said "test loop".
+
+**Rationale.** Operator ruling 2 on the mods parent (#92): scripts own state and policy, a mod
+displays it. Whether a lens met its bar is the verdict's threshold rule; recomputing it in
+TypeScript from `run_record.py show` would be a second copy that drifts. One renderer in Python
+also gives every other harness the identical line.
+
+**Rejected alternatives.** Re-deriving lens "met", cycle allowances and build-loop counts in the mod
+from `run_record.py show` (duplicates policy). A separate `--cwd` flag for matching a unit's
+worktree: `--repo-root` already resolves to this checkout's top level, which is what a unit's
+`worktree` names. Opening the plan viewer and review pane from the band with `$.command.run`: a
+plugin's own call skips its own hooks, so it never reaches `/plan-view` or `/review-view` (see
+LEARNINGS.md, same date).
+
+**Revisit when.** The run record stores per-lens "met" itself, or a combined-branch functional
+loop (issues #99 and #100) needs its own segment on the line.
+
 ### The review findings pane shows "unscored" apart from "not run", and takes both from the verdict
 
 **Decision.** `plugins/saga/scripts/run_status.py review` (schema `review_view.v1`) gives each lens
