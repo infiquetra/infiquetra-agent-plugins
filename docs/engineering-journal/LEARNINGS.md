@@ -41,6 +41,22 @@ once at session start through `run_status.py unit-for`, because orchestrate's un
 
 **Generalizable rule.** Capture cost at the event that names every attribute the ledger keys on,
 and record an unsplittable count at its most expensive rate rather than guess a split.
+### A display that re-asks a resolver must hand it the same inputs the real call got
+
+**Evidence.** The third review of issue #93 found that admission's staffing table in
+`plugins/saga/scripts/admission.py` (`_default_tier` and `_raise_outcome`) called the staffing
+resolver with no root, while `fill_defaults` staffed with `root=repo_root` from `--repo-root`.
+Fleet-core's `overlay_path` treats a missing root as the working directory, so a run from another
+directory showed an applied Jev raise the checkout's overlay had outranked.
+`test_the_table_reads_the_overlay_admission_staffs_from_repo_root` in
+`plugins/saga/tests/test_admission.py` pins the fix.
+
+**Mechanism.** The earlier repair moved the table onto the real resolver, but an optional
+parameter with a silent default (the working directory) let the two calls read different overlays.
+The table tests used a fake resolver that ignored `root`, so nothing could see the gap.
+
+**Generalizable rule.** When a display re-derives what a real call decided, thread every input of
+that call through, and test with the real component and a working directory that differs.
 
 ### Preserving unknown keys on load is not enough when the save writes back the copy it loaded
 

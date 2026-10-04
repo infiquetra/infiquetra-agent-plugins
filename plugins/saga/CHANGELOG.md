@@ -122,6 +122,10 @@
   and Why columns ask the staffing resolver about a recorded Jev raise and show its answer, so a
   one-model-rung raise the resolver applies (sonnet/medium to opus/medium) is no longer labelled
   refused, and a refused raise shows the resolver's own message.
+- Admission's staffing table reads the repository overlay (`.saga/tier-defaults.json`) from the
+  same root admission staffs with, `--repo-root`, not from the working directory. Run from another
+  directory, the Default, Proposed and Why columns could show a tier, or an applied Jev raise, that
+  the checkout's overlay outranked (issue #93 review).
 - `intent-envelope.md` describes `recommend_tier` as it now works: its base is the staffing
   resolver's answer, and the unattended step-down is skipped for the `implementation` shape.
 - `/plan`'s tier section no longer names `parse_tier_band`, `resolve_tier_for_plan` or

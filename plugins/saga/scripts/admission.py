@@ -1111,14 +1111,17 @@ def _tier(vendor: Any, model: Any, effort: Any) -> dict[str, Any] | None:
     return {"vendor": vendor, "model": model, "effort": effort}
 
 
-def _default_tier(staffing: Any, role: str) -> tuple[dict[str, Any] | None, str | None, str | None]:
+def _default_tier(
+    staffing: Any, role: str, repo_root: Path | None = None
+) -> tuple[dict[str, Any] | None, str | None, str | None]:
     """A fresh staffing resolve for *role*: its default tier, its work shape, and where the tier
     came from (``overlay`` for ``.saga/tier-defaults.json``, ``policy`` for the shared work-shape
-    registry), or ``None``s."""
+    registry), or ``None``s. *repo_root* is the checkout whose overlay is read, the same root
+    :func:`fill_defaults` staffs with; ``None`` reads the working directory's."""
     if staffing is None:
         return None, None, None
     try:
-        decision = staffing.resolve_role(role)
+        decision = staffing.resolve_role(role, root=repo_root)
     except Exception:
         return None, None, None
     tier = _tier(
@@ -1137,7 +1140,11 @@ def _default_tier(staffing: Any, role: str) -> tuple[dict[str, Any] | None, str 
 
 
 def _raise_outcome(
-    staffing: Any, role: str, row: dict[str, Any], raise_: dict[str, Any]
+    staffing: Any,
+    role: str,
+    row: dict[str, Any],
+    raise_: dict[str, Any],
+    repo_root: Path | None = None,
 ) -> tuple[Any, str | None]:
     """What the staffing resolver makes of a recorded Jev raise for *role*.
 
@@ -1146,11 +1153,12 @@ def _raise_outcome(
     neither. ``decision.source`` names the rung that won (``jev-raise`` when the raise applied);
     ``refused`` is the resolver's own message when it refused the raise. With the resolver
     unreachable, the row's recorded ``source`` and ``jev_raise_refused`` (written by
-    :func:`_resolve_staffing` from the same resolver) stand in.
+    :func:`_resolve_staffing` from the same resolver) stand in. *repo_root* is the overlay root
+    admission staffed with, so the table and the staffed tier read the same overlay.
     """
     if staffing is not None:
         try:
-            decision, refused = _resolve_one_role(staffing, role, root=None, jev_raise=raise_)
+            decision, refused = _resolve_one_role(staffing, role, root=repo_root, jev_raise=raise_)
         except AdmissionError:
             decision, refused = None, None
         if decision is not None or refused is not None:
@@ -1173,6 +1181,7 @@ def _proposed_and_why(
     operator: bool,
     staffing: Any = None,
     role: str = "",
+    repo_root: Path | None = None,
 ) -> tuple[dict[str, Any] | None, str]:
     """Which tier wins for one role, and the Why cell that names where it came from.
 
@@ -1193,7 +1202,7 @@ def _proposed_and_why(
     raise_ = row.get("jev_raise") if isinstance(row.get("jev_raise"), dict) else {}
     if not raise_.get("model"):
         return recorded, overlay_why if default_source == "overlay" else base_why
-    decision, refused = _raise_outcome(staffing, role, row, raise_)
+    decision, refused = _raise_outcome(staffing, role, row, raise_, repo_root)
     source = getattr(decision, "source", None) if decision is not None else default_source
     layer_why = overlay_why if source == "overlay" else base_why
     if refused is not None:
@@ -1299,8 +1308,11 @@ def _jev_staffing_cell(row: dict[str, Any], consult: Any) -> dict[str, Any]:
     }
 
 
-def _staffing_rows(record: run_record.RunRecord, staffing: Any) -> dict[str, Any]:
-    """One row per role the record holds, in sorted order."""
+def _staffing_rows(
+    record: run_record.RunRecord, staffing: Any, repo_root: Path | None = None
+) -> dict[str, Any]:
+    """One row per role the record holds, in sorted order. *repo_root* is the overlay root
+    admission staffed with (``--repo-root``); ``None`` reads the working directory's."""
     block = record.run_configuration["staffing_models_and_efforts"]
     value = block.get("value")
     source = block.get("source", "unset")
@@ -1316,12 +1328,18 @@ def _staffing_rows(record: run_record.RunRecord, staffing: Any) -> dict[str, Any
     rows: list[dict[str, Any]] = []
     for role in sorted(key for key in value if not str(key).startswith("_")):
         row = value[role] if isinstance(value[role], dict) else {}
-        default, shape, default_source = _default_tier(staffing, role)
+        default, shape, default_source = _default_tier(staffing, role, repo_root)
         if default is None and source == "staffing":
             default = _tier(row.get("vendor"), row.get("model"), row.get("effort"))
         operator = row.get("operator_override") is True or (source == "operator" and not merged)
         proposed, why = _proposed_and_why(
-            row, shape, default_source, operator=operator, staffing=staffing, role=role
+            row,
+            shape,
+            default_source,
+            operator=operator,
+            staffing=staffing,
+            role=role,
+            repo_root=repo_root,
         )
         rows.append(
             {
@@ -1507,8 +1525,12 @@ def review_data(
     outstanding: list[Question],
     staffing: Any,
     path: Path | None,
+    repo_root: Path | None = None,
 ) -> dict[str, Any]:
-    """Everything the two tables show, machine-readable (schema ``admission_review.v1``)."""
+    """Everything the two tables show, machine-readable (schema ``admission_review.v1``).
+
+    *repo_root* must be the root admission staffed with, so the staffing table resolves tiers
+    against the same ``.saga/tier-defaults.json`` overlay as the recorded rows."""
     data: dict[str, Any] = {
         "schema": REVIEW_SCHEMA,
         "issue": record.issue,
@@ -1519,7 +1541,7 @@ def review_data(
             {"key": question.key, "prompt": question.prompt, "default": question.default}
             for question in outstanding
         ],
-        "staffing": _staffing_rows(record, staffing),
+        "staffing": _staffing_rows(record, staffing, repo_root),
         "lenses": _lens_rows(record, staffing),
         "palette": _palette(),
     }
@@ -1613,10 +1635,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         path = None if args.dry_run else save_admission(store_root, record)
         if args.render == "json":
-            data = review_data(record, outstanding, staffing, path)
+            data = review_data(record, outstanding, staffing, path, repo_root)
             print(json.dumps(data, indent=2, sort_keys=True))
         elif args.render == "tables":
-            data = review_data(record, outstanding, staffing, path)
+            data = review_data(record, outstanding, staffing, path, repo_root)
             print(render(record, outstanding, path) + "\n\n" + data["tables_markdown"])
         else:
             print(render(record, outstanding, path))

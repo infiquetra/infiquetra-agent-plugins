@@ -2406,3 +2406,74 @@ def test_the_skills_name_the_resolver_and_restate_no_precedence(doc: Path) -> No
     ):
         assert retired not in text, f"{doc.name} still names {retired!r}"
     assert "resolve-build-unit-tier" in text
+
+
+def test_the_table_reads_the_overlay_admission_staffs_from_repo_root(
+    adm: ModuleType,
+    store: Path,
+    repo_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Review finding on #93: admission staffs from ``--repo-root``, so its table must too.
+
+    The checkout named by ``--repo-root`` sets the mechanical shape to sonnet/high; the working
+    directory's own overlay sets it to sonnet/low. With a recorded Jev raise on the merging worker
+    (sonnet/medium to opus/medium, which the checkout's overlay outranks), the table's Default,
+    Proposed and Why must agree with the tier admission records, never with the working
+    directory's overlay and never with the outranked raise.
+    """
+    staffing = _bundled_staffing(adm)
+    (repo_root / ".saga").mkdir()
+    (repo_root / ".saga" / "tier-defaults.json").write_text(
+        json.dumps({"mechanical": {"model": "sonnet", "effort": "high"}}), encoding="utf-8"
+    )
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / ".saga").mkdir(parents=True)
+    (elsewhere / ".saga" / "tier-defaults.json").write_text(
+        json.dumps({"mechanical": {"model": "sonnet", "effort": "low"}}), encoding="utf-8"
+    )
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setattr(adm, "load_card_validator", lambda: _passing_validator)
+    monkeypatch.setattr(adm, "load_staffing", lambda: staffing)
+    monkeypatch.setattr(adm, "fetch_issue", lambda *_a, **_k: {"number": 102, "body": _good_card()})
+
+    # Seed the store with a record whose merging worker carries a recorded one-step raise.
+    run_record = _load("run_record")
+    seeded = adm.fill_defaults(
+        run_record.RunRecord(issue=102, repo="infiquetra/infiquetra-agent-plugins"),
+        {},
+        staffing,
+        repo_root=repo_root,
+    )
+    raise_ = {"model": "opus", "effort": "medium", "reason": "gate"}
+    seeded.run_configuration["staffing_models_and_efforts"]["value"]["merging-worker"][
+        "jev_raise"
+    ] = raise_
+    adm.save_admission(store, seeded)
+
+    assert _run_main(adm, store, repo_root, "--render", "json") == 0
+    data = json.loads(capsys.readouterr().out)
+    rows = {row["role"]: row for row in data["staffing"]["rows"]}
+    merging = rows["merging-worker"]
+
+    staffed = adm.admit(
+        102,
+        "infiquetra/infiquetra-agent-plugins",
+        store_root=store,
+        repo_root=repo_root,
+        body=_good_card(),
+        validator=_passing_validator,
+        staffing=staffing,
+    )[0].run_configuration["staffing_models_and_efforts"]["value"]["merging-worker"]
+    assert (staffed["model"], staffed["effort"], staffed["source"]) == ("sonnet", "high", "overlay")
+    assert staffed["jev_raise"] == raise_
+
+    tier = {"vendor": "claude", "model": "sonnet", "effort": "high"}
+    assert merging["default"] == tier
+    assert merging["proposed"] == tier
+    assert merging["why"] == (
+        "repository overlay (.saga/tier-defaults.json, work shape mechanical); "
+        "the overlay outranks the recorded Jev raise"
+    )
