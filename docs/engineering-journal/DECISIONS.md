@@ -2,6 +2,31 @@
 
 ## 2026-10-04
 
+### Saga mods read a display view from `run_status.py`, not the plan path from the run record
+
+**Decision.** `plugins/saga/scripts/run_status.py summary --json` (schema `run_status.v1`) is the
+read-only view the saga mods show (issue #104). It joins the run record (`next_step`,
+`updated_at`) with the per-worktree saga envelope (lifecycle phase, plan path) and writes nothing.
+The plan viewer pane reads the run's plan path from it; `mods/run-record.ts` holds its argv builder
+and parser beside the run-record reader, so every mod's state reading stays in one module. The
+text form is the plain fallback other harnesses print. Later display mods (issues #105, #107,
+#108) extend this script rather than adding their own.
+
+**Rationale.** Operator ruling 2 on the mods parent (#92): scripts own state, mods display it. The
+run record has no plan path, and its twelve top-level keys are frozen (`run_record.TOP_LEVEL_KEYS`),
+so the plan path can only come from the envelope. A mod reading envelope files itself would parse
+saga's storage format in TypeScript.
+
+**Rejected alternatives.** Adding `plan_path` to the run record: it breaks the frozen key set for a
+value the envelope already owns. Calling `saga.py restore` from the mod: it needs the saga id,
+which needs the issue, which needs `next_step_context.resolve_issue`; that resolution belongs in
+Python, once. Section text that stops at the next heading of any level: a `##` section would then
+lose its `###` subsections, so a section runs to the next heading of the same or a higher level
+and its subsections are listed again on their own.
+
+**Revisit when.** The run record gains a plan path, or a mod needs a field that changes faster than
+a script call every few seconds can serve.
+
 ### Admission renders the staffing and lens tables itself, from the same rows as its JSON
 
 **Decision.** `plugins/saga/scripts/admission.py --render tables` prints the operator-facing

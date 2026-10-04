@@ -29,7 +29,13 @@
 // pins what the real script prints and exits with.
 
 import type { ProcessRunResult } from 'claude-code'
-import type { SagaRunRead, SagaRunRecord, SagaRunRecordSchema } from '../types/index.d.ts'
+import type {
+  SagaRunRead,
+  SagaRunRecord,
+  SagaRunRecordSchema,
+  SagaRunStatusSchema,
+  SagaRunStatusView,
+} from '../types/index.d.ts'
 
 /** The record version this module reads; `SCHEMA` in `scripts/run_record.py`. */
 export const KNOWN_SCHEMA: SagaRunRecordSchema = 'run_record.v1'
@@ -125,5 +131,88 @@ export async function readRunRecordWith(run: ProcessRunner, pluginRoot: string, 
     return parseRunRecordShow(await run(runRecordShowArgv(pluginRoot, issue)))
   } catch (err) {
     return runRecordRunFailed(err)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// `run_status.py summary`: the read-only run view (issue #104)
+//
+// The run record has no plan path and no lifecycle phase; the saga envelope
+// does. `scripts/run_status.py summary --json` joins the two, so a mod reads
+// both through one script, the same guarded way it reads the record.
+// ---------------------------------------------------------------------------
+
+/** The view version this module reads; `SCHEMA` in `scripts/run_status.py`. */
+export const KNOWN_RUN_STATUS_SCHEMA: SagaRunStatusSchema = 'run_status.v1'
+
+/** Which runs `run_status.py summary` reports, and from which checkout. */
+export type RunStatusQuery = {
+  /** The checkout whose saga envelopes are read: the session's directory. */
+  repoRoot: string
+  /** One issue; left out, the issue the checkout's active saga or `issue/N` branch names. */
+  issue?: number
+  /** Every run with a next step, the resolved issue first. */
+  allActive?: boolean
+}
+
+/** The outcome of reading the run view. A mod shows `detail` rather than guessing. */
+export type RunStatusRead =
+  | { ok: true; view: SagaRunStatusView }
+  | { ok: false; reason: 'unknown-version' | 'unreadable' | 'error'; detail: string }
+
+/** The argv that prints the run view as JSON. */
+export function runStatusSummaryArgv(pluginRoot: string, query: RunStatusQuery): string[] {
+  const args = ['--repo-root', query.repoRoot, 'summary']
+  if (query.issue !== undefined) {
+    requireIssue(query.issue)
+    args.push('--issue', String(query.issue))
+  }
+  if (query.allActive === true) args.push('--all-active')
+  args.push('--json')
+  return sagaScriptArgv(pluginRoot, 'run_status.py', args)
+}
+
+/** Turn what `run_status.py summary --json` did into the view, or the reason there is none. */
+export function parseRunStatusSummary(ran: ProcessResult): RunStatusRead {
+  const detail = ran.stderr.trim()
+  if (ran.exitCode === EXIT_UNKNOWN_VERSION) return { ok: false, reason: 'unknown-version', detail }
+  if (ran.exitCode !== 0) return { ok: false, reason: 'error', detail }
+  if (ran.isStdoutTruncated) {
+    return { ok: false, reason: 'unreadable', detail: 'run_status summary printed more than the engine keeps (4 MiB)' }
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(ran.stdout)
+  } catch (err) {
+    return { ok: false, reason: 'unreadable', detail: String(err) }
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return { ok: false, reason: 'unreadable', detail: 'run_status summary did not print a JSON object' }
+  }
+  const view = parsed as { schema?: unknown; runs?: unknown }
+  if (view.schema !== KNOWN_RUN_STATUS_SCHEMA) {
+    return {
+      ok: false,
+      reason: 'unknown-version',
+      detail: `run view version ${JSON.stringify(view.schema)} is not ${KNOWN_RUN_STATUS_SCHEMA}`,
+    }
+  }
+  if (!Array.isArray(view.runs)) {
+    return { ok: false, reason: 'unreadable', detail: 'run_status summary printed no runs list' }
+  }
+  return { ok: true, view: parsed as SagaRunStatusView }
+}
+
+/** Read the run view through `run`. Never rejects, as `readRunRecordWith`. */
+export async function readRunStatusWith(
+  run: ProcessRunner,
+  pluginRoot: string,
+  query: RunStatusQuery,
+): Promise<RunStatusRead> {
+  try {
+    return parseRunStatusSummary(await run(runStatusSummaryArgv(pluginRoot, query)))
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    return { ok: false, reason: 'error', detail: `run_status summary did not run: ${detail}` }
   }
 }

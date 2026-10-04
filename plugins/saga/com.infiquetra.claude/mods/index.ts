@@ -7,4 +7,8 @@
 
 import type { Register } from 'claude-code'
 
-export const register: Register = () => {}
+import { registerPlanViewer } from './plan-viewer.tsx'
+
+export const register: Register = (on) => {
+  registerPlanViewer(on)
+}
