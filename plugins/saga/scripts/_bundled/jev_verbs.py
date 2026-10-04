@@ -1,6 +1,6 @@
 # --- generated bundle stamp: do not edit ---
 # generated-by: scripts/bundle_fleet_module.py
-# source-version: 0.32.0
+# source-version: 0.33.0
 # source-commit: authored
 # source-path: scripts/fleet_commons/jev_verbs.py
 # source-sha256: d5074108c8a7870c776c7dfd58bfa0d3e51f5a431596f30d45791548835e70d1

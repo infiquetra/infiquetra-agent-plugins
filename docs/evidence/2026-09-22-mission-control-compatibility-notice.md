@@ -10,7 +10,10 @@ infiquetra-claude-plugins at acc99fe7 (upstream 2.21.0) and maintained here.
 Those records are superseded. When this notice was written, no ten-client run
 had been performed for 2.21.1; one was performed on 2026-09-22 and is recorded
 in
-[2026-09-22-mission-control-compatibility-matrix.md](2026-09-22-mission-control-compatibility-matrix.md),
+[2026-09-22-mission-control-compatibility-matrix.md, superseded 2026-10-04](2026-09-22-mission-control-compatibility-matrix.md).
+The package then moved to 2.21.2, and the nine-client run of 2026-10-04 is
+recorded in
+[2026-10-04-mission-control-compatibility-matrix.md](2026-10-04-mission-control-compatibility-matrix.md),
 which is the current matrix for the package that ships. This notice is still
 the end of the supersession chain. It is not an assessment, and it does not
 invent stage results.
@@ -22,5 +25,5 @@ carries no supersession directives of its own and the records that name it as
 their successor still resolve through it.
 
 ```json
-{"notice": "the mission-control 2.15.2 client results were not renumbered onto 2.21.1", "current_matrix": "2026-09-22-mission-control-compatibility-matrix.md"}
+{"notice": "the mission-control 2.15.2 client results were not renumbered onto 2.21.1", "current_matrix": "2026-10-04-mission-control-compatibility-matrix.md"}
 ```

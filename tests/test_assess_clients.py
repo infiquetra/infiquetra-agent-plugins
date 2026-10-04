@@ -1,4 +1,4 @@
-"""Tests for the scripted ten-client compatibility assessment.
+"""Tests for the scripted nine-client compatibility assessment.
 
 The harness's job is to be honest about what happened, so the behaviour under
 test is mostly the classification: which observations become **executed**, which
@@ -155,7 +155,6 @@ class RosterTest(unittest.TestCase):
             "Grok": "GROK_AUTO_TRUST_REAL_BIN",
             "Agy": "AGY_AUTO_TRUST_REAL_BIN",
             "Qwen": "standard input",
-            "Gemini CLI": "hangs",
             "Muse": "--force",
             "Hermes": "isolated",
             "OpenAI Codex": "actionable",
@@ -173,9 +172,14 @@ class RosterTest(unittest.TestCase):
                 self.assertIn(variable, harness.plan_for(name).environment)
 
     def test_the_prompting_clients_supply_a_confirmation(self) -> None:
-        """With no answer one installer lists and exits, and one hangs."""
+        """With no answer Qwen's installer lists and exits without installing."""
         self.assertEqual(harness.plan_for("Qwen").stage("placement").stdin, "y\n")
-        self.assertEqual(harness.plan_for("Gemini CLI").stage("placement").stdin, "y\n")
+
+    def test_gemini_cli_is_no_longer_assessed(self) -> None:
+        """Agy replaced Gemini CLI on 2026-10-04, so the harness plans nine clients."""
+        names = [plan.name for plan in harness.CLIENT_PLANS]
+        self.assertNotIn("Gemini CLI", names)
+        self.assertEqual(len(names), 9)
 
     def test_the_muse_load_stage_forces_the_digest(self) -> None:
         self.assertIn("--force", harness.plan_for("Muse").stage("load").argv)
@@ -1425,7 +1429,7 @@ class EntrypointPathTest(unittest.TestCase):
     def test_skill_scoped_plan_with_package_root_entrypoints_blocks_invocation_in_advance(self) -> None:
         """When entrypoints sit at package root, a skill-scoped client blocks invocation."""
         mc_config = port_config.load("mission-control", ROOT)
-        for name in ("OpenCode", "Gemini CLI", "Muse", "Hermes"):
+        for name in ("OpenCode", "Muse", "Hermes"):
             plan = harness.plan_for(name)
             spec = plan.stage("invocation")
             with self.subTest(client=name):
@@ -1452,7 +1456,7 @@ class EntrypointPathTest(unittest.TestCase):
 
     def test_skill_scoped_plan_with_all_deliverable_entrypoints_is_not_blocked(self) -> None:
         """When all entrypoints sit under skill units, skill-scoped clients execute normally."""
-        for name in ("OpenCode", "Gemini CLI", "Muse", "Hermes"):
+        for name in ("OpenCode", "Muse", "Hermes"):
             plan = harness.plan_for(name)
             spec = plan.stage("invocation")
             with self.subTest(client=name):
@@ -1479,7 +1483,7 @@ class EntrypointPathTest(unittest.TestCase):
         package must not resemble (its entrypoints sit at the package root).
         """
         al_config = port_config.load("agent-launcher", ROOT)
-        for name in ("OpenCode", "Gemini CLI", "Muse", "Hermes"):
+        for name in ("OpenCode", "Muse", "Hermes"):
             plan = harness.plan_for(name)
             spec = plan.stage("invocation")
             with self.subTest(client=name):
@@ -1502,7 +1506,7 @@ class EntrypointPathTest(unittest.TestCase):
         al_config = port_config.load("agent-launcher", ROOT)
         plan_text = harness.describe_plan(al_config)
         self.assertIn("Assessment plan for agent-launcher", plan_text)
-        for name in ("OpenCode", "Gemini CLI", "Muse", "Hermes"):
+        for name in ("OpenCode", "Muse", "Hermes"):
             with self.subTest(skill_scoped_client=name):
                 section = plan_text.split(f"## {name}")[1].split("## ")[0]
                 self.assertIn("invocation  <python>", section)
@@ -1574,7 +1578,7 @@ class EntrypointPathTest(unittest.TestCase):
         mc_config = port_config.load("mission-control", ROOT)
         plan_text = harness.describe_plan(mc_config)
         self.assertIn("Assessment plan for mission-control", plan_text)
-        for name in ("OpenCode", "Gemini CLI", "Muse", "Hermes"):
+        for name in ("OpenCode", "Muse", "Hermes"):
             with self.subTest(skill_scoped_client=name):
                 section = plan_text.split(f"## {name}")[1].split("## ")[0]
                 self.assertIn("invocation  blocked in advance:", section)

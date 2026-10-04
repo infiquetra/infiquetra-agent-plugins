@@ -1781,7 +1781,7 @@ class AuthoredMissionControlTests(unittest.TestCase):
         package = ROOT / "plugins" / "mission-control"
         self.assertFalse((package / "PROVENANCE.json").is_file())
         manifest = json.loads((package / "plugin.json").read_text(encoding="utf-8"))
-        self.assertEqual(manifest["version"], "2.21.1")
+        self.assertEqual(manifest["version"], "2.21.2")
         source = (package / "scripts" / "sdlc_manager.py").read_text(encoding="utf-8")
         self.assertNotIn("import fleet_commons_shim", source)
 

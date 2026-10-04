@@ -11,7 +11,9 @@ and otherwise unchanged, at
 The three earlier superseded records still name this file as their successor.
 
 Version 1.7.1 was assessed on 2026-09-22. That record is
-[2026-09-22-agent-launcher-compatibility-matrix.md](2026-09-22-agent-launcher-compatibility-matrix.md),
+[2026-09-22-agent-launcher-compatibility-matrix.md, superseded 2026-10-04](2026-09-22-agent-launcher-compatibility-matrix.md).
+Version 1.7.2 was assessed on 2026-10-04 against nine clients. That record is
+[2026-10-04-agent-launcher-compatibility-matrix.md](2026-10-04-agent-launcher-compatibility-matrix.md),
 and it is the current matrix for the package that ships. This file keeps the
 name the repository already cites and stays the successor the three earlier
 records name. It is not itself a matrix record, and it does not claim that the
@@ -23,6 +25,6 @@ separate assessment of the authored package.
   "notice": "the agent-launcher 1.0.0 client results were not renumbered onto 1.7.1",
   "assessed_version": "1.0.0",
   "preserved_record": "2026-08-27-agent-launcher-compatibility-matrix-pre-authored-import.md",
-  "current_matrix": "2026-09-22-agent-launcher-compatibility-matrix.md"
+  "current_matrix": "2026-10-04-agent-launcher-compatibility-matrix.md"
 }
 ```

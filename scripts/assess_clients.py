@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the ten-client compatibility assessment as a script instead of a method.
+"""Run the nine-client compatibility assessment as a script instead of a method.
 
 The UniFi pilot ran this assessment nine times. Every run was driven by hand
 from a written method, and each one re-learned the same quirks the hard way: an
@@ -238,7 +238,10 @@ CURSOR_LOAD_PROBE = (
 
 
 def _client_plans() -> tuple[ClientPlan, ...]:
-    """The ten plans, one per canonical client.
+    """The nine plans, one per canonical client.
+
+    Gemini CLI's plan was removed on 2026-10-04 because Agy replaced it on the
+    operator's machine; records made before then still carry its row.
 
     Every quirk recorded here was learned across nine assessment runs and is
     carried so the next port does not re-learn it. The membership of this tuple
@@ -397,30 +400,6 @@ def _client_plans() -> tuple[ClientPlan, ...]:
                 ),
                 StageSpec("discovery", ("opencode", "debug", "skill")),
                 StageSpec("load", ("opencode", "debug", "skill")),
-                StageSpec("invocation", from_package=True),
-            ),
-        ),
-        ClientPlan(
-            "Gemini CLI",
-            binary="gemini",
-            invocation_root=f"{CLIENT_HOME}/.gemini/skills",
-            skill_scoped=True,
-            quirk=(
-                "'skills link' prompts on standard input and hangs rather than declining when "
-                "stdin is closed, so the confirmation is supplied explicitly and the stage "
-                "carries a deadline. Session injection is not observable without credentials, "
-                "so what load confirms is definition load."
-            ),
-            stages=(
-                StageSpec(
-                    "placement",
-                    ("gemini", "skills", "link", SKILL),
-                    per_skill=True,
-                    stdin="y\n",
-                    writes_client_state=True,
-                ),
-                StageSpec("discovery", ("gemini", "skills", "list", "--all")),
-                StageSpec("load", ("gemini", "skills", "list", "--all")),
                 StageSpec("invocation", from_package=True),
             ),
         ),
@@ -1564,7 +1543,7 @@ def assess(
         # A fresh copy per client, fingerprinted per client. One shared copy
         # meant a client that installed in place changed the bytes every later
         # client was then assessed against, and the record still bound itself to
-        # the original fingerprint -- ten rows describing up to ten different
+        # the original fingerprint -- one row per client describing up to that many different
         # trees under one digest.
         scratch = base / plan.name.replace(" ", "-").lower() / "package"
         # Never conditional. Copying only when the path was absent meant a
@@ -1811,7 +1790,7 @@ def parse_real_binaries(values: list[str]) -> dict[str, str]:
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run the ten-client compatibility assessment for a portable package."
+        description="Run the nine-client compatibility assessment for a portable package."
     )
     parser.add_argument("--package", required=True, help="the package to assess")
     parser.add_argument(
@@ -1826,7 +1805,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
             "the interpreter the invocation stage uses. Name the floor explicitly by path, and "
             "point it at an environment that already has the package's own third-party imports: "
             "the entrypoints import them at module scope, so an interpreter without them records "
-            "a non-zero status for every client and proposes 'failed' for all ten"
+            "a non-zero status for every client and proposes 'failed' for all nine"
         ),
     )
     parser.add_argument("--client", action="append", default=[], help="restrict to one client")

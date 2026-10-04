@@ -1,20 +1,31 @@
-<!-- matrix-status: superseded -->
-<!-- superseded-by: 2026-10-04-orchestrate-compatibility-matrix.md -->
-<!-- superseded-reason: The package version moved from 6.0.1 to 6.1.0 for the 2026-10-04 release, so the assessment was re-run and the record re-bound. The fresh run covers nine clients, because Agy replaced Gemini CLI on the operator's machine. -->
+<!-- matrix-status: current -->
 
-# Ten-client compatibility matrix — portable orchestrate package (6.0.1)
+# Nine-client compatibility matrix — portable orchestrate package (6.1.0)
 
 This repository holds the portable source catalog for Infiquetra Agent Skills
 and Agent Plugins. `plugins/orchestrate/` is authored and maintained
 here. This document records what happened when the shipped package —
-50 files, tree `eab3a64d9a7e62549c5d448777d79f5d6da3a29179ae7ee9b4aa71b6a52bfc47` — was put in front
+60 files, tree `8107c584eb0e64f94c68f0891b58871ff62f6bc23a7f421f9590f03afadc7d57` — was put in front
 of every coding-agent client installed on the operator's machine, on
-2026-09-22.
+2026-10-04.
 
-It is a survey of what ten clients did with one package on one machine on one
+It is a survey of what nine clients did with one package on one machine on one
 day. It is not a release gate and not a claim about those clients in general.
 The package was fingerprinted before and after the run and was identical both
 times.
+
+Nine clients, not the ten of the 2026-09-22 record: Agy replaced Gemini CLI on
+the operator's machine, so the assessment dropped Gemini CLI from 2026-10-04
+(see the 2026-10-04 decision in
+[`DECISIONS.md`](../engineering-journal/DECISIONS.md)). The record this one
+replaces is [the 2026-09-22 matrix, superseded 2026-10-04](2026-09-22-orchestrate-compatibility-matrix.md),
+superseded because the package version moved.
+
+Each stage's evidence counts the package name, version and skill units a
+client's output named. In this record those counts ignore absolute paths in the
+output, because the harness's own scratch paths carry the package name. A
+count can therefore read lower than the 2026-09-22 record's without the client
+reporting less.
 
 ## How every client was assessed
 
@@ -25,13 +36,13 @@ load (does the client parse the placed definitions and hold them), and
 invocation (does the declared credential-free entrypoint run from the path
 this client resolved).
 
-Held identical across all ten:
+Held identical across all nine:
 
-- **Isolation.** Each client was handed its own fresh copy of the shipped tree, at 50 files, fingerprinted before and after that client ran. Every copy was unchanged afterwards, so no client added a vendor artifact to the package. Nine clients ran against
+- **Isolation.** Each client was handed its own fresh copy of the shipped tree, at 60 files, fingerprinted before and after that client ran. Every copy was unchanged afterwards, so no client added a vendor artifact to the package. Eight clients ran against
   their own empty scratch home; Cursor Agent is the single exception and was
   assessed against the real authenticated home, because an isolated home
   strips its authentication and measures a different client.
-- **Credentials.** The package declares no credential variable, which its port descriptor states by naming `credential_prefixes` in `declared_none`, so there was nothing for the harness to strip. Nine clients ran unauthenticated in their own empty scratch homes. Cursor Agent ran against the operator's real authenticated home by design, because an isolated home strips its authentication and produces a false failure; its authentication state is recorded only as present. No credential was created, changed, or read into this evidence, and no account identity is published here.
+- **Credentials.** The package declares no credential variable, which its port descriptor states by naming `credential_prefixes` in `declared_none`, so there was nothing for the harness to strip. Eight clients ran unauthenticated in their own empty scratch homes. Cursor Agent ran against the operator's real authenticated home by design, because an isolated home strips its authentication and produces a false failure; its authentication state is recorded only as present. No credential was created, changed, or read into this evidence, and no account identity is published here.
 - **Network.** The invocation stage runs each declared entrypoint's credential-free `--help` action, which parses arguments and exits without a network call. The other three stages run each client's own commands, so a client that reaches its own service does so on its own account; Cursor Agent's three stages are model prompts, which is why it is the one client assessed against the real authenticated home.
 - **The interpreter is the declared floor.** Every invocation ran on CPython
   3.14.7 by explicit path, the interpreter this machine resolves as `python3`.
@@ -52,32 +63,30 @@ Held identical across all ten:
 
 ## Results
 
-In one sentence: **7 clients work directly, 3 work through an adapter, 0 failed, and 0 are unsupported.**
+In one sentence: **5 clients work directly, 4 work through an adapter, 0 failed, and 0 are unsupported.**
 
 | Client | Version | Status | Placement | Discovery | Load | Invocation |
 |---|---|---|---|---|---|---|
-| Claude Code | 2.1.280 | works-directly | executed | executed | executed | executed |
-| OpenAI Codex | 0.155.1 | works-through-an-adapter | executed | executed | blocked | blocked |
-| Cursor Agent | 2026.09.18-9a7762b | works-directly | executed | executed | executed | executed |
-| Qwen | 0.24.4 | works-directly | executed | executed | executed | executed |
-| Grok | 1.0.40 | works-through-an-adapter | executed | executed | executed | blocked |
-| OpenCode | 2.0.13 | works-through-an-adapter | executed | executed | executed | executed |
-| Gemini CLI | 0.57.0 | works-directly | executed | executed | executed | executed |
-| Muse | 1.3.0 | works-directly | executed | executed | executed | executed |
-| Agy | 1.2.7 | works-directly | executed | executed | executed | executed |
-| Hermes | 0.21.3 | works-directly | executed | executed | executed | executed |
+| Claude Code | 2.1.289 | works-directly | executed | executed | executed | executed |
+| OpenAI Codex | 0.160.0 | works-through-an-adapter | executed | executed | blocked | blocked |
+| Cursor Agent | 2026.10.01-e373342 | works-through-an-adapter | executed | executed | blocked | executed |
+| Qwen | 0.24.7 | works-directly | executed | executed | executed | executed |
+| Grok | 1.0.46 | works-through-an-adapter | executed | executed | executed | blocked |
+| OpenCode | 2.0.18 | works-through-an-adapter | executed | executed | executed | executed |
+| Muse | 1.4.2 | works-directly | executed | executed | executed | executed |
+| Agy | 1.2.16 | works-directly | executed | executed | executed | executed |
+| Hermes | 0.21.5 | works-directly | executed | executed | executed | executed |
 
 ## Client outcomes
 
 | Client | Outcome |
 |---|---|
 | Claude Code | All four stages ran through this client and every command exited 0: placement, discovery, load, and invocation of 1 declared entrypoint(s) from the path this client resolved. |
-| OpenAI Codex | The client engaged with the package and could not fully consume it. Executed: placement, discovery. Blocked: load, invocation. Exited non-zero at: placement. At placement, the client refused the package root and named the manifest it requires. load: Nothing was placed, so there is nothing to load. invocation: No client-resolved path exists, because placement produced none. |
-| Cursor Agent | All four stages ran through this client and every command exited 0: placement, discovery, load, and invocation of 1 declared entrypoint(s) from the path this client resolved. |
+| OpenAI Codex | The client engaged with the package and could not fully consume it. Executed: placement, discovery. Blocked: load, invocation. Exited non-zero at: placement. At placement, the client refused the package root because it holds no marketplace manifest the client supports. load: Nothing was placed, so there is nothing to load. invocation: No client-resolved path exists, because placement produced none. |
+| Cursor Agent | The client engaged with the package and could not fully consume it. Executed: placement, discovery, invocation. Blocked: load. load: No result within the 120s deadline. When the deadline hit, the client's own output said it had lost its connection to its service and was retrying, so this block records a service interruption, not a package result. |
 | Qwen | All four stages ran through this client and every command exited 0: placement, discovery, load, and invocation of 1 declared entrypoint(s) from the path this client resolved. |
 | Grok | The client engaged with the package and could not fully consume it. Executed: placement, discovery, load. Blocked: invocation. invocation: The command still names <plugin-id>, which no earlier stage resolved. |
-| OpenCode | The client engaged with the package and could not fully consume it. Executed: placement, discovery, load, invocation. Blocked: no stage. Exited non-zero at: discovery, load. At discovery, the client reported the subcommand this stage uses as unknown. At load, the client reported the subcommand this stage uses as unknown. |
-| Gemini CLI | All four stages ran through this client and every command exited 0: placement, discovery, load, and invocation of 1 declared entrypoint(s) from the path this client resolved. |
+| OpenCode | The client engaged with the package and could not fully consume it. Executed: placement, discovery, load, invocation. Exited non-zero at: discovery, load. At discovery, the client reported the subcommand this stage uses as unknown. At load, the client reported the subcommand this stage uses as unknown. |
 | Muse | All four stages ran through this client and every command exited 0: placement, discovery, load, and invocation of 1 declared entrypoint(s) from the path this client resolved. |
 | Agy | All four stages ran through this client and every command exited 0: placement, discovery, load, and invocation of 1 declared entrypoint(s) from the path this client resolved. |
 | Hermes | All four stages ran through this client and every command exited 0: placement, discovery, load, and invocation of 1 declared entrypoint(s) from the path this client resolved. |
@@ -94,12 +103,12 @@ committed, and is not quoted here.
 {
   "$schema": "../../schemas/compatibility-matrix.schema.json",
   "schema_version": "2",
-  "assessed_on": "2026-09-22",
+  "assessed_on": "2026-10-04",
   "package": {
     "name": "orchestrate",
-    "version": "6.0.1",
-    "file_count": 50,
-    "tree_sha256": "eab3a64d9a7e62549c5d448777d79f5d6da3a29179ae7ee9b4aa71b6a52bfc47"
+    "version": "6.1.0",
+    "file_count": 60,
+    "tree_sha256": "8107c584eb0e64f94c68f0891b58871ff62f6bc23a7f421f9590f03afadc7d57"
   },
   "method": {
     "stages": [
@@ -108,14 +117,14 @@ committed, and is not quoted here.
       "load",
       "invocation"
     ],
-    "isolation": "Each client was handed its own fresh copy of the shipped tree, at 50 files, fingerprinted before and after that client ran. Every copy was unchanged afterwards, so no client added a vendor artifact to the package.",
-    "credentials": "The package declares no credential variable, which its port descriptor states by naming `credential_prefixes` in `declared_none`, so there was nothing for the harness to strip. Nine clients ran unauthenticated in their own empty scratch homes. Cursor Agent ran against the operator's real authenticated home by design, because an isolated home strips its authentication and produces a false failure; its authentication state is recorded only as present. No credential was created, changed, or read into this evidence, and no account identity is published here.",
+    "isolation": "Each client was handed its own fresh copy of the shipped tree, at 60 files, fingerprinted before and after that client ran. Every copy was unchanged afterwards, so no client added a vendor artifact to the package.",
+    "credentials": "The package declares no credential variable, which its port descriptor states by naming `credential_prefixes` in `declared_none`, so there was nothing for the harness to strip. Eight clients ran unauthenticated in their own empty scratch homes. Cursor Agent ran against the operator's real authenticated home by design, because an isolated home strips its authentication and produces a false failure; its authentication state is recorded only as present. No credential was created, changed, or read into this evidence, and no account identity is published here.",
     "network": "The invocation stage runs each declared entrypoint's credential-free `--help` action, which parses arguments and exits without a network call. The other three stages run each client's own commands, so a client that reaches its own service does so on its own account; Cursor Agent's three stages are model prompts, which is why it is the one client assessed against the real authenticated home."
   },
   "clients": [
     {
       "name": "Claude Code",
-      "version": "2.1.280",
+      "version": "2.1.289",
       "stages": {
         "placement": {
           "result": "executed",
@@ -126,7 +135,7 @@ committed, and is not quoted here.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name, version 6.0.1, 1 of 1 declared skill unit(s)."
+          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name, version 6.1.0, 1 of 1 declared skill unit(s)."
         },
         "discovery": {
           "result": "executed",
@@ -137,7 +146,7 @@ committed, and is not quoted here.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name, version 6.0.1, 1 of 1 declared skill unit(s)."
+          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name, version 6.1.0, 1 of 1 declared skill unit(s)."
         },
         "load": {
           "result": "executed",
@@ -148,7 +157,7 @@ committed, and is not quoted here.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name, version 6.0.1, 1 of 1 declared skill unit(s)."
+          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name, version 6.1.0, 1 of 1 declared skill unit(s)."
         },
         "invocation": {
           "result": "executed",
@@ -167,7 +176,7 @@ committed, and is not quoted here.
     },
     {
       "name": "OpenAI Codex",
-      "version": "0.155.1",
+      "version": "0.160.0",
       "stages": {
         "placement": {
           "result": "executed",
@@ -178,7 +187,7 @@ committed, and is not quoted here.
               "exit_status": 1
             }
           ],
-          "evidence": "Ran 1 command(s); exit status 1. The client refused the package root and named the manifest it requires. The client's output named the package name, 1 of 1 declared skill unit(s)."
+          "evidence": "Ran 1 command(s); exit status 1. The client refused the package root because it holds no marketplace manifest the client supports. The client's output named 0 of 1 declared skill unit(s)."
         },
         "discovery": {
           "result": "executed",
@@ -201,11 +210,11 @@ committed, and is not quoted here.
         }
       },
       "status": "works-through-an-adapter",
-      "reason": "The client engaged with the package and could not fully consume it. Executed: placement, discovery. Blocked: load, invocation. Exited non-zero at: placement. At placement, the client refused the package root and named the manifest it requires. load: Nothing was placed, so there is nothing to load. invocation: No client-resolved path exists, because placement produced none."
+      "reason": "The client engaged with the package and could not fully consume it. Executed: placement, discovery. Blocked: load, invocation. Exited non-zero at: placement. At placement, the client refused the package root because it holds no marketplace manifest the client supports. load: Nothing was placed, so there is nothing to load. invocation: No client-resolved path exists, because placement produced none."
     },
     {
       "name": "Cursor Agent",
-      "version": "2026.09.18-9a7762b",
+      "version": "2026.10.01-e373342",
       "stages": {
         "placement": {
           "result": "executed",
@@ -216,7 +225,7 @@ committed, and is not quoted here.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name, version 6.0.1, 1 of 1 declared skill unit(s)."
+          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name, 1 of 1 declared skill unit(s)."
         },
         "discovery": {
           "result": "executed",
@@ -227,18 +236,18 @@ committed, and is not quoted here.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name, version 6.0.1, 1 of 1 declared skill unit(s)."
+          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name, 1 of 1 declared skill unit(s)."
         },
         "load": {
-          "result": "executed",
+          "result": "blocked",
           "command": "cursor-agent --plugin-dir <package> --mode ask --trust -p --output-format text From session context only, for the plugin loaded from the session-scoped local plugin directory (not any marketplace-installed plugin of the same name): report its plugin name, its version if session context carries one, and the exact component names it contributes. Do not use filesystem, shell, network, or UniFi tools.",
           "commands": [
             {
               "command": "cursor-agent --plugin-dir <package> --mode ask --trust -p --output-format text From session context only, for the plugin loaded from the session-scoped local plugin directory (not any marketplace-installed plugin of the same name): report its plugin name, its version if session context carries one, and the exact component names it contributes. Do not use filesystem, shell, network, or UniFi tools.",
-              "exit_status": 0
+              "timed_out": true
             }
           ],
-          "evidence": "Ran 1 command(s); exit status 0. The client's output named 0 of 1 declared skill unit(s)."
+          "reason": "No result within the 120s deadline. At least one client prompts on standard input and hangs rather than declining when it gets no answer, so a stage that does not finish is recorded blocked rather than left running. The stage's process group was terminated and is empty. A descendant that started a session of its own is outside that group: this neither signals nor observes one, so it is not evidence that none is still running. When the deadline hit, the client's own output said it had lost its connection to its service and was retrying, so this block records a service interruption, not a package result."
         },
         "invocation": {
           "result": "executed",
@@ -252,12 +261,12 @@ committed, and is not quoted here.
           "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name."
         }
       },
-      "status": "works-directly",
-      "reason": "All four stages ran through this client and every command exited 0: placement, discovery, load, and invocation of 1 declared entrypoint(s) from the path this client resolved."
+      "status": "works-through-an-adapter",
+      "reason": "The client engaged with the package and could not fully consume it. Executed: placement, discovery, invocation. Blocked: load. load: No result within the 120s deadline. When the deadline hit, the client's own output said it had lost its connection to its service and was retrying, so this block records a service interruption, not a package result."
     },
     {
       "name": "Qwen",
-      "version": "0.24.4",
+      "version": "0.24.7",
       "stages": {
         "placement": {
           "result": "executed",
@@ -279,7 +288,7 @@ committed, and is not quoted here.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name, version 6.0.1, 1 of 1 declared skill unit(s)."
+          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name, version 6.1.0, 1 of 1 declared skill unit(s)."
         },
         "load": {
           "result": "executed",
@@ -290,7 +299,7 @@ committed, and is not quoted here.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name, version 6.0.1, 1 of 1 declared skill unit(s)."
+          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name, version 6.1.0, 1 of 1 declared skill unit(s)."
         },
         "invocation": {
           "result": "executed",
@@ -309,7 +318,7 @@ committed, and is not quoted here.
     },
     {
       "name": "Grok",
-      "version": "1.0.40",
+      "version": "1.0.46",
       "stages": {
         "placement": {
           "result": "executed",
@@ -342,7 +351,7 @@ committed, and is not quoted here.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name, version 6.0.1, 1 of 1 declared skill unit(s)."
+          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name, version 6.1.0, 1 of 1 declared skill unit(s)."
         },
         "invocation": {
           "result": "blocked",
@@ -355,7 +364,7 @@ committed, and is not quoted here.
     },
     {
       "name": "OpenCode",
-      "version": "2.0.13",
+      "version": "2.0.18",
       "stages": {
         "placement": {
           "result": "executed",
@@ -403,63 +412,11 @@ committed, and is not quoted here.
         }
       },
       "status": "works-through-an-adapter",
-      "reason": "The client engaged with the package and could not fully consume it. Executed: placement, discovery, load, invocation. Blocked: no stage. Exited non-zero at: discovery, load. At discovery, the client reported the subcommand this stage uses as unknown. At load, the client reported the subcommand this stage uses as unknown."
-    },
-    {
-      "name": "Gemini CLI",
-      "version": "0.57.0",
-      "stages": {
-        "placement": {
-          "result": "executed",
-          "command": "gemini skills link <package>/skills/orchestrate",
-          "commands": [
-            {
-              "command": "gemini skills link <package>/skills/orchestrate",
-              "exit_status": 0
-            }
-          ],
-          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name, 1 of 1 declared skill unit(s)."
-        },
-        "discovery": {
-          "result": "executed",
-          "command": "gemini skills list --all",
-          "commands": [
-            {
-              "command": "gemini skills list --all",
-              "exit_status": 0
-            }
-          ],
-          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name, 1 of 1 declared skill unit(s)."
-        },
-        "load": {
-          "result": "executed",
-          "command": "gemini skills list --all",
-          "commands": [
-            {
-              "command": "gemini skills list --all",
-              "exit_status": 0
-            }
-          ],
-          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name, 1 of 1 declared skill unit(s)."
-        },
-        "invocation": {
-          "result": "executed",
-          "command": "<python> <client-home>/.gemini/skills/orchestrate/scripts/orchestrate.py --help",
-          "commands": [
-            {
-              "command": "<python> <client-home>/.gemini/skills/orchestrate/scripts/orchestrate.py --help",
-              "exit_status": 0
-            }
-          ],
-          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name."
-        }
-      },
-      "status": "works-directly",
-      "reason": "All four stages ran through this client and every command exited 0: placement, discovery, load, and invocation of 1 declared entrypoint(s) from the path this client resolved."
+      "reason": "The client engaged with the package and could not fully consume it. Executed: placement, discovery, load, invocation. Exited non-zero at: discovery, load. At discovery, the client reported the subcommand this stage uses as unknown. At load, the client reported the subcommand this stage uses as unknown."
     },
     {
       "name": "Muse",
-      "version": "1.3.0",
+      "version": "1.4.2",
       "stages": {
         "placement": {
           "result": "executed",
@@ -511,7 +468,7 @@ committed, and is not quoted here.
     },
     {
       "name": "Agy",
-      "version": "1.2.7",
+      "version": "1.2.16",
       "stages": {
         "placement": {
           "result": "executed",
@@ -544,7 +501,7 @@ committed, and is not quoted here.
               "exit_status": 0
             }
           ],
-          "evidence": "Ran 1 command(s); exit status 0. The client's output named the package name, 1 of 1 declared skill unit(s)."
+          "evidence": "Ran 1 command(s); exit status 0. The client's output named 0 of 1 declared skill unit(s)."
         },
         "invocation": {
           "result": "executed",
@@ -563,7 +520,7 @@ committed, and is not quoted here.
     },
     {
       "name": "Hermes",
-      "version": "0.21.3",
+      "version": "0.21.5",
       "stages": {
         "placement": {
           "result": "executed",

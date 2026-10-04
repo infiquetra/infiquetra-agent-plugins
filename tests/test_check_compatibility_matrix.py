@@ -175,7 +175,8 @@ def valid_record(**overrides: object) -> dict:
             "credentials": "No client was authenticated at any stage.",
             "network": "No controller call was made at any stage.",
         },
-        "clients": [valid_client(name) for name in ccm.CANONICAL_CLIENTS],
+        # Dated before 2026-10-04, so the ten-client roster is the one in force.
+        "clients": [valid_client(name) for name in ccm.CANONICAL_CLIENTS_BEFORE_2026_10_04],
     }
     record.update(overrides)
     return record
@@ -273,8 +274,51 @@ class CoverageTest(unittest.TestCase):
         self.assertEqual(len(record["clients"]), 10)
         self.assertTrue(any("has no row" in problem for problem in problems))
         self.assertTrue(
-            any("not one of the ten named clients" in problem for problem in problems)
+            any("is not one of the 10 clients" in problem for problem in problems)
         )
+
+    def test_a_record_dated_from_2026_10_04_with_the_nine_clients_passes(self) -> None:
+        record = valid_record(assessed_on="2026-10-04")
+        record["clients"] = [valid_client(name) for name in ccm.CANONICAL_CLIENTS]
+        self.assertEqual(len(record["clients"]), 9)
+        self.assertEqual(check(record), [])
+
+    def test_a_record_dated_from_2026_10_04_that_still_has_gemini_cli_fails(self) -> None:
+        """Agy replaced Gemini CLI; a new record carrying its row is not the roster."""
+        record = valid_record(assessed_on="2026-10-05")
+        problems = check(record)
+        self.assertTrue(
+            any(
+                "'Gemini CLI'" in problem and "is not one of the 9" in problem
+                for problem in problems
+            ),
+            problems,
+        )
+
+    def test_the_roster_is_chosen_by_the_assessment_date(self) -> None:
+        """The cut-over day is 2026-10-04; an undated record gets the current roster."""
+        self.assertEqual(
+            ccm.required_clients({"assessed_on": "2026-10-03"}),
+            ccm.CANONICAL_CLIENTS_BEFORE_2026_10_04,
+        )
+        self.assertEqual(
+            ccm.required_clients({"assessed_on": "2026-10-04"}), ccm.CANONICAL_CLIENTS
+        )
+        self.assertEqual(ccm.required_clients({}), ccm.CANONICAL_CLIENTS)
+        self.assertEqual(ccm.required_clients({"assessed_on": None}), ccm.CANONICAL_CLIENTS)
+
+    def test_a_record_dated_before_2026_10_04_with_the_ten_clients_passes(self) -> None:
+        record = valid_record(assessed_on="2026-10-03")
+        self.assertEqual(len(record["clients"]), 10)
+        self.assertEqual(check(record), [])
+
+    def test_a_record_dated_before_2026_10_04_missing_a_client_fails(self) -> None:
+        record = valid_record(assessed_on="2026-09-22")
+        record["clients"] = [
+            client for client in record["clients"] if client["name"] != "Gemini CLI"
+        ]
+        problems = check(record)
+        self.assertIn("$.clients: 'Gemini CLI' is named in the assessment but has no row", problems)
 
     def test_a_duplicated_client_cannot_stand_in_for_a_missing_one(self) -> None:
         record = valid_record()
@@ -732,15 +776,19 @@ class SchemaContractTest(unittest.TestCase):
         self.assertTrue(any("notes" in problem for problem in problems))
 
     def test_the_schema_pins_exactly_ten_client_rows(self) -> None:
+        """Nine rows from 2026-10-04, ten before; the checker picks which by date."""
         schema = ccm.load_schema()
         clients = schema["properties"]["clients"]
-        self.assertEqual(clients.get("minItems"), 10)
-        self.assertEqual(clients.get("maxItems"), 10)
+        self.assertEqual(clients.get("minItems"), len(ccm.CANONICAL_CLIENTS))
+        self.assertEqual(
+            clients.get("maxItems"), len(ccm.CANONICAL_CLIENTS_BEFORE_2026_10_04)
+        )
 
     def test_the_schema_enumerates_exactly_the_canonical_clients(self) -> None:
         schema = ccm.load_schema()
         names = schema["properties"]["clients"]["items"]["properties"]["name"]["enum"]
-        self.assertEqual(set(names), set(ccm.CANONICAL_CLIENTS))
+        # Gemini CLI stays allowed so the records made before 2026-10-04 validate.
+        self.assertEqual(set(names), set(ccm.CANONICAL_CLIENTS_BEFORE_2026_10_04))
 
     def test_the_schema_enumerates_exactly_the_four_statuses(self) -> None:
         schema = ccm.load_schema()
@@ -977,7 +1025,7 @@ class PackageResolutionTest(unittest.TestCase):
             }
         )
         record["clients"] = [
-            valid_client(name, reason="") for name in ccm.CANONICAL_CLIENTS
+            valid_client(name, reason="") for name in ccm.required_clients(record)
         ]
         document = write_document(record)
         try:
@@ -1535,7 +1583,7 @@ class LiveDocumentTest(unittest.TestCase):
 
     def test_the_committed_matrix_covers_exactly_the_ten_clients(self) -> None:
         names = {client["name"] for client in self.record["clients"]}
-        self.assertEqual(names, set(ccm.CANONICAL_CLIENTS))
+        self.assertEqual(names, set(ccm.required_clients(self.record)))
 
     def test_the_committed_matrix_records_forty_stage_results(self) -> None:
         results = [
@@ -1834,7 +1882,7 @@ class MissionControlMatrixBindingTest(unittest.TestCase):
 
     def test_it_covers_exactly_the_ten_canonical_clients(self) -> None:
         names = {client["name"] for client in self.record["clients"]}
-        self.assertEqual(names, set(ccm.CANONICAL_CLIENTS))
+        self.assertEqual(names, set(ccm.required_clients(self.record)))
 
     def test_it_records_forty_stage_results_and_ten_statuses(self) -> None:
         results = [

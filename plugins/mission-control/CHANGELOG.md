@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [2.21.2] - 2026-10-04
+
+Stops the test suite from reading the SDLC schema live from GitHub.
 
 ### Fixed
 

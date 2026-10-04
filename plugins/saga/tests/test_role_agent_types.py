@@ -471,7 +471,7 @@ def test_the_versioned_install_layout_finds_the_newest_agent_launcher(
             parents=True
         )
         (cache / "agent-launcher" / version / role_agent_types.ROSTER_SUBPATH).write_text("")
-    monkeypatch.setattr(role_agent_types, "SAGA_ROOT", cache / "saga" / "1.2.2")
+    monkeypatch.setattr(role_agent_types, "SAGA_ROOT", cache / "saga" / "1.3.0")
     found = role_agent_types.locate_agent_launcher(env={})
     assert found == cache / "agent-launcher" / "0.10.0"
 

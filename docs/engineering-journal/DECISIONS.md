@@ -2,6 +2,32 @@
 
 ## 2026-10-04
 
+### The client assessment drops Gemini CLI from 2026-10-04, and earlier records keep their roster
+
+**Decision.** Agy replaced Gemini CLI on the operator's machine, so `scripts/assess_clients.py`
+assesses nine clients from 2026-10-04: Claude Code, OpenAI Codex, Cursor Agent, Qwen, Grok,
+OpenCode, Muse, Agy and Hermes. `scripts/check_compatibility_matrix.py` chooses the roster a record
+must cover from the record's own required `assessed_on` date: `CANONICAL_CLIENTS` (nine) from
+2026-10-04, `CANONICAL_CLIENTS_BEFORE_2026_10_04` (ten, with Gemini CLI) before. A record made
+earlier stays valid against the roster in force when it was made, until its package's version moves
+and forces a fresh nine-client record. `schemas/compatibility-matrix.schema.json` keeps
+`Gemini CLI` as an allowed client name and accepts nine or ten rows; the date rule lives in the
+checker. `scripts/install_client.py` keeps its Gemini CLI placement, because that is installation
+on a machine that may still have the binary, not assessment.
+
+**Rationale.** Twelve current records, all made on 2026-09-22, honestly assessed ten clients.
+Their packages have not changed version, so a fresh run would restate what they already say about
+nine clients and drop the tenth. `assessed_on` was already required by the schema and present on
+every record, so reading it needs no new field and keeps the schema closed.
+
+**Rejected alternatives.** Re-running all twelve packages now: hours of client runs, and no
+information gain for packages that have not changed. Deleting Gemini CLI from the schema: it would
+invalidate honest historical records. Adding a roster field to the record: a new field to keep in
+step, when the date already decides it.
+
+**Revisit when.** A client is added or removed again, or every current record has been re-run under
+the nine-client roster; then the date rule and the ten-client constant can go.
+
 ### A shared-environment lease belongs to one invocation, and nothing takes it over
 
 **Decision.** A lease on a shared non-production environment belongs to exactly one

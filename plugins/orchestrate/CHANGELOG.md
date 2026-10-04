@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [6.1.0] - 2026-10-04
+
+Adds JSON status output, a launch-table command and two Claude Code mods, and fixes run-record loading and saving so concurrent writes are no longer lost.
 
 ### Added
 

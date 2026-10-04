@@ -119,7 +119,7 @@ Do not rebuild these.
 | `scripts/check_compatibility_matrix.py` | Package-agnostic | Use as-is; it resolves the package from the record's own `$.package.name` |
 | `scripts/sync_vendor_source.py` | Package-agnostic | Use as-is; pass `--package <package>` |
 | `ports/<package>.json` | Per package | Write one. It is the only place package identity, custody, and assessment settings live |
-| `scripts/assess_clients.py` | Package-agnostic | Use as-is; it carries the ten-client roster and every quirk below |
+| `scripts/assess_clients.py` | Package-agnostic | Use as-is; it carries the nine-client roster and every quirk below |
 | `PROVENANCE.json` three-way custody schema | Generic | Reuse the schema |
 | `MutationProofBindingTest` pattern | Generic | Reuse; it fails when a graded file changes without its proof |
 | The credential value rule and its corpus | Stable at unifi 2.0.6 | Reuse for any profile-like contract rather than re-deriving |
@@ -128,7 +128,11 @@ Do not rebuild these.
 
 ## Client assessment
 
-Ten clients, four stages each: placement, discovery, load, invocation. Every quirk
+Nine clients, four stages each: placement, discovery, load, invocation. The clients
+are Claude Code, OpenAI Codex, Cursor Agent, Qwen, Grok, OpenCode, Muse, Agy and
+Hermes. Gemini CLI was dropped on 2026-10-04 because Agy replaced it; records made
+before then carry ten rows and stay valid against that roster (see the 2026-10-04
+decision in [`DECISIONS.md`](../engineering-journal/DECISIONS.md)). Every quirk
 below was learned the expensive way, and every one of them is now carried by
 [`scripts/assess_clients.py`](../../scripts/assess_clients.py) rather than by
 whoever is running the assessment.
@@ -144,7 +148,7 @@ python3 scripts/assess_clients.py --package <package> --execute \
 third-party imports — the pilot used a throwaway virtual environment holding
 only `requests` and `urllib3`. The entrypoints import them at module scope, so a
 bare floor interpreter records a non-zero status for every client and proposes
-`failed` for all ten.
+`failed` for all nine.
 
 Each client is handed its **own** fresh copy of the package, fingerprinted before
 and after that client runs. A client that changes the copy it was given has its
@@ -180,7 +184,6 @@ executes it.
 | Grok | Needs `GROK_AUTO_TRUST_REAL_BIN` under an isolated home. `plugin details` takes the plugin **name**, not the install id. |
 | Agy | Needs `AGY_AUTO_TRUST_REAL_BIN` under an isolated home. |
 | Qwen | Installer prompts for confirmation on stdin; with no answer it lists and exits without installing. Adds one metadata file to the extension directory. |
-| Gemini | `skills link` prompts on stdin and hangs rather than declining when stdin is closed. |
 | Muse | `--force` is required on the JSON install to report a digest once placement has installed the unit. |
 | Hermes | Run in an isolated home only. Confirm the live skills directory is unchanged before and after. |
 | Grok, Agy | The auto-trust override must name the **real** binary, and the harness never infers it: `which` returns the wrapper, and a wrapper pointed at itself spawns descendants until the host gives out. Supply `--real-binary <client>=<path>`, or export the client's own override variable. With neither, that client is **blocked** with the requirement named. |

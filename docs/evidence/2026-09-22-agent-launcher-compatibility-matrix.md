@@ -1,4 +1,6 @@
-<!-- matrix-status: current -->
+<!-- matrix-status: superseded -->
+<!-- superseded-by: 2026-10-04-agent-launcher-compatibility-matrix.md -->
+<!-- superseded-reason: The package version moved from 1.7.1 to 1.7.2 for the 2026-10-04 release, so the assessment was re-run and the record re-bound. The fresh run covers nine clients, because Agy replaced Gemini CLI on the operator's machine. -->
 
 # Ten-client compatibility matrix — portable agent-launcher package (1.7.1)
 

@@ -32,10 +32,10 @@ CHANGELOG = PLUGIN_ROOT / "CHANGELOG.md"
 MARKETPLACE = REPO_ROOT / ".claude-plugin" / "marketplace.json"
 
 #: Orchestrate's version at this card. Named with its predecessor so a bump is deliberate.
-ORCHESTRATE_VERSION = "6.0.1"
+ORCHESTRATE_VERSION = "6.1.0"
 # 6.0.0 is issue 1028: the board-writeback path is removed and `merge`'s exit status 2 is retired
 # with it. 5.0.0 was issue 1025, the slim to the run driver.
-ORCHESTRATE_PREDECESSOR = "6.0.0"
+ORCHESTRATE_PREDECESSOR = "6.0.1"
 
 REMOVED_SUBCOMMANDS = ("redrive", "collect", "land")
 KEPT_SUBCOMMANDS = ("plan-check", "launch-table", "start", "go", "merge", "clean")

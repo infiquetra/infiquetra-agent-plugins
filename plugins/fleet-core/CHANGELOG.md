@@ -9,7 +9,9 @@ describe the derived slice and are left as the record of those releases.
 
 The catalog requires `python>=3.12`.
 
-## [Unreleased]
+## [0.33.0] - 2026-10-04
+
+Adds the tier judgment and the implementation work shape to staffing, and removes the ordinal cost-weight module.
 
 ### Added
 
