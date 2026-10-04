@@ -1043,14 +1043,25 @@ def _tier_token(tier: Mapping[str, str] | None) -> str:
     return f"{tier['model']}/{tier['effort']}" if tier else "none"
 
 
+#: The direction question's own choices, in the order the reason lists their probabilities.
+DIRECTION_CHOICES = (DIRECTION_BELOW, DIRECTION_SAME, DIRECTION_ABOVE)
+
+
 def _probabilities_text(probabilities: Any) -> str:
+    """Render the answer's probabilities for the direction question's own choices only.
+
+    The keys come from the vendor's response, and the TypeSafe client passes answer mappings
+    through without checking them. The reason this text joins is recorded in ``jev_raise`` and
+    printed for ``/work``, so a key that is not one of :data:`DIRECTION_CHOICES` is dropped rather
+    than copied: vendor-controlled text never reaches the recorded reason (issue #133).
+    """
     if not isinstance(probabilities, Mapping):
         return ""
-    parts = [
-        f"{key} {float(value):.2f}"
-        for key, value in probabilities.items()
-        if isinstance(value, (int, float)) and not isinstance(value, bool)
-    ]
+    parts = []
+    for choice in DIRECTION_CHOICES:
+        value = probabilities.get(choice)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            parts.append(f"{choice} {float(value):.2f}")
     return f" (probabilities: {', '.join(parts)})" if parts else ""
 
 
@@ -1082,7 +1093,7 @@ def classify_judgment(
     base = {"model": str(default["model"]), "effort": str(default["effort"])}
     because = f": {criterion}" if criterion else ""
     odds = _probabilities_text(probabilities)
-    if confidence is None or direction not in (DIRECTION_BELOW, DIRECTION_SAME, DIRECTION_ABOVE):
+    if confidence is None or direction not in DIRECTION_CHOICES:
         return {
             "band": BAND_LOG_ONLY,
             "proposed": None,
