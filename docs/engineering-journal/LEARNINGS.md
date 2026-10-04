@@ -73,6 +73,26 @@ first draft had converted two writers while the reference said "every".
 
 **Generalizable rule.** When a shared record promises an open key set, test the promise at every
 writer that rewrites whole objects — round-trip a row carrying a key that writer does not own.
+### A Claude Code mod can share parsing across files, but never the engine handle `$`
+
+**Evidence.** Issue #101. `claude plugin validate` (2.1.289) refused a mod file
+that passed `$` to a reader imported from a sibling file: `$ is passed to
+"readRunRecord", imported from "./shared.ts": $ is followed only into a
+function declared in this same file, never across an import`. The same reader
+declared at the top level of the mod's own file validated, and the validator
+reported `calls: $.process.run (via readRunRecord)`. The test kit's `$` has no
+`process` noun at all (`undefined is not an object (evaluating
+'$.process.run')`), so a test body cannot run the script through the engine.
+
+**Mechanism.** The validator lists which engine calls a module makes (the
+`calls:` line) by following `$` through the module's source, and, as its own
+message says, it follows `$` only into functions declared at the top of the same
+file. A function in another file that takes `$` is refused, not followed.
+
+**Generalizable rule.** Put the pure parts of a mod (argv builders, parsers,
+types) in shared files, and let each mod file declare its own two-line function
+that holds `$`; test the pure parts directly, and pin the script's real output
+with a Python test (`plugins/saga/tests/test_mod_run_record_contract.py`).
 
 ## 2026-09-22
 
