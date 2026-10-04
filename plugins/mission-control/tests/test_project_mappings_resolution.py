@@ -143,7 +143,10 @@ def test_vendored_project_mappings_has_expected_canonical_state() -> None:
         )
 
 
-def test_sdlc_schema_remote_main_wins_over_local_and_vendored(tmp_path, fake_schema_path) -> None:
+def test_sdlc_schema_remote_main_wins_over_local_and_vendored(
+    tmp_path, fake_schema_path, monkeypatch
+) -> None:
+    monkeypatch.delenv("INFIQUETRA_SDLC_SCHEMA_OFFLINE", raising=False)
     import base64
 
     sdlc_path = tmp_path / "infiquetra-sdlc"
@@ -164,7 +167,10 @@ def test_sdlc_schema_remote_main_wins_over_local_and_vendored(tmp_path, fake_sch
     assert "sdlc-schema.json?ref=main" in gh.call_args.args[0][1]
 
 
-def test_sdlc_schema_vendored_used_when_remote_unavailable(tmp_path, fake_schema_path) -> None:
+def test_sdlc_schema_vendored_used_when_remote_unavailable(
+    tmp_path, fake_schema_path, monkeypatch
+) -> None:
+    monkeypatch.delenv("INFIQUETRA_SDLC_SCHEMA_OFFLINE", raising=False)
     fake_schema_path.write_text(
         json.dumps({"schema_version": "vendored", "workflows": {"intent_flow": {}}})
     )
@@ -180,11 +186,12 @@ def test_sdlc_schema_vendored_used_when_remote_unavailable(tmp_path, fake_schema
 
 
 def test_sdlc_schema_vendored_used_when_remote_result_is_garbage(
-    tmp_path, fake_schema_path
+    tmp_path, fake_schema_path, monkeypatch
 ) -> None:
     """W10 repair: a gh result that exists but won't decode/parse (a stubbed
     runner returning a URL, a truncated body) must degrade to the vendored copy,
     not escape as UnicodeDecodeError/JSONDecodeError."""
+    monkeypatch.delenv("INFIQUETRA_SDLC_SCHEMA_OFFLINE", raising=False)
     fake_schema_path.write_text(json.dumps({"schema_version": "vendored", "workflows": {}}))
 
     with patch.object(sdlc_manager, "_gh", return_value="https://not-base64.example"):
@@ -193,9 +200,21 @@ def test_sdlc_schema_vendored_used_when_remote_result_is_garbage(
     assert result["schema_version"] == "vendored"
 
 
+def test_sdlc_schema_offline_switch_skips_the_live_read(tmp_path, fake_schema_path) -> None:
+    """The suite-wide INFIQUETRA_SDLC_SCHEMA_OFFLINE=1 (conftest) keeps tests off the network."""
+    fake_schema_path.write_text(json.dumps({"schema_version": "vendored", "workflows": {}}))
+
+    with patch.object(sdlc_manager, "_gh") as gh:
+        result = sdlc_manager._resolve_sdlc_schema(tmp_path / "missing-sdlc")
+
+    gh.assert_not_called()
+    assert result["schema_version"] == "vendored"
+
+
 def test_sdlc_schema_local_used_only_when_remote_and_vendored_unavailable(
-    tmp_path, fake_schema_path
+    tmp_path, fake_schema_path, monkeypatch
 ) -> None:
+    monkeypatch.delenv("INFIQUETRA_SDLC_SCHEMA_OFFLINE", raising=False)
     sdlc_path = tmp_path / "infiquetra-sdlc"
     cfg_dir = sdlc_path / "config"
     cfg_dir.mkdir(parents=True)

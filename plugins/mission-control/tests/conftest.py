@@ -1,5 +1,11 @@
 """Guards for this package's pytest suite.
 
+Every test runs with ``INFIQUETRA_SDLC_SCHEMA_OFFLINE=1`` so ``load_config()`` resolves the SDLC
+schema from the vendored copy instead of reading it live from GitHub. Without it, each config load
+spends one REST call on the operator's token; one full suite run is hundreds of calls, and several
+runs in an hour exhausted the 5,000-call budget on 2026-10-04. A test of the live-read path itself
+clears the variable and stubs ``_gh``.
+
 The upstream repository kept the GitHub-write tripwire in its repo-root
 ``tests/conftest.py``. That file does not apply to ``plugins/*/tests``. The
 tripwire lives here so ``test_mission_control.py`` cannot call the operator's
@@ -40,3 +46,8 @@ def _no_live_gh(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch)
         return real_run(cmd, *args, **kwargs)
 
     monkeypatch.setattr(_sp, "run", _guard)
+
+
+@pytest.fixture(autouse=True)
+def _sdlc_schema_offline(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INFIQUETRA_SDLC_SCHEMA_OFFLINE", "1")
