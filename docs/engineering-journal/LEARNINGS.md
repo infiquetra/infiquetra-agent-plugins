@@ -2,6 +2,27 @@
 
 ## 2026-10-04
 
+### A mod's own `$.command.run` never reaches its own command hook; a button press does
+
+**Evidence.** Issue #105. The review findings pane's header (`plugins/saga/com.infiquetra.claude/mods/review-pane.tsx`,
+from issue #108) said the run status band would open it with `$.command.run({ command:
+'review-view' })`. Under `claude plugin test` on Claude Code 2.1.289 that call, made from a
+Button's `onPress`, failed with "no implementation for command.run" even though saga registers a
+`command.run` hook for `review-view`; from a `tool.call` hook it is refused outright ("it would wait
+on the turn this hook is holding"). A probe plugin with one command hook and one button reproduced
+both. The band's Plan and Review buttons now carry the keys `band-plan-<issue>` and
+`band-review-<issue>`, and `plan-viewer.tsx` and `review-pane.tsx` each answer a `ui.press` for
+their key with the same `openPlanView` / `openReviewView` function their slash command uses.
+
+**Mechanism.** The engine runs a plugin's `$` call through the same hook chain with the calling
+plugin's hooks skipped, so a plugin's call to its own command falls straight to what is beneath the
+plugins. A `ui.press` is raised by the engine for the person's press, so every plugin's hook sees
+it, and the module that owns a pane answers before the Button's own `onPress` would run.
+
+**Generalizable rule.** To trigger one mod's behaviour from another mod in the same plugin, hook an
+engine-raised event (`ui.press` on a known element key) in the owning module; never route through
+`$.command.run` or another call to the plugin's own hooks.
+
 ### A card filed from a pull request's follow-ups can be closed by that same pull request
 
 **Evidence.** Issue #117 was filed on 2026-10-04 from issue #95's implementer follow-ups. It said four

@@ -10,10 +10,12 @@ import { registerAdmissionReview } from './admission-review.tsx'
 import { registerPlanViewer } from './plan-viewer.tsx'
 import { registerReviewPane } from './review-pane.tsx'
 import { registerUsageCapture } from './usage-capture.ts'
+import { registerRunBand } from './run-band.tsx'
 
 export const register: Register = (on) => {
   registerPlanViewer(on)
   registerAdmissionReview(on)
   registerReviewPane(on)
   registerUsageCapture(on)
+  registerRunBand(on)
 }
