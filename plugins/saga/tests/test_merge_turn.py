@@ -382,6 +382,94 @@ class TestBothReintegrations:
         assert "there is nothing to re-integrate into it" in parent_row["detail"]
 
 
+class TestIntegrationState:
+    """Issue #99: integration ends before code review, and the merge turn says when it has."""
+
+    def test_one_unit_is_single_lane_and_complete(self, tmp_path: Path) -> None:
+        record = _record(tmp_path / "store", units=[_unit("unit-a", "unit-a")])
+        state = MT.integration_state(record)
+        assert state == {
+            "lanes": 1,
+            "single_lane": True,
+            "complete": True,
+            "pending": [],
+            "merged_tips": {},
+        }
+
+    def test_two_units_one_merged_is_not_complete_and_names_the_other(
+        self, tmp_path: Path
+    ) -> None:
+        record = _record(
+            tmp_path / "store",
+            units=[
+                _unit("unit-a", "unit-a", merge_state=MT.MERGE_MERGED, merged_tip="a" * 40),
+                _unit("unit-b", "unit-b"),
+            ],
+        )
+        state = MT.integration_state(record)
+        assert state["single_lane"] is False and state["complete"] is False
+        assert state["pending"] == ["unit-b"]
+        assert state["merged_tips"] == {"unit-a": "a" * 40}
+
+    def test_all_merged_is_complete_with_every_tip(self, tmp_path: Path) -> None:
+        record = _record(
+            tmp_path / "store",
+            units=[
+                _unit("unit-a", "unit-a", merge_state=MT.MERGE_MERGED, merged_tip="a" * 40),
+                _unit("unit-b", "unit-b", merge_state=MT.MERGE_MERGED, merged_tip="b" * 40),
+            ],
+        )
+        state = MT.integration_state(record)
+        assert state["complete"] is True and state["lanes"] == 2
+        assert state["merged_tips"] == {"unit-a": "a" * 40, "unit-b": "b" * 40}
+
+    def test_rows_on_one_branch_or_with_no_branch_are_one_lane(self, tmp_path: Path) -> None:
+        record = _record(
+            tmp_path / "store",
+            units=[_unit("U1", "issue/9"), _unit("U2", "issue/9"), {"id": "U3"}],
+        )
+        assert MT.integration_state(record)["single_lane"] is True
+
+    def test_a_merge_reports_whether_integration_is_complete(
+        self, repo: Path, tmp_path: Path
+    ) -> None:
+        _git(repo, "checkout", "unit-a")
+        _commit(repo, "one.txt", "unit a\n", "unit a works")
+        _git(repo, "checkout", "main")
+        record = _record(
+            tmp_path / "store", units=[_unit("unit-a", "unit-a"), _unit("unit-b", "unit-b")]
+        )
+        result = MT.merge_unit(
+            record,
+            "unit-a",
+            repo_root=repo,
+            parent_branch="parent/1",
+            worktree_root=tmp_path / "turns",
+        )
+        assert result["integration_complete"] is False
+        _git(repo, "checkout", "unit-b")
+        _commit(repo, "two.txt", "unit b\n", "unit b works")
+        _git(repo, "checkout", "main")
+        result = MT.merge_unit(
+            record,
+            "unit-b",
+            repo_root=repo,
+            parent_branch="parent/1",
+            worktree_root=tmp_path / "turns",
+        )
+        assert result["integration_complete"] is True
+
+    def test_the_status_subcommand_prints_the_integration_object(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        store = tmp_path / "store"
+        _record(store, units=[_unit("unit-a", "unit-a"), _unit("unit-b", "unit-b")])
+        assert MT.main(["--record", str(store / "issue-1028.json"), "status"]) == 0
+        integration = json.loads(capsys.readouterr().out)["integration"]
+        assert integration["complete"] is False
+        assert integration["pending"] == ["unit-a", "unit-b"]
+
+
 class TestNoLock:
     def test_the_module_introduces_no_lock_lease_reservation_or_receipt(self) -> None:
         """Card 1028's stop condition, as a guard rather than a promise in a document."""
