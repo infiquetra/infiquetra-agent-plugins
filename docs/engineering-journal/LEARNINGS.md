@@ -2,6 +2,24 @@
 
 ## 2026-10-04
 
+### A count read before a wait is not proof that the earlier holder finished
+
+**Evidence.** Issues #139 and #140, filed at #99's review cycle limit. `run_combined` in
+`plugins/saga/scripts/build_loop.py` took its pass number once, before `--lease-wait`, and
+`left_by_earlier_pass_of` in `plugins/saga/scripts/environment_lease.py` let a holder with a lower
+number on the same host be replaced. A concurrent invocation that gave up and recorded a
+could-not-execute pass bumped the count while the holder was still deploying. The fix removes
+replacement entirely and reads the pass number when the lease is won;
+`test_a_second_invocation_of_the_same_run_waits_on_a_lease_still_deploying` in
+`plugins/saga/tests/test_build_loop.py` drives both invocations through the real command line.
+
+**Mechanism.** The pass count measures how many passes were recorded by anyone, not whether the
+lease holder recorded its own. Any writer to the record can advance it, so an inference from it is
+true only while nobody else writes.
+
+**Generalizable rule.** Decide lock ownership from the lock's own identity (its token or nonce),
+never from a counter other writers can move.
+
 ### Two identical lease commits are one object, so both pushes "win"
 
 **Evidence.** Issue #99, review cycle 1. `test_a_concurrent_invocation_of_the_same_pass_waits_on_a_live_lease`

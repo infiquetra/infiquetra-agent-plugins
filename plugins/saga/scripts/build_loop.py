@@ -51,7 +51,10 @@ The combined-branch mode (issue #99, pre-review testing U4) adds three more deci
 * **A shared environment is held by one run at a time** through the lease in
   ``environment_lease.py``, a reference on the git remote every deploying host pushes to. A second
   run waits a bounded time, saying what it waits on, then records a could-not-execute pass naming
-  the holder. The run record itself still takes only its file lock; the combined passes live under
+  the holder. A lease belongs to the one invocation that took it (issues #139 and #140): a later
+  invocation of the same run waits on it like any other holder, and a crashed invocation's lease is
+  released by the operator. The pass number is read from the record when the lease is won, not
+  before the wait. The run record itself still takes only its file lock; the combined passes live under
   the run-level top-level key ``combined_branch``, which ``run_record.py`` preserves as an unknown
   field.
 
@@ -1058,13 +1061,22 @@ def acquire_lease(
     sleep: Callable[[float], None],
     wall_now: Callable[[], datetime],
     report: Callable[[str], None],
+    next_pass: Callable[[], int] | None = None,
 ) -> tuple[environment_lease.AcquireResult, float]:
-    """Take the lease, waiting up to *lease_wait* seconds on a holder and saying what it waits on."""
+    """Take the lease, waiting up to *lease_wait* seconds on a holder and saying what it waits on.
+
+    Every holder is waited on, this run's own earlier invocations included: nothing here replaces
+    a lease (issues #139 and #140). *next_pass*, when given, is asked at each attempt, so a lease
+    won after a wait names the pass number the record would hand out now, not the one it would
+    have handed out when the wait began.
+    """
     started = clock()
     while True:
         # The start time is stamped at each attempt, so a lease won after a wait does not carry
         # the wait as time held and is never described as stale the moment it is taken.
         attempt = dataclasses.replace(holder, started_at=environment_lease.iso_utc(wall_now()))
+        if next_pass is not None:
+            attempt = dataclasses.replace(attempt, pass_number=next_pass())
         try:
             result = backend.acquire(name, attempt)
         except environment_lease.LeaseError as exc:
@@ -1097,6 +1109,7 @@ def _lease_block(lease: dict[str, str] | None) -> dict[str, Any]:
         "status": None,
         "remote": lease["remote"],
         "ref": environment_lease.REF_PREFIX + lease["name"],
+        "invocation": None,
         "token": None,
         "holder": None,
         "waited_seconds": 0.0,
@@ -1114,6 +1127,8 @@ def _holder_record(holder: Any) -> Any:
             "host": holder.host,
             "started_at": holder.started_at,
             "bound_seconds": holder.bound_seconds,
+            "pass_number": holder.pass_number,
+            "invocation": holder.invocation,
         }
     return holder
 
@@ -1130,11 +1145,7 @@ def _pass_status(entry: dict[str, Any]) -> str:
     if STATUS_FAIL in statuses:
         return STATUS_FAIL
     lease_status = entry["lease"].get("status")
-    lease_ok = lease_status in (
-        LEASE_NOT_REQUIRED,
-        environment_lease.ACQUIRED,
-        environment_lease.REACQUIRED,
-    )
+    lease_ok = lease_status in (LEASE_NOT_REQUIRED, environment_lease.ACQUIRED)
     release_ok = entry["lease"].get("release_status") in (None, environment_lease.RELEASED)
     if (
         STATUS_COULD_NOT_EXECUTE in statuses
@@ -1166,6 +1177,8 @@ def run_combined_pass(
     sleep: Callable[[float], None] = time.sleep,
     report: Callable[[str], None] = print,
     host: str | None = None,
+    invocation: str | None = None,
+    next_pass: Callable[[], int] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Run one combined-branch pass and return ``(entry, green)``, writing nothing.
 
@@ -1173,6 +1186,10 @@ def run_combined_pass(
     the deploy-or-start command; the declared test command and every environment-bound plan check;
     the teardown. Teardown runs on every exit path once the deploy step was reached, and the lease
     is released after it. A waived repository runs the baseline only and records the waiver.
+
+    *invocation* names this invocation in the lease it takes (a fresh nonce when omitted).
+    *next_pass* reads the pass number from the record when the lease is won; without it the pass
+    keeps *pass_number*.
     """
     waived = environment.get("mode") == functional_environment.MODE_WAIVED
     lease = None if waived else functional_environment.lease_of(environment)
@@ -1257,6 +1274,8 @@ def run_combined_pass(
                 sleep=sleep,
                 report=report,
                 host=host,
+                invocation=invocation or environment_lease.new_invocation(),
+                next_pass=next_pass,
             )
     except BaseException as exc:
         entry["interrupted"] = True
@@ -1290,6 +1309,8 @@ def _deploy_test_teardown(
     sleep: Callable[[float], None],
     report: Callable[[str], None],
     host: str | None,
+    invocation: str,
+    next_pass: Callable[[], int] | None,
 ) -> None:
     """The lease, then deploy, test and teardown, with teardown and release on every exit path."""
     problems: list[str] = entry["environment_problems"]
@@ -1304,6 +1325,7 @@ def _deploy_test_teardown(
             started_at=environment_lease.iso_utc(wall_now()),
             bound_seconds=timeout * (3 + len(checks)),
             pass_number=pass_number,
+            invocation=invocation,
         )
         result, waited = acquire_lease(
             lease_backend,
@@ -1316,10 +1338,12 @@ def _deploy_test_teardown(
             sleep=sleep,
             wall_now=wall_now,
             report=report,
+            next_pass=next_pass,
         )
         lease_block.update(
             {
                 "status": result.status,
+                "invocation": invocation,
                 "token": result.token if result.acquired else None,
                 "holder": _holder_record(result.holder),
                 "waited_seconds": waited,
@@ -1345,6 +1369,9 @@ def _deploy_test_teardown(
             )
             return
         token = result.token
+        if isinstance(result.holder, environment_lease.LeaseHolder):
+            # The number read when the lease was won, not the one read before any wait.
+            entry["pass"] = result.holder.pass_number
 
     try:
         deploy_command = environment.get("deploy_command")
@@ -1599,9 +1626,14 @@ def run_combined(
         if unusable is not None:
             raise BuildLoopError(unusable)
         lease_backend = backend
-    block = record.extra.get(COMBINED_KEY)
-    previous = block.get("passes") if isinstance(block, dict) else None
-    pass_number = (len(previous) if isinstance(previous, list) else 0) + 1
+    def next_pass() -> int:
+        # Read from disk under the record's lock each time it is asked, so a pass that waited on
+        # the lease takes the number after every pass that landed during the wait.
+        with run_record.file_lock(path):
+            fresh = load_record_file(path)
+        block = fresh.extra.get(COMBINED_KEY)
+        previous = block.get("passes") if isinstance(block, dict) else None
+        return (len(previous) if isinstance(previous, list) else 0) + 1
 
     def land(entry: dict[str, Any], green: bool) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         with run_record.file_lock(path):
@@ -1621,7 +1653,8 @@ def run_combined(
                 revision,
                 runner=runner,
                 lease_backend=lease_backend,
-                pass_number=pass_number,
+                pass_number=next_pass(),
+                next_pass=next_pass,
                 branch=current_branch(repo_root, runner=runner),
                 timeout=args.timeout,
                 lease_wait=args.lease_wait,

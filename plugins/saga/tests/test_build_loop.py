@@ -19,6 +19,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1046,9 +1047,9 @@ _PRIVATE = {**_DECLARED, "deploy_command": "deploy-stack", "test_command": "run-
 
 
 class FakeLeaseBackend:
-    """An in-memory lease store with the git backend's semantics: one holder per name, a
-    compare-and-swap release, and a run that re-acquires its own lease. Shared between two runs,
-    it stands in for the one remote both hosts see."""
+    """An in-memory lease store with the git backend's semantics: one holder per name, never
+    replaced, and a compare-and-swap release. Shared between two runs, it stands in for the one
+    remote both hosts see."""
 
     def __init__(self) -> None:
         self.refs: dict[str, tuple[str, Any]] = {}
@@ -1068,16 +1069,8 @@ class FakeLeaseBackend:
         self.calls.append(("acquire", name))
         current = self.refs.get(name)
         if current is not None:
-            seen = current[1]
-            if isinstance(seen, environment_lease.LeaseHolder) and seen.left_by_earlier_pass_of(
-                holder
-            ):
-                token = self.hold(name, holder)
-                return environment_lease.AcquireResult(
-                    environment_lease.REACQUIRED, token=token, holder=holder
-                )
             return environment_lease.AcquireResult(
-                environment_lease.HELD, token=current[0], holder=seen
+                environment_lease.HELD, token=current[0], holder=current[1]
             )
         token = self.hold(name, holder)
         return environment_lease.AcquireResult(environment_lease.ACQUIRED, token=token, holder=holder)
@@ -1427,41 +1420,175 @@ def _record_after_an_interrupted_pass() -> dict[str, Any]:
     return payload
 
 
-def test_a_later_pass_replaces_the_lease_left_by_an_interrupted_pass_on_this_host(
-    tmp_path: Path,
+def test_a_lease_left_by_an_interrupted_invocation_of_this_run_waits_for_the_operator(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """Issues #139 and #140: no same-run take-over, even on this host with a lower pass number.
+
+    The earlier invocation's lease is held until the operator releases it with the exact command.
+    """
     backend = FakeLeaseBackend()
-    backend.hold(
-        "shared-nonprod",
-        _other_holder(
-            repo="infiquetra/infiquetra-claude-plugins",
-            issue=1027,
-            host=environment_lease.host_label(),
-            pass_number=1,
-        ),
+    left = _other_holder(
+        repo="infiquetra/infiquetra-claude-plugins",
+        issue=1027,
+        host=environment_lease.host_label(),
+        pass_number=1,
+        invocation="deadbeefdeadbeef",
+        started_at="2026-10-01T00:00:00Z",
+        bound_seconds=600,
     )
+    token = backend.hold("shared-nonprod", left)
     path = _write(tmp_path / "issue-1027.json", _record_after_an_interrupted_pass())
     runner = FakeRunner()
-    assert _combined(path, runner, backend) == build_loop.EXIT_GREEN
-    assert "deploy-stack --env nonprod" in _commands(runner)
-    assert _combined_block(path)["passes"][-1]["lease"]["status"] == "re-acquired"
-    assert backend.refs == {}
+    assert _combined(path, runner, backend) == build_loop.EXIT_NOT_GREEN
+    assert "deploy-stack --env nonprod" not in _commands(runner)
+    assert backend.refs["shared-nonprod"] == (token, left)
+    lease = _combined_block(path)["passes"][-1]["lease"]
+    assert lease["status"] == "held"
+    assert lease["holder"]["invocation"] == "deadbeefdeadbeef"
+    assert lease["invocation"] and lease["invocation"] != "deadbeefdeadbeef"
+    assert f"release --name shared-nonprod --expect {token}" in lease["detail"]
+    assert "STALE" in capsys.readouterr().out
 
 
-def test_a_second_invocation_of_the_same_run_does_not_take_a_live_lease(tmp_path: Path) -> None:
-    """The same run's pass still deploying, on this host or another, is waited on, not replaced."""
-    for host in (environment_lease.host_label(), "another-host"):
-        backend = FakeLeaseBackend()
-        live = _other_holder(
-            repo="infiquetra/infiquetra-claude-plugins", issue=1027, host=host, pass_number=1
-        )
-        token = backend.hold("shared-nonprod", live)
-        path = _write(tmp_path / "issue-1027.json", _combined_record())
-        runner = FakeRunner()
-        assert _combined(path, runner, backend) == build_loop.EXIT_NOT_GREEN, host
-        assert "deploy-stack --env nonprod" not in _commands(runner), host
-        assert _combined_block(path)["passes"][-1]["lease"]["status"] == "held", host
-        assert backend.refs["shared-nonprod"] == (token, live), host
+def test_a_second_invocation_of_the_same_run_waits_on_a_lease_still_deploying(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Acceptance criterion 1 of #139/#140, through the real command line on one record.
+
+    While invocation A deploys, invocation B of the same run waits and gives up, landing a
+    could-not-execute pass. That moves the record's pass count past A's, which is exactly what let
+    invocation C take A's lease before; C waits too. Only A ever deploys. The lease is the real
+    git backend against a bare repository under ``tmp_path``, so the backend's own rule is what
+    is tested; nothing touches a real remote.
+    """
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    remote, clone = tmp_path / "remote.git", tmp_path / "host"
+    for argv in (
+        ["init", "-q", "--bare", str(remote)],
+        ["init", "-q", str(clone)],
+        ["-C", str(clone), "remote", "add", "origin", str(remote)],
+    ):
+        subprocess.run(["git", *argv], check=True, capture_output=True)
+    backend = environment_lease.GitRefLeaseBackend(clone)
+    deploys: list[str] = []
+    waits: list[float] = []
+
+    def short_sleep(seconds: float) -> None:
+        waits.append(seconds)
+        time.sleep(min(seconds, 0.05))
+
+    def deploy_a(argv: Sequence[str], timeout: int) -> tuple[int, str]:
+        deploys.append("A")
+        holder_a = backend.read("shared-nonprod").token
+        for name in ("B", "C"):
+            runner = FakeRunner()
+            code = build_loop.main(
+                ["--record", str(path), "--combined", "--lease-wait", "1"],
+                runner=runner,
+                lease_backend=backend,
+                sleep=short_sleep,
+            )
+            assert code == build_loop.EXIT_NOT_GREEN, name
+            assert "deploy-stack --env nonprod" not in _commands(runner), name
+            assert backend.read("shared-nonprod").token == holder_a, name
+        return 0, ""
+
+    runner_a = FakeRunner(verdicts={"deploy-stack": deploy_a})
+    assert _combined(path, runner_a, backend) == build_loop.EXIT_GREEN
+    assert deploys == ["A"]
+    assert waits, "the waiting invocations slept between polls"
+    assert "Waiting on the shared environment" in capsys.readouterr().out
+    passes = _combined_block(path)["passes"]
+    assert [entry["lease"]["status"] for entry in passes] == ["held", "held", "acquired"]
+    assert [entry["pass"] for entry in passes] == [1, 2, 3]
+    invocations = {entry["lease"]["invocation"] for entry in passes}
+    assert len(invocations) == 3, "each invocation carries its own nonce"
+    a_invocation = passes[-1]["lease"]["invocation"]
+    assert all(entry["lease"]["holder"]["invocation"] == a_invocation for entry in passes)
+    assert not backend.read("shared-nonprod").held
+
+
+def test_a_waiting_invocation_that_wins_the_lease_takes_a_fresh_pass_number(
+    tmp_path: Path,
+) -> None:
+    """Acceptance criterion 3: the number is read when the lease is won, not before the wait."""
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    backend = FakeLeaseBackend()
+    backend.hold("shared-nonprod", _other_holder())
+    pushed: list[Any] = []
+    original = backend.acquire
+
+    def acquire(name: str, holder: Any) -> Any:
+        pushed.append(holder)
+        return original(name, holder)
+
+    backend.acquire = acquire  # type: ignore[method-assign]
+
+    def sleep(_: float) -> None:
+        # While this invocation waits, two other passes of the run land and the holder leaves.
+        with run_record.file_lock(path):
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            block = raw.setdefault("combined_branch", {"environment": dict(_SHARED)})
+            block.setdefault("passes", []).extend(
+                [{"pass": 1, "status": "fail"}, {"pass": 2, "status": "fail"}]
+            )
+            path.write_text(json.dumps(raw), encoding="utf-8")
+        backend.refs.clear()
+
+    code = build_loop.main(
+        ["--record", str(path), "--combined", "--lease-wait", "60"],
+        runner=FakeRunner(),
+        lease_backend=backend,
+        sleep=sleep,
+    )
+    assert code == build_loop.EXIT_GREEN
+    assert [holder.pass_number for holder in pushed] == [1, 3]
+    landed = _combined_block(path)["passes"][-1]
+    assert landed["pass"] == 3
+    assert landed["lease"]["holder"]["pass_number"] == 3
+
+
+def test_a_pass_records_the_lease_at_the_time_it_was_won_with_its_fresh_pass_number() -> None:
+    """Acceptance criteria 2 and 3 on the pass's own lease block, with the clocks injected."""
+    start = datetime(2026, 10, 4, tzinfo=UTC)
+    elapsed = [0.0]
+    backend = FakeLeaseBackend()
+    backend.hold("shared-nonprod", _other_holder())
+    numbers = iter([1, 1, 4])
+
+    def sleep(seconds: float) -> None:
+        elapsed[0] += seconds
+        if elapsed[0] >= 60:
+            backend.refs.clear()
+
+    def wall_now() -> datetime:
+        return start + timedelta(seconds=elapsed[0])
+
+    entry, green = build_loop.run_combined_pass(
+        run_record.from_dict(_combined_record(), warn=None),
+        _SHARED,
+        [],
+        "c" * 40,
+        runner=FakeRunner(),
+        lease_backend=backend,
+        pass_number=1,
+        next_pass=lambda: next(numbers),
+        lease_wait=1800,
+        clock=lambda: elapsed[0],
+        wall_now=wall_now,
+        sleep=sleep,
+        report=lambda _: None,
+        host="builder-1",
+        invocation="feedfacefeedface",
+    )
+    assert green is True
+    holder = entry["lease"]["holder"]
+    assert holder["started_at"] == environment_lease.iso_utc(start + timedelta(seconds=60))
+    assert holder["started_at"] != environment_lease.iso_utc(start)
+    assert not environment_lease.is_stale(environment_lease.LeaseHolder(**holder), wall_now())
+    assert holder["pass_number"] == 4 and entry["pass"] == 4
+    assert holder["invocation"] == entry["lease"]["invocation"] == "feedfacefeedface"
 
 
 def test_a_lease_won_after_waiting_is_stamped_when_taken_and_is_not_stale() -> None:
@@ -1495,6 +1622,7 @@ def test_a_lease_won_after_waiting_is_stamped_when_taken_and_is_not_stale() -> N
         started_at=environment_lease.iso_utc(start),
         bound_seconds=600,
         pass_number=1,
+        invocation="feedfacefeedface",
     )
     result, waited = build_loop.acquire_lease(
         backend,

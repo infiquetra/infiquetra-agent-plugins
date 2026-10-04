@@ -122,16 +122,57 @@ def test_a_release_with_the_wrong_token_deletes_nothing(hosts: tuple[Path, Path,
     assert _remote_ref(remote) == token
 
 
-def test_a_later_pass_on_the_same_host_replaces_a_lease_left_by_an_earlier_pass(
+def test_no_invocation_takes_over_a_lease_left_by_an_earlier_invocation_of_the_same_run(
     hosts: tuple[Path, Path, Path],
 ) -> None:
+    """Issues #139 and #140: same run, same host, a higher pass number -- still held, untouched."""
     remote, host_a, _ = hosts
-    L.GitRefLeaseBackend(host_a).acquire("shared-nonprod", _holder(7, pass_number=1))
-    again = L.GitRefLeaseBackend(host_a).acquire(
-        "shared-nonprod", _holder(7, started_at="2026-10-04T01:00:00Z", pass_number=2)
+    first = L.GitRefLeaseBackend(host_a).acquire(
+        "shared-nonprod", _holder(7, pass_number=1, invocation="aaaa")
     )
-    assert again.status == L.REACQUIRED
-    assert _remote_ref(remote) == again.token
+    again = L.GitRefLeaseBackend(host_a).acquire(
+        "shared-nonprod",
+        _holder(7, started_at="2026-10-04T01:00:00Z", pass_number=2, invocation="bbbb"),
+    )
+    assert again.status == L.HELD and not again.acquired
+    assert again.token == first.token
+    assert again.holder.invocation == "aaaa"
+    assert _remote_ref(remote) == first.token
+
+
+def test_the_holder_round_trips_its_invocation_and_names_it_when_described(
+    hosts: tuple[Path, Path, Path],
+) -> None:
+    _, host_a, host_b = hosts
+    L.GitRefLeaseBackend(host_a).acquire(
+        "shared-nonprod", _holder(7, pass_number=3, invocation="0123abcd")
+    )
+    state = L.GitRefLeaseBackend(host_b).read("shared-nonprod")
+    assert state.holder.invocation == "0123abcd" and state.holder.pass_number == 3
+    line = L.describe(state, datetime(2026, 10, 4, 0, 1, tzinfo=UTC))
+    assert "infiquetra/example#7 pass 3 (invocation 0123abcd)" in line
+
+
+def test_a_holder_written_before_the_invocation_field_still_reads() -> None:
+    old = json.dumps(
+        {
+            "repo": "infiquetra/example",
+            "issue": 7,
+            "revision": "c" * 40,
+            "host": "builder-1",
+            "started_at": "2026-10-04T00:00:00Z",
+            "bound_seconds": 600,
+            "pass_number": 1,
+            "schema": L.LEASE_SCHEMA,
+        }
+    )
+    holder = L.LeaseHolder.from_json(old)
+    assert isinstance(holder, L.LeaseHolder) and holder.invocation == ""
+
+
+def test_no_replace_path_remains() -> None:
+    assert not hasattr(L, "REACQUIRED")
+    assert not hasattr(L.LeaseHolder, "left_by_earlier_pass_of")
 
 
 def test_the_same_run_from_another_host_waits_on_a_live_lease(
