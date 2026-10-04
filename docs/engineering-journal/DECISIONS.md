@@ -142,6 +142,48 @@ no pane is open.
 **Revisit when.** The mod API offers a free wait on a pane press, or `start` gains a digest check
 (then pass the approved `plan_sha256` to it).
 
+### Saga's roles become Claude Code agent types registered by a mod, tiered from the run record
+
+**Decision.** In Claude Code, saga's mod registers one agent type per role of the active run
+(`saga:worker`, `saga:planner`, `saga:plan-reviewer`, `saga:functional-tester`,
+`saga:release-worker`) through `$.agent.register`, with the role's model and effort (issue #106).
+`plugins/saga/scripts/role_agent_types.py` decides what to register. Every role's tier comes from
+fleet-core's staffing resolver (`staffing.resolve_role`, from the bundle, run from the checkout so
+the overlay applies). The script hands the resolver what the run record's
+`staffing_models_and_efforts` holds for the role: a row the operator answered goes in as the
+operator's answer, and a recorded `jev_raise` goes in as the raise. Which rows the operator
+answered is `run_record.operator_answered_roles`, the one rule admission's staffing table also
+reads: under a per-role merge only the rows marked `operator_override: true`, under a whole-map
+answer every row. The script writes no precedence order of its own; the resolver's one order
+(issue #93) decides. Each prompt is the roles-library file, read at call time through agent-launcher's
+roster helper, behind a short saga hosting preamble: report the handoff as the final message and
+post nothing on the issue. `/work` dispatches a build unit as `saga:worker`, with no `model`
+parameter, only when the type's tier equals the unit's resolved tier; otherwise the effort rider
+stays the route. The type is named after the staffing role (`saga:worker`), not `saga:builder` as
+the card's example had it, so no third spelling joins `worker` and `implementer`. A mod-side
+`turn.step` check reports a request that does not carry its type's tier as
+`tiering-drift[claude-agent-type]` and never rewrites it. `fleet_commons.effort_rider` gains
+`claude-agent-type` as a real-knob spawn kind.
+
+**Rationale.** The Agent tool takes a model per call but no effort, so effort on that path was a
+prompt instruction, the labeled proxy. A registered type carries a real effort. Reading the tier
+from the resolver, with the record's operator answer and Jev raise as its inputs, keeps the types,
+the drift check and `/work`'s unit tier on one answer, including an operator's and a raise's.
+
+**Rejected alternatives.** Static plugin agent files (`agents/saga-worker.md`): Claude Code honors
+their `effort:`, but a file cannot carry a per-run tier and would hold a copy of the library prompt
+that drifts. Reading the record's row first and the resolver only for gaps: it wrote a second precedence
+order, and it registered a role one step below a recorded Jev raise. Calling the
+`staffing.py resolve --role` command line: it takes neither an operator answer nor a raise, and it
+costs one process per role on every refresh. Running the library prompt verbatim: the implementer prompt tells
+the subagent to post handoff comments, which `/work` routes through mission-control instead. A mod
+that rewrites the request's model or effort: the mods parent rules that a mod never enforces policy.
+A `saga:builder` alias: a third name for one role, with a mapping to keep in sync.
+
+**Revisit when.** The Agent tool gains a per-call effort parameter (then the rider route and the
+type route can merge), when measured runs show many build units whose tier differs from their
+role's type (then register tier-variant types such as `saga:worker-opus-high`), or when `/plan`,
+`/qa` and `/code-review` dispatch their roles directly and should use the types too.
 ### Admission renders the staffing and lens tables itself, from the same rows as its JSON
 
 **Decision.** `plugins/saga/scripts/admission.py --render tables` prints the operator-facing

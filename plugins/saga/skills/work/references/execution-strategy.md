@@ -70,8 +70,12 @@ constraints below mitigate them.
 
 ## Subagent dispatch (U-ID preservation)
 
-Use the generic `Explore` / `Task` agents for judgment and code-authoring units.  Do **not** reference
-named `ce-*` agents.  For each unit, give the subagent: the full plan path (overall context), the
+A code-authoring build unit goes to the registered `saga:worker` agent type where Claude Code offers
+it and its stated tier is the unit's resolved tier; dispatch it with no `model` parameter, because
+the Agent call's model overrides the type's. Everywhere else (another harness, no type offered, or a
+unit tier that differs from the type's) use the generic `Explore` / `Task` agents with `model` set to
+the resolved model and the effort rider prepended. Judgment units use the generic agents. Do **not**
+reference named `ce-*` agents.  For each unit, give the subagent: the full plan path (overall context), the
 unit's Goal / Files / Approach / Execution note / Patterns / Test scenarios / Verification, any resolved
 deferred-implementation questions, and the instruction to check the unit's test scenarios against all
 four applicable categories (happy / edge / error / integration) and supplement gaps. **Preserve the
@@ -219,4 +223,6 @@ rule — `resolve_build_unit_tier` in
 `lifecycle_state.py` is the single delegation seam behind the subcommand. **The resolver takes no
 host or session input at all**, which is what makes inheritance impossible: it cannot consult a host
 tier it is never given. Record the resolved tier in the Phase-4 work-session execution evidence for
-both the explicit and defaulted case.
+both the explicit and defaulted case. The resolved tier reaches the spawn by one of two routes (see
+§ Subagent dispatch): as the definition of the `saga:worker` agent type when its tier matches, or as
+the Agent call's `model` plus the effort rider otherwise. Record the route beside the tier.

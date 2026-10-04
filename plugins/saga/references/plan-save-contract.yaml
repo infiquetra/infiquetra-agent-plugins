@@ -44,4 +44,5 @@ effort_honoring:
   spawn_kinds:
     workflow: native
     external-engine: native
+    claude-agent-type: native
     agent: proxy

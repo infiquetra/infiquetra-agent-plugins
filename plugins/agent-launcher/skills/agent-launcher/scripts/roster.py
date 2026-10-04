@@ -77,6 +77,9 @@ CREATED_BY = "roster.py"
 #: ``merging-worker`` is deliberately absent: the staffing registry has a row for it, the lifecycle
 #: role catalogue names no such role, and the roles library therefore ships no prompt. Inventing a
 #: briefing for it is the drift the roles library forbids, so it is a named refusal (plan KTD3).
+#:
+#: Saga's ``scripts/role_agent_types.py`` imports this mapping at run time (issue #106), so it is a
+#: contract between the two packages: rename a key here only together with that reader.
 STAFFING_ROLE_TO_ROLE_ID: dict[str, str] = {
     "planner": "planner",
     "plan-reviewer": "plan_reviewer",

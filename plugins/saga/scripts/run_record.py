@@ -324,6 +324,35 @@ def record_path(store_root: Path, issue: int) -> Path:
     return (Path(store_root) / f"issue-{int(issue)}.json").resolve()
 
 
+def operator_answered_roles(block: Any) -> frozenset[str]:
+    """The roles of a ``staffing_models_and_efforts`` block whose tier the operator answered.
+
+    An operator's ``staffing_overrides`` answer lands in one of two shapes, and this is the one
+    place the two are told apart. A per-role merge (admission's ``_merge_overrides``) marks each
+    role the answer named with ``operator_override: true`` and leaves every other row as the
+    staffing component recorded it, so only the marked roles are the operator's. A whole map with
+    no ``operator_override`` key on any row, under a block ``source`` of ``operator``, was
+    written by the operator in full, so every role is. Run-wide ``_`` keys are never roles.
+    """
+    if not isinstance(block, Mapping):
+        return frozenset()
+    value = block.get("value")
+    if not isinstance(value, Mapping):
+        return frozenset()
+    roles = {
+        str(role): row
+        for role, row in value.items()
+        if not str(role).startswith("_") and isinstance(row, Mapping)
+    }
+    merged = any("operator_override" in row for row in roles.values())
+    whole_map = block.get("source") == "operator" and not merged
+    return frozenset(
+        role
+        for role, row in roles.items()
+        if whole_map or row.get("operator_override") is True
+    )
+
+
 def empty_run_configuration() -> dict[str, dict[str, Any]]:
     """The thirteen parameters, each unset, each already carrying who chooses it."""
     return {

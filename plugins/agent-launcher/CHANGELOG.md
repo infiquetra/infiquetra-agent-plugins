@@ -19,6 +19,8 @@
   takes the record's lock, re-reads the record and replaces only `roster` on that fresh copy, so a
   unit row or usage entry written since the roster was read survives. With a saga older than issue
   95, which has no `update`, it falls back to the old unlocked write.
+- `roster.STAFFING_ROLE_TO_ROLE_ID` is now read at run time by saga's `role_agent_types.py`
+  (issue 106); its comment says so. No behaviour changed.
 
 ## [1.7.1] - 2026-09-22
 

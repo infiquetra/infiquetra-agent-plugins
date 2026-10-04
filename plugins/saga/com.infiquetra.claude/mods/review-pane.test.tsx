@@ -118,6 +118,11 @@ function fake(on: On): Fake {
   on('tool.register', async ($, e) => ({ value: { tool: e.name } }))
   on('session.cwd', async () => ({ value: CWD }))
   on('process.run', async ($, e) => {
+    // The agent-types mod (issue #106) asks at session start which saga types to register: none here.
+    if (e.argv.some((arg: string) => arg.endsWith('role_agent_types.py'))) {
+      const none = JSON.stringify({ schema: 'saga_role_agent_types.v1', active: false, issue: null, types: [], skipped: [], fingerprint: 'none' })
+      return { value: { exitCode: 0, stdout: none, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     // The token-capture mod asks at session start which unit this directory works: none here.
     if (e.argv.includes('unit-for')) {
       const none = JSON.stringify({ schema: 'run_status.v1', repo_root: CWD, branch: '', match: null })

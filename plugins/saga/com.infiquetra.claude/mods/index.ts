@@ -7,6 +7,7 @@
 
 import type { Register } from 'claude-code'
 import { registerAdmissionReview } from './admission-review.tsx'
+import { registerAgentTypes } from './agent-types.ts'
 import { registerPlanViewer } from './plan-viewer.tsx'
 import { registerReviewPane } from './review-pane.tsx'
 import { registerUsageCapture } from './usage-capture.ts'
@@ -18,4 +19,5 @@ export const register: Register = (on) => {
   registerReviewPane(on)
   registerUsageCapture(on)
   registerRunBand(on)
+  registerAgentTypes(on)
 }

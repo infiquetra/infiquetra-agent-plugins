@@ -356,6 +356,55 @@ export type SagaRecordView = {
   page: number
 }
 
+/**
+ * One role's agent type, as `scripts/role_agent_types.py` prints it: the role's
+ * prompt (a saga hosting preamble, then the roles-library file's body) and the
+ * model and effort the run is staffed at.
+ */
+export type SagaRoleAgentType = {
+  /** The staffing role (`worker`); the registered type is `saga:<role>`. */
+  role: string
+  /** The roles library's id for it (`implementer`). */
+  role_id: string
+  readable_role: string
+  prompt_path: string
+  prompt: string
+  model: string
+  effort: string
+  /** The resolver's tier source: `operator`, `overlay`, `jev-raise` or `policy`. */
+  source: string
+  description: string
+}
+
+/** What `scripts/role_agent_types.py --json` prints: `saga_role_agent_types.v1`. */
+export type SagaRoleAgentTypes = {
+  schema: 'saga_role_agent_types.v1'
+  /** Whether this checkout has an active run; with none, `types` is empty. */
+  active: boolean
+  issue: number | null
+  types: SagaRoleAgentType[]
+  skipped: { role: string; reason: string }[]
+  /** A hash of every type's role, tier and prompt; it changes only when one of them does. */
+  fingerprint: string
+  /** Why no types could be answered, when that is the case. */
+  error?: string
+}
+
+/** One registered agent type's resolved tier, by its full name (`saga:worker`). */
+export type SagaRegisteredAgentType = {
+  role: string
+  model: string
+  effort: string
+}
+
+/** What the agent-types mod last registered, kept in the session's state. */
+export type SagaAgentTypesState = {
+  active: boolean
+  issue: number | null
+  fingerprint: string
+  byType: Record<string, SagaRegisteredAgentType>
+}
+
 declare module 'claude-code' {
   interface PluginState {
     saga: {
@@ -383,6 +432,8 @@ declare module 'claude-code' {
       bandHidden: boolean
       /** The raw run record the band's Record button opened, or null. */
       recordView: SagaRecordView | null
+      /** What the agent-types mod last registered (issue #106). */
+      agentTypes: SagaAgentTypesState
     }
   }
 }

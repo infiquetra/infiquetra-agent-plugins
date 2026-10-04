@@ -4,6 +4,22 @@
 
 ### Added
 
+- Issue 106: saga's roles as Claude Code agent types that carry a real model and effort.
+  `mods/agent-types.ts` registers `saga:<role>` (`saga:worker`, `saga:planner`,
+  `saga:plan-reviewer`, `saga:functional-tester`, `saga:release-worker`) at session start and again
+  at the end of a main-loop turn whenever the answer changed. Each type carries the role's
+  roles-library prompt behind a short saga hosting preamble, and the model and effort the run is
+  staffed at. A session with no active saga run registers nothing, and a type the current answer no
+  longer names is hidden from the model. On every request a `saga:<role>` subagent makes, the mod
+  compares the model and effort sent with the type's tier; a mismatch shows a toast and writes one
+  `tiering-drift[claude-agent-type]` line into the transcript. The mod never rewrites a request.
+- `scripts/role_agent_types.py --json` (`saga_role_agent_types.v1`) is the portable answer behind
+  the mod: the active-run rule from `next_step_context`, each role's tier from fleet-core's
+  staffing resolver, handed the run record's operator answer and recorded Jev raise for the role
+  so its one precedence order decides. Only the rows the operator actually answered go in as the
+  operator's (`run_record.operator_answered_roles`, which admission's staffing table now reads
+  too), so every other role keeps its repository overlay or recorded raise. Each prompt is read
+  from agent-launcher's roles library at call time through roster's own role mapping. Requires fleet-core's `claude-agent-type` spawn kind, added in the same release.
 - **A repository declares its functional-test environment once, in `.saga-profile.json`** (issue
   #97, pre-review testing U2). The `functional_test_environment` block names the `kind` (`local`,
   `emulator`, `ephemeral-stack` or `shared-nonprod`), the `deploy_command` (optional for `local`),
@@ -134,6 +150,12 @@
 
 ### Changed
 
+- Issue 106: `/work` dispatches a build unit as `saga:worker` with no `model` parameter when
+  Claude Code offers that type and its tier is the unit's resolved tier. Otherwise it uses a
+  generic agent with the resolved model and the effort rider, as before, and records which route
+  it used. The plan contract (`references/plan-save-contract.yaml`) lists the new
+  `claude-agent-type` spawn kind as `native`, and the plan skill's generated effort note was
+  regenerated to match.
 - **`branch_preview` and `branch_preview_command` migrate into the functional-test declaration**
   (issue #97). A profile with `branch_preview: true` and a command is read as an incomplete
   `ephemeral-stack`, `private` declaration with that deploy command, and admission asks once with

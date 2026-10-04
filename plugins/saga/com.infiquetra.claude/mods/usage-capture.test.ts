@@ -86,6 +86,11 @@ function fake(on: On): Fake {
   on('agent.list', async () => ({ value: state.agents.map((a) => ({ ...a, description: '', status: 'running' })) }))
   on('ui.log', async () => ({ value: undefined }))
   on('process.run', async ($, e) => {
+    // The agent-types mod (issue #106) asks at session start which saga types to register: none here.
+    if (e.argv.some((arg: string) => arg.endsWith('role_agent_types.py'))) {
+      const none = JSON.stringify({ schema: 'saga_role_agent_types.v1', active: false, issue: null, types: [], skipped: [], fingerprint: 'none' })
+      return { value: { exitCode: 0, stdout: none, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     state.runs.push([...e.argv])
     if (e.argv.includes('unit-for')) {
       const view = { schema: 'run_status.v1', repo_root: WORKTREE, branch: 'orch/r1-u2', match: state.match }

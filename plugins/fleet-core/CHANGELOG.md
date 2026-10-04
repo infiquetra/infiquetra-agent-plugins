@@ -13,6 +13,11 @@ The catalog requires `python>=3.12`.
 
 ### Added
 
+- `fleet_commons.effort_rider` understands a fourth spawn kind, `claude-agent-type`: a subagent
+  dispatched as an agent type whose definition carries the resolved model and effort (saga's
+  Claude Code mod, issue #106). It is a real-knob pass-through, so `inject_effort` returns the
+  prompt unchanged and `reconcile_effort` compares the observed request effort through
+  `manifest_effort`. The `agent` rider is unchanged and stays the fallback.
 - `staffing.json` gains the `implementation` work shape at `opus/medium`, for implementing a
   settled plan unit including its tests, and the `worker` role now points at it (issue #93). The
   merging and release workers stay on `mechanical` at `sonnet/medium`.
@@ -35,6 +40,10 @@ The catalog requires `python>=3.12`.
 
 ### Changed
 
+- `references/staffing.md` describes the registered-type route and keeps the rider as the
+  fallback, records that Claude Code 2.1.289 honors `effort:` in a plugin agent file (read from the
+  build's loader), and corrects the agent-file paragraph: agent files live under the Claude
+  adapter, and the lint it named is not in this repository.
 - `intent_envelope.recommend_tier` takes its base from `staffing.resolve_shape` (so the repository
   overlay applies) and accepts `root=`.
 - `render_tier_table.py` renders an `implementation` row.
