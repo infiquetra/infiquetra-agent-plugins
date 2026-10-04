@@ -99,9 +99,9 @@
       }
     },
     "clients": {
-      "description": "Exactly the ten installed clients, asserted by set equality against the canonical list rather than by count, so a substituted or renamed client cannot pass as covered.",
+      "description": "Exactly the installed clients in force on `assessed_on`, asserted by set equality rather than by count, so a substituted or renamed client cannot pass as covered. Records assessed from 2026-10-04 cover nine clients (Agy replaced Gemini CLI); earlier records cover ten, which is why `Gemini CLI` stays an allowed name. The date-dependent set is enforced by check_compatibility_matrix.py.",
       "type": "array",
-      "minItems": 10,
+      "minItems": 9,
       "maxItems": 10,
       "items": {
         "type": "object",

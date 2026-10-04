@@ -221,8 +221,11 @@ gemini skills link <skill directory>
 ```
 
 Standard input is `y`. Closed stdin hangs this command instead of declining,
-which is why the assessment supplies the confirmation and a deadline. The
-script does the same. It then records the skill in
+which is why the assessment supplied the confirmation and a deadline. The
+script does the same. Gemini CLI has not been an assessed client since
+2026-10-04, when Agy replaced it; the placement stays for a machine that still
+has the binary, and the assessed clients are listed in
+[the port runbook](portable-plugin-port.md#client-assessment). It then records the skill in
 `~/.gemini/.infiquetra-skills.json`.
 
 `--check` reads `~/.gemini/skills/<skill>`. A symlink must resolve to the skill

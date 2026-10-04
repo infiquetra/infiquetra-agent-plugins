@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the ten-client compatibility matrix against its closed schema.
+"""Validate the client compatibility matrix against its closed schema.
 
 Standard library only, and no network access, matching ``check_repo.py``: this
 repository's validators must keep passing when a package index is unreachable,
@@ -13,8 +13,9 @@ claims is derived from that block.
 
 What this validator exists to enforce, which prose cannot:
 
-* **Coverage is real.** All ten named clients are present, asserted by set
-  equality against the canonical list rather than by count, so a substituted or
+* **Coverage is real.** Every named client is present, asserted by set
+  equality against the roster in force on the record's ``assessed_on`` date
+  (nine clients from 2026-10-04, ten before) rather than by count, so a substituted or
   renamed client cannot pass as covered. Every client carries all four stage
   results; a row missing a stage fails even when it carries an overall status.
   That is the defect this check closes: a row that stops at its first failure
@@ -57,8 +58,8 @@ its record::
 fail-closed: a document has to say something to be let off it.
 
 A third status, ``notice``, is for a document that explains *why* no live
-matrix exists yet -- a package whose version moved with no fresh ten-client
-run -- without itself performing an assessment. A notice document carries no
+matrix exists yet -- a package whose version moved with no fresh client
+assessment -- without itself performing an assessment. A notice document carries no
 ``$.package``/``$.clients`` record, is a valid target for another document's
 ``superseded-by``, is never counted as a current matrix, and is never treated
 as a matrix document at all. Declaring a document ``notice`` is the only way
@@ -128,10 +129,32 @@ FINGERPRINT_EXCLUDED_DIRECTORIES = frozenset(
 )
 FINGERPRINT_EXCLUDED_NAMES = frozenset({".DS_Store"})
 
-#: The ten installed clients the assessment must cover. Set equality against
-#: this tuple is the coverage assertion; a count is not, because a renamed or
-#: substituted client keeps the count intact while losing the coverage.
+#: The installed clients an assessment must cover. Set equality against the
+#: roster in force is the coverage assertion; a count is not, because a renamed
+#: or substituted client keeps the count intact while losing the coverage.
+#:
+#: There are two rosters because the machine changed. Agy replaced Gemini CLI,
+#: so assessments made from 2026-10-04 cover nine clients, while records made
+#: earlier honestly assessed ten and stay valid against the roster in force
+#: when they were made. Which roster a record answers to is read from its own
+#: required ``assessed_on`` date (see ``required_clients``). An earlier record
+#: stops being current when its package's version moves, which forces a fresh
+#: nine-client record, so the older roster retires on its own.
 CANONICAL_CLIENTS = (
+    "Claude Code",
+    "OpenAI Codex",
+    "Cursor Agent",
+    "Qwen",
+    "Grok",
+    "OpenCode",
+    "Muse",
+    "Agy",
+    "Hermes",
+)
+
+#: The ten-client roster that applied to every record assessed before
+#: ``NINE_CLIENT_ROSTER_FROM``.
+CANONICAL_CLIENTS_BEFORE_2026_10_04 = (
     "Claude Code",
     "OpenAI Codex",
     "Cursor Agent",
@@ -143,6 +166,22 @@ CANONICAL_CLIENTS = (
     "Agy",
     "Hermes",
 )
+
+#: The first ``assessed_on`` date checked against ``CANONICAL_CLIENTS``.
+NINE_CLIENT_ROSTER_FROM = "2026-10-04"
+
+
+def required_clients(record: dict[str, Any]) -> tuple[str, ...]:
+    """The client roster a record must cover, chosen by its own assessment date.
+
+    ISO-8601 dates compare correctly as strings. A record with no usable date
+    is held to the current roster; the schema already fails the missing date.
+    """
+    assessed_on = record.get("assessed_on")
+    if isinstance(assessed_on, str) and assessed_on < NINE_CLIENT_ROSTER_FROM:
+        return CANONICAL_CLIENTS_BEFORE_2026_10_04
+    return CANONICAL_CLIENTS
+
 
 STAGES = ("placement", "discovery", "load", "invocation")
 STAGE_RESULTS = ("executed", "blocked", "not-applicable")
@@ -517,7 +556,7 @@ def split_binding_problems(problems: list[str]) -> tuple[list[str], list[str]]:
     For a derived package every byte came from one pin, so a moved fingerprint
     meant a moved pin and binding the matrix to the tree was exactly right. An
     authored package's tree moves on every commit -- a typo fixed in a README
-    moves it -- and a ten-client run per commit is not a standard anyone will
+    moves it -- and a full client assessment per commit is not a standard anyone will
     keep. Left as a failure, the rule would be switched off within a week, which
     is worse than a rule that reports.
 
@@ -782,13 +821,15 @@ def check_coverage(record: dict[str, Any]) -> list[str]:
 
     names = [client.get("name") for client in clients if isinstance(client, dict)]
     found = set(names)
-    expected = set(CANONICAL_CLIENTS)
+    roster = required_clients(record)
+    expected = set(roster)
     for missing in sorted(expected - found):
         problems.append(f"$.clients: {missing!r} is named in the assessment but has no row")
     for extra in sorted(found - expected):
         problems.append(
-            f"$.clients: {extra!r} is not one of the ten named clients; a substituted or "
-            "renamed client cannot pass as covered"
+            f"$.clients: {extra!r} is not one of the {len(roster)} clients assessed on "
+            f"{record.get('assessed_on')}; a substituted or renamed client cannot pass "
+            "as covered"
         )
     duplicates = sorted({name for name in names if names.count(name) > 1 and name is not None})
     for duplicate in duplicates:
@@ -1218,7 +1259,7 @@ def current_matrix_report(root: Path | None = None) -> list[str]:
     """One ``<package>: current matrix: yes/none`` line per ported package.
 
     A package with no live matrix is not itself a failure -- the 2026-09-22
-    version-bound rule allows that state until a fresh ten-client run lands.
+    version-bound rule allows that state until a fresh client assessment lands.
     This report is what makes the state visible instead of silent; nothing
     here fails the run by itself.
     """

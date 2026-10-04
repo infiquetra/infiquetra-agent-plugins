@@ -3,8 +3,11 @@
 
 The ten placements are the ones the compatibility matrices and
 ``scripts/assess_clients.py`` already recorded. This script does not invent a
-second method. It also does not run anything unless ``--execute`` is passed;
-the default prints every command and file operation and stops.
+second method. Gemini CLI's placement comes from the matrices made before
+2026-10-04; the assessment has covered nine clients since then, because Agy
+replaced Gemini CLI, but the placement stays for a machine that still has it.
+It also does not run anything unless ``--execute`` is passed; the default
+prints every command and file operation and stops.
 
 Two calls that are not obvious from the command list:
 

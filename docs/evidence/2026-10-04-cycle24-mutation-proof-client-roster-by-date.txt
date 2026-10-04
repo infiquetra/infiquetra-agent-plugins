@@ -1,0 +1,83 @@
+# Cycle-24 mutation proof - the client roster is chosen by the record's assessment date
+# Digests are bound by MutationProofBindingTest: change a graded file
+# without re-running this proof and the suite fails. Paths are repository-relative.
+#
+# Supersedes 2026-10-04-cycle23-mutation-proof-claude-module-sources.txt for
+# the binding test only. Cycle 23 is preserved unedited. Reason: Agy replaced
+# Gemini CLI on the operator's machine, so from 2026-10-04 the client assessment
+# covers nine clients. scripts/check_compatibility_matrix.py now holds two
+# rosters, CANONICAL_CLIENTS (nine) and CANONICAL_CLIENTS_BEFORE_2026_10_04
+# (ten, with Gemini CLI), and check_coverage takes the roster from
+# required_clients(record), which reads the record's own assessed_on date.
+# scripts/assess_clients.py no longer carries a Gemini CLI plan.
+#
+# The other three graded files were not edited and were not re-graded:
+#   plugins/unifi/scripts/site_profile.py
+#   scripts/check_repo.py
+#   scripts/port_config.py
+# Their cycle-23 digests are carried below.
+#
+# This cycle re-graded ONLY the roster choice in check_compatibility_matrix.py
+# (required_clients, the two roster constants, and check_coverage's
+# missing/extra loops) and the plan roster in assess_clients.py. Every other
+# guard in those two files was not re-patched here.
+#
+# Runner: each mutation is one exact string replacement in the named file, then
+# `python3 -m unittest tests.test_check_compatibility_matrix tests.test_assess_clients`,
+# then the pristine bytes are written back. MutationProofBindingTest is not in
+# those two modules, so it is excluded from grading by construction. Each
+# mutation names the first test that killed it. The run used a copy of the
+# release branch holding only this change, so the suite started green; the
+# release branch's version bumps make four 2026-09-22 records stale until their
+# fresh records land in the next commit.
+#
+# One round of this proof before the final one found two survivors: moving the
+# cut-over date to 2026-10-05, and holding an undated record to the ten-client
+# roster. test_the_roster_is_chosen_by_the_assessment_date was added for both.
+
+## two files -- one guard each, eleven mutations, eleven killed
+
+## MUTATION 1: the date rule ignored: every record is held to the nine-client roster
+   Killed by: tests.test_check_compatibility_matrix.BaselineTest.test_the_constructed_record_is_clean
+   FAILED (failures=94)
+## MUTATION 2: the date rule inverted: every record is held to the ten-client roster
+   Killed by: tests.test_check_compatibility_matrix.CoverageTest.test_a_record_dated_from_2026_10_04_that_still_has_gemini_cli_fails
+   FAILED (failures=3)
+## MUTATION 3: the boundary moved: `<` replaced by `<=`, so 2026-10-04 itself answers to ten
+   Killed by: tests.test_check_compatibility_matrix.CoverageTest.test_a_record_dated_from_2026_10_04_with_the_nine_clients_passes
+   FAILED (failures=2)
+## MUTATION 4: the cut-over date moved one day later, to 2026-10-05
+   Killed by: tests.test_check_compatibility_matrix.CoverageTest.test_a_record_dated_from_2026_10_04_with_the_nine_clients_passes
+   FAILED (failures=2)
+## MUTATION 5: the wire: check_coverage reads the ten-client constant instead of required_clients(record)
+   Killed by: tests.test_check_compatibility_matrix.CoverageTest.test_a_record_dated_from_2026_10_04_that_still_has_gemini_cli_fails
+   FAILED (failures=2)
+## MUTATION 6: Gemini CLI added back to the nine-client roster
+   Killed by: tests.test_check_compatibility_matrix.CoverageTest.test_a_record_dated_from_2026_10_04_that_still_has_gemini_cli_fails
+   FAILED (failures=6)
+## MUTATION 7: Gemini CLI dropped from the ten-client roster
+   Killed by: tests.test_check_compatibility_matrix.CoverageTest.test_a_record_dated_before_2026_10_04_missing_a_client_fails
+   FAILED (failures=75)
+## MUTATION 8: extra rows no longer refused: the `found - expected` loop iterates nothing
+   Killed by: tests.test_check_compatibility_matrix.CoverageTest.test_a_record_dated_from_2026_10_04_that_still_has_gemini_cli_fails
+   FAILED (failures=2)
+## MUTATION 9: missing rows no longer refused: the `expected - found` loop iterates nothing
+   Killed by: tests.test_check_compatibility_matrix.CoverageTest.test_a_record_dated_before_2026_10_04_missing_a_client_fails
+   FAILED (failures=4)
+## MUTATION 10: a record with no string date is held to the ten-client roster
+   Killed by: tests.test_check_compatibility_matrix.CoverageTest.test_the_roster_is_chosen_by_the_assessment_date
+   FAILED (failures=1)
+## MUTATION 11: the Muse plan renamed Gemini CLI, keeping nine plans
+   Killed by: tests.test_assess_clients.EntrypointPathTest.test_agent_launcher_entrypoint_is_deliverable_to_every_skill_scoped_client
+   FAILED (failures=4, errors=7)
+
+## RESTORED
+# carried from cycle 23, not re-graded in this cycle:
+plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
+scripts/assess_clients.py sha256: 375eccd3b7252cd7ae1754682fa7bb4b5fe8b1a1a1536c5bc4f74b0b35a684e1
+scripts/check_compatibility_matrix.py sha256: c5c5752c038325c63a67c7c790ef88922c6c30e9a520ea77c7ad7d4fdc489808
+# carried from cycle 23, not re-graded in this cycle:
+scripts/check_repo.py sha256: 9c4dc07fe9156a8066ba3717d8ed7358a82c20209d18f5c1d7ef687da52cd172
+# carried from cycle 23, not re-graded in this cycle:
+scripts/port_config.py sha256: 56216b7c8018b361d611356e21bc2383cb7d71ebf478f28436fee3c5c8e46b17
+byte-identical to pristine: YES
