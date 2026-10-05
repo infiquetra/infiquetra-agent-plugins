@@ -1,0 +1,209 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-05T19:08:04.423199+00:00",
+  "created_at": "2026-10-05T19:09:51.690569+00:00",
+  "created_issue_number": 151,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/151",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-05-saga-build-loop-tool-framework-reporting-only-wh.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C4a-tool-framework.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "medium",
+    "confidence": 0.56,
+    "distribution": {
+      "high": 0.56,
+      "low": 0.0,
+      "medium": 0.22,
+      "very-high": 0.22
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": true,
+    "overridden": true,
+    "score": 1.99,
+    "suggested": "high"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-05-saga-build-loop-tool-framework-reporting-only-wh.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-05\ntopic: saga-review-redesign\nmaturity: requirements-ready\n---\n\n# saga: build-loop tool framework reporting only what a change introduces\n\n### Objective\n\nOne saga script runs the pinned review tools on a change and reports only what the change introduces, as finding and measurement records. It reads the change through one diff reader, filters line findings to the changed lines, and compares base and head runs for whole-project results and for every type checker. It reads changed-line coverage from the three standard report formats, runs the tests once more from a different working directory and home directory, and marks every missing tool, version other than the pin and known gap as degraded. It holds the outcome rules for tool findings that no lens-table row names, and ships with the tools every language gets (Semgrep, gitleaks, osv-scanner, jscpd, lizard); C4b and C4c plug the language adapters into it.\n\n### Intent\n\nThis card implements plan.md, Change 3 (\"Tools per lens, reporting only what the change introduces\") and Change 2's \"How the tools run\", with the tool outcomes the operator decided on 5 October 2026.\n\nWhat is true on origin/main today:\n\n- The build ",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C4a-tool-framework.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-05-saga-review-redesign/cards/C4a-tool-framework.md",
+    "ref": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C4a-tool-framework.md",
+    "title": "saga: build-loop tool framework reporting only what a change introduces",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "enhancement",
+        "confidence": 0.95,
+        "distribution": {
+          "capability": 0.96,
+          "context-update": 0.0,
+          "defect": 0.0,
+          "enhancement": 0.03,
+          "exploration": 0.01
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": true,
+        "suggested": "capability"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C4a-tool-framework.md",
+        "confidence": 0.08,
+        "distribution": {
+          "improve-agent-plugins": 0.54,
+          "none": 0.46
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "improve-agent-plugins"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "medium",
+        "confidence": 0.56,
+        "distribution": {
+          "high": 0.56,
+          "low": 0.0,
+          "medium": 0.22,
+          "very-high": 0.22
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": true,
+        "overridden": true,
+        "score": 1.99,
+        "suggested": "high"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.9,
+        "distribution": {
+          "Awaiting operator input": 0.0,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.0,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.04,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.0,
+          "Discovering": 0.0,
+          "Execution planning": 0.02,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.02,
+          "Ready for Planning": 0.92,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "saga: build-loop tool framework reporting only what a change introduces",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "enhancement",
+    "confidence": 0.95,
+    "distribution": {
+      "capability": 0.96,
+      "context-update": 0.0,
+      "defect": 0.0,
+      "enhancement": 0.03,
+      "exploration": 0.01
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": true,
+    "suggested": "capability"
+  },
+  "updated_at": "2026-10-05T19:10:10.125853+00:00"
+}

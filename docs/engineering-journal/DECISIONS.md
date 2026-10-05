@@ -1,5 +1,44 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-10-05
+
+### Saga's code review becomes mostly deterministic, and a lens blocks only after a corpus measures it
+
+**Decision.** The plan in `docs/brainstorms/2026-10-05-saga-review-redesign/plan.md` replaces
+saga's lens-roster code review; issue #147 and its children on the Operations board build it. Tools
+and our own pattern checks produce findings, and a sweep of narrow Jev (TypeSafe's classifier)
+questions says where to look. One targeted LLM (large language model) reviewer answers every
+where-to-look item; on high and very-high risk cards a second one, blind to the first, does too. An
+LLM finding blocks only when the review command's own sandboxed re-run of its test fails. A fixed
+formula grades each lens A to F, and merge needs every lens at C or better. Rounds stop when every
+lens is at C or better, when a repair round leaves the same blocking items, or at round 3. Each lens only
+reports until a private corpus of known defects and clean changes (`infiquetra/saga-review-corpus`)
+shows it clears fixed pass marks: security, for example, must block at least 9 of 10 known blocking
+defects and at most 1 of 10 clean changes. Reproduced data loss or a reproduced security exposure
+blocks regardless. The reviewer runs with its normal configuration (instruction files, plugins,
+hooks) and the subscription sign-in, from any vendor agent-launcher staffs, the same way in real
+reviews and in the corpus harness. Every review is traced to Langfuse with what later happened to
+its findings.
+
+**Rationale.** A round ran one reviewer session per selected lens, 4 to 15 of them, each re-reading
+the whole branch, and was accepted only when every selected lens had a scorer qualified in the
+lifecycle repository's executor ledger. That ledger is empty on purpose, so rounds ended
+`review_incomplete` (`plugins/saga/scripts/review_consensus.py:2213-2221` at 1f7137d). The spend
+bought few decisions, and nothing measured whether a lens caught what it claimed to.
+
+**Rejected alternatives.** Tune the lens roster and consensus scoring: the cost grows with lens
+sessions and the ledger gate stays unmet. Measure the reviewer in safe mode or bare mode for
+repeatable runs: real reviews always load instruction files and plugins and may move to another
+vendor, so a stripped reviewer is a different agent (bare mode also needs a billed API key); the
+harness instead turns a component off only where a comparison shows it does not change results.
+Split history cases between the tuning and held-out halves by hash: that doubles the history
+defects to prove, so history goes to the held-out half only and public sets and planted defects
+fill tuning. Let Jev decide when rounds stop: a formula is cheaper and can be audited.
+
+**Revisit when.** A lens cannot clear its pass marks after its questions and tools are tuned on the
+corpus; a different vendor becomes the usual reviewer; or Langfuse outcomes show blocked findings
+later judged wrong more often than the pass marks allow.
+
 ## 2026-10-04
 
 ### Claude Code installs this catalog from the GitHub repository, not the local checkout

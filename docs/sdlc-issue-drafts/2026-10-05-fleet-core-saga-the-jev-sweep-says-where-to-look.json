@@ -1,0 +1,209 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-05T19:08:07.141226+00:00",
+  "created_at": "2026-10-05T19:11:38.699367+00:00",
+  "created_issue_number": 156,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/156",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-05-fleet-core-saga-the-jev-sweep-says-where-to-look.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C6-jev-sweep.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "medium",
+    "confidence": 0.59,
+    "distribution": {
+      "high": 0.37,
+      "low": 0.0,
+      "medium": 0.61,
+      "very-high": 0.02
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": true,
+    "overridden": false,
+    "score": 1.4,
+    "suggested": "medium"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-05-fleet-core-saga-the-jev-sweep-says-where-to-look.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-05\ntopic: saga-review-redesign\nmaturity: requirements-ready\n---\n\n# fleet-core + saga: the Jev sweep says where to look in a change\n\n### Objective\n\nSaga cuts each change into small pieces with C4a's diff reader, and fleet-core's new `jev sweep` asks each piece the four lenses' bank questions through a swappable classifier (TypeSafe Jev today). The result is a where-to-look list: each location with the questions that fired, highest probability first, within a cap of 30 items and $1 per review. Saga runs the sweep from a build-time bundle, so the build loop and the review command share one sweep, and fleet-core's TypeSafe policy allows the code the sweep sends.\n\n### Intent\n\nToday (infiquetra-agent-plugins at origin/main 1f7137d):\n\n- `jev` is the command-line front door to the TypeSafe client. Its subcommands are `ask`, `eval` and one per registered verb (`plugins/fleet-core/scripts/jev.py:180-221`). Each verb is a fixed question set about one whole state (`scripts/fleet_commons/jev_verbs.py:100-394`). Nothing splits a change into pieces; the `lenses` verb asks five yes/no questions of a whole diff (lines 171-182).\n- The TypeSafe client redacts state and questions bef",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C6-jev-sweep.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-05-saga-review-redesign/cards/C6-jev-sweep.md",
+    "ref": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C6-jev-sweep.md",
+    "title": "fleet-core + saga: the Jev sweep says where to look in a change",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "enhancement",
+        "confidence": 0.95,
+        "distribution": {
+          "capability": 0.96,
+          "context-update": 0.01,
+          "defect": 0.0,
+          "enhancement": 0.02,
+          "exploration": 0.01
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": true,
+        "suggested": "capability"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C6-jev-sweep.md",
+        "confidence": 0.2,
+        "distribution": {
+          "improve-agent-plugins": 0.6,
+          "none": 0.4
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "improve-agent-plugins"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "medium",
+        "confidence": 0.59,
+        "distribution": {
+          "high": 0.37,
+          "low": 0.0,
+          "medium": 0.61,
+          "very-high": 0.02
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": true,
+        "overridden": false,
+        "score": 1.4,
+        "suggested": "medium"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.93,
+        "distribution": {
+          "Awaiting operator input": 0.0,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.0,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.02,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.0,
+          "Discovering": 0.0,
+          "Execution planning": 0.02,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.02,
+          "Ready for Planning": 0.93,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "fleet-core + saga: the Jev sweep says where to look in a change",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "enhancement",
+    "confidence": 0.95,
+    "distribution": {
+      "capability": 0.96,
+      "context-update": 0.01,
+      "defect": 0.0,
+      "enhancement": 0.02,
+      "exploration": 0.01
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": true,
+    "suggested": "capability"
+  },
+  "updated_at": "2026-10-05T19:11:57.147977+00:00"
+}

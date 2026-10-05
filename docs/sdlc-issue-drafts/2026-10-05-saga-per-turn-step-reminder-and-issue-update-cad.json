@@ -1,0 +1,209 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-05T19:08:14.386847+00:00",
+  "created_at": "2026-10-05T19:16:20.324583+00:00",
+  "created_issue_number": 169,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/169",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-05-saga-per-turn-step-reminder-and-issue-update-cad.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/O2-step-reminder-and-update-cadence.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "low",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "low",
+    "confidence": 0.66,
+    "distribution": {
+      "high": 0.04,
+      "low": 0.71,
+      "medium": 0.25,
+      "very-high": 0.0
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": false,
+    "overridden": false,
+    "score": 0.34,
+    "suggested": "low"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-05-saga-per-turn-step-reminder-and-issue-update-cad.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-05\ntopic: saga-review-redesign\nmaturity: requirements-ready\n---\n\n# saga: per-turn step reminder and issue update cadence\n\n### Objective\n\nEvery operator turn in a session working an active saga run carries one line naming the run, the\nstep it is in and the step that comes next, so a session that drifts from the lifecycle is reminded\nwhere it should be. The run's GitHub issue is updated after plan review, after every code-review\nround, at every stall or restart, and every few hours during a long step, so the issue never goes\nquiet while work continues.\n\n### Intent\n\nThis card is card 10 of the 4 October 2026 enhancement plan, which plan.md (\"Decisions added when\nthe plan became issues\") files as a card of its own, outside the review redesign.\n\nWhat is true today, at origin/main (1f7137d), with paths under `plugins/saga/`:\n\n- The prompt hook runs on every operator prompt (`com.infiquetra.claude/hooks/hooks.json`,\n  `UserPromptSubmit`, 5-second timeout). It prints at most one line, and only when the prompt names\n  exactly one saga command, or asks to carry on and the recorded next step names one\n  (`hooks/prompt_suggestion_hook.py:75-95`). Every other prompt gets silen",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/O2-step-reminder-and-update-cadence.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-05-saga-review-redesign/cards/O2-step-reminder-and-update-cadence.md",
+    "ref": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/O2-step-reminder-and-update-cadence.md",
+    "title": "saga: per-turn step reminder and issue update cadence",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "enhancement",
+        "confidence": 0.86,
+        "distribution": {
+          "capability": 0.1,
+          "context-update": 0.01,
+          "defect": 0.0,
+          "enhancement": 0.89,
+          "exploration": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "enhancement"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/O2-step-reminder-and-update-cadence.md",
+        "confidence": 0.13,
+        "distribution": {
+          "improve-agent-plugins": 0.56,
+          "none": 0.44
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "improve-agent-plugins"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "low",
+        "confidence": 0.66,
+        "distribution": {
+          "high": 0.04,
+          "low": 0.71,
+          "medium": 0.25,
+          "very-high": 0.0
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": false,
+        "overridden": false,
+        "score": 0.34,
+        "suggested": "low"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.69,
+        "distribution": {
+          "Awaiting operator input": 0.01,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.01,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.08,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.01,
+          "Discovering": 0.0,
+          "Execution planning": 0.07,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.01,
+          "Integrating": 0.0,
+          "Needs clarification": 0.01,
+          "Ready for Active": 0.08,
+          "Ready for Planning": 0.72,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "saga: per-turn step reminder and issue update cadence",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "enhancement",
+    "confidence": 0.86,
+    "distribution": {
+      "capability": 0.1,
+      "context-update": 0.01,
+      "defect": 0.0,
+      "enhancement": 0.89,
+      "exploration": 0.0
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": false,
+    "suggested": "enhancement"
+  },
+  "updated_at": "2026-10-05T19:16:36.704308+00:00"
+}

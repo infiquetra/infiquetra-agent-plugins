@@ -1,0 +1,209 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-05T19:08:05.542080+00:00",
+  "created_at": "2026-10-05T19:10:35.265234+00:00",
+  "created_issue_number": 153,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/153",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-05-saga-review-tools-for-typescript-dart-rust-and-s.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C4c-tools-typescript-dart-rust-swift.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "medium",
+    "confidence": 0.52,
+    "distribution": {
+      "high": 0.53,
+      "low": 0.0,
+      "medium": 0.41,
+      "very-high": 0.06
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": true,
+    "overridden": true,
+    "score": 1.64,
+    "suggested": "high"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-05-saga-review-tools-for-typescript-dart-rust-and-s.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-05\ntopic: saga-review-redesign\nmaturity: requirements-ready\n---\n\n# saga: review tools for TypeScript, Dart, Rust and Swift\n\n### Objective\n\nSaga's tool runner from C4a gains adapters for TypeScript, Dart, Rust and Swift. Each tool runs at its pinned version on a change, and each result becomes a record carrying the lens-table row and outcome plan.md fixes for it, or, where no row names the finding, the outcome C4a's rules give it from the tool's own level. Tests run in random order through each runner's own shuffle option where one exists. The known gaps run degraded, never as a pass: Swift dependency audits, Flutter branch coverage, Rust branch coverage on a stable toolchain, Muter on Linux, random test order in Rust and Swift, and blocking the network in tests outside Python.\n\n### Intent\n\nThis card implements the TypeScript, Dart, Rust and Swift rows of plan.md's \"Default tools\" table (Change 2) and its list of known gaps, mapped onto the four lens tables in \"Lens by lens\", with the outcomes the operator decided on 5 October 2026 for findings those tables never named.\n\nWhat is true on origin/main today: saga runs no tool for these languages. The build loop's chec",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C4c-tools-typescript-dart-rust-swift.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-05-saga-review-redesign/cards/C4c-tools-typescript-dart-rust-swift.md",
+    "ref": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C4c-tools-typescript-dart-rust-swift.md",
+    "title": "saga: review tools for TypeScript, Dart, Rust and Swift",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "enhancement",
+        "confidence": 0.92,
+        "distribution": {
+          "capability": 0.94,
+          "context-update": 0.01,
+          "defect": 0.0,
+          "enhancement": 0.05,
+          "exploration": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": true,
+        "suggested": "capability"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C4c-tools-typescript-dart-rust-swift.md",
+        "confidence": 0.16,
+        "distribution": {
+          "improve-agent-plugins": 0.58,
+          "none": 0.42
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "improve-agent-plugins"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "medium",
+        "confidence": 0.52,
+        "distribution": {
+          "high": 0.53,
+          "low": 0.0,
+          "medium": 0.41,
+          "very-high": 0.06
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": true,
+        "overridden": true,
+        "score": 1.64,
+        "suggested": "high"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.92,
+        "distribution": {
+          "Awaiting operator input": 0.0,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.0,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.01,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.0,
+          "Discovering": 0.0,
+          "Execution planning": 0.02,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.02,
+          "Ready for Planning": 0.9400000000000001,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "saga: review tools for TypeScript, Dart, Rust and Swift",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "enhancement",
+    "confidence": 0.92,
+    "distribution": {
+      "capability": 0.94,
+      "context-update": 0.01,
+      "defect": 0.0,
+      "enhancement": 0.05,
+      "exploration": 0.0
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": true,
+    "suggested": "capability"
+  },
+  "updated_at": "2026-10-05T19:10:52.137403+00:00"
+}

@@ -1,0 +1,209 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-05T19:08:14.935631+00:00",
+  "created_at": "2026-10-05T19:16:41.402527+00:00",
+  "created_issue_number": 170,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/170",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-05-saga-budget-and-proportionality-at-admission-as.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/O3-budget-at-admission.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "medium",
+    "confidence": 0.83,
+    "distribution": {
+      "high": 0.15,
+      "low": 0.01,
+      "medium": 0.84,
+      "very-high": 0.0
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": false,
+    "overridden": false,
+    "score": 1.15,
+    "suggested": "medium"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-05-saga-budget-and-proportionality-at-admission-as.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-05\ntopic: saga-review-redesign\nmaturity: requirements-ready\n---\n\n# saga: budget and proportionality at admission, as guidance\n\n### Objective\n\nAt admission the operator records what the issue is worth and a spend budget for the run. The\nbudget defaults by the run's risk tier and the operator may change it. It is guidance, not a gate:\nwhen the run's spend reaches 50% and then 100% of the budget, saga raises a notice and comments on\nthe issue, and the run carries on. `/plan` reports the plan's size against a target and suggests\nplanning a large parent's children one at a time.\n\n### Intent\n\nThis card is card 11 of the 4 October 2026 enhancement plan, which plan.md (\"Decisions added when\nthe plan became issues\") files as a card of its own, outside the review redesign.\n\nWhat is true today, at origin/main (1f7137d), with paths under `plugins/saga/`:\n\n- Admission is asked once, at the front of a run. `scripts/admission.py` never prompts: it prints\n  the questions that remain and records an answers file (`:1-28`). `/plan` puts the questions to the\n  operator (`skills/plan/SKILL.md:78-188`).\n- Its ten questions (`scripts/admission.py:117-160`) include the risk tier, one of ",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/O3-budget-at-admission.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-05-saga-review-redesign/cards/O3-budget-at-admission.md",
+    "ref": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/O3-budget-at-admission.md",
+    "title": "saga: budget and proportionality at admission, as guidance",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "enhancement",
+        "confidence": 0.74,
+        "distribution": {
+          "capability": 0.2,
+          "context-update": 0.01,
+          "defect": 0.0,
+          "enhancement": 0.79,
+          "exploration": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "enhancement"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/O3-budget-at-admission.md",
+        "confidence": 0.16,
+        "distribution": {
+          "improve-agent-plugins": 0.58,
+          "none": 0.42
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "improve-agent-plugins"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "medium",
+        "confidence": 0.83,
+        "distribution": {
+          "high": 0.15,
+          "low": 0.01,
+          "medium": 0.84,
+          "very-high": 0.0
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": false,
+        "overridden": false,
+        "score": 1.15,
+        "suggested": "medium"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.85,
+        "distribution": {
+          "Awaiting operator input": 0.01,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.0,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.03,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.0,
+          "Discovering": 0.0,
+          "Execution planning": 0.03,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.01,
+          "Ready for Active": 0.05,
+          "Ready for Planning": 0.87,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "saga: budget and proportionality at admission, as guidance",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "enhancement",
+    "confidence": 0.74,
+    "distribution": {
+      "capability": 0.2,
+      "context-update": 0.01,
+      "defect": 0.0,
+      "enhancement": 0.79,
+      "exploration": 0.0
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": false,
+    "suggested": "enhancement"
+  },
+  "updated_at": "2026-10-05T19:16:59.686493+00:00"
+}

@@ -1,0 +1,209 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-05T19:08:02.863104+00:00",
+  "created_at": "2026-10-05T19:08:40.889615+00:00",
+  "created_issue_number": 148,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/148",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-05-saga-review-records-validation-and-the-a-f-formu.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C1-review-records-and-formula.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "medium",
+    "confidence": 0.58,
+    "distribution": {
+      "high": 0.28,
+      "low": 0.03,
+      "medium": 0.64,
+      "very-high": 0.05
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": true,
+    "overridden": false,
+    "score": 1.36,
+    "suggested": "medium"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-05-saga-review-records-validation-and-the-a-f-formu.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-05\ntopic: saga-review-redesign\nmaturity: requirements-ready\n---\n\n# saga: review records, validation and the A\u2013F formula\n\n### Objective\n\nSaga has one schema for the five review records (finding, measurement, where-to-look item, lens\ngrade, review run) and the builder record, a validator that sends back any malformed record, and a\nformula in code that gives each input an outcome, each lens an A\u2013F grade and the change a merge\nanswer. A writer stores the records in the run record with every field.\n\n### Intent\n\nToday on origin/main (1f7137d), paths under `plugins/saga/`:\n\n- Two different shapes are both called `review_result.v2` (`scripts/review_consensus.py:868`,\n  `scripts/review_result.py:813`); the command-line writer drops fields when it rebuilds one\n  (`scripts/review_result.py:1140-1191`). Results carry no tokens, cost or time.\n- Severity is a priority label, P0 to P3, that the reviewer writes (`scripts/review_result.py:120`,\n  `:196`); `flag_severity` (`:598`) only suggests one, and only tests call it.\n- A lens passes on 0\u201310 scores against a strictness ladder (`scripts/review_consensus.py:128`,\n  `:2161`); one lens with no usable result makes the review `revie",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C1-review-records-and-formula.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-05-saga-review-redesign/cards/C1-review-records-and-formula.md",
+    "ref": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C1-review-records-and-formula.md",
+    "title": "saga: review records, validation and the A\u2013F formula",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "enhancement",
+        "confidence": 0.77,
+        "distribution": {
+          "capability": 0.82,
+          "context-update": 0.01,
+          "defect": 0.01,
+          "enhancement": 0.12,
+          "exploration": 0.04
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": true,
+        "suggested": "capability"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C1-review-records-and-formula.md",
+        "confidence": 0.05,
+        "distribution": {
+          "improve-agent-plugins": 0.47,
+          "none": 0.53
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "none"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "medium",
+        "confidence": 0.58,
+        "distribution": {
+          "high": 0.28,
+          "low": 0.03,
+          "medium": 0.64,
+          "very-high": 0.05
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": true,
+        "overridden": false,
+        "score": 1.36,
+        "suggested": "medium"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.93,
+        "distribution": {
+          "Awaiting operator input": 0.0,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.0,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.02,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.0,
+          "Discovering": 0.0,
+          "Execution planning": 0.02,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.02,
+          "Ready for Planning": 0.93,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "saga: review records, validation and the A\u2013F formula",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "enhancement",
+    "confidence": 0.77,
+    "distribution": {
+      "capability": 0.82,
+      "context-update": 0.01,
+      "defect": 0.01,
+      "enhancement": 0.12,
+      "exploration": 0.04
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": true,
+    "suggested": "capability"
+  },
+  "updated_at": "2026-10-05T19:09:00.144449+00:00"
+}

@@ -1,0 +1,209 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-05T19:08:12.134712+00:00",
+  "created_at": "2026-10-05T19:14:53.805425+00:00",
+  "created_issue_number": 165,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/165",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-05-saga-mods-review-pane-merge-confirmation-run-ban.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C14-review-mods.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "medium",
+    "confidence": 0.72,
+    "distribution": {
+      "high": 0.25,
+      "low": 0.01,
+      "medium": 0.73,
+      "very-high": 0.01
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": false,
+    "overridden": false,
+    "score": 1.26,
+    "suggested": "medium"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-05-saga-mods-review-pane-merge-confirmation-run-ban.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-05\ntopic: saga-review-redesign\nmaturity: requirements-ready\n---\n\n# saga mods: review pane, merge confirmation, run band and setup pane\n\n### Objective\n\nInside Claude Code the operator watches a review live, confirms the merge in a pane, sees review\nstate and missing tools at a glance, and runs setup from a pane. Every screen draws from a document\na saga script prints and answers through that script. No mod computes a grade, a block or an\noutcome, and a pane that times out files nothing and leaves the merge to the run's recorded setting.\n\n### Intent\n\nToday (paths under `plugins/saga/com.infiquetra.claude/`):\n\n- Mods display state and collect answers; saga's scripts own state and policy (`mods/index.ts:1-6`).\n- `/review-view`, a command the review-pane mod registers, shows the latest code review result lens\n  by lens through `run_status.py review` (met, not met, not run or unscored, with finding counts),\n  polling the run record every five seconds (`mods/review-pane.tsx:1-22`, `:127-174`).\n- No merge-confirmation pane: `/work` asks a question (`plugins/saga/skills/work/SKILL.md:93-95`).\n- The band above the prompt shows one line per run, rendered by `run_status.py` f",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C14-review-mods.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-05-saga-review-redesign/cards/C14-review-mods.md",
+    "ref": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C14-review-mods.md",
+    "title": "saga mods: review pane, merge confirmation, run band and setup pane",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "enhancement",
+        "confidence": 0.79,
+        "distribution": {
+          "capability": 0.83,
+          "context-update": 0.02,
+          "defect": 0.0,
+          "enhancement": 0.14,
+          "exploration": 0.01
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": true,
+        "suggested": "capability"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C14-review-mods.md",
+        "confidence": 0.45,
+        "distribution": {
+          "improve-agent-plugins": 0.73,
+          "none": 0.27
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "improve-agent-plugins"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "medium",
+        "confidence": 0.72,
+        "distribution": {
+          "high": 0.25,
+          "low": 0.01,
+          "medium": 0.73,
+          "very-high": 0.01
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": false,
+        "overridden": false,
+        "score": 1.26,
+        "suggested": "medium"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.89,
+        "distribution": {
+          "Awaiting operator input": 0.0,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.0,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.02,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.01,
+          "Discovering": 0.0,
+          "Execution planning": 0.03,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.03,
+          "Ready for Planning": 0.91,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "saga mods: review pane, merge confirmation, run band and setup pane",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "enhancement",
+    "confidence": 0.79,
+    "distribution": {
+      "capability": 0.83,
+      "context-update": 0.02,
+      "defect": 0.0,
+      "enhancement": 0.14,
+      "exploration": 0.01
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": true,
+    "suggested": "capability"
+  },
+  "updated_at": "2026-10-05T19:15:12.068431+00:00"
+}
