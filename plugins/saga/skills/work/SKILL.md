@@ -949,8 +949,10 @@ acceptance rule from that reference):
   git rev-list <REVIEWED_SHA>..HEAD --count
   ```
 
-A count `> 0` means commits landed since the review: keep PR-ready blocked and re-run `/code-review`,
-capturing a fresh `REVIEWED_SHA`, before any PR/merge offer.
+A count `> 0` means commits landed since the review: keep PR-ready blocked and route the branch back
+through Phase 3.3 — run the combined-branch loop on the new head until it is green, take the new
+`REVIEWED_SHA` from `build_loop.py --handoff` exactly as §5.1 does, and then re-run `/code-review`,
+before any PR/merge offer.
 
 Allow an explicit operator override only with a **recorded** rationale (it flows into the issue comment
 via `--review-gate-override` for the review gate and `--doc-review-override` for the doc-review gate,

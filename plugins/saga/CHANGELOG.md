@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Issue 144: `/work` §5.3 no longer tells the worker to re-run `/code-review` while "capturing a
+  fresh `REVIEWED_SHA`". A stale branch goes back through the Phase 3.3 combined-branch loop, and
+  the new `REVIEWED_SHA` comes from `build_loop.py --handoff` exactly as §5.1 does, so no path into
+  code review skips the issue #100 gate.
+
 - Issue 175: on the terminal, the plan viewer and the review findings pane draw a Markdown table that is wider than the pane as labeled lines, with a rule between rows. A table that fits is drawn as written. A table that continues onto another page repeats its header and delimiter. The plan file is not changed. Desktop, VS Code and mobile are unchanged. The width is the pane body, measured from the text as written so a table judged to fit cannot overflow the pane.
 - Issue 175: a delimiter cell is one or more dashes with optional colons, so a wide table written with a one-dash delimiter is stacked with the others.
 
