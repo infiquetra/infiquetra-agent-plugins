@@ -6005,11 +6005,14 @@ def _fleet_commons(module: str) -> Any:
     the ordinary offline path keeps exactly the dependency graph it had before
     this card (plan KTD4, KTD6). The build-time bundle replaces
     fleet_commons_shim; the caller's module name is unchanged.
+
+    Loaded by path under a unique name (#111 CI): the old sys.path insert plus
+    short-name import let this package's bundle directory win later imports of
+    the same short name in a shared process, so saga's tier consults silently
+    ran against this package's `staffing` copy — whose bundle has no
+    `jev_verbs` — and failed open.
     """
-    bundled = str(Path(__file__).resolve().parent / "_bundled")
-    if bundled not in sys.path:
-        sys.path.insert(0, bundled)
-    return importlib.import_module(module)
+    return _load_bundled(module)
 
 
 def _issue_types_policy_text() -> str:

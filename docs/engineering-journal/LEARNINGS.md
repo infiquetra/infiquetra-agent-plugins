@@ -2,6 +2,25 @@
 
 ## 2026-10-05
 
+### A shared short-name import cache silently runs one plugin's code as another's
+
+**Evidence.** PR #174 (issue #111): 18 saga/orchestrate tier-judgment tests failed on CI while
+every suite passed alone. Mission-control's `_fleet_commons` inserted its `_bundled` directory at
+`sys.path[0]` and imported by short name; orchestrate's record test then cached
+mission-control's `staffing.py` under `sys.modules["staffing"]`, and saga's consults ran against
+a bundle without `jev_verbs` — failing open to "not-consulted" with no error. The fix loads by
+path under a unique name (the `_load_bundled` pattern already in the same file) and completes
+the bundle with `jev_verbs`; `tests/test_fleet_bundle.py` pins both.
+
+**Mechanism.** `sys.path` order plus short-name imports make module identity depend on who ran
+first in the process. The failure is silent twice over: the wrong copy is behavior-identical
+until the one missing sibling is needed, and the consult fails open by design, so the symptom
+lands far downstream as missing keys and absent files.
+
+**Generalizable rule.** In a shared process, load bundled modules by path under a unique name —
+never `sys.path.insert` plus a short import — and bundle every sibling the bundled code can
+reach, not just the entry points.
+
 ### An append-only evidence log needs a retirement marker, not just writers
 
 **Evidence.** Issue #111: `issue prepare` recorded the handoff source's file path as the card's

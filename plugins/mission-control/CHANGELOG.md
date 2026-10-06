@@ -15,6 +15,12 @@
   one `invalidation` record per pre-#111 verdict that logged a source path as the Objective.
   The log is append-only, so nothing is rewritten; the evaluation harness excludes invalidated
   verdicts from scoring. `--dry-run` reports first; `--log-dir` overrides the log location.
+- The bundle loader no longer inserts this package's `_bundled` directory into `sys.path` nor
+  imports by short name (#111 CI). In a process shared with saga's tests, the old loader let
+  this package's `staffing` copy win the short-name cache, and saga's tier consults silently
+  failed open against a bundle without `jev_verbs`. `_fleet_commons` now delegates to the
+  path-scoped `_load_bundled`, and the bundle carries `jev_verbs` so the bundled `staffing`
+  copy can consult on its own.
 
 ### Tests
 
@@ -25,6 +31,8 @@
   objective override and a null label; with `--objective` the comparison uses that value.
 - New `tests/test_issue_invalidate_bogus_objectives.py`: dry-run writes nothing, a run retires
   only the bogus objective verdicts with the originals byte-identical, and a rerun is a no-op.
+- New `tests/test_fleet_bundle.py`: bundled loads leave `sys.path` and the short-name cache
+  untouched, and the bundled `staffing` copy runs a tier consult instead of failing open.
 
 ## [2.21.2] - 2026-10-04
 
