@@ -1,0 +1,209 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-04T16:08:40.714633+00:00",
+  "created_at": "2026-10-04T16:08:44.432962+00:00",
+  "created_issue_number": 144,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/144",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-04-saga-a-stale-review-re-enters-code-review-withou.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-04-saga-review-fixes/stale-review-gate.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "low",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "low",
+    "confidence": 0.8,
+    "distribution": {
+      "high": 0.04,
+      "low": 0.87,
+      "medium": 0.09,
+      "very-high": 0.0
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": false,
+    "overridden": false,
+    "score": 0.2,
+    "suggested": "low"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-04-saga-a-stale-review-re-enters-code-review-withou.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-04\ntopic: saga-review-fixes\nmaturity: requirements-ready\n---\n\n# saga: a stale review re-enters code review without the combined-branch functional run\n\n### Objective\n\nMake `/work`'s stale-review path send the branch back through the combined-branch functional run\nbefore it reviews again, so no path into code review skips the gate that #100 added.\n\n### Intent\n\nIssue #100 made a passing combined-branch functional run the gate for code review. `/work` \u00a75.1\n(`plugins/saga/skills/work/SKILL.md:878-890` on main at 531ecc2) says review does not start without\nthat run, and that the reviewed revision comes only from `build_loop.py --handoff`, \"not from a\nfresh `git rev-parse`\". \u00a73.3 (`SKILL.md:611`) says \"Every entry into code review comes through\nhere\", including repair batches. The coordinator ruling under operator ruling 4 says the same.\n\n\u00a75.3 contradicts all three. At `SKILL.md:952-953` it handles a stale review (commits landed since\n`REVIEWED_SHA`) like this: \"keep PR-ready blocked and re-run `/code-review`, capturing a fresh\n`REVIEWED_SHA`, before any PR/merge offer\". A worker following \u00a75.3 as written either reviews a\nrevision no combined pass has checked, or re-revi",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-04-saga-review-fixes/stale-review-gate.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-04-saga-review-fixes/stale-review-gate.md",
+    "ref": "docs/brainstorms/2026-10-04-saga-review-fixes/stale-review-gate.md",
+    "title": "saga: a stale review re-enters code review without the combined-branch functional run",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "defect",
+        "confidence": 0.42,
+        "distribution": {
+          "capability": 0.0,
+          "context-update": 0.04,
+          "defect": 0.42,
+          "enhancement": 0.54,
+          "exploration": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "enhancement"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-04-saga-review-fixes/stale-review-gate.md",
+        "confidence": 0.1,
+        "distribution": {
+          "improve-agent-plugins": 0.45,
+          "none": 0.55
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "none"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "low",
+        "confidence": 0.8,
+        "distribution": {
+          "high": 0.04,
+          "low": 0.87,
+          "medium": 0.09,
+          "very-high": 0.0
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": false,
+        "overridden": false,
+        "score": 0.2,
+        "suggested": "low"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.91,
+        "distribution": {
+          "Awaiting operator input": 0.0,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.0,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.03,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.0,
+          "Discovering": 0.0,
+          "Execution planning": 0.01,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.03,
+          "Ready for Planning": 0.93,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "saga: a stale review re-enters code review without the combined-branch functional run",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "defect",
+    "confidence": 0.42,
+    "distribution": {
+      "capability": 0.0,
+      "context-update": 0.04,
+      "defect": 0.42,
+      "enhancement": 0.54,
+      "exploration": 0.0
+    },
+    "floor": 0.6,
+    "low_confidence": true,
+    "overridden": true,
+    "suggested": "enhancement"
+  },
+  "updated_at": "2026-10-04T16:08:59.770475+00:00"
+}
