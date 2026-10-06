@@ -2,6 +2,16 @@
 
 ## 2026-10-06
 
+### This catalog's saga profile declares a local functional-test environment and no deploy destination
+
+**Decision.** `.saga-profile.json` at the repository root declares `functional_test_environment` with kind `local`, scope `private`, and test command `python3 -m pytest plugins/*/tests -q --import-mode=importlib`. `nonproduction_destination` is `none`. `main_consumed_directly` is true. `concurrency_allocation` is 10. The mechanical baseline is `python3 scripts/check_repo.py`, `python3 -m unittest discover -s tests -v`, that same pytest command, and `git diff --check`. The `qa` block requires `cli-smoke` of `python3 scripts/check_repo.py`, with a ceiling of 180 seconds and no direct cost.
+
+**Rationale.** Issue #114. The three live-profile tests skip until this file exists, and they require the whole profile. The plugin test suite is the test command the card names, and it is the command the `plugin-tests` job runs. This catalog does not deploy. Installed clients load it from this repository's marketplace on `main`, so a merge to `main` is consumed directly. The `qa` block is the smallest schema-valid block whose required strategy this catalog can run: `installed-surface` looks for a marketplace named `infiquetra-plugins`.
+
+**Rejected alternatives.** A waiver. A deploy destination. `main_consumed_directly` false, copied from the profile contract's example for a different repository. The Claude Code matrix job on the mechanical baseline. `installed-surface` in the `qa` block.
+
+**Revisit when.** This catalog gains a non-production deploy, or `installed-surface` resolves the `infiquetra-agent-plugins` marketplace.
+
 ### Stack a Markdown table that does not fit the terminal pane
 
 **Decision.** Stack tables that do not fit, measured conservatively, on the terminal only. The saga plan viewer and the review findings pane do this before handing text to `Markdown`. A table at or under the pane's `bodyColumns` is drawn as written. Desktop, VS Code and mobile are unchanged, and the plan file is unchanged.
