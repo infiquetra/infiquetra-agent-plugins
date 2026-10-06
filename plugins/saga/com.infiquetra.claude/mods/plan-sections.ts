@@ -1,13 +1,14 @@
 // The plan viewer's text handling: split a plan into sections, page a long
-// section under the engine's Markdown limit, turn backticked `path:line`
-// references into links a press can answer, and quote a page for the prompt.
+// section under the mod's page budget, turn backticked `path:line` references
+// into links a press can answer, stack a table that does not fit the pane, and
+// quote a page for the prompt.
 //
 // Pure functions with no `$`, so `plan-viewer.tsx` and its tests share them and
 // later mods can reuse them; nothing here reads a file or draws.
 
 import type { SagaPlanSection } from '../types/index.d.ts'
 
-/** The most characters one `Markdown` element draws (`MarkdownProps.text`). */
+/** The mod's own page budget, in characters, for one `Markdown` element. */
 export const MARKDOWN_LIMIT = 10_000
 
 /**
@@ -130,12 +131,17 @@ export function splitSections(markdown: string): SagaPlanSection[] {
 /**
  * Split one oversize block line by line. A page that ends inside a fenced code
  * block closes the fence, and the next page opens it again with the same info
- * string, so every page draws as the block it came from. A single line longer
- * than a page is cut by characters.
+ * string, so every page draws as the block it came from. A page that ends
+ * inside a table starts the next page with that table's header and delimiter.
+ * Their length is reserved the same way as the reopened fence, so no page
+ * passes `limit`. A single line longer than a page is cut by characters.
  */
 function splitBlock(block: string, limit: number): string[] {
   const pages: string[] = []
   const fence = new FenceState()
+  const flow = new FlowState()
+  const lines = block.split('\n')
+  let table: { header: string; delimiter: string } | null = null
   let current: string[] = []
   // The page's length once joined, plus one: each line counts its newline.
   let size = 0
@@ -144,8 +150,16 @@ function splitBlock(block: string, limit: number): string[] {
   const flush = () => {
     const open = fence.open
     pages.push((open !== null ? [...current, fence.closer] : current).join('\n'))
-    current = open !== null ? [open] : []
-    size = open !== null ? open.length + 1 : 0
+    if (open !== null) {
+      current = [open]
+      size = open.length + 1
+    } else if (table !== null) {
+      current = [table.header, table.delimiter]
+      size = table.header.length + 1 + table.delimiter.length + 1
+    } else {
+      current = []
+      size = 0
+    }
     hasContent = false
   }
   const add = (text: string) => {
@@ -153,9 +167,42 @@ function splitBlock(block: string, limit: number): string[] {
     size += text.length + 1
     hasContent = true
   }
+  const fits = (from: number, text: string, reserve: number): boolean => from + text.length + reserve <= limit
+  const note = (line: string) => {
+    const wasFence = fence.open !== null
+    const isFence = fence.feed(line)
+    flow.feed(line, wasFence || isFence || fence.open !== null)
+  }
 
-  for (const line of block.split('\n')) {
-    // Room for the fence that closes this page, before and after this line.
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index] ?? ''
+    const next = lines[index + 1]
+    if (table !== null && flow.endsTable(line, fence.open !== null)) table = null
+
+    // A header and its delimiter stay on one page. Splitting them is what
+    // leaves the next page with no header, which the engine then draws as raw pipes.
+    if (table === null && next !== undefined && flow.canOpenTable(line, next, fence.open !== null)) {
+      const delimiter = next
+      const after = fence.clone()
+      after.feed(line)
+      after.feed(delimiter)
+      const reserve = Math.max(fence.reserve, after.reserve)
+      let from = size
+      if (hasContent && !fits(from, line, reserve)) {
+        flush()
+        from = size
+      }
+      if (fits(from, line, reserve) && fits(from + line.length + 1, delimiter, reserve)) {
+        add(line)
+        add(delimiter)
+        note(line)
+        note(delimiter)
+        table = { header: line, delimiter }
+        index += 1
+        continue
+      }
+    }
+
     const after = fence.clone()
     after.feed(line)
     const reserve = Math.max(fence.reserve, after.reserve)
@@ -168,7 +215,7 @@ function splitBlock(block: string, limit: number): string[] {
       flush()
     }
     add(rest)
-    fence.feed(line)
+    note(line)
   }
   if (hasContent) {
     const open = fence.open
@@ -219,6 +266,299 @@ export function pageText(text: string, limit: number = PAGE_LIMIT): string[] {
   }
   if (page !== '') pages.push(page)
   return pages
+}
+
+// Display width follows the ranges measured against the engine. A code point
+// that is not listed counts as one, and a listed wide character counts as two,
+// so a table judged to fit is never wider on screen than this count.
+const WIDE_CODE_POINTS: ReadonlyArray<readonly [number, number]> = [
+  [0x1100, 0x115f],
+  [0x231a, 0x231b],
+  [0x23e9, 0x23ec],
+  [0x23f0, 0x23f0],
+  [0x23f3, 0x23f3],
+  [0x25fd, 0x25fe],
+  [0x2600, 0x27bf],
+  [0x2b1b, 0x2b1c],
+  [0x2b50, 0x2b50],
+  [0x2b55, 0x2b55],
+  [0x2e80, 0x303e],
+  [0x3041, 0x33ff],
+  [0x3400, 0x4dbf],
+  [0x4e00, 0x9fff],
+  [0xa000, 0xa4cf],
+  [0xac00, 0xd7a3],
+  [0xf900, 0xfaff],
+  [0xfe30, 0xfe4f],
+  [0xff00, 0xff60],
+  [0xffe0, 0xffe6],
+  [0x1f000, 0x1faff],
+  [0x20000, 0x3fffd],
+]
+const ZERO_WIDTH_CODE_POINTS: ReadonlyArray<readonly [number, number]> = [
+  [0x0300, 0x036f],
+  [0x200b, 0x200f],
+  [0xfe00, 0xfe0f],
+  [0xe0100, 0xe01ef],
+]
+
+function inCodePointRanges(codePoint: number, ranges: ReadonlyArray<readonly [number, number]>): boolean {
+  for (const [start, end] of ranges) {
+    if (codePoint < start) return false
+    if (codePoint <= end) return true
+  }
+  return false
+}
+
+function widthOf(codePoint: number): number {
+  if (codePoint === 0x09) return 8
+  if (inCodePointRanges(codePoint, ZERO_WIDTH_CODE_POINTS)) return 0
+  if (inCodePointRanges(codePoint, WIDE_CODE_POINTS)) return 2
+  return 1
+}
+
+/** How many terminal cells `text` occupies. Markup counts; this never under-counts the engine. */
+export function displayWidth(text: string): number {
+  let width = 0
+  for (const character of text) width += widthOf(character.codePointAt(0) ?? 0)
+  return width
+}
+
+const LIST_ITEM = /^ {0,3}(?:[-+*]|\d{1,9}[.)])\s+/
+const BLOCKQUOTE_LINE = /^ {0,3}>/
+const HEADING_LINE = /^ {0,3}#{1,6}(?:[ \t]|$)/
+const DELIMITER_CELL = /^:?-{3,}:?$/
+const EMPTY_CELL = '—'
+
+function leadingSpaces(line: string): number {
+  return /^ */.exec(line)?.[0].length ?? 0
+}
+
+/**
+ * Split one row on `|` that is neither escaped nor inside a backtick code span.
+ * One leading and one trailing `|` are dropped, and each cell is trimmed.
+ */
+function splitCells(line: string): { cells: string[]; separators: number } {
+  const raw: string[] = []
+  let buffer = ''
+  let separators = 0
+  let inCode = false
+  let codeLength = 0
+  for (let index = 0; index < line.length; ) {
+    const character = line[index] ?? ''
+    if (!inCode && character === '\\' && index + 1 < line.length) {
+      buffer += character + (line[index + 1] ?? '')
+      index += 2
+      continue
+    }
+    if (character === '`') {
+      let run = 0
+      while (line[index + run] === '`') run += 1
+      buffer += '`'.repeat(run)
+      if (!inCode) {
+        inCode = true
+        codeLength = run
+      } else if (run === codeLength) {
+        inCode = false
+      }
+      index += run
+      continue
+    }
+    if (!inCode && character === '|') {
+      raw.push(buffer)
+      buffer = ''
+      separators += 1
+      index += 1
+      continue
+    }
+    buffer += character
+    index += 1
+  }
+  raw.push(buffer)
+  let start = 0
+  let end = raw.length
+  const trimmed = line.trim()
+  if (trimmed.startsWith('|')) start += 1
+  if (trimmed.endsWith('|') && end > start) end -= 1
+  return { cells: raw.slice(start, end).map((cell) => cell.trim()), separators }
+}
+
+function isTableHeaderLine(line: string): boolean {
+  if (leadingSpaces(line) > 3) return false
+  if (BLOCKQUOTE_LINE.test(line) || LIST_ITEM.test(line) || HEADING_LINE.test(line) || FENCE.test(line)) return false
+  return splitCells(line).separators >= 1
+}
+
+function isDelimiterLine(line: string, columns: number): boolean {
+  if (columns < 1 || leadingSpaces(line) > 3) return false
+  if (BLOCKQUOTE_LINE.test(line) || LIST_ITEM.test(line)) return false
+  const { cells, separators } = splitCells(line)
+  if (separators < 1 || cells.length !== columns) return false
+  return cells.every((cell) => DELIMITER_CELL.test(cell))
+}
+
+/** Whether the walker is inside a list item or a blockquote, where a table is left as written. */
+class FlowState {
+  private listIndent: number | null = null
+  private listBlank = false
+  private quote = false
+  private quoteBlank = false
+
+  private inList(line: string): boolean {
+    if (this.listIndent === null) return false
+    if (line.trim() === '') return true
+    return !(this.listBlank && leadingSpaces(line) < this.listIndent && LIST_ITEM.exec(line) === null)
+  }
+
+  private inQuote(line: string): boolean {
+    if (!this.quote) return false
+    if (line.trim() === '') return true
+    return !(this.quoteBlank && !BLOCKQUOTE_LINE.test(line))
+  }
+
+  /** True when `line` followed by `next` opens a top-level table. */
+  canOpenTable(line: string, next: string, inFence: boolean): boolean {
+    if (inFence || this.inList(line) || this.inQuote(line)) return false
+    if (!isTableHeaderLine(line)) return false
+    return isDelimiterLine(next, splitCells(line).cells.length)
+  }
+
+  /** True when `line` ends the body of the table currently being read. */
+  endsTable(line: string, inFence: boolean): boolean {
+    if (inFence) return false
+    if (line.trim() === '') return true
+    return BLOCKQUOTE_LINE.test(line) || HEADING_LINE.test(line) || FENCE.test(line)
+  }
+
+  feed(line: string, inFence: boolean): void {
+    if (inFence) return
+    if (line.trim() === '') {
+      if (this.listIndent !== null) this.listBlank = true
+      if (this.quote) this.quoteBlank = true
+      return
+    }
+    const marker = LIST_ITEM.exec(line)
+    if (marker !== null) {
+      this.listIndent = marker[0].length
+      this.listBlank = false
+    } else if (this.listIndent !== null) {
+      if (this.listBlank && leadingSpaces(line) < this.listIndent) {
+        this.listIndent = null
+        this.listBlank = false
+      } else {
+        this.listBlank = false
+      }
+    }
+    if (BLOCKQUOTE_LINE.test(line)) {
+      this.quote = true
+      this.quoteBlank = false
+    } else if (this.quote && this.quoteBlank) {
+      this.quote = false
+      this.quoteBlank = false
+    }
+  }
+}
+
+function padRow(cells: readonly string[], columns: number): string[] {
+  return Array.from({ length: columns }, (_, index) => cells[index] ?? '')
+}
+
+/**
+ * The width the engine draws for `rows`: the widest cell of each column, plus
+ * three cells of grid per column, plus one. `rows[0]` is the header. A short
+ * row counts as empty cells; cells past the header do not count.
+ */
+export function tableWidth(rows: readonly (readonly string[])[]): number {
+  const header = rows[0]
+  if (header === undefined || header.length === 0) return 0
+  const columns = header.length
+  let sum = 0
+  for (let column = 0; column < columns; column++) {
+    let widest = 0
+    for (const row of rows) widest = Math.max(widest, displayWidth(row[column] ?? ''))
+    sum += widest
+  }
+  return sum + 3 * columns + 1
+}
+
+function columnLabel(header: string, index: number): string {
+  const name = header.trim() === '' ? `Column ${index + 1}` : header
+  // A header that is already marked up would nest a second bold around it.
+  return name.includes('*') ? `${name}:` : `**${name}:**`
+}
+
+function stackTable(headers: readonly string[], body: readonly (readonly string[])[]): string[] {
+  const labels = headers.map((header, index) => columnLabel(header, index))
+  const lines: string[] = []
+  body.forEach((row, rowIndex) => {
+    if (rowIndex > 0) lines.push('', '* * *', '')
+    headers.forEach((_, column) => {
+      if (column > 0) lines.push('')
+      const cell = row[column] ?? ''
+      lines.push(`${labels[column]} ${cell.trim() === '' ? EMPTY_CELL : cell}`)
+    })
+  })
+  return lines
+}
+
+/**
+ * Rewrite every top-level table wider than `columns` into labeled paragraphs.
+ * A table that fits, a table with no body, and anything that is not a table
+ * come back as the same string. Fitting measures the text it is given, markup
+ * included, so a caller links references first.
+ */
+export function fitTables(markdown: string, columns: number): string {
+  if (!Number.isFinite(columns)) return markdown
+  const lines = markdown.split('\n')
+  const fence = new FenceState()
+  const flow = new FlowState()
+  const replacements: { start: number; end: number; lines: string[] }[] = []
+
+  let index = 0
+  while (index < lines.length) {
+    const line = lines[index] ?? ''
+    const next = lines[index + 1]
+    const inFence = fence.open !== null
+    if (next !== undefined && flow.canOpenTable(line, next, inFence)) {
+      const header = splitCells(line).cells
+      let end = index + 2
+      while (end < lines.length && !flow.endsTable(lines[end] ?? '', false)) end += 1
+      const bodyLines = lines.slice(index + 2, end)
+      if (bodyLines.length > 0) {
+        const body = bodyLines.map((row) => padRow(splitCells(row).cells, header.length))
+        if (tableWidth([header, ...body]) > columns) {
+          replacements.push({ start: index, end, lines: stackTable(header, body) })
+        }
+      }
+      for (let cursor = index; cursor < end; cursor++) {
+        const consumed = lines[cursor] ?? ''
+        const wasFence = fence.open !== null
+        const isFence = fence.feed(consumed)
+        flow.feed(consumed, wasFence || isFence || fence.open !== null)
+      }
+      index = end
+      continue
+    }
+    const wasFence = inFence
+    const isFence = fence.feed(line)
+    flow.feed(line, wasFence || isFence || fence.open !== null)
+    index += 1
+  }
+
+  if (replacements.length === 0) return markdown
+  const out = lines.slice()
+  for (let rep = replacements.length - 1; rep >= 0; rep--) {
+    const one = replacements[rep]
+    if (one === undefined) continue
+    const insert = one.lines.slice()
+    // One blank line on each side, and only where the source had a neighbour
+    // that was not already blank. The table's own lines are what get replaced.
+    if (one.start > 0 && out[one.start - 1] !== '') insert.unshift('')
+    if (one.end < out.length && out[one.end] !== '') insert.push('')
+    out.splice(one.start, one.end - one.start, ...insert)
+  }
+  const joined = out.join('\n')
+  return joined === markdown ? markdown : joined
 }
 
 /** A file reference found in a plan: what a press on it quotes into the prompt. */

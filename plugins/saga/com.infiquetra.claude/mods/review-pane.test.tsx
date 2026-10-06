@@ -3,6 +3,8 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import type { SagaReview, SagaReviewFinding, SagaReviewLens } from '../types/index.d.ts'
+import { GOLDEN_PAGE } from './fixtures/wide-table-plan.fixture.ts'
+import { fitTables } from './plan-sections.ts'
 import { FINDING_TEXT_LIMIT, findingText, lensLabel, quoteText } from './review-findings.ts'
 import { REVIEW_PANE, REVIEW_POLL_MS } from './review-pane.tsx'
 
@@ -308,6 +310,44 @@ describe('the review pane', () => {
       expect(await ui.find({ type: 'Text', text: /No review loaded/ })).toBeDefined()
       await ui.unmount()
     }
+  })
+
+  test("stacks a finding's wide table on the terminal and leaves it on the desktop", async ($, on) => {
+    const fakes = fake(on)
+    const wide = finding('P1', 'src/wide.py', 4, 'layout')
+    wide.evidence = GOLDEN_PAGE
+    wide.impact = 'the pane wraps the grid'
+    const review = reviewOf()
+    review.lenses = [lens('layout', 'not_met', [wide])]
+    fakes.review = answer(review)
+    await start($)
+    await reviewView($, '')
+
+    const terminal = await $.ui.mount({
+      plugin: 'saga',
+      surface: 'terminal',
+      ...PANE,
+      props: { ...PANE.props, bodyColumns: 71 },
+    })
+    await terminal.press({ key: 'lens-layout' })
+    const stacked = await terminal.find({ type: 'Markdown', key: 'text-0' })
+    expect(stacked?.props.text).toBe(fitTables(findingText(wide), 71))
+    expect(String(stacked?.props.text)).toContain('**Option:** A')
+    expect(String(stacked?.props.text)).not.toContain('|:---|')
+    // reviewLens survives unmount, so return to the lens list first.
+    await terminal.press({ key: 'back' })
+    await terminal.unmount()
+
+    const desktop = await $.ui.mount({
+      plugin: 'saga',
+      surface: 'desktop',
+      ...PANE,
+      props: { ...PANE.props, bodyColumns: 71 },
+    })
+    await desktop.press({ key: 'lens-layout' })
+    const plain = await desktop.find({ type: 'Markdown', key: 'text-0' })
+    expect(plain?.props.text).toBe(findingText(wide))
+    await desktop.unmount()
   })
 })
 

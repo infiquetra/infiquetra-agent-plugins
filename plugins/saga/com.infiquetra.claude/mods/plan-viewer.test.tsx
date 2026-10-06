@@ -2,7 +2,8 @@ import type { On } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { MARKDOWN_LIMIT } from './plan-sections.ts'
+import { WIDE_TABLE_PLAN } from './fixtures/wide-table-plan.fixture.ts'
+import { MARKDOWN_LIMIT, linkifyRefs, pageText, splitSections } from './plan-sections.ts'
 import { PLAN_PANE, PLAN_POLL_MS } from './plan-viewer.tsx'
 
 const CWD = '/Users/operator/repo'
@@ -424,5 +425,101 @@ describe('opening after /plan saves', () => {
     await $.tool.call({ tool: 'Bash', command: SAVE.replace('--lifecycle-phase plan', '--lifecycle-phase work') })
     await $.tool.call({ tool: 'Bash', command: `${SAVE} && fails` })
     expect(fakes.opened).toEqual([])
+  })
+})
+
+const WIDE_PATH = 'docs/plans/wide-table.md'
+const WIDE_FILE = `${CWD}/${WIDE_PATH}`
+
+function widePage(title: string): string {
+  const section = splitSections(WIDE_TABLE_PLAN).find((one) => one.title === title)
+  if (section === undefined) throw new Error(`no section ${title}`)
+  return pageText(section.text)[0] ?? ''
+}
+
+describe('wide tables in the plan pane', () => {
+  async function openWide($: Engine, on: On) {
+    const fakes = fake(on)
+    fakes.files.set(WIDE_FILE, { text: WIDE_TABLE_PLAN, mtimeMs: 1 })
+    await start($)
+    await planView($, WIDE_PATH)
+    return fakes
+  }
+
+  async function show(
+    $: Engine,
+    title: string,
+    surface: 'terminal' | 'desktop',
+    bodyColumns: number,
+    viewport?: { columns: number; rows: number; isFullscreen: boolean },
+  ) {
+    const sections = splitSections(WIDE_TABLE_PLAN)
+    const index = sections.findIndex((one) => one.title === title)
+    const ui = await $.ui.mount({
+      plugin: 'saga',
+      surface,
+      ...PANE,
+      props: { ...PANE.props, bodyColumns },
+      ...(viewport === undefined ? {} : { viewport }),
+    })
+    await ui.press({ key: `sec-${index}` })
+    const shown = await ui.find({ type: 'Markdown', key: 'section' })
+    return { ui, text: String(shown?.props.text), links: shown?.props.pressableLinks }
+  }
+
+  test('stacks the Decisions section at the pane width, not the viewport width', async ($, on) => {
+    await openWide($, on)
+    const page = widePage('Decisions')
+    const linked = linkifyRefs(page, CWD)
+    const { ui, text, links } = await show($, 'Decisions', 'terminal', 71, { columns: 160, rows: 50, isFullscreen: true })
+    expect(text).not.toContain('| --- |')
+    expect(links).toEqual(linked.refs.map((ref) => ref.href))
+    // 150 fits in the 160-column viewport and does not fit in the 71-column pane.
+    // Reading viewport.columns would keep the delimiter line this assertion rejects.
+    expect(text).not.toBe(linked.text)
+    await ui.unmount()
+  })
+
+  test('fits the Shape section after linking, so the threshold is 159', async ($, on) => {
+    await openWide($, on)
+    const linked = linkifyRefs(widePage('Shape'), CWD)
+    const kept = await show($, 'Shape', 'terminal', 159)
+    expect(kept.text).toBe(linked.text)
+    // planSelected survives unmount, so return to the section list first.
+    await kept.ui.press({ key: 'back' })
+    await kept.ui.unmount()
+    const stacked = await show($, 'Shape', 'terminal', 158)
+    expect(stacked.text).not.toBe(linked.text)
+    expect(stacked.text).toContain('**Option:** A')
+    expect(stacked.text).not.toContain('|:---|:---|---:|')
+    await stacked.ui.unmount()
+  })
+
+  test('draws the Status section unchanged on the terminal', async ($, on) => {
+    await openWide($, on)
+    const linked = linkifyRefs(widePage('Status'), CWD)
+    const { ui, text } = await show($, 'Status', 'terminal', 71)
+    expect(text).toBe(linked.text)
+    await ui.unmount()
+  })
+
+  test('draws the Decisions section unchanged on the desktop', async ($, on) => {
+    await openWide($, on)
+    const linked = linkifyRefs(widePage('Decisions'), CWD)
+    const { ui, text } = await show($, 'Decisions', 'desktop', 71)
+    expect(text).toBe(linked.text)
+    await ui.unmount()
+  })
+
+  test('quotes the Decisions table as written for Discuss this', async ($, on) => {
+    const fakes = await openWide($, on)
+    const { ui } = await show($, 'Decisions', 'terminal', 71, { columns: 160, rows: 50, isFullscreen: true })
+    await ui.press({ key: 'discuss' })
+    expect(fakes.fills).toHaveLength(1)
+    const quoted = fakes.fills[0] ?? ''
+    expect(quoted).toContain('> | Decision | Detail | Owner | Call |')
+    expect(quoted).toContain('> | --- | --- | --- | --- |')
+    expect(quoted).not.toContain('**Decision:**')
+    await ui.unmount()
   })
 })

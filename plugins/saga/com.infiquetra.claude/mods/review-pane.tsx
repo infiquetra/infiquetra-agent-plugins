@@ -25,6 +25,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { SagaReviewView } from '../types/index.d.ts'
+import { fitTables } from './plan-sections.ts'
 import {
   findingHeading,
   findingLine,
@@ -224,7 +225,10 @@ export function registerReviewPane(on: On): void {
         {findings.map((finding, i) => (
           <Box key={`finding-${i}`} flexDirection="column">
             <Text key={`heading-${i}`}>{findingHeading(finding)}</Text>
-            <Markdown key={`text-${i}`} text={findingText(finding)} />
+            <Markdown
+              key={`text-${i}`}
+              text={e.surface === 'terminal' ? fitTables(findingText(finding), e.props.bodyColumns) : findingText(finding)}
+            />
             <Button key={`quote-${i}`} label="Quote" onPress={() => fillPrompt($, quoteText(lens, finding))} />
           </Box>
         ))}

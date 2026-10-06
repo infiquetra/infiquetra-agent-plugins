@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Issue 175: on the terminal, the plan viewer and the review findings pane draw a Markdown table that is wider than the pane as labeled lines, with a rule between rows. A table that fits is drawn as written. A table that continues onto another page repeats its header and delimiter. The plan file is not changed. Desktop, VS Code and mobile are unchanged. The width is the pane body, measured from the text as written so a table judged to fit cannot overflow the pane.
+
 ## [1.3.0] - 2026-10-04
 
 Adds the combined-branch functional-test gate before code review, with the functional-test declaration, plan checks and closeout evidence that feed it.
