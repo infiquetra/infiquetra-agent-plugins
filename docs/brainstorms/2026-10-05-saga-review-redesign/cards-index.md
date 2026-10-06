@@ -44,6 +44,7 @@ P0. Cards O1 to O4 are top-level.
 | K1 | `K1-corpus-repository-and-history.md` | saga-review-corpus (new, private) | enhancement | medium | Corpus repository, case format and cases from our fix history |
 | K2 | `K2-planted-defects-and-public-sets.md` | saga-review-corpus (new, private) | enhancement | medium | Planted defects, builder records and public reference sets |
 | K3 | `K3-harness.md` | saga-review-corpus (new, private) | enhancement | high | The harness: run the review on the corpus and write the calibration file |
+| O0 | `O0-run-cost-and-progress.md` | infiquetra-agent-plugins | capability | medium | saga: see what a run costs and where it stands |
 | O1 | `O1-status-band-v2.md` | infiquetra-agent-plugins | enhancement | low | saga mod: status band, second version |
 | O2 | `O2-step-reminder-and-update-cadence.md` | infiquetra-agent-plugins | enhancement | low | saga: per-turn step reminder and issue update cadence |
 | O3 | `O3-budget-at-admission.md` | infiquetra-agent-plugins | enhancement | medium | saga: budget and proportionality at admission, as guidance |
@@ -51,9 +52,10 @@ P0. Cards O1 to O4 are top-level.
 
 ## Filed issues
 
-All 32 cards were filed on 5 October 2026. P0 ([#147](https://github.com/infiquetra/infiquetra-agent-plugins/issues/147))
-is the parent; the 27 other new cards are its sub-issues, and O1 to O4 stand on their own under the same
-objective. The seven cards for private repositories (X1a, X1b, X2, X3, K1, K2, K3) are filed there and are
+All 32 cards were filed on 5 October 2026, and O0 on 6 October. P0
+([#147](https://github.com/infiquetra/infiquetra-agent-plugins/issues/147)) is the parent of the 27 other redesign
+cards and of two earlier issues: #114 (this repository's saga profile, which the review command reads) and #144
+(the stale-review path, which C10b keeps). O0 ([#173](https://github.com/infiquetra/infiquetra-agent-plugins/issues/173)) is the parent of O1 to O4. The seven cards for private repositories (X1a, X1b, X2, X3, K1, K2, K3) are filed there and are
 not in this folder.
 
 | Card | Issue |
@@ -86,6 +88,7 @@ not in this folder.
 | K1 | [saga-review-corpus#1](https://github.com/infiquetra/saga-review-corpus/issues/1) |
 | K2 | [saga-review-corpus#2](https://github.com/infiquetra/saga-review-corpus/issues/2) |
 | K3 | [saga-review-corpus#3](https://github.com/infiquetra/saga-review-corpus/issues/3) |
+| O0 | [#173](https://github.com/infiquetra/infiquetra-agent-plugins/issues/173) |
 | O1 | [#168](https://github.com/infiquetra/infiquetra-agent-plugins/issues/168) |
 | O2 | [#169](https://github.com/infiquetra/infiquetra-agent-plugins/issues/169) |
 | O3 | [#170](https://github.com/infiquetra/infiquetra-agent-plugins/issues/170) |
@@ -260,6 +263,9 @@ what has an effect, caching by fingerprint, the cost estimate and cap, repeat ru
 held-out hygiene, per-lens and per-language results with the guard, Langfuse dataset runs, writing the
 calibration file (verdicts, numbers and thresholds), the drift runs, the like-for-like summary, the
 second-reviewer measurement, and checking both halves' minimums before the first full run.
+
+**O0** (added 5 October, after filing) — the parent of O1 to O4: while a run works the operator sees its
+step and its spend against a budget, and afterwards what each step, role and round cost.
 
 **O1 to O4** (from the 4 October enhancement plan, outside the review redesign) — O1: the status band's
 second version. O2: a per-turn step reminder and an issue update cadence. O3: budget and plan size at
