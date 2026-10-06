@@ -3,8 +3,8 @@
 # source-version: 0.33.0
 # source-commit: authored
 # source-path: scripts/fleet_commons/jev_log.py
-# source-sha256: 252f2320f481d47111dac27222d7930e026b19b399bff2231e82fdbb99073794
-# output-sha256: 252f2320f481d47111dac27222d7930e026b19b399bff2231e82fdbb99073794
+# source-sha256: cde66301d2025183fa550d2382c054c10e08ed0c98d1a4b50df4056570d6ab97
+# output-sha256: cde66301d2025183fa550d2382c054c10e08ed0c98d1a4b50df4056570d6ab97
 # --- end generated bundle stamp ---
 """The verdict log and the answer cache (plan U4).
 
@@ -208,6 +208,30 @@ def record_override(
     return record
 
 
+def record_invalidation(
+    *,
+    verdict_hash: str,
+    reason: str = "",
+    directory: Path | None = None,
+    clock: Callable[[], float] = time.time,
+) -> dict[str, Any]:
+    """Append an invalidation, retiring the verdict it names by hash.
+
+    The log is append-only: a verdict whose label turned out to be bogus is
+    never rewritten or removed. The invalidation is the marker that retires it;
+    the evaluation harness drops invalidated verdicts from scoring, and the
+    verdict's linked overrides retire with it (they were never scored).
+    """
+    record = {
+        "kind": "invalidation",
+        "verdict_hash": verdict_hash,
+        "reason": reason,
+        "at": _timestamp(clock),
+    }
+    _append((directory or log_dir()) / VERDICT_FILENAME, record)
+    return record
+
+
 def read_verdicts(directory: Path | None = None) -> tuple[list[dict[str, Any]], int]:
     return _read_lines((directory or log_dir()) / VERDICT_FILENAME)
 
@@ -320,6 +344,7 @@ __all__: Sequence[str] = (
     "log_dir",
     "read_pins",
     "read_verdicts",
+    "record_invalidation",
     "record_override",
     "record_verdict",
     "write_pin",

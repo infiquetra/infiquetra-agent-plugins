@@ -15,6 +15,12 @@
       ]
     },
     {
+      "name": "jev_verbs",
+      "destinations": [
+        "scripts/_bundled/jev_verbs.py"
+      ]
+    },
+    {
       "name": "plugin_resolution",
       "destinations": [
         "scripts/_bundled/plugin_resolution.py"

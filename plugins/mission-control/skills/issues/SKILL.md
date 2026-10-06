@@ -187,7 +187,25 @@ later makes it possible to ask whether the judgment is worth trusting. The sugge
 reach the issue body, and the risk suggestion never touches the card's Risk — the body still owns
 that.
 
+**Naming the card's Objective.** `--objective` records your Objective decision in the sidecar and
+compares the objective suggestion against it. It must name a live Objective option on `--project`
+(the membership is checked live, so the flag needs `gh` auth); without it no Objective is
+recorded and no objective override is logged. `--objective-option` stays what it was: candidates
+for the judgment to choose among, not your decision.
+
 The flag is opt-in and off by default, so an ordinary prepare makes no model call at all.
+
+**Retiring pre-#111 bogus records.** Prepares written before #111 logged the source file path as
+the operator's chosen Objective. `issue invalidate-bogus-objectives` appends one invalidation
+record per such verdict — the log is append-only, so nothing is rewritten — and the evaluation
+harness then excludes them from scoring. Dry-run first, against the real log:
+
+```bash
+python3 sdlc_manager.py issue invalidate-bogus-objectives --dry-run
+python3 sdlc_manager.py issue invalidate-bogus-objectives
+```
+
+The command is idempotent: a rerun appends nothing.
 
 **Where the text goes.** With the flag, the draft body and this repository's own issue-types
 reference are sent to TypeSafe, a third-party endpoint, and `TYPESAFE_API_KEY` must be in the

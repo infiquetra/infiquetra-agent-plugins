@@ -718,3 +718,210 @@ def test_text_only_prepare_works_with_saga_absent(tmp_path, monkeypatch) -> None
     assert any(
         "Missing handoff maturity" in warning for warning in sidecar["readiness"]["warnings"]
     )
+
+
+# --------------------------------------------------------------------------- #
+# #111 — the card's Objective is the operator's decision, never the source ref
+# --------------------------------------------------------------------------- #
+
+
+def _brainstorm_artifact(tmp_path, monkeypatch):
+    """A routable local source, the way --from resolves one."""
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "docs" / "brainstorms" / "source-note.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("# Source note\n")
+    return sdlc_manager.resolve_source_artifact("docs/brainstorms/source-note.md", tmp_path)
+
+
+def test_prepare_with_a_source_records_no_objective(tmp_path, monkeypatch) -> None:
+    """#111: the source ref is a path, never an Objective option."""
+    artifact = _brainstorm_artifact(tmp_path, monkeypatch)
+    assert "/" in artifact.ref
+
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="defect",
+        team="campps",
+        project="campps",
+        source=OLYMPUS_BODY,
+        title="Sourceless objective",
+        status=None,
+        risk="medium",
+        mode=None,
+        draft_dir=tmp_path / "out",
+        stage="Intake",
+        source_artifact=artifact,
+    )
+
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+    assert "Objective" not in sidecar["project_fields"]
+
+
+def test_prepare_with_an_objective_records_it_verbatim(tmp_path) -> None:
+    """#111: the operator-named Objective is what the sidecar carries."""
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="defect",
+        team="campps",
+        project="campps",
+        source=OLYMPUS_BODY,
+        title="Named objective",
+        status=None,
+        risk="medium",
+        mode=None,
+        draft_dir=tmp_path,
+        stage="Intake",
+        objective="improve-agent-plugins",
+    )
+
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+    assert sidecar["project_fields"]["Objective"] == "improve-agent-plugins"
+
+
+def test_prepare_with_a_source_and_an_objective_records_only_the_objective(
+    tmp_path, monkeypatch
+) -> None:
+    """#111: the named Objective wins; the source path never reaches the field."""
+    artifact = _brainstorm_artifact(tmp_path, monkeypatch)
+
+    draft = sdlc_manager.issue_prepare(
+        repo="hermes-claude-code-router",
+        issue_type="defect",
+        team="campps",
+        project="campps",
+        source=OLYMPUS_BODY,
+        title="Named objective beats source",
+        status=None,
+        risk="medium",
+        mode=None,
+        draft_dir=tmp_path / "out",
+        stage="Intake",
+        source_artifact=artifact,
+        objective="improve-agent-plugins",
+    )
+
+    sidecar = json.loads(draft.with_suffix(".json").read_text())
+    assert sidecar["project_fields"]["Objective"] == "improve-agent-plugins"
+    assert artifact.ref not in json.dumps(sidecar["project_fields"])
+
+
+def _stub_live_objective_field(monkeypatch, options: list) -> None:
+    monkeypatch.setattr(
+        sdlc_manager,
+        "_resolve_project_field",
+        lambda project, field: {"name": "Objective", "options": [{"name": o} for o in options]},
+    )
+
+
+def test_prepare_dispatch_rejects_an_objective_the_board_does_not_offer(
+    monkeypatch, capsys
+) -> None:
+    """#111: --objective must name a live Objective option on the project."""
+    _stub_live_objective_field(monkeypatch, ["improve-agent-plugins"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "sdlc_manager.py",
+            "issue",
+            "prepare",
+            "--repo",
+            "hermes-claude-code-router",
+            "--type",
+            "defect",
+            "--team",
+            "campps",
+            "--project",
+            "campps",
+            "--title",
+            "t",
+            "--objective",
+            "not-a-real-option",
+            "a body",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        sdlc_manager.main()
+
+    assert exc.value.code == 1
+    assert "Unknown Objective 'not-a-real-option'" in capsys.readouterr().err
+
+
+def test_prepare_dispatch_passes_a_known_objective_through(monkeypatch) -> None:
+    """#111: registration is not wiring — the live check must feed issue_prepare."""
+    seen: dict = {}
+
+    def _capture(**kwargs) -> Path:
+        seen.update(kwargs)
+        return Path("drafts/fake.md")
+
+    _stub_live_objective_field(monkeypatch, ["improve-agent-plugins"])
+    monkeypatch.setattr(sdlc_manager, "issue_prepare", _capture)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "sdlc_manager.py",
+            "issue",
+            "prepare",
+            "--repo",
+            "hermes-claude-code-router",
+            "--type",
+            "defect",
+            "--team",
+            "campps",
+            "--project",
+            "campps",
+            "--title",
+            "t",
+            "--objective",
+            "improve-agent-plugins",
+            "a body",
+        ],
+    )
+
+    sdlc_manager.main()
+
+    assert seen["objective"] == "improve-agent-plugins"
+
+
+def test_prepare_without_the_flag_makes_no_live_field_call(monkeypatch) -> None:
+    """#111: the membership check runs only when --objective is passed."""
+
+    def _explode(project: str, field: str):
+        raise AssertionError("no live field read without --objective")
+
+    seen: dict = {}
+
+    def _capture(**kwargs) -> Path:
+        seen.update(kwargs)
+        return Path("drafts/fake.md")
+
+    monkeypatch.setattr(sdlc_manager, "_resolve_project_field", _explode)
+    monkeypatch.setattr(sdlc_manager, "issue_prepare", _capture)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "sdlc_manager.py",
+            "issue",
+            "prepare",
+            "--repo",
+            "hermes-claude-code-router",
+            "--type",
+            "defect",
+            "--team",
+            "campps",
+            "--project",
+            "campps",
+            "--title",
+            "t",
+            "a body",
+        ],
+    )
+
+    sdlc_manager.main()
+
+    assert seen["objective"] is None

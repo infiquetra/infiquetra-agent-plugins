@@ -749,3 +749,135 @@ def test_team_and_project_are_still_required_with_suggest() -> None:
     assert result.returncode != 0
     assert "--team" in result.stderr
     assert "--project" in result.stderr
+
+
+# --------------------------------------------------------------------------- #
+# #111 — the objective comparison uses the operator's --objective, or nothing
+# --------------------------------------------------------------------------- #
+
+
+OBJECTIVE_ANSWERS = dict(ANSWERS)
+OBJECTIVE_ANSWERS[ts.QUESTION_OBJECTIVE] = {
+    "type": "choice",
+    "choice": "improve-claude-plugins",
+    "confidence": 0.71,
+    "probabilities": {"improve-claude-plugins": 0.71, "improve-agent-plugins": 0.29},
+}
+
+
+def _sourced_prepare_kwargs(tmp_path: Path, monkeypatch) -> dict[str, Any]:
+    """A prepare whose handoff source is a local file, the way --from resolves one."""
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "docs" / "brainstorms" / "source-note.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("# Source note\n")
+    artifact = sdlc_manager.resolve_source_artifact(
+        "docs/brainstorms/source-note.md", tmp_path
+    )
+    assert "/" in artifact.ref
+    return {"source_artifact": artifact}
+
+
+def test_a_sourced_prepare_without_an_objective_logs_no_objective_override(
+    tmp_path, monkeypatch
+) -> None:
+    """#111: the source path is not an operator choice, so nothing compares."""
+    log_dir = tmp_path / "log"
+    draft = _prepare(
+        tmp_path / "out",
+        suggest=True,
+        ask=_fake_ask(_FakeResult(answers=dict(OBJECTIVE_ANSWERS))),
+        suggest_client=client,
+        suggest_log=jev_log,
+        suggest_log_dir=log_dir,
+        objective_options=["improve-claude-plugins", "improve-agent-plugins"],
+        **_sourced_prepare_kwargs(tmp_path, monkeypatch),
+    )
+    sidecar = _sidecar(draft)
+
+    judgment = sidecar["suggestions"]["judgments"][ts.QUESTION_OBJECTIVE]
+    assert judgment["asked"] is True
+    assert judgment["suggested"] == "improve-claude-plugins"
+    assert judgment["chosen"] is None
+    assert judgment["overridden"] is False
+    assert "Objective" not in sidecar["project_fields"]
+
+    objective_verdicts = [
+        record
+        for record in _verdicts(log_dir)
+        if record["kind"] == "verdict"
+        and record["decision_id"] == "mission-control/issue-prepare:objective"
+    ]
+    assert len(objective_verdicts) == 1
+    assert objective_verdicts[0]["label"] is None
+    assert [
+        record
+        for record in _verdicts(log_dir)
+        if record["kind"] == "override"
+        and record["verdict_hash"] == objective_verdicts[0]["verdict_hash"]
+    ] == []
+
+
+def test_a_named_objective_is_what_the_suggestion_compares_against(
+    tmp_path, monkeypatch
+) -> None:
+    """#111: with --objective the comparison uses that value, not the source."""
+    log_dir = tmp_path / "log"
+    draft = _prepare(
+        tmp_path / "out",
+        suggest=True,
+        ask=_fake_ask(_FakeResult(answers=dict(OBJECTIVE_ANSWERS))),
+        suggest_client=client,
+        suggest_log=jev_log,
+        suggest_log_dir=log_dir,
+        objective="improve-agent-plugins",
+        objective_options=["improve-claude-plugins", "improve-agent-plugins"],
+        **_sourced_prepare_kwargs(tmp_path, monkeypatch),
+    )
+    sidecar = _sidecar(draft)
+
+    judgment = sidecar["suggestions"]["judgments"][ts.QUESTION_OBJECTIVE]
+    assert judgment["chosen"] == "improve-agent-plugins"
+    assert judgment["overridden"] is True
+    assert sidecar["project_fields"]["Objective"] == "improve-agent-plugins"
+
+    records = _verdicts(log_dir)
+    verdict = next(
+        record
+        for record in records
+        if record["kind"] == "verdict"
+        and record["decision_id"] == "mission-control/issue-prepare:objective"
+    )
+    assert verdict["label"] == "improve-agent-plugins"
+    overrides = [
+        record
+        for record in records
+        if record["kind"] == "override" and record["verdict_hash"] == verdict["verdict_hash"]
+    ]
+    assert len(overrides) == 1
+    assert overrides[0]["chosen"] == "improve-agent-plugins"
+
+
+def test_an_objective_matching_the_suggestion_logs_no_override(tmp_path) -> None:
+    """#111: agreement is agreement — the named value equal to the suggestion."""
+    log_dir = tmp_path / "log"
+    answers = {ts.QUESTION_OBJECTIVE: dict(OBJECTIVE_ANSWERS[ts.QUESTION_OBJECTIVE])}
+    _prepare(
+        tmp_path,
+        suggest=True,
+        ask=_fake_ask(_FakeResult(answers=answers)),
+        suggest_client=client,
+        suggest_log=jev_log,
+        suggest_log_dir=log_dir,
+        objective="improve-claude-plugins",
+        objective_options=["improve-claude-plugins", "improve-agent-plugins"],
+    )
+
+    assert [record["kind"] for record in _verdicts(log_dir)] == ["verdict"]
+
+
+def test_the_objective_flag_is_registered_on_the_prepare_subcommand() -> None:
+    result = _cli("issue", "prepare", "--help")
+
+    assert result.returncode == 0
+    assert "--objective" in result.stdout

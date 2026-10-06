@@ -55,6 +55,7 @@ class EvalReport:
     unlabeled: list[str] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
     skipped_lines: int = 0
+    invalidated: int = 0
     bands: list[BandTally] = field(default_factory=list)
     question_key: str = ""
 
@@ -67,6 +68,10 @@ class EvalReport:
             lines = ["No records were scored."]
             if self.unlabeled:
                 lines.append(f"{len(self.unlabeled)} record(s) carried no label.")
+            if self.invalidated:
+                lines.append(
+                    f"{self.invalidated} record(s) were retired by an invalidation."
+                )
             if self.skipped_lines:
                 lines.append(f"{self.skipped_lines} line(s) were unreadable and skipped.")
             return "\n".join(lines)
@@ -89,6 +94,8 @@ class EvalReport:
                 f"Labeling conflicts: {len(self.conflicts)} -- "
                 + ", ".join(sorted(self.conflicts)[:10])
             )
+        if self.invalidated:
+            lines.append(f"Invalidated (excluded from scoring): {self.invalidated}")
         if self.skipped_lines:
             lines.append(f"Unreadable lines skipped: {self.skipped_lines}")
         return "\n".join(lines)
@@ -101,6 +108,7 @@ class EvalReport:
             "unlabeled": self.unlabeled,
             "conflicts": self.conflicts,
             "skipped_lines": self.skipped_lines,
+            "invalidated": self.invalidated,
             "question_key": self.question_key,
             "bands": [
                 {"band": t.band, "scored": t.scored, "agreed": t.agreed, "agreement": t.agreement}
@@ -171,8 +179,12 @@ def _hashable(value: Any) -> Any:
     return value
 
 
-def load_records(path: Path) -> tuple[list[dict[str, Any]], int]:
-    """Read either input format: a JSON list, or the verdict log's JSON Lines."""
+def load_records(path: Path) -> tuple[list[dict[str, Any]], int, int]:
+    """Read either input format: a JSON list, or the verdict log's JSON Lines.
+
+    Returns ``(records, skipped, invalidated)``: the scorable records, the
+    unreadable lines, and the verdicts an ``invalidation`` record retired.
+    """
     if not path.exists():
         raise EvalInputError(f"no such evaluation input: {path}")
 
@@ -185,15 +197,18 @@ def load_records(path: Path) -> tuple[list[dict[str, Any]], int]:
             )
         records: list[dict[str, Any]] = []
         skipped = 0
+        invalidated = 0
         for candidate in candidates:
-            found, missed = load_records(candidate)
+            found, missed, retired = load_records(candidate)
             records.extend(found)
             skipped += missed
-        return records, skipped
+            invalidated += retired
+        return records, skipped, invalidated
 
     text = path.read_text(encoding="utf-8")
     if path.suffix == ".jsonl":
-        records = []
+        verdicts: list[dict[str, Any]] = []
+        retired_hashes: set[str] = set()
         skipped = 0
         for line in text.splitlines():
             line = line.strip()
@@ -208,11 +223,26 @@ def load_records(path: Path) -> tuple[list[dict[str, Any]], int]:
                 # Read fine, simply not a verdict to score.  Counting it as
                 # unreadable would report a corrupt log that is not corrupt.
                 continue
+            if isinstance(parsed, dict) and parsed.get("kind") == "invalidation":
+                # Read fine as well: a marker retiring one verdict by hash.
+                # Collected before filtering so an invalidation retires its
+                # verdict no matter which line comes first in the file.
+                marker = parsed.get("verdict_hash")
+                if isinstance(marker, str) and marker:
+                    retired_hashes.add(marker)
+                continue
             if isinstance(parsed, dict):
-                records.append(_from_verdict(parsed))
+                verdicts.append(parsed)
             else:
                 skipped += 1
-        return records, skipped
+        records = []
+        invalidated = 0
+        for verdict in verdicts:
+            if verdict.get("verdict_hash") in retired_hashes:
+                invalidated += 1
+                continue
+            records.append(_from_verdict(verdict))
+        return records, skipped, invalidated
 
     try:
         parsed = json.loads(text)
@@ -220,7 +250,7 @@ def load_records(path: Path) -> tuple[list[dict[str, Any]], int]:
         raise EvalInputError(f"{path} is not valid JSON: {exc}") from None
     if not isinstance(parsed, list):
         raise EvalInputError(f"{path} must hold a list of records at its top level")
-    return [r for r in parsed if isinstance(r, dict)], 0
+    return [r for r in parsed if isinstance(r, dict)], 0, 0
 
 
 def _from_verdict(record: Mapping[str, Any]) -> dict[str, Any]:
@@ -239,10 +269,12 @@ def evaluate(
     question_key: str | None = None,
     bands: Sequence[tuple[float, float, str]] = DEFAULT_BANDS,
     skipped_lines: int = 0,
+    invalidated: int = 0,
 ) -> EvalReport:
     """Score recorded answers against labels, overall and per confidence band."""
     report = EvalReport(
         skipped_lines=skipped_lines,
+        invalidated=invalidated,
         bands=[BandTally(band=name) for _, _, name in bands],
         question_key=question_key or "",
     )
@@ -319,8 +351,14 @@ def evaluate_path(
     question_key: str | None = None,
     bands: Sequence[tuple[float, float, str]] = DEFAULT_BANDS,
 ) -> EvalReport:
-    records, skipped = load_records(path)
-    return evaluate(records, question_key=question_key, bands=bands, skipped_lines=skipped)
+    records, skipped, invalidated = load_records(path)
+    return evaluate(
+        records,
+        question_key=question_key,
+        bands=bands,
+        skipped_lines=skipped,
+        invalidated=invalidated,
+    )
 
 
 __all__: Sequence[str] = (

@@ -1,5 +1,45 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-05
+
+### A shared short-name import cache silently runs one plugin's code as another's
+
+**Evidence.** PR #174 (issue #111): 18 saga/orchestrate tier-judgment tests failed on CI while
+every suite passed alone. Mission-control's `_fleet_commons` inserted its `_bundled` directory at
+`sys.path[0]` and imported by short name; orchestrate's record test then cached
+mission-control's `staffing.py` under `sys.modules["staffing"]`, and saga's consults ran against
+a bundle without `jev_verbs` — failing open to "not-consulted" with no error. The fix loads by
+path under a unique name (the `_load_bundled` pattern already in the same file) and completes
+the bundle with `jev_verbs`; `tests/test_fleet_bundle.py` pins both.
+
+**Mechanism.** `sys.path` order plus short-name imports make module identity depend on who ran
+first in the process. The failure is silent twice over: the wrong copy is behavior-identical
+until the one missing sibling is needed, and the consult fails open by design, so the symptom
+lands far downstream as missing keys and absent files.
+
+**Generalizable rule.** In a shared process, load bundled modules by path under a unique name —
+never `sys.path.insert` plus a short import — and bundle every sibling the bundled code can
+reach, not just the entry points.
+
+### An append-only evidence log needs a retirement marker, not just writers
+
+**Evidence.** Issue #111: `issue prepare` recorded the handoff source's file path as the card's
+Objective and as the operator's chosen Objective in the verdict log. The cleanup could not rewrite
+history, so `jev_log.record_invalidation` appends an `invalidation` marker and `jev_eval` drops
+invalidated verdicts from scoring. Without the marker, the old path labels would have conflicted
+with every future real label under the shared `mission-control/issue-prepare:objective` decision
+id — the harness drops a twice-labeled id — and the objective judgment could never have been
+scored again.
+
+**Mechanism.** An append-only log accumulates corrupt entries alongside good ones, and a scorer
+that cannot tell them apart either scores the corruption or discards the whole series. A marker
+record naming the corrupt entry by hash lets the writer retire evidence with the same
+append-only primitive, and lets the scorer report the exclusion instead of silently changing
+what it measures.
+
+**Generalizable rule.** When the evidence is append-only, ship the retirement marker with the
+first writer: every recorded series eventually contains an entry that must stop counting.
+
 ## 2026-10-04
 
 ### Claude Code cannot change a marketplace's source in place

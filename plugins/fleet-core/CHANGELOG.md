@@ -9,6 +9,18 @@ describe the derived slice and are left as the record of those releases.
 
 The catalog requires `python>=3.12`.
 
+## [Unreleased]
+
+### Added
+
+- `jev_log.record_invalidation` appends an `invalidation` record naming one verdict by hash
+  (#111). The verdict log is append-only, so a verdict whose label turned out to be bogus is
+  marked, never rewritten; the bundled copies in mission-control and saga are regenerated.
+- The evaluation harness honors invalidations: `jev_eval.load_records` drops invalidated
+  verdicts and now returns `(records, skipped, invalidated)`, and `EvalReport` carries the
+  count (`invalidated`, in `to_dict()` and `render()`). `evaluate()` takes matching
+  `invalidated=` input. `typesafe.md` §2 documents the new record kind.
+
 ## [0.33.0] - 2026-10-04
 
 Adds the tier judgment and the implementation work shape to staffing, and removes the ordinal cost-weight module.
