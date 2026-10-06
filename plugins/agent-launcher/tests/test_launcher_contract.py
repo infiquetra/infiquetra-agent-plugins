@@ -3650,6 +3650,48 @@ def test_kind_mismatch_stops_before_prompt(
         launcher.verify_unit_preflight(unit, "pane-1", ready=True)
 
 
+@pytest.mark.parametrize("reported", ["muse", "maki", "MAKI"])
+def test_muse_launch_accepts_herdr_kind_maki(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, reported: str
+) -> None:
+    monkeypatch.setattr(
+        launcher,
+        "agent_row",
+        lambda unit, agents=None: {
+            "pane_id": "pane-1",
+            "cwd": "/tmp/wt",
+            "interactive_ready": True,
+            "agent": reported,
+        },
+    )
+    unit = launcher.LaunchRequest(
+        name="builder", vendor="muse", worktree="/tmp/wt", pane_id="pane-1", tab_id="tab-1"
+    )
+    confirmed, _unconfirmed, _cwd, _ready = launcher.verify_unit_identity(unit, "pane-1", ready=True)
+    assert "kind" in confirmed
+
+
+def test_maki_is_not_accepted_for_another_vendor(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        launcher,
+        "agent_row",
+        lambda unit, agents=None: {
+            "pane_id": "pane-1",
+            "cwd": "/tmp/wt",
+            "interactive_ready": True,
+            "agent": "maki",
+        },
+    )
+    monkeypatch.setattr(launcher, "close_run_session", lambda unit: None)
+    unit = launcher.LaunchRequest(
+        name="reviewer", vendor="codex", worktree="/tmp/wt", pane_id="pane-1", tab_id="tab-1"
+    )
+    with pytest.raises(SystemExit, match="herdr reports agent 'maki', requested 'codex'"):
+        launcher.verify_unit_identity(unit, "pane-1", ready=True)
+
+
 def test_failed_launch_persists_tab_id_for_close(
     launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

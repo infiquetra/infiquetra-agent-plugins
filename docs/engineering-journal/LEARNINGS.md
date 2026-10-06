@@ -2,6 +2,20 @@
 
 ## 2026-10-06
 
+### Herdr names a Muse session `maki`
+
+**Evidence.** On 6 October 2026 two agent-launcher launches of Muse Code 1.4.3 for issue #147 stopped
+with "herdr reports agent 'maki', requested 'muse'". `herdr agent explain` showed the `maki` manifest's
+`prompt_box_idle` rule (`^❯ `) matching the pane. The launcher's identity check
+(`plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`, `verify_unit_identity`) compared
+Herdr's kind to the vendor name exactly.
+
+**Mechanism.** Muse and maki are the same agent; Herdr's detection reports it as `maki`. An exact
+comparison treats that as a different agent and closes the session before the prompt.
+
+**Generalizable rule.** Compare Herdr's agent kind to a vendor through an alias table, never by exact
+string, and keep the table to names the operator has confirmed are one agent.
+
 ### A pane wraps each line of a table the engine laid out for the whole terminal
 
 **Evidence.** Issue #175. `plugins/saga/com.infiquetra.claude/mods/plan-sections.ts` rewrites a table wider than the pane before `Markdown` sees it, and `plan-viewer.tsx` passes `e.props.bodyColumns`. The pull request that lands this change is the other half of the evidence; this build does not open one.

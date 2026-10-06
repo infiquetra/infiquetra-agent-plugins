@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+The roles library stays pinned to infiquetra-sdlc revision `e5a2be10`.
+
+### Fixed
+
+- **A Muse launch no longer stops when Herdr names the session `maki`.** Muse Code is the agent
+  Herdr detects as `maki`, so the identity check now accepts either kind for `muse`
+  (`HERDR_KIND_ALIASES`, `accepted_herdr_kinds`). Every other vendor still needs Herdr to report its
+  own name. Found on 6 October 2026 when two Muse launches for issue #147 stopped with
+  "herdr reports agent 'maki', requested 'muse'".
+
 ## [1.7.2] - 2026-10-04
 
 Re-pins the roles library to the infiquetra-sdlc revision that requires combined-branch functional testing, and makes roster writes lock-safe.
