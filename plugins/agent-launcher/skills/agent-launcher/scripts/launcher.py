@@ -217,6 +217,17 @@ if set(COMPOSER_GLYPH_BY_VENDOR) != SUPPORTED_VENDORS:
 # it lived nowhere. `roster` prints them, so the interview reads how a vendor behaves rather than
 # recalling it -- which is the failure this is for: an orchestrator that guesses, plausibly, and is
 # only found out a phase later.
+# Herdr's name for a vendor's agent, where it differs from the vendor key. Muse Code is the agent
+# Herdr detects as `maki`: the two names are one agent, so a `muse` launch accepts either.
+HERDR_KIND_ALIASES: dict[str, frozenset[str]] = {"muse": frozenset({"muse", "maki"})}
+
+
+def accepted_herdr_kinds(vendor: str) -> frozenset[str]:
+    """The agent kinds Herdr may report for a session launched as ``vendor``."""
+    key = str(vendor).lower()
+    return HERDR_KIND_ALIASES.get(key, frozenset({key}))
+
+
 VENDOR_NOTES: dict[str, str] = {
     "qwen": (
         "never reports interactive readiness, so its task is typed into the pane rather than "
@@ -1284,7 +1295,7 @@ def verify_unit_identity(
     reported_kind = row.get("agent") or row.get("kind")
     if not reported_kind:
         raise SystemExit(f"{unit.name}: herdr did not report agent kind; refusing to prompt")
-    if str(reported_kind).lower() != str(unit.vendor).lower():
+    if str(reported_kind).lower() not in accepted_herdr_kinds(unit.vendor):
         close_run_session(unit)
         raise SystemExit(
             f"{unit.name}: herdr reports agent {reported_kind!r}, requested {unit.vendor!r}"
