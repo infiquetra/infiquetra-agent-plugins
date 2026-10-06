@@ -75,7 +75,7 @@ Every GitHub access goes through the `gh` CLI. The split recorded in
 | Group | Read-only against GitHub | Mutates GitHub |
 |---|---|---|
 | `board` | `view`, `wip`, `standup`, `discover-fields` | `add`, `move`, `archive` |
-| `issue` | `prepare`, `intent-envelope` | `create`, `create-prepared`, `approve`, `close`, `reopen`, `comment`, `label-add`, `label-remove` |
+| `issue` | `prepare`, `intent-envelope`, `invalidate-bogus-objectives` | `create`, `create-prepared`, `approve`, `close`, `reopen`, `comment`, `label-add`, `label-remove` |
 | `labels` | `audit` | `deploy`, `auto-label`, `sync-fields` |
 | `fields` | `discover`, `create-option` | `set-options` |
 | `metrics` | `cycle-time`, `throughput`, `wip-age`, `column-time` | — |
@@ -85,7 +85,8 @@ Every GitHub access goes through the `gh` CLI. The split recorded in
 | `config` | `show`, `show-defaults`, `init-defaults` | — |
 
 `issue prepare` writes a local draft. `config init-defaults` writes a local
-defaults file. `flow repair-window` adds or removes the repair-window label
+defaults file. `issue invalidate-bogus-objectives` appends to the local
+verdict log. `flow repair-window` adds or removes the repair-window label
 and posts a comment. When `issue create-prepared` meets an unmapped
 repository it opens a mapping pull request (`_open_mapping_pr` in the
 descriptor): real `git` worktree add, commit, and push, plus `gh pr create`.

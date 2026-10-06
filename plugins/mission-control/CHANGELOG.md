@@ -1,5 +1,31 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- `issue prepare` no longer records the handoff source's path as the card's `Objective` (#111).
+  The `Objective` project field is carried only when the operator names it with the new
+  `--objective` flag, which must match a live Objective option on `--project` (checked at the
+  command line, so the flag needs `gh` auth; `issue_prepare()` itself stays offline). Without
+  the flag no Objective is recorded and the suggestion step logs no objective override, so the
+  verdict log stops accumulating false operator choices that skew the objective judgment's
+  agreement figures.
+- New `issue invalidate-bogus-objectives` command: a one-off, idempotent cleanup that appends
+  one `invalidation` record per pre-#111 verdict that logged a source path as the Objective.
+  The log is append-only, so nothing is rewritten; the evaluation harness excludes invalidated
+  verdicts from scoring. `--dry-run` reports first; `--log-dir` overrides the log location.
+
+### Tests
+
+- `tests/test_issue_prepare.py`: a sourced prepare records no Objective; a named one records it
+  verbatim; the dispatch rejects an unknown `--objective` without it ever reaching
+  `issue_prepare`, and makes no live field call when the flag is absent.
+- `tests/test_issue_prepare_suggest.py`: a sourced prepare without `--objective` logs no
+  objective override and a null label; with `--objective` the comparison uses that value.
+- New `tests/test_issue_invalidate_bogus_objectives.py`: dry-run writes nothing, a run retires
+  only the bogus objective verdicts with the originals byte-identical, and a rerun is a no-op.
+
 ## [2.21.2] - 2026-10-04
 
 Stops the test suite from reading the SDLC schema live from GitHub.

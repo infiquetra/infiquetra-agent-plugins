@@ -4734,7 +4734,9 @@ class PreparedIssue:
 
 
 def _prepared_project_fields(
-    issue: PreparedIssue, source_artifact: SourceArtifact | None
+    issue: PreparedIssue,
+    source_artifact: SourceArtifact | None,
+    objective: str | None = None,
 ) -> dict[str, str]:
     """Resolve the project-field values a prepared card will carry (U11).
 
@@ -4747,6 +4749,11 @@ def _prepared_project_fields(
     tolerance for not-yet-created fields is also a follow-up, not implemented
     here). We only record non-empty values so the sidecar reflects what we could
     populate; do not read more into the presence of this key than "recorded".
+
+    The Objective is recorded only when the operator names one (#111): the
+    handoff source's ref is a path, URL, or branch — never an Objective option —
+    so deriving the field from the source wrote a false operator choice into
+    both the sidecar and the verdict log.
     """
     fields: dict[str, str] = {_PREPARED_FIELD_ISSUE_TYPE: issue.issue_type}
     # Risk is NOT recorded here — decision E1 (#1000) retired the project-field
@@ -4761,11 +4768,32 @@ def _prepared_project_fields(
     # a derived value, so an absent author Stage stays absent here too.
     if issue.stage:
         fields[_PREPARED_FIELD_STAGE] = issue.stage
-    # Objective is carried only when the handoff source names one; we don't
-    # invent an Objective the operator didn't supply.
-    if source_artifact and source_artifact.ref:
-        fields[_PREPARED_FIELD_OBJECTIVE] = source_artifact.ref
+    # Objective is carried only when the operator names one (#111); the
+    # handoff source never supplies it. An absent Objective stays absent here,
+    # and the suggestion step then records no objective override.
+    if objective:
+        fields[_PREPARED_FIELD_OBJECTIVE] = objective
     return fields
+
+
+def _validate_prepare_objective(project_name: str, objective: str) -> str:
+    """Reject an --objective that names no live Objective option on the project.
+
+    Live discovery, like every other field read in this file: the board is the
+    only authority on its option names. Called from the `issue prepare` dispatch
+    arm — `issue_prepare` itself stays pure/offline and records the value
+    verbatim.
+    """
+    field = _resolve_project_field(project_name, _PREPARED_FIELD_OBJECTIVE)
+    options = [str(entry.get("name", "")) for entry in field.get("options", [])]
+    if objective not in options:
+        known = ", ".join(options) if options else "(the field exposes no options)"
+        raise RuntimeError(
+            f"Unknown Objective {objective!r} for project {project_name!r}; "
+            f"expected one of {known}. List them with "
+            f"`flow field-options --project {project_name} --field Objective`."
+        )
+    return objective
 
 
 @dataclass
@@ -6215,6 +6243,11 @@ def issue_prepare(
     draft_dir: Path | None = None,
     fmt: str = "text",
     stage: str | None = None,
+    # #111: the operator's Objective decision, recorded verbatim.  No default
+    # is derived: the handoff source's ref is a path, URL, or branch, never an
+    # Objective option.  The command line validates membership against the live
+    # field before calling; this function stays pure/offline.
+    objective: str | None = None,
     # #1035: advisory triage suggestions.  Opt-in, apply nothing, and every one
     # of these defaults keeps the command exactly as offline as it was.
     suggest: bool = False,
@@ -6328,7 +6361,7 @@ def issue_prepare(
     )
     # Record the project-field values the card will carry so the later live
     # `create` step can set them (U11). Offline — derived from issue metadata.
-    issue.project_fields = _prepared_project_fields(issue, source_artifact)
+    issue.project_fields = _prepared_project_fields(issue, source_artifact, objective)
     # KTD9: the body produced by prepare must PASS the Phase C validator before
     # it can reach approval. The validator runs inside readiness (the olympus
     # profile calls validate_card_body), so a malformed body fails readiness and
@@ -6406,6 +6439,106 @@ def issue_prepare(
                     f"{suggestions.get('note', '')}"
                 )
     return draft_path
+
+
+#: File suffixes a source ref can end in that no Objective option uses (checked
+#: against every board's vendored options; the live check is `--dry-run`).
+_BOGUS_OBJECTIVE_SUFFIXES = (".md", ".markdown", ".txt", ".rst")
+
+
+def _is_bogus_objective_label(value: Any) -> bool:
+    """Whether a recorded objective label is really a handoff source ref.
+
+    Pre-#111 prepares stored `source_artifact.ref` — a path, URL, or branch —
+    as the operator's Objective. A `/` or a prose-file suffix tells the two
+    apart: option names carry spaces, colons, and dots, never either.
+    """
+    if not isinstance(value, str) or not value:
+        return False
+    return "/" in value or value.endswith(_BOGUS_OBJECTIVE_SUFFIXES)
+
+
+def issue_invalidate_bogus_objectives(
+    fmt: str = "text",
+    log_dir: Path | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Retire the pre-#111 verdicts that logged a source path as the Objective.
+
+    One-off cleanup, idempotent: every prepare-objective verdict whose label is
+    a source ref gains one `invalidation` record, appended — the log is never
+    rewritten. The evaluation harness then excludes those verdicts from scoring
+    (without this, the old path labels would conflict with every future real
+    label under the shared decision id, and the objective judgment could never
+    be scored). Linked overrides retire with their verdict; they were never
+    scored. A rerun appends nothing: already-invalidated verdicts are skipped,
+    so an interrupted run resumes cleanly.
+    """
+    log = _fleet_commons("jev_log")
+    base = log_dir or log.log_dir()
+    decision_id = f"{_SUGGEST_DECISION_PREFIX}:{triage_suggest.QUESTION_OBJECTIVE}"
+    records, skipped = log.read_verdicts(base)
+    retired = {
+        record.get("verdict_hash")
+        for record in records
+        if record.get("kind") == "invalidation"
+    }
+    bogus = [
+        record
+        for record in records
+        if record.get("kind") == "verdict"
+        and record.get("decision_id") == decision_id
+        and _is_bogus_objective_label(record.get("label"))
+    ]
+    targets = {
+        record["verdict_hash"]
+        for record in bogus
+        if isinstance(record.get("verdict_hash"), str)
+    }
+    linked_overrides = sum(
+        1
+        for record in records
+        if record.get("kind") == "override" and record.get("verdict_hash") in targets
+    )
+    fresh = [record for record in bogus if record.get("verdict_hash") not in retired]
+    invalidated: list[str] = []
+    if not dry_run:
+        for verdict in fresh:
+            if not isinstance(verdict.get("verdict_hash"), str):
+                continue
+            log.record_invalidation(
+                verdict_hash=verdict["verdict_hash"],
+                reason=(
+                    f"pre-#111 prepare recorded the source ref {verdict.get('label')!r} "
+                    "as the operator's Objective; no operator choice existed"
+                ),
+                directory=base,
+            )
+            invalidated.append(verdict["verdict_hash"])
+    result = {
+        "log": str(base / log.VERDICT_FILENAME),
+        "bogus_verdicts": len(bogus),
+        "linked_overrides": linked_overrides,
+        "already_invalidated": len(bogus) - len(fresh),
+        "invalidated": invalidated if not dry_run else [v.get("verdict_hash") for v in fresh],
+        "dry_run": dry_run,
+        "skipped_lines": skipped,
+    }
+    if fmt == "json":
+        _out(result, fmt)
+    else:
+        print(f"Verdict log: {result['log']}")
+        print(f"Bogus prepare-objective verdicts: {len(bogus)}")
+        print(f"Linked overrides retiring with them: {linked_overrides}")
+        if dry_run:
+            print(f"Would invalidate: {len(fresh)} (dry run — nothing was appended)")
+        else:
+            print(f"Invalidated now: {len(invalidated)}")
+        if result["already_invalidated"]:
+            print(f"Already invalidated: {result['already_invalidated']}")
+        if skipped:
+            print(f"Unreadable lines skipped: {skipped}")
+    return result
 
 
 def _known_template_names() -> list[str]:
@@ -7726,6 +7859,14 @@ def main() -> None:
         help="An Objective candidate the --suggest judgment may choose among (repeatable). "
         "With none supplied the objective question is not asked.",
     )
+    issue_prepare_p.add_argument(
+        "--objective",
+        default=None,
+        help="The card's Objective: your decision, recorded in the sidecar and compared "
+        "against the --suggest judgment. Must name a live Objective option on "
+        "--project (validated live, so this flag needs gh auth); without it no "
+        "Objective is recorded and no objective override is logged.",
+    )
     issue_prepare_p.add_argument("source", nargs="*")
 
     issue_create_prepared_p = issue_sp.add_parser(
@@ -7758,6 +7899,24 @@ def main() -> None:
         "drafts",
         nargs="+",
         help="One or more prepared draft markdown paths to approve",
+    )
+
+    issue_invalidate_p = issue_sp.add_parser(
+        "invalidate-bogus-objectives",
+        help="Retire pre-#111 prepare verdicts that logged a source path as the "
+        "Objective. Appends invalidation records; the log is never rewritten. "
+        "Idempotent: reruns append nothing.",
+    )
+    issue_invalidate_p.add_argument(
+        "--log-dir",
+        default=None,
+        help="Verdict log directory (default: INFIQUETRA_TYPESAFE_LOG_DIR or "
+        "~/.claude/typesafe)",
+    )
+    issue_invalidate_p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would be retired without appending anything",
     )
 
     # #380: capture-side producer of the ship-policy intent envelope. Answer values are
@@ -8160,6 +8319,11 @@ def main() -> None:
                     args.source_file,
                     args.from_ref,
                 )
+                objective = (
+                    _validate_prepare_objective(args.project, args.objective)
+                    if args.objective
+                    else None
+                )
                 issue_prepare(
                     repo=args.repo,
                     issue_type=args.type,
@@ -8173,6 +8337,7 @@ def main() -> None:
                     handoff_maturity=args.handoff_maturity,
                     source_artifact=source_artifact,
                     fmt=fmt,
+                    objective=objective,
                     suggest=args.suggest,
                     objective_options=args.objective_options,
                 )
@@ -8186,6 +8351,12 @@ def main() -> None:
                 )
             elif args.action == "approve":
                 prepared_approve_batch([Path(d) for d in args.drafts], fmt=fmt)
+            elif args.action == "invalidate-bogus-objectives":
+                issue_invalidate_bogus_objectives(
+                    fmt,
+                    log_dir=Path(args.log_dir) if args.log_dir else None,
+                    dry_run=args.dry_run,
+                )
             elif args.action == "intent-envelope":
                 issue_render_intent_envelope(
                     args.run_mode,

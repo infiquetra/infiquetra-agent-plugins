@@ -61,7 +61,7 @@ One JSON object per line, appended, never rewritten.
 
 | Field | Meaning |
 |---|---|
-| `kind` | `verdict` or `override` |
+| `kind` | `verdict`, `override`, or `invalidation` |
 | `decision_id` | which judgment point asked; the join key the harness scores on |
 | `state_hash` | a hash of the state, never the state itself |
 | `questions_hash` | a hash of the question set |
@@ -74,6 +74,13 @@ One JSON object per line, appended, never rewritten.
 | `verdict_hash` | the identity an override points back to |
 
 An override record carries `verdict_hash`, the `chosen` value, and a `rationale`.
+
+An invalidation record carries `verdict_hash` and a `reason`. It retires a verdict whose label
+turned out to be bogus — the log is append-only, so the verdict itself is never rewritten or
+removed. The evaluation harness drops invalidated verdicts from scoring and reports the count;
+a verdict's linked overrides retire with it. Invalidation is for corrupt evidence, not for
+disagreement: a genuine difference between an answer and its label is what the harness scores,
+and stays scored.
 
 ### Confidence, and the one asymmetry worth knowing
 
