@@ -232,3 +232,77 @@ def test_a_record_names_its_own_scored_question() -> None:
         }
     ]
     assert ev.evaluate(records).agreed == 1
+
+
+# --------------------------------------------------------------------------- #
+# Invalidations (#111)
+# --------------------------------------------------------------------------- #
+
+
+def _verdict_line(identifier: str, label: str, verdict_hash: str) -> str:
+    return json.dumps(
+        {
+            "kind": "verdict",
+            "decision_id": identifier,
+            "answer": {"type": "choice", "choice": "haiku", "confidence": 0.9},
+            "label": label,
+            "resolved_model": "jev-1.13.0",
+            "verdict_hash": verdict_hash,
+        }
+    )
+
+
+def test_an_invalidated_verdict_is_excluded_from_scoring(tmp_path) -> None:
+    """A bogus label must not skew the agreement it would otherwise join."""
+    path = tmp_path / "verdicts.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                _verdict_line("a", "haiku", "kept"),
+                _verdict_line("b", "opus", "retired"),
+                json.dumps({"kind": "invalidation", "verdict_hash": "retired"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    report = ev.evaluate_path(path)
+    assert report.scored == 1
+    assert report.agreed == 1
+    assert report.invalidated == 1
+    assert "Invalidated (excluded from scoring): 1" in report.render()
+    assert report.to_dict()["invalidated"] == 1
+
+
+def test_an_invalidation_applies_no_matter_which_line_comes_first(tmp_path) -> None:
+    path = tmp_path / "verdicts.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                json.dumps({"kind": "invalidation", "verdict_hash": "retired"}),
+                _verdict_line("b", "opus", "retired"),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    report = ev.evaluate_path(path)
+    assert report.scored == 0
+    assert report.invalidated == 1
+
+
+def test_an_invalidation_naming_nothing_changes_nothing(tmp_path) -> None:
+    path = tmp_path / "verdicts.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                _verdict_line("a", "haiku", "kept"),
+                json.dumps({"kind": "invalidation", "verdict_hash": "absent"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    report = ev.evaluate_path(path)
+    assert report.scored == 1
+    assert report.invalidated == 0

@@ -297,3 +297,32 @@ def test_the_pin_records_what_the_alias_resolved_to(tmp_path) -> None:
 def test_a_corrupt_pin_file_reads_as_empty_rather_than_raising(tmp_path) -> None:
     (tmp_path / log.PIN_FILENAME).write_text("{not json", encoding="utf-8")
     assert log.read_pins(tmp_path) == {}
+
+
+def test_an_invalidation_retires_its_verdict_by_hash_without_touching_it(tmp_path) -> None:
+    """#111: the log is append-only, so a bogus verdict is marked, not rewritten."""
+    verdict = log.record_verdict(
+        decision_id="mission-control/issue-prepare:objective",
+        state=STATE,
+        questions=QUESTIONS,
+        answer=ANSWER,
+        confidence=0.93,
+        threshold=0.6,
+        resolved_model="jev-1.13.0",
+        label="docs/brainstorms/a-source.md",
+        directory=tmp_path,
+    )
+    before = (tmp_path / log.VERDICT_FILENAME).read_text(encoding="utf-8")
+    log.record_invalidation(
+        verdict_hash=verdict["verdict_hash"],
+        reason="the label is a source path, not an Objective",
+        directory=tmp_path,
+    )
+    lines = (tmp_path / log.VERDICT_FILENAME).read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert lines[0] == before.strip()
+    marker = json.loads(lines[1])
+    assert marker["kind"] == "invalidation"
+    assert marker["verdict_hash"] == verdict["verdict_hash"]
+    assert "source path" in marker["reason"]
+    assert "at" in marker

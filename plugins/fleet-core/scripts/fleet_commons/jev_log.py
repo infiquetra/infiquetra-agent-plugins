@@ -200,6 +200,30 @@ def record_override(
     return record
 
 
+def record_invalidation(
+    *,
+    verdict_hash: str,
+    reason: str = "",
+    directory: Path | None = None,
+    clock: Callable[[], float] = time.time,
+) -> dict[str, Any]:
+    """Append an invalidation, retiring the verdict it names by hash.
+
+    The log is append-only: a verdict whose label turned out to be bogus is
+    never rewritten or removed. The invalidation is the marker that retires it;
+    the evaluation harness drops invalidated verdicts from scoring, and the
+    verdict's linked overrides retire with it (they were never scored).
+    """
+    record = {
+        "kind": "invalidation",
+        "verdict_hash": verdict_hash,
+        "reason": reason,
+        "at": _timestamp(clock),
+    }
+    _append((directory or log_dir()) / VERDICT_FILENAME, record)
+    return record
+
+
 def read_verdicts(directory: Path | None = None) -> tuple[list[dict[str, Any]], int]:
     return _read_lines((directory or log_dir()) / VERDICT_FILENAME)
 
@@ -312,6 +336,7 @@ __all__: Sequence[str] = (
     "log_dir",
     "read_pins",
     "read_verdicts",
+    "record_invalidation",
     "record_override",
     "record_verdict",
     "write_pin",

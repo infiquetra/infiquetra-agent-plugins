@@ -91,6 +91,7 @@ READ_ONLY_VERBS = frozenset(
         # issue
         "prepare",
         "intent-envelope",
+        "invalidate-bogus-objectives",
         # labels
         "audit",
         # fields

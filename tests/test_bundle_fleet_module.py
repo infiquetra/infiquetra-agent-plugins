@@ -687,6 +687,7 @@ class LiveTreeTests(unittest.TestCase):
             {
                 "intent_envelope",
                 "jev_log",
+                "jev_verbs",
                 "plugin_resolution",
                 "retry_backoff",
                 "staffing",
