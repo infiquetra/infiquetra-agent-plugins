@@ -1,0 +1,209 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-05T19:08:13.181224+00:00",
+  "created_at": "2026-10-05T19:15:37.278018+00:00",
+  "created_issue_number": 167,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/167",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-05-saga-tie-qa-and-later-defects-back-to-the-review.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C16-qa-and-outcome-job.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "medium",
+    "confidence": 0.7,
+    "distribution": {
+      "high": 0.27,
+      "low": 0.01,
+      "medium": 0.71,
+      "very-high": 0.01
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": false,
+    "overridden": false,
+    "score": 1.28,
+    "suggested": "medium"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-05-saga-tie-qa-and-later-defects-back-to-the-review.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-05\ntopic: saga-review-redesign\nmaturity: requirements-ready\n---\n\n# saga: tie /qa and later defects back to the review that passed the code\n\n### Objective\n\nA review's misses become visible. `/qa`, saga's functional test after merge, names the review run that\npassed the code it tests and posts its failures as that review's misses; the release step records the\nmerged commit, so `/qa`'s tested revision is never empty. A daily job links later defects and reverts\nto the review runs that passed their code, queues them as corpus candidates, and files fix-later boxes\nticked after the review, linking each new issue into the pull request comment.\n\n### Intent\n\nToday (paths under `plugins/saga/`):\n\n- `/qa` runs after the merge and the non-production deploy (`skills/qa/SKILL.md:8-10`). It writes a\n  `qa_run.v1` block under the run record's top-level `qa` key, through the record's lock\n  (`scripts/qa_strategies.py:1486-1505`, `:1649-1662`), naming no review run. It files no issues and\n  edits no pull request (`skills/qa/SKILL.md:64-67`).\n- `/qa` reads the tested revision from the record's `deploy` and `release` blocks\n  (`scripts/qa_strategies.py:1451-1472`), but nothing writes ",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C16-qa-and-outcome-job.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-05-saga-review-redesign/cards/C16-qa-and-outcome-job.md",
+    "ref": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C16-qa-and-outcome-job.md",
+    "title": "saga: tie /qa and later defects back to the review that passed the code",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "enhancement",
+        "confidence": 0.87,
+        "distribution": {
+          "capability": 0.9,
+          "context-update": 0.03,
+          "defect": 0.01,
+          "enhancement": 0.06,
+          "exploration": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": true,
+        "suggested": "capability"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C16-qa-and-outcome-job.md",
+        "confidence": 0.28,
+        "distribution": {
+          "improve-agent-plugins": 0.64,
+          "none": 0.36
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "improve-agent-plugins"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "medium",
+        "confidence": 0.7,
+        "distribution": {
+          "high": 0.27,
+          "low": 0.01,
+          "medium": 0.71,
+          "very-high": 0.01
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": false,
+        "overridden": false,
+        "score": 1.28,
+        "suggested": "medium"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.8,
+        "distribution": {
+          "Awaiting operator input": 0.0,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.0,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.06999999999999999,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.01,
+          "Discovering": 0.0,
+          "Execution planning": 0.04,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.05,
+          "Ready for Planning": 0.8200000000000001,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "saga: tie /qa and later defects back to the review that passed the code",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "enhancement",
+    "confidence": 0.87,
+    "distribution": {
+      "capability": 0.9,
+      "context-update": 0.03,
+      "defect": 0.01,
+      "enhancement": 0.06,
+      "exploration": 0.0
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": true,
+    "suggested": "capability"
+  },
+  "updated_at": "2026-10-05T19:15:53.376599+00:00"
+}

@@ -1,0 +1,76 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-06T00:26:56.131875+00:00",
+  "created_at": "2026-10-06T00:26:59.740347+00:00",
+  "created_issue_number": 173,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/173",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-06-saga-see-what-a-run-costs-and-where-it-stands.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/O0-run-cost-and-progress.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-06-saga-see-what-a-run-costs-and-where-it-stands.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-05\ntopic: saga-review-redesign\nmaturity: requirements-ready\n---\n\n# saga: see what a run costs and where it stands\n\n### Objective\n\nWhile a saga run works, the operator can see which step it is in, how far its spend has gone against\na budget set at admission, and when its issue was last updated; afterwards, the operator can see what\neach step, role and review round cost. Four child cards build this, and this card closes when they\nhave.\n\n### Intent\n\nThe code review redesign (#147) started from runs that spent a lot for little value, and it changes\nhow review works. These four cards, carried over from the 4 October enhancement plan and outside the\nredesign, make any run's progress and cost visible, review or not:\n\n- #170 (O3, saga: budget and proportionality at admission, as guidance): at admission the operator\n  records what the issue is worth and a spend budget, which defaults by risk tier. At 50% and 100% of\n  it saga raises a notice and comments on the issue, and the run carries on. `/plan` reports the\n  plan's size against a target.\n- #168 (O1, saga mod: status band, second version): the band above the prompt shows the lifecycle\n  step, the code-review round, the",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/O0-run-cost-and-progress.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-05-saga-review-redesign/cards/O0-run-cost-and-progress.md",
+    "ref": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/O0-run-cost-and-progress.md",
+    "title": "saga: see what a run costs and where it stands",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "saga: see what a run costs and where it stands",
+  "updated_at": "2026-10-06T00:27:19.420983+00:00"
+}

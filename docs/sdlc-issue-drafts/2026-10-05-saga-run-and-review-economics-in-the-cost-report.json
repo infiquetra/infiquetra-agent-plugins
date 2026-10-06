@@ -1,0 +1,209 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-05T19:08:15.461446+00:00",
+  "created_at": "2026-10-05T19:17:03.260192+00:00",
+  "created_issue_number": 171,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/171",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-05-saga-run-and-review-economics-in-the-cost-report.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/O4-cost-report-economics.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "low",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "low",
+    "confidence": 0.89,
+    "distribution": {
+      "high": 0.01,
+      "low": 0.9,
+      "medium": 0.09,
+      "very-high": 0.0
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": false,
+    "overridden": false,
+    "score": 0.11,
+    "suggested": "low"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-05-saga-run-and-review-economics-in-the-cost-report.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-05\ntopic: saga-review-redesign\nmaturity: requirements-ready\n---\n\n# saga: run and review economics in the cost report\n\n### Objective\n\n`cost_report.py` shows, from saga's run records, what each lifecycle step and each role cost (plan,\nplan review, build, test, code review and repair), how many code-review rounds each review used, and\nhow many of each review's findings carry each outcome (blocks merge, fix later, note) and each merge\nfate (fixed, dismissed, fixed now, filed, left). The operator can then see where a run's spend went\nand whether later review rounds paid for themselves.\n\n### Intent\n\nThis card is card 12 of the 4 October 2026 enhancement plan, which plan.md (\"Decisions added when\nthe plan became issues\") files as a card of its own, outside the review redesign.\n\nWhat is true today, at origin/main (1f7137d), with paths under `plugins/saga/`:\n\n- `scripts/cost_report.py` prints cost per completed unit, grouped by role and model tier\n  (docstring `:1-32`). It reads the usage entries on each unit row (`:258-265`) and prices them\n  from `references/model-prices.yaml` (`:54`). It prints text or `--json` and stores nothing.\n- A unit counts as completed only when ",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/O4-cost-report-economics.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-05-saga-review-redesign/cards/O4-cost-report-economics.md",
+    "ref": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/O4-cost-report-economics.md",
+    "title": "saga: run and review economics in the cost report",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "enhancement",
+        "confidence": 0.88,
+        "distribution": {
+          "capability": 0.09,
+          "context-update": 0.01,
+          "defect": 0.0,
+          "enhancement": 0.9,
+          "exploration": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "enhancement"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/O4-cost-report-economics.md",
+        "confidence": 0.06,
+        "distribution": {
+          "improve-agent-plugins": 0.47,
+          "none": 0.53
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "none"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "low",
+        "confidence": 0.89,
+        "distribution": {
+          "high": 0.01,
+          "low": 0.9,
+          "medium": 0.09,
+          "very-high": 0.0
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": false,
+        "overridden": false,
+        "score": 0.11,
+        "suggested": "low"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.83,
+        "distribution": {
+          "Awaiting operator input": 0.0,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.0,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.04,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.0,
+          "Discovering": 0.0,
+          "Execution planning": 0.03,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.08,
+          "Ready for Planning": 0.85,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "saga: run and review economics in the cost report",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "enhancement",
+    "confidence": 0.88,
+    "distribution": {
+      "capability": 0.09,
+      "context-update": 0.01,
+      "defect": 0.0,
+      "enhancement": 0.9,
+      "exploration": 0.0
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": false,
+    "suggested": "enhancement"
+  },
+  "updated_at": "2026-10-05T19:17:20.869640+00:00"
+}

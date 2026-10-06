@@ -1,0 +1,209 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-05T19:08:11.552973+00:00",
+  "created_at": "2026-10-05T19:14:31.896083+00:00",
+  "created_issue_number": 164,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/164",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-05-saga-review-state-for-every-harness-the-pull-req.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C13-review-state-and-fix-later.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "medium",
+    "confidence": 0.65,
+    "distribution": {
+      "high": 0.31,
+      "low": 0.0,
+      "medium": 0.67,
+      "very-high": 0.02
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": false,
+    "overridden": false,
+    "score": 1.34,
+    "suggested": "medium"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-05-saga-review-state-for-every-harness-the-pull-req.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-05\ntopic: saga-review-redesign\nmaturity: requirements-ready\n---\n\n# saga: review state for every harness, the pull request checklist and fix-later choices\n\n### Objective\n\nOne saga script writes a code review's state and pending choices as one document. Every screen\nreads it, every answer goes back through the script, and harnesses without mods get Markdown with\nnumbered questions. Each round posts one pull request comment, the final one with the fix-later\nchecklist. At merge confirmation each fix-later item is fixed now, filed or left, and its finding\nrecord keeps the choice. An unattended run files only security-guard items, and its merge follows\nthe merge setting recorded at run start.\n\n### Intent\n\nToday (paths under `plugins/saga/`):\n\n- No one document holds a review's state: `/review-view` reads `run_status.py review` (lines 471-517\n  of `scripts/run_status.py`), the band reads its `summary` (657-739), and the pull request comment,\n  one comment and never a review, has no checklist (`scripts/review_result.py:1036-1115`).\n- Merge confirmation is prose: `/work` asks a question (`skills/work/SKILL.md:93-95`), and the merge\n  stays explicitly confirmed (`:1074-1080",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C13-review-state-and-fix-later.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-05-saga-review-redesign/cards/C13-review-state-and-fix-later.md",
+    "ref": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C13-review-state-and-fix-later.md",
+    "title": "saga: review state for every harness, the pull request checklist and fix-later choices",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "enhancement",
+        "confidence": 0.83,
+        "distribution": {
+          "capability": 0.87,
+          "context-update": 0.02,
+          "defect": 0.0,
+          "enhancement": 0.1,
+          "exploration": 0.01
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": true,
+        "suggested": "capability"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C13-review-state-and-fix-later.md",
+        "confidence": 0.28,
+        "distribution": {
+          "improve-agent-plugins": 0.64,
+          "none": 0.36
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": true,
+        "suggested": "improve-agent-plugins"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "medium",
+        "confidence": 0.65,
+        "distribution": {
+          "high": 0.31,
+          "low": 0.0,
+          "medium": 0.67,
+          "very-high": 0.02
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": false,
+        "overridden": false,
+        "score": 1.34,
+        "suggested": "medium"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "",
+        "confidence": 0.92,
+        "distribution": {
+          "Awaiting operator input": 0.0,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.0,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.03,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.0,
+          "Discovering": 0.0,
+          "Execution planning": 0.01,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.02,
+          "Ready for Planning": 0.93,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.13.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "saga: review state for every harness, the pull request checklist and fix-later choices",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "enhancement",
+    "confidence": 0.83,
+    "distribution": {
+      "capability": 0.87,
+      "context-update": 0.02,
+      "defect": 0.0,
+      "enhancement": 0.1,
+      "exploration": 0.01
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": true,
+    "suggested": "capability"
+  },
+  "updated_at": "2026-10-05T19:14:50.246818+00:00"
+}
