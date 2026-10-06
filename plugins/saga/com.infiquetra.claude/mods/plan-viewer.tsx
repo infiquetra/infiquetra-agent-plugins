@@ -26,6 +26,7 @@ import type { EngineInterface, On } from 'claude-code'
 import type { SagaPlanView } from '../types/index.d.ts'
 import {
   discussPromptText,
+  fitTables,
   linkifyRefs,
   pageText,
   planSavePath,
@@ -278,7 +279,11 @@ export function registerPlanViewer(on: On): void {
 
     const pages = pageText(section.text)
     const page = Math.min(Math.max(0, await read($, planPage)), pages.length - 1)
-    const { text, refs } = linkifyRefs(pages[page] ?? '', view.repoRoot)
+    const linked = linkifyRefs(pages[page] ?? '', view.repoRoot)
+    // Link first, then measure: a file reference drawn without OSC 8 is wider than its label.
+    // bodyColumns is the pane. viewport.columns is the transcript beside a docked pane.
+    const text = e.surface === 'terminal' ? fitTables(linked.text, e.props.bodyColumns) : linked.text
+    const { refs } = linked
     const pressRef = async (ref: PlanRef | null) => {
       if (ref !== null) await fillPrompt($, refPromptText(ref))
     }

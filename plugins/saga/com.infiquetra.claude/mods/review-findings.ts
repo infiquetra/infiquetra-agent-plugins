@@ -7,7 +7,7 @@
 
 import type { SagaReview, SagaReviewFinding, SagaReviewLens, SagaReviewLensState } from '../types/index.d.ts'
 
-/** The engine refuses a Markdown block over 10,000 characters; a finding's text stays well under. */
+/** The mod's own page budget is 10,000 characters; a finding's text stays well under it. */
 export const FINDING_TEXT_LIMIT = 1_500
 
 /** The pseudo-lens that lists findings whose lens is not in the review's lens list. */

@@ -1,5 +1,17 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-10-06
+
+### Stack a Markdown table that does not fit the terminal pane
+
+**Decision.** Stack tables that do not fit, measured conservatively, on the terminal only. The saga plan viewer and the review findings pane do this before handing text to `Markdown`. A table at or under the pane's `bodyColumns` is drawn as written. Desktop, VS Code and mobile are unchanged, and the plan file is unchanged.
+
+**Rationale.** The engine lays a table in a pane out for the terminal's width. Pinning a `Box` to the pane width does not change that. Stacking is the rewrite the mod can do, and counting markup in the width means a table judged to fit is never wider on screen than the count.
+
+**Rejected alternatives.** The `Box` width wrapper (it has no effect), a grid of our own, always stacking, and a custom Markdown renderer.
+
+**Revisit when.** The engine lays out pane tables at `bodyColumns`.
+
 ## 2026-10-05
 
 ### Saga's code review becomes mostly deterministic, and a lens blocks only after a corpus measures it
