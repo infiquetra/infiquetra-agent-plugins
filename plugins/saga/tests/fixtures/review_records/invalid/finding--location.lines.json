@@ -1,0 +1,35 @@
+{
+  "kind": "finding",
+  "schema": "review_records.v1",
+  "subject": "code",
+  "lens": "correctness",
+  "rule": {
+    "row": "judged",
+    "ref": "correctness.q-retry-safe"
+  },
+  "source": {
+    "kind": "llm",
+    "name": "reviewer",
+    "model": "example-model-1"
+  },
+  "location": {
+    "scope": "lines",
+    "file": "src/billing/charge.py",
+    "function": "charge_with_retry",
+    "anchor": "for attempt in range(3):\n    gateway.charge(card, amount)"
+  },
+  "language": "python",
+  "statement": "A retry after a timeout charges the card a second time.",
+  "consequence": "money-or-resources-wrongly-moved",
+  "trigger": "retry",
+  "evidence": "reproduced",
+  "proof": {
+    "test": "tests/test_charge.py::test_retry_after_timeout_charges_once"
+  },
+  "introduced": true,
+  "degraded": false,
+  "consequence_jev": "money-or-resources-wrongly-moved",
+  "unconfirmed": false,
+  "merge_outcome": null,
+  "id": "rf:e6232067855f17b97bb62050a6d4941d"
+}

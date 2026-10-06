@@ -1,0 +1,40 @@
+{
+  "kind": "finding",
+  "schema": "review_records.v1",
+  "subject": "code",
+  "lens": "security",
+  "rule": {
+    "row": "security.secret-in-diff",
+    "ref": "gitleaks:generic-api-key"
+  },
+  "source": {
+    "kind": "tool",
+    "name": "gitleaks",
+    "version": "8.21.0"
+  },
+  "location": {
+    "scope": "lines",
+    "file": "src/billing/charge.py",
+    "lines": {
+      "start": 40,
+      "end": 52
+    },
+    "function": "charge_with_retry",
+    "anchor": "for attempt in range(3):\n    gateway.charge(card, amount)"
+  },
+  "language": "python",
+  "statement": "A credential-shaped string was added to the diff.",
+  "consequence": null,
+  "trigger": null,
+  "evidence": "tool-result",
+  "proof": {
+    "raw_output": "0000000000000000000000000000000000000000000000000000000000000001"
+  },
+  "introduced": true,
+  "degraded": false,
+  "consequence_jev": null,
+  "unconfirmed": false,
+  "merge_outcome": null,
+  "id": "rf:c7e61cca52711a29fce761f3d08f82d8",
+  "matched_text": "EXAMPLE-NOT-A-SECRET"
+}
