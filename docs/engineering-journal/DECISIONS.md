@@ -12,6 +12,27 @@
 
 **Revisit when.** The engine lays out pane tables at `bodyColumns`.
 
+### Muse staffs as muse-spark-1.3-contributor and keeps max effort
+
+**Decision.** Fleet Core's staffing palette (`plugins/fleet-core/scripts/fleet_commons/staffing.json`
+and its bundled copies in saga and mission-control) maps every Muse tier to
+`muse-spark-1.3-contributor`, and Muse accepts `max` with no collapse to `xhigh`. The operator's
+favourites file, `~/.config/orchestrate/models.json`, names the same model.
+
+**Rationale.** The operator chose this model for the #147 program on 6 October 2026, and that program
+runs Muse at `max` (`docs/plans/2026-10-06-saga-review-redesign-program-plan.md`, decisions D2 and D3).
+Muse Code 1.4.3 lists `max` among its efforts (`muse --help`), and `muse model-profile show
+muse-spark-1.3-contributor --effort max` reports a measured tuning cell for it. The palette's old
+`max` to `xhigh` collapse dated from 13 August, when Muse ran through OpenCode, whose picker offered no
+higher rung; left in place, it would quietly lower every saga-staffed Muse role.
+
+**Rejected alternatives.** Keep `muse-spark-1.2-contributor` in the palette and set the model per launch:
+saga's own staffing would then disagree with every run the operator starts. Accept `ultra` as well: no
+evidence yet that it does better, and it costs more of Muse's allowance.
+
+**Revisit when.** The #147 pilot or the reviewer bake-off shows Muse stopping on usage limits at
+`max`, or a newer Muse model is released.
+
 ## 2026-10-05
 
 ### Saga's code review becomes mostly deterministic, and a lens blocks only after a corpus measures it
