@@ -327,7 +327,8 @@ export function displayWidth(text: string): number {
 const LIST_ITEM = /^ {0,3}(?:[-+*]|\d{1,9}[.)])\s+/
 const BLOCKQUOTE_LINE = /^ {0,3}>/
 const HEADING_LINE = /^ {0,3}#{1,6}(?:[ \t]|$)/
-const DELIMITER_CELL = /^:?-{3,}:?$/
+// One or more dashes. The engine and GitHub accept `|-|`, not only `---`.
+const DELIMITER_CELL = /^:?-+:?$/
 const EMPTY_CELL = '—'
 
 function leadingSpaces(line: string): number {

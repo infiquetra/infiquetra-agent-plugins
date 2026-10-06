@@ -5,6 +5,7 @@
 ### Fixed
 
 - Issue 175: on the terminal, the plan viewer and the review findings pane draw a Markdown table that is wider than the pane as labeled lines, with a rule between rows. A table that fits is drawn as written. A table that continues onto another page repeats its header and delimiter. The plan file is not changed. Desktop, VS Code and mobile are unchanged. The width is the pane body, measured from the text as written so a table judged to fit cannot overflow the pane.
+- Issue 175: a delimiter cell is one or more dashes with optional colons, so a wide table written with a one-dash delimiter is stacked with the others.
 
 ## [1.3.0] - 2026-10-04
 

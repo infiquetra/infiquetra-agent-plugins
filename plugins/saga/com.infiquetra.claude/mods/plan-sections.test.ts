@@ -365,6 +365,18 @@ describe('fitting tables to the pane', () => {
     for (const row of rows) expect(joined.split(row).length - 1).toBe(1)
   })
 
+  test('stacks a wide one-dash delimiter at 10 columns and keeps a short one at 200', async () => {
+    const wide = ['| Left | Right | Tail |', '|-|:-|-:|', '| this cell is wider than ten | y | z |'].join('\n')
+    const stacked = fitTables(wide, 10)
+    expect(stacked).toContain('**Left:** this cell is wider than ten')
+    expect(stacked).toContain('**Right:** y')
+    expect(stacked).toContain('**Tail:** z')
+    expect(stacked).not.toContain('|-|')
+
+    const short = ['| A | B | C |', '|-|:-|-:|', '| a | b | c |'].join('\n')
+    expect(fitTables(short, 200)).toBe(short)
+  })
+
   test('returns a stacked page longer than 10,000 characters whole', async () => {
     const cell = 'word '.repeat(600).trim()
     const table = ['| A | B | C | D |', '| --- | --- | --- | --- |', `| ${cell} | ${cell} | ${cell} | ${cell} |`].join('\n')

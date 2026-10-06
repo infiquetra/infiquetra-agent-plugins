@@ -10,6 +10,14 @@
 
 **Generalizable rule.** Size what a pane draws to `e.props.bodyColumns`, and check what a pane paints, not just its tree, because the test kit cannot see paint.
 
+### A one-dash delimiter is a table the engine draws
+
+**Evidence.** Issue #175, from the live check of the docked pane. `DELIMITER_CELL` in `plugins/saga/com.infiquetra.claude/mods/plan-sections.ts`. The pull request that lands this change is the other half of the evidence; this build does not open one.
+
+**Mechanism.** GitHub and the engine treat a delimiter cell as optional colons around one or more dashes. Requiring three dashes left a wide table written with a one-dash delimiter undetected, so the pane still wrapped its grid lines.
+
+**Generalizable rule.** Match the delimiter the engine draws: one or more dashes, with optional colons on either side.
+
 ## 2026-10-05
 
 ### A shared short-name import cache silently runs one plugin's code as another's
