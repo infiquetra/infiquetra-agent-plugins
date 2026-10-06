@@ -1,0 +1,40 @@
+{
+  "schema": "repository_profile.v1",
+  "repo": "infiquetra/infiquetra-agent-plugins",
+  "concurrency_allocation": 10,
+  "nonproduction_destination": "none",
+  "main_consumed_directly": true,
+  "functional_test_environment": {
+    "kind": "local",
+    "test_command": "python3 -m pytest plugins/*/tests -q --import-mode=importlib",
+    "scope": "private"
+  },
+  "mechanical_tool_baseline": [
+    "python3 scripts/check_repo.py",
+    "python3 -m unittest discover -s tests -v",
+    "python3 -m pytest plugins/*/tests -q --import-mode=importlib",
+    "git diff --check"
+  ],
+  "preflight_checks": [
+    "the plan cleared /doc-review with nothing above P3 open",
+    "the work branch exists and is not the default branch"
+  ],
+  "qa": {
+    "schema": "qa_profile.v1",
+    "ceiling": {
+      "max_duration_seconds": 180,
+      "max_direct_cost": 0
+    },
+    "strategies": {
+      "cli-smoke": {
+        "required": true,
+        "commands": [
+          {
+            "name": "repository-validation",
+            "command": "python3 scripts/check_repo.py"
+          }
+        ]
+      }
+    }
+  }
+}
