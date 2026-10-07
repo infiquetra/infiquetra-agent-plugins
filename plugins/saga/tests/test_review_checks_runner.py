@@ -145,3 +145,33 @@ def test_checks_fingerprint_names_the_script() -> None:
     )
     for name in (*H.C.CHECKS, *ROWS):
         assert name in tools
+
+
+def _checks_module() -> Any:
+    path = Path(__file__).resolve().parents[1] / "scripts" / "review_checks.py"
+    spec = importlib.util.spec_from_file_location("review_checks_for_junit_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_junit_report_with_a_doctype_or_entity_is_refused() -> None:
+    checks = _checks_module()
+    plain = '<testsuite><testcase name="t" classname="c"><skipped message="m"/></testcase></testsuite>'
+    assert checks._junit_cases(plain) == [("t", "c", "m")]
+    expansion = (
+        '<?xml version="1.0"?><!DOCTYPE r [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;">]>'
+        '<testsuite><testcase name="&b;" classname="c"/></testsuite>'
+    )
+    assert checks._junit_cases(expansion) == []
+    assert checks._junit_cases("<!entity x 'y'>" + plain) == []
+    # Refusal degrades the row: with no test named in the log either, the gap reason is returned.
+    assert checks._ci_judgement(["tests/test_x.py::test_new"], "", expansion) == ([], "log-names-no-test")
+
+
+def test_an_oversized_junit_report_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    checks = _checks_module()
+    monkeypatch.setattr(checks, "JUNIT_MAX_BYTES", 50)
+    report = '<testsuite><testcase name="t" classname="c"><skipped message="m"/></testcase></testsuite>'
+    assert checks._junit_cases(report) == []

@@ -420,8 +420,20 @@ def _local(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
+#: A JUnit report is CI output from the change under review, so it is untrusted. It never needs a
+#: document type or entity declarations, and none this large is a real report.
+JUNIT_MAX_BYTES = 20_000_000
+_XML_DECLARATIONS = re.compile(r"<!\s*(DOCTYPE|ENTITY)", re.IGNORECASE)
+
+
 def _junit_cases(text: str) -> list[tuple[str, str, str | None]]:
-    """``(name, classname, skip message or None when the case is not skipped)``."""
+    """``(name, classname, skip message or None when the case is not skipped)``.
+
+    A report carrying a document type or entity declaration, or over ``JUNIT_MAX_BYTES``, is refused
+    as if it named no test, which degrades the row rather than reading as clean.
+    """
+    if len(text.encode("utf-8", "replace")) > JUNIT_MAX_BYTES or _XML_DECLARATIONS.search(text):
+        return []
     try:
         root = ET.fromstring(text)
     except ET.ParseError:
