@@ -43,7 +43,11 @@ An adapter is a frozen object. `invoke` builds an argument vector and does not r
 | `mode` | `report` or `fix`. `fix` writes no review record. |
 | `platforms` | Empty means every platform. Otherwise the current platform must be listed. |
 
-`ScanContext` carries `repo` (the checkout the caller named), `root` (the directory this scan reads), `home` (where raw output and the rule cache go) and `configs` (local rule directories only).
+`ScanContext` carries `repo` and `root`, both the directory this scan reads (the head worktree, or the base worktree on a base scan), `home` (where raw output and the rule cache go) and `configs` (local rule directories only).
+
+## The commit under review
+
+The commit under review is untrusted. Pins, rules, the test command, and `coverage_report` come from `.saga-profile.json` at the base commit. Saga's Semgrep rules and the gitleaks config come from this plugin. Scanners read a detached worktree of the head commit after `.semgrepignore`, `.gitleaks.toml`, `.gitleaksignore`, `.jscpd.json`, `whitelizard.txt`, and `osv-scanner.toml` are removed. Semgrep is started with `--disable-nosem`. gitleaks is started with `--config` pointing at `plugins/saga/references/gitleaks.toml` and with `--ignore-gitleaks-allow`. Coverage bytes come only from the relocated command's directory. The base cache is used only when its stored key matches the resolved base commit. Empty standard output with exit 0 is reason `empty-output`. The relocated command's environment copies `PATH`, `LANG`, `LC_ALL`, `LC_CTYPE`, and `TZ` when they are set, and sets `HOME`, `TMPDIR`, `TMP`, and `TEMP` to fresh directories. The command must start from a binary on `PATH`. A relative token is rewritten only when that path exists in the head worktree. A changed line that contains `gitleaks:allow`, `jscpd:ignore`, or `lizard forgives` is a degraded input, and the file is not rewritten. A relative Semgrep rule path from the base profile, other than saga's own rules, is read from a base worktree that stays open until that adapter's scans finish.
 
 A hit carries the rule id, path, statement, anchor, optional level, line range, function, advisory ids, score and row. The runner turns hits into findings. A finding is handed in without a severity. `review_formula.py` computes the severity, and `outcomes.json` is where a reader finds it.
 

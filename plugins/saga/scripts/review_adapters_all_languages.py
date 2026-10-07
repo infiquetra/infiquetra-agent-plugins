@@ -45,7 +45,7 @@ def _document() -> dict[str, object]:
 
 
 def _semgrep_argv(context: ScanContext) -> list[str]:
-    argv = ["semgrep", "scan", "--metrics=off", "--json"]
+    argv = ["semgrep", "scan", "--metrics=off", "--disable-nosem", "--json"]
     for config in context.configs:
         argv.extend(["--config", str(config)])
     argv.append(str(context.root))
@@ -94,7 +94,26 @@ def _parse_semgrep(text: str, *, saga: bool) -> ParseResult:
             end=int(end) if isinstance(end, int) else None,
             row=row or None,
         ))
-    return ParseResult(tuple(hits))
+    return ParseResult(tuple(hits), problems=_semgrep_problems(data.get("errors")))
+
+
+def _semgrep_problems(errors: object) -> tuple[str, ...]:
+    """Path, or else type and level. The message can quote source, so it is never stored."""
+    if not isinstance(errors, list):
+        return ()
+    problems: list[str] = []
+    for error in errors:
+        if not isinstance(error, dict):
+            continue
+        path = error.get("path")
+        if isinstance(path, str) and path.strip():
+            problems.append(" ".join(path.split()))
+            continue
+        kind = str(error.get("type") or "")
+        level = str(error.get("level") or "")
+        text = " ".join(part for part in (kind, level) if part)
+        problems.append(text or "semgrep")
+    return tuple(problems)
 
 
 def _parse_semgrep_security(text: str) -> ParseResult:
@@ -106,8 +125,14 @@ def _parse_semgrep_saga(text: str) -> ParseResult:
 
 
 def _invoke_gitleaks(context: ScanContext) -> list[str]:
+    config = review_tools.plugin_root() / "references" / "gitleaks.toml"
     return [
-        "gitleaks", "detect", "--report-format", "json", "--report-path", "-", str(context.root),
+        "gitleaks", "detect",
+        "--report-format", "json",
+        "--report-path", "-",
+        "--config", str(config),
+        "--ignore-gitleaks-allow",
+        str(context.root),
     ]
 
 
@@ -253,13 +278,17 @@ def _parse_osv(text: str) -> ParseResult:
 
 def _invoke_jscpd(min_lines: int, min_tokens: int):
     def invoke(context: ScanContext) -> list[str]:
-        return [
+        argv = [
             "jscpd",
             "--min-lines", str(min_lines),
             "--min-tokens", str(min_tokens),
             "--reporters", "json",
-            str(context.root),
+            "--silent",
         ]
+        if context.report_dir is not None:
+            argv.extend(["--output", str(context.report_dir)])
+        argv.append(str(context.root))
+        return argv
     return invoke
 
 

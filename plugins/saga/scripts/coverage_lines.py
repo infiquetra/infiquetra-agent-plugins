@@ -138,6 +138,21 @@ def parse_coverage_json(text: str) -> Report:
     return Report(files=tuple(files))
 
 
+def resolve_report(name: str, directory: Path) -> Path:
+    """A coverage file inside ``directory``.
+
+    An absolute path, a ``..`` part, and a symlink that resolves outside ``directory`` are refused.
+    """
+    path = Path(name)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"coverage report {name!r} is outside the relocated directory")
+    root = directory.resolve()
+    candidate = (directory / path).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise ValueError(f"coverage report {name!r} is outside the relocated directory")
+    return candidate
+
+
 def parse_report(path: Path) -> Report:
     """Pick a parser from the suffix, then from the text."""
     text = path.read_text(encoding="utf-8")
