@@ -89,6 +89,7 @@ Not finding everything is accepted; a senior engineer's review never found every
 - **Every source emits the same records,** and code validates them. Tools, Jev and the LLM all produce them (change 1).
 - **A lens blocks only after it clears its pass mark on the corpus.** Until then it runs and reports, but it cannot block.
 - **A missing tool degrades the review; it doesn't stop it.** Saga's setup step finds what is installed and offers to install the rest. Without a tool, Jev or the LLM answers that question instead, the record marks the answer degraded, and a degraded answer cannot block on its own.
+- **The change under review is untrusted.** Nothing the reviewed commit contains configures its own review. Scanners run on a detached copy of the head commit, and settings, pins and rules come from the base commit and the plugin. A settings file the change adds or edits is recorded for the reviewer, never applied. Commands run on the reviewer's behalf read only the scratch copy, the packet and the toolchain, never the operator's home directory, and their output is scrubbed of secrets before it is recorded or sent anywhere (#188, #189).
 - **Everything is measured.** Every review run is recorded in Langfuse, and every change to the review is checked against the corpus before it ships.
 
 ### What we will build (ten changes)
@@ -253,7 +254,7 @@ A "Saga Reviews" project. The operator creates it and its key pair in the Langfu
 **Datasets, evaluators and retention**
 
 - **The corpus is one dataset,** its cases split into tuning and held-out. Each harness run over it is recorded against that dataset.
-- **Evaluators are plain code first.** They compute the agreed numbers: per-lens hits and false blocks, per-question precision, grade stability, and cost. LLM-based evaluators come in only after they are checked against hand labels.
+- **Evaluators are plain code first.** They compute the agreed numbers: per-lens hits and false blocks, per-question precision, grade stability, and cost, and for live reviews the addressed rate: the share of a run's findings that were fixed or filed rather than dismissed or left (ReviewBench's online precision measure). LLM-based evaluators come in only after they are checked against hand labels.
 - **Nothing is deleted automatically.** The records are small, and future tuning depends on them.
 
 #### Change 10: What the operator sees and chooses
@@ -408,7 +409,7 @@ Code with known defects, each with a clean twin, where the answer comes from a t
 | Held-out cases, which decide pass marks | Our own cases only: our history and planted defects. |
 | Tuning | Our planted defects first; history cases go only to the held-out half. Public sets of real bugs where they match a question's defect kind: BugsInPy and SWE-bench for Python; BugsJS and Multi-SWE-bench for JavaScript, TypeScript and Rust; RustMizan for Rust; CVEfixes for security. |
 | Wiring checks | The rule test suites of Semgrep, ESLint, Clippy, SwiftLint, Dart's lints, markdownlint, KICS and cdk-nag: each tool runs, the changed-line filter works, severities map correctly. |
-| Outside comparison | The Python and TypeScript pull requests in Martian's and Greptile's benchmarks. Never counts toward a pass mark. |
+| Outside comparison | The Python and TypeScript pull requests in Martian's and Greptile's benchmarks, and beside them GitHub's ReviewBench (219 pull requests from 187 open-source repositories in 19 languages, with findings labelled by severity and category), limited to the languages we use and scored only on its fixed findings: precision, recall and F1 per severity and category. ReviewBench's findings were proposed partly by LLMs and its own scoring uses an LLM judge, so it never counts toward a pass mark and is never used for tuning. |
 
 **Cases from our history**
 
@@ -448,6 +449,9 @@ It runs the review on every corpus case and scores it, and it decides, through o
 
 **One review command**
 `/code-review` keeps its name, but one script does the work: it takes the repository, the base and head commits, the repository profile and the builder's record; runs the tools, our checks and the Jev sweep; writes the packet for the LLM reviewer; checks what comes back; applies the formula; and writes the five records. The LLM reviewer is one agent with a fixed prompt file and output shape. In saga, orchestrate starts it through agent-launcher; in the harness, the harness starts it through agent-launcher too, with the same prompt, model, effort, tools and normal configuration (for Claude, `claude -p`), in a scratch copy of the change, and every test it writes runs sandboxed. The harness lives in the corpus repository and pins the saga and fleet-core versions it tests.
+
+**Choosing the reviewer**
+Before the first full run, the harness reviews one sample of about 80 tuning cases, never held-out ones, with three reviewers: Grok and Muse, the two candidates, and Claude as the baseline whose quality is known. Every reviewer gets the same cases, defect version and twin, and repeats the LLM step on the same 20. Scoring uses the cases' own answers and no judge model: a catch is the known defect found with a test that reproduces; a false alarm is a block on a twin; a flip is a repeat that changes a lens between blocking and passing. The rule is fixed before the run. The primary reviewer is whichever candidate catches more, provided its false-alarm rate is no higher than Claude's, its flips stay within 1 in 10, and it catches at least 90% of what Claude catches on the same cases. The other candidate becomes the second reviewer on high-risk cards. If both fall short, Claude is primary and the better candidate is the second reviewer. The report gives each vendor's tokens per case and the projected cost of a full run. Decided 6 October 2026, to move the corpus runs and every later review off the Claude usage limit without guessing at quality.
 
 **Builder records**
 Corpus cases have no builder, so each carries the record one would have written: the plan unit's acceptance criteria and their checks, the per-question declarations, and the reason for any coverage gap or surviving mutant. It is written once, shared by the defect version and its twin, and the twin is built to pass every rule about what the builder must provide. A block on a twin can then only come from a claimed defect. The rules about missing declarations are checked by ordinary tests in saga.
