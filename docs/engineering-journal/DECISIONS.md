@@ -17,6 +17,15 @@ Nothing is installed, and no optional step runs, unless the operator names it. `
 **Rejected alternatives.** A fifth probe status for timeouts. Putting the machine record under `.claude/saga/runs`. Adding a setup question to admission. Importing `jsonschema` in the setup script. Letting saga-owned rows match catalogue commands. Editing `review-calibration.json` so a probed pin would not be report-only.
 
 **Revisit when.** Card C14 adds the pane's first-session offer, card C5 adds a repository question, or card C16 adds a step.
+### The scripted checks run from the plugin script
+
+**Decision.** Issue #155 (card C5b). `plugins/saga/scripts/review_checks.py` is the plugin's copy. The runner passes the base profile's test commands as one JSON argument and does not read `.saga-profile.json` from the commit under review. The two testing rows set `excused_by` to `test-passes-before-change` and `test-skipped-in-ci`. Machine-specific hits are where-to-look items with no answer. A confirmed finding on `architecture-maintainability.machine-specific-value` stays fix later. When the relocated command fails, the block stays on `architecture-maintainability.relocated-run-fails`.
+
+**Rationale.** The commit under review is untrusted, so it cannot choose the checks, the commands, or the user and host. The two testing rows shipped with no excuse kind, so a builder reason could not clear them. Card C1 did not encode a modifier that raises the machine-specific row when the relocated run fails, and this card does not add one.
+
+**Rejected alternatives.** One shared testing-gap excuse kind. Reading the head commit's profile for the test command. A formula modifier that changes the machine-specific finding's own severity. A new row in `review-tools.yaml`, which the build loop would list as uncovered.
+
+**Revisit when.** A later card adds that severity modifier, or a lister for a language other than pytest, cargo, and swift.
 
 ### may-block reads the installed saga, and the profile is the base commit's
 

@@ -1,0 +1,11 @@
+{
+  "nodes": [
+    {"id": "left", "kind": "step"},
+    {"id": "right", "kind": "step"},
+    {"id": "done", "kind": "terminal"}
+  ],
+  "transitions": [
+    {"from": "left", "to": "right"},
+    {"from": "right", "to": "left"}
+  ]
+}

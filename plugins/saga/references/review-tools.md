@@ -168,6 +168,18 @@ Issue 152 adds these adapters. A formatter (`ruff-format`, `shfmt`) is `mode: fi
 
 The family draft, the kind draft, and the curated Checkov ids are the second fence. The first fence stays the semgrep map.
 
+## Scripted checks
+
+Issue 155 adds five checks in `scripts/review_checks.py`. The runner starts the plugin's copy of that script. The commit under review does not configure these checks. `where-to-look.json` carries the unanswered machine-specific items. A confirmed machine-specific finding stays fix later. When the relocated test command fails, `architecture-maintainability.relocated-run-fails` blocks in the same outcome file.
+
+| Adapter id | Comparison | Row | Computed severity |
+|---|---|---|---|
+| `two-runs` | lines, whole project | `testing.test-passes-before-change` | blocks, excused by `test-passes-before-change` |
+| `ci-skips` | lines, whole project | `testing.test-skipped-in-ci` | blocks, excused by `test-skipped-in-ci` |
+| `machine-values` | lines; items, not findings | `architecture-maintainability.machine-specific-value` | fix later. The item has no answer |
+| `changed-names` | lines, whole project | `correctness.unupdated-mention`; `correctness.unupdated-mention-in-document` for a document | blocks, excused by `unaffected`; fix later |
+| `workflow-graph` | base against head | `correctness.workflow-dead-end` | blocks |
+
 ```yaml
 ruff_family_draft:
   F: error

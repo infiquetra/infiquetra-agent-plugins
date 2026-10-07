@@ -53,8 +53,9 @@ The kinds on the list today:
 - The reviewer's prompt, answer schema, and launch settings. The launch settings are `targeted-reviewer-launch.json` (vendor and model).
 - The sweep: `sweep_pieces.py`, `model-prices.yaml`, and fleet-core's `jev_sweep.py` (C6).
 - The Python, CDK, shell, workflow, and Markdown adapters (C4b).
+- The scripted checks (issue 155): `scripts/review_checks.py`.
 
-Not on the list yet: question banks and the policy questions, our checks, and the review command. A card that adds a review component adds its paths in the same change.
+Not on the list yet: question banks and the policy questions, our pattern checks, and the review command. The scripted checks in `review_checks.py` are on the list. A card that adds a review component adds its paths in the same change.
 
 Instruction files are recorded in `reviewer_configuration` and are not fingerprinted. `may-block` does not read that field. `review_records.py` is not a component. The record schema is the contract; the validator is held to that schema by its own drift test. `reviewer_answer.py` is not a component either. It refuses an answer and caps an open-search finding; the prompt, the answer schema and the launch settings are the fingerprinted parts, and the module is held by its own tests.
 
@@ -77,6 +78,7 @@ plugins/saga/references/targeted-reviewer-launch.json
 plugins/fleet-core/scripts/fleet_commons/jev_sweep.py
 plugins/saga/scripts/sweep_pieces.py
 plugins/saga/references/model-prices.yaml
+plugins/saga/scripts/review_checks.py
 ```
 
 ## The answer

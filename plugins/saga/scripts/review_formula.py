@@ -99,6 +99,8 @@ REASON_KINDS: tuple[str, ...] = (
     "unaffected",
     "pattern-check",
     "where-to-look-explanation",
+    "test-passes-before-change",
+    "test-skipped-in-ci",
 )
 
 GRADES: tuple[str, ...] = ("A", "B", "C", "D", "F")
@@ -141,8 +143,9 @@ ROWS: Mapping[str, Row] = _rows(
     # Testing
     Row("testing.uncovered-branch", "testing", "blocks", excused_by="coverage-gap"),
     Row("testing.surviving-mutant", "testing", "blocks", excused_by="surviving-mutant"),
-    Row("testing.test-passes-before-change", "testing", "blocks"),
-    Row("testing.test-skipped-in-ci", "testing", "blocks"),
+    Row("testing.test-passes-before-change", "testing", "blocks",
+        excused_by="test-passes-before-change"),
+    Row("testing.test-skipped-in-ci", "testing", "blocks", excused_by="test-skipped-in-ci"),
     Row("testing.flaky-order-or-network", "testing", "fix-later"),
     Row("testing.fakes-code-under-test", "testing", "fix-later"),
     Row("testing.writes-live-system", "testing", "fix-later", blocks_when_reproduced=True),

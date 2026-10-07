@@ -945,7 +945,9 @@
                   "scanner-false-positive",
                   "unaffected",
                   "pattern-check",
-                  "where-to-look-explanation"
+                  "where-to-look-explanation",
+                  "test-passes-before-change",
+                  "test-skipped-in-ci"
                 ]
               },
               "finding_id": {

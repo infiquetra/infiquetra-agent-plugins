@@ -9,6 +9,21 @@
 **Mechanism.** A saga-owned tool row uses a binary such as `uv`, `git`, or `python3` that also appears in baseline commands. `catalogue_check_for` matches any row's `tool` string, so those rows would claim `uv run ...` and `git diff`. Rows with `catalogue: false` are dropped in both `catalogue_check_for` and `check_map`. `admit` surveys, writes the notice, and prints the suggestion only when both `home` and `runner` were passed. The command passes them. `--dry-run` passes neither, so a library call and a dry run do not create `~/.saga/machine.json`.
 
 **Generalizable rule.** A shared tool name is not a catalogue claim, and a library default that writes under the operator's home has to be an explicit argument.
+### A second pytest quiet flag hides the node ids
+
+**Evidence.** Issue #155. `plugins/saga/scripts/review_checks.py` (`_list_argv`). Pytest 9.0.3 prints `path::node` for `--collect-only -q` and `path: count` for `--collect-only -qq`. The proofs are the passing tests in `plugins/saga/tests/test_review_check_two_runs.py` and `plugins/saga/tests/test_review_check_ci_skips.py`.
+
+**Mechanism.** The repository's test command already includes `-q`. Appending another `-q` makes the listing unrecognisable, so the check records `no-test-list` and no finding.
+
+**Generalizable rule.** When a review appends flags to a command the repository already wrote, do not repeat a flag whose second copy changes the output shape.
+
+### A blocking row needs its excuse kind set
+
+**Evidence.** Issue #155. `testing.test-passes-before-change` and `testing.test-skipped-in-ci` in `plugins/saga/scripts/review_formula.py`. The proofs are `test_reason_excuses_only_its_own_testing_row`, `test_a_builder_reason_turns_the_block_into_a_note` in `plugins/saga/tests/test_review_check_two_runs.py`, and `test_a_builder_reason_turns_the_skip_into_a_note` in `plugins/saga/tests/test_review_check_ci_skips.py`.
+
+**Mechanism.** Those rows shipped with `excused_by` unset, so a builder reason could not clear them until this card set the kinds.
+
+**Generalizable rule.** A row which blocks unless a reason is recorded needs `excused_by` set to that reason's kind.
 
 ### An installed saga plugin is its own root
 

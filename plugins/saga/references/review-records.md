@@ -108,8 +108,8 @@ excuses it or a rule that reproduction makes it block. Tool adapters and our own
 |---|---|---|---|
 | `testing.uncovered-branch` | blocks | `coverage-gap` | |
 | `testing.surviving-mutant` | blocks | `surviving-mutant` | |
-| `testing.test-passes-before-change` | blocks | | |
-| `testing.test-skipped-in-ci` | blocks | | |
+| `testing.test-passes-before-change` | blocks | `test-passes-before-change` | |
+| `testing.test-skipped-in-ci` | blocks | `test-skipped-in-ci` | |
 | `testing.flaky-order-or-network` | fix later | | |
 | `testing.fakes-code-under-test` | fix later | | |
 | `testing.writes-live-system` | fix later | | yes |

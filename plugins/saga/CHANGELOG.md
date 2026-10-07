@@ -4,6 +4,12 @@
 
 ### Added
 
+- Issue 155: `scripts/review_checks.py` adds five scripted checks on the review-tools runner:
+  two test runs, tests the continuous-integration run skipped, machine-specific values,
+  changed names, and a workflow graph. The two testing rows are excused by
+  `test-passes-before-change` and `test-skipped-in-ci`. Machine-specific hits are written
+  to `where-to-look.json` without an answer.
+
 - Issue 158: the calibration tests prove that the targeted reviewer's prompt, answer schema and
   launch settings are fingerprinted, so a one-byte change to any of them makes a recorded run
   stale, and that a changed `CLAUDE.md`, `AGENTS.md` or plugin manifest fails no check.
