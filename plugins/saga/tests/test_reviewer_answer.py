@@ -438,6 +438,15 @@ def test_a_test_file_no_reproduction_names_is_refused() -> None:
     assert "scratch.changes" in fields(A.check(ANSWER, ITEMS, result=result))
 
 
+def test_a_symlink_the_session_made_is_refused() -> None:
+    result = copy.deepcopy(RESULT)
+    result["scratch"]["changes"]["links"] = ["tests/test_charge_retry.py"]
+    assert (
+        "scratch.changes: tests/test_charge_retry.py (symlink) is a link the session made, "
+        "never a test" in A.check(ANSWER, ITEMS, result=result)
+    )
+
+
 def test_a_deleted_file_in_the_scratch_copy_is_refused() -> None:
     result = copy.deepcopy(RESULT)
     result["scratch"]["changes"]["deleted"] = ["tests/test_charge_retry.py"]

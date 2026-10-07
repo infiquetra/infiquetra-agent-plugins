@@ -2105,15 +2105,21 @@ REVIEWER_SCRATCH_IGNORED = re.compile(
 )
 
 
-#: Project files in the reviewed change that Claude would act on outside the command sandbox:
-#: hooks, ``apiKeyHelper`` and environment in project settings, and project MCP servers. The change
-#: under review is untrusted, so they are withheld from the copy; the operator's own user-level
-#: configuration is what "normal configuration" means, and it still loads.
-REVIEWER_UNTRUSTED_CONFIG = (".claude/settings.json", ".claude/settings.local.json", ".mcp.json")
-#: Project instruction files Claude loads from the working directory.
-REVIEWER_PROJECT_INSTRUCTIONS = ("CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md")
+#: The change under review is untrusted. Claude acts on a project's ``.claude/`` directory (settings
+#: with hooks, ``apiKeyHelper`` and environment; rules; skills and agents, whose frontmatter can
+#: carry hooks) and its ``.mcp.json`` without a trust prompt in ``-p``, and hooks and MCP servers
+#: run outside the command sandbox. So every one of them, at any depth, is withheld from the copy.
+#: The operator's own user-level configuration is what "normal configuration" means, and it loads.
+REVIEWER_UNTRUSTED_DIRS = (".claude",)
+REVIEWER_UNTRUSTED_FILES = (".mcp.json",)
+#: Instruction files Claude loads from the working directory and, on demand, from subdirectories.
+REVIEWER_INSTRUCTION_NAMES = ("CLAUDE.md", "CLAUDE.local.md")
 #: How deep Claude follows ``@`` imports.
 REVIEWER_IMPORT_DEPTH = 5
+#: A deliberately wider net than Claude's own import parser: any ``@`` followed by non-space text,
+#: inside code spans or not, is treated as an import, so no import Claude follows can be missed.
+_REVIEWER_ANY_IMPORT = re.compile(r"@([^\s]+)")
+_REVIEWER_IMPORT_TRAILING = "`'\")]}>.,;:!?*"
 
 
 class ReviewerRefused(Exception):
@@ -2226,9 +2232,6 @@ def reviewer_parse_claude_result(stdout: str) -> dict[str, Any]:
     }
 
 
-_REVIEWER_IMPORT = re.compile(r"(?<![\w`])@((?:~|\.{1,2})?/?[\w.-][^\s`)]*)")
-
-
 def _reviewer_read(path: Path) -> bytes | None:
     try:
         return path.read_bytes() if path.is_file() else None
@@ -2243,24 +2246,33 @@ def _reviewer_inside(path: Path, copy: Path) -> bool:
         return False
 
 
-def _reviewer_import_target(token: str, parent: Path) -> Path:
-    return Path(token).expanduser() if token.startswith("~") else parent / token
+def _reviewer_import_targets(content: bytes, parent: Path) -> list[tuple[str, Path]]:
+    """Every ``@`` token in *content* that could be an import, with the path it would name."""
+    found: list[tuple[str, Path]] = []
+    for raw in _REVIEWER_ANY_IMPORT.findall(content.decode("utf-8", "replace")):
+        token = raw.rstrip(_REVIEWER_IMPORT_TRAILING)
+        if not token:
+            continue
+        target = Path(token).expanduser() if token.startswith("~") else parent / token
+        found.append((token, target))
+    return found
 
 
 def _reviewer_imports_leave(start: Path, copy: Path) -> bool:
-    """Whether *start*'s ``@`` imports, followed as Claude follows them, reach outside *copy*."""
+    """Whether *start*'s possible imports, followed as Claude follows them, can leave *copy*."""
     frontier, seen = [start], set()
-    for _ in range(REVIEWER_IMPORT_DEPTH):
+    for _ in range(REVIEWER_IMPORT_DEPTH + 1):
         following: list[Path] = []
         for path in frontier:
             if path in seen:
                 continue
             seen.add(path)
-            content = _reviewer_read(path)
+            if path.is_symlink() and not _reviewer_inside(path, copy):
+                return True
+            content = _reviewer_read(path) if _reviewer_inside(path, copy) else None
             if content is None:
                 continue
-            for token in _REVIEWER_IMPORT.findall(content.decode("utf-8", "replace")):
-                target = _reviewer_import_target(token, path.parent)
+            for _token, target in _reviewer_import_targets(content, path.parent):
                 if not _reviewer_inside(target, copy):
                     return True
                 following.append(target)
@@ -2271,27 +2283,83 @@ def _reviewer_imports_leave(start: Path, copy: Path) -> bool:
 def reviewer_withhold_untrusted(copy: Path) -> list[str]:
     """Remove what the reviewed change could use to run or read outside the sandbox.
 
-    Symlinks that leave the copy, project settings and MCP files Claude would act on outside the
-    command sandbox, and project instruction files whose ``@`` imports reach outside the copy (Claude
-    would load the imported file, a credential for example, into the reviewer's context). Returns
-    each withheld path with the reason; the reviewer still sees them in the packet's diff.
+    Every ``.claude/`` directory and ``.mcp.json`` at any depth (Claude acts on them outside the
+    command sandbox), every symlink that leaves the copy, and every instruction file whose possible
+    ``@`` imports can leave the copy (Claude would load the imported file, a credential for example,
+    into the reviewer's context). Returns each withheld path with the reason; the reviewer still
+    sees them in the packet's diff.
     """
     withheld: list[str] = []
+
+    def drop(path: Path, why: str) -> None:
+        withheld.append(f"{path.relative_to(copy).as_posix()} ({why})")
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
     for path in sorted(copy.rglob("*")):
-        if path.is_symlink() and not _reviewer_inside(path, copy):
-            withheld.append(f"{path.relative_to(copy).as_posix()} (a symlink out of the copy)")
-            path.unlink()
-    for relative in REVIEWER_UNTRUSTED_CONFIG:
-        path = copy / relative
-        if path.is_file() or path.is_symlink():
-            withheld.append(f"{relative} (Claude would act on it outside the sandbox)")
-            path.unlink()
-    for relative in REVIEWER_PROJECT_INSTRUCTIONS:
-        path = copy / relative
-        if path.is_file() and _reviewer_imports_leave(path, copy):
-            withheld.append(f"{relative} (it imports a file outside the copy)")
-            path.unlink()
+        if not (path.exists() or path.is_symlink()):
+            continue  # inside a directory already withheld
+        if path.name in REVIEWER_UNTRUSTED_DIRS and (path.is_dir() or path.is_symlink()):
+            drop(path, "Claude would act on it outside the sandbox")
+        elif path.name in REVIEWER_UNTRUSTED_FILES:
+            drop(path, "Claude would act on it outside the sandbox")
+        elif path.is_symlink() and not _reviewer_inside(path, copy):
+            drop(path, "a symlink out of the copy")
+    for path in sorted(copy.rglob("*")):
+        if path.name in REVIEWER_INSTRUCTION_NAMES and path.is_file() and (
+            _reviewer_imports_leave(path, copy)
+        ):
+            drop(path, "it can import a file outside the copy")
     return withheld
+
+
+def reviewer_claude_widening(env: Mapping[str, str]) -> list[str]:
+    """Settings outside the copy that would widen the reviewer's sandbox.
+
+    ``--settings`` overrides scalar keys, but list keys merge across levels, and managed settings
+    outrank it. So a user, local or managed setting that excludes commands from the sandbox, allows
+    a domain, a write or a read, adds a working directory, or turns the sandbox off would carry into
+    the session; the launch refuses rather than run a review it cannot confine.
+    """
+    home = Path(env.get("HOME") or Path.home())
+    base = Path(env["CLAUDE_CONFIG_DIR"]) if env.get("CLAUDE_CONFIG_DIR") else home / ".claude"
+    files = [
+        base / "settings.json",
+        base / "settings.local.json",
+        Path("/Library/Application Support/ClaudeCode/managed-settings.json"),
+        Path("/etc/claude-code/managed-settings.json"),
+    ]
+    problems: list[str] = []
+    for path in files:
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(loaded, dict):
+            continue
+        sandbox = loaded.get("sandbox") if isinstance(loaded.get("sandbox"), dict) else {}
+        network = sandbox.get("network") if isinstance(sandbox.get("network"), dict) else {}
+        filesystem = sandbox.get("filesystem") if isinstance(sandbox.get("filesystem"), dict) else {}
+        permissions = (
+            loaded.get("permissions") if isinstance(loaded.get("permissions"), dict) else {}
+        )
+        widening = {
+            "sandbox.excludedCommands": sandbox.get("excludedCommands"),
+            "sandbox.network.allowedDomains": network.get("allowedDomains"),
+            "sandbox.filesystem.allowWrite": filesystem.get("allowWrite"),
+            "sandbox.filesystem.allowRead": filesystem.get("allowRead"),
+            "permissions.additionalDirectories": permissions.get("additionalDirectories"),
+        }
+        for key, value in widening.items():
+            if value:
+                problems.append(f"{path.name} sets {key}")
+        if sandbox.get("enabled") is False and "managed" in path.name:
+            problems.append(f"{path.name} turns the sandbox off")
+        if filesystem.get("disabled") is True:
+            problems.append(f"{path.name} sets sandbox.filesystem.disabled")
+    return problems
 
 
 def reviewer_claude_config_sources(
@@ -2308,8 +2376,10 @@ def reviewer_claude_config_sources(
     files = [
         ("user:CLAUDE.md", base / "CLAUDE.md"),
         ("project:CLAUDE.md", copy / "CLAUDE.md"),
-        ("project:.claude/CLAUDE.md", copy / ".claude" / "CLAUDE.md"),
-        ("project:CLAUDE.local.md", copy / "CLAUDE.local.md"),
+    ] + [
+        (f"project:{path.relative_to(copy).as_posix()}", path)
+        for path in sorted(copy.rglob("*"))
+        if path.name in REVIEWER_INSTRUCTION_NAMES and path != copy / "CLAUDE.md"
     ]
     sources: list[tuple[str, bytes | None]] = []
     for label, path in files:
@@ -2317,8 +2387,7 @@ def reviewer_claude_config_sources(
         sources.append((label, content))
         if content is None:
             continue
-        for token in sorted(set(_REVIEWER_IMPORT.findall(content.decode("utf-8", "replace")))):
-            target = _reviewer_import_target(token, path.parent)
+        for token, target in sorted(set(_reviewer_import_targets(content, path.parent))):
             if label.startswith("project:") and not _reviewer_inside(target, copy):
                 # Never read a file the reviewed change points at outside the copy.
                 sources.append((f"import:{label}:{token}", b"outside the copy"))
@@ -2413,47 +2482,103 @@ def reviewer_work_root(env: Mapping[str, str], platform: str | None = None) -> P
 
 
 def _reviewer_manifest(copy: Path) -> dict[str, str]:
+    """Each file's SHA-256, and each symlink as ``link:<target>``, never followed."""
     manifest: dict[str, str] = {}
     for path in sorted(copy.rglob("*")):
-        if path.is_file() and not path.is_symlink():
-            manifest[path.relative_to(copy).as_posix()] = hashlib.sha256(
-                path.read_bytes()
-            ).hexdigest()
+        relative = path.relative_to(copy).as_posix()
+        if path.is_symlink():
+            manifest[relative] = f"link:{os.readlink(path)}"
+        elif path.is_file():
+            manifest[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
     return manifest
 
 
+def _reviewer_safe_path(copy: Path, relative: str) -> Path:
+    parts = Path(relative).parts
+    if not parts or Path(relative).is_absolute() or any(p in ("..", ".git", "") for p in parts):
+        raise ReviewerRefused(f"the head names an unsafe path {relative!r}")
+    return copy.joinpath(*parts)
+
+
 def reviewer_export_head(repo: Path, head: str, copy: Path) -> dict[str, str]:
-    """Export *head*'s tracked files into *copy* with no ``.git``, and return their manifest."""
+    """Write *head*'s tracked files into *copy* from git's object store, with no ``.git``.
+
+    Read with ``ls-tree`` and ``cat-file`` rather than ``git archive``, so the change's own
+    ``.gitattributes`` (``export-ignore``, ``export-subst``) cannot make the copy differ from the
+    head. Every path is checked, regular files are written before symlinks, and submodules are
+    left out. Returns the copy's manifest.
+    """
     resolved = run(
         ["git", "-C", str(repo), "rev-parse", "--verify", f"{head}^{{commit}}"],
         check=False, timeout=30,
     )
     if resolved.returncode != 0:
         raise ReviewerRefused(f"{head} is not a commit in {repo}")
+    commit = resolved.stdout.strip()
+    listing = subprocess.run(
+        ["git", "-C", str(repo), "ls-tree", "-r", "-z", "--full-tree", commit],
+        capture_output=True, timeout=120, check=False,
+    )
+    if listing.returncode != 0:
+        raise ReviewerRefused(f"git ls-tree failed: {listing.stderr.decode(errors='replace')}")
+    entries: list[tuple[str, str, str]] = []
+    for record in listing.stdout.split(b"\0"):
+        if not record:
+            continue
+        meta, _, name = record.partition(b"\t")
+        mode, kind, sha = meta.decode().split()
+        if kind == "blob":
+            entries.append((mode, sha, name.decode("utf-8", "surrogateescape")))
+    batch = subprocess.run(
+        ["git", "-C", str(repo), "cat-file", "--batch"],
+        input="".join(f"{sha}\n" for _, sha, _ in entries).encode(),
+        capture_output=True, timeout=300, check=False,
+    )
+    if batch.returncode != 0:
+        raise ReviewerRefused(f"git cat-file failed: {batch.stderr.decode(errors='replace')}")
+    blobs: list[bytes] = []
+    stream, offset = batch.stdout, 0
+    for _ in entries:
+        newline = stream.index(b"\n", offset)
+        size = int(stream[offset:newline].split()[2])
+        blobs.append(stream[newline + 1 : newline + 1 + size])
+        offset = newline + 1 + size + 1
     copy.mkdir(parents=True)
-    archive = subprocess.run(
-        ["git", "-C", str(repo), "archive", "--format=tar", resolved.stdout.strip()],
-        capture_output=True, timeout=300, check=False,
-    )
-    if archive.returncode != 0:
-        raise ReviewerRefused(f"git archive failed: {archive.stderr.decode(errors='replace')}")
-    untar = subprocess.run(
-        ["tar", "-x", "-f", "-", "-C", str(copy)], input=archive.stdout,
-        capture_output=True, timeout=300, check=False,
-    )
-    if untar.returncode != 0:
-        raise ReviewerRefused(f"extracting the copy failed: {untar.stderr.decode(errors='replace')}")
+    links: list[tuple[Path, bytes]] = []
+    for (mode, _sha, relative), data in zip(entries, blobs, strict=True):
+        target = _reviewer_safe_path(copy, relative)
+        if mode == "120000":
+            links.append((target, data))
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not _reviewer_inside(target.parent, copy):
+            raise ReviewerRefused(f"the head writes {relative!r} outside the copy")
+        target.write_bytes(data)
+        if mode == "100755":
+            target.chmod(0o755)
+    for target, data in links:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.symlink(data.decode("utf-8", "surrogateescape"), target)
     return _reviewer_manifest(copy)
 
 
 def reviewer_scratch_changes(copy: Path, manifest: Mapping[str, str]) -> dict[str, list[str]]:
     """The files added, modified and deleted in the copy since the export, minus tool clutter."""
     now = _reviewer_manifest(copy)
-    keep = lambda path: not REVIEWER_SCRATCH_IGNORED.search(path)  # noqa: E731
+
+    def keep(path: str) -> bool:
+        return not REVIEWER_SCRATCH_IGNORED.search(path) and not now.get(path, "").startswith("link:")
+
     return {
         "added": sorted(p for p in now if p not in manifest and keep(p)),
         "modified": sorted(p for p in now if p in manifest and now[p] != manifest[p] and keep(p)),
-        "deleted": sorted(p for p in manifest if p not in now and keep(p)),
+        "deleted": sorted(p for p in manifest if p not in now and not REVIEWER_SCRATCH_IGNORED.search(p)),
+        # A symlink the session made or changed is never a reproduction test: reading it later,
+        # outside the sandbox, could read whatever it points at.
+        "links": sorted(
+            p for p in now
+            if now[p].startswith("link:") and manifest.get(p) != now[p]
+        ),
     }
 
 
@@ -2590,6 +2715,11 @@ def reviewer_launch(
     wrapper = reviewer_wrapper_path()
     if not wrapper.is_file():
         raise ReviewerRefused(f"the roles library's wrapper {wrapper} is missing")
+    widening = reviewer_claude_widening(environ) if request.vendor == "claude" else []
+    if widening:
+        raise ReviewerRefused(
+            "settings outside the copy would widen the reviewer's sandbox: " + "; ".join(widening)
+        )
 
     root = (request.work_root or reviewer_work_root(environ)) / (
         f"{request.repo.resolve().name}-{request.head[:12]}-{os.urandom(4).hex()}"

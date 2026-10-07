@@ -21,9 +21,12 @@ for C8 to extend.
   returns the answer plus a result with the session's usage, the vendor and its version, the
   requested and resolved model, the prompt and schema fingerprints, a fingerprint of the
   instruction files and enabled plugins, and the scratch copy's changes. The reviewed change is
-  untrusted, so the copy withholds its project settings and `.mcp.json` (Claude would run their
-  hooks and servers outside the sandbox), symlinks leaving the copy, and instruction files whose
-  `@` imports leave it; the result lists what was withheld. Every other vendor is
+  untrusted, so the copy is written from git's object store (its `.gitattributes` cannot shape
+  it) and withholds every `.claude/` directory and `.mcp.json` (Claude would run their hooks and
+  servers outside the sandbox), symlinks leaving the copy, and instruction files whose possible
+  `@` imports leave it; the result lists what was withheld. The launch refuses when user or managed
+  settings would widen the sandbox, and lists any symlink the session makes apart, which saga's
+  check refuses. Every other vendor is
   refused by name until it has a sandbox recipe that passes `launcher.py reviewer-probe`, which runs
   the recipe live and checks each denial from outside the session.
 - **`roles/targeted-reviewer.md`**, a thin wrapper naming saga's prompt. The roster plans it one

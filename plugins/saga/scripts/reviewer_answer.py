@@ -310,6 +310,8 @@ def _check_scratch(check: records._Check, answer: Mapping[str, Any], result: Any
         check.add("scratch.changes", "the launch result does not list the scratch copy's changes")
         return
     allowed = reproduction_tests(answer)
+    for path in changes.get("links") or ():
+        check.add("scratch.changes", f"{path} (symlink) is a link the session made, never a test")
     for kind in ("added", "modified", "deleted"):
         for path in changes.get(kind) or ():
             normal = str(path).lstrip("./")

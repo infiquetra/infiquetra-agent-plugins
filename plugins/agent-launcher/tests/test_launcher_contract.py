@@ -4815,6 +4815,7 @@ def test_reviewer_the_scratch_changes_name_every_edit_and_saga_refuses_a_non_tes
     )
     assert result["scratch"]["changes"] == {
         "added": ["tests/test_charge_retry.py"], "modified": ["src/app.py"], "deleted": [],
+        "links": [],
     }
     refused = subprocess.run(
         [sys.executable, str(SAGA_ANSWER_CLI), "check",
@@ -5016,18 +5017,18 @@ def test_reviewer_withholds_what_would_run_or_read_outside_the_sandbox(
     copy = Path(result["scratch"]["path"])
     assert code == 0
     assert sorted(result["scratch"]["withheld"]) == sorted([
-        ".claude/settings.json (Claude would act on it outside the sandbox)",
-        ".claude/settings.local.json (Claude would act on it outside the sandbox)",
+        ".claude (Claude would act on it outside the sandbox)",
         ".mcp.json (Claude would act on it outside the sandbox)",
-        "CLAUDE.md (it imports a file outside the copy)",
+        "CLAUDE.md (it can import a file outside the copy)",
         "key-link (a symlink out of the copy)",
     ])
-    for gone in (".claude/settings.json", ".claude/settings.local.json", ".mcp.json",
-                 "CLAUDE.md", "key-link"):
+    for gone in (".claude", ".mcp.json", "CLAUDE.md", "key-link"):
         assert not (copy / gone).exists() and not (copy / gone).is_symlink(), gone
-    assert (copy / ".claude" / "CLAUDE.md").is_file()  # imports stay inside the copy
+    assert (copy / "docs" / "style.md").is_file()
     assert (copy / "inner-link").is_symlink()  # a symlink inside the copy is harmless
-    assert result["scratch"]["changes"] == {"added": [], "modified": [], "deleted": []}
+    assert result["scratch"]["changes"] == {
+        "added": [], "modified": [], "deleted": [], "links": []
+    }
     assert "`key-link (a symlink out of the copy)`" in session.calls[0]["stdin"]
 
 
@@ -5047,3 +5048,122 @@ def test_reviewer_fingerprint_never_reads_a_project_import_outside_the_copy(
     assert sources[f"import:project:CLAUDE.md:{secret}"] == b"outside the copy"
     # The operator's own imports are trusted and still fingerprinted.
     assert sources["import:user:CLAUDE.md:RULES.md"] == b"Imported rules.\n"
+
+
+def _copy_with(tmp_path: Path, files: dict[str, str]) -> Path:
+    copy = tmp_path / "copy"
+    for relative, text in files.items():
+        (copy / relative).parent.mkdir(parents=True, exist_ok=True)
+        (copy / relative).write_text(text)
+    return copy
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        {"pkg/CLAUDE.md": "Nested rules.\n@~/.aws/credentials\n"},
+        {"CLAUDE.md": "Inline `@~/.ssh/id_ed25519` in a code span.\n"},
+        {"CLAUDE.md": "See (@../../outside.md).\n"},
+        {"CLAUDE.md": "@docs/a.md\n", "docs/a.md": "@b.md\n", "docs/b.md": "@/etc/hosts\n"},
+        {"CLAUDE.local.md": "@~/.netrc\n"},
+    ],
+    ids=["nested-file", "code-span", "parent-escape", "chained-import", "local-file"],
+)
+def test_reviewer_withholds_any_instruction_file_whose_imports_can_leave(
+    launcher: ModuleType, tmp_path: Path, files: dict[str, str]
+) -> None:
+    copy = _copy_with(tmp_path, files)
+    withheld = launcher.reviewer_withhold_untrusted(copy)
+    instruction = next(name for name in files if name.endswith(launcher.REVIEWER_INSTRUCTION_NAMES))
+    assert f"{instruction} (it can import a file outside the copy)" in withheld
+    assert not (copy / instruction).exists()
+
+
+def test_reviewer_keeps_instruction_files_whose_imports_stay_inside(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy = _copy_with(tmp_path, {
+        "CLAUDE.md": "@docs/style.md and mail me at someone@example.com\n",
+        "docs/style.md": "Style.\n",
+    })
+    assert launcher.reviewer_withhold_untrusted(copy) == []
+    assert (copy / "CLAUDE.md").is_file()
+
+
+def test_reviewer_withholds_claude_directories_and_mcp_files_at_any_depth(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy = _copy_with(tmp_path, {
+        "pkg/.claude/skills/x/SKILL.md": "---\nhooks: {}\n---\n",
+        "pkg/.mcp.json": "{}",
+        "src/app.py": "print()\n",
+    })
+    withheld = launcher.reviewer_withhold_untrusted(copy)
+    assert sorted(withheld) == [
+        "pkg/.claude (Claude would act on it outside the sandbox)",
+        "pkg/.mcp.json (Claude would act on it outside the sandbox)",
+    ]
+    assert (copy / "src" / "app.py").is_file()
+
+
+def test_reviewer_copy_ignores_the_change_s_export_attributes(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    """`export-ignore` and `export-subst` cannot make the copy differ from the head."""
+    repo = tmp_path / "attrs"
+    (repo / "tests").mkdir(parents=True)
+    (repo / ".gitattributes").write_text("tests/* export-ignore\nversion.txt export-subst\n")
+    (repo / "tests" / "test_hidden.py").write_text("def test_x():\n    pass\n")
+    (repo / "version.txt").write_text("$Format:%H$\n")
+    (repo / "run.sh").write_text("#!/bin/sh\n")
+    (repo / "run.sh").chmod(0o755)
+    _git(repo.parent, "init", "-q", str(repo))
+    _git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "add", ".")
+    _git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "base")
+    copy = tmp_path / "copy"
+    manifest = launcher.reviewer_export_head(repo, _git(repo, "rev-parse", "HEAD"), copy)
+    assert "tests/test_hidden.py" in manifest
+    assert (copy / "version.txt").read_text() == "$Format:%H$\n"
+    assert os.access(copy / "run.sh", os.X_OK)
+
+
+def test_reviewer_a_symlink_the_session_makes_is_listed_apart(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, home: Path
+) -> None:
+    repo, head = reviewed_repo
+    secret = tmp_path / "outside-secret"
+    secret.write_text("inert-example-secret\n")
+
+    def link(copy: Path) -> None:
+        (copy / "tests" / "test_link.py").symlink_to(secret)
+
+    result, _ = launcher.reviewer_launch(
+        _request(launcher, repo, head, tmp_path), env=_env(home),
+        session=FakeSession(_claude_result(json.dumps(ANSWER)), act=link),
+    )
+    assert result["scratch"]["changes"]["links"] == ["tests/test_link.py"]
+    assert "tests/test_link.py" not in result["scratch"]["changes"]["added"]
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"sandbox": {"excludedCommands": ["docker"]}},
+        {"sandbox": {"network": {"allowedDomains": ["example.com"]}}},
+        {"sandbox": {"filesystem": {"allowWrite": ["~/work"]}}},
+        {"sandbox": {"filesystem": {"allowRead": ["~/.ssh"]}}},
+        {"permissions": {"additionalDirectories": ["~/elsewhere"]}},
+    ],
+    ids=["excluded-commands", "allowed-domains", "allow-write", "allow-read", "extra-dirs"],
+)
+def test_reviewer_refuses_user_settings_that_widen_the_sandbox(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, home: Path,
+    settings: dict[str, Any],
+) -> None:
+    repo, head = reviewed_repo
+    (home / ".claude" / "settings.local.json").write_text(json.dumps(settings))
+    session = FakeSession("{}")
+    with pytest.raises(launcher.ReviewerRefused, match="would widen the reviewer's sandbox"):
+        launcher.reviewer_launch(_request(launcher, repo, head, tmp_path), env=_env(home),
+                                 session=session)
+    assert session.calls == []
