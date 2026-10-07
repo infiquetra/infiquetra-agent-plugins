@@ -2,6 +2,14 @@
 
 ## 2026-10-07
 
+### A shared binary is not a catalogue claim, and admission does not touch the home directory unless asked
+
+**Evidence.** Issue #150. `plugins/saga/scripts/build_loop.py` (`_baseline_rows`, `catalogue_check_for`, `check_map`). `plugins/saga/scripts/admission.py` (`admit`, `home`, `runner`).
+
+**Mechanism.** A saga-owned tool row uses a binary such as `uv`, `git`, or `python3` that also appears in baseline commands. `catalogue_check_for` matches any row's `tool` string, so those rows would claim `uv run ...` and `git diff`. Rows with `catalogue: false` are dropped in both `catalogue_check_for` and `check_map`. `admit` surveys, writes the notice, and prints the suggestion only when both `home` and `runner` were passed. The command passes them. `--dry-run` passes neither, so a library call and a dry run do not create `~/.saga/machine.json`.
+
+**Generalizable rule.** A shared tool name is not a catalogue claim, and a library default that writes under the operator's home has to be an explicit argument.
+
 ### An installed saga plugin is its own root
 
 **Evidence.** Issue #149 repair. `plugins/saga/scripts/review_calibration.py` (`package_dir`, `locate`). The code review of `e1e351a` ran `may-block` from a copy laid out as `<cache>/saga/1.0.0/`.

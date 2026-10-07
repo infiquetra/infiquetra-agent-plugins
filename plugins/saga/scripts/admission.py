@@ -20,10 +20,10 @@ Putting the one message to the operator is the ``/plan`` skill's job, because th
 a conversation; keeping interactive input out of here is what makes "the operator is asked exactly
 once" a property a test can check rather than something a human has to observe.
 
-It writes one file besides the run record (issue #97): when the operator answers the
-functional-test environment question, the answer is written to the tracked ``.saga-profile.json``
-under ``--repo-root``, so the next run in that repository is not asked again. ``--dry-run`` writes
-neither.
+It writes the functional-test answer into the tracked ``.saga-profile.json`` under ``--repo-root``
+(issue #97), so the next run in that repository is not asked again. When ``home`` and ``runner``
+are both passed, it also stores one setup notice and, once per machine, the offer to run
+``/saga:setup``. ``--dry-run`` passes neither, so it writes nothing.
 
 Exit codes are the run record's (see ``references/run-record.md``): 0 success, 2 a refusal —
 including a card that fails the validator — and 3 an unknown record version.
@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import re
 import subprocess  # nosec B404
 import sys
@@ -1154,6 +1155,60 @@ def issue_review_block(card_passed: bool) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
+def default_machine_home() -> Path:
+    """The operator's home. Tests replace this; ``--dry-run`` does not call it."""
+    return Path.home()
+
+
+def setup_runner(
+    argv: list[str],
+    *,
+    cwd: Path | None = None,
+    env: Mapping[str, str] | None = None,
+    timeout: int = 30,
+) -> Any:
+    """The real tool runner. Imported here so loading admission does not import setup."""
+    import saga_setup  # noqa: E402
+
+    return saga_setup.production_runner(argv, cwd=cwd, env=env, timeout=timeout)
+
+
+def _attach_setup_notice(
+    record: run_record.RunRecord,
+    repo_root: Path,
+    home: Path,
+    runner: Callable[..., Any],
+) -> run_record.RunRecord:
+    """Copy one survey notice onto ``admission`` and offer setup once per machine.
+
+    The survey is not stored. ``record_offer`` runs only when setup has never run and has never
+    been offered. Either a missing ``home`` or a missing ``runner`` skips this entirely.
+    """
+    import saga_setup  # noqa: E402
+
+    try:
+        survey = saga_setup.collect(
+            Path(repo_root),
+            runner=runner,
+            env=os.environ,
+            home=Path(home),
+            persist=False,
+            probe_live=False,
+        )
+    except saga_setup.SetupError as exc:
+        raise AdmissionError(str(exc)) from exc
+    admission = json.loads(json.dumps(record.admission))
+    admission["setup_notice"] = saga_setup.notice_for(survey)
+    updated = run_record.RunRecord(**{**record.__dict__, "admission": admission})
+    machine = saga_setup.load_machine(Path(home))
+    ran = isinstance(machine, dict) and machine.get("ran") is True
+    offered = isinstance(machine, dict) and machine.get("offered") is True
+    if not ran and not offered:
+        saga_setup.record_offer(Path(home))
+        print(saga_setup.SUGGESTION)
+    return updated
+
+
 def admit(
     issue: int,
     repo: str,
@@ -1171,6 +1226,8 @@ def admit(
     judgment_cache: bool = False,
     judgment_log_dir: Path | None = None,
     log_labels: bool = False,
+    home: Path | None = None,
+    runner: Callable[..., Any] | None = None,
 ) -> tuple[run_record.RunRecord, list[Question]]:
     """Validate, fill, apply any answers, and return the record with what is still outstanding.
 
@@ -1178,6 +1235,10 @@ def admit(
     ``title`` and ``body``. ``log_labels`` writes each role's verdict once ``staffing_overrides``
     is answered, labeled with the direction of the tier the operator finally accepted; the command
     line turns it off for ``--dry-run``, which records nothing.
+
+    ``home`` and ``runner`` together attach ``admission.setup_notice``. When either is absent the
+    record is left unchanged and nothing is printed. Outstanding questions are computed first, so
+    the notice is not one of them.
     """
     existing = run_record.load(store_root, issue, warn=None)
     record = existing or run_record.RunRecord(issue=int(issue), repo=repo)
@@ -1223,6 +1284,8 @@ def admit(
             "next_step": _next_step(record.next_step, next_step),
         }
     )
+    if home is not None and runner is not None:
+        record = _attach_setup_notice(record, repo_root, home, runner)
     return record, outstanding
 
 
@@ -1945,6 +2008,11 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--home",
+        default=None,
+        help="Home directory for the setup machine record. Defaults to the operator's home.",
+    )
+    parser.add_argument(
         "--answers",
         default=None,
         help="A JSON file of answers to record, or '-' to read the JSON from standard input.",
@@ -1986,6 +2054,12 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.store_root).resolve() if args.store_root else run_record.resolve_store_root()
         )
         answers = read_answers(args.answers) if args.answers else None
+        if args.dry_run:
+            machine_home = None
+            machine_runner = None
+        else:
+            machine_home = Path(args.home) if args.home else default_machine_home()
+            machine_runner = setup_runner
 
         issue_payload = fetch_issue(args.issue, repo)
         staffing = load_staffing()
@@ -2002,6 +2076,8 @@ def main(argv: list[str] | None = None) -> int:
             judge_tiers=True,
             judgment_cache=True,
             log_labels=not args.dry_run,
+            home=machine_home,
+            runner=machine_runner,
         )
         path = None
         if not args.dry_run:

@@ -368,17 +368,30 @@ def _tokens(command: str) -> list[str]:
     return [os.path.basename(part) for part in parts]
 
 
+def _baseline_rows() -> list[dict[str, Any]]:
+    """Review-tool rows a baseline command can answer.
+
+    ``catalogue: false`` marks a row the setup survey checks and the build loop does not.
+    Saga's own tools use binaries the baseline already names (``git``, ``python3``, ``uv``).
+    Matching those strings would claim repository commands and list the rows as uncovered.
+    """
+    return [
+        row
+        for row in review_tools.load_tool_list()
+        if row.get("tool") and row.get("catalogue") is not False
+    ]
+
+
 def catalogue_check_for(command: str) -> str | None:
     """Which review-tool row *command* answers, or ``None`` for a repository-specific entry.
 
     Several rows can share one binary. Their ids are sorted and joined, so ``semgrep scan``
-    answers ``semgrep-saga,semgrep-security``. A row with an empty ``tool`` is not a baseline check.
+    answers ``semgrep-saga,semgrep-security``. A row with an empty ``tool``, and a row with
+    ``catalogue: false``, is not a baseline check.
     """
     tokens = set(_tokens(command))
     matched = sorted(
-        str(row["id"])
-        for row in review_tools.load_tool_list()
-        if row.get("tool") and str(row["tool"]) in tokens
+        str(row["id"]) for row in _baseline_rows() if str(row["tool"]) in tokens
     )
     if not matched:
         return None
@@ -389,10 +402,10 @@ def check_map(baseline: Sequence[str]) -> dict[str, Any]:
     """Map *baseline* onto ``review-tools.yaml`` and name the tools no command answers.
 
     A command no row claims is repository-specific. It still runs: green is the profile's
-    ``mechanical_tool_baseline``, not this map. Rows with an empty ``tool`` are not baseline
-    checks and do not appear as uncovered.
+    ``mechanical_tool_baseline``, not this map. Rows with an empty ``tool``, and rows with
+    ``catalogue: false``, are not baseline checks and do not appear as uncovered.
     """
-    rows = [row for row in review_tools.load_tool_list() if row.get("tool")]
+    rows = _baseline_rows()
     covered: set[str] = set()
     commands: list[dict[str, Any]] = []
     for command in baseline:

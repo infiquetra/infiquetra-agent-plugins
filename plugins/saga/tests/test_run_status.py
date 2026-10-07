@@ -914,3 +914,46 @@ def test_the_contract_declares_the_band_blocks_the_script_prints(
         assert body, f"the contract no longer declares {name}"
         declared = set(re.findall(r"^\s+(\w+):", body.group(1), re.MULTILINE))
         assert declared == set(row[key]), name
+
+
+def test_setup_notice_is_on_the_summary_row(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    notice = {
+        "text": "Missing saga-git and sandbox. Run /saga:setup.",
+        "missing_tools": ["saga-git"],
+        "sandbox_unavailable": True,
+    }
+    run_record.set_next_step(store, 150, "plan")
+
+    def change(existing: run_record.RunRecord | None) -> run_record.RunRecord:
+        assert existing is not None
+        admission = dict(existing.admission)
+        admission["setup_notice"] = notice
+        return run_record.RunRecord(**{**existing.__dict__, "admission": admission})
+
+    run_record.update(store, 150, change)
+    _tick(repo, 150, lifecycle_phase="plan", plan_path=PLAN)
+    code, out, err = _run(repo, store, "summary", "--issue", "150", "--json", capsys=capsys)
+    assert (code, err) == (0, "")
+    view = json.loads(out)
+    assert view["schema"] == "run_status.v1"
+    assert view["repo_root"] == str(repo)
+    [row] = view["runs"]
+    assert row["setup_notice"] == notice
+
+
+def test_setup_notice_is_null_when_the_record_has_none(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_record.set_next_step(store, 104, "plan")
+    _tick(repo, 104, lifecycle_phase="plan", plan_path=PLAN)
+    code, out, err = _run(repo, store, "summary", "--issue", "104", "--json", capsys=capsys)
+    assert (code, err) == (0, "")
+    view = json.loads(out)
+    assert view["schema"] == "run_status.v1"
+    [row] = view["runs"]
+    assert row["setup_notice"] is None
+    assert row["issue"] == 104
+    assert row["phase"] == "plan"
+    assert row["next_step"] == "plan"

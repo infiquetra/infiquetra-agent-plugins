@@ -43,7 +43,7 @@ INTERNAL = frozenset(
     }
 )
 
-CREDENTIAL_PREFIXES = ("TYPESAFE_", "GH_", "GITHUB_", "INFIQUETRA_")
+CREDENTIAL_PREFIXES = ("TYPESAFE_", "GH_", "GITHUB_", "INFIQUETRA_", "SAGA_LANGFUSE_")
 
 
 def test_entrypoint_internal_includes_jev_sweep() -> None:

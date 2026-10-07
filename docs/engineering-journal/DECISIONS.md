@@ -2,6 +2,22 @@
 
 ## 2026-10-07
 
+### Setup keeps the machine record out of the repository, and a run does not ask setup questions
+
+**Decision.** Issue #150 (card C3). The machine record is `<home>/.saga/machine.json`, schema `machine_record.v1`, directory mode 0700, file mode 0600. It is not under `.claude/saga/runs`. `survey` sets `ran` and does not clear `offered`. `record_offer` sets `offered` and does not set `ran`. Admission and card C14 both call `record_offer`.
+
+Writing a probed version into `review_tools.pins` while `review-tools.yaml` says `not-recorded` makes `may-block` report-only for the lenses that tool serves. This card accepts that. It does not edit `review-calibration.json`.
+
+The live sandbox probe takes `model` and `effort` from `plugins/saga/references/targeted-reviewer-launch.json` (vendor `claude`, model `opus`, effort `high`). `--probe-sandbox-model` overrides the model. A missing file, a vendor other than `claude`, an import failure, or a non-zero probe is unavailable with reason `probe-unavailable`. Admission does not start the probe.
+
+Nothing is installed, and no optional step runs, unless the operator names it. `install --tools` runs install vectors. `step --name` runs one registry step. The registry is `plugins/saga/references/setup-extensions.yaml`, schema `setup_extensions.v1`, committed with empty `steps` and empty `questions`. A question whose `profile_key` is a known profile key is refused when the registry is loaded.
+
+**Rationale.** The machine is not a repository, so its record does not belong in a commit or in one checkout's run store. A run that stops to ask which tools to install would hide a missing tool inside a question nobody recorded. Naming the tool and `/saga:setup` once is enough. Saga-owned rows share binaries with baseline commands (`git`, `uv`, `python3`); skipping `catalogue: false` keeps those commands unclaimed. The report-only consequence of a recorded pin is the calibration rule already shipped, and changing it here would decide which lenses may block.
+
+**Rejected alternatives.** A fifth probe status for timeouts. Putting the machine record under `.claude/saga/runs`. Adding a setup question to admission. Importing `jsonschema` in the setup script. Letting saga-owned rows match catalogue commands. Editing `review-calibration.json` so a probed pin would not be report-only.
+
+**Revisit when.** Card C14 adds the pane's first-session offer, card C5 adds a repository question, or card C16 adds a step.
+
 ### may-block reads the installed saga, and the profile is the base commit's
 
 **Decision.** Issue #149 repair, after the code review of the calibration file. `may-block` reads the calibration file and the component bytes from the saga directory that contains the script (`parents[1]`). A marketplace install's root is that directory, so `parents[3]` is not a checkout. A path under `plugins/saga/` is read at `<package>/<rest>`. The repository check still hashes `<repository>/<path>`. `--root` and `--profile` select the base commit's profile and do not select the calibration file. The component list adds the three `sweep_pieces.SWEEP_COMPONENTS` paths as literals. A component is a file. An unreadable profile exits 2.
