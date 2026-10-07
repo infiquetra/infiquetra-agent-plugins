@@ -315,7 +315,7 @@ def test_status_typed_outcome_outranks_a_contradictory_note(
         units=[controller],
     )
     raw = json.dumps(
-        {"schema": "review_result.v1", "outcome": "cycle_cap_best_available"},
+        {"schema": "review_result.v2", "outcome": "cycle_cap_best_available"},
         sort_keys=True,
     )
     run.write_review_slot(controller, review_result=raw, review_outcome="cycle_cap_best_available")
@@ -714,3 +714,47 @@ def test_status_json_on_a_missing_record_exits_2_with_nothing_on_stdout(
     assert code == 2
     assert captured.out == ""
     assert captured.err.strip()
+
+
+def test_a_note_contradicts_a_review_run_outcome(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    controller = orchestrate.Unit(
+        name="code-review-controller",
+        vendor="grok",
+        task="/saga:code-review review",
+        role="review-controller",
+        merge=False,
+        status="done",
+        note="the controller note says accepted",
+    )
+    run = orchestrate.Run(
+        run_id="review-run",
+        source="test",
+        base="base",
+        units=[controller],
+    )
+    raw = json.dumps(
+        {
+            "schema": "review_records.v1",
+            "kind": "review_run",
+            "round": 1,
+            "merge": {"allowed": False, "blocking": []},
+            "findings": [],
+        },
+        sort_keys=True,
+    )
+    run.write_review_slot(controller, review_result=raw, review_outcome="repairs_requested")
+    _support.save_run(run, test_store())
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        orchestrate, "unit_commit_statuses", lambda units, r: [("-", "-")] * len(units)
+    )
+    assert orchestrate.cmd_status(NS()) == 0
+    output = capsys.readouterr().out
+    assert "repairs_requested" in output
+    assert "note contradicts typed outcome" in output
+    assert "accepted" in output

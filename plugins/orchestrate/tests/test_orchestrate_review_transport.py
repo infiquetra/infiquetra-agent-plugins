@@ -110,11 +110,18 @@ def repo(tmp_path: Path) -> Path:
     return r
 
 
-def _write_run(repo: Path, units: list[dict[str, Any]] | None = None, **overrides: Any) -> None:
+def _write_run(
+    repo: Path,
+    units: list[dict[str, Any]] | None = None,
+    *,
+    extra_top_level: dict[str, Any] | None = None,
+    **overrides: Any,
+) -> None:
     """Write this test's run into the per-issue run record (issue #1025).
 
     There is no `.orchestrate/run.json` any more. The store is derived from the repository rather
     than resolved, because the resolved store is the developer's own `.claude/saga/runs`.
+    ``extra_top_level`` replaces top-level record keys, which is how a test sets ``admission``.
     """
     _support.ensure_origin(repo)
     base = subprocess.run(  # nosec B603 B607 - fixed argv, temporary repository
@@ -126,6 +133,7 @@ def _write_run(repo: Path, units: list[dict[str, Any]] | None = None, **override
         test_store(),
         TEST_ISSUE,
         units=[_support.fill_unit_row(u) for u in (units or [])],
+        extra_top_level=extra_top_level,
         **block,
     )
 
@@ -189,7 +197,12 @@ def test_review_transport_go_launches_both_via_orchestrate_not_the_retired_runne
     repo: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_run(repo, [_controller_row(), _grok_seat_row()])
+    """A high record pane-launches the controller only. The external seat stays unlaunched."""
+    _write_run(
+        repo,
+        [_controller_row(), _grok_seat_row()],
+        extra_top_level={"admission": {"destination": "pr", "risk_tier": "high"}},
+    )
     monkeypatch.chdir(repo)
     launched: list[tuple[str, str]] = []
 
@@ -203,13 +216,13 @@ def test_review_transport_go_launches_both_via_orchestrate_not_the_retired_runne
     monkeypatch.setattr(orchestrate, "launch", fake_launch)
     assert orchestrate.cmd_go(NS(limit=0)) == 0
 
-    assert launched == [
-        ("code-review-controller", "claude"),
-        ("grok-reviewer", "grok"),
-    ]
+    assert launched == [("code-review-controller", "claude")]
     run = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
-    assert {u.name: u.worktree for u in run.units}
-    assert all(u.worktree and Path(u.worktree).exists() for u in run.units)
+    controller = run.unit("code-review-controller")
+    seat = run.unit("grok-reviewer")
+    assert controller.worktree and Path(controller.worktree).exists()
+    assert seat.worktree is None
+    assert seat.pane_id is None
     assert not (SCRIPT.parent / "engine_session_runner.py").exists()
     assert not (ROOT / "plugins" / "saga" / "scripts" / "engine_session_runner.py").exists()
 
@@ -574,3 +587,719 @@ def test_review_transport_refuses_non_allowlisted_namespaced_review_prompts(
     unit = _grok_seat_row(task=task, role=None)
     with pytest.raises(SystemExit, match="plain review prompt"):
         orchestrate.plan_units({"units": [_controller_row(), unit]})
+
+
+# --- issue #159: review-launch and the risk tier -------------------------------------------------
+
+CANARY = "CANARY-answer-must-stay-unread"
+TARGETED_STAFF = {"vendor": "claude", "model": "opus", "effort": "high"}
+GROK_WORKER_STAFF = {"vendor": "grok", "model": "grok-4.6", "effort": "medium"}
+SAME_VENDOR_WORKER = {"vendor": "claude", "model": "sonnet", "effort": "low"}
+
+
+def _head(repo: Path) -> str:
+    return subprocess.run(  # nosec B603 B607 - fixed argv, temporary repository
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _branches(repo: Path) -> str:
+    return subprocess.run(  # nosec B603 B607 - fixed argv, temporary repository
+        ["git", "branch", "--list", "--format=%(refname:short)"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
+def _record_top(tier: str | None, staffing: dict[str, dict[str, str]]) -> dict[str, Any]:
+    admission: dict[str, Any] = {"destination": "pr"}
+    if tier is not None:
+        admission["risk_tier"] = tier
+    return {
+        "admission": admission,
+        "run_configuration": {
+            "concurrency_allocation": {
+                "value": 10,
+                "chosen_by": "delivery_manager",
+                "source": "profile",
+            },
+            "staffing_models_and_efforts": {
+                "value": staffing,
+                "chosen_by": "delivery_manager",
+                "source": "profile",
+            },
+        },
+    }
+
+
+def _targeted_row() -> dict[str, Any]:
+    return {
+        "name": "targeted",
+        "vendor": "claude",
+        "model": "opus",
+        "effort": "high",
+        "task": "Write the targeted reviewer's answer for this packet.",
+        "role": "targeted-reviewer",
+        "merge": False,
+        "status": "pending",
+    }
+
+
+def _stub_start(orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "assert_agent_launcher_available",
+        "assert_vendors_available",
+        "assert_saga_reachable",
+    ):
+        monkeypatch.setattr(orchestrate, name, lambda *a, **k: None)
+
+
+def _install_review_runner(
+    orchestrate: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    code: int = 0,
+    answer: str = CANARY,
+    help_code: int = 0,
+) -> list[list[str]]:
+    calls: list[list[str]] = []
+
+    def fake(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(list(argv))
+        if "--help" in argv and "--vendor" not in argv:
+            return subprocess.CompletedProcess(argv, help_code, "", "")
+        if "--out" in argv:
+            out = Path(argv[argv.index("--out") + 1])
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "answer.json").write_text(answer)
+            (out / "result.json").write_text("{}\n")
+        return subprocess.CompletedProcess(argv, code, "", "")
+
+    monkeypatch.setattr(orchestrate, "_reviewer_process", fake)
+    monkeypatch.setattr(orchestrate, "assert_agent_launcher_available", lambda: None)
+    monkeypatch.setattr(
+        orchestrate,
+        "_reviewer_answer_paths",
+        lambda: {"prompt": "/tmp/reviewer-prompt.md", "schema": "/tmp/reviewer-schema.json"},
+    )
+    return calls
+
+
+def _session_argv(calls: list[list[str]]) -> list[str]:
+    return next(argv for argv in calls if "--vendor" in argv)
+
+
+def _flag_pairs(argv: list[str]) -> dict[str, str]:
+    review_at = argv.index("review")
+    flags = argv[review_at + 1 :]
+    return dict(zip(flags[0::2], flags[1::2], strict=True))
+
+
+def _assert_nine_flags(argv: list[str]) -> dict[str, str]:
+    script = next(part for part in argv if part.endswith("launcher.py"))
+    assert argv[argv.index(script) + 1] == "review"
+    flags = argv[argv.index("review") + 1 :]
+    assert flags[0::2] == [
+        "--vendor",
+        "--model",
+        "--effort",
+        "--repo",
+        "--head",
+        "--packet",
+        "--prompt",
+        "--schema",
+        "--out",
+    ]
+    assert "--open-search-cap" not in argv
+    assert "--timeout" not in argv
+    assert "--settings" not in argv
+    return _flag_pairs(argv)
+
+
+def _launch(
+    orchestrate: ModuleType,
+    repo: Path,
+    packet: Path,
+    seat: str,
+    *,
+    out: str | None = None,
+) -> int:
+    fields: dict[str, object] = {
+        "seat": seat,
+        "packet": str(packet),
+        "repo": str(repo),
+        "head": "abc123",
+    }
+    if out is not None:
+        fields["out"] = out
+    return orchestrate.cmd_review_launch(NS(**fields))
+
+
+def test_review_launch_calls_the_reviewer_launch_and_leaves_the_answer_unread(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_run(
+        repo,
+        [_controller_row(), _targeted_row()],
+        extra_top_level=_record_top(None, {"targeted-reviewer": TARGETED_STAFF}),
+    )
+    monkeypatch.chdir(repo)
+    packet = repo / "packet"
+    packet.mkdir()
+    calls = _install_review_runner(orchestrate, monkeypatch)
+    assert _launch(orchestrate, repo, packet, "targeted-reviewer") == 0
+    flags = _assert_nine_flags(_session_argv(calls))
+    assert (flags["--vendor"], flags["--model"], flags["--effort"]) == ("claude", "opus", "high")
+    assert flags["--packet"] == str(packet.resolve())
+    answer = Path(flags["--out"]) / "answer.json"
+    assert answer.read_text() == CANARY
+    captured = capsys.readouterr()
+    assert CANARY not in captured.out
+    assert str(answer) in captured.out
+    assert "launcher exit 0" in captured.out
+    note = orchestrate.Run.load(TEST_ISSUE, test_store()).unit("targeted").note
+    assert note.startswith("review-launch out ")
+    assert CANARY not in note
+    assert flags["--out"] in note
+
+
+def test_review_launch_returns_the_launcher_exit_when_the_answer_is_not_json(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_run(
+        repo,
+        [_controller_row(), _targeted_row()],
+        extra_top_level=_record_top(None, {"targeted-reviewer": TARGETED_STAFF}),
+    )
+    monkeypatch.chdir(repo)
+    packet = repo / "packet"
+    packet.mkdir()
+    _install_review_runner(orchestrate, monkeypatch, answer="this is not json " + CANARY)
+    assert _launch(orchestrate, repo, packet, "targeted-reviewer") == 0
+    assert CANARY not in capsys.readouterr().out
+
+
+def test_review_launch_refuses_before_a_session_when_the_packet_is_missing(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_run(
+        repo,
+        [_controller_row()],
+        extra_top_level=_record_top(None, {"targeted-reviewer": TARGETED_STAFF}),
+    )
+    monkeypatch.chdir(repo)
+    calls = _install_review_runner(orchestrate, monkeypatch)
+    missing = repo / "missing-packet"
+    assert _launch(orchestrate, repo, missing, "targeted-reviewer") == 2
+    assert calls == []
+
+
+def test_review_launch_refuses_a_packet_outside_the_run(
+    orchestrate: ModuleType,
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_run(
+        repo,
+        [_controller_row()],
+        extra_top_level=_record_top(None, {"targeted-reviewer": TARGETED_STAFF}),
+    )
+    monkeypatch.chdir(repo)
+    outside = tmp_path / "elsewhere" / "packet"
+    outside.mkdir(parents=True)
+    calls = _install_review_runner(orchestrate, monkeypatch)
+    assert _launch(orchestrate, repo, outside, "targeted-reviewer") == 2
+    assert calls == []
+
+
+def test_review_launch_refuses_a_repo_that_is_not_the_run(
+    orchestrate: ModuleType,
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_run(
+        repo,
+        [_controller_row()],
+        extra_top_level=_record_top(None, {"targeted-reviewer": TARGETED_STAFF}),
+    )
+    monkeypatch.chdir(repo)
+    packet = repo / "packet"
+    packet.mkdir()
+    calls = _install_review_runner(orchestrate, monkeypatch)
+    other = tmp_path / "other-repo"
+    other.mkdir()
+    assert (
+        orchestrate.cmd_review_launch(
+            NS(seat="targeted-reviewer", packet=str(packet), repo=str(other), head="abc123")
+        )
+        == 2
+    )
+    assert calls == []
+
+
+def test_review_launch_refuses_an_out_directory_outside_the_store(
+    orchestrate: ModuleType,
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_run(
+        repo,
+        [_controller_row()],
+        extra_top_level=_record_top(None, {"targeted-reviewer": TARGETED_STAFF}),
+    )
+    monkeypatch.chdir(repo)
+    packet = repo / "packet"
+    packet.mkdir()
+    calls = _install_review_runner(orchestrate, monkeypatch)
+    outside = tmp_path / "not-the-store"
+    assert _launch(orchestrate, repo, packet, "targeted-reviewer", out=str(outside)) == 2
+    assert calls == []
+
+
+def test_review_launch_refuses_a_shared_out_directory(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    noted = test_store() / "review-launch" / "issue-1" / "noted"
+    external = _grok_seat_row()
+    external["note"] = f"review-launch out {noted}"
+    _write_run(
+        repo,
+        [_controller_row(), external],
+        extra_top_level=_record_top("high", {"targeted-reviewer": TARGETED_STAFF}),
+    )
+    monkeypatch.chdir(repo)
+    packet = repo / "packet"
+    packet.mkdir()
+    loaded = orchestrate.Run.load(TEST_ISSUE, test_store())
+    other_default = orchestrate._default_review_out(loaded, "external-reviewer", None)
+    calls = _install_review_runner(orchestrate, monkeypatch)
+    assert _launch(orchestrate, repo, packet, "targeted-reviewer", out=str(other_default)) == 2
+    assert _launch(orchestrate, repo, packet, "targeted-reviewer", out=str(noted)) == 2
+    assert calls == []
+
+
+def test_review_launch_refuses_a_packet_that_overlaps_the_second_reviewer_output(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The second packet must not contain, equal, or sit inside a reviewer output."""
+    _write_run(
+        repo,
+        [_controller_row(), _targeted_row(), _grok_seat_row()],
+        extra_top_level=_record_top(
+            "high",
+            {"targeted-reviewer": TARGETED_STAFF, "worker": GROK_WORKER_STAFF},
+        ),
+    )
+    monkeypatch.chdir(repo)
+    packet = repo / "packet"
+    packet.mkdir()
+    calls = _install_review_runner(orchestrate, monkeypatch)
+    assert _launch(orchestrate, repo, packet, "targeted-reviewer") == 0
+    answer = (
+        test_store() / "review-launch" / "issue-1" / "targeted-reviewer" / "answer.json"
+    )
+    parent = answer.parents[1]
+    assert answer.is_relative_to(parent)
+    before = len(calls)
+    assert _launch(orchestrate, repo, parent, "external-reviewer") == 2
+    nested = answer.parent / "nested"
+    nested.mkdir()
+    assert _launch(orchestrate, repo, nested, "external-reviewer") == 2
+    assert len(calls) == before
+    assert "overlaps reviewer output" in capsys.readouterr().err
+
+
+def test_review_launch_refuses_an_out_inside_the_packet_for_the_second_reviewer(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An output directory inside the packet would leave the answer where the next seat reads."""
+    _write_run(
+        repo,
+        [_controller_row(), _targeted_row()],
+        extra_top_level=_record_top(
+            "high",
+            {"targeted-reviewer": TARGETED_STAFF, "worker": GROK_WORKER_STAFF},
+        ),
+    )
+    monkeypatch.chdir(repo)
+    packet = test_store() / "pkt"
+    packet.mkdir()
+    calls = _install_review_runner(orchestrate, monkeypatch)
+    assert _launch(orchestrate, repo, packet, "targeted-reviewer", out=str(packet / "first")) == 2
+    assert _launch(orchestrate, repo, packet, "external-reviewer", out=str(packet)) == 2
+    assert calls == []
+    assert "overlaps reviewer output" in capsys.readouterr().err
+
+
+def test_review_launch_refuses_when_the_review_subcommand_is_missing(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_run(
+        repo,
+        [_controller_row()],
+        extra_top_level=_record_top(None, {"targeted-reviewer": TARGETED_STAFF}),
+    )
+    monkeypatch.chdir(repo)
+    packet = repo / "packet"
+    packet.mkdir()
+    calls = _install_review_runner(orchestrate, monkeypatch, help_code=2)
+    assert _launch(orchestrate, repo, packet, "targeted-reviewer") == 2
+    assert orchestrate._UPDATE_REMEDIATION in capsys.readouterr().err
+    assert all("--vendor" not in argv for argv in calls)
+
+
+def test_go_does_not_open_a_pane_for_the_targeted_reviewer(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_run(repo, [_controller_row(), _targeted_row()])
+    monkeypatch.chdir(repo)
+    launched: list[str] = []
+    worktrees: list[str] = []
+    real = orchestrate.make_worktree
+
+    def spy(unit: Any, r: Any, root: Path) -> str | None:
+        worktrees.append(unit.name)
+        return real(unit, r, root)
+
+    monkeypatch.setattr(orchestrate, "make_worktree", spy)
+    monkeypatch.setattr(
+        orchestrate,
+        "launch",
+        lambda unit, backend="inline", **_: launched.append(unit.name),
+    )
+    assert orchestrate.cmd_go(NS(limit=0)) == 0
+    assert launched == ["code-review-controller"]
+    assert worktrees == ["code-review-controller"]
+    seat = orchestrate.Run.load(TEST_ISSUE, test_store()).unit("targeted")
+    assert seat.worktree is None
+    assert seat.pane_id is None
+
+
+def test_the_agent_launcher_floor_is_1_7_2(orchestrate: ModuleType) -> None:
+    assert orchestrate._declared_agent_launcher_floor() == (1, 7, 2)
+    portable = json.loads((ROOT / "plugins" / "orchestrate" / "plugin.json").read_text())
+    assert portable["version"] == "6.1.0"
+
+
+def _start_review(
+    orchestrate: ModuleType,
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    tier: str | None,
+    staffing: dict[str, dict[str, str]],
+    units: list[dict[str, Any]] | None = None,
+) -> None:
+    _stub_start(orchestrate, monkeypatch)
+    monkeypatch.chdir(repo)
+    _support.write_record(
+        test_store(),
+        TEST_ISSUE,
+        units=None,
+        extra_top_level=_record_top(tier, staffing),
+    )
+    plan = tmp_path / "plan.json"
+    plan.write_text(
+        json.dumps({"run_id": "r1", "units": units if units is not None else [_controller_row()]})
+    )
+    assert (
+        orchestrate.main(
+            [
+                "start",
+                "--issue",
+                str(TEST_ISSUE),
+                "--store-root",
+                str(test_store()),
+                "--plan",
+                str(plan),
+                "--branch",
+                "orch/r1",
+                "--base",
+                _head(repo),
+            ]
+        )
+        == 0
+    )
+
+
+def _external_units(orchestrate: ModuleType) -> list[Any]:
+    run = orchestrate.Run.load(TEST_ISSUE, test_store())
+    return [unit for unit in run.units if unit.role == "external-reviewer"]
+
+
+def test_a_high_record_starts_a_second_reviewer_on_the_other_staffed_vendor(
+    orchestrate: ModuleType,
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    staffing = {"targeted-reviewer": TARGETED_STAFF, "worker": GROK_WORKER_STAFF}
+    _start_review(orchestrate, repo, tmp_path, monkeypatch, tier="high", staffing=staffing)
+    seats = _external_units(orchestrate)
+    assert len(seats) == 1
+    assert (seats[0].vendor, seats[0].model, seats[0].effort) == ("grok", "grok-4.6", "medium")
+    assert seats[0].merge is False
+    assert seats[0].after == []
+    packet = repo / "packet"
+    packet.mkdir()
+    calls = _install_review_runner(orchestrate, monkeypatch)
+    assert _launch(orchestrate, repo, packet, "targeted-reviewer") == 0
+    assert _launch(orchestrate, repo, packet, "external-reviewer") == 0
+    sessions = [_flag_pairs(argv) for argv in calls if "--vendor" in argv]
+    assert sessions[0]["--vendor"] == "claude"
+    assert (sessions[1]["--vendor"], sessions[1]["--model"], sessions[1]["--effort"]) == (
+        "grok",
+        "grok-4.6",
+        "medium",
+    )
+    assert sessions[0]["--packet"] == sessions[1]["--packet"]
+
+
+def test_a_very_high_record_starts_a_second_reviewer(
+    orchestrate: ModuleType,
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    staffing = {"targeted-reviewer": TARGETED_STAFF, "worker": GROK_WORKER_STAFF}
+    _start_review(orchestrate, repo, tmp_path, monkeypatch, tier="very-high", staffing=staffing)
+    seats = _external_units(orchestrate)
+    assert len(seats) == 1
+    assert (seats[0].vendor, seats[0].model, seats[0].effort) == ("grok", "grok-4.6", "medium")
+
+
+def test_a_high_record_starts_a_second_reviewer_for_each_lifecycle(
+    orchestrate: ModuleType,
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    staffing = {"targeted-reviewer": TARGETED_STAFF, "worker": GROK_WORKER_STAFF}
+    units = [
+        {**_controller_row(), "name": "cr-c2", "lifecycle": "c2"},
+        {**_controller_row(), "name": "cr-c4", "lifecycle": "c4"},
+    ]
+    _start_review(
+        orchestrate, repo, tmp_path, monkeypatch, tier="high", staffing=staffing, units=units
+    )
+    seats = {unit.name: unit for unit in _external_units(orchestrate)}
+    assert set(seats) == {"external-reviewer-c2", "external-reviewer-c4"}
+    assert all(
+        (unit.vendor, unit.model, unit.effort) == ("grok", "grok-4.6", "medium")
+        for unit in seats.values()
+    )
+
+
+def test_the_same_vendor_runs_when_no_other_is_staffed(
+    orchestrate: ModuleType,
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    staffing = {"targeted-reviewer": TARGETED_STAFF, "worker": SAME_VENDOR_WORKER}
+    _start_review(orchestrate, repo, tmp_path, monkeypatch, tier="high", staffing=staffing)
+    seats = _external_units(orchestrate)
+    assert len(seats) == 1
+    assert (seats[0].vendor, seats[0].model, seats[0].effort) == ("claude", "opus", "high")
+    packet = repo / "packet"
+    packet.mkdir()
+    calls = _install_review_runner(orchestrate, monkeypatch)
+    assert _launch(orchestrate, repo, packet, "external-reviewer") == 0
+    flags = _flag_pairs(_session_argv(calls))
+    assert (flags["--vendor"], flags["--model"], flags["--effort"]) == ("claude", "opus", "high")
+
+
+def _assert_existing_external_is_refused(
+    orchestrate: ModuleType,
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tier: str | None,
+) -> None:
+    _stub_start(orchestrate, monkeypatch)
+    monkeypatch.chdir(repo)
+    staffing = {"targeted-reviewer": TARGETED_STAFF}
+    _support.write_record(
+        test_store(),
+        TEST_ISSUE,
+        units=None,
+        extra_top_level=_record_top(tier, staffing),
+    )
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({"run_id": "r1", "units": [_controller_row(), _grok_seat_row()]}))
+    before = _branches(repo)
+    with pytest.raises(SystemExit, match="external-reviewer"):
+        orchestrate.main(
+            [
+                "start",
+                "--issue",
+                str(TEST_ISSUE),
+                "--store-root",
+                str(test_store()),
+                "--plan",
+                str(plan),
+                "--branch",
+                "orch/not-created",
+                "--base",
+                _head(repo),
+            ]
+        )
+    assert _branches(repo) == before
+    assert "orch/not-created" not in _branches(repo)
+
+    _write_run(
+        repo,
+        [_controller_row(), _grok_seat_row()],
+        extra_top_level=_record_top(tier, staffing),
+    )
+
+    def refuse_worktree(*_a: object, **_k: object) -> None:
+        raise AssertionError("go reached make_worktree")
+
+    monkeypatch.setattr(orchestrate, "make_worktree", refuse_worktree)
+    with pytest.raises(SystemExit, match="external-reviewer"):
+        orchestrate.cmd_go(NS(limit=0))
+
+    packet = repo / "packet"
+    packet.mkdir()
+    calls = _install_review_runner(orchestrate, monkeypatch)
+    assert _launch(orchestrate, repo, packet, "external-reviewer") == 2
+    assert calls == []
+
+
+def test_a_medium_record_starts_one_reviewer(
+    orchestrate: ModuleType,
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_existing_external_is_refused(orchestrate, repo, tmp_path, monkeypatch, "medium")
+
+
+def test_a_low_record_starts_one_reviewer(
+    orchestrate: ModuleType,
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_existing_external_is_refused(orchestrate, repo, tmp_path, monkeypatch, "low")
+
+
+def test_a_missing_tier_starts_one_reviewer(
+    orchestrate: ModuleType,
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_existing_external_is_refused(orchestrate, repo, tmp_path, monkeypatch, None)
+
+
+def test_the_second_reviewer_is_blind_and_uses_its_own_vendor(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_run(
+        repo,
+        [_controller_row(), _targeted_row(), _grok_seat_row()],
+        extra_top_level=_record_top(
+            "high",
+            {"targeted-reviewer": TARGETED_STAFF, "worker": GROK_WORKER_STAFF},
+        ),
+    )
+    monkeypatch.chdir(repo)
+    packet = repo / "packet"
+    packet.mkdir()
+    calls = _install_review_runner(orchestrate, monkeypatch, answer=CANARY)
+    assert _launch(orchestrate, repo, packet, "targeted-reviewer") == 0
+    assert _launch(orchestrate, repo, packet, "external-reviewer") == 0
+    first, second = [_flag_pairs(argv) for argv in calls if "--vendor" in argv]
+    assert first["--packet"] == second["--packet"]
+    assert CANARY not in " ".join(calls[-1])
+    assert first["--out"] not in " ".join(calls[-1])
+    assert second["--vendor"] == "grok"
+    assert "review" in calls[-1]
+    assert any(part.endswith("launcher.py") for part in calls[-1])
+
+
+def test_review_transport_records_a_review_run(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A review run is stored verbatim and routes to the same outcome words as review_result.v2."""
+    _write_run(repo, [_controller_row()])
+    monkeypatch.chdir(repo)
+    raw = json.dumps(
+        {
+            "schema": "review_records.v1",
+            "kind": "review_run",
+            "round": 1,
+            "merge": {"allowed": True, "blocking": []},
+            "findings": [],
+        },
+        sort_keys=True,
+    )
+    result_path = tmp_path / "review-run.json"
+    result_path.write_text(raw)
+    assert orchestrate.cmd_review_result(NS(file=str(result_path))) == 0
+    restored = orchestrate.Run.load(TEST_ISSUE, test_store())
+    assert restored.review_result == raw
+    assert restored.review_outcome == "accepted"
+    assert json.loads(restored.review_result)["kind"] == "review_run"
+
+
+def test_review_transport_refuses_a_contradictory_review_run(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """allowed true with blocking ids is not an acceptance. The outcome stays unset."""
+    _write_run(repo, [_controller_row()])
+    monkeypatch.chdir(repo)
+    raw = json.dumps(
+        {
+            "schema": "review_records.v1",
+            "kind": "review_run",
+            "round": 1,
+            "merge": {"allowed": True, "blocking": ["rf:" + "ab" * 16]},
+            "findings": [],
+        },
+        sort_keys=True,
+    )
+    result_path = tmp_path / "contradiction.json"
+    result_path.write_text(raw)
+    with pytest.raises(SystemExit, match="disagrees with merge"):
+        orchestrate.cmd_review_result(NS(file=str(result_path)))
+    restored = orchestrate.Run.load(TEST_ISSUE, test_store())
+    assert restored.review_outcome is None
+    assert restored.review_result == raw

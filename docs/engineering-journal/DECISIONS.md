@@ -31,6 +31,15 @@
 **Rejected alternatives.** Calling `usage add` and relying on its sum. Appending a usage object without `add_usage`. Refusing the whole review when the vendor is unreadable.
 
 **Revisit when.** Card C9 starts the reviewer session and puts `session_id` on the launcher result, or the mod's session id shape changes.
+### The reviewer starts through review-launch, and a review run does not invent an owner
+
+**Decision.** Issue #159 (card C9). The targeted reviewer, and on a high or very-high tier the external reviewer, start through `orchestrate.py review-launch`, which calls `launcher.py review`. `go` does not open a pane for either seat. A review run (`review_records.v1`, kind `review_run`) routes onto the same outcome words as `review_result.v2`. Every blocking id is owned by `review-fixer`.
+
+**Rationale.** The packet does not exist when `go` launches the controller. A review run has no owner field. Inventing one would put a policy decision in orchestrate.
+
+**Rejected alternatives.** Admitting the reviewer as a pane through expand and go. Inventing an owner role on the review run.
+
+**Revisit when.** A later card writes the packet and calls finish, or removes `review_result.v2`.
 
 ### Setup keeps the machine record out of the repository, and a run does not ask setup questions
 
