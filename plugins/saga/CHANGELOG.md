@@ -66,6 +66,9 @@
   item's reason. It does so before the record is built, before Jev's state is built, and before
   the 4,000-character cut.
 
+- Issue 188: the review-tools runner treats the commit under review as untrusted. Pins, rules, the test command, and coverage come from the base commit and the plugin. An uncommitted edit does not change a finding. Empty scanner output and a Semgrep error are degraded inputs.
+- Issue 188: a relative Semgrep rule path from the base profile stays on disk until that adapter's scans finish. A changed line containing `jscpd:ignore` or `lizard forgives` is a degraded input. The file is not rewritten.
+
 - Issue 151: an unknown tool level or lens is exit 2. A base tree the adapter declines to scan is an empty baseline, so head is still compared. A relocated command that is refused removes the work directories already created. A head payload that does not parse is reason `unparseable`.
 
 - Issue 144: `/work` §5.3 no longer tells the worker to re-run `/code-review` while "capturing a
