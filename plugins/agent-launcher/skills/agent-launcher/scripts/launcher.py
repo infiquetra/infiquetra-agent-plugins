@@ -2105,6 +2105,17 @@ REVIEWER_SCRATCH_IGNORED = re.compile(
 )
 
 
+#: Project files in the reviewed change that Claude would act on outside the command sandbox:
+#: hooks, ``apiKeyHelper`` and environment in project settings, and project MCP servers. The change
+#: under review is untrusted, so they are withheld from the copy; the operator's own user-level
+#: configuration is what "normal configuration" means, and it still loads.
+REVIEWER_UNTRUSTED_CONFIG = (".claude/settings.json", ".claude/settings.local.json", ".mcp.json")
+#: Project instruction files Claude loads from the working directory.
+REVIEWER_PROJECT_INSTRUCTIONS = ("CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md")
+#: How deep Claude follows ``@`` imports.
+REVIEWER_IMPORT_DEPTH = 5
+
+
 class ReviewerRefused(Exception):
     """A reviewer launch refused before any session started."""
 
@@ -2225,6 +2236,64 @@ def _reviewer_read(path: Path) -> bytes | None:
         return None
 
 
+def _reviewer_inside(path: Path, copy: Path) -> bool:
+    try:
+        return path.resolve().is_relative_to(copy.resolve())
+    except (OSError, RuntimeError):
+        return False
+
+
+def _reviewer_import_target(token: str, parent: Path) -> Path:
+    return Path(token).expanduser() if token.startswith("~") else parent / token
+
+
+def _reviewer_imports_leave(start: Path, copy: Path) -> bool:
+    """Whether *start*'s ``@`` imports, followed as Claude follows them, reach outside *copy*."""
+    frontier, seen = [start], set()
+    for _ in range(REVIEWER_IMPORT_DEPTH):
+        following: list[Path] = []
+        for path in frontier:
+            if path in seen:
+                continue
+            seen.add(path)
+            content = _reviewer_read(path)
+            if content is None:
+                continue
+            for token in _REVIEWER_IMPORT.findall(content.decode("utf-8", "replace")):
+                target = _reviewer_import_target(token, path.parent)
+                if not _reviewer_inside(target, copy):
+                    return True
+                following.append(target)
+        frontier = following
+    return False
+
+
+def reviewer_withhold_untrusted(copy: Path) -> list[str]:
+    """Remove what the reviewed change could use to run or read outside the sandbox.
+
+    Symlinks that leave the copy, project settings and MCP files Claude would act on outside the
+    command sandbox, and project instruction files whose ``@`` imports reach outside the copy (Claude
+    would load the imported file, a credential for example, into the reviewer's context). Returns
+    each withheld path with the reason; the reviewer still sees them in the packet's diff.
+    """
+    withheld: list[str] = []
+    for path in sorted(copy.rglob("*")):
+        if path.is_symlink() and not _reviewer_inside(path, copy):
+            withheld.append(f"{path.relative_to(copy).as_posix()} (a symlink out of the copy)")
+            path.unlink()
+    for relative in REVIEWER_UNTRUSTED_CONFIG:
+        path = copy / relative
+        if path.is_file() or path.is_symlink():
+            withheld.append(f"{relative} (Claude would act on it outside the sandbox)")
+            path.unlink()
+    for relative in REVIEWER_PROJECT_INSTRUCTIONS:
+        path = copy / relative
+        if path.is_file() and _reviewer_imports_leave(path, copy):
+            withheld.append(f"{relative} (it imports a file outside the copy)")
+            path.unlink()
+    return withheld
+
+
 def reviewer_claude_config_sources(
     copy: Path, env: Mapping[str, str]
 ) -> list[tuple[str, bytes | None]]:
@@ -2249,7 +2318,11 @@ def reviewer_claude_config_sources(
         if content is None:
             continue
         for token in sorted(set(_REVIEWER_IMPORT.findall(content.decode("utf-8", "replace")))):
-            target = Path(token).expanduser() if token.startswith("~") else path.parent / token
+            target = _reviewer_import_target(token, path.parent)
+            if label.startswith("project:") and not _reviewer_inside(target, copy):
+                # Never read a file the reviewed change points at outside the copy.
+                sources.append((f"import:{label}:{token}", b"outside the copy"))
+                continue
             sources.append((f"import:{label}:{token}", _reviewer_read(target)))
 
     enabled: set[str] = set()
@@ -2405,9 +2478,16 @@ def reviewer_wrapper_path() -> Path:
 
 
 def reviewer_launch_message(
-    wrapper: str, prompt: str, packet: Path, copy: Path, cap: int
+    wrapper: str, prompt: str, packet: Path, copy: Path, cap: int,
+    withheld: Sequence[str] = (),
 ) -> str:
     """What the session reads on standard input: the wrapper, saga's prompt, then where things are."""
+    note = (
+        "\nWithheld from the scratch copy, because they would run or read outside the sandbox; "
+        "the packet's change still shows them:\n"
+        + "".join(f"- `{item}`\n" for item in withheld)
+        if withheld else ""
+    )
     return (
         f"{_reviewer_body(wrapper).rstrip()}\n\n"
         "---\n\n"
@@ -2416,7 +2496,8 @@ def reviewer_launch_message(
         "# This review\n\n"
         f"- The review packet: `{packet.resolve()}`\n"
         f"- The scratch copy, your working directory: `{copy.resolve()}`\n"
-        f"- The open search's cap on findings: {cap}\n\n"
+        f"- The open search's cap on findings: {cap}\n"
+        f"{note}\n"
         "Your final message is the answer JSON and nothing else.\n"
     )
 
@@ -2514,7 +2595,9 @@ def reviewer_launch(
         f"{request.repo.resolve().name}-{request.head[:12]}-{os.urandom(4).hex()}"
     )
     copy = root / "copy"
-    manifest = reviewer_export_head(request.repo, request.head, copy)
+    reviewer_export_head(request.repo, request.head, copy)
+    withheld = reviewer_withhold_untrusted(copy)
+    manifest = _reviewer_manifest(copy)
     session_env = reviewer_session_environment(environ)
     settings_path = root / "settings.json"
     settings_path.write_text(
@@ -2523,7 +2606,7 @@ def reviewer_launch(
     configuration = reviewer_configuration_fingerprint(recipe.config_sources(copy, session_env))
     message = reviewer_launch_message(
         wrapper.read_text(encoding="utf-8"), prompt_text, request.packet, copy,
-        request.open_search_cap,
+        request.open_search_cap, withheld,
     )
     argv = recipe.argv(request.model, request.effort, settings_path)
     proc = session(argv, stdin=message, cwd=copy, env=session_env, timeout=request.timeout)
@@ -2550,7 +2633,11 @@ def reviewer_launch(
         "prompt_sha256": hashlib.sha256(prompt_bytes).hexdigest(),
         "schema_sha256": hashlib.sha256(request.schema.read_bytes()).hexdigest(),
         "configuration": configuration,
-        "scratch": {"path": str(copy), "changes": reviewer_scratch_changes(copy, manifest)},
+        "scratch": {
+            "path": str(copy),
+            "withheld": withheld,
+            "changes": reviewer_scratch_changes(copy, manifest),
+        },
         "answer_path": str(answer_path) if answer is not None else None,
         "exit": code,
         "error": error,
