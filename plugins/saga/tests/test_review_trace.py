@@ -381,6 +381,41 @@ def test_rejected_post_is_kept(tmp_path: Path) -> None:
     assert summary["sent"] == 3 and RT.queue_status(home)["waiting"] == 0
 
 
+def test_requeue_updates_reason_in_place(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    directory = home / ".saga" / "langfuse-queue"
+    RT.post(_items(), home=home, getenv=_getenv(), urlopen=_Opener(urllib.error.URLError("down")))
+    [queued] = list(directory.iterdir())
+    RT.post([], home=home, getenv=_getenv(), urlopen=_Opener(_http_error(400)))
+    assert [p.name for p in directory.iterdir()] == [queued.name]
+    stored = json.loads(queued.read_text())
+    assert stored["reason"] == "http-400" and stored["attempts"] == 2
+    assert stat.S_IMODE(queued.stat().st_mode) == 0o600
+
+
+def test_failed_requeue_keeps_the_post(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home"
+    directory = home / ".saga" / "langfuse-queue"
+    RT.post(_items(), home=home, getenv=_getenv(), urlopen=_Opener(_http_error(400)))
+    [queued] = list(directory.iterdir())
+    before = queued.read_text()
+
+    real_open = os.open
+
+    def full_disk(path: Any, *args: Any, **kwargs: Any) -> int:
+        if Path(path).parent == directory:
+            raise OSError(28, "No space left on device")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", full_disk)
+    opener = _Opener(_http_error(400), _Response())
+    summary = RT.post([("scores", {"id": "new", "name": "n", "value": 2}, "private")],
+                      home=home, getenv=_getenv(), urlopen=opener)
+    assert [p.name for p in directory.iterdir()] == [queued.name]
+    assert queued.read_text() == before
+    assert summary["sent"] == 1 and [body["id"] for body in opener.bodies()] == ["s0", "new"]
+
+
 def test_stale_claim_is_retaken(tmp_path: Path) -> None:
     home = tmp_path / "home"
     RT.post(_items(2), home=home, getenv=_getenv(), urlopen=_Opener(urllib.error.URLError("down")))

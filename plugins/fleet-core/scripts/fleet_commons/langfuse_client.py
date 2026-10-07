@@ -173,12 +173,21 @@ def _resolve_keys(getenv: Callable[[str], str | None]) -> tuple[str, str] | None
     return public, secret
 
 
-def _public_address(address: str) -> bool:
+def _plain_http_refused(address: str) -> bool:
+    """True unless ``address`` is loopback or private and not link-local.
+
+    Python marks link-local addresses private too, and 169.254.169.254 is the cloud metadata
+    address, so the link-local refusal comes first.
+    """
     try:
         ip = ipaddress.ip_address(address.split("%", 1)[0])
     except ValueError:
         return True
-    return not (ip.is_loopback or ip.is_private or ip.is_link_local)
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    if ip.is_link_local:
+        return True
+    return not (ip.is_loopback or ip.is_private)
 
 
 def gate(
@@ -209,10 +218,10 @@ def gate(
     addresses = [entry[4][0] for entry in found or [] if entry and entry[4]]
     if not addresses:
         return "address-lookup-failed", "the host's address could not be looked up; nothing was sent"
-    if any(_public_address(str(address)) for address in addresses):
+    if any(_plain_http_refused(str(address)) for address in addresses):
         return (
             "plain-http-public-address",
-            "plain http is allowed only to a loopback or private address; nothing was sent",
+            "plain http is allowed only to a loopback or private, non-link-local address; nothing was sent",
         )
     return None
 

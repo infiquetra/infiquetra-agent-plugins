@@ -38,7 +38,7 @@ A repository's visibility is the `visibility` key of `.saga-profile.json`, which
 | Host scheme | Private or unrecorded | Public |
 |---|---|---|
 | `https` | sent, with the default certificate check | sent, with the default certificate check |
-| `http` | refused: `plain-http-private`, naming X3 | sent only when every address the host resolves to is loopback or private; otherwise `plain-http-public-address`, or `address-lookup-failed` when the lookup fails |
+| `http` | refused: `plain-http-private`, naming X3 | sent only when every address the host resolves to is loopback or private and none is link-local (169.254.0.0/16 or fe80::/10, which hold the cloud metadata address); otherwise `plain-http-public-address`, or `address-lookup-failed` when the lookup fails |
 | anything else | refused: `bad-scheme` | refused: `bad-scheme` |
 
 The client follows no redirect (`redirect`): a same-host redirect from `https` to `http` would put the key pair in clear.
@@ -68,7 +68,7 @@ Traces use the OpenTelemetry endpoint because Langfuse's published API marks the
 | `missing-host` | `SAGA_LANGFUSE_HOST` is unset |
 | `bad-scheme` | the host is not `https` or `http`, or has no host name |
 | `plain-http-private` | a private or unrecorded repository on `http`; see X3 |
-| `plain-http-public-address` | a public repository on `http` to a public address |
+| `plain-http-public-address` | a public repository on `http` to a public or link-local address |
 | `address-lookup-failed` | a public repository on `http` whose host could not be looked up |
 | `unprepared` | the payload skipped `prepare_payload` |
 | `redirect` | the server answered with a redirect |

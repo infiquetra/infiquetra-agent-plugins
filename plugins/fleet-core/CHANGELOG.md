@@ -26,8 +26,8 @@ The catalog requires `python>=3.12`.
 - Issue 166: `langfuse_client`, a standard-library client for saga's own Langfuse project. It reads
   only `SAGA_LANGFUSE_PUBLIC_KEY`, `SAGA_LANGFUSE_SECRET_KEY` and `SAGA_LANGFUSE_HOST`, puts the key
   pair only in the basic-auth header, removes Langfuse key shapes and then runs TypeSafe's redaction
-  on every payload, refuses a private or unrecorded repository over plain HTTP (naming X3), follows
-  no redirect, and reaches a fixed list of `GET` and `POST` endpoints only. `references/langfuse.md`
+  on every payload, refuses a private or unrecorded repository over plain HTTP (naming X3), sends a
+  public one over plain HTTP only to a loopback or private, non-link-local address, follows no redirect, and reaches a fixed list of `GET` and `POST` endpoints only. `references/langfuse.md`
   holds the rule. Saga's bundle includes it. The package version stays 0.33.0.
 
 - Issue 156: `jev sweep` classifies pieces into a where-to-look list of at most 30 items and stops

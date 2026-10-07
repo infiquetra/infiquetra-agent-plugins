@@ -24,6 +24,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -675,8 +676,7 @@ def queue_dir(home: Path) -> Path:
     return path
 
 
-def _write_0600(path: Path, content: str) -> None:
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+def _write_fd(fd: int, content: str) -> None:
     try:
         os.fchmod(fd, 0o600)
         data = memoryview(content.encode("utf-8"))
@@ -685,6 +685,11 @@ def _write_0600(path: Path, content: str) -> None:
             data = data[written:]
     finally:
         os.close(fd)
+
+
+def _write_0600(path: Path, content: str) -> None:
+    _write_fd(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600),
+              content)
 
 
 def _enqueue(home: Path, prepared: Any, visibility: str | None, reason: str) -> Path:
@@ -705,6 +710,30 @@ def _enqueue(home: Path, prepared: Any, visibility: str | None, reason: str) -> 
         "body": prepared.body,
     }))
     return target
+
+
+def _requeue(claimed: Path, path: Path, content: str) -> None:
+    """Put a claimed post back under its own name with its new reason and attempt count.
+
+    The update goes to a new owner-only file first, and the claimed copy is removed only once the
+    update sits under the original name. A failed write puts the old copy back unchanged; a
+    failed put-back leaves the claim, which the next post takes back once it is stale.
+    """
+    fresh: Path | None = None
+    try:
+        fd, name = tempfile.mkstemp(dir=path.parent, prefix=f"{path.stem}.", suffix=".rewrite")
+        fresh = Path(name)
+        _write_fd(fd, content)
+        os.replace(fresh, path)
+    except OSError:
+        try:
+            if fresh is not None:
+                fresh.unlink(missing_ok=True)
+            claimed.rename(path)
+        except OSError:
+            pass
+        return
+    claimed.unlink(missing_ok=True)
 
 
 def _reclaim(directory: Path, now: float) -> None:
@@ -783,8 +812,7 @@ def post(
             continue
         stored["reason"] = result.reason
         stored["attempts"] = int(stored.get("attempts") or 0) + 1
-        claimed.unlink(missing_ok=True)
-        _write_0600(path, json.dumps(stored))
+        _requeue(claimed, path, json.dumps(stored))
         if result.outcome in _STOP:
             stopped = result.reason
             break

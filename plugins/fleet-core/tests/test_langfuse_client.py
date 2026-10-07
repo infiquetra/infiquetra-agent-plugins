@@ -201,6 +201,26 @@ def test_visibility_public_on_http_to_public_address_refused() -> None:
     assert opener.requests == []
 
 
+def test_visibility_public_on_http_to_metadata_address_refused() -> None:
+    def resolving(*addresses: str) -> Any:
+        return lambda *_a, **_k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (a, 80)) for a in addresses]
+
+    for addresses in (("169.254.169.254",), ("fe80::1%en0",), ("::ffff:169.254.169.254",),
+                      ("10.1.2.3", "169.254.169.254")):
+        result, opener = _send(
+            visibility="public", env={**SAGA_ENV, "SAGA_LANGFUSE_HOST": PLAIN},
+            resolve=resolving(*addresses),
+        )
+        assert (result.outcome, result.reason) == ("refused", "plain-http-public-address"), addresses
+        assert opener.requests == []
+    for addresses in (("127.0.0.1",), ("::1",), ("192.168.1.20", "fd00::5")):
+        result, _ = _send(
+            visibility="public", env={**SAGA_ENV, "SAGA_LANGFUSE_HOST": PLAIN},
+            resolve=resolving(*addresses),
+        )
+        assert result.outcome == "sent", addresses
+
+
 def test_visibility_public_on_http_lookup_failure_refused() -> None:
     def raises(*_args: Any, **_kwargs: Any) -> Any:
         raise OSError("no such host")

@@ -79,7 +79,7 @@ the benchmark snapshot change.
 
 ### Langfuse visibility is read at the base commit
 
-**Decision.** Issue #166 (card C15), KTD6 and KTD7. A review's visibility is `.saga-profile.json`'s `visibility` at the base commit; a plan review's is at the merge base of `HEAD` and the default branch. A missing or unknown value counts as private, and private posts go only over `https`. A public repository may use plain `http` only to a loopback or private address.
+**Decision.** Issue #166 (card C15), KTD6 and KTD7. A review's visibility is `.saga-profile.json`'s `visibility` at the base commit; a plan review's is at the merge base of `HEAD` and the default branch. A missing or unknown value counts as private, and private posts go only over `https`. A public repository may use plain `http` only to a loopback or private address that is not link-local.
 
 **Rationale.** The change under review is untrusted (#190, #191). Reading the head would let a change mark its own repository public and send private code over plain HTTP. The address check keeps the key pair off the public internet in clear even for a public repository.
 

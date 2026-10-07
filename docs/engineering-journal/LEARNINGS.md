@@ -25,6 +25,14 @@
 
 **Generalizable rule.** A client that reuses another client's redaction tests it against its own key shape.
 
+### Python marks the cloud metadata address private
+
+**Evidence.** Issue #166, code review. `ipaddress.ip_address("169.254.169.254")` has `is_private` and `is_link_local` both true on Python 3.14, and so does `fe80::1`. `plugins/fleet-core/scripts/fleet_commons/langfuse_client.py` (`_plain_http_refused`) allowed plain HTTP for loopback, private or link-local, so the link-local clause refused nothing and the metadata address was allowed. It now refuses link-local first, after unwrapping an IPv4-mapped IPv6 address.
+
+**Mechanism.** The standard library's private ranges include 169.254.0.0/16 and fe80::/10, so a check written as "private, or link-local" never separates them.
+
+**Generalizable rule.** To exclude a subset of `is_private`, test the subset first and refuse it; adding it as another allowed flag excludes nothing.
+
 ### A later fingerprint path has to land before a test that pins the last entry
 
 **Evidence.** Issue #160, after rebasing onto main. `plugins/saga/tests/test_review_checks_runner.py` (`test_checks_fingerprint_names_the_script`) asserts `COMPONENTS[-1]` is `plugins/saga/scripts/review_checks.py`. Card C5 kept that path last the same way. The review command is the entry before it in `plugins/saga/scripts/review_calibration.py`.
