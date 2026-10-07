@@ -31,6 +31,7 @@ INTERNAL = frozenset(
         "jev_sweep",
         "jev_verbs",
         "jev_widen",
+        "langfuse_client",
         "merge_guard",
         "merge_turn",
         "plugin_resolution",
@@ -43,11 +44,25 @@ INTERNAL = frozenset(
     }
 )
 
-CREDENTIAL_PREFIXES = ("TYPESAFE_", "GH_", "GITHUB_", "INFIQUETRA_", "SAGA_LANGFUSE_")
+CREDENTIAL_PREFIXES = (
+    "TYPESAFE_", "GH_", "GITHUB_", "INFIQUETRA_", "SAGA_LANGFUSE_", "LANGFUSE_",
+)
 
 
 def test_entrypoint_internal_includes_jev_sweep() -> None:
     assert "jev_sweep" in INTERNAL
+
+
+def test_bundled_langfuse_client_loads() -> None:
+    sys.path.insert(0, str(SCRIPTS))
+    try:
+        bundled_fleet = importlib.import_module("bundled_fleet")
+        client = bundled_fleet.load("langfuse_client")
+    finally:
+        sys.path.remove(str(SCRIPTS))
+    assert Path(client.__file__).resolve().parent == SCRIPTS / "_bundled"
+    redaction_source = Path(client.redact.__code__.co_filename).resolve()
+    assert redaction_source == SCRIPTS / "_bundled" / "typesafe_client.py"
 
 
 def _scripts() -> list[Path]:

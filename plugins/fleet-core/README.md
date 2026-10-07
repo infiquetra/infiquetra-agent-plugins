@@ -21,6 +21,7 @@ declares it.
 | [`scripts/jev.py`](scripts/jev.py) | Command-line tool for the judgment verbs |
 | [`references/staffing.md`](references/staffing.md) | How the staffing registry is shaped |
 | [`references/typesafe.md`](references/typesafe.md) | Data rules the TypeSafe client enforces |
+| [`references/langfuse.md`](references/langfuse.md) | Data rule, keys and visibility rule the Langfuse client enforces |
 | [`scripts/fleet_commons/`](scripts/fleet_commons/) | The library modules and their data files |
 
 ### Library modules
@@ -40,6 +41,7 @@ declares it.
 | `merge_guard.py` | Refuses a merge that would revert a newer comparison branch. |
 | `plugin_resolution.py` | Finds a sibling plugin root. It is not the retired discovery shim. |
 | `typesafe_client.py` | Client for the TypeSafe System One endpoint. Standard library transport, with an optional vendor SDK. |
+| `langfuse_client.py` | Client for saga's Langfuse project. Standard library only; redacts every payload, refuses private code over plain HTTP, and cannot delete. |
 | `jev_verbs.py` | Named judgment verbs: questions, criteria, confidence floor. |
 | `jev_log.py` | Verdict log and answer cache. |
 | `jev_eval.py` | Scores recorded answers against labels, by confidence band. |

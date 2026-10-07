@@ -33,6 +33,12 @@
       ]
     },
     {
+      "name": "langfuse_client",
+      "destinations": [
+        "scripts/_bundled/langfuse_client.py"
+      ]
+    },
+    {
       "name": "merge_guard",
       "destinations": [
         "scripts/_bundled/merge_guard.py"
