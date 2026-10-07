@@ -18,6 +18,7 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = REPO_ROOT / "plugins" / "saga" / "scripts"
@@ -3316,6 +3317,16 @@ class _Probe:
         self.stderr = stderr
 
 
+def _shipped_semgrep_pin() -> str:
+    """The Semgrep pin the committed tool list records, which the stub reports."""
+    text = (
+        REPO_ROOT / "plugins" / "saga" / "references" / "review-tools.yaml"
+    ).read_text(encoding="utf-8")
+    document = yaml.safe_load(text)
+    row = next(item for item in document["tools"] if item.get("id") == "semgrep-security")
+    return str(row["default_version"])
+
+
 def _notice_runner(missing: str | None = "git") -> Any:
     """Every shipped tool is installed except the named binary."""
 
@@ -3332,6 +3343,8 @@ def _notice_runner(missing: str | None = "git") -> Any:
             raise FileNotFoundError(missing)
         if argv and argv[0] == "python3":
             return _Probe(0, "Python 3.12.0\n")
+        if argv[:2] == ["semgrep", "--version"]:
+            return _Probe(0, f"semgrep {_shipped_semgrep_pin()}\n")
         return _Probe(0, "1.2.3\n")
 
     return runner

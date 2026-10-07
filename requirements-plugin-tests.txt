@@ -6,4 +6,5 @@ pytest
 pyyaml
 redis
 requests
+semgrep==1.179.0
 urllib3
