@@ -30,6 +30,10 @@
 
 import type { ProcessRunResult } from 'claude-code'
 import type {
+  SagaMachineRecordSchema,
+  SagaOfferStatus,
+  SagaReview,
+  SagaReviewStateSchema,
   SagaReviewView,
   SagaReviewViewSchema,
   SagaRunRead,
@@ -37,6 +41,9 @@ import type {
   SagaRunRecordSchema,
   SagaRunStatusSchema,
   SagaRunStatusView,
+  SagaSetupSurvey,
+  SagaSetupSurveySchema,
+  SagaStateReview,
 } from '../types/index.d.ts'
 
 /** The record version this module reads; `SCHEMA` in `scripts/run_record.py`. */
@@ -299,5 +306,233 @@ export async function readReviewViewWith(
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err)
     return { ok: false, reason: 'error', detail: `run_status review did not run: ${detail}` }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The review-state document embedded in `run_status.py review` (issue #165)
+//
+// For records with C1 review runs the review view carries the whole
+// `review_state.v1` document under `state`. The panes read the document
+// through this reader alone, never by running the review-state script.
+// ---------------------------------------------------------------------------
+
+/** The document version this module reads; `SCHEMA` in `scripts/review_state.py`. */
+export const KNOWN_REVIEW_STATE_SCHEMA: SagaReviewStateSchema = 'review_state.v1'
+
+/** The outcome of reading the state review. A mod shows `detail` rather than guessing. */
+export type StateReviewRead =
+  | { ok: true; view: SagaReviewView; review: SagaStateReview }
+  | { ok: false; reason: 'unknown-version' | 'unreadable' | 'error'; detail: string }
+
+/** Whether the review is a state review carrying the embedded document. */
+export function isStateReview(review: SagaReview | SagaStateReview | null): review is SagaStateReview {
+  return (
+    review !== null &&
+    typeof (review as SagaStateReview).state_schema === 'string' &&
+    typeof (review as SagaStateReview).state === 'object' &&
+    (review as SagaStateReview).state !== null
+  )
+}
+
+/** Turn what `run_status.py review --json` did into the state review, or the reason there is none. */
+export function parseRunStatusStateReview(ran: ProcessResult): StateReviewRead {
+  const parsed = parseRunStatusObject(ran, 'run_status review')
+  if (!parsed.ok) return parsed
+  const view = parsed.value
+  if (view.schema !== KNOWN_REVIEW_VIEW_SCHEMA) {
+    return {
+      ok: false,
+      reason: 'unknown-version',
+      detail: `review view version ${JSON.stringify(view.schema)} is not ${KNOWN_REVIEW_VIEW_SCHEMA}`,
+    }
+  }
+  const review = view.review as SagaStateReview | null | undefined
+  if (review === null || review === undefined) {
+    return { ok: false, reason: 'unreadable', detail: 'run_status review recorded no review' }
+  }
+  if (!isStateReview(review)) {
+    return { ok: false, reason: 'unreadable', detail: 'run_status review printed no state review' }
+  }
+  if (review.state_schema !== KNOWN_REVIEW_STATE_SCHEMA || review.state.schema !== KNOWN_REVIEW_STATE_SCHEMA) {
+    return {
+      ok: false,
+      reason: 'unknown-version',
+      detail: `review-state document version ${JSON.stringify(review.state_schema)} is not ${KNOWN_REVIEW_STATE_SCHEMA}`,
+    }
+  }
+  return { ok: true, view: view as unknown as SagaReviewView, review }
+}
+
+/** Read the state review through `run`. Never rejects, as `readRunRecordWith`. */
+export async function readStateReviewWith(
+  run: ProcessRunner,
+  pluginRoot: string,
+  query: ReviewViewQuery,
+): Promise<StateReviewRead> {
+  try {
+    return parseRunStatusStateReview(await run(runStatusReviewArgv(pluginRoot, query)))
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    return { ok: false, reason: 'error', detail: `run_status review did not run: ${detail}` }
+  }
+}
+
+/**
+ * Read the review in either shape through `run`, enforcing the document
+ * version for a state review. One run, two parses: the legacy parse validates
+ * the envelope for both shapes, and a state review is then checked against
+ * the known document token before anything draws from it. Never rejects.
+ */
+export async function readEitherReviewWith(
+  run: ProcessRunner,
+  pluginRoot: string,
+  query: ReviewViewQuery,
+): Promise<ReviewViewRead> {
+  let completed: ProcessResult
+  try {
+    completed = await run(runStatusReviewArgv(pluginRoot, query))
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    return { ok: false, reason: 'error', detail: `run_status review did not run: ${detail}` }
+  }
+  const parsed = parseRunStatusReview(completed)
+  if (!parsed.ok) return parsed
+  const review = parsed.view.review
+  if (review !== null && isStateReview(review)) {
+    const checked = parseRunStatusStateReview(completed)
+    if (!checked.ok) return checked
+  }
+  return parsed
+}
+
+// ---------------------------------------------------------------------------
+// The setup survey and the machine offer (issue #165)
+//
+// The setup pane draws `saga_setup.py survey --format json` through these
+// readers alone, and the first-session offer reads `offer-status` through one.
+// Recording the offer rides `record-offer`'s exit code, which needs no reader.
+// ---------------------------------------------------------------------------
+
+/** The survey version this module reads; `SURVEY_SCHEMA` in `scripts/saga_setup.py`. */
+export const KNOWN_SETUP_SURVEY_SCHEMA: SagaSetupSurveySchema = 'setup_survey.v1'
+
+/** The machine-record version the offer reads; `MACHINE_SCHEMA` in `scripts/saga_setup.py`. */
+export const KNOWN_MACHINE_RECORD_SCHEMA: SagaMachineRecordSchema = 'machine_record.v1'
+
+/** The outcome of reading the setup survey. A mod shows `detail` rather than guessing. */
+export type SetupSurveyRead =
+  | { ok: true; survey: SagaSetupSurvey }
+  | { ok: false; reason: 'unknown-version' | 'unreadable' | 'error'; detail: string }
+
+/** The outcome of reading the machine offer status. */
+export type OfferStatusRead =
+  | { ok: true; status: SagaOfferStatus }
+  | { ok: false; reason: 'unknown-version' | 'unreadable' | 'error'; detail: string }
+
+/**
+ * The argv that surveys the checkout's tools as JSON. The survey persists the
+ * machine record with `ran` set, so it never serves as the offer check.
+ */
+export function setupSurveyArgv(pluginRoot: string, repo: string): string[] {
+  return sagaScriptArgv(pluginRoot, 'saga_setup.py', ['survey', '--repo', repo, '--format', 'json'])
+}
+
+/** The argv that installs one tool. Install runs one call per ticked tool, in order. */
+export function setupInstallArgv(pluginRoot: string, tool: string, repo: string): string[] {
+  return sagaScriptArgv(pluginRoot, 'saga_setup.py', ['install', '--tools', tool, '--repo', repo])
+}
+
+/** The argv that prints the machine record's `ran` and `offered` without writing. */
+export function setupOfferStatusArgv(pluginRoot: string): string[] {
+  return sagaScriptArgv(pluginRoot, 'saga_setup.py', ['offer-status'])
+}
+
+/** The argv that stamps `offered` on the machine record. */
+export function setupRecordOfferArgv(pluginRoot: string): string[] {
+  return sagaScriptArgv(pluginRoot, 'saga_setup.py', ['record-offer'])
+}
+
+/** The JSON object one setup verb printed, or why there is none. */
+function setupOutput(
+  ran: ProcessResult,
+  command: string,
+): { ok: true; value: Record<string, unknown> } | { ok: false; reason: 'unreadable' | 'error'; detail: string } {
+  if (ran.exitCode !== 0) {
+    const stderr = ran.stderr.trim()
+    return { ok: false, reason: 'error', detail: stderr === '' ? `${command} exited ${ran.exitCode}` : stderr }
+  }
+  if (ran.isStdoutTruncated) {
+    return { ok: false, reason: 'unreadable', detail: `${command} printed past the stdout cap` }
+  }
+  let value: unknown
+  try {
+    value = JSON.parse(ran.stdout)
+  } catch {
+    value = undefined
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return { ok: false, reason: 'unreadable', detail: `${command} printed no JSON object` }
+  }
+  return { ok: true, value: value as Record<string, unknown> }
+}
+
+/** Turn what `saga_setup.py survey --format json` did into the survey, or the reason there is none. */
+export function parseSetupSurvey(ran: ProcessResult): SetupSurveyRead {
+  const parsed = setupOutput(ran, 'saga_setup survey')
+  if (!parsed.ok) return parsed
+  const survey = parsed.value
+  if (survey.schema !== KNOWN_SETUP_SURVEY_SCHEMA) {
+    return {
+      ok: false,
+      reason: 'unknown-version',
+      detail: `setup survey version ${JSON.stringify(survey.schema)} is not ${KNOWN_SETUP_SURVEY_SCHEMA}`,
+    }
+  }
+  if (!Array.isArray(survey.tools)) {
+    return { ok: false, reason: 'unreadable', detail: 'saga_setup survey printed no tool rows' }
+  }
+  return { ok: true, survey: survey as unknown as SagaSetupSurvey }
+}
+
+/** Turn what `saga_setup.py offer-status` did into the offer status, or the reason there is none. */
+export function parseOfferStatus(ran: ProcessResult): OfferStatusRead {
+  const parsed = setupOutput(ran, 'saga_setup offer-status')
+  if (!parsed.ok) return parsed
+  const status = parsed.value
+  if (status.schema !== KNOWN_MACHINE_RECORD_SCHEMA) {
+    return {
+      ok: false,
+      reason: 'unknown-version',
+      detail: `machine record version ${JSON.stringify(status.schema)} is not ${KNOWN_MACHINE_RECORD_SCHEMA}`,
+    }
+  }
+  if (typeof status.ran !== 'boolean' || typeof status.offered !== 'boolean') {
+    return { ok: false, reason: 'unreadable', detail: 'saga_setup offer-status printed no ran and offered flags' }
+  }
+  return { ok: true, status: status as unknown as SagaOfferStatus }
+}
+
+/** Read the setup survey through `run`. Never rejects, as `readRunRecordWith`. */
+export async function readSetupSurveyWith(
+  run: ProcessRunner,
+  pluginRoot: string,
+  repo: string,
+): Promise<SetupSurveyRead> {
+  try {
+    return parseSetupSurvey(await run(setupSurveyArgv(pluginRoot, repo)))
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    return { ok: false, reason: 'error', detail: `saga_setup survey did not run: ${detail}` }
+  }
+}
+
+/** Read the machine offer status through `run`. Never rejects, as `readRunRecordWith`. */
+export async function readOfferStatusWith(run: ProcessRunner, pluginRoot: string): Promise<OfferStatusRead> {
+  try {
+    return parseOfferStatus(await run(setupOfferStatusArgv(pluginRoot)))
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    return { ok: false, reason: 'error', detail: `saga_setup offer-status did not run: ${detail}` }
   }
 }

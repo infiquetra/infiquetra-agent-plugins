@@ -5,7 +5,19 @@
 // `scripts/run_status.py review`, which applies the verdict's own rule. These
 // only turn that view into labels and prompt text.
 
-import type { SagaReview, SagaReviewFinding, SagaReviewLens, SagaReviewLensState } from '../types/index.d.ts'
+import type {
+  SagaReview,
+  SagaReviewFinding,
+  SagaReviewLens,
+  SagaReviewLensState,
+  SagaReviewState,
+  SagaStateCost,
+  SagaStateFinding,
+  SagaStateLens,
+  SagaStateReview,
+  SagaStateRound,
+  SagaStateWhereToLook,
+} from '../types/index.d.ts'
 
 /** The mod's own page budget is 10,000 characters; a finding's text stays well under it. */
 export const FINDING_TEXT_LIMIT = 1_500
@@ -80,4 +92,63 @@ export function reviewHeading(issue: number | null, review: SagaReview): string 
 export function findingsFor(review: SagaReview, lens: string): SagaReviewFinding[] {
   if (lens === OTHER_FINDINGS) return review.unattributed_findings
   return review.lenses.find((one) => one.lens === lens)?.findings ?? []
+}
+
+// ---------------------------------------------------------------------------
+// The live review pane (issue #165): labels over the review-state document.
+// ---------------------------------------------------------------------------
+
+/** `testing  A  0 blocking  1 fix later`, one row in the grades list. */
+export function gradeLabel(lens: SagaStateLens): string {
+  return `${lens.lens}  ${lens.grade}  ${lens.blocking} blocking  ${lens.fix_later} fix later`
+}
+
+/** `lens  file:start-end  answered finding-id  questions: a, b`, one where-to-look row. */
+export function whereToLookLabel(item: SagaStateWhereToLook): string {
+  const verdict =
+    item.state === 'answered' ? `answered ${item.finding_id ?? '?'}` : `cleared: ${item.reason ?? 'no reason'}`
+  const questions = item.questions.length > 0 ? `  questions: ${item.questions.join(', ')}` : ''
+  return `${item.lens}  ${item.location}  ${verdict}${questions}`
+}
+
+/** `round 2  1 new blocking  0 cleared`, the heading of one round block. */
+export function roundLabel(round: SagaStateRound): string {
+  return `round ${round.round}  ${round.new_blocking.length} new blocking  ${round.cleared_blocking.length} cleared`
+}
+
+/** `tokens 10 in / 20 out  $0.05  30s`, the cost so far. */
+export function costLine(cost: SagaStateCost): string {
+  return `tokens ${cost.tokens_in} in / ${cost.tokens_out} out  $${cost.cost_usd}  ${cost.seconds}s`
+}
+
+/** The header line over the live pane: issue, round, outcome, and the reviewed revision. */
+export function stateHeading(issue: number | null, review: SagaStateReview): string {
+  const parts = [`#${issue ?? '?'}`, `round ${review.round}`, review.outcome, review.revision.slice(0, 12)]
+  return parts.join(' · ')
+}
+
+/** `fix-later · testing · rf:abc… · guard`, the heading of a document finding. */
+export function stateFindingHeading(finding: SagaStateFinding): string {
+  return `${finding.severity} · ${finding.lens} · ${finding.id}${finding.guard ? ' · guard' : ''}`
+}
+
+/** A document finding's statement and merge outcome as the Markdown drawn under its heading. */
+export function stateFindingText(finding: SagaStateFinding): string {
+  const outcome =
+    finding.merge_outcome === null ? 'unanswered' : `merge outcome: ${JSON.stringify(finding.merge_outcome)}`
+  return truncate(`${finding.statement}\n\n**Outcome:** ${outcome}`)
+}
+
+/** The text a document finding's Quote button puts in the prompt. */
+export function stateQuoteText(finding: SagaStateFinding): string {
+  return `${quoted(`[${finding.severity} · ${finding.lens}] ${finding.id} — ${finding.statement}`)}\n\n`
+}
+
+/** The document findings listed for `lens`, which may be `OTHER_FINDINGS`. */
+export function stateLensFindings(state: SagaReviewState, lens: string): SagaStateFinding[] {
+  if (lens === OTHER_FINDINGS) {
+    const known = new Set(state.lenses.map((one) => one.lens))
+    return state.findings.filter((finding) => !known.has(finding.lens))
+  }
+  return state.findings.filter((finding) => finding.lens === lens)
 }

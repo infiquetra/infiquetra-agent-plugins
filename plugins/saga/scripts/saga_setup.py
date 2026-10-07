@@ -196,8 +196,40 @@ def load_extensions(path: Path | None = None) -> dict[str, Any]:
     return {"steps": steps, "questions": questions}
 
 
+def machine_path(home: Path) -> Path:
+    """The machine record's path under *home*."""
+    return Path(home) / ".saga" / "machine.json"
+
+
+def require_readable_machine(home: Path) -> dict[str, Any] | None:
+    """The machine record, or ``None`` when no file exists yet.
+
+    Raises ``SetupError`` when the file exists but cannot be read as a
+    machine record: the offer verbs must never mistake a corrupt file for
+    setup never offered, and must never replace what they could not read.
+    """
+    record = load_machine(home)
+    if record is None and machine_path(home).is_file():
+        raise SetupError(f"{machine_path(home)} exists but cannot be read as a machine record")
+    return record
+
+
+def offer_status(home: Path) -> dict[str, Any]:
+    """The machine record's ``ran`` and ``offered``, without writing anything.
+
+    A missing file reads both false; a file that exists but cannot be parsed
+    raises ``SetupError`` through :func:`require_readable_machine`.
+    """
+    record = require_readable_machine(home)
+    return {
+        "schema": MACHINE_SCHEMA,
+        "ran": bool(record.get("ran")) if record else False,
+        "offered": bool(record.get("offered")) if record else False,
+    }
+
+
 def load_machine(home: Path) -> dict[str, Any] | None:
-    path = Path(home) / ".saga" / "machine.json"
+    path = machine_path(home)
     if not path.is_file():
         return None
     try:
@@ -380,6 +412,10 @@ def _probe_row(
         "status": "installed",
         "version": None,
         "auth": "not-applicable",
+        # The setup pane's checkbox reads these (issue 165): whether the row
+        # has an install command, and the sentence shown when it has not.
+        "has_install": bool(row.get("install_argv")),
+        "install": row.get("install"),
     }
     if not tool:
         return base
@@ -1116,6 +1152,16 @@ def build_parser() -> argparse.ArgumentParser:
     step.add_argument("--name", required=True)
     step.add_argument("--repo", default=None)
     step.add_argument("--extensions", default=None)
+
+    offer_status_parser = subcommands.add_parser(
+        "offer-status", help="Print whether setup ran and was offered, without writing."
+    )
+    offer_status_parser.add_argument("--home", default=None, help="Home directory for the machine record.")
+
+    record_offer_parser = subcommands.add_parser(
+        "record-offer", help="Record that the setup offer was shown, without marking setup run."
+    )
+    record_offer_parser.add_argument("--home", default=None, help="Home directory for the machine record.")
     return parser
 
 
@@ -1200,6 +1246,14 @@ def main(
                 cwd=_repo(args.repo),
                 extensions_path=Path(args.extensions) if args.extensions else None,
             )
+        if args.command == "offer-status":
+            print(json.dumps(offer_status(Path(args.home) if args.home else Path.home()), indent=2))
+            return 0
+        if args.command == "record-offer":
+            home = Path(args.home) if args.home else Path.home()
+            require_readable_machine(home)
+            print(record_offer(home))
+            return 0
         raise SetupError(f"unknown command {args.command}")
     except SetupError as exc:
         print(f"saga_setup: {exc}", file=sys.stderr)

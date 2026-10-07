@@ -1,22 +1,26 @@
-// The review findings pane (issue #108): `/review-view` shows the run's latest
-// code review result, one row per selected lens, inside Claude Code.
+// The review findings pane (issue #108, live in issue #165): `/review-view`
+// shows the run's latest code review inside Claude Code.
 //
-// Read-only. It reads the review through `scripts/run_status.py review`, which
-// picks the latest `review_result.v2` entry from the run record and applies the
-// verdict's own per-lens rule; the pane shows that answer and never recomputes
-// it. The only thing it writes is the operator's own prompt, when they press a
-// finding's Quote. No acceptance decision and no finding edits happen here.
-// The plain fallback on every other harness is `run_status.py review`'s table.
+// Read-only. It reads the review through `scripts/run_status.py review`. For a
+// record with C1 review runs the view embeds the whole `review_state.v1`
+// document, and the pane draws that alone: grades, where-to-look states,
+// tools, round and cost, and per-round deltas. For an older record it draws
+// today's lens list from the latest `review_result.v2` entry. The pane shows
+// those answers and never recomputes them. The only thing it writes is the
+// operator's own prompt, when they press a finding's Quote. No acceptance
+// decision and no finding edits happen here. The plain fallback on every other
+// harness is `run_status.py review`'s table.
 //
 // - `/review-view` opens the checkout's run; `/review-view #N` issue N's.
-// - Each lens row reads met, not met, not run or unscored, with its finding
-//   count and its top findings. A lens that did not run, or has no recorded
-//   result, says so; it never shows a number that could read as a low score.
-// - Choosing a lens lists its findings with `path:line`; Quote puts one in the
-//   prompt.
-// - A Bash call that ran `review_result.py` reloads the open pane, and so does a
-//   change of the run record's modification time, polled every five seconds
-//   while the pane is open.
+// - A state review shows each lens's grade with its blocking and fix-later
+//   counts. An old-shape lens row reads met, not met, not run or unscored,
+//   with its finding count and its top findings; a lens that did not run, or
+//   has no recorded result, says so and never shows a number that could read
+//   as a low score.
+// - Choosing a lens lists its findings; Quote puts one in the prompt.
+// - A Bash call that ran a script which writes review runs reloads the open
+//   pane, and so does a change of the run record's modification time, polled
+//   every five seconds while the pane is open.
 // - The run status band's Review button (issue #105) opens this pane: this
 //   module answers the press on `band-review-<issue>` itself, because a
 //   plugin's own `$.command.run` never reaches its own command hook.
@@ -27,16 +31,25 @@ import type { EngineInterface, On } from 'claude-code'
 import type { SagaReviewView } from '../types/index.d.ts'
 import { fitTables } from './plan-sections.ts'
 import {
+  costLine,
   findingHeading,
   findingLine,
   findingsFor,
   findingText,
+  gradeLabel,
   lensLabel,
   OTHER_FINDINGS,
   quoteText,
   reviewHeading,
+  roundLabel,
+  stateFindingHeading,
+  stateFindingText,
+  stateHeading,
+  stateLensFindings,
+  stateQuoteText,
+  whereToLookLabel,
 } from './review-findings.ts'
-import { readReviewViewWith } from './run-record.ts'
+import { isStateReview, readEitherReviewWith } from './run-record.ts'
 import type { ReviewViewQuery } from './run-record.ts'
 
 /** The pane's id, and the `requestId` its `ui.render` hook matches. */
@@ -48,8 +61,8 @@ export const BAND_REVIEW_ELEMENT = /^band-review-\d+$/
 /** How often an open pane checks the run record's modification time. */
 export const REVIEW_POLL_MS = 5_000
 
-/** A Bash command that ran the script which writes review results. */
-const WRITES_REVIEW = /\breview_result\.py\b/
+/** A Bash command that ran a script which writes review runs or answers. */
+const WRITES_REVIEW = /\b(review_result|review_command|review_state)\.py\b/
 
 const reviewView = atom({ plugin: 'saga', key: 'reviewView' } as const, null)
 const reviewLens = atom({ plugin: 'saga', key: 'reviewLens' } as const, null)
@@ -69,7 +82,7 @@ async function recordMtime($: EngineInterface, view: SagaReviewView): Promise<nu
 async function reloadReview($: EngineInterface, shown: SagaReviewView): Promise<void> {
   const query: ReviewViewQuery = { repoRoot: shown.repo_root }
   if (shown.issue !== null) query.issue = shown.issue
-  const ran = await readReviewViewWith((argv) => $.process.run(argv), $.plugin.root, query)
+  const ran = await readEitherReviewWith((argv) => $.process.run(argv), $.plugin.root, query)
   // A record caught mid-write keeps its last good review on screen.
   if (!ran.ok || ran.view.review === null) return
   const view = ran.view
@@ -106,7 +119,7 @@ async function openReviewView($: EngineInterface, args: string): Promise<{ text:
   const query: ReviewViewQuery = { repoRoot: cwd }
   if (issueArg !== null) query.issue = Number(issueArg[1])
 
-  const ran = await readReviewViewWith((argv) => $.process.run(argv), $.plugin.root, query)
+  const ran = await readEitherReviewWith((argv) => $.process.run(argv), $.plugin.root, query)
   if (!ran.ok) return { text: `review-view: could not read the review (${ran.reason}): ${ran.detail}`, isOpened: false }
   const view = ran.view
   const review = view.review
@@ -117,6 +130,15 @@ async function openReviewView($: EngineInterface, args: string): Promise<{ text:
   await update($, reviewLens, () => null)
   const mtime = await recordMtime($, view)
   await update($, reviewMtimeMs, () => mtime)
+  if (isStateReview(review)) {
+    await $.ui.open({ id: REVIEW_PANE, title: `Review · #${view.issue} round ${review.round}` })
+    const blocking = review.lenses.reduce((sum, lens) => sum + lens.blocking, 0)
+    const fixLater = review.lenses.reduce((sum, lens) => sum + lens.fix_later, 0)
+    return {
+      text: `review-view: #${view.issue} round ${review.round}, ${review.outcome}, ${review.lenses.length} lenses, ${blocking} blocking, ${fixLater} fix later.`,
+      isOpened: true,
+    }
+  }
   await $.ui.open({ id: REVIEW_PANE, title: `Review · #${view.issue} cycle ${review.cycle}` })
   const findings = review.lenses.reduce((sum, lens) => sum + lens.finding_count, 0) + review.unattributed_findings.length
   return {
@@ -187,6 +209,88 @@ export function registerReviewPane(on: On): void {
     }
 
     const lens = await read($, reviewLens)
+    if (isStateReview(review)) {
+      const state = review.state
+      if (lens === null) {
+        const others = stateLensFindings(state, OTHER_FINDINGS)
+        const ran = Object.entries(state.tools.ran)
+        return (
+          <Box flexDirection="column">
+            <Text dimColor>{stateHeading(view.issue, review)}</Text>
+            <Text bold>Grades</Text>
+            {state.lenses.map((one) => (
+              <Box key={`row-${one.lens}`} flexDirection="column">
+                <Button key={`lens-${one.lens}`} label={gradeLabel(one)} plain onPress={() => update($, reviewLens, () => one.lens)} />
+              </Box>
+            ))}
+            {others.length > 0 && (
+              <Button
+                key="lens-other"
+                label={`${OTHER_FINDINGS}  ${others.length} finding${others.length === 1 ? '' : 's'}`}
+                plain
+                onPress={() => update($, reviewLens, () => OTHER_FINDINGS)}
+              />
+            )}
+            <Text bold>Where to look</Text>
+            {state.where_to_look.length === 0 && <Text dimColor>None.</Text>}
+            {state.where_to_look.map((item, i) => (
+              <Box key={`wtl-${i}`}>
+                <Text dimColor>{whereToLookLabel(item)}</Text>
+              </Box>
+            ))}
+            <Text bold>Tools</Text>
+            {ran.map(([name, version]) => (
+              <Box key={`tool-${name}`}>
+                <Text dimColor>{`${name} ${version}`}</Text>
+              </Box>
+            ))}
+            {state.tools.missing_notice !== null && <Text>{state.tools.missing_notice}</Text>}
+            {state.tools.missing_notice === null && state.tools.missing_tools.length > 0 && (
+              <Text dimColor>{`missing: ${state.tools.missing_tools.join(', ')}`}</Text>
+            )}
+            <Text bold>{`Round ${state.round}`}</Text>
+            <Text dimColor>{costLine(state.cost)}</Text>
+            {state.rounds.map((round) => (
+              <Box key={`round-${round.round}`} flexDirection="column">
+                <Text>{roundLabel(round)}</Text>
+                {round.new_blocking.map((id) => (
+                  <Box key={`new-${id}`}>
+                    <Text dimColor>{`  + ${id}`}</Text>
+                  </Box>
+                ))}
+                {round.cleared_blocking.map((id) => (
+                  <Box key={`cleared-${id}`}>
+                    <Text dimColor>{`  - ${id}`}</Text>
+                  </Box>
+                ))}
+                {round.new_blocking.length === 0 && round.cleared_blocking.length === 0 && (
+                  <Text dimColor>  nothing added or cleared</Text>
+                )}
+              </Box>
+            ))}
+          </Box>
+        )
+      }
+      const stateFindings = stateLensFindings(state, lens)
+      const shownGrade = state.lenses.find((one) => one.lens === lens)
+      return (
+        <Box flexDirection="column">
+          <Button key="back" label="Grades" onPress={() => update($, reviewLens, () => null)} />
+          <Text bold>{shownGrade === undefined ? lens : gradeLabel(shownGrade)}</Text>
+          {stateFindings.length === 0 && <Text dimColor>No findings.</Text>}
+          {stateFindings.map((finding, i) => (
+            <Box key={`finding-${i}`} flexDirection="column">
+              <Text key={`heading-${i}`}>{stateFindingHeading(finding)}</Text>
+              <Markdown
+                key={`text-${i}`}
+                text={e.surface === 'terminal' ? fitTables(stateFindingText(finding), e.props.bodyColumns) : stateFindingText(finding)}
+              />
+              <Button key={`quote-${i}`} label="Quote" onPress={() => fillPrompt($, stateQuoteText(finding))} />
+            </Box>
+          ))}
+        </Box>
+      )
+    }
     if (lens === null) {
       const others = review.unattributed_findings
       return (

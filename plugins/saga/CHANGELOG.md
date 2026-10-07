@@ -4,6 +4,15 @@
 
 ### Added
 
+- Issue 165: the saga mods draw C13's review-state document and C3's setup survey. `/review-view`
+  becomes a live review pane (grades, where-to-look states, tools, round, cost, per-round deltas);
+  `mcp__saga__review_merge` confirms the merge in a pane and records through `review_state.py
+  answers`, timing out to the unattended rules after thirty minutes; the band's review part shows
+  the round and grades while the status line names missing tools and `/saga:setup`; and
+  `mcp__saga__setup` wraps the survey rows with a live Install plus a first-session offer
+  remembered in the machine record and `$.store`. `run_status.py review` embeds the document, and
+  `saga_setup.py` gains the `offer-status` and `record-offer` verbs.
+
 - Issue 164: `scripts/review_state.py` renders a review's state and pending choices as one
   `review_state.v1` document — JSON for panes, Markdown with numbered questions for every other
   harness — records every answer through `--answers -`, files fix-later items through

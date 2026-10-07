@@ -30,8 +30,12 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "plugins" / "saga" / "scripts" / "run_record.py"
+RUN_STATUS = REPO_ROOT / "plugins" / "saga" / "scripts" / "run_status.py"
+REVIEW_STATE = REPO_ROOT / "plugins" / "saga" / "scripts" / "review_state.py"
+SETUP_SCRIPT = REPO_ROOT / "plugins" / "saga" / "scripts" / "saga_setup.py"
 READER = REPO_ROOT / "plugins" / "saga" / "com.infiquetra.claude" / "mods" / "run-record.ts"
 CONTRACT = REPO_ROOT / "plugins" / "saga" / "com.infiquetra.claude" / "types" / "index.d.ts"
+STATE_FIXTURES = REPO_ROOT / "plugins" / "saga" / "tests" / "fixtures" / "review_state"
 
 
 def _ts_constant(name: str) -> str:
@@ -116,6 +120,159 @@ def test_every_failure_reason_the_reader_returns_is_in_the_contract() -> None:
     declared = set(re.findall(r"\| '([a-z-]+)'", union.group(1)))
     assert returned, "run-record.ts returns no failure reason, so this check finds nothing"
     assert returned == declared, f"reader returns {sorted(returned)}, contract declares {sorted(declared)}"
+
+
+def _stage_state_record(store: Path, issue: int) -> None:
+    raw = json.loads((STATE_FIXTURES / "record.json").read_text(encoding="utf-8"))
+    raw["issue"] = issue
+    (store / f"issue-{issue}.json").write_text(json.dumps(raw), encoding="utf-8")
+
+
+def _review(store: Path, issue: int) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            str(RUN_STATUS),
+            "--store-root",
+            str(store),
+            "--repo-root",
+            str(store),
+            "review",
+            "--issue",
+            str(issue),
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_the_state_reader_knows_the_document_version_the_script_writes(store: Path) -> None:
+    _stage_state_record(store, 7)
+    rendered = subprocess.run(
+        [
+            sys.executable,
+            str(REVIEW_STATE),
+            "render",
+            "--record",
+            str(store / "issue-7.json"),
+            "--envelope",
+            str(STATE_FIXTURES / "envelope.json"),
+            "--render",
+            "json",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert rendered.returncode == 0, rendered.stderr
+    assert json.loads(rendered.stdout)["schema"] == _ts_constant("KNOWN_REVIEW_STATE_SCHEMA")
+    assert f"'{json.loads(rendered.stdout)['schema']}'" in CONTRACT.read_text(encoding="utf-8")
+
+
+def test_the_state_review_view_carries_the_token_the_reader_requires(store: Path) -> None:
+    _stage_state_record(store, 7)
+    ran = _review(store, 7)
+    assert ran.returncode == 0, ran.stderr
+    view = json.loads(ran.stdout)
+    assert view["schema"] == _ts_constant("KNOWN_REVIEW_VIEW_SCHEMA")
+    review = view["review"]
+    assert review["state_schema"] == _ts_constant("KNOWN_REVIEW_STATE_SCHEMA")
+    assert review["state"]["schema"] == _ts_constant("KNOWN_REVIEW_STATE_SCHEMA")
+    assert isinstance(review["lenses"], list) and review["lenses"]
+
+
+def test_a_state_review_with_an_unknown_record_version_exits_3(store: Path) -> None:
+    (store / "issue-9.json").write_text(json.dumps({"schema": "run_record.v999", "issue": 9}))
+    ran = _review(store, 9)
+    assert ran.returncode == int(_ts_constant("EXIT_UNKNOWN_VERSION"))
+
+
+def test_a_corrupt_record_is_an_error_for_the_review_view(store: Path) -> None:
+    (store / "issue-10.json").write_text("{not json", encoding="utf-8")
+    ran = _review(store, 10)
+    assert ran.returncode == int(_ts_constant("EXIT_RECORD_ERROR"))
+
+
+SETUP_TOOLS = """\
+schema: review_tools.v1
+tools:
+  - id: probe-install
+    tool: saga-probe-missing-binary
+    languages: ["*"]
+    lens: testing
+    default_version: "1.0.0"
+    version_mode: exact
+    install: "Run the installer."
+    install_argv: ["saga-probe-installer"]
+  - id: probe-missing
+    tool: saga-probe-missing-binary
+    languages: ["*"]
+    lens: testing
+    default_version: "1.0.0"
+    version_mode: exact
+    install: null
+    install_argv: null
+"""
+
+
+def test_the_setup_reader_knows_the_survey_version_the_script_writes(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    tools = tmp_path / "tools.yaml"
+    tools.write_text(SETUP_TOOLS, encoding="utf-8")
+    ran = subprocess.run(
+        [
+            sys.executable,
+            str(SETUP_SCRIPT),
+            "survey",
+            "--repo",
+            str(repo),
+            "--home",
+            str(home),
+            "--tools",
+            str(tools),
+            "--format",
+            "json",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert ran.returncode == 0, ran.stderr
+    document = json.loads(ran.stdout)
+    assert document["schema"] == _ts_constant("KNOWN_SETUP_SURVEY_SCHEMA")
+    assert f"'{document['schema']}'" in CONTRACT.read_text(encoding="utf-8")
+    by_id = {row["id"]: row for row in document["tools"]}
+    assert by_id["probe-install"]["has_install"] is True
+    assert by_id["probe-install"]["install"] == "Run the installer."
+    assert by_id["probe-missing"]["has_install"] is False
+    assert by_id["probe-missing"]["install"] is None
+
+
+def test_the_offer_reader_knows_the_record_version_the_script_writes(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+
+    def verb(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(SETUP_SCRIPT), *args, "--home", str(home)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    first = verb("offer-status")
+    assert first.returncode == 0, first.stderr
+    assert json.loads(first.stdout)["schema"] == _ts_constant("KNOWN_MACHINE_RECORD_SCHEMA")
+    assert f"'{json.loads(first.stdout)['schema']}'" in CONTRACT.read_text(encoding="utf-8")
+    recorded = verb("record-offer")
+    assert recorded.returncode == 0, recorded.stderr
+    body = json.loads(verb("offer-status").stdout)
+    assert (body["ran"], body["offered"]) == (False, True)
 
 
 def test_the_contract_declares_exactly_the_keys_the_script_writes() -> None:

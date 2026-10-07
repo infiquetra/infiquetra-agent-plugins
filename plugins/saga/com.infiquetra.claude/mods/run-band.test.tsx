@@ -180,7 +180,10 @@ function fake(on: On): Fake {
     else if (e.argv.includes('--all-active')) answer = state.summary
     else {
       const plan = state.plan
-      answer = ok(summaryOf([plan === null ? run() : { ...run(), plan_path: 'docs/plans/p.md', plan_file: plan.file }]))
+      const at = e.argv.indexOf('--issue')
+      const issue = at === -1 ? 412 : Number(e.argv[at + 1])
+      const row = { ...run(issue), plan_path: 'docs/plans/p.md', plan_file: plan === null ? null : plan.file }
+      answer = ok(summaryOf([plan === null ? { ...row, plan_path: null, plan_file: null } : row]))
     }
     return { value: { ...answer, isStdoutTruncated: false, isStderrTruncated: false } }
   })
@@ -401,6 +404,52 @@ describe('the status line and refreshing', () => {
     expect(fakes.statuses).toEqual(['saga #412 · work'])
     expect(statusText([run(7, '#7', null)])).toBe('saga #7')
     expect(statusText([])).toBeUndefined()
+  })
+
+  test('the status line appends the missing-tools notice verbatim, naming the tools and /saga:setup', async ($, on) => {
+    const fakes = fake(on)
+    fakes.summary = ok(
+      summaryOf([
+        {
+          ...run(),
+          setup_notice: {
+            text: 'Missing ruff, mypy. Run /saga:setup.',
+            missing_tools: ['ruff', 'mypy'],
+            sandbox_unavailable: false,
+          },
+        },
+      ]),
+    )
+    await start($, fakes)
+    expect(fakes.statuses).toEqual(['saga #412 · work · Missing ruff, mypy. Run /saga:setup.'])
+    expect(statusText([{ ...run(), setup_notice: null }])).toBe('saga #412 · work')
+    expect(statusText([{ ...run(), setup_notice: { text: '', missing_tools: [], sandbox_unavailable: false } }])).toBe(
+      'saga #412 · work',
+    )
+  })
+
+  test('the band still shows the active saga with its plan', async ($, on) => {
+    const fakes = fake(on)
+    fakes.summary = ok(
+      summaryOf([
+        {
+          ...run(147, '#147 · work · build loop pass 2, green', 'work'),
+          review: null,
+          setup_notice: null,
+          plan_path: 'docs/plans/program.md',
+          plan_file: `${CWD}/docs/plans/program.md`,
+        },
+      ]),
+    )
+    fakes.plan = { file: `${CWD}/docs/plans/program.md`, text: '# Program\n\n## Step one\n\nDo it.\n' }
+    await start($, fakes)
+    const ui = await $.ui.mount({ plugin: 'saga', surface: 'terminal', ...band() })
+    expect(await ui.find({ type: 'Text', text: '#147 · work · build loop pass 2, green' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: bandPlanKey(147) })).toBeDefined()
+    await ui.press({ key: bandPlanKey(147) })
+    expect(fakes.opened).toEqual([PLAN_PANE])
+    expect(fakes.toasts).toEqual([])
+    expect(fakes.statuses).toEqual(['saga #147 · work'])
   })
 
   test('refreshes at start, every minute, and after a main-loop turn but not a subagent turn', async ($, on) => {

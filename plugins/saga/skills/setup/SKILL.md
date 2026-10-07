@@ -9,6 +9,13 @@ description: Check the tools on this machine and the repository before a saga ru
 
 ## Survey
 
+**In Claude Code, when the tool `mcp__saga__setup` is listed and
+the operator has not disabled panes, call it with `{"repo": "<repository>"}` instead of
+running the survey below, and read the `status` it returns.** Submitted names the installed
+and failed ids — never reinstall them. Dismissed, not-placed, unavailable, nothing-to-review,
+timed-out or error means the pane settled nothing: run the survey below, print its table, and
+ask which tools to install exactly as if the tool were absent.
+
 Run the survey with the live sandbox probe and print the table:
 
 ```bash
