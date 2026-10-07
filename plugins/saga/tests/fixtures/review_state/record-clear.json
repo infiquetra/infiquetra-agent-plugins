@@ -1,0 +1,217 @@
+{
+  "schema": "run_record.v1",
+  "issue": 164,
+  "repo": "infiquetra/infiquetra-agent-plugins",
+  "created_at": "2026-10-06T00:00:00Z",
+  "updated_at": "2026-10-06T00:00:00Z",
+  "admission": {
+    "setup_notice": {
+      "text": "test notice: muter is missing; run /saga:setup",
+      "missing_tools": [
+        "muter"
+      ],
+      "sandbox_unavailable": false
+    }
+  },
+  "run_configuration": {},
+  "approval_scope": {},
+  "roster": [],
+  "units": [],
+  "review_cycles": [
+    {
+      "kind": "review_run",
+      "schema": "review_records.v1",
+      "card": 164,
+      "repo": "infiquetra/infiquetra-agent-plugins",
+      "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "saga_version": "0.0.0-fixture",
+      "round": 1,
+      "tool_versions": {
+        "semgrep": "1.0.0",
+        "mypy": "1.0",
+        "pytest": "8.0"
+      },
+      "usage": {
+        "tokens_in": 1000,
+        "tokens_out": 500,
+        "cost_usd": 0.01,
+        "seconds": 30
+      },
+      "where_to_look": [],
+      "raw_outputs": [],
+      "findings": [
+        {
+          "kind": "finding",
+          "schema": "review_records.v1",
+          "subject": "code",
+          "lens": "security",
+          "rule": {
+            "row": "security.scanner-medium-low",
+            "ref": "semgrep:python.lang.security"
+          },
+          "source": {
+            "kind": "tool",
+            "name": "semgrep",
+            "version": "1.0.0"
+          },
+          "location": {
+            "scope": "lines",
+            "file": "src/util/hash.py",
+            "lines": {
+              "start": 90,
+              "end": 92
+            },
+            "function": "digest",
+            "anchor": "digest(data)"
+          },
+          "language": "python",
+          "statement": "Fast hash used where a password hash belongs.",
+          "consequence": null,
+          "trigger": null,
+          "evidence": "tool-result",
+          "proof": {
+            "raw_output": "abababababababababababababababababababababababababababababababab"
+          },
+          "introduced": true,
+          "degraded": false,
+          "consequence_jev": null,
+          "unconfirmed": false,
+          "merge_outcome": null,
+          "id": "rf:c03fefba03f5eb25b54a014653d9cec0",
+          "severity": "fix-later",
+          "severity_basis": {
+            "row": "security.scanner-medium-low",
+            "modifiers": []
+          },
+          "flags": [],
+          "enforced": false
+        },
+        {
+          "kind": "finding",
+          "schema": "review_records.v1",
+          "subject": "code",
+          "lens": "testing",
+          "rule": {
+            "row": "testing.flaky-order-or-network",
+            "ref": "pytest-randomly"
+          },
+          "source": {
+            "kind": "tool",
+            "name": "pytest",
+            "version": "8.0"
+          },
+          "location": {
+            "scope": "lines",
+            "file": "tests/test_cache.py",
+            "lines": {
+              "start": 100,
+              "end": 105
+            },
+            "function": "test_expire",
+            "anchor": "def test_expire():"
+          },
+          "language": "python",
+          "statement": "Cache expiry test fails under random order.",
+          "consequence": null,
+          "trigger": null,
+          "evidence": "tool-result",
+          "proof": {
+            "raw_output": "abababababababababababababababababababababababababababababababab"
+          },
+          "introduced": true,
+          "degraded": false,
+          "consequence_jev": null,
+          "unconfirmed": false,
+          "merge_outcome": null,
+          "id": "rf:cc58110c3c27cdf399f286443ee27d35",
+          "severity": "fix-later",
+          "severity_basis": {
+            "row": "testing.flaky-order-or-network",
+            "modifiers": []
+          },
+          "flags": [],
+          "enforced": false
+        }
+      ],
+      "measurements": [],
+      "lens_grades": [
+        {
+          "kind": "lens_grade",
+          "schema": "review_records.v1",
+          "lens": "correctness",
+          "blocks": 0,
+          "fix_later": 0,
+          "notes": 0,
+          "grade": "A",
+          "degraded_inputs": [],
+          "may_block": {
+            "python": true
+          }
+        },
+        {
+          "kind": "lens_grade",
+          "schema": "review_records.v1",
+          "lens": "security",
+          "blocks": 0,
+          "fix_later": 1,
+          "notes": 0,
+          "grade": "B",
+          "degraded_inputs": [],
+          "may_block": {
+            "python": true
+          }
+        },
+        {
+          "kind": "lens_grade",
+          "schema": "review_records.v1",
+          "lens": "testing",
+          "blocks": 0,
+          "fix_later": 1,
+          "notes": 0,
+          "grade": "B",
+          "degraded_inputs": [],
+          "may_block": {
+            "python": true
+          }
+        },
+        {
+          "kind": "lens_grade",
+          "schema": "review_records.v1",
+          "lens": "architecture-maintainability",
+          "blocks": 0,
+          "fix_later": 0,
+          "notes": 0,
+          "grade": "A",
+          "degraded_inputs": [],
+          "may_block": {
+            "python": true
+          }
+        }
+      ],
+      "builder_records": [],
+      "may_block": {
+        "correctness": {
+          "python": true
+        },
+        "security": {
+          "python": true
+        },
+        "testing": {
+          "python": true
+        },
+        "architecture-maintainability": {
+          "python": true
+        }
+      },
+      "degraded_inputs": [],
+      "merge": {
+        "allowed": true,
+        "blocking": [],
+        "report_only_blocks": []
+      },
+      "loop": "review_run"
+    }
+  ],
+  "next_step": "code_review"
+}

@@ -164,8 +164,9 @@ def freeze_run_record(repo_root: Path, box: dict[str, Any] | None) -> dict[str, 
         "destination": record.admission.get("destination"),
         "pending_questions": list(record.admission.get("pending_questions") or []),
         "units": len(record.units),
-        # A stored review run (issue 148) and a plan review (issue 163) share
-        # ``review_cycles`` but neither is a review cycle.
+        # A stored review run (issue 148), a plan review (issue 163) and a
+        # merge confirmation (issue 164) share ``review_cycles`` but none is a
+        # review cycle.
         "review_cycles": sum(
             1
             for entry in record.review_cycles
@@ -174,6 +175,7 @@ def freeze_run_record(repo_root: Path, box: dict[str, Any] | None) -> dict[str, 
                 and (
                     entry.get("kind") == "review_run"
                     or entry.get("loop") == "plan_review"
+                    or entry.get("loop") == "merge_confirmation"
                 )
             )
         ),

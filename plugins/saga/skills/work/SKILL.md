@@ -1057,7 +1057,10 @@ ordinary `gh` operations.** The ship ceremony that used to carry them was remove
 there is no ceremony, no transition table, no reversibility tier and no receipt. **Each of them, and
 the merge, stays explicitly confirmed** — that is the preservation contract issue #1029 declared, and
 removing the ceremony removed the mechanism, never the confirmation. They are
-**offered and confirmed, never auto-fired**. If the operator declines, hand them the prepared
+**offered and confirmed, never auto-fired**. At merge confirmation each fix-later item is answered
+fix-now, file-as-issue or leave through `review_state.py answers`, which records the choice on the
+finding; a traced security harm the security lens could not reproduce is filed unless fixed now, and
+an unattended run files nothing else. If the operator declines, hand them the prepared
 pull-request body (it links the plan, the work-sessions and the code-review artifact) and the
 branch. Then record `pr_refs` on the saga, set `next_step="await review on PR #N"`, and comment the
 pull request's status to the issue via the extended `issue_progress.py` CLI (`--pr-url`,

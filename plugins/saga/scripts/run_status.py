@@ -55,6 +55,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import next_step_context  # noqa: E402  (after the sys.path shim, by design)
 import review_consensus  # noqa: E402
 import review_result  # noqa: E402
+import review_state  # noqa: E402
 import run_record  # noqa: E402
 
 #: The version token of what ``summary --json`` prints.
@@ -503,6 +504,15 @@ def review_view(
         return view
     view["record_path"] = str(run_record.record_path(store_root, resolved))
     view["legacy_entries"] = len(review_result.legacy_entries(record))
+    # The review-state document wins when the redesign's runs exist; the
+    # ``review_result.v2`` reader below stays for older records until C10b
+    # deletes it. The document is card-level, so --unit/--loop do not filter it.
+    if any(
+        isinstance(entry, dict) and entry.get("kind") == review_state.KIND_REVIEW_RUN
+        for entry in record.review_cycles
+    ):
+        view["review"] = state_review_view(record)
+        return view
     entry = latest_review(record, loop=loop, unit=unit)
     if entry is None:
         return view
@@ -530,12 +540,36 @@ def _finding_line(finding: dict[str, Any]) -> str:
     return f"{finding['severity']} {finding['path']}:{finding['line']} {finding['category']}"
 
 
+def state_review_view(record: run_record.RunRecord) -> dict[str, Any]:
+    """The latest review from the review-state document (issue 164).
+
+    No envelope is read here — ``review`` stays offline — so the merge display
+    cannot know the merge setting and says so rather than guessing it.
+    """
+    document = review_state.build_document(record, None)
+    runs = review_state.review_runs(record)
+    newest = runs[-1]
+    blocking = document["merge_blocking"]
+    return {
+        "state_schema": review_state.SCHEMA,
+        "round": document["round"],
+        "loop": review_state.KIND_REVIEW_RUN,
+        "revision": newest.get("head"),
+        "outcome": "blocked" if blocking else "clear",
+        "lenses": document["lenses"],
+        "pending_choices": document["pending_choices"],
+        "merge": document["merge"],
+    }
+
+
 def render_review(view: dict[str, Any]) -> list[str]:
     """The review as a fixed-width table: the fallback every other harness prints."""
     review = view["review"]
     if review is None:
         which = f"#{view['issue']}" if view["issue"] is not None else "this checkout"
         return [f"run_status: no review result recorded for {which}"]
+    if isinstance(review, dict) and "state_schema" in review:
+        return render_state_review(view)
     header = (
         f"#{view['issue']} · {review['unit']} · cycle {review['cycle']} · {review['loop']} · "
         f"{review['outcome']} · {str(review['revision'])[:12]}"
@@ -552,6 +586,27 @@ def render_review(view: dict[str, Any]) -> list[str]:
         lines += [f"  {_finding_line(finding)}" for finding in lens["top"]]
     if review["unattributed_findings"]:
         lines.append(f"other findings: {len(review['unattributed_findings'])}")
+    return lines
+
+
+def render_state_review(view: dict[str, Any]) -> list[str]:
+    """The review-state document as a table plus its numbered questions."""
+    review = view["review"]
+    lines = [
+        f"#{view['issue']} · round {review['round']} · {review['loop']} · "
+        f"{review['outcome']} · {str(review['revision'])[:12]}"
+    ]
+    width = max([len("lens"), *(len(str(lens["lens"])) for lens in review["lenses"])])
+    lines.append(f"{'lens':<{width}}  {'grade':<5}  blocking  fix later")
+    for lens in review["lenses"]:
+        lines.append(
+            f"{str(lens['lens']):<{width}}  {str(lens['grade']):<5}  "
+            f"{lens['blocking']:<8}  {lens['fix_later']}"
+        )
+    for number, key in enumerate(review["pending_choices"], start=1):
+        lines.append(f"Q{number}. {key}")
+    merge = review["merge"]
+    lines.append(f"Merge: {'waiting' if merge['waiting'] else 'free to proceed'} — {merge['reason']}")
     return lines
 
 
