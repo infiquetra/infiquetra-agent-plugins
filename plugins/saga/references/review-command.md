@@ -42,6 +42,16 @@ A reproduced finding stays reproduced only when this command's own re-run exits 
 
 `prepare` publishes `--out` only after every step has succeeded. A failure leaves that directory uncreated.
 
+## Posting to Langfuse
+
+After `finish` writes `review-run.json` (and, with `--issue`, the run record), it posts the run to Langfuse through `review_trace.post_review_run` (issue 166). The post never changes a record or the exit status: any failure prints one `langfuse:` line on standard error and the review carries on.
+
+- **What is sent:** one trace with an entry per tool, the Jev sweep, each reviewer result (vendor, model, configuration fingerprint, tokens, cost and time), the formula and each finding, with each finding's excerpt at the head commit. Raw tool output leaves only as its SHA-256; a secret-scanner finding sends its location only. The repository is named by its `owner/name` slug. Round 2 and 3 runs also post whether they found anything new.
+- **Visibility** is read from `.saga-profile.json` at the base commit. A private or unrecorded repository posts only over `https`.
+- **When it cannot go:** the post waits in `<home>/.saga/langfuse-queue/` with its reason (`--home` sets the home) and goes with the next post once the reason clears. `review_trace.py status` counts what waits.
+
+`plugins/fleet-core/references/langfuse.md` holds the full rule, the trace layout and the score names.
+
 ## Exit codes
 
 | Code | Meaning |

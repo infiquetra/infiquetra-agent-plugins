@@ -1392,3 +1392,34 @@ def test_survey_rows_carry_the_install_signal_for_the_setup_pane(
     assert by_id["star"]["install"] == "Not installed by setup."
     assert by_id["py-row"]["has_install"] is False
     assert by_id["py-row"]["install"] == "Not installed by setup."
+
+
+def test_survey_reports_langfuse_queue(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    home = tmp_path / "home"
+    queue = home / ".saga" / "langfuse-queue"
+    queue.mkdir(parents=True, mode=0o700)
+    for index, reason in enumerate(("unreachable", "missing-keys")):
+        (queue / f"{index:020d}-{'0' * 16}.json").write_text(
+            json.dumps({"kind": "scores", "reason": reason, "body": {}}), encoding="utf-8",
+        )
+    env = {"SAGA_LANGFUSE_SECRET_KEY": "sentinel-secret-value"}
+    code, raw, err = _run(
+        ["survey", "--repo", str(repo), "--home", str(home), "--format", "json"],
+        capsys, runner=_happy_runner([]), env=env,
+    )
+    assert code == 0, err
+    document = json.loads(raw)
+    assert document["langfuse_queue"] == {
+        "waiting": 2, "reasons": {"missing-keys": 1, "unreachable": 1}}
+    notice = setup.notice_for(document)
+    assert notice["langfuse_waiting"] == 2
+    assert "Langfuse posts waiting: 2." in notice["text"]
+    code, text, err = _run(
+        ["survey", "--repo", str(repo), "--home", str(home), "--format", "text"],
+        capsys, runner=_happy_runner([]), env=env,
+    )
+    assert code == 0, err
+    assert "Langfuse posts waiting: 2 (missing-keys 1, unreachable 1)" in text
+    assert "sentinel-secret-value" not in raw + text + err

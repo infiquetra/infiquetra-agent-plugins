@@ -10,6 +10,7 @@ import os
 import socket
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 from contextlib import redirect_stderr
 from pathlib import Path
@@ -57,6 +58,15 @@ def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(socket, "create_connection", refuse)
     monkeypatch.setattr(urllib.request, "urlopen", refuse)
+
+
+@pytest.fixture(autouse=True)
+def _no_operator_langfuse(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> None:
+    """No test sees the operator's Langfuse keys, or writes the operator's queue."""
+    for name in list(os.environ):
+        if name.startswith(("SAGA_LANGFUSE_", "LANGFUSE_")):
+            monkeypatch.delenv(name)
+    monkeypatch.setenv("HOME", str(tmp_path_factory.mktemp("operator-home")))
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -355,6 +365,7 @@ def _finish(
     packet: Path, pairs: list[tuple[dict[str, Any], dict[str, Any]]], home: Path, runner: _Runner,
     *, ask: Any = None, confine: Any = None, store: Path | None = None, issue: int | None = None,
     final: bool = False, extra: list[str] | None = None, directory: Path | None = None,
+    trace_opener: Any = None,
 ) -> tuple[int, str]:
     parent = directory or packet.parent
     parent.mkdir(parents=True, exist_ok=True)
@@ -371,7 +382,7 @@ def _finish(
         argv.append("--final")
     if extra:
         argv.extend(extra)
-    return _main(argv, runner=runner, ask=ask, confine=confine)
+    return _main(argv, runner=runner, ask=ask, confine=confine, trace_opener=trace_opener)
 
 
 def _line_packet(tmp: Path) -> tuple[Path, Path, _Runner]:
@@ -1421,3 +1432,134 @@ def test_command_doc_names_inputs_outputs_exit_codes_and_both_callers() -> None:
     assert "finish" in text
     assert "/code-review" in text
     assert "corpus harness" in text
+
+
+# --- posting to Langfuse (issue 166) ------------------------------------------------------------
+
+_LF_ENV = {
+    "SAGA_LANGFUSE_PUBLIC_KEY": "pk-lf-SENTINEL-public",
+    "SAGA_LANGFUSE_SECRET_KEY": "sk-lf-SENTINEL-secret",
+    "SAGA_LANGFUSE_HOST": "https://langfuse.example.test",
+}
+
+
+class _LfResponse:
+    def __init__(self, status: int = 200) -> None:
+        self.status = status
+
+    def read(self) -> bytes:
+        return b"{}"
+
+    def getcode(self) -> int:
+        return self.status
+
+    def __enter__(self) -> Any:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+
+class _LfOpener:
+    def __init__(self, result: Any = None) -> None:
+        self.result = result if result is not None else _LfResponse()
+        self.requests: list[Any] = []
+
+    def __call__(self, request: Any, timeout: float | None = None) -> Any:
+        self.requests.append(request)
+        if isinstance(self.result, BaseException):
+            raise self.result
+        return self.result
+
+
+def _finished(
+    tmp: Path, opener: Any, monkeypatch: pytest.MonkeyPatch, *, issue: bool = True,
+) -> tuple[int, str, Path, Path | None, Path]:
+    for name, value in _LF_ENV.items():
+        monkeypatch.setenv(name, value)
+    repo, base, head = _repo(tmp, function=True)
+    profile = _profile(tmp / "outside")
+    builder = _builder(tmp / "builder.json")
+    bank = _bank(tmp / "bank.json")
+    home = tmp / "home"
+    home.mkdir()
+    out = tmp / "packet"
+    code, err = _prepare(repo, base, head, profile, builder, out, home, _Runner(), start=2,
+                         ask=_ask(), bank=bank)
+    assert code == 0, err
+    where = _read(out / "where-to-look.json")
+    cleared = _answer([], items=[{
+        "index": 0, "file": where[0]["location"]["file"],
+        "answer": {"kind": "cleared", "reason": "The stub line is the only finding here."},
+    }])
+    scratch, changes = _scratch(tmp, with_test=False)
+    store = _store(tmp) if issue else None
+    code, err = _finish(out, [(cleared, _result(scratch, changes))], home, _Runner(), ask=_ask(),
+                        store=store, issue=160 if issue else None, trace_opener=opener)
+    return code, err, out, store, home
+
+
+def _stored_record(store: Path | None) -> Any:
+    if store is None:
+        return None
+    return RR.to_dict(RR.load(store, 160, warn=None))
+
+
+def test_finish_langfuse_failure_changes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    good_code, _, good_out, good_store, _ = _finished(tmp_path / "ok", _LfOpener(), monkeypatch)
+    assert good_code == 0
+    good_run = _read(good_out / "review-run.json")
+    good_record = _stored_record(good_store)
+    cases = [
+        ("unreachable", _LfOpener(urllib.error.URLError("down")), True),
+        ("server-error", _LfOpener(_LfResponse(500)), True),
+    ]
+    for label, opener, queues in cases:
+        code, err, out, store, home = _finished(tmp_path / label, opener, monkeypatch)
+        assert code == good_code
+        run = _read(out / "review-run.json")
+        assert {k: v for k, v in run.items() if k not in ("base", "head", "repo")} == {
+            k: v for k, v in good_run.items() if k not in ("base", "head", "repo")}
+        record = _stored_record(store)
+        assert len(record["review_cycles"]) == len(good_record["review_cycles"])
+        assert [line for line in err.splitlines() if line.startswith("langfuse:")]
+        if queues:
+            assert list((home / ".saga" / "langfuse-queue").glob("*.json"))
+        assert "SENTINEL" not in err and "langfuse.example.test" not in err
+
+    def broken(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("posting bug")
+
+    trace = sys.modules.get("review_trace") or importlib.import_module("review_trace")
+    monkeypatch.setattr(trace, "post_review_run", broken)
+    code, err, out, _, _ = _finished(tmp_path / "bug", _LfOpener(), monkeypatch)
+    assert code == good_code
+    assert (out / "review-run.json").is_file()
+    assert "langfuse: not posted (RuntimeError)" in err
+
+
+def test_finish_posts_one_trace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    opener = _LfOpener()
+    code, err, out, _, _ = _finished(tmp_path, opener, monkeypatch)
+    assert code == 0, err
+    run = _read(out / "review-run.json")
+    traces = [r for r in opener.requests if r.full_url.endswith("/api/public/otel/v1/traces")]
+    scores = [r for r in opener.requests if r.full_url.endswith("/api/public/scores")]
+    assert len(traces) == 1
+    body = json.loads(traces[0].data.decode())
+    spans = body["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    root = next(span for span in spans if span["name"] == "review-run")
+    attrs = {a["key"]: next(iter(a["value"].values())) for a in root["attributes"]}
+    assert attrs["langfuse.trace.metadata.head"] == run["head"]
+    assert str(tmp_path) not in traces[0].data.decode()
+    assert any(span["name"].startswith("llm:") for span in spans)
+    assert [json.loads(r.data.decode())["name"] for r in scores] == ["round"]
+    assert "langfuse: sent" in err
+
+
+def test_finish_without_store_posts_round_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    opener = _LfOpener()
+    code, err, _, _, _ = _finished(tmp_path, opener, monkeypatch, issue=False)
+    assert code == 0, err
+    [trace] = [r for r in opener.requests if r.full_url.endswith("/otel/v1/traces")]
+    assert '"no-store"' in trace.data.decode()

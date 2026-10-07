@@ -9,6 +9,21 @@
 **Mechanism.** An untracked file is not in `git ls-files`, so the check never read the new notices. The local pass proved nothing about them.
 
 **Generalizable rule.** Stage new documents before running a check that enumerates files through git.
+### A review record's repo field is a local path
+
+**Evidence.** Issue #166. `plugins/saga/scripts/review_command.py` (`_finish`) stores `change.json`'s `repo`, the directory `prepare` was given, in the review run. `plugins/saga/scripts/review_trace.py` (`repository_slug`) replaces it with `owner/name` before anything leaves the machine.
+
+**Mechanism.** The field reads like a repository name, and the C1 fixtures hold `example/repo`, but the command writes an absolute path that includes the operator's home directory. Copying the record off the machine as-is would publish that path.
+
+**Generalizable rule.** Before a record leaves the machine, check what each field holds in a real run, not in the fixture.
+
+### TypeSafe's redaction misses Langfuse keys
+
+**Evidence.** Issue #166, plan review finding 3. `plugins/fleet-core/scripts/fleet_commons/typesafe_client.py` `redact_text` returned an `sk-lf-` and a `pk-lf-` key of 32 hex characters unchanged. `plugins/fleet-core/scripts/fleet_commons/langfuse_client.py` (`_LANGFUSE_KEY`) now removes them first.
+
+**Mechanism.** The `sk-` pattern needs twenty letters or digits straight after the dash, so the `lf-` segment breaks it; nothing matches `pk-`; and the entropy rule starts at forty characters.
+
+**Generalizable rule.** A client that reuses another client's redaction tests it against its own key shape.
 
 ### A later fingerprint path has to land before a test that pins the last entry
 

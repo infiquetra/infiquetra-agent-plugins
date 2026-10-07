@@ -640,6 +640,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_release.add_argument("--pull-request", required=True, type=int)
     p_release.add_argument("--merge-method", default="merge", choices=["merge", "squash", "rebase"])
     p_release.add_argument("--dry-run", action="store_true")
+    p_release.add_argument(
+        "--repo-path", default=None,
+        help="the repository whose profile gives the Langfuse visibility (default: here)",
+    )
     p_deploy = sub.add_parser("deploy", help="hand off to deploy, or record that there is nowhere")
     p_deploy.add_argument("--saga-id", default="")
     p_close = sub.add_parser("close", help="compose the closeout comment")
@@ -648,7 +652,33 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def _post_outcomes(raw: dict[str, Any], repo_path: str | None, **transport: Any) -> None:
+    """Post each finding's merge outcome to Langfuse (issue 166). Never changes the release.
+
+    Called only after a merge this step observed. Any failure prints one line; what could not
+    go waits in the owner-only queue and goes with a later post.
+    """
+    try:
+        import review_trace  # noqa: PLC0415 - loaded late so a broken bundle cannot stop a release
+
+        summary = review_trace.post_outcomes(
+            raw, repo=Path(repo_path) if repo_path else Path.cwd(), home=Path.home(), **transport,
+        )
+        line = review_trace.summary_line(summary)
+        if summary.get("unrecorded"):
+            line += f"; {summary['unrecorded']} finding(s) with no recorded outcome"
+        print(line, file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 - a Langfuse problem never fails a release
+        print(f"langfuse: outcomes not posted ({exc.__class__.__name__})", file=sys.stderr)
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    runner: Runner | None = None,
+    trace_opener: Any = None,
+) -> int:
+    """Run one subcommand. ``runner`` and ``trace_opener`` are test seams the CLI does not expose."""
     args = build_parser().parse_args(argv)
     path = Path(args.record).resolve()
     try:
@@ -666,15 +696,15 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 )
                 return 0
-            print(
-                json.dumps(
-                    release(
-                        repo=str(raw.get("repo") or ""),
-                        number=args.pull_request,
-                        merge_method=args.merge_method,
-                    )
-                )
+            state = release(
+                repo=str(raw.get("repo") or ""),
+                number=args.pull_request,
+                merge_method=args.merge_method,
+                runner=runner,
             )
+            print(json.dumps(state))
+            if state.get("status") == "merged":
+                _post_outcomes(raw, args.repo_path, urlopen=trace_opener)
             return 0
         if args.cmd == "deploy":
             print(

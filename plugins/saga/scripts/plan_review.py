@@ -484,10 +484,54 @@ def _issue_body(
         raise PlanReviewError(f"the issue body could not be read: {exc}") from exc
 
 
+def _post_trace(
+    record_file: Path,
+    repo: Path,
+    *,
+    entry: Mapping[str, Any] | None = None,
+    finding_id: str | None = None,
+    opener: Callable[..., Any] | None = None,
+) -> None:
+    """Post the review's trace, or an answer's score, to Langfuse (issue 166).
+
+    The run record is already written. Nothing here changes it or the exit code: a failure
+    prints one line, and what could not go waits in the owner-only queue for a later post.
+    """
+    try:
+        import review_trace  # noqa: PLC0415 - loaded late so a broken bundle cannot stop a review
+
+        record = run_record.to_dict(build_loop.load_record_file(record_file))
+        if entry is not None:
+            summary = review_trace.post_plan_review(
+                entry, record=record, repo=repo, home=Path.home(), urlopen=opener,
+            )
+        else:
+            summary = review_trace.post_plan_answer(
+                record, str(finding_id), repo=repo, home=Path.home(), urlopen=opener,
+            )
+        print(review_trace.summary_line(summary), file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 - a Langfuse problem never fails a plan review
+        print(f"langfuse: not posted ({exc.__class__.__name__})", file=sys.stderr)
+
+
+def _plan_repo(record_file: Path, finding_id: str) -> Path:
+    """The checkout holding the newest reviewed plan with this finding, else here."""
+    try:
+        record = build_loop.load_record_file(record_file)
+    except Exception:  # noqa: BLE001 - an unreadable record falls back to the working directory
+        return Path.cwd()
+    for entry in reversed(plan_review_entries(record)):
+        if any(f.get("id") == finding_id for f in entry.get("findings", [])):
+            parent = Path(str(entry.get("plan_path") or "")).resolve().parent
+            return parent if parent.is_dir() else Path.cwd()
+    return Path.cwd()
+
+
 def main(
     argv: list[str] | None = None,
     *,
     fetch: Callable[[int, str | None], str] = parse_issue.fetch_issue_body,
+    trace_opener: Callable[..., Any] | None = None,
 ) -> int:
     """Run the command line. Every loader call sits inside this one catch."""
     args = build_parser().parse_args(argv)
@@ -502,6 +546,7 @@ def main(
                     + "\n  ".join(problems)
                 )
             entry = do_record(record_file, plan, findings)
+            _post_trace(record_file, plan.resolve().parent, entry=entry, opener=trace_opener)
             print(
                 json.dumps(
                     {
@@ -522,6 +567,10 @@ def main(
                 store_root=store_root,
             )
             print(json.dumps({"finding": args.finding, **stored}, indent=2))
+            _post_trace(
+                record_file, _plan_repo(record_file, args.finding),
+                finding_id=args.finding, opener=trace_opener,
+            )
             return EXIT_OK
         record = build_loop.load_record_file(record_file)
         entries = plan_review_entries(record)

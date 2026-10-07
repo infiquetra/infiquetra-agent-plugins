@@ -67,6 +67,25 @@ them down on benchmark evidence only. Watch their first runs.
 **Revisit when.** Saga's cost report shows sonnet/high losing to opus/medium on cost per completed
 unit after about ten units; a Haiku survey misses a finding its cross-check catches; or prices or
 the benchmark snapshot change.
+### Review traces go through Langfuse's OpenTelemetry endpoint, with derived IDs
+
+**Decision.** Issue #166 (card C15), KTD1 and KTD8. Saga posts review traces as OpenTelemetry JSON to `POST /api/public/otel/v1/traces` with `x-langfuse-ingestion-version: 4`, and scores to `POST /api/public/scores`. Trace IDs are 32 hex characters of SHA-256 over the repository slug, base and head commits, card and round; entry IDs are 16 hex characters over the trace ID and the entry's key (`finding:<identity>` for a finding).
+
+**Rationale.** On 7 October 2026 Langfuse's published API marked the batch ingestion endpoint deprecated (Langfuse Cloud stops accepting traces there on 16 November 2026; a self-hosted server does once it runs version-4-only writes), and the operator's server reports version 4.35.0. C1's review run has no run ID, so a derived ID lets the release step find a finding's entry without reading Langfuse back, whose read APIs other than metrics can lag by minutes. A derived ID also makes a resend replace rather than add.
+
+**Rejected alternatives.** The batch ingestion endpoint. The Langfuse Python SDK (not standard library). Adding a run ID to C1's record (a schema change outside the card). Random IDs plus a lookup.
+
+**Revisit when.** Langfuse changes the OpenTelemetry attribute names, or C1 adds a run ID.
+
+### Langfuse visibility is read at the base commit
+
+**Decision.** Issue #166 (card C15), KTD6 and KTD7. A review's visibility is `.saga-profile.json`'s `visibility` at the base commit; a plan review's is at the merge base of `HEAD` and the default branch. A missing or unknown value counts as private, and private posts go only over `https`. A public repository may use plain `http` only to a loopback or private address.
+
+**Rationale.** The change under review is untrusted (#190, #191). Reading the head would let a change mark its own repository public and send private code over plain HTTP. The address check keeps the key pair off the public internet in clear even for a public repository.
+
+**Rejected alternatives.** Reading the head commit or the working tree. Treating an unrecorded repository as public. Enforcing visibility only in saga rather than in the client.
+
+**Revisit when.** Plain HTTP is closed on the server for every client, or setup records visibility somewhere other than the profile.
 
 ### The reproduction re-run is this command's sandbox, not a reviewer session
 

@@ -801,6 +801,7 @@ def collect(
         ],
         "languages": languages,
         "visibility": _visibility(root, runner, env),
+        "langfuse_queue": langfuse_queue(home),
         "questions": [],
     }
     document["questions"] = questions_for(document, profile, extensions)
@@ -809,6 +810,18 @@ def collect(
             raise SetupError("survey needs a home directory to record")
         record_survey(home, document)
     return document
+
+
+def langfuse_queue(home: Path | None) -> dict[str, Any]:
+    """How many Langfuse posts wait in ``<home>/.saga/langfuse-queue``, by reason (issue 166)."""
+    if home is None:
+        return {"waiting": 0, "reasons": {}}
+    try:
+        import review_trace  # noqa: PLC0415 - only setup's survey needs it
+
+        return review_trace.queue_status(Path(home))
+    except Exception:  # noqa: BLE001 - an unreadable queue is reported, never fatal to setup
+        return {"waiting": 0, "reasons": {"unreadable": 1}}
 
 
 def notice_for(survey: Mapping[str, Any]) -> dict[str, Any]:
@@ -828,10 +841,15 @@ def notice_for(survey: Mapping[str, Any]) -> dict[str, Any]:
         text = "Missing sandbox. Run /saga:setup."
     else:
         text = ""
+    queue = survey.get("langfuse_queue") if isinstance(survey.get("langfuse_queue"), dict) else {}
+    waiting = queue.get("waiting") if isinstance(queue.get("waiting"), int) else 0
+    if waiting:
+        text = (text + " " if text else "") + f"Langfuse posts waiting: {waiting}."
     return {
         "text": text,
         "missing_tools": missing,
         "sandbox_unavailable": unavailable,
+        "langfuse_waiting": waiting,
     }
 
 
@@ -858,6 +876,7 @@ def render_text(document: Mapping[str, Any]) -> str:
             f"Sandbox: reproduction {sandbox.get('reproduction')}{suffix}",
             "Languages: " + ", ".join(document.get("languages") or []),
             "Visibility: " + (document.get("visibility") or "unknown"),
+            _queue_line(document.get("langfuse_queue")),
             "Steps",
         ]
     )
@@ -873,6 +892,14 @@ def render_text(document: Mapping[str, Any]) -> str:
         for index, question in enumerate(questions, start=1):
             lines.append(f"  {index}. {question.get('key')}: {question.get('prompt')}")
     return "\n".join(lines) + "\n"
+
+
+def _queue_line(queue: Any) -> str:
+    queue = queue if isinstance(queue, dict) else {}
+    waiting = queue.get("waiting") if isinstance(queue.get("waiting"), int) else 0
+    reasons = queue.get("reasons") if isinstance(queue.get("reasons"), dict) else {}
+    detail = ", ".join(f"{name} {count}" for name, count in sorted(reasons.items()))
+    return f"Langfuse posts waiting: {waiting}" + (f" ({detail})" if detail else "")
 
 
 def _keep_pin(entry: Any) -> dict[str, Any] | None:
