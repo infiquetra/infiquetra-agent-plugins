@@ -49,7 +49,7 @@ def _document() -> dict[str, object]:
 
 
 def _semgrep_argv(context: ScanContext) -> list[str]:
-    argv = ["semgrep", "scan", "--metrics=off", "--disable-nosem", "--json"]
+    argv = ["semgrep", "scan", "--metrics=off", "--disable-nosem", "--disable-version-check", "--json"]
     for config in context.configs:
         argv.extend(["--config", str(config)])
     argv.append(str(context.root))

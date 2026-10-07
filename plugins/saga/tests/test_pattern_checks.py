@@ -278,7 +278,7 @@ class _Calls:
     ) -> Any:
         assert shell is False
         assert isinstance(argv, list)
-        self.calls.append({"argv": list(argv), "cwd": Path(cwd)})
+        self.calls.append({"argv": list(argv), "cwd": Path(cwd), "env": dict(env)})
         if "--version" in argv:
             return review_tools.ProcessResult(0, self.version)
         return review_tools.ProcessResult(0, self.payload)
@@ -296,6 +296,7 @@ def _run_saga(
     profile_data: dict[str, Any],
     changed: set[int],
     builder: dict[str, Any] | None = None,
+    runner: _Calls | None = None,
 ) -> tuple[int, Path]:
     repo, base, head = _changed_lines_repo(tmp, changed)
     profile = tmp / "profile.json"
@@ -307,7 +308,8 @@ def _run_saga(
     home = tmp / "home"
     home.mkdir(parents=True, exist_ok=True)
     output = tmp / "out"
-    runner = _Calls(f"semgrep {_tool_list_pin()}\n", payload)
+    if runner is None:
+        runner = _Calls(f"semgrep {_tool_list_pin()}\n", payload)
     code = review_tools.run(
         repo,
         base,
@@ -659,6 +661,20 @@ def test_profile_rule_override_passes_through_unrendered(tmp_path: Path) -> None
         assert notes == ()
 
 
+def test_saga_scan_stays_off_the_network(tmp_path: Path, monkeypatch: Any) -> None:
+    """The saga scan disables the version check by flag and by environment."""
+    monkeypatch.setenv("SEMGREP_ENABLE_VERSION_CHECK", "1")
+    runner = _Calls(f"semgrep {_tool_list_pin()}\n", _payload())
+    code, _output = _run_saga(
+        tmp_path, _payload(), _profile_with_key(), {4, 5, 6, 7, 8, 9}, runner=runner
+    )
+    assert code == 0
+    scans = [call for call in runner.calls if "scan" in call["argv"]]
+    assert len(scans) == 1
+    assert "--disable-version-check" in scans[0]["argv"]
+    assert scans[0]["env"]["SEMGREP_ENABLE_VERSION_CHECK"] == "0"
+
+
 def test_rendered_config_scans_cleanly_live(tmp_path: Path) -> None:
     """U3: the rendered config scans for real, excluding only the named paths."""
     binary = _semgrep_or_skip()
@@ -680,8 +696,8 @@ def test_rendered_config_scans_cleanly_live(tmp_path: Path) -> None:
         notes = review_tools._render_saga_rules(adapter, RULES, review, target)
         env = {**os.environ, "SEMGREP_ENABLE_VERSION_CHECK": "0"}
         proc = subprocess.run(
-            [binary, "scan", "--metrics=off", "--disable-nosem", "--json",
-             "--config", str(target), str(sample)],
+            [binary, "scan", "--metrics=off", "--disable-nosem", "--disable-version-check",
+             "--json", "--config", str(target), str(sample)],
             capture_output=True,
             text=True,
             env=env,

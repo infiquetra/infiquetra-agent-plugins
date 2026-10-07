@@ -393,6 +393,9 @@ def _run(
     degraded: list[dict[str, str]] = list(profile_notes)
     deadline = time.monotonic() + MUTATION_CAP_SECONDS
     base_env = dict(os.environ)
+    # Semgrep phones home for a version check unless told not to; the scan must
+    # stay off the network and never send the operator's token.
+    base_env["SEMGREP_ENABLE_VERSION_CHECK"] = "0"
     extra: list[tuple[str, Path]] = []
     try:
         with _worktree(repo, head_sha) as head_root:

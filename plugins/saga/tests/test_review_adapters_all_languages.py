@@ -198,6 +198,7 @@ def test_semgrep_security_maps_levels_and_stays_on_the_local_cache(tmp_path: Pat
     scans = [argv for argv in runner.calls if "scan" in argv]
     assert len(scans) == 1
     assert "--metrics=off" in scans[0]
+    assert "--disable-version-check" in scans[0]
     config = scans[0][scans[0].index("--config") + 1]
     assert config == str(T.semgrep_cache(home, "p/security-audit"))
     assert not any(token.startswith("http") for token in scans[0])
