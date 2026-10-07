@@ -127,16 +127,17 @@ def test_the_cross_reference_check_fails_against_a_missing_target(tmp_path: Path
 
 
 def test_no_reviewer_dispatch_path_survives_in_document_review() -> None:
-    """Issue 776 retired the external-engine dispatch; the panel section described one."""
+    """Issue 776 retired the external-engine dispatch; issue 163 retired the seat too."""
     text = DOC_REVIEW.read_text(encoding="utf-8")
     assert "engine_resolver.resolve_role" not in text
     assert "via agy" not in text
-    assert "The only representable external seat is a named" in " ".join(text.split())
+    assert "external seat" not in text
+    assert "external-reviewer" not in text
 
 
-def test_document_review_stays_single_pass_within_a_cycle() -> None:
-    """Card 931's boundary: this unit does not change Document Review's single-pass behaviour.
-    The loop issue 1026 adds is around the review, not inside it."""
+def test_document_review_is_one_pass_with_answers() -> None:
+    """Issue 163's boundary: one pass, answers through the script, no cycle around it."""
     text = DOC_REVIEW.read_text(encoding="utf-8")
-    assert "One cycle is one completed review result followed by one repair batch" in text
+    assert "One cycle is one completed review result followed by one repair batch" not in text
+    assert "One pass is one completed review result followed by the author's answers" in text
     assert "re-review within the same pass" not in text

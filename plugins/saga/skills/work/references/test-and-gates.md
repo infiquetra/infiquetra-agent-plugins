@@ -111,9 +111,10 @@ own captured reviewed SHA rather than a stored field or a parse of `/code-review
 
 ### Override (recorded, never silent)
 
-Allow an explicit operator override of either block **only with a recorded rationale** — it flows into the
-issue comment via `issue_progress.py --doc-review-override` and into the work-session writeup. A silent
-skip of the review gate is forbidden (Jeff's no-lies rule; SKILL core principle 6).
+Allow an explicit operator override of the review-gate block **only with a recorded rationale** — it flows into the
+issue comment via `issue_progress.py --review-gate-override` and into the work-session writeup. A silent
+skip of the review gate is forbidden (Jeff's no-lies rule; SKILL core principle 6). The doc-review
+gate has no override.
 
 ## Autonomy contract (gstack stop-for / never-stop-for)
 

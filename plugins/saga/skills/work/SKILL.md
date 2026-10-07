@@ -91,7 +91,7 @@ legitimately sits at `work` from merge until `/qa` runs and passes (see Phase 5)
 ## Interaction method
 
 Use `AskUserQuestion` for choices from a known set (resume-vs-mint, branch decision, execution backend,
-doc-review override, PR-open / merge confirmation, continuation routing). Call `ToolSearch` with
+PR-open / merge confirmation, continuation routing). Call `ToolSearch` with
 `select:AskUserQuestion` first if its schema is not loaded. Ask one question per turn; prefer a concise
 single-select when natural options exist. For open-ended discussion, ask inline in chat. Never silently
 skip a confirmation that mutates GitHub.
@@ -237,26 +237,31 @@ and `Verification` field. See `references/execution-strategy.md`.
 <!-- gate-record: id=work-doc-review-floor absence=HALT transport=ask-user-question -->
 
 Before executing from a plan, confirm the plan cleared plan review. `/plan` Phase 5.4 dispatches
-that review and loops on repair, so by the time `/work` starts the result exists; this step reads
-it, it does not ask whether to run it.
+that review once and answers every finding, so by the time `/work` starts the result exists; this
+step reads it, it does not ask whether to run it.
+
+**Run the check, and block execution on a non-zero exit:**
+
+```bash
+python3 plugins/saga/scripts/plan_review.py check --issue <N>
+```
+
+The check exits non-zero while any finding is unanswered or the acceptance-criteria mapping fails,
+and it prints every rejection with its reason. Show that printout to an attending operator.
+There is no override for this gate: a gap clears only by answering every finding and editing the
+plan until the mapping passes. Do not reinterpret finding metadata to talk yourself past the block.
 
 **Read the evidence in this order, and stop at the first that resolves:**
 
-1. The run record's `review_cycles` at `<primary checkout>/.claude/saga/runs/issue-<N>.json` — the
-   durable result, written by the loop that produced it, and readable from any worktree or
-   session.
+1. The check against the run record's `review_cycles` at
+   `<primary checkout>/.claude/saga/runs/issue-<N>.json` — the durable result, read by the script
+   that wrote it, from any worktree or session.
 2. Same-session review output.
 3. The latest matching artifact under `docs/reviews/`, resolved by the recorded target path per
    the doc-review skill's artifact-matching rule.
 
 The order matters after a resume: chat memory is not durable evidence and a session that resumed
 has none, which is exactly when a gate is most likely to be waved through on a recollection.
-
-**If an unresolved `P0` or `P1` finding remains, block execution.** The only way past is the
-operator explicitly overriding, in one word, with a rationale — recorded, and carried into the
-Phase-4 issue comment via `--doc-review-override`. Nothing else produces an override: not a
-finding count, not an exhausted cycle allowance, not unattended mode, and no sentence in this
-skill. Do not reinterpret finding metadata to talk yourself past the block.
 
 ### 1.3b Submit the card's move to `Active` / `Implementing` — Mission Control executes it
 
@@ -683,24 +688,20 @@ python3 plugins/saga/scripts/issue_progress.py \
   --checks-run "pytest|ruff|mypy" \
   --blockers "<none or text>" \
   --doc-review-artifact docs/reviews/<artifact>.md \
-  --doc-review-fixes "<safe fix 1>|<safe fix 2>" \
   --doc-review-findings "<finding 1>|<finding 2>" \
-  --doc-review-override "<rationale if doc-review gate waived>" \
+  --doc-review-rejections "<finding — reason>|<finding — reason>" \
   --review-gate-override "<rationale if review gate waived>"
 ```
 
-`--doc-review-fixes` carries the safe fixes the plan review applied into the issue comment, under
-the heading `doc review fixes`. Pass it whenever the review edited the plan: without it the comment
-records the findings and silently drops what was done about them, which reads on the issue as a
-review that found problems and fixed nothing.
+`--doc-review-rejections` carries the plan review's rejections into the issue comment, under
+the heading `doc review rejections`. Pass it whenever the check lists rejections: without it the
+comment records the findings and silently drops what the author decided about them, which reads on
+the issue as a review whose verdicts vanished.
 
-An override must name which gate it waives: `--doc-review-override` for the doc-review gate and
-`--review-gate-override` for the review gate. What makes that unambiguous is the **split itself** —
-two flags, each hard-wired to one gate, so a rationale cannot arrive without a gate through this
-path at all, and the rendered issue comment labels the two waivers `doc review override` and
-`review gate override`. `issue_progress.py:_override_line` does carry a refusal for an unknown gate
-name, but the source itself records that it is unreachable from here: it is a guard for a direct
-caller, and describing it as what enforces the property reads as a runtime check that never runs.
+The review gate keeps its own override: `--review-gate-override`, rendered under the label
+`review gate override`. No override exists for the doc-review gate, so a rationale through this
+path can only waive the review gate. `issue_progress.py:_override_line` still refuses an unknown
+gate name, as a guard for a direct caller.
 
 Then **post it**, through the same reconcile controller Phase 4.4 uses. Rendering is not posting, and
 "hand it to `mission-control`" was for a long time the only instruction here — so nothing ran, and no
@@ -955,9 +956,8 @@ through Phase 3.3 — run the combined-branch loop on the new head until it is g
 before any PR/merge offer.
 
 Allow an explicit operator override only with a **recorded** rationale (it flows into the issue comment
-via `--review-gate-override` for the review gate and `--doc-review-override` for the doc-review gate,
-each rendered through `issue_progress.py:_override_line` under its own gate's label, plus the
-work-session). Never a silent skip.
+via `--review-gate-override`, rendered through `issue_progress.py:_override_line` under the review
+gate's label, plus the work-session). Never a silent skip.
 
 ### 5.4 The release, the functional test, and the close
 

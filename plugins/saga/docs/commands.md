@@ -117,16 +117,16 @@ Implementation-readiness review for plans and requirements.
 | Field | Value |
 |-------|-------|
 | Purpose | Review plans, requirements, or formal SDLC artifacts for readiness. |
-| Use when | A document must be checked before execution, and safe in-place fixes may help. |
+| Use when | A document must be checked before execution. |
 | Do not use when | The target is code at the PR boundary, or the question is ambition/scope. |
 | Inputs | Document path. |
-| Outputs | Review artifact under `docs/reviews/` and optional safe fixes. |
-| Saga state | Review evidence; unresolved P0/P1 blocks `/work` unless overridden. |
+| Outputs | Review artifact under `docs/reviews/` and finding records. |
+| Saga state | Review evidence; the check blocks `/work` while a finding is unanswered. |
 | Routes in | `/plan`, optional `/spec` review. |
 | Routes out | `/work`, `/plan`, `/founder-review`. |
-| Gates | P0/P1 findings block `/work` without recorded override. |
+| Gates | Unanswered findings or a failing mapping block `/work`; no override. |
 | Boundary | Owns document readiness, not code review or implementation. |
-| Common mistakes | Treating it as `/code-review`; ignoring unresolved P0/P1 findings. |
+| Common mistakes | Treating it as `/code-review`; leaving a finding unanswered. |
 | Example | `/doc-review docs/plans/2026-06-09-example-plan.md` |
 
 ### /work

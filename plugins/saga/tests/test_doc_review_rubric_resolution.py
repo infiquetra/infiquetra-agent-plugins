@@ -135,11 +135,11 @@ def test_no_durable_lens_record_or_census_was_added() -> None:
         assert forbidden not in text
 
 
-def test_doc_review_fixes_is_defined_forwarded_and_reaches_the_comment() -> None:
+def test_doc_review_rejections_is_defined_forwarded_and_reaches_the_comment() -> None:
     """The parameter existed and the flag did not, so the CLI could never populate it."""
     source = ISSUE_PROGRESS.read_text(encoding="utf-8")
-    assert '"--doc-review-fixes"' in source
-    assert "doc_review_fixes=_split_pipe(args.doc_review_fixes)" in source
+    assert '"--doc-review-rejections"' in source
+    assert "doc_review_rejections=_split_pipe(args.doc_review_rejections)" in source
 
     result = subprocess.run(
         [
@@ -151,18 +151,18 @@ def test_doc_review_fixes_is_defined_forwarded_and_reaches_the_comment() -> None
             "owner/repo#1",
             "--destination",
             "pr",
-            "--doc-review-fixes",
-            "corrected the origin mapping|filled the missing gate",
+            "--doc-review-rejections",
+            "vague scope — pinned already|stale gate — covered by the smoke",
         ],
         capture_output=True,
         text=True,
     )
     assert result.returncode == 0, result.stderr
-    assert "doc review fixes" in result.stdout
-    assert "corrected the origin mapping" in result.stdout
-    assert "filled the missing gate" in result.stdout
+    assert "doc review rejections" in result.stdout
+    assert "vague scope — pinned already" in result.stdout
+    assert "stale gate — covered by the smoke" in result.stdout
 
 
 def test_the_work_skill_forwards_the_flag_it_now_has() -> None:
     work = (SAGA / "skills" / "work" / "SKILL.md").read_text(encoding="utf-8")
-    assert "--doc-review-fixes" in work
+    assert "--doc-review-rejections" in work

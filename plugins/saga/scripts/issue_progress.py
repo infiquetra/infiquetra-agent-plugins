@@ -39,7 +39,6 @@ def _list_lines(label: str, values: Sequence[str] | None) -> list[str]:
 
 
 _OVERRIDE_LABELS: dict[str, str] = {
-    "doc-review": "doc review override",
     "review-gate": "review gate override",
 }
 
@@ -72,9 +71,8 @@ def render_issue_comment(
     review_status: str | None = None,
     doc_review_artifact: str | None = None,
     doc_review_blocked: bool | None = None,
-    doc_review_fixes: Sequence[str] | None = None,
     doc_review_findings: Sequence[str] | None = None,
-    doc_review_override: str | None = None,
+    doc_review_rejections: Sequence[str] | None = None,
     review_gate_override: str | None = None,
     handoff_maturity: str | None = None,
     handoff_source: str | None = None,
@@ -88,17 +86,12 @@ def render_issue_comment(
     title = EVENT_TITLES.get(event, event.replace("-", " ").title())
     lines = [f"### {title}", "", f"- issue: {issue_ref}", f"- selected destination: {destination}"]
     override_candidates: list[str | None] = []
-    if doc_review_override is not None or review_gate_override is not None:
-        # What makes a gate-less waiver impossible is the FLAG SPLIT, not a runtime refusal: there
-        # are exactly two override parameters and each one carries its gate's name as a literal
-        # here, so an unnamed waiver has nowhere to enter. `_override_line`'s raise is a defensive
-        # guard for a direct caller, and is unreachable from this path by construction — the
-        # earlier note credited it with enforcing the property, which reads as a runtime check that
-        # never runs.
-        if doc_review_override is not None:
-            override_candidates.append(_override_line("doc-review", doc_review_override))
-        if review_gate_override is not None:
-            override_candidates.append(_override_line("review-gate", review_gate_override))
+    if review_gate_override is not None:
+        # Only one override parameter remains: the review gate's. The doc-review gate has no
+        # override, so a rationale through this path can only waive the review gate.
+        # `_override_line`'s raise is a defensive guard for a direct caller, unreachable from
+        # this path by construction.
+        override_candidates.append(_override_line("review-gate", review_gate_override))
     # The legacy direct values, still supported for a caller that validated them itself. The
     # helper above is the canonical path for everything it covers.
     for candidate in (
@@ -126,8 +119,8 @@ def render_issue_comment(
     for cand in override_candidates:
         if cand:
             lines.append(cand)
-    lines.extend(_list_lines("doc review fixes", doc_review_fixes))
     lines.extend(_list_lines("doc review findings", doc_review_findings))
+    lines.extend(_list_lines("doc review rejections", doc_review_rejections))
     lines.extend(_checks_lines(checks_run))
     return "\n".join(lines).rstrip() + "\n"
 
@@ -166,12 +159,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         dest="doc_review_blocked",
         action="store_false",
     )
-    parser.add_argument(
-        "--doc-review-fixes",
-        help="pipe-separated list of safe fixes the document review applied",
-    )
     parser.add_argument("--doc-review-findings", help="pipe-separated list of doc review findings")
-    parser.add_argument("--doc-review-override")
+    parser.add_argument(
+        "--doc-review-rejections",
+        help="pipe-separated list of plan-review rejections, each finding with its reason",
+    )
     parser.add_argument("--review-gate-override")
     parser.add_argument("--deploy-status")
     parser.add_argument("--workflow-url")
@@ -196,9 +188,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             review_status=args.review_status,
             doc_review_artifact=args.doc_review_artifact,
             doc_review_blocked=args.doc_review_blocked,
-            doc_review_fixes=_split_pipe(args.doc_review_fixes),
             doc_review_findings=_split_pipe(args.doc_review_findings),
-            doc_review_override=args.doc_review_override,
+            doc_review_rejections=_split_pipe(args.doc_review_rejections),
             review_gate_override=args.review_gate_override,
             handoff_maturity=args.handoff_maturity,
             handoff_source=args.handoff_source,

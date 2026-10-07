@@ -9,7 +9,7 @@ description: Create durable Infiquetra implementation plans with issue, review, 
 requirements doc, a handoff issue, or a clear ad-hoc request — and interrogates it into a durable,
 agent-consumable implementation plan. It does **not** invent product behavior (that came from
 `/brainstorm` or the issue) and it does **not** implement code. It plans, records a plan saga,
-**dispatches the plan review and loops on repair until it passes**, and routes.
+**dispatches the plan review once and answers every finding**, and routes.
 
 ## Position in the lifecycle
 
@@ -29,8 +29,7 @@ review is a step inside the plan phase, not a phase the saga records.
 The handshake is deliberate. When the WHAT is unsettled, `/plan` recommends the operator step back to
 `/brainstorm` first (a one-way forward route — `/plan` points there; it does not claim `/brainstorm`
 "accepts" a handoff). When the plan is written, `/plan` does not recommend the review — it dispatches
-it, repairs what it finds, and re-checks until nothing above `P2` is open or the operator overrides
-one finding in one word.
+it once, answers every finding the reviewer reports, and runs the check until it exits 0.
 
 ## Core principles
 
@@ -713,7 +712,7 @@ python3 plugins/saga/scripts/functional_checks.py write --plan <plan path> --iss
 Each `### U<N>.` unit's checks land on the row whose `id`, `name` or `unit_id` is that U-ID (a
 row is added when none matches), as `functional_checks`, and the plan's smoke as
 `scenario_smoke`; every other key on every row is left alone. The write holds the record's lock
-and is idempotent, so **re-run it after every §5.4 repair batch** that changes a check. Exit 2
+and is idempotent, so **re-run it after every §5.4 plan fix** that changes a check. Exit 2
 means it refused — no record yet, or a malformed check block (it names the unit and the field) —
 and nothing was written: STOP and surface it.
 
@@ -727,15 +726,14 @@ created the rows. For the write to land, each `/work` unit in the expansion tabl
 plan U-ID it builds (`U1`, `U2`, ...).
 `python3 plugins/saga/scripts/build_loop.py --issue <N> --dry-run` then lists every unit's checks.
 
-### 5.4 Dispatch the plan review, and loop until it passes
+### 5.4 Dispatch the plan review, once
 
 <!-- gate-record: id=plan-review-floor absence=HALT transport=ask-user-question -->
 
 **`/plan` does not recommend the review; it runs it.** The plan is not finished when the document
-is written — it is finished when a Plan Reviewer has read it and nothing above `P2` is open, or the
-operator has said one word to go past a finding that is. An operator who has to remember to type
-`/doc-review` is the transport for a gate, and a gate with a human transport is a gate that gets
-skipped on the busy days it matters most.
+is written — it is finished when a Plan Reviewer has read it once, every finding is answered, and
+the check exits 0. An operator who has to remember to type `/doc-review` is the transport for a
+gate, and a gate with a human transport is a gate that gets skipped on the busy days it matters most.
 
 **Who reviews, decided from the run record and not from this session.** Read the run record at
 `<primary checkout>/.claude/saga/runs/issue-<N>.json` and take the first of these that holds:
@@ -769,29 +767,36 @@ rule that reads the environment answers differently in each of them.
 exit 1, add a functional check for each criterion it names and repeat §5.3a, so the reviewer is
 not spent on a gap a script already found. The reviewer runs the same command as a blocking check.
 
-**The loop is the repair protocol.** Dispatch, read the result, repair the plan document, dispatch
-again — recording **one entry per turn** in the record's `review_cycles` (its cycle number, its
-result, and where its findings are). Exit on one of exactly three conditions:
+**One pass, then answers — never a second dispatch.** Dispatch once and stop. Save the
+reviewer's findings verbatim to a file and store them:
 
-- **Pass.** No `P0` and no `P1` remains. Continue to §5.5.
-- **The operator's word.** A `P0` or `P1` is open and the operator overrides it in one word, with
-  a rationale recorded alongside the finding. This is the **only** override. No finding count, no
-  cycle count, no unattended mode, and no sentence in this skill produces one on its own.
-- **Exhausted allowances.** The record's `standard_cycle_allowance` and
-  `escalated_cycle_allowance` bound the loop (a cycle is one completed review result followed by
-  one repair batch; a re-dispatch after no repair is not a cycle). Exhausting them **stops and
-  reports** — it never passes. The numbers live in the record, not here, so a run can lower them
-  without editing this skill.
+```bash
+python3 plugins/saga/scripts/plan_review.py record --issue <N> --plan <plan path> --findings <findings file>
+```
 
-A finding the reviewer raises against a revision you have since changed is not answered by the
-change alone: re-dispatch so the verdict is bound to the revision that will be built.
+The script validates the findings as C1 finding records and writes the run record's entry itself;
+never write `review_cycles` by hand. Then answer every finding: fix the plan and record
+`answer --finding <id> --fixed "<plan section>"`, or reject one believed wrong with
+`answer --finding <id> --rejected "<reason>"`. A fixed answer is accepted only if the plan changed
+since the review, so edit first and answer second. Then run the check, and keep answering until it
+exits 0:
+
+```bash
+python3 plugins/saga/scripts/plan_review.py check --issue <N>
+```
+
+The check exits non-zero while any finding is unanswered or the acceptance-criteria mapping fails,
+and it prints every rejection with its reason. There is no second dispatch, no cycle allowance, and
+no override: rejections are listed for the operator, never gated on, and a mapping gap clears only
+by editing the plan until the mapping passes. Answers, unlike checks, need no re-run onto the run
+record — they are already there.
 
 ### 5.5 Submit the card's move to `Planning` / `Ready for Active` — Mission Control executes it
 
-**Actor:** this skill. **Trigger:** §5.4's review loop recorded a **pass**, or the operator's
-one-word override, so the card is no longer being designed -- it is ready to build. The trigger is
-observable here and nowhere earlier: before §5.4 runs there is no review result to read, which is
-why this move sits after the loop rather than at the head of the phase. **Move:** the live pair `Stage` =
+**Actor:** this skill. **Trigger:** §5.4's check exits 0 with every finding answered, so
+the card is no longer being designed -- it is ready to build. The trigger is observable here and
+nowhere earlier: before §5.4 runs there is no review result to read, which is
+why this move sits after the review rather than at the head of the phase. **Move:** the live pair `Stage` =
 `Planning`, `Status` = `Ready for Active`. `Ready for Active` is the schema's own named terminal
 option for the Planning stage; there is no bare `Ready` option on either live field.
 

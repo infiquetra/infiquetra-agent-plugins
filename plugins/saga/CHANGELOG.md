@@ -4,6 +4,12 @@
 
 ### Added
 
+- Issue 163: plan review in one pass. `scripts/plan_review.py` stores the reviewer's findings as
+  C1 finding records in the run record (`record`), records the author's answer to each (`answer`:
+  fixed with the plan section changed, rejected with a reason), and gates on every finding answered
+  plus the acceptance-criteria mapping (`check`). `/plan` §5.4 dispatches once and gates on the
+  check; `/work`'s doc-review gate runs it; the issue comment lists rejections under
+  `doc review rejections` via `--doc-review-rejections`.
 - Issue 148: one schema for the review records (finding, measurement, where-to-look item, lens
   grade, review run) and the per-unit builder record, in `references/review-records.schema.json`
   and `references/review-records.md`. `scripts/review_records.py validate <file>` refuses a
@@ -14,6 +20,14 @@
   security boundary crossed" finding. `record-run` and `record-builder` store runs and builder
   records in the run record under its lock. Nothing calls them until the review command (C10a);
   the `review_result.v2` shapes stay until C10b.
+
+### Changed
+
+- Issue 163: the plan-review repair loop, its cycle allowances, the re-dispatch, the reviewer's
+  in-place edits, the cross-family seat, the second opinion, and the one-word override are gone.
+  Standalone `/doc-review` reports finding records and never edits the document. The
+  `--doc-review-fixes` and `--doc-review-override` flags are removed; `--review-gate-override`
+  stays.
 
 ### Fixed
 
