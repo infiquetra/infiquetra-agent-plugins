@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1383,6 +1386,176 @@ class ContinuousIntegrationTests(unittest.TestCase):
 
         broken_pattern = "plugins/mission-control/tests"
         self.assertFalse(fnmatch.fnmatch("plugins/unifi/tests", broken_pattern))
+
+
+class ReviewCalibrationTests(unittest.TestCase):
+    """The repository check calls saga's one calibration implementation (issue 149)."""
+
+    FORMULA = "plugins/saga/scripts/review_formula.py"
+
+    def setUp(self) -> None:
+        def refuse(*_args: object, **_kwargs: object) -> None:
+            raise OSError("network blocked")
+
+        self.enterContext(mock.patch.object(socket.socket, "connect", refuse))
+        self.enterContext(mock.patch("socket.create_connection", refuse))
+
+    def module(self):
+        scripts = str(ROOT / "plugins" / "saga" / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        import review_calibration
+
+        return review_calibration
+
+    def copy_components(self, root: Path) -> None:
+        for relative in self.module().COMPONENTS:
+            target = root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / relative, target)
+
+    def write_no_run(self, root: Path) -> Path:
+        self.copy_components(root)
+        target = root / "plugins/saga/references/review-calibration.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / target.relative_to(root), target)
+        return target
+
+    def write_recorded(self, root: Path) -> None:
+        module = self.module()
+        self.copy_components(root)
+        data = json.loads(
+            (ROOT / "plugins/saga/references/review-calibration.json").read_text(encoding="utf-8")
+        )
+        data["corpus_run"] = "recorded"
+        data["fingerprint"] = {
+            relative: hashlib.sha256((root / relative).read_bytes()).hexdigest()
+            for relative in module.COMPONENTS
+        }
+        overall = {
+            "held_out_blocked": 0,
+            "held_out_defects": 10,
+            "held_out_false_blocks": 0,
+            "held_out_clean": 10,
+            "repeat_flips": 0,
+            "repeat_cases": 10,
+        }
+        for row in data["lenses"].values():
+            row["drift"] = "as-recorded"
+            row["overall"] = dict(overall)
+            row["languages"] = {}
+        target = root / "plugins/saga/references/review-calibration.json"
+        target.write_text(json.dumps(data), encoding="utf-8")
+
+    def component_messages(self, problems: list[str]) -> list[str]:
+        return [item for item in problems if "component:" in item]
+
+    def test_no_run_accepts_a_changed_component(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_no_run(root)
+            target = root / self.FORMULA
+            target.write_bytes(target.read_bytes() + b"x")
+            self.assertEqual(check_repo.check_review_calibration(root), [])
+
+    def test_recorded_match_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_recorded(root)
+            self.assertEqual(check_repo.check_review_calibration(root), [])
+
+    def test_a_changed_component_is_named(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_recorded(root)
+            target = root / self.FORMULA
+            target.write_bytes(target.read_bytes() + b"x")
+            expected = [f"changed component: {self.FORMULA}"]
+            direct = check_repo.check_review_calibration(root)
+            aggregate = check_repo.check_repo(root)
+        self.assertEqual(self.component_messages(direct), expected)
+        self.assertEqual(self.component_messages(aggregate), expected)
+
+    def test_a_missing_component_is_named(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_recorded(root)
+            (root / self.FORMULA).unlink()
+            self.assertEqual(
+                check_repo.check_review_calibration(root),
+                [f"missing component: {self.FORMULA}"],
+            )
+
+    def test_an_unknown_key_is_named_without_a_recorded_run(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = self.write_no_run(root)
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["comment"] = "x"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            direct = check_repo.check_review_calibration(root)
+            aggregate = check_repo.check_repo(root)
+        self.assertTrue(any("comment" in item for item in direct), direct)
+        self.assertTrue(any("comment" in item for item in aggregate), aggregate)
+
+    def test_free_text_is_named_without_a_recorded_run(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = self.write_no_run(root)
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["langfuse_run_id"] = "a sentence with spaces"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            problems = check_repo.check_review_calibration(root)
+        self.assertTrue(any("langfuse_run_id" in item for item in problems), problems)
+
+    def test_a_tree_without_saga_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(check_repo.check_review_calibration(Path(directory)), [])
+
+    def test_check_repo_surfaces_the_calibration_sentinel(self) -> None:
+        module = self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(module, "check", return_value=["sentinel-calibration"]):
+                problems = check_repo.check_repo(Path(directory))
+        self.assertIn("sentinel-calibration", problems)
+
+    def test_the_import_is_local_and_does_not_name_yaml(self) -> None:
+        text = (ROOT / "scripts" / "check_repo.py").read_text(encoding="utf-8")
+        self.assertNotIn("import yaml", text)
+        lines = [line for line in text.splitlines() if "import review_calibration" in line]
+        self.assertTrue(lines)
+        for line in lines:
+            self.assertTrue(line.startswith((" ", "\t")), line)
+
+    def _yaml_free(self, target: Path) -> subprocess.CompletedProcess[str]:
+        script = """
+import sys
+from pathlib import Path
+live = Path(sys.argv[1])
+target = Path(sys.argv[2])
+sys.path.insert(0, str(live / "scripts"))
+import check_repo
+result = check_repo.check_review_calibration(target)
+assert result == [], result
+assert "yaml" not in sys.modules
+"""
+        return subprocess.run(
+            [sys.executable, "-c", script, str(ROOT), str(target)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_the_live_check_does_not_import_yaml(self) -> None:
+        completed = self._yaml_free(ROOT)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_the_recorded_compare_does_not_import_yaml(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_recorded(root)
+            completed = self._yaml_free(root)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
 
 if __name__ == "__main__":

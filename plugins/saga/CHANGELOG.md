@@ -4,6 +4,11 @@
 
 ### Added
 
+- Issue 149: `references/review-calibration.json` records that no corpus run exists yet, so every
+  lens reports only. `scripts/review_calibration.py may-block` prints whether a lens may block in
+  a language, from the stored verdicts. `scripts/check_repo.py` calls that module's fingerprint
+  check and, once a run is recorded, fails naming the component that changed.
+
 - Issue 156: `scripts/sweep_pieces.py` cuts one piece per changed function for `jev sweep`.
   `references/review-tools.yaml` gains a Universal Ctags row the review runner does not execute.
   `references/model-prices.yaml` prices TypeSafe input. The fleet bundle includes `jev_sweep`.
@@ -57,6 +62,10 @@
   stays.
 
 ### Fixed
+
+- Issue 149: `may-block` reads the calibration file and the component bytes from the installed
+  saga package. `--root` selects the base commit's profile and does not select that file. An
+  unreadable profile exits 2. The fingerprint also names the Jev sweep's three paths.
 
 - Issue 189: `scripts/reviewer_answer.py` replaces known secret formats (GitHub, AWS, Slack, Stripe,
   Google, Anthropic and OpenAI-style keys, private-key blocks, JSON web tokens, bearer tokens,

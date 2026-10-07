@@ -1,0 +1,68 @@
+# Cycle-25 mutation proof - the repository check calls saga's calibration implementation
+# Digests are bound by MutationProofBindingTest: change a graded file
+# without re-running this proof and the suite fails. Paths are repository-relative.
+#
+# Supersedes 2026-10-04-cycle24-mutation-proof-client-roster-by-date.txt for
+# the binding test only. Cycle 24 is preserved unedited. Reason: issue #149
+# adds check_review_calibration to scripts/check_repo.py. The function puts
+# plugins/saga/scripts on the path, imports review_calibration inside the
+# function, passes the tree it was given, and returns that module's check.
+# It does not import PyYAML.
+#
+# The other four graded files were not edited and were not re-graded:
+#   plugins/unifi/scripts/site_profile.py
+#   scripts/assess_clients.py
+#   scripts/check_compatibility_matrix.py
+#   scripts/port_config.py
+# Their cycle-24 digests are carried below.
+#
+# This cycle re-graded ONLY check_review_calibration and the line in
+# check_repo() that calls it. Every other guard inside scripts/check_repo.py
+# was not re-patched here.
+#
+# Runner: each mutation is one exact string replacement in scripts/check_repo.py,
+# then `python3 -m unittest tests.test_check_repo.ReviewCalibrationTests`,
+# then the pristine bytes are written back. MutationProofBindingTest lives in
+# tests.test_site_profile and is not part of that command, so the runner
+# excludes it from grading. The exclusion is stated here. A mutation counts as
+# killed only when that command fails a test that passed at baseline. Each
+# mutation names the first test that killed it. The baseline was green
+# (11 tests, OK) before any mutation. The digest block was hashed from the
+# restored bytes after this run. No earlier round of these seven mutations
+# found a survivor.
+
+## scripts/check_repo.py -- one guard, seven mutations, seven killed
+
+## MUTATION 1: the wire: `*check_review_calibration(root),` deleted from check_repo()
+   Killed by: tests.test_check_repo.ReviewCalibrationTests.test_a_changed_component_is_named
+   FAILED (failures=3)
+## MUTATION 2: the check reports nothing: `return review_calibration.check(root)` replaced by `return []`
+   Killed by: tests.test_check_repo.ReviewCalibrationTests.test_a_changed_component_is_named
+   FAILED (failures=5)
+## MUTATION 3: the check ignores its root and reads the live checkout
+   Killed by: tests.test_check_repo.ReviewCalibrationTests.test_a_changed_component_is_named
+   FAILED (failures=4)
+## MUTATION 4: the wrapper returns before the implementation when plugins/saga is absent
+   Killed by: tests.test_check_repo.ReviewCalibrationTests.test_check_repo_surfaces_the_calibration_sentinel
+   FAILED (failures=1)
+## MUTATION 5: the saga scripts directory is never inserted on sys.path
+   Killed by: tests.test_check_repo.ReviewCalibrationTests.test_the_live_check_does_not_import_yaml
+   FAILED (failures=2)
+## MUTATION 6: the scripts directory is resolved from the checker file instead of the repository root
+   Killed by: tests.test_check_repo.ReviewCalibrationTests.test_the_live_check_does_not_import_yaml
+   FAILED (failures=2)
+## MUTATION 7: an indented `import yaml` added inside check_review_calibration
+   Killed by: tests.test_check_repo.ReviewCalibrationTests.test_the_import_is_local_and_does_not_name_yaml
+   FAILED (failures=3)
+
+## RESTORED
+# carried from cycle 24, not re-graded in this cycle:
+plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
+# carried from cycle 24, not re-graded in this cycle:
+scripts/assess_clients.py sha256: 375eccd3b7252cd7ae1754682fa7bb4b5fe8b1a1a1536c5bc4f74b0b35a684e1
+# carried from cycle 24, not re-graded in this cycle:
+scripts/check_compatibility_matrix.py sha256: c5c5752c038325c63a67c7c790ef88922c6c30e9a520ea77c7ad7d4fdc489808
+scripts/check_repo.py sha256: 403493fd03439d3006fc76e02fcc98e936f94b71231875cf48ba2b4455ba1b85
+# carried from cycle 24, not re-graded in this cycle:
+scripts/port_config.py sha256: 56216b7c8018b361d611356e21bc2383cb7d71ebf478f28436fee3c5c8e46b17
+byte-identical to pristine: YES

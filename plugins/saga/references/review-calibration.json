@@ -1,0 +1,45 @@
+{
+  "schema": "review_calibration.v1",
+  "corpus_run": "no-run",
+  "fingerprint": {},
+  "corpus_version": null,
+  "jev_model_version": null,
+  "cost_usd": null,
+  "langfuse_run_id": null,
+  "reviewer_configuration": null,
+  "marks": {
+    "lenses": {
+      "correctness": {
+        "must_block": {"numerator": 8, "denominator": 10},
+        "may_block_clean": {"numerator": 1, "denominator": 10}
+      },
+      "security": {
+        "must_block": {"numerator": 9, "denominator": 10},
+        "may_block_clean": {"numerator": 1, "denominator": 10}
+      },
+      "testing": {
+        "must_block": {"numerator": 9, "denominator": 10},
+        "may_block_clean": {"numerator": 1, "denominator": 10}
+      },
+      "architecture-maintainability": {
+        "must_block": {"numerator": 6, "denominator": 10},
+        "may_block_clean": {"numerator": 1, "denominator": 20}
+      }
+    },
+    "language_guard": {
+      "must_catch": {"numerator": 7, "denominator": 10},
+      "may_block_clean": {"numerator": 2, "denominator": 10}
+    },
+    "repeat_run": {
+      "may_flip": {"numerator": 1, "denominator": 10}
+    },
+    "deterministic": "identical"
+  },
+  "lenses": {
+    "correctness": {"drift": "report-only", "languages": {}},
+    "security": {"drift": "report-only", "languages": {}},
+    "testing": {"drift": "report-only", "languages": {}},
+    "architecture-maintainability": {"drift": "report-only", "languages": {}}
+  },
+  "thresholds": []
+}
