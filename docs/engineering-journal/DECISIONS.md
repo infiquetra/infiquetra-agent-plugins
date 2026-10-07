@@ -38,6 +38,15 @@ A candidate path is dropped, or for the copy and packet the launch is refused, w
 **Rejected alternatives.** Scanning the checkout when `git status` is clean. Falling back to the head profile when the base commit has none. Rewriting the relocated command against the checkout. Linking the checkout's dependency directories into the head worktree so a relative `.venv` keeps working. Recording a `package.json` `jscpd` key in this card. Extending `FINGERPRINT_COMPONENTS` with the gitleaks config.
 
 **Revisit when.** The card that runs this runner from the review command. That card has to start the installed plugin, or the plugin at the base commit.
+### The calibration file stores verdicts, and one saga function fingerprints the review
+
+**Decision.** Issue #149 (card C2 of the saga review redesign, parent #147). Five choices. "No run yet" is the identifier `no-run` on `corpus_run`; only `recorded` is a run, and any other spelling is a format error. `may-block` answers from the stored verdict, the drift line, the fingerprint and the profile pins. It does not compare the stored numbers with the pass marks. The component list committed here is ten repo-relative paths, written as string literals: C1's formula and record schema, C4a's five `FINGERPRINT_COMPONENTS`, and C8's prompt, answer schema and launch settings. The Semgrep pack is not hashed as a directory and is not committed. `review-tools.yaml` is on the list, so the sha256 already stored beside the pin is what a pack change moves. `review_calibration.py` imports only the standard library at module scope. It imports `review_tools` (and therefore PyYAML) only inside the pin comparison, and it passes that call the tool list under the root being asked about. `scripts/check_repo.py` imports the module inside the check function and does not import PyYAML.
+
+**Rationale.** A typo in the run flag must not disable the gate. Recomputing clearance in saga would be a second copy of the marks and could disagree with the harness. C4a and C8 landed first, and C4a's text search fails if this file exists without those five paths. The Semgrep Rules License forbids shipping the pack. The repository check has to stay runnable where PyYAML is not installed, and an overridden root has to be compared with that root's defaults.
+
+**Rejected alternatives.** JSON `null`, or a missing key, meaning no run. Recomputing the marks in `may-block`. Fingerprinting only C1's two paths. Importing C4a's tuple so the path strings are not in this file. Hashing the operator's Semgrep cache. A top-level `import yaml`. Calling `load_tool_list` with no path.
+
+**Revisit when.** The Semgrep rules license allows shipping the pack, or a real Langfuse run id or Jev model version falls outside the identifier pattern.
 
 ### The review tool list is the check map, and the runner does not copy a checkout
 

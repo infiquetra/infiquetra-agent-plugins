@@ -200,6 +200,10 @@ the parent environment, plus a fresh `HOME` and a fresh temp directory on `TMPDI
 `.venv/bin/pytest` is resolved only when that path exists in the head worktree, so a dependency
 directory that exists only in the checkout is not used.
 
+`may-block` (`plugins/saga/scripts/review_calibration.py`) reads `review_tools.pins`. A version or
+a rule set other than the default makes the lenses that tool serves report only. An absent block
+stays valid, and an absent `pins` key is no difference.
+
 The remaining nine parameters come from elsewhere and are not the profile's business:
 `staffing_models_and_efforts` from the staffing component in fleet-core; `applicable_lenses` and
 `per_lens_score_threshold` from the lens catalogue; and `standard_cycle_allowance`,

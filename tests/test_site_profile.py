@@ -1101,7 +1101,12 @@ class MutationProofBindingTest(unittest.TestCase):
         changes a graded file's bytes. Counting that as a kill made every
         mutation a kill by construction -- see the cycle-12 proof's header.
 
-        The document is cycle 24. Cycle 23 remains the proof of the bytes
+        The document is cycle 25. Cycle 24 remains the proof of the bytes
+        before issue #149 added ``check_review_calibration`` to
+        ``scripts/check_repo.py``; cycle 25 re-grades only that guard (seven
+        mutations, seven killed) and carries the other four digests.
+
+        Cycle 24's account follows. Cycle 23 remains the proof of the bytes
         before the client assessment dropped Gemini CLI on 2026-10-04 (Agy
         replaced it); cycle 24 re-grades only the roster choice in
         ``scripts/check_compatibility_matrix.py`` and the plan roster in
@@ -1144,7 +1149,7 @@ class MutationProofBindingTest(unittest.TestCase):
         """
         root = self.EVIDENCE.parent.parent
         recorded = self._recorded(
-            "2026-10-04-cycle24-mutation-proof-client-roster-by-date.txt"
+            "2026-10-07-cycle25-mutation-proof-review-calibration.txt"
         )
         self.assertEqual(set(recorded), set(self.GRADED), recorded)
         for relative in self.GRADED:

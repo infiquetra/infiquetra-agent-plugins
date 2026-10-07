@@ -4,6 +4,11 @@
 
 ### Added
 
+- Issue 149: `references/review-calibration.json` records that no corpus run exists yet, so every
+  lens reports only. `scripts/review_calibration.py may-block` prints whether a lens may block in
+  a language, from the stored verdicts. `scripts/check_repo.py` calls that module's fingerprint
+  check and, once a run is recorded, fails naming the component that changed.
+
 - Issue 156: `scripts/sweep_pieces.py` cuts one piece per changed function for `jev sweep`.
   `references/review-tools.yaml` gains a Universal Ctags row the review runner does not execute.
   `references/model-prices.yaml` prices TypeSafe input. The fleet bundle includes `jev_sweep`.

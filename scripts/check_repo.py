@@ -1235,6 +1235,21 @@ def check_codex_packaging_manifest(root: Path) -> list[str]:
     return check_codex_packaging(root)
 
 
+def check_review_calibration(root: Path) -> list[str]:
+    """The calibration file's format, and its fingerprint once a corpus run is recorded.
+
+    The import is local, matching the generated-artifact checks above: the saga
+    module stays out of this file's module scope, and this file stays on the
+    standard library. PyYAML is not imported here.
+    """
+    scripts_dir = str(Path(__file__).resolve().parents[1] / "plugins" / "saga" / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import review_calibration  # noqa: PLC0415  (local by design)
+
+    return review_calibration.check(root)
+
+
 def check_repo(root: Path) -> list[str]:
     return [
         *check_required_paths(root),
@@ -1251,6 +1266,7 @@ def check_repo(root: Path) -> list[str]:
         *check_secret_free_values(root),
         *check_machine_specific_paths(root),
         *check_claude_module_sources(root),
+        *check_review_calibration(root),
     ]
 
 
