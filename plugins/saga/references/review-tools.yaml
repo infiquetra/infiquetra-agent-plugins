@@ -169,7 +169,7 @@ tools:
     lens: testing
     purpose: One head coverage report matched to the diff. Not a second tool run.
     install: The test command writes the report. This card does not install a coverage tool.
-    default_version: "not-recorded"
+    default_version: "7.16.2"
     version_args: []
     timeout_seconds: 120
     platforms: []
@@ -220,3 +220,314 @@ tools:
     rules: []
     env_dirs: []
     lockfiles: []
+  - id: bandit
+    tool: bandit
+    languages: [python]
+    lens: security
+    purpose: Python security findings on changed lines. HIGH blocks. MEDIUM and LOW are fix later.
+    install: Install bandit on the operator machine. This card does not install it.
+    default_version: "1.9.4"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    comparison: lines
+    mode: report
+    curated_block_rules: []
+  - id: pip-audit
+    tool: pip-audit
+    languages: [python]
+    lens: security
+    purpose: Requirement-file advisories with no score. Compared base against head. No live run.
+    install: Install pip-audit on the operator machine. This card does not install it.
+    default_version: "2.10.1"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    comparison: base-head
+    mode: report
+    curated_block_rules: []
+  - id: mypy
+    tool: mypy
+    languages: [python]
+    lens: correctness
+    purpose: Type checker over the whole project, base against head, using the base configuration.
+    install: Install mypy on the operator machine. This card does not install it.
+    default_version: "2.1.0"
+    version_args: ["--version"]
+    timeout_seconds: 600
+    comparison: base-head
+    type_checker: true
+    mode: report
+    curated_block_rules: []
+  - id: ruff-lint
+    tool: ruff
+    languages: [python]
+    lens: correctness
+    purpose: All ruff rules, isolated, with noqa ignored. The family map sets the level.
+    install: Install ruff on the operator machine. This card does not install it.
+    default_version: "0.15.18"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    comparison: lines
+    mode: report
+    family_map:
+      F: error
+      B: error
+      S: error
+      C4: warning
+      UP: warning
+      SIM: warning
+      RUF: warning
+      E: style
+      W: style
+      N: style
+      I: style
+    curated_block_rules: []
+  - id: ruff-format
+    tool: ruff
+    languages: [python]
+    lens: correctness
+    purpose: Formatter. The review runner does not start it.
+    install: Install ruff on the operator machine. This card does not install it.
+    default_version: "0.15.18"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    comparison: lines
+    mode: fix
+    curated_block_rules: []
+  - id: vulture
+    tool: vulture
+    languages: [python]
+    lens: architecture-maintainability
+    purpose: Unused code on changed lines. Always a note.
+    install: Install vulture on the operator machine. This card does not install it.
+    default_version: "2.16"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    comparison: lines
+    mode: report
+    curated_block_rules: []
+  - id: import-linter
+    tool: lint-imports
+    languages: [python]
+    lens: architecture-maintainability
+    purpose: Import contracts from the base commit, compared base against head.
+    install: Install import-linter on the operator machine. This card does not install it.
+    default_version: "2.15"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    comparison: base-head
+    mode: report
+    curated_block_rules: []
+  - id: cosmic-ray
+    tool: cosmic-ray
+    languages: [python]
+    lens: testing
+    purpose: Mutants on changed lines, inside the review cap. The test command uses the allow-list.
+    install: The adapter loads cosmic-ray for one invocation. This card does not install it.
+    default_version: "8.7.0"
+    version_args: ["--version"]
+    timeout_seconds: 900
+    comparison: lines
+    mutation: true
+    narrow_env: true
+    mode: report
+    curated_block_rules: []
+  - id: pytest-randomly
+    tool: pytest-randomly
+    languages: [python]
+    lens: testing
+    purpose: A failure under random order is fix later. The run uses the allow-list.
+    install: The adapter loads pytest-randomly for one invocation. This card does not install it.
+    default_version: "5.0.0"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    comparison: lines
+    narrow_env: true
+    mode: report
+    curated_block_rules: []
+  - id: pytest-socket
+    tool: pytest-socket
+    languages: [python]
+    lens: testing
+    purpose: A failure with sockets disabled is fix later. The run uses the allow-list.
+    install: The adapter loads pytest-socket for one invocation. This card does not install it.
+    default_version: "0.8.1"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    comparison: lines
+    narrow_env: true
+    mode: report
+    curated_block_rules: []
+  - id: cdk-nag
+    tool: cdk-nag
+    languages: [cloudformation]
+    lens: security
+    purpose: cdk-nag on synthesized templates. A missing report is a degraded input.
+    install: Install the CDK CLI to synthesize. This card does not install cdk-nag.
+    default_version: "3.0.2"
+    version_args: ["--version"]
+    timeout_seconds: 300
+    comparison: base-head
+    narrow_env: true
+    mode: report
+    curated_block_rules: []
+  - id: checkov-cdk
+    tool: checkov
+    languages: [cloudformation]
+    lens: security
+    purpose: Checkov on synthesized templates. A curated rule blocks. The synth uses the allow-list.
+    install: Install checkov on the operator machine. This card does not install it.
+    default_version: "3.3.25"
+    version_args: ["--version"]
+    timeout_seconds: 300
+    comparison: base-head
+    narrow_env: true
+    mode: report
+    curated_block_rules:
+      - CKV_AWS_62
+      - CKV_AWS_63
+      - CKV_AWS_356
+      - CKV_AWS_20
+      - CKV_AWS_53
+      - CKV_AWS_54
+      - CKV_AWS_55
+      - CKV_AWS_56
+      - CKV_AWS_57
+      - CKV_AWS_70
+  - id: checkov-cfn
+    tool: checkov
+    languages: [cloudformation]
+    lens: security
+    purpose: Checkov on hand-written templates, on changed lines. The same curated list.
+    install: Install checkov on the operator machine. This card does not install it.
+    default_version: "3.3.25"
+    version_args: ["--version"]
+    timeout_seconds: 300
+    comparison: lines
+    mode: report
+    curated_block_rules:
+      - CKV_AWS_62
+      - CKV_AWS_63
+      - CKV_AWS_356
+      - CKV_AWS_20
+      - CKV_AWS_53
+      - CKV_AWS_54
+      - CKV_AWS_55
+      - CKV_AWS_56
+      - CKV_AWS_57
+      - CKV_AWS_70
+  - id: cfn-lint
+    tool: cfn-lint
+    languages: [cloudformation]
+    lens: correctness
+    purpose: CloudFormation lint on changed lines. E, W, and I follow the tool level.
+    install: Install cfn-lint on the operator machine. This card does not install it.
+    default_version: "1.57.2"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    comparison: lines
+    mode: report
+    curated_block_rules: []
+  - id: shellcheck
+    tool: shellcheck
+    languages: [shell]
+    lens: correctness
+    purpose: ShellCheck on a copy with disable directives removed, and without an rc file.
+    install: Install ShellCheck on the operator machine. This card does not install it.
+    default_version: "0.11.0"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    comparison: lines
+    mode: report
+    curated_block_rules: []
+  - id: shfmt
+    tool: shfmt
+    languages: [shell]
+    lens: correctness
+    purpose: Formatter. The review runner does not start it.
+    install: Install shfmt on the operator machine. This card does not install it.
+    default_version: "3.14.1"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    comparison: lines
+    mode: fix
+    curated_block_rules: []
+  - id: zizmor
+    tool: zizmor
+    languages: [github-workflows]
+    lens: security
+    purpose: Offline workflow audit. No GitHub token. High blocks. Medium and low are fix later.
+    install: Install zizmor on the operator machine. This card does not install it.
+    default_version: "1.30.1"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    comparison: lines
+    narrow_env: true
+    mode: report
+    curated_block_rules: []
+  - id: actionlint
+    tool: actionlint
+    languages: [github-workflows]
+    lens: correctness
+    purpose: Workflow checks. The kind map sets the level. Integrations that download are off.
+    install: Install actionlint on the operator machine. This card does not install it.
+    default_version: "1.7.12"
+    version_args: ["-version"]
+    timeout_seconds: 120
+    comparison: lines
+    mode: report
+    kind_map:
+      syntax-check: error
+      job-needs: error
+      events: error
+      workflow-call: error
+      glob: error
+      matrix: error
+      id: error
+      action: error
+      shell-name: error
+      env-var: error
+      runner-label: error
+      permissions: warning
+      credentials: warning  # actionlint kind, not a stored login
+      shellcheck: warning
+      pyflakes: warning
+      expression: warning
+      if-cond: warning
+      deprecated-commands: style
+    curated_block_rules: []
+  - id: markdownlint-cli2
+    tool: markdownlint-cli2
+    languages: [markdown]
+    lens: correctness
+    purpose: Markdown lint. Always a note.
+    install: Install markdownlint-cli2 on the operator machine. This card does not install it.
+    default_version: "0.23.3"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    comparison: lines
+    mode: report
+    curated_block_rules: []
+  - id: lychee
+    tool: lychee
+    languages: [markdown]
+    lens: architecture-maintainability
+    purpose: A broken link is fix later. Recorded output only, because lychee uses the network. The report has no line, so the link set is compared base against head.
+    install: Install lychee on the operator machine. This card does not install it.
+    default_version: "0.24.2"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    comparison: base-head
+    mode: report
+    curated_block_rules: []
+  - id: cspell
+    tool: cspell
+    languages: [markdown]
+    lens: architecture-maintainability
+    purpose: Unknown words are notes. The dictionary comes from the base commit.
+    install: Install cspell on the operator machine. This card does not install it.
+    default_version: "10.3.6"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    comparison: lines
+    mode: report
+    curated_block_rules: []

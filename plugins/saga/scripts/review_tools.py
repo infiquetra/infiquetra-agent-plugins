@@ -49,6 +49,11 @@ FINGERPRINT_COMPONENTS = (
     "plugins/saga/scripts/coverage_lines.py",
     "plugins/saga/scripts/review_adapters_all_languages.py",
     "plugins/saga/references/review-tools.yaml",
+    "plugins/saga/scripts/review_adapters_python.py",
+    "plugins/saga/scripts/review_adapters_infrastructure.py",
+    "plugins/saga/scripts/review_adapters_shell.py",
+    "plugins/saga/scripts/review_adapters_workflows.py",
+    "plugins/saga/scripts/review_adapters_markdown.py",
 )
 _VERSION = re.compile(r"\d+\.\d+(?:\.\d+)?")
 _SHA = re.compile(r"^[0-9a-f]{64}$")
@@ -81,6 +86,10 @@ _COMMENT_MARKERS = (
     ("gitleaks:allow", "security", "gitleaks", "gitleaks-allow"),
     ("jscpd:ignore", "architecture-maintainability", "jscpd", "jscpd-ignore"),
     ("lizard forgives", "architecture-maintainability", "lizard", "lizard-forgives"),
+    ("noqa", "correctness", "ruff", "ruff-noqa"),
+    ("ruff: ignore", "correctness", "ruff", "ruff-ignore"),
+    ("nosec", "security", "bandit", "bandit-nosec"),
+    ("shellcheck disable", "correctness", "shellcheck", "shellcheck-disable"),
 )
 
 Process = Callable[..., "ProcessResult"]
@@ -124,6 +133,8 @@ class ScanContext:
     home: Path
     configs: tuple[Path, ...] = ()
     report_dir: Path | None = None
+    base: str = ""
+    test_command: str = ""
 
 
 @dataclass(frozen=True)
@@ -185,6 +196,8 @@ class Adapter:
     curated_rules: tuple[str, ...] = ()
     level_map: tuple[tuple[str, str], ...] = ()
     rules: tuple[RulePin, ...] = ()
+    version_argv: tuple[str, ...] = ()
+    narrow_env: bool = False
 
 
 def load_tool_list(path: Path | None = None) -> list[dict[str, Any]]:
@@ -200,10 +213,22 @@ def load_tool_list(path: Path | None = None) -> list[dict[str, Any]]:
 
 
 def default_adapters() -> list[Adapter]:
-    """The every-language adapters. Imported here so loading the tool list starts nothing."""
-    import review_adapters_all_languages as adapters
+    """Every adapter. Imported here so loading the tool list starts nothing."""
+    import review_adapters_all_languages as every
+    import review_adapters_infrastructure as infrastructure
+    import review_adapters_markdown as markdown
+    import review_adapters_python as python_adapters
+    import review_adapters_shell as shell
+    import review_adapters_workflows as workflows
 
-    return list(adapters.ADAPTERS)
+    return [
+        *every.ADAPTERS,
+        *python_adapters.ADAPTERS,
+        *infrastructure.ADAPTERS,
+        *shell.ADAPTERS,
+        *workflows.ADAPTERS,
+        *markdown.ADAPTERS,
+    ]
 
 
 def language_for(path: str) -> str:
@@ -424,7 +449,14 @@ def _run_adapter(
         if adapter.mutation:
             timeout = max(1, min(timeout, int(deadline - time.monotonic())))
         ran = version or adapter.default_version
-        context = ScanContext(head_root, head_root, home, configs)
+        context = ScanContext(
+            head_root,
+            head_root,
+            home,
+            configs,
+            base=base_sha,
+            test_command=_python_test_command(profile),
+        )
         comparison = "base-head" if adapter.type_checker else adapter.comparison
         if comparison == "base-head":
             hits, digests = _base_and_head(
@@ -480,7 +512,11 @@ def _once(
         degraded.append(_degraded(adapter, _primary_row(adapter), problem))
         return (), {}
     assert result is not None
-    parsed, failure = _parsed(adapter, result, label)
+    try:
+        parsed, failure = _parsed(adapter, result, label)
+    except ToolGap as exc:
+        degraded.append(_degraded(adapter, exc.row, exc.reason))
+        return (), {}
     if parsed is not None:
         _note_problems(adapter, parsed, degraded)
     if failure is not None:
@@ -625,13 +661,21 @@ def _execute(
 ) -> tuple[ProcessResult | None, str | None]:
     if isinstance(argv, str) or not isinstance(argv, list):
         raise RunnerFailure(1, f"{adapter.id}: invoke returned a string command")
+    run_env: Mapping[str, str] = env
+    temps: list[Path] = []
+    if adapter.narrow_env:
+        run_env, temps = _relocated_env()
     try:
-        result = process(argv, cwd=cwd, env=env, timeout=timeout, shell=False)
-    except FileNotFoundError:
-        return None, "missing"
-    except subprocess.TimeoutExpired:
-        return None, "timeout"
-    return result, None
+        try:
+            result = process(argv, cwd=cwd, env=run_env, timeout=timeout, shell=False)
+        except FileNotFoundError:
+            return None, "missing"
+        except subprocess.TimeoutExpired:
+            return None, "timeout"
+        return result, None
+    finally:
+        for path in temps:
+            shutil.rmtree(path, ignore_errors=True)
 
 
 def _parsed(
@@ -647,6 +691,8 @@ def _parsed(
         return None, "unparseable"
     try:
         produced = adapter.parse(text)
+    except ToolGap:
+        raise
     except (ValueError, json.JSONDecodeError):
         if label == "base" and result.code != 0:
             return None, "base-deps-missing"
@@ -669,9 +715,14 @@ def _read_version(
         return pinned, None
     probe = Path(tempfile.mkdtemp(prefix="saga-version-"))
     try:
+        probe_argv = (
+            list(adapter.version_argv)
+            if adapter.version_argv
+            else [adapter.tool, *adapter.version_args]
+        )
         try:
             result = process(
-                [adapter.tool, *adapter.version_args],
+                probe_argv,
                 cwd=probe, env=env, timeout=adapter.timeout_seconds, shell=False,
             )
         except FileNotFoundError:
@@ -753,6 +804,20 @@ def _rules_digest(rules: Sequence[RulePin]) -> str:
         {"pack": rule.pack, "path": rule.path, "sha256": rule.sha256} for rule in rules
     ]
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def _python_test_command(profile: Mapping[str, Any]) -> str:
+    """The Python test command from the base profile, or the functional command."""
+    languages = profile.get("languages") or {}
+    python = languages.get("python") if isinstance(languages, Mapping) else None
+    if isinstance(python, Mapping):
+        command = python.get("test_command")
+        if isinstance(command, str) and command.strip():
+            return command
+    command = profile.get("test_command")
+    if isinstance(command, str) and command.strip():
+        return command
+    return ""
 
 
 def _pinned_version(adapter: Adapter, profile: Mapping[str, Any]) -> str:

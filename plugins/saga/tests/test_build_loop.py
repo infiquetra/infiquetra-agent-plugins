@@ -168,7 +168,12 @@ def test_the_python_baseline_runs_and_records_each_result_with_its_catalogue_che
     assert build_loop.main(["--record", str(path), "--unit", "U1"], runner=runner) == 0
 
     baseline = _block(path)["iterations"][0]["baseline"]
-    assert [entry["catalogue_check"] for entry in baseline] == [None, None, None, None]
+    assert [entry["catalogue_check"] for entry in baseline] == [
+        "ruff-format,ruff-lint",
+        "ruff-format,ruff-lint",
+        "mypy",
+        None,
+    ]
     assert {entry["status"] for entry in baseline} == {"pass"}
     # Every command reached the runner, not merely the first.
     assert sum(1 for call in runner.calls if call[:1] != ["git"]) == 4
@@ -579,7 +584,7 @@ def test_the_dry_run_prints_the_checks_and_whether_a_preview_is_declared(
     assert build_loop.main(["--record", str(record_file), "--dry-run"], runner=FakeRunner()) == 0
     out = capsys.readouterr().out
     assert "uv run ruff check ." in out
-    assert "answers: no catalogue check (repository-specific entry)" in out
+    assert "answers: ruff-format,ruff-lint" in out
     assert "branch preview: none declared" in out
     assert "none prescribed in the run record" in out
 
@@ -587,7 +592,7 @@ def test_the_dry_run_prints_the_checks_and_whether_a_preview_is_declared(
 def test_the_dry_run_names_every_uncovered_review_tool(
     record_file: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The gap is the review-tool list, and bandit is not a catalogue check."""
+    """The gap is the review-tool list. This baseline does not run bandit."""
     assert build_loop.main(["--record", str(record_file), "--dry-run"], runner=FakeRunner()) == 0
     out = capsys.readouterr().out
     for uncovered in (
@@ -597,9 +602,9 @@ def test_the_dry_run_names_every_uncovered_review_tool(
         "osv-scanner",
         "jscpd",
         "lizard",
+        "bandit",
     ):
         assert uncovered in out
-    assert "bandit" not in out
     assert "Named scanners" not in out
     section = out.split("Review tools this baseline does not name:", 1)[1]
     section = section.split("Child-scoped functional checks", 1)[0]
