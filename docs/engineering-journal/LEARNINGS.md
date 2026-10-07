@@ -2,6 +2,14 @@
 
 ## 2026-10-06
 
+### A gap on one side of a comparison is an empty set
+
+**Evidence.** Issue #151 repair. `plugins/saga/scripts/review_tools.py` `_base_and_head` treats a base `ToolGap` as no findings and still scans head. `_identity` and the adapter loop turn `FormulaError` into exit 2. Tests: `test_a_base_npm_gap_still_scans_a_lockfile_added_at_head`, `test_an_unknown_tool_level_or_lens_is_a_refusal`.
+
+**Mechanism.** osv-scanner declines an npm-only tree. That decline used to return before the head worktree existed, so a lockfile the change added was never scanned and the run reported only `known-gap`. The same boundary let an unknown tool level raise `FormulaError` past the refusal handler, which the command line reports as exit 1.
+
+**Generalizable rule.** A missing side of a base-against-head comparison is an empty set of findings, and a documented refusal has to be the exception type the process boundary already catches.
+
 ### Herdr names a Muse session `maki`
 
 **Evidence.** On 6 October 2026 two agent-launcher launches of Muse Code 1.4.3 for issue #147 stopped

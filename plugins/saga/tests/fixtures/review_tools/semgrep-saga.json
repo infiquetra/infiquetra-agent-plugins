@@ -1,0 +1,15 @@
+{
+  "results": [
+    {
+      "check_id": "saga.swallowed-error",
+      "path": "src/app.py",
+      "start": {"line": 4},
+      "end": {"line": 4},
+      "extra": {
+        "severity": "ERROR",
+        "message": "An error is swallowed.",
+        "metadata": {"row": "correctness.pattern.swallowed-error"}
+      }
+    }
+  ]
+}

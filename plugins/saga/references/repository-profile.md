@@ -156,6 +156,41 @@ how to test against it. When the operator answers, the write-back removes both l
 `branch_preview_command` is still read by the build loop's legacy per-unit preview for records
 admitted before issue #97; see `plugins/saga/references/mechanical-baseline.md`.
 
+### `review_tools`
+
+Optional. An absent block is valid: the runner uses the defaults in
+`plugins/saga/references/review-tools.yaml`, and when `review_tools.languages` is absent it runs
+`functional_test_environment.test_command` once, with language `none`.
+
+```json
+"review_tools": {
+  "languages": {
+    "python": {
+      "test_command": "python3 -m pytest plugins/*/tests -q --import-mode=importlib",
+      "coverage_report": "coverage.json"
+    }
+  },
+  "pins": {
+    "semgrep": {
+      "version": "1.0.0",
+      "rules": [{"pack": "p/security-audit", "sha256": "<64 hex characters>"}]
+    }
+  }
+}
+```
+
+`languages` keys are formula languages. `test_command` and `coverage_report` are strings. `pins`
+are keyed by the binary name in the tool list (`tool`), so one semgrep pin covers every semgrep
+row. A version-only pin overrides that version and keeps the yaml rules. A `rules` list replaces
+the yaml rules for that binary; it does not merge. A pack rule needs a 64-character hex `sha256`.
+A path rule may omit it. The sha256 is the digest of the cached pack. The value in the yaml today
+is a placeholder, because the rule pack is not shipped in this repository.
+
+A malformed block exits 2 before any tool runs. That includes a non-string version, a rules entry
+without `pack` or `path`, a sha256 that is not 64 hex characters, an unknown tool, a language the
+formula does not know, or a test command or coverage report that is not a string. This
+repository's `.saga-profile.json` does not carry the block yet.
+
 The remaining nine parameters come from elsewhere and are not the profile's business:
 `staffing_models_and_efforts` from the staffing component in fleet-core; `applicable_lenses` and
 `per_lens_score_threshold` from the lens catalogue; and `standard_cycle_allowance`,

@@ -4,6 +4,14 @@
 
 ### Added
 
+- Issue 151: `scripts/review_tools.py` writes findings for what a change introduces, from a
+  repository, two commits, a profile and an output directory. It does not read a run record. Line
+  findings stay on the diff; a whole-project result stays only when it is new at head; a missing
+  tool is a degraded input. `references/review-tools.yaml` is the list `build_loop.py` classifies
+  baseline commands from. The profile's `mechanical_tool_baseline` still decides whether the
+  iteration is green. Semgrep runs with metrics off, from a local rule cache. The runner is inert
+  until a later card calls it.
+
 - Issue 163: plan review in one pass. `scripts/plan_review.py` stores the reviewer's findings as
   C1 finding records in the run record (`record`), records the author's answer to each (`answer`:
   fixed with the plan section changed, rejected with a reason), and gates on every finding answered
@@ -30,6 +38,8 @@
   stays.
 
 ### Fixed
+
+- Issue 151: an unknown tool level or lens is exit 2. A base tree the adapter declines to scan is an empty baseline, so head is still compared. A relocated command that is refused removes the work directories already created. A head payload that does not parse is reason `unparseable`.
 
 - Issue 144: `/work` §5.3 no longer tells the worker to re-run `/code-review` while "capturing a
   fresh `REVIEWED_SHA`". A stale branch goes back through the Phase 3.3 combined-branch loop, and

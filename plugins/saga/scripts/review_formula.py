@@ -184,6 +184,19 @@ ROWS: Mapping[str, Row] = _rows(
     Row("correctness.workflow-dead-end", "correctness", "blocks"),
     Row("correctness.ci-matrix-fails", "correctness", "blocks"),
     Row("correctness.dispute", "correctness", "fix-later", merge_confirmation=True),
+    *(
+        Row(f"{lens}.{suffix}", lens, outcome)
+        for lens in LENSES
+        for suffix, outcome in (
+            ("tool-error", "blocks"),
+            ("tool-warning", "fix-later"),
+            ("tool-style", "note"),
+            ("tool-curated", "blocks"),
+            ("tool-unscoped", "fix-later"),
+        )
+    ),
+    Row("security.dependency-medium-low", "security", "fix-later"),
+    Row("security.workflow-infra-medium-low", "security", "fix-later"),
     # Judged findings, any lens
     Row("judged.harm-reproduced", None, "blocks"),
     Row("judged.harm-traced", None, "fix-later"),
@@ -194,6 +207,121 @@ ROWS: Mapping[str, Row] = _rows(
 
 #: The keys the formula computes on a finding; a finding handed in carrying one is refused.
 COMPUTED_FINDING_KEYS: tuple[str, ...] = ("severity", "severity_basis", "flags", "enforced")
+
+#: Item 6 levels. Information uses the style row. No level is unscoped, or curated when listed.
+_TOOL_LEVEL_ROWS: Mapping[str, str] = {
+    "error": "tool-error",
+    "warning": "tool-warning",
+    "style": "tool-style",
+    "info": "tool-style",
+    "information": "tool-style",
+}
+
+
+def tool_row(lens: str, level: str | None, rule_id: str, curated: Sequence[str]) -> str:
+    """The row for a tool finding the lens tables do not name.
+
+    ``level`` is ``error``, ``warning``, ``style``, ``info``, or none. A missing level is
+    ``tool-unscoped`` (fix later) unless ``rule_id`` is in ``curated``, which blocks and which no
+    builder reason excuses.
+    """
+    if lens not in LENSES:
+        raise FormulaError(f"lens: {lens!r} is not a lens")
+    if level in (None, "", "none"):
+        suffix = "tool-curated" if rule_id in curated else "tool-unscoped"
+    else:
+        suffix = _TOOL_LEVEL_ROWS.get(level)
+        if suffix is None:
+            raise FormulaError(f"level: {level!r} is not a tool level")
+    return f"{lens}.{suffix}"
+
+
+def dependency_row(score: float | None) -> str:
+    """CVSS v3 bands. ``None`` is no score and blocks. ``0.0`` is a score, not a missing one."""
+    if score is None:
+        return "security.dependency-high"
+    if float(score) >= 7.0:
+        return "security.dependency-high"
+    return "security.dependency-medium-low"
+
+
+def workflow_row(level: str) -> str:
+    """The same bands, on the workflow and infrastructure words."""
+    word = level.lower()
+    if word in {"critical", "high"}:
+        return "security.workflow-infra-high"
+    if word in {"medium", "low", "none"}:
+        return "security.workflow-infra-medium-low"
+    raise FormulaError(f"level: {level!r} is not a workflow severity")
+
+
+def merge_advisories(hits: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse raw hits whose advisory id or alias sets intersect.
+
+    Each hit carries ``advisory_ids``, ``tool``, ``score`` (or none) and ``row``. The kept hit is
+    the one with a score, and the highest score when several have one. Its ``canonical_id`` is that
+    hit's lexicographically first advisory id, or the first id of the union when none is scored.
+    The validated finding gains no extra field: the caller copies ``canonical_id`` into ``rule.ref``.
+    """
+    indexed = [dict(hit) for hit in hits]
+    parent = list(range(len(indexed)))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        roots = (find(left), find(right))
+        if roots[0] != roots[1]:
+            parent[roots[1]] = roots[0]
+
+    id_sets = [set(hit.get("advisory_ids") or ()) for hit in indexed]
+    for left in range(len(indexed)):
+        if not id_sets[left]:
+            continue
+        for right in range(left + 1, len(indexed)):
+            if id_sets[left] & id_sets[right]:
+                union(left, right)
+    groups: dict[int, list[int]] = {}
+    for index in range(len(indexed)):
+        groups.setdefault(find(index), []).append(index)
+
+    merged: list[dict[str, Any]] = []
+    for members in groups.values():
+        kept_index = _scored_hit(indexed, members)
+        kept = dict(indexed[kept_index])
+        union_ids = sorted({item for index in members for item in id_sets[index]})
+        if indexed[kept_index].get("score") is not None:
+            scored_ids = sorted(id_sets[kept_index])
+            kept["canonical_id"] = scored_ids[0] if scored_ids else (union_ids[0] if union_ids else "")
+        else:
+            kept["canonical_id"] = union_ids[0] if union_ids else ""
+        kept["advisory_ids"] = union_ids
+        merged.append(kept)
+    return merged
+
+
+def _scored_hit(hits: Sequence[Mapping[str, Any]], members: Sequence[int]) -> int:
+    """The scored hit, or the highest score. Unscored hits lose to any score, including zero."""
+    scored = [index for index in members if hits[index].get("score") is not None]
+    pool = list(scored) if scored else list(members)
+
+    def better(challenger: int, incumbent: int) -> bool:
+        challenger_score = hits[challenger].get("score")
+        incumbent_score = hits[incumbent].get("score")
+        left = float(challenger_score) if challenger_score is not None else -1.0
+        right = float(incumbent_score) if incumbent_score is not None else -1.0
+        if left != right:
+            return left > right
+        return str(hits[challenger].get("tool") or "") < str(hits[incumbent].get("tool") or "")
+
+    best = pool[0]
+    for index in pool[1:]:
+        if better(index, best):
+            best = index
+    return best
 
 
 def consequence_group(consequence: str) -> int:
