@@ -1283,6 +1283,7 @@ def _adapter(
     lens: str,
     rows: tuple[str, ...],
     narrow: bool = False,
+    ambient: bool = False,
 ) -> Adapter:
     return Adapter(
         id=check,
@@ -1297,6 +1298,7 @@ def _adapter(
         default_version=VERSION,
         version_argv=(sys.executable, _script(), "--version"),
         narrow_env=narrow,
+        ambient_env=ambient,
     )
 
 
@@ -1305,18 +1307,21 @@ ADAPTERS: tuple[Adapter, ...] = (
         "two-runs", _invoke_two_runs, comparison="lines", lens="testing",
         rows=(ROW_BEFORE,), narrow=True,
     ),
-    _adapter("ci-skips", _invoke_ci, comparison="lines", lens="testing", rows=(ROW_SKIPPED,)),
+    _adapter(
+        "ci-skips", _invoke_ci, comparison="lines", lens="testing",
+        rows=(ROW_SKIPPED,), ambient=True,
+    ),
     _adapter(
         "machine-values", _invoke_machine, comparison="lines",
-        lens="architecture-maintainability", rows=(ROW_MACHINE,),
+        lens="architecture-maintainability", rows=(ROW_MACHINE,), ambient=True,
     ),
     _adapter(
         "changed-names", _invoke_names, comparison="lines", lens="correctness",
-        rows=(ROW_MENTION, ROW_DOCUMENT),
+        rows=(ROW_MENTION, ROW_DOCUMENT), ambient=True,
     ),
     _adapter(
         "workflow-graph", _invoke_workflow, comparison="base-head", lens="correctness",
-        rows=(ROW_DEAD,),
+        rows=(ROW_DEAD,), ambient=True,
     ),
 )
 

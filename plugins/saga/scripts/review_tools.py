@@ -321,6 +321,10 @@ class Adapter:
     rules: tuple[RulePin, ...] = ()
     version_argv: tuple[str, ...] = ()
     narrow_env: bool = False
+    #: Saga's own trusted scripts keep the operator's environment, so operator
+    #: configuration (``gh`` authentication) reaches the tools they call.
+    #: Narrow wins: an adapter that runs untrusted code stays narrowed.
+    ambient_env: bool = False
     #: Which stream ``parse`` reads: ``stdout``, ``stderr`` or ``both``.
     stream: str = "stdout"
     #: Machine report the tool writes under the scan root, read after the run.
@@ -1066,6 +1070,8 @@ def _execute(
     temps: list[Path] = []
     if adapter.narrow_env:
         run_env, temps = _relocated_env()
+    elif adapter.ambient_env:
+        run_env = dict(os.environ)
     if adapter.tool == "semgrep":
         # Semgrep phones home for a version check unless told not to; the scan
         # must stay off the network and never send the operator's token.
@@ -1157,7 +1163,14 @@ def _read_version(
             probe_argv = [
                 _resolve_tool(adapter, root, probe_argv[0]), *probe_argv[1:]
             ]
-        probe_env = env
+        # A probe executes the same tool binary as the scan, so by default it
+        # gets the narrowed run environment. The exceptions keep C4b's pinned
+        # contract: a narrow adapter's probe stays ambient while its scan is
+        # relocated, and saga's own trusted scripts stay ambient throughout.
+        if adapter.narrow_env or adapter.ambient_env:
+            probe_env = dict(os.environ)
+        else:
+            probe_env = env
         if adapter.tool == "semgrep":
             probe_env = {**probe_env, "SEMGREP_ENABLE_VERSION_CHECK": "0"}
         try:

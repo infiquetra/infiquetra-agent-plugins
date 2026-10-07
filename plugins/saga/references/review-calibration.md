@@ -54,6 +54,7 @@ The kinds on the list today:
 - The sweep: `sweep_pieces.py`, `model-prices.yaml`, and fleet-core's `jev_sweep.py` (C6).
 - The Python, CDK, shell, workflow, and Markdown adapters (C4b).
 - Our checks: the six saga pattern rules, listed as files (C5).
+- The TypeScript, Dart, Rust, and Swift adapters (C4c).
 - The scripted checks (issue 155): `scripts/review_checks.py`.
 
 Not on the list yet: question banks and the policy questions, and the review command. The scripted checks in `review_checks.py` are on the list. A card that adds a review component adds its paths in the same change.
@@ -73,6 +74,10 @@ plugins/saga/scripts/review_adapters_infrastructure.py
 plugins/saga/scripts/review_adapters_shell.py
 plugins/saga/scripts/review_adapters_workflows.py
 plugins/saga/scripts/review_adapters_markdown.py
+plugins/saga/scripts/review_adapters_typescript.py
+plugins/saga/scripts/review_adapters_dart.py
+plugins/saga/scripts/review_adapters_rust.py
+plugins/saga/scripts/review_adapters_swift.py
 plugins/saga/references/targeted-reviewer-prompt.md
 plugins/saga/references/targeted-reviewer-answer.schema.json
 plugins/saga/references/targeted-reviewer-launch.json
