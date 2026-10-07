@@ -10,7 +10,7 @@ its own: no role that repository does not name, no contract it does not define, 
 threshold. When this directory and that repository disagree, that repository is right and this
 directory is stale.
 
-Read from `infiquetra-sdlc` revision `e5a2be10`.
+Read from `infiquetra-sdlc` revision `f8d0994`.
 
 **One thing here is copied rather than referenced, and it is worth naming.** Each prompt lists the
 required field names of the contract it posts. Those names are the lifecycle's, transcribed — a
@@ -42,7 +42,7 @@ Frontmatter keys, all four required:
 |---|---|
 | `role` | The readable role name, spelled as the role catalogue at `infiquetra-sdlc` `docs/roles/run-roles.md` spells it — Title Case. The lifecycle disagrees with itself here: its run model spells eight of the fifteen in sentence case (`Initial implementation worker`), its role catalogue in Title Case (`Initial Implementation Worker`). The catalogue is the page a person reads, so these files follow it, and the test compares the two without regard to case |
 | `role_id` | The lifecycle's stable identifier for the role |
-| `emits` | A YAML **list** of the handoff contract identifiers this role produces. Always a list, never a bare string — the Planner produces two and the Delivery Manager five. The list is empty for a role whose result is aggregated into another role's contract rather than posted as its own; the Lens Reviewer is the only such role, and its prompt says where its result goes |
+| `emits` | A YAML **list** of the handoff contract identifiers this role produces. Always a list, never a bare string — the Planner produces two and the Delivery Manager five. The list is empty for a role whose result is aggregated into another role's contract rather than posted as its own; the Lens Reviewer and the Targeted Reviewer are the only such roles, and each prompt says where its result goes |
 | `source` | Where the content came from, so a reader can check it |
 
 Required sections, in this order and with these exact headings:
@@ -51,7 +51,7 @@ Required sections, in this order and with these exact headings:
 |---|---|
 | `## Role` | What the role is, what it may decide, and what it must never do |
 | `## Inputs from the run record` | The named inputs the session is given, and where each comes from |
-| `## Output contract` | The handoff comment the role posts, in the lifecycle's shape, naming each contract in `emits` by the name the lifecycle gives it and listing its required fields. One role posts nothing of its own — the Lens Reviewer, the only file with an empty `emits` — and its section says where its result goes instead |
+| `## Output contract` | The handoff comment the role posts, in the lifecycle's shape, naming each contract in `emits` by the name the lifecycle gives it and listing its required fields. Two roles post nothing of their own — the Lens Reviewer and the Targeted Reviewer, the only files with an empty `emits` — and each section says where its result goes instead |
 | `### Stop rule` | The condition on which this role stops working and hands off |
 
 `### Stop rule` is a level-three heading inside the output-contract section on purpose: the card that
@@ -65,7 +65,7 @@ heading here and the field there are the same idea under two names.
 ## The output contract, once
 
 Every role posts its result as a handoff comment on the issue record, in the shape
-`infiquetra-sdlc` `docs/process/run-contracts.md` fixes, at revision `e5a2be10`. The comment opens with a heading naming the contract:
+`infiquetra-sdlc` `docs/process/run-contracts.md` fixes, at revision `f8d0994`. The comment opens with a heading naming the contract:
 
 ```markdown
 ### Handoff: <contract name> (<contract-id>)
@@ -103,7 +103,7 @@ handoffs.
 
 ## Role to file map
 
-Fourteen roles, one file each. The lifecycle names fifteen; the Human Operator is a person, not a
+Fifteen roles, one file each. The lifecycle names sixteen; the Human Operator is a person, not a
 session, and gets no prompt.
 
 Two identifiers are historical and deliberately do not match their readable name — the Architect's
@@ -122,6 +122,7 @@ orchestrator.
 | Plan Reviewer | `plan_reviewer` | `plan-reviewer.md` |
 | Review Controller | `review_controller` | `review-controller.md` |
 | Lens Reviewer | `lens_reviewer` | `lens-reviewer.md` |
+| Targeted Reviewer | `targeted_reviewer` | `targeted-reviewer.md` |
 | Standard Repair Implementer | `standard_repair_implementer` | `standard-repair-implementer.md` |
 | Expert Repair Implementer | `expert_repair_implementer` | `expert-repair-implementer.md` |
 | Release Worker | `release_worker` | `release-worker.md` |

@@ -1,6 +1,6 @@
 {
   "schema": "roles_index.v1",
-  "sdlc_revision": "e5a2be10",
+  "sdlc_revision": "f8d0994",
   "roles": [
     {
       "role": "Architect",
@@ -66,6 +66,12 @@
       "role": "Lens Reviewer",
       "role_id": "lens_reviewer",
       "file": "lens-reviewer.md",
+      "emits": []
+    },
+    {
+      "role": "Targeted Reviewer",
+      "role_id": "targeted_reviewer",
+      "file": "targeted-reviewer.md",
       "emits": []
     },
     {
