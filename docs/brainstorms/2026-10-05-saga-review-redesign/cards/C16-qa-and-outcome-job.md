@@ -53,7 +53,10 @@ What changes (plan.md, Change 8 "After merge"; Change 9 "Who records outcomes, a
    issue yet. It files each through mission-control's command line, edits that comment to link it, and
    changes the finding's outcome from "left" to "filed" with the issue number, in the run record and
    in Langfuse.
-7. `/saga:setup` gains an optional machine step that installs the daily schedule, only on the
+7. Once a review run's findings all have an outcome, the job posts that run's addressed rate to its trace: the share
+   of its findings that were fixed or filed, against those dismissed or left. It is the live precision signal
+   ReviewBench reports as its addressed rate, and it never feeds a grade or a pass mark.
+8. `/saga:setup` gains an optional machine step that installs the daily schedule, only on the
    operator's approval, through the mechanism C3 provides for other cards' machine steps.
 
 Depends on C1 (saga: review records, validation and the A–F formula), C3 (saga: /saga:setup checks and
@@ -107,7 +110,9 @@ Test files sit in `plugins/saga/tests/`.
     run as found after merge; a revert is linked as reverted; each, and each `/qa` miss, is queued once;
   - a ticked box with no issue is filed, the final round's comment gains its link, and the finding's
     outcome changes from "left" to "filed" with the issue number; an unticked box
-    is left alone; a second pass changes nothing.
+    is left alone; a second pass changes nothing;
+  - a review run whose findings all have outcomes gets one addressed-rate score (fixed plus filed over all
+    findings); a run with an outcome still missing gets none; a run with no findings gets none.
 - `test_saga_setup.py`: the schedule step installs nothing without approval; with approval it writes the
   launchd file under a temporary home, and the file holds no key.
 - `test_entrypoints.py`: the new script answers `--help` with no credentials.
@@ -129,6 +134,8 @@ Test files sit in `plugins/saga/tests/`.
 - [ ] The job files each ticked, unfiled box through mission-control, links the issue in the final
       round's comment, records the finding's outcome as "filed" with the issue number, and files nothing
       twice.
+- [ ] Each review run whose findings all have outcomes carries one addressed-rate score on its trace, and no grade,
+      pass mark or calibration number reads it.
 - [ ] `/saga:setup` offers the daily schedule and installs it only on approval; once installed,
       `launchctl list` shows the job's label.
 - [ ] `python3 -m pytest plugins/saga/tests/test_outcome_job.py -q --import-mode=importlib` passes, and
