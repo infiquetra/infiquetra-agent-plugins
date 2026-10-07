@@ -13,6 +13,10 @@
 # names its entries as unpriced and never prices them at zero.
 #
 # Standard first-party rates only: no batch discount, no fast mode, no inference_geo multiplier.
+#
+# A row may carry its own source and verified_on when it was not read with the Claude table.
+# The table's verified_on stays the Claude date. cost_report prices a row from its five rates
+# either way. The TypeSafe row below was read from https://docs.typesafe.ai/models on 2026-10-07.
 
 schema: model_prices.v1
 verified_on: 2026-10-03
@@ -64,3 +68,16 @@ models:
       cache_write_1h: 20.00
       output: 50.00
     note: Claude Fable 5.1. Cache reads are 0.025 times input on this model.
+  jev-1.13.0:
+    vendor: typesafe
+    tier: jev
+    aliases: [jev-latest, jev]
+    source: https://docs.typesafe.ai/models
+    verified_on: 2026-10-07
+    usd_per_million:
+      uncached_input: 0.042
+      cache_read: 0
+      cache_write_5m: 0
+      cache_write_1h: 0
+      output: 0
+    note: Output is free. Read from the TypeSafe models page on 2026-10-07. Price every resolved Jev version from this row until the table grows.

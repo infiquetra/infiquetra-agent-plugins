@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib.util
 import re
 import sys
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -166,3 +167,29 @@ def test_the_tier_bands_match_the_verb() -> None:
     ):
         assert f"`{band}`" in section, f"the band {band!r} is not described in section 7"
     assert staffing.JUDGMENT_DECISION_PREFIX in section
+
+
+def test_the_sweep_caps_in_the_reference_match_the_module() -> None:
+    sweep = _load("jev_sweep_for_reference_drift", "jev_sweep.py")
+    assert sweep.ITEM_CAP == 30
+    assert sweep.SPEND_CAP_USD == Decimal("1")
+    assert sweep.PIECE_KINDS == ("function", "block", "file")
+    assert sweep.BLOCK_CONTEXT_LINES == 20
+    assert sweep.SMALL_FILE_MAX_LINES == 400
+    paragraph = DOC.split("### May be sent, after redaction", 1)[1].split("###", 1)[0]
+    assert "after redaction" in paragraph
+    for kind in sweep.PIECE_KINDS:
+        assert kind in paragraph
+    assert "20" in paragraph and "400" in paragraph
+    assert "30" in paragraph and "$1" in paragraph
+    assert "adversarial screening does not cover it" in DOC
+    assert "fails open to no items" in DOC
+
+
+def test_the_decision_journal_records_the_wider_data_rule() -> None:
+    journal = (REPO_ROOT / "docs/engineering-journal/DECISIONS.md").read_text(encoding="utf-8")
+    heading = "The Jev sweep may send a changed function, a changed block, or a small file"
+    assert heading in journal
+    body = journal.split(heading, 1)[1].split("\n## ", 1)[0]
+    for label in ("Decision", "Rationale", "Rejected alternatives", "Revisit"):
+        assert label in body

@@ -201,3 +201,22 @@ tools:
     rules: []
     env_dirs: []
     lockfiles: []
+  - id: universal-ctags
+    tool: ctags
+    languages: ["typescript", "dart", "rust", "swift", "shell"]
+    lens: correctness
+    purpose: Function spans for the Jev sweep. The review runner does not execute this row.
+    install: Install Universal Ctags on the operator machine. Exuberant Ctags does not qualify. This card does not install it.
+    default_version: "not-recorded"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []

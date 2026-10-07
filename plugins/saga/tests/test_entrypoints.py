@@ -28,6 +28,7 @@ INTERNAL = frozenset(
         "fleet_commons_shim",
         "intent_envelope",
         "jev_log",
+        "jev_sweep",
         "jev_verbs",
         "jev_widen",
         "merge_guard",
@@ -43,6 +44,10 @@ INTERNAL = frozenset(
 )
 
 CREDENTIAL_PREFIXES = ("TYPESAFE_", "GH_", "GITHUB_", "INFIQUETRA_")
+
+
+def test_entrypoint_internal_includes_jev_sweep() -> None:
+    assert "jev_sweep" in INTERNAL
 
 
 def _scripts() -> list[Path]:

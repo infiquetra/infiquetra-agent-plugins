@@ -58,6 +58,7 @@ def _load_sibling(name: str):
 typesafe_client = _load_sibling("typesafe_client")
 jev_eval = _load_sibling("jev_eval")
 jev_log = _load_sibling("jev_log")
+jev_sweep = _load_sibling("jev_sweep")
 jev_verbs = _load_sibling("jev_verbs")
 
 
@@ -177,6 +178,41 @@ def _run_eval(args: argparse.Namespace) -> int:
     return 0
 
 
+class _Usage(Exception):
+    """A sweep flag is missing, unreadable, or not the shape the command accepts."""
+
+
+def _read_json(path: str, label: str) -> object:
+    file = Path(path)
+    if not file.is_file():
+        raise _Usage(f"no such {label} file: {file}")
+    try:
+        raw = file.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise _Usage(f"{label} could not be read: {exc}") from exc
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise _Usage(f"{label} is not valid JSON: {exc}") from exc
+
+
+def _run_sweep(args: argparse.Namespace) -> int:
+    """Exit 0 when the classifier fails open. Exit 2 is a usage error, not ask's exit 1."""
+    try:
+        bank = _read_json(args.bank, "bank")
+        prepared = _read_json(args.pieces, "pieces")
+        thresholds = _read_json(args.thresholds, "thresholds")
+        rate = _read_json(args.rate, "rate")
+        result = jev_sweep.sweep(
+            bank, prepared, thresholds, rate, repo=args.repo, head=args.head,
+        )
+    except (_Usage, jev_sweep.SweepInputError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    _emit(result)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jev", description="Typed judgments from the TypeSafe System One endpoint."
@@ -209,6 +245,14 @@ def build_parser() -> argparse.ArgumentParser:
         _add_common(target)
         target.set_defaults(confidence_floor=verb.confidence_floor)
 
+    sweep = sub.add_parser("sweep", help="classify pieces into a where-to-look list")
+    sweep.add_argument("--bank", required=True, help="question bank JSON file")
+    sweep.add_argument("--pieces", required=True, help="piece list JSON file")
+    sweep.add_argument("--thresholds", required=True, help="threshold map JSON file")
+    sweep.add_argument("--rate", required=True, help="five-category rate JSON file")
+    sweep.add_argument("--repo", default="local", help="repository name recorded on each verdict")
+    sweep.add_argument("--head", default="unknown", help="head revision recorded on each verdict")
+
     evaluate = sub.add_parser("eval", help="score recorded answers against labels")
     evaluate.add_argument(
         "--cached", required=True, help="a recorded-answers file or a directory holding one"
@@ -226,6 +270,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.verb == "eval":
         return _run_eval(args)
+
+    if args.verb == "sweep":
+        return _run_sweep(args)
 
     if args.verb == "ask":
         try:

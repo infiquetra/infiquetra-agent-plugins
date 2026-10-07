@@ -13,6 +13,10 @@ The catalog requires `python>=3.12`.
 
 ### Added
 
+- Issue 156: `jev sweep` classifies pieces into a where-to-look list of at most 30 items and stops
+  at $1. A failed classifier returns no items, and the review continues. Saga's bundle includes
+  `jev_sweep`. The package version stays 0.33.0.
+
 - Issue 158: a `consequence` Jev verb, one choice over saga's eleven review consequences in the
   closed list's order (floor 0.60), which saga's targeted-reviewer check asks about each
   reproduced finding; and a `targeted-reviewer` staffing role at the `judgment` work shape with the

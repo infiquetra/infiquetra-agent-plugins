@@ -640,6 +640,30 @@ def test_the_shipped_table_prices_exactly_the_record_categories(cr: ModuleType) 
         assert row.rates is None or tuple(row.rates) == rr.TOKEN_CATEGORIES
 
 
+def test_the_shipped_table_prices_typesafe_input(cr: ModuleType) -> None:
+    table = cr.load_prices(SHIPPED_PRICES)
+    assert table.verified_on == SHIPPED_VERIFIED
+    row = cr.resolve_price(table, "typesafe", "jev-latest")
+    assert row is not None
+    assert row.model == "jev-1.13.0"
+    assert row.rates is not None
+    assert row.rates["uncached_input"] == Decimal("0.042")
+    assert row.rates["output"] == Decimal("0")
+    assert row.rates["cache_read"] == Decimal("0")
+    assert row.rates["cache_write_5m"] == Decimal("0")
+    assert row.rates["cache_write_1h"] == Decimal("0")
+    assert row.source == "https://docs.typesafe.ai/models"
+    assert row.verified_on == date(2026, 10, 7)
+
+
+def test_a_claude_row_without_its_own_date_still_loads(cr: ModuleType) -> None:
+    table = cr.load_prices(SHIPPED_PRICES)
+    opus = cr.resolve_price(table, "claude", "claude-opus-5-5")
+    assert opus is not None
+    assert opus.verified_on is None
+    assert opus.source == ""
+
+
 def test_json_output_carries_the_groups_and_the_staleness_fields(store: Path, prices: Path) -> None:
     _fixture(store)
     result = _run(store, prices, "--today", (VERIFIED + timedelta(days=32)).isoformat(), "--json")
