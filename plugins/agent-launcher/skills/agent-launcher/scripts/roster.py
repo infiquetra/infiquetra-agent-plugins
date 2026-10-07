@@ -87,10 +87,17 @@ STAFFING_ROLE_TO_ROLE_ID: dict[str, str] = {
     "lens-reviewer": "lens_reviewer",
     "functional-tester": "functional_tester",
     "release-worker": "release_worker",
+    "targeted-reviewer": "targeted_reviewer",
 }
 
 #: The staffing role whose seats are multiplied by the run's applicable lenses.
 LENS_ROLE = "lens-reviewer"
+
+#: Staffing roles planned one seat that ``up`` never opens as a pane: the targeted reviewer needs
+#: the review packet, which does not exist at roster time, so ``launcher.py review`` starts it
+#: headless later (issue #158). Such a seat occupies no pane and counts against no allocation.
+HEADLESS_ROLES = frozenset({"targeted-reviewer"})
+HEADLESS_START = "started by `launcher.py review` after the review packet exists"
 
 #: States a roster row moves through. ``down`` skips ``closed``.
 STATE_CREATED = "created"
@@ -364,6 +371,7 @@ class Seat:
     pane_name: str
     lens: str | None = None
     account: str | None = None
+    headless: bool = False
 
     @property
     def prompt_path(self) -> Path:
@@ -452,6 +460,7 @@ def plan_seats(
                     effort=effort,
                     pane_name=f"{prefix}{role}",
                     account=seat_account,
+                    headless=role in HEADLESS_ROLES,
                 )
             )
 
@@ -561,7 +570,8 @@ def _live_row(rows: Sequence[Mapping[str, Any]], pane_name: str) -> Mapping[str,
 
 def render_dry_run(seats: Sequence[Seat], record: Any, record_path: Path) -> str:
     """What ``up --dry-run`` prints: the panes, kinds, models, efforts and prompts (plan R2)."""
-    out = [f"roster: issue {record.issue} would create {len(seats)} pane(s); nothing was created."]
+    panes = sum(1 for seat in seats if not seat.headless)
+    out = [f"roster: issue {record.issue} would create {panes} pane(s); nothing was created."]
     for seat in seats:
         out.append("")
         out.append(f"pane   {seat.pane_name}")
@@ -571,6 +581,8 @@ def render_dry_run(seats: Sequence[Seat], record: Any, record_path: Path) -> str
         out.append(f"  role   {seat.role} ({seat.role_id})")
         if seat.lens:
             out.append(f"  lens   {seat.lens}")
+        if seat.headless:
+            out.append(f"  start  {HEADLESS_START}")
         out.append(f"  brief  {seat.prompt_path}")
         for line in dispatch_brief(seat, record, record_path).splitlines():
             out.append(f"    | {line}")
@@ -601,10 +613,11 @@ def up(
         out(render_dry_run(seats, record, record_path))
         return EXIT_OK
 
+    panes = [seat for seat in seats if not seat.headless]
     allocation = _parameter(record, "concurrency_allocation")
-    if isinstance(allocation, int) and len(seats) > allocation:
+    if isinstance(allocation, int) and len(panes) > allocation:
         raise RosterError(
-            f"roster: the staffing plan needs {len(seats)} panes but the run's concurrency "
+            f"roster: the staffing plan needs {len(panes)} panes but the run's concurrency "
             f"allocation is {allocation}; a role session is long-lived, so there is no later turn "
             "in which the rest would start"
         )
@@ -615,6 +628,9 @@ def up(
     failures = 0
 
     for seat in seats:
+        if seat.headless:
+            out(f"roster: {seat.pane_name} is headless; it is {HEADLESS_START}, not opened here")
+            continue
         existing = _live_row(rows, seat.pane_name)
         if existing is not None:
             out(

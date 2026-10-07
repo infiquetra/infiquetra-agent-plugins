@@ -189,6 +189,28 @@ def test_a_verb_carries_its_policy_text_in_one_place() -> None:
     assert tier["direction"]["instructions"]["policy"] == jev_verbs.TIER_POLICY
 
 
+def test_the_consequence_verb_offers_saga_s_closed_list_in_its_order() -> None:
+    """Issue #158: saga compares these keys with review_formula.CONSEQUENCES, in order."""
+    questions = jev_verbs.VERBS["consequence"].question_set()
+    assert list(questions) == ["consequence"]
+    question = questions["consequence"]
+    assert question["type"] == "choice"
+    assert list(question["criteria"]) == [
+        "data-lost-or-corrupted",
+        "money-or-resources-wrongly-moved",
+        "security-boundary-crossed",
+        "two-holders-of-one-exclusive-thing",
+        "wrong-result-reported-as-success",
+        "required-behaviour-missing",
+        "break-in-supported-use",
+        "fails-loudly-and-recoverably",
+        "misleads-a-person",
+        "costs-future-work",
+        "style",
+    ]
+    assert jev_verbs.VERBS["consequence"].confidence_floor == 0.6
+
+
 def test_issue_flags_covers_the_five_flags_and_the_seven_approval_boundaries() -> None:
     """The widen-only union (issue 1036) reads these keys by name, so pin the set."""
     questions = jev_verbs.VERBS["issue-flags"].question_set()

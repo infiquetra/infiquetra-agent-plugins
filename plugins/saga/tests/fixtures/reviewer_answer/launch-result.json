@@ -1,0 +1,45 @@
+{
+  "schema": "targeted_reviewer_launch.v1",
+  "vendor": "claude",
+  "vendor_version": "2.1.292 (Claude Code)",
+  "model": {
+    "requested": "opus",
+    "resolved": [
+      "example-model-1"
+    ]
+  },
+  "effort": "high",
+  "usage": {
+    "input_tokens": 120,
+    "output_tokens": 3400,
+    "cache_read_input_tokens": 50000,
+    "cache_creation_input_tokens": 14000,
+    "cost_usd": 0.42,
+    "seconds": 210.5,
+    "turns": 18,
+    "session_id": "00000000-0000-4000-8000-000000000000"
+  },
+  "prompt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "schema_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "configuration": {
+    "fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+    "sources": [
+      "user:CLAUDE.md",
+      "project:CLAUDE.md",
+      "plugin:saga@1.3.0"
+    ]
+  },
+  "scratch": {
+    "path": "example/reviews/repo-0123456789ab-x/copy",
+    "changes": {
+      "added": [
+        "tests/test_charge_retry.py"
+      ],
+      "modified": [],
+      "deleted": []
+    }
+  },
+  "answer_path": "example/out/answer.json",
+  "exit": 0,
+  "error": null
+}

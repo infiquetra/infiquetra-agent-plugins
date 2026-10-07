@@ -9,6 +9,21 @@
 **Mechanism.** osv-scanner declines an npm-only tree. That decline used to return before the head worktree existed, so a lockfile the change added was never scanned and the run reported only `known-gap`. The same boundary let an unknown tool level raise `FormulaError` past the refusal handler, which the command line reports as exit 1.
 
 **Generalizable rule.** A missing side of a base-against-head comparison is an empty set of findings, and a documented refusal has to be the exception type the process boundary already catches.
+### A sandbox's defaults are not its guarantees
+
+**Evidence.** Issue #158. Probes run on 2026-10-06 while planning and building the targeted reviewer: `claude -p` on Claude Code 2.1.292, with Haiku, under the settings in `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py` (`reviewer_claude_settings`), and `codex sandbox` from codex-cli 0.160.1 in `workspace-write` with no model. `launcher.py reviewer-probe --vendor claude` now repeats the Claude probe, judging each denial from the command's own exit codes and the filesystem.
+
+**Mechanism.** Under `--permission-mode dontAsk`, Bash was denied until an allow rule named it, even with `autoAllowBashIfSandboxed`. The sandbox sets `TMPDIR` to its own per-user directory under `/tmp`, which stays writable until a `denyWrite` names the root; `CLAUDE_CODE_TMPDIR` does not move it, and Python's `tempfile` then falls back to the working directory. Eleven variables with "token" in their names reached a sandboxed command until `sandbox.credentials.envVars` denied them. Codex's `workspace-write` sandbox read a file outside its workspace.
+
+**Generalizable rule.** Before relying on a sandbox, probe each denial you need from outside it, and judge by what the command did, never by what the model says it did.
+
+### In a Claude permission rule, one leading slash is not an absolute path
+
+**Evidence.** Issue #158's code review (a P2 on `reviewer_claude_settings` in `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`) asked for the packet rule `Read(//<packet>/**)` to lose a slash. Live runs on 2026-10-06, Claude Code 2.1.292 with Haiku, `--permission-mode dontAsk` and the reviewer's settings: a deny rule `Read(//<dir>/**)` stopped the Read tool reading a file in that directory, and `Read(/<dir>/**)` did not. With no allow rule for the directory at all, the Read tool still read the file. Paths in `sandbox.filesystem.denyRead`, spelled with `~` or absolute, were denied to both the Read tool and sandboxed Bash. After a session that wrote, edited and ran a test, the only thing Claude left under `.claude/` in its working directory was an empty `.cc-writes/` directory.
+
+**Mechanism.** In a Read or Edit permission rule, `//path` is absolute, `~/path` is under the home directory and `/path` is relative to the settings file. `Path.resolve()` already starts with `/`, so `f"Read(/{path}/**)"` is the absolute form, and dropping the slash makes a rule that matches nothing. Under `dontAsk`, reads outside the working directory are not gated by allow rules, so the deny lists carry the confinement.
+
+**Generalizable rule.** Check a permission rule's spelling with a deny rule and a live run. Deny rules show whether a path matches; allow rules can pass because nothing was gated.
 
 ### Herdr names a Muse session `maki`
 

@@ -13,6 +13,12 @@ The catalog requires `python>=3.12`.
 
 ### Added
 
+- Issue 158: a `consequence` Jev verb, one choice over saga's eleven review consequences in the
+  closed list's order (floor 0.60), which saga's targeted-reviewer check asks about each
+  reproduced finding; and a `targeted-reviewer` staffing role at the `judgment` work shape with the
+  `adversarial-review` capability. `typesafe.md` names the verb and its caller. The bundled copies
+  in mission-control and saga are regenerated.
+
 - `jev_log.record_invalidation` appends an `invalidation` record naming one verdict by hash
   (#111). The verdict log is append-only, so a verdict whose label turned out to be bogus is
   marked, never rewritten; the bundled copies in mission-control and saga are regenerated.

@@ -22,7 +22,8 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Sequence
+import unicodedata
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -2028,6 +2029,986 @@ def _request_from_args(args: argparse.Namespace) -> LaunchRequest:
     )
 
 
+# --------------------------------------------------------------------------- the targeted reviewer
+#
+# Issue #158. Saga's targeted reviewer runs headless, never in a Herdr pane: one session per
+# review, on a staffed vendor, with that vendor's normal configuration (instruction files, plugins,
+# hooks, the subscription sign-in), in a sandbox that keeps its commands to a scratch copy of the
+# head commit with no network and no credentials. ``launcher.py review`` starts it and returns its
+# answer and a result; ``launcher.py reviewer-probe`` runs the same recipe live and checks every
+# denial from outside the session. Orchestrate execs this file into its own namespace, so every
+# name below carries ``reviewer``.
+
+REVIEWER_RESULT_SCHEMA = "targeted_reviewer_launch.v1"
+REVIEWER_PROMPT_ID = "targeted-reviewer-prompt"
+REVIEWER_TIMEOUT_SECONDS = 3600
+REVIEWER_EXIT_REFUSED = 2
+REVIEWER_EXIT_NO_ANSWER = 3
+REVIEWER_EXIT_TIMEOUT = 124
+REVIEWER_DEFAULT_CAP = 5
+
+#: Every launcher vendor's flags that turn off instruction files, plugins, hooks or skills, or
+#: remove its sandbox or approvals, read from each vendor's own ``--help`` on 2026-10-06. No
+#: reviewer launch may pass one; a test keeps the keys equal to ``VENDOR_FLAGS``.
+REVIEWER_FORBIDDEN_FLAGS: dict[str, tuple[str, ...]] = {
+    "claude": (
+        "--bare", "--safe-mode", "--restricted", "--disable-slash-commands",
+        "--strict-mcp-config", "--setting-sources", "--dangerously-skip-permissions",
+        "bypassPermissions",
+    ),
+    "codex": (
+        "--ignore-user-config", "--ignore-rules", "--disable",
+        "--dangerously-bypass-approvals-and-sandbox",
+    ),
+    "grok": ("--always-approve", "--system-prompt-override", "bypassPermissions"),
+    "muse": (
+        "--disable-sandbox", "--no-foreign-personal-context", "--disable-reminders", "--yolo",
+        "never",
+    ),
+    "agy": ("--dangerously-skip-permissions", "--disable-slash-commands"),
+    "qwen": ("--bare", "--safe-mode", "--yolo"),
+    "opencode": ("--auto",),
+}
+
+#: Variables that make a vendor sign in with an API key instead of the subscription. The launch
+#: removes them from the session's environment.
+REVIEWER_API_KEY_VARIABLES = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_PROFILE",
+)
+REVIEWER_API_KEY_PREFIXES = ("CLAUDE_CODE_USE_",)
+
+#: A variable whose name looks like a credential is hidden from the reviewer's sandboxed commands.
+REVIEWER_CREDENTIAL_NAME = re.compile(
+    r"TOKEN|KEY|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|SESSION|COOKIE", re.IGNORECASE
+)
+#: Credential files and directories the reviewer's commands may not read.
+REVIEWER_CREDENTIAL_PATHS = (
+    "~/.ssh",
+    "~/.aws",
+    "~/.config/gh",
+    "~/.gnupg",
+    "~/.netrc",
+    "~/.docker/config.json",
+    "~/.kube",
+    "~/.config/gcloud",
+    "~/.azure",
+    "~/.claude/.credentials.json",
+    "~/.codex/auth.json",
+)
+#: Paths in the scratch copy that tools write and nobody edits: Python's temp-directory fallback
+#: (the sandbox denies the system temp roots, so ``tempfile`` falls back to the working directory),
+#: pytest's caches and compiled bytecode. They never count as a change. ``.claude/`` is not among
+#: them: Claude leaves only an empty ``.claude/.cc-writes/`` there (measured on 2.1.292), so a file
+#: under it is one the session wrote, and saga's check refuses it.
+REVIEWER_SCRATCH_IGNORED = re.compile(
+    r"^(pytest-of-[^/]+/|\.pytest_cache/|tmp[a-z0-9_]{8}/)|(^|/)__pycache__/|\.pyc$"
+)
+
+
+#: The change under review is untrusted. Claude acts on a project's ``.claude/`` directory (settings
+#: with hooks, ``apiKeyHelper`` and environment; rules; skills and agents, whose frontmatter can
+#: carry hooks) and its ``.mcp.json`` without a trust prompt in ``-p``, and hooks and MCP servers
+#: run outside the command sandbox. So every one of them, at any depth, is withheld from the copy.
+#: The operator's own user-level configuration is what "normal configuration" means, and it loads.
+REVIEWER_UNTRUSTED_DIRS = (".claude",)
+REVIEWER_UNTRUSTED_FILES = (".mcp.json",)
+#: Instruction files Claude loads from the working directory and, on demand, from subdirectories.
+REVIEWER_INSTRUCTION_NAMES = ("CLAUDE.md", "CLAUDE.local.md")
+def _reviewer_fold(name: str) -> str:
+    """A name as a forgiving file system may match it: compatibility-normalised and casefolded.
+
+    A case-insensitive file system loads ``.CLAUDE`` as ``.claude``; folding more than any file
+    system does only withholds more, never less.
+    """
+    return unicodedata.normalize("NFKC", name).casefold()
+
+
+_REVIEWER_UNTRUSTED_DIR_NAMES = frozenset(_reviewer_fold(n) for n in REVIEWER_UNTRUSTED_DIRS)
+_REVIEWER_UNTRUSTED_FILE_NAMES = frozenset(_reviewer_fold(n) for n in REVIEWER_UNTRUSTED_FILES)
+_REVIEWER_INSTRUCTION_NAMES = frozenset(_reviewer_fold(n) for n in REVIEWER_INSTRUCTION_NAMES)
+#: How deep Claude follows ``@`` imports.
+REVIEWER_IMPORT_DEPTH = 5
+#: A deliberately wider net than Claude's own import parser: any ``@`` followed by text up to ASCII
+#: whitespace, inside code spans or not, is treated as an import, so no import Claude follows can
+#: be missed. A token is safe only when it is a plain relative path: then every reading of it,
+#: whatever Claude's parser takes as its end, stays inside the copy.
+_REVIEWER_ANY_IMPORT = re.compile(r"@([^ \t\n\r\f\v]+)")
+_REVIEWER_IMPORT_TRAILING = "`'\")]}>.,;:!?*"
+_REVIEWER_RISKY_IMPORT = re.compile(r"\.\.|~|\$|%|\\|^/|[^\x21-\x7e]")
+
+
+class ReviewerRefused(Exception):
+    """A reviewer launch refused before any session started."""
+
+
+def reviewer_temp_roots(platform: str | None = None) -> tuple[str, ...]:
+    """The system temp roots the reviewer's commands may not write to."""
+    if (platform or sys.platform) == "darwin":
+        return ("/tmp", "/private/tmp", "/var/folders")
+    return ("/tmp", "/var/tmp")
+
+
+def reviewer_credential_variables(env: Mapping[str, str]) -> list[str]:
+    """The environment variables hidden from sandboxed commands, by name."""
+    return sorted(name for name in env if REVIEWER_CREDENTIAL_NAME.search(name))
+
+
+def reviewer_session_environment(env: Mapping[str, str]) -> dict[str, str]:
+    """The session's environment: everything, except what would sign in with an API key."""
+    return {
+        name: value
+        for name, value in env.items()
+        if name not in REVIEWER_API_KEY_VARIABLES
+        and not name.startswith(REVIEWER_API_KEY_PREFIXES)
+    }
+
+
+def reviewer_claude_argv(model: str, effort: str | None, settings_path: Path) -> list[str]:
+    """Claude's reviewer argv: headless, sandboxed through ``--settings``, JSON result."""
+    argv = ["claude", "-p", "--model", model]
+    if effort:
+        argv += ["--effort", effort]
+    return argv + [
+        "--permission-mode", "dontAsk",
+        "--settings", str(settings_path),
+        "--output-format", "json",
+        "--no-session-persistence",
+    ]
+
+
+def reviewer_claude_settings(
+    packet: Path,
+    env: Mapping[str, str],
+    *,
+    extra_deny_read: Sequence[str] = (),
+    platform: str | None = None,
+) -> dict[str, Any]:
+    """The per-launch settings that turn on Claude's command sandbox and confine the session.
+
+    Measured on Claude Code 2.1.292 on 2026-10-06: under ``dontAsk`` Bash is denied unless allowed,
+    even with ``autoAllowBashIfSandboxed``; the sandbox's own temp directory stays writable until a
+    ``denyWrite`` names its root; credential-named variables reach sandboxed commands until
+    ``credentials.envVars`` denies them. The settings set no ``apiKeyHelper``, plugins or hooks, so
+    the user's own configuration is what loads.
+    """
+    deny_read = list(REVIEWER_CREDENTIAL_PATHS) + list(extra_deny_read)
+    return {
+        "sandbox": {
+            "enabled": True,
+            "failIfUnavailable": True,
+            "autoAllowBashIfSandboxed": True,
+            "allowUnsandboxedCommands": False,
+            "filesystem": {
+                "denyWrite": list(reviewer_temp_roots(platform)),
+                "denyRead": deny_read,
+            },
+            "network": {"strictAllowlist": True, "allowedDomains": []},
+            "credentials": {
+                "envVars": [
+                    {"name": name, "mode": "deny"} for name in reviewer_credential_variables(env)
+                ]
+            },
+        },
+        "permissions": {
+            # ``//`` starts an absolute path in a permission rule; ``/`` is relative to the settings
+            # file. ``packet.resolve()`` begins with ``/``, so this reads ``Read(//<packet>/**)``.
+            "allow": ["Bash", "Edit(./**)", f"Read(/{packet.resolve()}/**)"],
+            "deny": ["WebFetch", "WebSearch", "mcp__*"] + [f"Read({path})" for path in deny_read],
+        },
+    }
+
+
+def reviewer_parse_claude_result(stdout: str) -> dict[str, Any]:
+    """Usage, resolved models and the final message from ``claude -p --output-format json``."""
+    try:
+        data = json.loads(stdout)
+    except (TypeError, ValueError):
+        return {"usage": None, "resolved": [], "final": None, "is_error": True,
+                "error": "the session printed no JSON result"}
+    if not isinstance(data, dict):
+        return {"usage": None, "resolved": [], "final": None, "is_error": True,
+                "error": "the session's result is not a JSON object"}
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    duration = data.get("duration_ms")
+    model_usage = data.get("modelUsage")
+    return {
+        "usage": {
+            "input_tokens": usage.get("input_tokens"),
+            "output_tokens": usage.get("output_tokens"),
+            "cache_read_input_tokens": usage.get("cache_read_input_tokens"),
+            "cache_creation_input_tokens": usage.get("cache_creation_input_tokens"),
+            "cost_usd": data.get("total_cost_usd"),
+            "seconds": duration / 1000 if isinstance(duration, (int, float)) else None,
+            "turns": data.get("num_turns"),
+            "session_id": data.get("session_id"),
+        },
+        "resolved": sorted(model_usage) if isinstance(model_usage, dict) else [],
+        "final": data.get("result") if isinstance(data.get("result"), str) else None,
+        "is_error": bool(data.get("is_error")),
+        "error": None if not data.get("is_error") else str(data.get("subtype") or "error"),
+    }
+
+
+def _reviewer_read(path: Path) -> bytes | None:
+    try:
+        return path.read_bytes() if path.is_file() else None
+    except OSError:
+        return None
+
+
+def _reviewer_inside(path: Path, copy: Path) -> bool:
+    try:
+        return path.resolve().is_relative_to(copy.resolve())
+    except (OSError, RuntimeError):
+        return False
+
+
+def _reviewer_risky_imports(content: bytes) -> list[str]:
+    """``@`` tokens that are not plain relative paths: each could name a file outside the copy."""
+    tokens = _REVIEWER_ANY_IMPORT.findall(content.decode("utf-8", "replace"))
+    return [token for token in tokens if _REVIEWER_RISKY_IMPORT.search(token)]
+
+
+def _reviewer_import_targets(content: bytes, parent: Path) -> list[tuple[str, Path]]:
+    """Every ``@`` token in *content* that could be an import, with the path it would name."""
+    found: list[tuple[str, Path]] = []
+    for raw in _REVIEWER_ANY_IMPORT.findall(content.decode("utf-8", "replace")):
+        token = raw.rstrip(_REVIEWER_IMPORT_TRAILING)
+        if not token:
+            continue
+        target = Path(token).expanduser() if token.startswith("~") else parent / token
+        found.append((token, target))
+    return found
+
+
+def _reviewer_imports_leave(start: Path, copy: Path) -> bool:
+    """Whether *start*'s possible imports, followed as Claude follows them, can leave *copy*."""
+    frontier, seen = [start], set()
+    for _ in range(REVIEWER_IMPORT_DEPTH + 1):
+        following: list[Path] = []
+        for path in frontier:
+            if path in seen:
+                continue
+            seen.add(path)
+            if path.is_symlink() and not _reviewer_inside(path, copy):
+                return True
+            content = _reviewer_read(path) if _reviewer_inside(path, copy) else None
+            if content is None:
+                continue
+            if _reviewer_risky_imports(content):
+                return True
+            for _token, target in _reviewer_import_targets(content, path.parent):
+                if not _reviewer_inside(target, copy):
+                    return True
+                following.append(target)
+        frontier = following
+    return False
+
+
+def reviewer_withhold_untrusted(copy: Path) -> list[str]:
+    """Remove what the reviewed change could use to run or read outside the sandbox.
+
+    Every ``.claude/`` directory and ``.mcp.json`` at any depth (Claude acts on them outside the
+    command sandbox), every symlink that leaves the copy, and every instruction file whose possible
+    ``@`` imports can leave the copy (Claude would load the imported file, a credential for example,
+    into the reviewer's context). Returns each withheld path with the reason; the reviewer still
+    sees them in the packet's diff.
+    """
+    withheld: list[str] = []
+
+    def drop(path: Path, why: str) -> None:
+        withheld.append(f"{path.relative_to(copy).as_posix()} ({why})")
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+    for path in sorted(copy.rglob("*")):
+        if not (path.exists() or path.is_symlink()):
+            continue  # inside a directory already withheld
+        name = _reviewer_fold(path.name)
+        if name in _REVIEWER_UNTRUSTED_DIR_NAMES and (path.is_dir() or path.is_symlink()):
+            drop(path, "Claude would act on it outside the sandbox")
+        elif name in _REVIEWER_UNTRUSTED_FILE_NAMES:
+            drop(path, "Claude would act on it outside the sandbox")
+        elif path.is_symlink() and not _reviewer_inside(path, copy):
+            drop(path, "a symlink out of the copy")
+    for path in sorted(copy.rglob("*")):
+        if _reviewer_fold(path.name) in _REVIEWER_INSTRUCTION_NAMES and path.is_file() and (
+            _reviewer_imports_leave(path, copy)
+        ):
+            drop(path, "it can import a file outside the copy")
+    return withheld
+
+
+def reviewer_claude_widening(env: Mapping[str, str]) -> list[str]:
+    """Settings outside the copy that would widen the reviewer's sandbox.
+
+    ``--settings`` overrides scalar keys, but list keys merge across levels, and managed settings
+    outrank it. So a user, local or managed setting that excludes commands from the sandbox, allows
+    a domain, a write or a read, adds a working directory, or turns the sandbox off would carry into
+    the session; the launch refuses rather than run a review it cannot confine.
+    """
+    home = Path(env.get("HOME") or Path.home())
+    base = Path(env["CLAUDE_CONFIG_DIR"]) if env.get("CLAUDE_CONFIG_DIR") else home / ".claude"
+    files = [
+        base / "settings.json",
+        base / "settings.local.json",
+        Path("/Library/Application Support/ClaudeCode/managed-settings.json"),
+        Path("/etc/claude-code/managed-settings.json"),
+    ]
+    problems: list[str] = []
+    for path in files:
+        if not path.exists():
+            continue
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            # Claude may read a file this strict parser cannot (comments, trailing commas); a
+            # setting unchecked could widen the sandbox, so an unreadable file refuses the launch.
+            problems.append(f"{path} cannot be read as JSON to check it")
+            continue
+        if not isinstance(loaded, dict):
+            problems.append(f"{path} is not a JSON object")
+            continue
+        sandbox = loaded.get("sandbox") if isinstance(loaded.get("sandbox"), dict) else {}
+        network = sandbox.get("network") if isinstance(sandbox.get("network"), dict) else {}
+        filesystem = (
+            sandbox.get("filesystem") if isinstance(sandbox.get("filesystem"), dict) else {}
+        )
+        permissions = (
+            loaded.get("permissions") if isinstance(loaded.get("permissions"), dict) else {}
+        )
+        widening = {
+            "sandbox.excludedCommands": sandbox.get("excludedCommands"),
+            "sandbox.network.allowedDomains": network.get("allowedDomains"),
+            "sandbox.filesystem.allowWrite": filesystem.get("allowWrite"),
+            "sandbox.filesystem.allowRead": filesystem.get("allowRead"),
+            "permissions.additionalDirectories": permissions.get("additionalDirectories"),
+        }
+        for key, value in widening.items():
+            if value:
+                problems.append(f"{path.name} sets {key}")
+        if sandbox.get("enabled") is False and "managed" in path.name:
+            problems.append(f"{path.name} turns the sandbox off")
+        if filesystem.get("disabled") is True:
+            problems.append(f"{path.name} sets sandbox.filesystem.disabled")
+    return problems
+
+
+def reviewer_claude_config_sources(
+    copy: Path, env: Mapping[str, str]
+) -> list[tuple[str, bytes | None]]:
+    """What Claude's normal configuration loads, as ``(label, content)`` pairs.
+
+    The user's and the project's instruction files, each file they import with ``@path`` one level
+    deep, and the enabled plugins with their installed versions. A missing file is recorded as
+    absent, so creating one changes the fingerprint. Labels never carry an absolute path.
+    """
+    home = Path(env.get("HOME") or Path.home())
+    base = Path(env["CLAUDE_CONFIG_DIR"]) if env.get("CLAUDE_CONFIG_DIR") else home / ".claude"
+    files = [
+        ("user:CLAUDE.md", base / "CLAUDE.md"),
+        ("project:CLAUDE.md", copy / "CLAUDE.md"),
+    ] + [
+        (f"project:{path.relative_to(copy).as_posix()}", path)
+        for path in sorted(copy.rglob("*"))
+        if _reviewer_fold(path.name) in _REVIEWER_INSTRUCTION_NAMES and path != copy / "CLAUDE.md"
+    ]
+    sources: list[tuple[str, bytes | None]] = []
+    for label, path in files:
+        content = _reviewer_read(path)
+        sources.append((label, content))
+        if content is None:
+            continue
+        for token, target in sorted(set(_reviewer_import_targets(content, path.parent))):
+            if label.startswith("project:") and not _reviewer_inside(target, copy):
+                # Never read a file the reviewed change points at outside the copy.
+                sources.append((f"import:{label}:{token}", b"outside the copy"))
+                continue
+            sources.append((f"import:{label}:{token}", _reviewer_read(target)))
+
+    enabled: set[str] = set()
+    for settings in (base / "settings.json", copy / ".claude" / "settings.json"):
+        try:
+            loaded = json.loads(settings.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        plugins = loaded.get("enabledPlugins") if isinstance(loaded, dict) else None
+        if isinstance(plugins, dict):
+            enabled |= {str(name) for name, on in plugins.items() if on is True}
+    try:
+        installed = json.loads((base / "plugins" / "installed_plugins.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        installed = {}
+    entries = installed.get("plugins", {}) if isinstance(installed, dict) else {}
+    for name in sorted(enabled):
+        rows = entries.get(name) if isinstance(entries, dict) else None
+        versions = sorted(
+            f"{row.get('version')}@{row.get('gitCommitSha') or ''}"
+            for row in (rows or [])
+            if isinstance(row, dict)
+        )
+        sources.append((f"plugin:{name}", ",".join(versions).encode("utf-8")))
+    return sources
+
+
+def reviewer_configuration_fingerprint(
+    sources: Sequence[tuple[str, bytes | None]],
+) -> dict[str, Any]:
+    """SHA-256 over the sorted ``(label, content digest)`` pairs, and the labels that went in."""
+    pairs = sorted(
+        (label, hashlib.sha256(content).hexdigest() if content is not None else "absent")
+        for label, content in sources
+    )
+    digest = hashlib.sha256(json.dumps(pairs, separators=(",", ":")).encode("utf-8"))
+    return {"fingerprint": digest.hexdigest(), "sources": [label for label, _ in pairs]}
+
+
+@dataclass(frozen=True)
+class ReviewerRecipe:
+    """How one vendor runs the targeted reviewer: argv, sandbox settings, result, configuration."""
+
+    binary: str
+    argv: Any
+    settings: Any
+    parse: Any
+    config_sources: Any
+
+
+#: The vendors with a reviewer recipe. A vendor joins only when ``reviewer-probe`` passes on it;
+#: every other vendor is refused by name (plan KTD2: codex-cli 0.160.1's workspace-write sandbox
+#: read a file outside its workspace on 2026-10-06).
+REVIEWER_RECIPES: dict[str, ReviewerRecipe] = {
+    "claude": ReviewerRecipe(
+        binary="claude",
+        argv=reviewer_claude_argv,
+        settings=reviewer_claude_settings,
+        parse=reviewer_parse_claude_result,
+        config_sources=reviewer_claude_config_sources,
+    ),
+}
+
+
+def reviewer_recipe(vendor: str) -> ReviewerRecipe:
+    recipe = REVIEWER_RECIPES.get(vendor)
+    if recipe is None:
+        raise ReviewerRefused(
+            f"{vendor} has no reviewer sandbox recipe that denies writes outside the copy, network "
+            "and credential reads; it cannot staff the targeted reviewer"
+        )
+    return recipe
+
+
+def reviewer_work_root(env: Mapping[str, str], platform: str | None = None) -> Path:
+    """Where scratch copies live: outside every temp root the sandbox denies."""
+    cache = env.get("XDG_CACHE_HOME") or str(Path(env.get("HOME") or Path.home()) / ".cache")
+    root = Path(cache).expanduser() / "agent-launcher" / "reviews"
+    for temp in reviewer_temp_roots(platform):
+        if any(
+            str(path) == temp or str(path).startswith(temp.rstrip("/") + "/")
+            for path in (root, root.resolve())
+        ):
+            raise ReviewerRefused(
+                f"the scratch copy would sit under {temp}, which the reviewer's sandbox denies"
+            )
+    return root
+
+
+def _reviewer_manifest(copy: Path) -> dict[str, str]:
+    """Each file's SHA-256, and each symlink as ``link:<target>``, never followed."""
+    manifest: dict[str, str] = {}
+    for path in sorted(copy.rglob("*")):
+        relative = path.relative_to(copy).as_posix()
+        if path.is_symlink():
+            manifest[relative] = f"link:{os.readlink(path)}"
+        elif path.is_file():
+            manifest[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return manifest
+
+
+def _reviewer_safe_path(copy: Path, relative: str) -> Path:
+    parts = Path(relative).parts
+    if (
+        not parts
+        or Path(relative).is_absolute()
+        or any(p in ("..", "") or _reviewer_fold(p) == ".git" for p in parts)
+    ):
+        raise ReviewerRefused(f"the head names an unsafe path {relative!r}")
+    return copy.joinpath(*parts)
+
+
+def _reviewer_writable_at(copy: Path, target: Path, relative: str) -> None:
+    """Refuse a write whose directory leaves the copy or passes through a symlink."""
+    ancestor = target.parent
+    while ancestor != copy:
+        if ancestor.is_symlink():
+            raise ReviewerRefused(f"the head writes {relative!r} through a symlink")
+        ancestor = ancestor.parent
+    if not _reviewer_inside(target.parent, copy):
+        raise ReviewerRefused(f"the head writes {relative!r} outside the copy")
+
+
+def reviewer_export_head(repo: Path, head: str, copy: Path) -> dict[str, str]:
+    """Write *head*'s tracked files into *copy* from git's object store, with no ``.git``.
+
+    Read with ``ls-tree`` and ``cat-file`` rather than ``git archive``, so the change's own
+    ``.gitattributes`` (``export-ignore``, ``export-subst``) cannot make the copy differ from the
+    head. Every path is checked, regular files are written before symlinks, and submodules are
+    left out. Returns the copy's manifest.
+    """
+    resolved = run(
+        ["git", "-C", str(repo), "rev-parse", "--verify", f"{head}^{{commit}}"],
+        check=False, timeout=30,
+    )
+    if resolved.returncode != 0:
+        raise ReviewerRefused(f"{head} is not a commit in {repo}")
+    commit = resolved.stdout.strip()
+    listing = subprocess.run(
+        ["git", "-C", str(repo), "ls-tree", "-r", "-z", "--full-tree", commit],
+        capture_output=True, timeout=120, check=False,
+    )
+    if listing.returncode != 0:
+        raise ReviewerRefused(f"git ls-tree failed: {listing.stderr.decode(errors='replace')}")
+    entries: list[tuple[str, str, str]] = []
+    for record in listing.stdout.split(b"\0"):
+        if not record:
+            continue
+        meta, _, name = record.partition(b"\t")
+        mode, kind, sha = meta.decode().split()
+        if kind == "blob":
+            entries.append((mode, sha, name.decode("utf-8", "surrogateescape")))
+    batch = subprocess.run(
+        ["git", "-C", str(repo), "cat-file", "--batch"],
+        input="".join(f"{sha}\n" for _, sha, _ in entries).encode(),
+        capture_output=True, timeout=300, check=False,
+    )
+    if batch.returncode != 0:
+        raise ReviewerRefused(f"git cat-file failed: {batch.stderr.decode(errors='replace')}")
+    blobs: list[bytes] = []
+    stream, offset = batch.stdout, 0
+    for _ in entries:
+        newline = stream.index(b"\n", offset)
+        size = int(stream[offset:newline].split()[2])
+        blobs.append(stream[newline + 1 : newline + 1 + size])
+        offset = newline + 1 + size + 1
+    folded: dict[str, str] = {}
+    for _mode, _sha, relative in entries:
+        for depth in range(1, len(Path(relative).parts) + 1):
+            prefix = "/".join(Path(relative).parts[:depth])
+            seen = folded.setdefault(_reviewer_fold(prefix), prefix)
+            if seen != prefix:
+                # On a case-insensitive file system the two would land on one path.
+                raise ReviewerRefused(
+                    f"the head names {seen!r} and {prefix!r}, which differ only by case"
+                )
+    copy.mkdir(parents=True)
+    links: list[tuple[Path, bytes]] = []
+    for (mode, _sha, relative), data in zip(entries, blobs, strict=True):
+        target = _reviewer_safe_path(copy, relative)
+        if mode == "120000":
+            links.append((target, data))
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _reviewer_writable_at(copy, target, relative)
+        target.write_bytes(data)
+        if mode == "100755":
+            target.chmod(0o755)
+    for target, data in links:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _reviewer_writable_at(copy, target, target.relative_to(copy).as_posix())
+        os.symlink(data.decode("utf-8", "surrogateescape"), target)
+    return _reviewer_manifest(copy)
+
+
+def reviewer_scratch_changes(copy: Path, manifest: Mapping[str, str]) -> dict[str, list[str]]:
+    """The files added, modified and deleted in the copy since the export, minus tool clutter."""
+    now = _reviewer_manifest(copy)
+
+    def is_link(path: str) -> bool:
+        return now.get(path, "").startswith("link:")
+
+    # Clutter is ignored only where it is new: a tracked file at a clutter-looking path that the
+    # session modified or deleted is a change like any other.
+    return {
+        "added": sorted(
+            p for p in now
+            if p not in manifest and not is_link(p) and not REVIEWER_SCRATCH_IGNORED.search(p)
+        ),
+        "modified": sorted(
+            p for p in now if p in manifest and now[p] != manifest[p] and not is_link(p)
+        ),
+        "deleted": sorted(p for p in manifest if p not in now),
+        # A symlink the session made or changed is never a reproduction test: reading it later,
+        # outside the sandbox, could read whatever it points at.
+        "links": sorted(
+            p for p in now
+            if now[p].startswith("link:") and manifest.get(p) != now[p]
+        ),
+    }
+
+
+def _reviewer_front_matter(text: str) -> dict[str, str]:
+    if not text.startswith("---\n"):
+        return {}
+    head = text[4:].split("\n---", 1)[0]
+    pairs = (line.split(":", 1) for line in head.splitlines() if ":" in line)
+    return {key.strip(): value.strip() for key, value in pairs}
+
+
+def _reviewer_body(text: str) -> str:
+    if text.startswith("---\n") and "\n---" in text[4:]:
+        return text[4:].split("\n---", 1)[1].lstrip("-").lstrip("\n")
+    return text
+
+
+def reviewer_wrapper_path() -> Path:
+    """The roles library's wrapper, beside this script's package root."""
+    source = Path(reviewer_wrapper_path.__code__.co_filename).resolve()
+    return source.parents[3] / "roles" / "targeted-reviewer.md"
+
+
+def reviewer_launch_message(
+    wrapper: str, prompt: str, packet: Path, copy: Path, cap: int,
+    withheld: Sequence[str] = (),
+) -> str:
+    """What the session reads on standard input: the wrapper, saga's prompt, where things are."""
+    note = (
+        "\nWithheld from the scratch copy, because they would run or read outside the sandbox; "
+        "the packet's change still shows them:\n"
+        + "".join(f"- `{item}`\n" for item in withheld)
+        if withheld else ""
+    )
+    return (
+        f"{_reviewer_body(wrapper).rstrip()}\n\n"
+        "---\n\n"
+        f"{_reviewer_body(prompt).rstrip()}\n\n"
+        "---\n\n"
+        "# This review\n\n"
+        f"- The review packet: `{packet.resolve()}`\n"
+        f"- The scratch copy, your working directory: `{copy.resolve()}`\n"
+        f"- The open search's cap on findings: {cap}\n"
+        f"{note}\n"
+        "Your final message is the answer JSON and nothing else.\n"
+    )
+
+
+def reviewer_extract_answer(final: str | None) -> tuple[Any, str | None]:
+    """The answer in the final message, unwrapping one code fence; or why there is none."""
+    if not final or not final.strip():
+        return None, "the session gave no final message"
+    text = final.strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*\n(.*)\n```", text, re.DOTALL)
+    if fenced:
+        text = fenced.group(1)
+    try:
+        answer = json.loads(text)
+    except ValueError:
+        return None, "the final message is not JSON"
+    if not isinstance(answer, dict):
+        return None, "the final message is not a JSON object"
+    return answer, None
+
+
+def reviewer_run_session(
+    argv: list[str], *, stdin: str, cwd: Path, env: Mapping[str, str], timeout: float
+) -> subprocess.CompletedProcess[str]:
+    """Run the session; a timeout comes back as exit 124, never an exception."""
+    try:
+        return subprocess.run(
+            argv, input=stdin, cwd=str(cwd), env=dict(env), capture_output=True, text=True,
+            timeout=timeout, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(argv, REVIEWER_EXIT_TIMEOUT, "", "timed out")
+    except OSError as exc:
+        return subprocess.CompletedProcess(argv, 127, "", str(exc))
+
+
+def _reviewer_vendor_version(binary: str, env: Mapping[str, str]) -> str | None:
+    try:
+        proc = subprocess.run(
+            [binary, "--version"], capture_output=True, text=True, timeout=20, env=dict(env),
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return proc.stdout.strip() or None if proc.returncode == 0 else None
+
+
+@dataclass
+class ReviewerRequest:
+    """One targeted-reviewer launch."""
+
+    vendor: str
+    model: str
+    effort: str
+    repo: Path
+    head: str
+    packet: Path
+    prompt: Path
+    schema: Path
+    out: Path
+    open_search_cap: int = REVIEWER_DEFAULT_CAP
+    timeout: float = REVIEWER_TIMEOUT_SECONDS
+    work_root: Path | None = None
+
+
+def reviewer_launch(
+    request: ReviewerRequest,
+    *,
+    env: Mapping[str, str] | None = None,
+    session: Any = reviewer_run_session,
+) -> tuple[dict[str, Any], int]:
+    """Start the targeted reviewer headless and return ``(result, exit code)``.
+
+    Refusals (``ReviewerRefused``) happen before anything is created: a vendor with no recipe, a
+    prompt that is not saga's, a missing packet or schema, or a head that is not a commit.
+    """
+    environ = dict(os.environ if env is None else env)
+    recipe = reviewer_recipe(request.vendor)
+    try:
+        prompt_bytes = request.prompt.read_bytes()
+    except OSError as exc:
+        raise ReviewerRefused(f"cannot read the prompt {request.prompt}: {exc}") from None
+    prompt_text = prompt_bytes.decode("utf-8")
+    if _reviewer_front_matter(prompt_text).get("id") != REVIEWER_PROMPT_ID:
+        raise ReviewerRefused(f"{request.prompt} is not saga's {REVIEWER_PROMPT_ID}")
+    if not request.schema.is_file():
+        raise ReviewerRefused(f"the answer schema {request.schema} does not exist")
+    if not request.packet.is_dir():
+        raise ReviewerRefused(f"the review packet {request.packet} is not a directory")
+    wrapper = reviewer_wrapper_path()
+    if not wrapper.is_file():
+        raise ReviewerRefused(f"the roles library's wrapper {wrapper} is missing")
+    widening = reviewer_claude_widening(environ) if request.vendor == "claude" else []
+    if widening:
+        raise ReviewerRefused(
+            "settings outside the copy would widen the reviewer's sandbox: " + "; ".join(widening)
+        )
+
+    root = (request.work_root or reviewer_work_root(environ)) / (
+        f"{request.repo.resolve().name}-{request.head[:12]}-{os.urandom(4).hex()}"
+    )
+    copy = root / "copy"
+    reviewer_export_head(request.repo, request.head, copy)
+    withheld = reviewer_withhold_untrusted(copy)
+    manifest = _reviewer_manifest(copy)
+    session_env = reviewer_session_environment(environ)
+    settings_path = root / "settings.json"
+    settings_path.write_text(
+        json.dumps(recipe.settings(request.packet, session_env), indent=2) + "\n", "utf-8"
+    )
+    configuration = reviewer_configuration_fingerprint(recipe.config_sources(copy, session_env))
+    message = reviewer_launch_message(
+        wrapper.read_text(encoding="utf-8"), prompt_text, request.packet, copy,
+        request.open_search_cap, withheld,
+    )
+    argv = recipe.argv(request.model, request.effort, settings_path)
+    proc = session(argv, stdin=message, cwd=copy, env=session_env, timeout=request.timeout)
+    parsed = recipe.parse(proc.stdout)
+    answer, missing = reviewer_extract_answer(parsed["final"])
+
+    request.out.mkdir(parents=True, exist_ok=True)
+    answer_path = request.out / "answer.json"
+    if answer is not None:
+        answer_path.write_text(json.dumps(answer, indent=2, ensure_ascii=False) + "\n", "utf-8")
+    if proc.returncode == REVIEWER_EXIT_TIMEOUT:
+        code, error = REVIEWER_EXIT_TIMEOUT, "the session timed out"
+    elif answer is None:
+        code, error = REVIEWER_EXIT_NO_ANSWER, parsed.get("error") or missing
+    else:
+        code, error = 0, parsed.get("error")
+    result = {
+        "schema": REVIEWER_RESULT_SCHEMA,
+        "vendor": request.vendor,
+        "vendor_version": _reviewer_vendor_version(recipe.binary, session_env),
+        "model": {"requested": request.model, "resolved": parsed["resolved"]},
+        "effort": request.effort,
+        "usage": parsed["usage"],
+        "prompt_sha256": hashlib.sha256(prompt_bytes).hexdigest(),
+        "schema_sha256": hashlib.sha256(request.schema.read_bytes()).hexdigest(),
+        "configuration": configuration,
+        "scratch": {
+            "path": str(copy),
+            "withheld": withheld,
+            "changes": reviewer_scratch_changes(copy, manifest),
+        },
+        "answer_path": str(answer_path) if answer is not None else None,
+        "exit": code,
+        "error": error,
+    }
+    (request.out / "result.json").write_text(json.dumps(result, indent=2) + "\n", "utf-8")
+    return result, code
+
+
+#: The fixed command the probe asks the session to run. Each line records its own exit status in
+#: ``probe-results.txt`` inside the copy, so every verdict comes from the command, never the model.
+REVIEWER_PROBE_SCRIPT = """\
+r=probe-results.txt
+: > "$r"
+cat "{outside}/canary.txt" > /dev/null 2>&1; echo "read=$?" >> "$r"
+touch "{outside}/written" 2> /dev/null; echo "write_outside=$?" >> "$r"
+touch inside-written 2> /dev/null; echo "write_inside=$?" >> "$r"
+touch "${{TMPDIR:-/tmp}}/reviewer-probe-{tag}" 2> /dev/null; echo "write_tmpdir=$?" >> "$r"
+touch "/tmp/reviewer-probe-{tag}" 2> /dev/null; echo "write_tmp=$?" >> "$r"
+curl -sS -m 5 -o /dev/null https://example.com > /dev/null 2>&1; echo "network=$?" >> "$r"
+if [ -n "${{REVIEWER_PROBE_TOKEN+x}}" ]; then v=set; else v=unset; fi; echo "variable=$v" >> "$r"
+"""
+
+REVIEWER_PROBE_MESSAGE = (
+    "Run exactly this one Bash command, from your working directory, and then reply with the "
+    "single word done: sh probe.sh"
+)
+
+
+def reviewer_probe_verdicts(
+    root: Path, outside: Path, tag: str, canaries: Sequence[str], session_output: str
+) -> list[dict[str, Any]]:
+    """Judge each denial from outside the session: the filesystem and the command's own results."""
+    copy = root / "copy"
+    results_path = copy / "probe-results.txt"
+    try:
+        lines = results_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return [{"denial": "results", "held": False,
+                 "detail": "probe-results.txt is missing: the command did not run"}]
+    results = dict(line.split("=", 1) for line in lines if "=" in line)
+    seen = results_path.read_text(encoding="utf-8") + "\n" + session_output
+
+    def nonzero(key: str) -> bool:
+        return results.get(key, "0") not in ("", "0")
+
+    verdicts = [
+        ("read-credential", nonzero("read"), f"read={results.get('read')}"),
+        ("write-outside", nonzero("write_outside") and not (outside / "written").exists(),
+         f"write_outside={results.get('write_outside')}"),
+        ("write-inside", results.get("write_inside") == "0" and (copy / "inside-written").exists(),
+         f"write_inside={results.get('write_inside')}"),
+        ("write-tmpdir", nonzero("write_tmpdir"), f"write_tmpdir={results.get('write_tmpdir')}"),
+        ("write-tmp", nonzero("write_tmp") and not Path(f"/tmp/reviewer-probe-{tag}").exists(),
+         f"write_tmp={results.get('write_tmp')}"),
+        # 126 and 127 mean curl could not run, which proves nothing about the network.
+        ("network", nonzero("network") and results.get("network") not in ("126", "127"),
+         f"network={results.get('network')}"),
+        ("credential-variable", results.get("variable") == "unset",
+         f"variable={results.get('variable')}"),
+        ("no-canary-in-output", not any(c in seen for c in canaries),
+         "a canary value appeared in the results or the session's output"
+         if any(c in seen for c in canaries) else "no canary value seen"),
+    ]
+    return [{"denial": name, "held": held, "detail": detail} for name, held, detail in verdicts]
+
+
+def reviewer_probe(
+    vendor: str,
+    model: str,
+    effort: str | None = None,
+    *,
+    env: Mapping[str, str] | None = None,
+    session: Any = reviewer_run_session,
+    work_root: Path | None = None,
+    keep: bool = False,
+) -> tuple[list[dict[str, Any]], int]:
+    """Run *vendor*'s reviewer recipe live on a fixed command and check each denial."""
+    recipe = reviewer_recipe(vendor)
+    tag = os.urandom(6).hex()
+    canary_file = f"reviewer-probe-canary-{os.urandom(8).hex()}"
+    canary_variable = f"reviewer-probe-variable-{os.urandom(8).hex()}"
+    environ = dict(os.environ if env is None else env)
+    environ["REVIEWER_PROBE_TOKEN"] = canary_variable
+    root = (work_root or reviewer_work_root(environ)) / f"probe-{tag}"
+    copy, outside = root / "copy", root / "outside"
+    copy.mkdir(parents=True)
+    outside.mkdir()
+    (outside / "canary.txt").write_text(canary_file + "\n", "utf-8")
+    (copy / "probe.sh").write_text(REVIEWER_PROBE_SCRIPT.format(outside=outside, tag=tag), "utf-8")
+    session_env = reviewer_session_environment(environ)
+    settings_path = root / "settings.json"
+    settings = recipe.settings(copy, session_env, extra_deny_read=[str(outside)])
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n", "utf-8")
+    try:
+        proc = session(
+            recipe.argv(model, effort, settings_path), stdin=REVIEWER_PROBE_MESSAGE, cwd=copy,
+            env=session_env, timeout=300,
+        )
+        verdicts = reviewer_probe_verdicts(
+            root, outside, tag, (canary_file, canary_variable),
+            (proc.stdout or "") + (proc.stderr or ""),
+        )
+    finally:
+        Path(f"/tmp/reviewer-probe-{tag}").unlink(missing_ok=True)
+        if not keep:
+            shutil.rmtree(root, ignore_errors=True)
+    return verdicts, 0 if all(v["held"] for v in verdicts) else 1
+
+
+def _reviewer_args(sub: Any) -> None:
+    review_p = sub.add_parser(
+        "review",
+        help="Start saga's targeted reviewer headless in a sandboxed scratch copy (issue #158)",
+        description=(
+            "Start saga's targeted reviewer headless on a vendor with a reviewer recipe, with its "
+            "normal configuration, in a sandboxed export of --head. Writes answer.json and "
+            "result.json to --out and prints the result. Exit 0 answer; 2 refused before "
+            "anything started; 3 no parsable answer; 124 timed out."
+        ),
+    )
+    review_p.add_argument("--vendor", required=True)
+    review_p.add_argument("--model", required=True)
+    review_p.add_argument("--effort", required=True)
+    review_p.add_argument("--repo", required=True, type=Path, help="The repository to export")
+    review_p.add_argument("--head", required=True, help="The commit under review")
+    review_p.add_argument("--packet", required=True, type=Path, help="The review packet directory")
+    review_p.add_argument(
+        "--prompt", required=True, type=Path,
+        help="saga's targeted-reviewer-prompt.md (reviewer_answer.py paths prints it)",
+    )
+    review_p.add_argument("--schema", required=True, type=Path, help="saga's answer schema")
+    review_p.add_argument("--out", required=True, type=Path, help="Where answer and result go")
+    review_p.add_argument("--open-search-cap", type=int, default=REVIEWER_DEFAULT_CAP)
+    review_p.add_argument("--timeout", type=float, default=REVIEWER_TIMEOUT_SECONDS)
+    probe_p = sub.add_parser(
+        "reviewer-probe",
+        help="Run a vendor's reviewer recipe live and check every sandbox denial",
+        description=(
+            "Run the reviewer recipe on one fixed command and check, from outside the session, "
+            "that a credential read, writes outside the copy and to the temp roots, the network "
+            "and a credential variable are denied and a write inside the copy works. Exit 0 when "
+            "every denial held, 1 otherwise, 2 for a vendor with no recipe."
+        ),
+    )
+    probe_p.add_argument("--vendor", required=True)
+    probe_p.add_argument("--model", default="haiku")
+    probe_p.add_argument("--effort", default=None)
+    probe_p.add_argument("--keep", action="store_true", help="Keep the probe directory")
+
+
+def _reviewer_cli(args: argparse.Namespace) -> int:
+    try:
+        if args.cmd == "reviewer-probe":
+            verdicts, code = reviewer_probe(args.vendor, args.model, args.effort, keep=args.keep)
+            json.dump(verdicts, sys.stdout, indent=2)
+            sys.stdout.write("\n")
+            return code
+        result, code = reviewer_launch(
+            ReviewerRequest(
+                vendor=args.vendor, model=args.model, effort=args.effort, repo=args.repo,
+                head=args.head, packet=args.packet, prompt=args.prompt, schema=args.schema,
+                out=args.out, open_search_cap=args.open_search_cap, timeout=args.timeout,
+            )
+        )
+    except ReviewerRefused as refused:
+        print(f"launcher: {refused}", file=sys.stderr)
+        return REVIEWER_EXIT_REFUSED
+    json.dump(result, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return code
+
+
 def _add_launch_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--vendor", required=True)
     parser.add_argument("--task", required=True, help="Herdr tab label and agent name")
@@ -2083,6 +3064,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     close_p.add_argument("--receipt-json", required=True, help="Launch receipt proving ownership")
     sub.add_parser("roster", help="Vendors this machine can launch that this plugin can drive")
+    _reviewer_args(sub)
     return parser
 
 
@@ -2118,6 +3100,8 @@ def _load_receipt(raw: str) -> dict[str, Any]:
 
 def cli_main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    if args.cmd in ("review", "reviewer-probe"):
+        return _reviewer_cli(args)
     if args.cmd == "roster":
         for name, flags in roster():
             print(f"{name}\t{flags}")

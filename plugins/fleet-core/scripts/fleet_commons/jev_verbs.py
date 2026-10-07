@@ -391,6 +391,48 @@ VERBS: dict[str, Verb] = {
             "scope_clear": _noul("Is the scope of `idea` unambiguous?"),
         },
     ),
+    # The consequence a reproduced review finding shows, from saga's closed list (saga's
+    # review_formula.CONSEQUENCES, in the same order: harm, then visible, then upkeep). Saga's
+    # targeted-reviewer check asks it beside the reviewer's own pick, and the lower one applies;
+    # an answer below the floor counts as no answer, and the finding is marked "unconfirmed".
+    "consequence": Verb(
+        name="consequence",
+        summary="Which consequence a reproduced review finding shows",
+        state_help=(
+            'the finding, as {"finding": "...", "trigger": "...", "test": "...", "output": "..."}'
+        ),
+        questions={
+            "consequence": _choice(
+                "What is the worst thing the problem described by `finding`, shown failing by "
+                "`test` with `output`, does when `trigger` happens?",
+                {
+                    "data-lost-or-corrupted": "harm: stored data is lost or corrupted",
+                    "money-or-resources-wrongly-moved": (
+                        "harm: money or resources are moved, charged or released wrongly"
+                    ),
+                    "security-boundary-crossed": (
+                        "harm: someone reaches data or actions they should not"
+                    ),
+                    "two-holders-of-one-exclusive-thing": (
+                        "harm: two holders get one exclusive thing, such as a lock or a lease"
+                    ),
+                    "wrong-result-reported-as-success": (
+                        "harm: a wrong result is reported as success"
+                    ),
+                    "required-behaviour-missing": "harm: behaviour the change requires is missing",
+                    "break-in-supported-use": "harm: a supported use stops working",
+                    "fails-loudly-and-recoverably": (
+                        "visible: it fails loudly, and the work can be recovered"
+                    ),
+                    "misleads-a-person": (
+                        "visible: it misleads a person while the work itself is right"
+                    ),
+                    "costs-future-work": "upkeep: it costs future work only",
+                    "style": "upkeep: style only",
+                },
+            )
+        },
+    ),
 }
 
 

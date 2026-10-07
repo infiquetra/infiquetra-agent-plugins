@@ -1,0 +1,284 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/infiquetra/infiquetra-agent-plugins/plugins/saga/references/targeted-reviewer-answer.schema.json",
+  "title": "Targeted reviewer answer",
+  "description": "The answer saga's targeted reviewer gives (issue #158). plugins/saga/scripts/reviewer_answer.py check validates it beyond this schema, and records turns it into review_records.v1 findings. Code computes severity; the reviewer never writes one.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "items",
+    "findings"
+  ],
+  "properties": {
+    "schema": {
+      "const": "targeted_reviewer_answer.v1"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/item"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index",
+        "file",
+        "answer"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "answer": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "finding"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "finding"
+                },
+                "finding": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "cleared"
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "origin",
+        "lens",
+        "row",
+        "location",
+        "language",
+        "statement",
+        "consequence",
+        "trigger",
+        "evidence",
+        "proof",
+        "introduced"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "origin": {
+          "oneOf": [
+            {
+              "const": "open-search"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "item"
+              ],
+              "properties": {
+                "item": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          ]
+        },
+        "lens": {
+          "enum": [
+            "correctness",
+            "security",
+            "testing",
+            "architecture-maintainability"
+          ]
+        },
+        "row": {
+          "enum": [
+            "judged",
+            "correctness.dispute",
+            "security.dispute",
+            "testing.dispute",
+            "architecture-maintainability.dispute"
+          ]
+        },
+        "disputes": {
+          "type": "string",
+          "minLength": 1
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        },
+        "language": {
+          "enum": [
+            "python",
+            "typescript",
+            "dart",
+            "rust",
+            "swift",
+            "markdown",
+            "shell",
+            "github-workflows",
+            "cloudformation",
+            "none"
+          ]
+        },
+        "statement": {
+          "type": "string",
+          "minLength": 1
+        },
+        "consequence": {
+          "enum": [
+            "data-lost-or-corrupted",
+            "money-or-resources-wrongly-moved",
+            "security-boundary-crossed",
+            "two-holders-of-one-exclusive-thing",
+            "wrong-result-reported-as-success",
+            "required-behaviour-missing",
+            "break-in-supported-use",
+            "fails-loudly-and-recoverably",
+            "misleads-a-person",
+            "costs-future-work",
+            "style"
+          ]
+        },
+        "trigger": {
+          "enum": [
+            "normal-use",
+            "retry",
+            "interrupt",
+            "concurrency",
+            "old-data",
+            "other-caller",
+            "misuse-only"
+          ]
+        },
+        "evidence": {
+          "enum": [
+            "reproduced",
+            "traced",
+            "suspected"
+          ]
+        },
+        "proof": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "test": {
+              "type": "string",
+              "minLength": 1
+            },
+            "command": {
+              "type": "string",
+              "minLength": 1
+            },
+            "output": {
+              "type": "string",
+              "minLength": 1
+            },
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "introduced": {
+          "type": "boolean"
+        }
+      }
+    },
+    "location": {
+      "type": "object",
+      "required": [
+        "scope",
+        "anchor"
+      ],
+      "properties": {
+        "scope": {
+          "enum": [
+            "lines",
+            "whole-project"
+          ]
+        },
+        "anchor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "function": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lines": {
+          "type": "object",
+          "required": [
+            "start",
+            "end"
+          ],
+          "properties": {
+            "start": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      },
+      "description": "C1's location for code: lines needs file, lines and function; whole-project needs file and no lines.",
+      "additionalProperties": false
+    }
+  }
+}
