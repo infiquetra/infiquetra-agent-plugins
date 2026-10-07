@@ -926,3 +926,4 @@ def test_the_dry_run_says_how_the_headless_seat_starts(
     said: list[str] = []
     roster.up(store, 4242, dry_run=True, env=IN_PANE, out=said.append)
     assert "start  started by `launcher.py review`" in "\n".join(said)
+    assert "would create 1 pane(s)" in said[0]

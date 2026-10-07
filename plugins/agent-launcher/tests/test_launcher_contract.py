@@ -4804,8 +4804,8 @@ def test_reviewer_the_scratch_changes_name_every_edit_and_saga_refuses_a_non_tes
     def edit(copy: Path) -> None:
         (copy / "tests" / "test_charge_retry.py").write_text("def test_reviewer_x():\n    assert False\n")
         (copy / "src" / "app.py").write_text("def add(a, b):\n    return a - b\n")
-        (copy / ".claude").mkdir()
-        (copy / ".claude" / ".cc-writes").write_text("vendor state\n")
+        # What Claude leaves in its working directory, measured on 2.1.292: an empty directory.
+        (copy / ".claude" / ".cc-writes").mkdir(parents=True)
         (copy / "tmpabcd1234").mkdir()
         (copy / "tmpabcd1234" / "scratch").write_text("tempfile fallback\n")
 
@@ -4941,6 +4941,14 @@ def test_reviewer_the_probe_passes_when_every_denial_held(launcher: ModuleType, 
 def test_reviewer_the_probe_fails_on_a_file_written_outside(launcher: ModuleType, tmp_path: Path) -> None:
     held, code = _probe(launcher, tmp_path, _probe_session(HONEST, outside_write=True))
     assert code == 1 and held["write-outside"] is False
+
+
+@pytest.mark.parametrize("status", ["126", "127"])
+def test_reviewer_the_probe_fails_when_curl_could_not_run(
+    launcher: ModuleType, tmp_path: Path, status: str
+) -> None:
+    held, code = _probe(launcher, tmp_path, _probe_session({**HONEST, "network": status}))
+    assert code == 1 and held["network"] is False
 
 
 def test_reviewer_the_probe_fails_on_a_credential_read(launcher: ModuleType, tmp_path: Path) -> None:
@@ -5297,6 +5305,21 @@ def test_reviewer_counts_an_edit_to_a_tracked_file_at_a_clutter_path(
         "deleted": ["tmpabcd1234/kept.py"],
         "links": [],
     }
+
+
+def test_reviewer_counts_a_file_the_session_writes_under_dot_claude(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    """Claude's own trace is the empty ``.claude/.cc-writes/``; any file there is the session's."""
+    copy = _copy_with(tmp_path, {"src/a.py": "x = 1\n"})
+    manifest = launcher._reviewer_manifest(copy)
+    (copy / ".claude" / ".cc-writes").mkdir(parents=True)
+    (copy / ".claude" / "settings.json").write_text('{"hooks": {}}\n')
+    (copy / "tests" / "__pycache__").mkdir(parents=True)
+    (copy / "tests" / "__pycache__" / "test_a.cpython-312.pyc").write_bytes(b"\0")
+    (copy / ".pytest_cache").mkdir()
+    (copy / ".pytest_cache" / "README.md").write_text("cache\n")
+    assert launcher.reviewer_scratch_changes(copy, manifest)["added"] == [".claude/settings.json"]
 
 
 @pytest.mark.parametrize(

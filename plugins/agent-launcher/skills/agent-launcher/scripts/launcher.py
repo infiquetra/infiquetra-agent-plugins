@@ -2098,11 +2098,13 @@ REVIEWER_CREDENTIAL_PATHS = (
     "~/.claude/.credentials.json",
     "~/.codex/auth.json",
 )
-#: Paths in the scratch copy that tools write and nobody edits: Claude's own state, Python's
-#: temp-directory fallback (the sandbox denies the system temp roots, so ``tempfile`` falls back to
-#: the working directory), pytest's caches and compiled bytecode. They never count as a change.
+#: Paths in the scratch copy that tools write and nobody edits: Python's temp-directory fallback
+#: (the sandbox denies the system temp roots, so ``tempfile`` falls back to the working directory),
+#: pytest's caches and compiled bytecode. They never count as a change. ``.claude/`` is not among
+#: them: Claude leaves only an empty ``.claude/.cc-writes/`` there (measured on 2.1.292), so a file
+#: under it is one the session wrote, and saga's check refuses it.
 REVIEWER_SCRATCH_IGNORED = re.compile(
-    r"^(\.claude/|pytest-of-[^/]+/|\.pytest_cache/|tmp[a-z0-9_]{8}/)|(^|/)__pycache__/|\.pyc$"
+    r"^(pytest-of-[^/]+/|\.pytest_cache/|tmp[a-z0-9_]{8}/)|(^|/)__pycache__/|\.pyc$"
 )
 
 
@@ -2211,6 +2213,8 @@ def reviewer_claude_settings(
             },
         },
         "permissions": {
+            # ``//`` starts an absolute path in a permission rule; ``/`` is relative to the settings
+            # file. ``packet.resolve()`` begins with ``/``, so this reads ``Read(//<packet>/**)``.
             "allow": ["Bash", "Edit(./**)", f"Read(/{packet.resolve()}/**)"],
             "deny": ["WebFetch", "WebSearch", "mcp__*"] + [f"Read({path})" for path in deny_read],
         },
@@ -2887,7 +2891,9 @@ def reviewer_probe_verdicts(
         ("write-tmpdir", nonzero("write_tmpdir"), f"write_tmpdir={results.get('write_tmpdir')}"),
         ("write-tmp", nonzero("write_tmp") and not Path(f"/tmp/reviewer-probe-{tag}").exists(),
          f"write_tmp={results.get('write_tmp')}"),
-        ("network", nonzero("network"), f"network={results.get('network')}"),
+        # 126 and 127 mean curl could not run, which proves nothing about the network.
+        ("network", nonzero("network") and results.get("network") not in ("126", "127"),
+         f"network={results.get('network')}"),
         ("credential-variable", results.get("variable") == "unset",
          f"variable={results.get('variable')}"),
         ("no-canary-in-output", not any(c in seen for c in canaries),

@@ -17,6 +17,14 @@
 
 **Generalizable rule.** Before relying on a sandbox, probe each denial you need from outside it, and judge by what the command did, never by what the model says it did.
 
+### In a Claude permission rule, one leading slash is not an absolute path
+
+**Evidence.** Issue #158's code review (a P2 on `reviewer_claude_settings` in `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`) asked for the packet rule `Read(//<packet>/**)` to lose a slash. Live runs on 2026-10-06, Claude Code 2.1.292 with Haiku, `--permission-mode dontAsk` and the reviewer's settings: a deny rule `Read(//<dir>/**)` stopped the Read tool reading a file in that directory, and `Read(/<dir>/**)` did not. With no allow rule for the directory at all, the Read tool still read the file. Paths in `sandbox.filesystem.denyRead`, spelled with `~` or absolute, were denied to both the Read tool and sandboxed Bash. After a session that wrote, edited and ran a test, the only thing Claude left under `.claude/` in its working directory was an empty `.cc-writes/` directory.
+
+**Mechanism.** In a Read or Edit permission rule, `//path` is absolute, `~/path` is under the home directory and `/path` is relative to the settings file. `Path.resolve()` already starts with `/`, so `f"Read(/{path}/**)"` is the absolute form, and dropping the slash makes a rule that matches nothing. Under `dontAsk`, reads outside the working directory are not gated by allow rules, so the deny lists carry the confinement.
+
+**Generalizable rule.** Check a permission rule's spelling with a deny rule and a live run. Deny rules show whether a path matches; allow rules can pass because nothing was gated.
+
 ### Herdr names a Muse session `maki`
 
 **Evidence.** On 6 October 2026 two agent-launcher launches of Muse Code 1.4.3 for issue #147 stopped

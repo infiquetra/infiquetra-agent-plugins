@@ -412,6 +412,17 @@ def test_a_finding_its_item_does_not_name_is_refused() -> None:
     assert "findings.stale-readme.origin" in fields(A.check(orphan, ITEMS))
 
 
+def test_an_item_may_name_only_a_finding_whose_origin_is_that_item() -> None:
+    borrowed = answer()
+    finding(borrowed, "double-charge")["origin"] = A.OPEN_SEARCH
+    problems = A.check(borrowed, ITEMS)
+    assert "items.0.answer.finding" in fields(problems)
+    assert any("its origin is 'open-search'" in problem for problem in problems)
+    other = answer()
+    finding(other, "double-charge")["origin"] = {"item": 1}
+    assert "items.0.answer.finding" in fields(A.check(other, ITEMS))
+
+
 def test_a_dispute_names_what_it_disputes_on_its_own_lens() -> None:
     dispute = answer()
     found = finding(dispute, "stale-readme")
@@ -444,6 +455,21 @@ def test_a_symlink_the_session_made_is_refused() -> None:
     assert (
         "scratch.changes: tests/test_charge_retry.py (symlink) is a link the session made, "
         "never a test" in A.check(ANSWER, ITEMS, result=result)
+    )
+
+
+@pytest.mark.parametrize(
+    "path", [".claude/settings.json", ".claude/tests/test_x.py", "pkg/.CLAUDE/test_x.py",
+             ".mcp.json"],
+)
+def test_claude_configuration_the_session_wrote_is_refused_even_named_as_a_test(path: str) -> None:
+    named = copy.deepcopy(ANSWER)
+    named["findings"][0]["proof"]["test"] = f"{path}::test_x"
+    result = copy.deepcopy(RESULT)
+    result["scratch"]["changes"]["added"] = [path]
+    assert (
+        f"scratch.changes: {path} (added) is Claude configuration, never a test"
+        in A.check(named, ITEMS, result=result)
     )
 
 

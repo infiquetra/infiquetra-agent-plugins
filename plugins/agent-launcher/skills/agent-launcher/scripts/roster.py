@@ -570,7 +570,8 @@ def _live_row(rows: Sequence[Mapping[str, Any]], pane_name: str) -> Mapping[str,
 
 def render_dry_run(seats: Sequence[Seat], record: Any, record_path: Path) -> str:
     """What ``up --dry-run`` prints: the panes, kinds, models, efforts and prompts (plan R2)."""
-    out = [f"roster: issue {record.issue} would create {len(seats)} pane(s); nothing was created."]
+    panes = sum(1 for seat in seats if not seat.headless)
+    out = [f"roster: issue {record.issue} would create {panes} pane(s); nothing was created."]
     for seat in seats:
         out.append("")
         out.append(f"pane   {seat.pane_name}")

@@ -33,6 +33,7 @@ import hashlib
 import json
 import re
 import sys
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -93,6 +94,14 @@ FILLED_BY_CODE = frozenset(
 #: A reproduction's test file must look like a test by its path.
 _TEST_DIR = re.compile(r"(^|/)(tests?|spec|__tests__)/")
 _TEST_NAME = re.compile(r"(^test_[^/]*$)|(_test\.[^/]+$)|(\.test\.[^/]+$)|(\.spec\.[^/]+$)")
+#: What Claude acts on outside its command sandbox; never a reproduction test, whatever its name.
+_CLAUDE_CONFIG = (".claude", ".mcp.json")
+
+
+def is_claude_configuration(path: str) -> bool:
+    """Whether *path* is in a ``.claude`` directory or is ``.mcp.json``, at any depth or case."""
+    parts = str(path).replace("\\", "/").split("/")
+    return any(unicodedata.normalize("NFKC", part).casefold() in _CLAUDE_CONFIG for part in parts)
 
 
 class AnswerRefused(Exception):
@@ -314,6 +323,11 @@ def _check_scratch(check: records._Check, answer: Mapping[str, Any], result: Any
         check.add("scratch.changes", f"{path} (symlink) is a link the session made, never a test")
     for kind in ("added", "modified", "deleted"):
         for path in changes.get(kind) or ():
+            if is_claude_configuration(str(path)):
+                check.add(
+                    "scratch.changes", f"{path} ({kind}) is Claude configuration, never a test"
+                )
+                continue
             normal = str(path).lstrip("./")
             if kind == "deleted" or normal not in allowed or not looks_like_a_test(normal):
                 check.add("scratch.changes", f"{path} ({kind}) is not a reproduction test")
@@ -360,6 +374,15 @@ def check(
             paths.append((path, finding))
 
     named = _check_items(problems, answer.get("items"), items, set(keys))
+    # The item's question is the rule behind its finding, so the finding must come from that item.
+    for index, key in sorted(named.items()):
+        origin = keys[key].get("origin")
+        if not (isinstance(origin, Mapping) and type(origin.get("item")) is int
+                and origin["item"] == index):
+            problems.add(
+                f"items.{index}.answer.finding",
+                f"{key!r} is not item {index}'s finding: its origin is {origin!r}",
+            )
     for path, finding in paths:
         _check_finding(problems, finding, path, items)
         origin = finding.get("origin")

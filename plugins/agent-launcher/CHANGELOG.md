@@ -26,10 +26,11 @@ for C8 to extend.
   servers outside the sandbox) in any letter case, symlinks leaving the copy, and instruction files
   with an `@` import that is not a plain relative path; a head whose paths differ only by case is
   refused, and no export write passes through a symlink; the result lists what was withheld. The launch refuses when user or managed
-  settings would widen the sandbox, and lists any symlink the session makes apart, which saga's
-  check refuses. Every other vendor is
+  settings would widen the sandbox, lists any symlink the session makes apart, which saga's
+  check refuses, and counts a file the session writes under `.claude/` as a change. Every other vendor is
   refused by name until it has a sandbox recipe that passes `launcher.py reviewer-probe`, which runs
-  the recipe live and checks each denial from outside the session.
+  the recipe live and checks each denial from outside the session; a probe whose `curl` could
+  not run fails rather than passing as a network denial.
 - **`roles/targeted-reviewer.md`**, a thin wrapper naming saga's prompt. The roster plans it one
   seat, never one per lens, and leaves it to `launcher.py review` rather than opening a pane.
 

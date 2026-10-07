@@ -31,10 +31,12 @@
 - Issue 158: the targeted reviewer's prompt (`references/targeted-reviewer-prompt.md`), answer
   schema (`references/targeted-reviewer-answer.schema.json`) and launch settings
   (`references/targeted-reviewer-launch.json`). `scripts/reviewer_answer.py check` refuses an
-  answer by name: a skipped or twice-answered where-to-look item, a finding without a location,
+  answer by name: a skipped or twice-answered where-to-look item, an item naming a finding that
+  did not come from it, a finding without a location,
   statement or closed-list label, a reproduction without its test, command and output, any
   severity, more open-search findings than the cap (5 by default), or a scratch copy changed
-  outside the reproduction tests. `records` turns an accepted answer into review_records.v1
+  outside the reproduction tests (a file under `.claude/`, or `.mcp.json`, is refused whatever
+  its name). `records` turns an accepted answer into review_records.v1
   findings and answered where-to-look records, asking Jev's `consequence` verb about each
   reproduced finding; the lower pick applies through C1's formula, and when Jev cannot answer the
   finding is marked `unconfirmed`. `paths` prints the prompt and schema for agent-launcher's
