@@ -426,6 +426,31 @@ def test_an_npm_audit_row_retires_the_osv_npm_gap(tmp_path: Path) -> None:
     assert _read(output, "findings.json") == []
 
 
+def test_osv_degrades_when_head_removes_the_lockfile(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "yarn.lock").write_text("lock\n", encoding="utf-8")
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "yarn.lock").unlink()
+    (repo / "README").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    profile = _profile(tmp_path / "profile.json", {"osv-scanner": {"version": "1.0.0"}})
+    payload = (FIXTURES / "osv-scanner.json").read_text(encoding="utf-8")
+    runner = _Calls(base, payload)
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, profile, output, tmp_path / "home", [_adapter("osv-scanner")], runner,
+    )
+    assert code == 0
+    assert _read(output, "findings.json") == []
+    degraded = [
+        item for item in _read(output, "degraded.json") if item["tool"] == "osv-scanner"
+    ]
+    assert len(degraded) == 1
+    assert degraded[0]["reason"] == "lockfile-removed"
+
+
 def test_a_base_npm_gap_still_scans_a_lockfile_added_at_head(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init(repo)

@@ -108,6 +108,21 @@ def _no_network(
     the allow_sockets mark and justifies it where the mark sits.
     """
     if request.node.get_closest_marker("allow_sockets") is not None:
+        real_socket = socket.socket
+
+        def allow_unix_only(
+            family: Any = None, *args: Any, **kwargs: Any
+        ) -> socket.socket:
+            seen = family
+            if seen is None:
+                seen = kwargs.get("family", socket.AF_INET)
+            if seen != socket.AF_UNIX:
+                raise AssertionError("saga tests must make no network call")
+            if family is None:
+                return real_socket(*args, **kwargs)
+            return real_socket(family, *args, **kwargs)
+
+        monkeypatch.setattr(socket, "socket", allow_unix_only)
         return
 
     def refuse(*_args: Any, **_kwargs: Any) -> None:

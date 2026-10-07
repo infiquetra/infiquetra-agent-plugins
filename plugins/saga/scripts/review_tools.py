@@ -166,6 +166,9 @@ _STRIP_NAMES = _SETTINGS_NAMES + _C4C_SETTINGS_NAMES
 #: Cargo's config is matched by path, never by the bare name: a bare ``config.toml``
 #: would strip unrelated project files.
 _STRIP_PATHS = (".cargo/config.toml",)
+#: Directory names whose whole file list is stripped at any depth. Cargo reads
+#: ``.cargo/config`` too and prefers it when both names exist.
+_STRIP_DIR_FILES = {".cargo": ("config", "config.toml")}
 _ENV_COPIED = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
 _ENV_WINDOWS = ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT")
 # needle, lens, tool, reason. One degraded input per changed file that contains the needle.
@@ -703,7 +706,8 @@ def _tool_env(home: Path) -> tuple[dict[str, str], list[str]]:
     An allow-list (PATH, locale, TZ, the Windows basics) with a fresh HOME and
     TMPDIR, mirroring the relocated run. ``CARGO_HOME`` points at a persistent
     credentials-free cache under ``.saga`` so public crates resolve without
-    operator credentials. Returns the env and the temp dirs the caller removes.
+    operator credentials. Cargo-family runs override it per invocation (see
+    ``_execute``). Returns the env and the temp dirs the caller removes.
     """
     names = ("PATH", "PATHEXT", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
     if sys.platform == "win32":
@@ -910,7 +914,7 @@ def _base_and_head(
             with _worktree(repo, base_sha) as base_root:
                 _strip_settings(base_root, only=_C4C_SETTINGS_NAMES)
                 _link_env(adapter, repo, base_root, base_sha, head_sha)
-                base_hits, _base_digest, base_problem = _scan_root(
+                base_hits, _base_digest, base_problem, base_ran = _scan_root(
                     adapter, replace(context, repo=base_root, root=base_root), process, env,
                     timeout, "base", degraded, items,
                 )
@@ -918,6 +922,7 @@ def _base_and_head(
             # The base tree declined. Head is still compared against no earlier findings.
             base_hits = ()
             base_problem = None
+            base_ran = False
         if base_problem == "empty-output":
             degraded.append(_degraded(adapter, _primary_row(adapter), base_problem))
             base_hits = ()
@@ -926,12 +931,13 @@ def _base_and_head(
             return (), {}
         else:
             _write_base_cache(
-                context.home, adapter, version, base_sha, settings, key, base_hits
+                context.home, adapter, version, base_sha, settings, key, base_hits,
+                base_ran,
             )
     else:
-        base_hits = cached
+        base_hits, base_ran = cached
     try:
-        head_hits, head_digest, head_problem = _scan_root(
+        head_hits, head_digest, head_problem, head_ran = _scan_root(
             adapter, replace(context, repo=head_root, root=head_root), process, env, timeout,
             "head", degraded, items,
         )
@@ -941,6 +947,10 @@ def _base_and_head(
     if head_problem is not None:
         degraded.append(_degraded(adapter, _primary_row(adapter), head_problem))
         return (), {}
+    if base_ran and not head_ran and _reads_lockfiles(adapter):
+        # The base audit read a lockfile the head scan does not read. Comparing
+        # against silence would drop base advisories as a clean result.
+        degraded.append(_degraded(adapter, _primary_row(adapter), "lockfile-removed"))
     base_ids = {_identity(adapter, hit) for hit in base_hits}
     kept = tuple(hit for hit in head_hits if _identity(adapter, hit) not in base_ids)
     return kept, {"head": head_digest}
@@ -955,30 +965,30 @@ def _scan_root(
     label: str,
     degraded: list[dict[str, str]],
     items: list[Mapping[str, Any]],
-) -> tuple[tuple[Hit, ...], str, str | None]:
+) -> tuple[tuple[Hit, ...], str, str | None, bool]:
     result, problem, ran = _capture(adapter, context, process, env, timeout)
     if not ran:
-        return (), "", None
+        return (), "", None, False
     if problem is not None:
-        return (), "", problem
+        return (), "", problem, True
     assert result is not None
     parsed, failure = _parsed(adapter, result, label)
     if parsed is not None:
         _note_problems(adapter, parsed, degraded)
     if failure is not None:
-        return (), "", failure
+        return (), "", failure, True
     assert parsed is not None
     if parsed.gap is not None:
         reason, row = parsed.gap
         degraded.append(_degraded(adapter, row, reason))
-        return (), "", None
+        return (), "", None, True
     digest = store_raw((result.stdout or "").encode(), context.home)
     hits = tuple(_relative_hit(hit, context.root) for hit in parsed.hits)
     if parsed.unfinished:
         degraded.append(_degraded(adapter, "testing.surviving-mutant", "cap"))
         hits = tuple(replace(hit, degraded=True) for hit in hits)
     _absorb(adapter, parsed, label, degraded, items)
-    return hits, digest, None
+    return hits, digest, None, True
 
 
 def _capture(
@@ -1003,10 +1013,20 @@ def _capture(
         argv = adapter.invoke(scan)
         if not argv:
             return None, None, False
+        if adapter.report_file is not None:
+            # A committed report (or a symlink where the report goes) must
+            # not be what gets parsed. Refuse a report that would land
+            # outside the scan root before anything runs or is deleted.
+            report = scan.root / adapter.report_file
+            if not _within_root(scan.root, report.parent):
+                return None, "unparseable", True
+            _remove_tree(report)
         result, problem = _execute(adapter, argv, scan.root, process, env, timeout)
         if result is not None and problem is None:
             if adapter.report_file is not None:
                 report = scan.root / adapter.report_file
+                if report.is_symlink():
+                    return None, "unparseable", True
                 try:
                     text = report.read_bytes().decode("utf-8", errors="replace")
                 except OSError:
@@ -1050,6 +1070,13 @@ def _execute(
         # Semgrep phones home for a version check unless told not to; the scan
         # must stay off the network and never send the operator's token.
         run_env = {**run_env, "SEMGREP_ENABLE_VERSION_CHECK": "0"}
+    if argv and Path(argv[0]).name.startswith("cargo"):
+        # A commit's build script runs under this environment, so a shared
+        # CARGO_HOME would let it plant config the next invocation reads.
+        # Each cargo invocation gets a fresh home that dies with it.
+        cargo_home = Path(tempfile.mkdtemp(prefix="saga-cargo-home-"))
+        temps.append(cargo_home)
+        run_env = {**run_env, "CARGO_HOME": str(cargo_home)}
     try:
         try:
             result = process(argv, cwd=cwd, env=run_env, timeout=timeout, shell=False)
@@ -1234,6 +1261,13 @@ def _primary_row(adapter: Adapter) -> str:
     if adapter.rows:
         return adapter.rows[0]
     return f"{adapter.lens}.tool-unscoped"
+
+
+def _reads_lockfiles(adapter: Adapter) -> bool:
+    """True for dependency audits that read lockfiles as their scan input."""
+    if not adapter.lockfiles:
+        return False
+    return any(row.startswith("security.dependency") for row in adapter.rows)
 
 
 def _present(path: Path) -> bool:
@@ -1705,7 +1739,8 @@ def _strip_settings(
 
     ``only`` limits the strip to the named basenames (the base worktree strips
     the C4c names only, so C4a's base behavior is unchanged). ``_STRIP_PATHS``
-    always applies: registry and cargo configs must not differ between trees.
+    and ``_STRIP_DIR_FILES`` always apply: registry and cargo configs must not
+    differ between trees.
     """
     names = _STRIP_NAMES if only is None else only
     found: list[str] = []
@@ -1715,7 +1750,11 @@ def _strip_settings(
         for name in filenames:
             path = Path(directory) / name
             relative = path.relative_to(root).as_posix()
-            if name not in names and relative not in _STRIP_PATHS:
+            if (
+                name not in names
+                and relative not in _STRIP_PATHS
+                and name not in _STRIP_DIR_FILES.get(Path(relative).parent.name, ())
+            ):
                 continue
             found.append(relative)
             path.unlink()
@@ -2255,6 +2294,14 @@ def _link_env(
     """
     if not adapter.env_dirs:
         return
+    if target == head:
+        # The reviewed tree is untrusted: a committed dependency directory
+        # would be the code the tools resolve and run. Remove it before the
+        # operator tree is linked. The base tree keeps its own: base is
+        # trusted, and removing it would lose the baseline whenever base and
+        # head lockfiles differ.
+        for name in adapter.env_dirs:
+            _remove_tree(target_root / name)
     if _rev(repo, "HEAD") != _rev(repo, head):
         return
     for lock in adapter.lockfiles:
@@ -2268,8 +2315,25 @@ def _link_env(
     for name in adapter.env_dirs:
         source = repo / name
         dest = target_root / name
-        if source.exists() and not dest.exists():
+        if source.exists() and not os.path.lexists(dest):
             dest.symlink_to(source, target_is_directory=source.is_dir())
+
+
+def _remove_tree(path: Path) -> None:
+    """Unlink a file or symlink, or remove a directory. Missing is fine."""
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+
+
+def _within_root(root: Path, path: Path) -> bool:
+    """True when ``path`` resolves inside ``root``. Symlink escapes fail."""
+    try:
+        path.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 @lru_cache(maxsize=1024)
@@ -2307,10 +2371,11 @@ def _write_base_cache(
     settings: str,
     key: Mapping[str, str],
     hits: Sequence[Hit],
+    ran: bool,
 ) -> None:
     target = _cache_path(home, adapter, version, base_sha, settings)
     target.parent.mkdir(parents=True, exist_ok=True)
-    body = {"key": dict(key), "hits": [asdict(hit) for hit in hits]}
+    body = {"key": dict(key), "hits": [asdict(hit) for hit in hits], "ran": ran}
     target.write_text(json.dumps(body, sort_keys=True), encoding="utf-8")
     target.chmod(0o600)
 
@@ -2322,8 +2387,8 @@ def _read_base_cache(
     base_sha: str,
     settings: str,
     key: Mapping[str, str],
-) -> tuple[Hit, ...] | None:
-    """A miss leaves the file in place. A list in the old shape is a miss."""
+) -> tuple[tuple[Hit, ...], bool] | None:
+    """A miss leaves the file in place. A list, or a dict without ``ran``, is a miss."""
     target = _cache_path(home, adapter, version, base_sha, settings)
     if not target.is_file():
         return None
@@ -2332,6 +2397,8 @@ def _read_base_cache(
     except (OSError, json.JSONDecodeError):
         return None
     if not isinstance(raw, dict) or raw.get("key") != dict(key):
+        return None
+    if not isinstance(raw.get("ran"), bool):
         return None
     items = raw.get("hits")
     if not isinstance(items, list):
@@ -2346,7 +2413,7 @@ def _read_base_cache(
             hits.append(Hit(**payload))
         except TypeError:
             return None
-    return tuple(hits)
+    return tuple(hits), raw["ran"]
 
 
 def _parser() -> argparse.ArgumentParser:

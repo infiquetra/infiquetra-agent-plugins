@@ -659,8 +659,8 @@ tools:
     level_map: {}
     curated_block_rules: []
     rules: []
-    env_dirs: []
-    lockfiles: []
+    env_dirs: ["node_modules"]
+    lockfiles: ["package-lock.json", "npm-shrinkwrap.json"]
     base_files: [".npmrc"]
     local_bins: ["node_modules/.bin"]
   - id: tsc

@@ -579,6 +579,14 @@ def test_check_strips_a_registry_redirect(tmp_path: Path) -> None:
     (repo / ".cargo" / "config.toml").write_text(
         "[source.crates-io]\nreplace-with = 'vendored'\n", encoding="utf-8"
     )
+    (repo / ".cargo" / "config").write_text(
+        "[source.crates-io]\nreplace-with = 'vendored'\n", encoding="utf-8"
+    )
+    nested = repo / "crates" / "member" / ".cargo"
+    nested.mkdir(parents=True)
+    (nested / "config.toml").write_text(
+        "[source.crates-io]\nreplace-with = 'vendored'\n", encoding="utf-8"
+    )
     base = _commit(repo, "base")
     (repo / ".cargo" / "config.toml").write_text(
         "[source.crates-io]\nreplace-with = 'evil'\n", encoding="utf-8"
@@ -587,9 +595,13 @@ def test_check_strips_a_registry_redirect(tmp_path: Path) -> None:
     head = _commit(repo, "head")
     output = tmp_path / "out"
     snapshots: list[tuple[list[str], bool | None, dict[str, str | None]]] = []
+    watched = (
+        ".cargo/config.toml", ".cargo/config",
+        "crates/member/.cargo/config.toml",
+    )
     runner = _Calls(
         base, _fixture("cargo-check.jsonl"), base_payload="", code=101,
-        watch=(".cargo/config.toml",), snapshots=snapshots,
+        watch=watched, snapshots=snapshots,
     )
     assert _run(
         repo, base, head, _profile(tmp_path / "profile.json"), output,
@@ -602,7 +614,86 @@ def test_check_strips_a_registry_redirect(tmp_path: Path) -> None:
     ]
     assert runs, "cargo check never ran"
     for _argv, _at_base, state in runs:
-        assert state[".cargo/config.toml"] is None
+        for name in watched:
+            assert state[name] is None
+
+
+def test_each_cargo_run_gets_a_fresh_cargo_home(tmp_path: Path) -> None:
+    repo, source = _clippy_repo(tmp_path)
+    base = _commit(repo, "base")
+    text = source.read_text(encoding="utf-8").splitlines(keepends=True)
+    text[1] = "    return a + b + 0;\n"
+    text[5] = "    let unused_var = 2;\n"
+    text[6] = "    let _zero = 0.0 / 0.0 + 0.0;\n"
+    source.write_text("".join(text), encoding="utf-8")
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    home = tmp_path / "home"
+    env_seen: list[dict[str, str]] = []
+    runner = _Calls(base, _fixture("clippy.jsonl"), code=101, env_seen=env_seen)
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        home, [_adapter("clippy")], runner,
+    ) == 0
+    assert _severity(output, "clippy::eq_op") == "blocks"
+    shared = home / ".saga" / "cargo-home"
+    assert shared.is_dir()
+    probes = [
+        env for call, env in zip(runner.calls, runner.env_seen)
+        if "--version" in call
+    ]
+    runs = [
+        env for call, env in zip(runner.calls, runner.env_seen)
+        if "--version" not in call
+    ]
+    assert probes and runs
+    for env in probes:
+        assert env["CARGO_HOME"] == str(shared)
+    for env in runs:
+        assert env["CARGO_HOME"] != str(shared)
+        assert not Path(env["CARGO_HOME"]).exists()
+
+
+def test_deny_degrades_when_head_removes_the_lockfile(tmp_path: Path) -> None:
+    repo, _source = _rust_repo(tmp_path)
+    base = _commit(repo, "base")
+    (repo / "Cargo.lock").unlink()
+    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    payload = _fixture("cargo-deny.jsonl")
+    runner = _Calls(base, payload, base_payload=payload)
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("cargo-deny")], runner,
+    ) == 0
+    assert _read(output, "findings.json") == []
+    degraded = _degraded(output, "cargo-deny")
+    assert len(degraded) == 1
+    assert degraded[0]["reason"] == "lockfile-removed"
+
+
+def test_mutants_ignores_a_preseeded_report(tmp_path: Path) -> None:
+    repo, source = _mutants_repo(tmp_path)
+    (repo / "mutants.out").mkdir()
+    (repo / "mutants.out" / "outcomes.json").write_text(
+        _fixture("mutants-outcomes.json"), encoding="utf-8"
+    )
+    base = _commit(repo, "base")
+    text = source.read_text(encoding="utf-8").splitlines(keepends=True)
+    text[1] = "    a + b + 0\n"
+    source.write_text("".join(text), encoding="utf-8")
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    runner = _Calls(base, "2 mutants missed.\n")
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("cargo-mutants")], runner,
+    ) == 0
+    assert _read(output, "findings.json") == []
+    degraded = _degraded(output, "cargo-mutants")
+    assert len(degraded) == 1
+    assert degraded[0]["reason"] == "unparseable"
 
 
 def _clippy_repo(tmp_path: Path) -> tuple[Path, Path]:

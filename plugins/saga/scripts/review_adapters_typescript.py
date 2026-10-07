@@ -163,6 +163,58 @@ def _stage_first_base(context: ScanContext, names: tuple[str, ...]) -> Path | No
     return None
 
 
+_JS_CONFIG_SUFFIXES = (".js", ".mjs", ".cjs", ".ts", ".mts", ".cts")
+_RELATIVE_IMPORT = re.compile(
+    r"(?:from\s+|import\s+|require\s*\(|import\s*\()\s*['\"]\.[./]"
+)
+
+
+def _refuse_relative_imports(staged: Path | None, row: str) -> None:
+    """Decline a base config that imports a project-relative file.
+
+    The staged copy runs in the scanned tree, so a relative import resolves
+    to that tree's file, which the reviewed commit controls. Raw text on
+    purpose: stripping comments could hide a real import inside a string,
+    while a comment shaped like an import degrades in the safe direction.
+    """
+    if staged is None or staged.suffix not in _JS_CONFIG_SUFFIXES:
+        return
+    try:
+        text = staged.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    if _RELATIVE_IMPORT.search(text):
+        raise ToolGap("config-imports-head", row)
+
+
+_NPMRC_SECRET_LINE = re.compile(
+    r"(?i)^\s*(?://[^=\s]*)?\s*(_authtoken|_auth|_password|username)\s*="
+)
+
+
+def _stage_npmrc(context: ScanContext) -> Path | None:
+    """Stage the base ``.npmrc`` without auth lines.
+
+    Auth tokens in the base commit must not be sent to a registry by the
+    audit. A private registry that needed them fails into a degraded input.
+    Proxy URLs are left alone: even a fake credential inside one trips the
+    repository's own credential gate, which has no placeholder exemption.
+    """
+    staged = _base_file(context, ".npmrc")
+    if staged is None:
+        return None
+    try:
+        text = staged.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    kept = [
+        line for line in text.splitlines() if not _NPMRC_SECRET_LINE.match(line)
+    ]
+    target = context.root / ".npmrc"
+    target.write_bytes(("".join(f"{line}\n" for line in kept)).encode("utf-8"))
+    return target
+
+
 def _stage_tsconfig(context: ScanContext) -> None:
     """Stage the base tsconfig so tools that read it see base options, never head's."""
     _stage_first_base(context, ("tsconfig.json",))
@@ -206,7 +258,7 @@ def _invoke_npm_audit(context: ScanContext) -> list[str]:
         return []
     if not any((context.root / name).is_file() for name in _NPM_LOCKS):
         return []
-    _stage_base(context, ".npmrc")
+    _stage_npmrc(context)
     return ["npm", "audit", "--json"]
 
 
@@ -437,6 +489,7 @@ def _invoke_eslint(context: ScanContext) -> list[str]:
             raise ToolGap("config-unresolved", "correctness.tool-error") from exc
         staged = context.root / "eslint.config.mjs"
         staged.write_text(text, encoding="utf-8")
+    _refuse_relative_imports(staged, "correctness.tool-error")
     return [
         "eslint", "--format", "json", "--config", str(staged), str(context.root),
     ]
@@ -500,7 +553,9 @@ def _invoke_stryker(context: ScanContext) -> list[str]:
         raise ToolGap("not-configured", "testing.surviving-mutant")
     _stage_tsconfig(context)
     argv = ["stryker", "run", "--testRunner", runner, "--reporters", "json"]
-    if _stage_first_base(context, _STRYKER_CONFIGS) is None:
+    staged = _stage_first_base(context, _STRYKER_CONFIGS)
+    _refuse_relative_imports(staged, "testing.surviving-mutant")
+    if staged is None:
         for pattern in _STRYKER_MUTATE:
             argv.extend(["--mutate", pattern])
         for pattern in _STRYKER_IGNORE:
@@ -563,7 +618,8 @@ def _invoke_vitest_shuffle(context: ScanContext) -> list[str]:
     if _runner_choice(context) != "vitest":
         return []
     _stage_tsconfig(context)
-    _stage_first_base(context, _VITEST_CONFIGS)
+    staged = _stage_first_base(context, _VITEST_CONFIGS)
+    _refuse_relative_imports(staged, "testing.flaky-order-or-network")
     return [
         "vitest", "run", "--sequence.shuffle",
         "--sequence.seed", str(_shuffle_seed()),
@@ -610,9 +666,11 @@ def _invoke_jest_shuffle(context: ScanContext) -> list[str]:
     if _runner_choice(context) != "jest":
         return []
     _stage_tsconfig(context)
-    _stage_first_base(context, _BABEL_CONFIGS)
+    babel = _stage_first_base(context, _BABEL_CONFIGS)
+    _refuse_relative_imports(babel, "testing.flaky-order-or-network")
     _stage_first_base(context, (".swcrc", ".swcrc.json"))
     staged = _stage_first_base(context, _JEST_CONFIGS)
+    _refuse_relative_imports(staged, "testing.flaky-order-or-network")
     argv = ["jest", "--randomize", "--seed", str(_shuffle_seed()), "--showSeed"]
     if staged is None:
         package = _base_json(context, "package.json")
@@ -675,6 +733,9 @@ def _invoke_knip(context: ScanContext) -> list[str]:
         return []
     _stage_tsconfig(context)
     staged = _stage_first_base(context, _KNIP_CONFIGS)
+    _refuse_relative_imports(
+        staged, "architecture-maintainability.complexity-dead-code-naming"
+    )
     if staged is None:
         package = _base_json(context, "package.json")
         key = package.get("knip")
@@ -757,6 +818,9 @@ def _invoke_dependency_cruiser(context: ScanContext) -> list[str]:
     if not _has_markers(context.root):
         return []
     staged = _stage_first_base(context, _DEPCRUISE_CONFIGS)
+    _refuse_relative_imports(
+        staged, "architecture-maintainability.structural-check-fails"
+    )
     if staged is None:
         raise ToolGap("not-configured", "architecture-maintainability.structural-check-fails")
     return [

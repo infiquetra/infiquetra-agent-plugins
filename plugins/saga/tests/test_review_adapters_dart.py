@@ -419,6 +419,46 @@ def test_dart_analyze_runs_when_the_tree_links_dart_tool(tmp_path: Path) -> None
     assert _degraded(output, "dart") == []
 
 
+def test_committed_dart_tool_is_replaced_by_the_operator_tree(
+    tmp_path: Path,
+) -> None:
+    repo, _source = _dart_repo(tmp_path, pubspec={
+        "name": "example",
+        "environment": {"sdk": "^3.0.0"},
+        "dependencies": {"http": "^1.0.0"},
+    })
+    committed = repo / ".dart_tool"
+    committed.mkdir()
+    (committed / "package_config.json").write_text(
+        json.dumps({"configVersion": 2, "packages": [{"name": "committed"}]}),
+        encoding="utf-8",
+    )
+    base = _commit(repo, "base")
+    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    _link_dart_tool(repo)
+    output = tmp_path / "out"
+    snapshots: list[tuple[list[str], bool | None, dict[str, str | None]]] = []
+    runner = _Calls(
+        base, _fixture("dart-analyze.txt"), base_payload="", code=3,
+        watch=(".dart_tool/package_config.json",), snapshots=snapshots,
+    )
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("dart-analyze")], runner,
+    ) == 0
+    assert _severity(output, "return_of_invalid_type") == "blocks"
+    runs = [
+        (argv, state) for argv, at_base, state in snapshots
+        if argv[:1] == ["dart"] and at_base is False
+    ]
+    assert runs, "dart analyze never ran at head"
+    for _argv, state in runs:
+        assert state[".dart_tool/package_config.json"] == json.dumps(
+            {"configVersion": 2, "packages": []}
+        )
+
+
 def test_dart_analyze_unparseable_output_is_degraded(tmp_path: Path) -> None:
     repo, _source = _dart_repo(tmp_path)
     base = _commit(repo, "base")

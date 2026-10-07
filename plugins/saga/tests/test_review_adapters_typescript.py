@@ -108,6 +108,7 @@ class _Calls:
         base_payload: str = "{}",
         versions: dict[str, str] | None = None,
         files: dict[str, str] | None = None,
+        links: dict[str, str] | None = None,
         stderr: str = "",
         code: int = 0,
         base_code: int = 0,
@@ -122,6 +123,7 @@ class _Calls:
         self.base_payload = base_payload
         self.versions = versions if versions is not None else dict(_TS_VERSIONS)
         self.files = files or {}
+        self.links = links or {}
         self.stderr = stderr
         self.code = code
         self.base_code = base_code
@@ -173,6 +175,12 @@ class _Calls:
             target.write_text(
                 content.replace("@ROOT@", Path(cwd).as_posix()), encoding="utf-8"
             )
+        for relative, target_name in self.links.items():
+            link = Path(cwd) / relative
+            link.parent.mkdir(parents=True, exist_ok=True)
+            if link.is_symlink() or link.is_file():
+                link.unlink()
+            link.symlink_to(target_name)
         return T.ProcessResult(self.base_code if at_base else self.code, body, self.stderr)
 
 
@@ -548,6 +556,69 @@ def test_eslint_uses_base_config_and_ignores_head(tmp_path: Path) -> None:
         assert state["eslint.config.mjs"] == base_config
 
 
+def test_committed_node_modules_is_replaced_by_the_operator_tree(
+    tmp_path: Path,
+) -> None:
+    repo, source = _js_repo(tmp_path)
+    (repo / "package-lock.json").write_text("{}\n", encoding="utf-8")
+    committed = repo / "node_modules" / ".bin"
+    committed.mkdir(parents=True)
+    (committed / "eslint").write_text("committed\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    text = source.read_text(encoding="utf-8").splitlines(keepends=True)
+    text[4] = "console.log(missingName, 'x');\n"
+    source.write_text("".join(text), encoding="utf-8")
+    head = _commit(repo, "head")
+    (repo / "node_modules" / ".bin" / "eslint").write_text(
+        "operator\n", encoding="utf-8"
+    )
+    output = tmp_path / "out"
+    snapshots: list[tuple[list[str], bool | None, dict[str, str | None]]] = []
+    runner = _Calls(
+        base, _fixture("eslint.json"), watch=("node_modules/.bin/eslint",),
+        snapshots=snapshots,
+    )
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("eslint")], runner,
+    ) == 0
+    assert _severity(output, "no-undef") == "blocks"
+    runs = [
+        (argv, state) for argv, at_base, state in snapshots
+        if Path(argv[0]).name == "eslint" and at_base is not None
+    ]
+    assert runs, "eslint never ran"
+    for argv, state in runs:
+        assert Path(argv[0]).is_absolute()
+        assert state["node_modules/.bin/eslint"] == "operator\n"
+
+
+def test_eslint_base_config_with_relative_import_is_refused(
+    tmp_path: Path,
+) -> None:
+    repo, source = _js_repo(tmp_path)
+    (repo / "eslint.config.mjs").write_text(
+        "import rules from './rules.js';\nexport default [rules];\n",
+        encoding="utf-8",
+    )
+    base = _commit(repo, "base")
+    text = source.read_text(encoding="utf-8").splitlines(keepends=True)
+    text[4] = "console.log(missingName, 'x');\n"
+    source.write_text("".join(text), encoding="utf-8")
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    runner = _Calls(base, _fixture("eslint.json"))
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("eslint")], runner,
+    ) == 0
+    assert _read(output, "findings.json") == []
+    degraded = _degraded(output, "eslint")
+    assert len(degraded) == 1
+    assert degraded[0]["reason"] == "config-imports-head"
+    assert all("--version" in call for call in runner.calls)
+
+
 def test_eslint_plugin_default_when_base_has_none(tmp_path: Path) -> None:
     repo, source = _js_repo(tmp_path)
     base = _commit(repo, "base")
@@ -691,6 +762,69 @@ def test_npm_audit_stages_base_npmrc(tmp_path: Path) -> None:
     assert audit_runs, "npm audit never ran"
     for _argv, _at_base, state in audit_runs:
         assert state[".npmrc"] == "registry=https://registry.example.com/\n"
+
+
+def test_npm_audit_degrades_when_head_removes_the_lockfile(
+    tmp_path: Path,
+) -> None:
+    repo, base, _head = _audit_repo(tmp_path)
+    (repo / "package-lock.json").unlink()
+    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    payload = _fixture("npm-audit.json")
+    runner = _Calls(base, payload, base_payload=payload)
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("npm-audit")], runner,
+    ) == 0
+    assert _read(output, "findings.json") == []
+    degraded = _degraded(output, "npm")
+    assert len(degraded) == 1
+    assert degraded[0]["reason"] == "lockfile-removed"
+
+
+def test_npm_audit_stages_npmrc_without_auth_lines(tmp_path: Path) -> None:
+    repo, base, head = _audit_repo(tmp_path)
+    _git(repo, "checkout", "-q", base)
+    (repo / ".npmrc").write_text(
+        "registry=https://registry.example.com/\n"
+        "@example:registry=https://registry.example.com/\n"
+        "//registry.example.com/:_authToken=EXAMPLE_TOKEN\n"
+        "username=example-user\n"
+        "_password=ZXhhbXBsZQ==\n"
+        "proxy=http://proxy.example.com/\n"
+        "always-auth=true\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "--amend", "--no-edit")
+    base = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "main")
+    (repo / ".npmrc").write_text("registry=https://evil.example.com/\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    snapshots: list[tuple[list[str], bool | None, dict[str, str | None]]] = []
+    runner = _Calls(
+        base, _fixture("npm-audit.json"), base_payload='{"vulnerabilities": {}}',
+        watch=(".npmrc",), snapshots=snapshots,
+    )
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("npm-audit")], runner,
+    ) == 0
+    audit_runs = [
+        (argv, at_base, state) for argv, at_base, state in snapshots
+        if argv[:1] == ["npm"] and "audit" in argv and at_base is not None
+    ]
+    assert audit_runs, "npm audit never ran"
+    for _argv, _at_base, state in audit_runs:
+        assert state[".npmrc"] == (
+            "registry=https://registry.example.com/\n"
+            "@example:registry=https://registry.example.com/\n"
+            "proxy=http://proxy.example.com/\n"
+            "always-auth=true\n"
+        )
 
 
 def test_npm_high_blocks_unless_the_builder_excuses_it(tmp_path: Path) -> None:
@@ -943,6 +1077,107 @@ def test_stryker_past_deadline_records_cap(tmp_path: Path, monkeypatch: pytest.M
     assert all(Path(call[0]).name != "stryker" or "--version" in call for call in runner.calls)
 
 
+def test_stryker_ignores_a_preseeded_report(tmp_path: Path) -> None:
+    repo, source = _stryker_repo(tmp_path)
+    report = repo / "reports" / "mutation"
+    report.mkdir(parents=True)
+    (report / "mutation.json").write_text(
+        _fixture("stryker-mutation.json"), encoding="utf-8"
+    )
+    base = _commit(repo, "base")
+    text = source.read_text(encoding="utf-8").splitlines(keepends=True)
+    text[1] = "  return a + b + 0;\n"
+    source.write_text("".join(text), encoding="utf-8")
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    runner = _Calls(base, "Mutation testing complete: 1 survived, 1 killed.\n")
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("stryker")], runner,
+    ) == 0
+    assert _read(output, "findings.json") == []
+    degraded = _degraded(output, "stryker")
+    assert len(degraded) == 1
+    assert degraded[0]["reason"] == "unparseable"
+
+
+def test_stryker_ignores_a_preseeded_report_symlink(tmp_path: Path) -> None:
+    repo, source = _stryker_repo(tmp_path)
+    report = repo / "reports" / "mutation"
+    report.mkdir(parents=True)
+    (repo / "reports" / "evil.json").write_text(
+        _fixture("stryker-mutation.json"), encoding="utf-8"
+    )
+    (report / "mutation.json").symlink_to("../evil.json")
+    base = _commit(repo, "base")
+    text = source.read_text(encoding="utf-8").splitlines(keepends=True)
+    text[1] = "  return a + b + 0;\n"
+    source.write_text("".join(text), encoding="utf-8")
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    runner = _Calls(base, "Mutation testing complete: 1 survived, 1 killed.\n")
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("stryker")], runner,
+    ) == 0
+    assert _read(output, "findings.json") == []
+    degraded = _degraded(output, "stryker")
+    assert len(degraded) == 1
+    assert degraded[0]["reason"] == "unparseable"
+
+
+def test_stryker_rejects_a_report_symlink_after_the_run(
+    tmp_path: Path,
+) -> None:
+    repo, source = _stryker_repo(tmp_path)
+    base = _commit(repo, "base")
+    text = source.read_text(encoding="utf-8").splitlines(keepends=True)
+    text[1] = "  return a + b + 0;\n"
+    source.write_text("".join(text), encoding="utf-8")
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    runner = _Calls(
+        base, "Mutation testing complete: 1 survived, 1 killed.\n",
+        files={"reports/evil.json": _fixture("stryker-mutation.json")},
+        links={"reports/mutation/mutation.json": "../evil.json"},
+    )
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("stryker")], runner,
+    ) == 0
+    assert _read(output, "findings.json") == []
+    degraded = _degraded(output, "stryker")
+    assert len(degraded) == 1
+    assert degraded[0]["reason"] == "unparseable"
+
+
+def test_stryker_refuses_a_report_parent_outside_the_worktree(
+    tmp_path: Path,
+) -> None:
+    repo, source = _stryker_repo(tmp_path)
+    (repo / "reports").symlink_to(tmp_path / "outside")
+    base = _commit(repo, "base")
+    text = source.read_text(encoding="utf-8").splitlines(keepends=True)
+    text[1] = "  return a + b + 0;\n"
+    source.write_text("".join(text), encoding="utf-8")
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    runner = _Calls(
+        base, "Mutation testing complete: 1 survived, 1 killed.\n",
+        files={"reports/mutation/mutation.json": _fixture("stryker-mutation.json")},
+    )
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("stryker")], runner,
+    ) == 0
+    assert _read(output, "findings.json") == []
+    degraded = _degraded(output, "stryker")
+    assert len(degraded) == 1
+    assert degraded[0]["reason"] == "unparseable"
+    assert not (tmp_path / "outside").exists()
+    assert all("--version" in call for call in runner.calls)
+
+
 def test_stryker_killed_run_records_timeout(tmp_path: Path) -> None:
     repo, _source = _stryker_repo(tmp_path)
     base = _commit(repo, "base")
@@ -1045,6 +1280,35 @@ def test_dependency_cruiser_error_blocks_warning_fixes_later(tmp_path: Path) -> 
     assert _severity(output, "no-orphans") == "blocks"
     assert _severity(output, "not-to-test") == "fix-later"
     assert _finding(output, "no-orphans")["location"]["file"] == "src/orphan.js"
+
+
+def test_dependency_cruiser_base_config_with_import_is_refused(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "package.json").write_text(
+        json.dumps({"name": "example", "version": "1.0.0"}), encoding="utf-8"
+    )
+    (repo / ".dependency-cruiser.js").write_text(
+        "const rules = require('./rules.js');\nmodule.exports = rules;\n",
+        encoding="utf-8",
+    )
+    base = _commit(repo, "base")
+    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    runner = _Calls(base, _fixture("depcruise.json"))
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("dependency-cruiser")], runner,
+    ) == 0
+    assert _read(output, "findings.json") == []
+    degraded = _degraded(output, "dependency-cruiser")
+    assert len(degraded) == 1
+    assert degraded[0]["reason"] == "config-imports-head"
+    assert all("--version" in call for call in runner.calls)
 
 
 def test_dependency_cruiser_preexisting_violation_drops(tmp_path: Path) -> None:

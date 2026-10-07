@@ -630,7 +630,11 @@ def test_the_environment_symlink_is_created_only_when_lockfile_blobs_match(
         tmp_path / "home-2", adapters=[adapter], runner=_Calls(observe),
     )
     assert code == 0
-    assert all(linked is False for _sha, linked in observe.seen)
+    # Base locks no longer match, so the base tree stays unlinked. Head locks
+    # do, so the head tree links even though the commit carries its own
+    # .venv: the committed tree is removed before the operator tree is linked.
+    assert (base, False) in observe.seen
+    assert (moved, True) in observe.seen
 
     observe.seen = []
     code = _run(

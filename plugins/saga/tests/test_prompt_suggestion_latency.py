@@ -768,3 +768,10 @@ def test_the_floor_shape_makes_no_request_at_all() -> None:
         shape="floor", prompt="x", socket="", transport="", commands_dir=str(SAGA_COMMANDS)
     )
     assert harness.cmd_hook(args) == 0
+
+
+def test_the_suite_guard_refuses_network_sockets_but_allows_unix() -> None:
+    with pytest.raises(AssertionError):
+        socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as unix:
+        assert unix.family == socket.AF_UNIX
