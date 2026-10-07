@@ -155,6 +155,7 @@ TOOL_STEMS: dict[str, str] = {
     "supported build": "correctness.ci-matrix",
     "build matrix": "correctness.ci-matrix",
     "structural check": "architecture-maintainability.structural-check-fails",
+    "reaches into an upper": "architecture-maintainability.structural-check-fails",
     "check_repo": "architecture-maintainability.structural-check-fails",
     "packaging test": "architecture-maintainability.structural-check-fails",
     "import-linter": "architecture-maintainability.structural-check-fails",
@@ -172,6 +173,7 @@ TOOL_STEMS: dict[str, str] = {
     "account id": "architecture-maintainability.machine-values",
     "account-id": "architecture-maintainability.machine-values",
     "duplicat": "architecture-maintainability.duplicate",
+    "live in two places": "architecture-maintainability.duplicate",
     "copy-paste": "architecture-maintainability.duplicate",
     "copy and paste": "architecture-maintainability.duplicate",
     "second copy": "architecture-maintainability.duplicate",
@@ -181,6 +183,7 @@ TOOL_STEMS: dict[str, str] = {
     "cyclomatic": "architecture-maintainability.complexity-dead-code-naming",
     "dead code": "architecture-maintainability.complexity-dead-code-naming",
     "dead-code": "architecture-maintainability.complexity-dead-code-naming",
+    "nothing reads anymore": "architecture-maintainability.complexity-dead-code-naming",
     "unused": "architecture-maintainability.complexity-dead-code-naming",
     "vulture": "architecture-maintainability.complexity-dead-code-naming",
     "naming": "architecture-maintainability.complexity-dead-code-naming",
@@ -780,6 +783,24 @@ def test_tool_answered_stems_catch_planted_violations() -> None:
     }
     stems = {stem for stem, _, _ in _violations(planted)}
     assert {"coverage", "mutat", "scanner finding", "stale", "duplicat"} <= stems
+    retired = {
+        "id": "architecture-maintainability.retired-ask",
+        "lens": "architecture-maintainability",
+        "kind": "yes-no",
+        "options": [
+            {"id": "yes", "definition": "a lower layer reaches into an upper one"},
+            {"id": "no", "definition": "no trap here"},
+        ],
+        "examples": ["settings that live in two places"],
+        "not_for": ["a flag nothing reads anymore"],
+        "piece": "function",
+    }
+    retired_stems = {stem for stem, _, _ in _violations(retired)}
+    assert {
+        "reaches into an upper",
+        "live in two places",
+        "nothing reads anymore",
+    } <= retired_stems
     clean = copy.deepcopy(planted)
     clean["id"] = "testing.clean-ask"
     clean["options"] = [

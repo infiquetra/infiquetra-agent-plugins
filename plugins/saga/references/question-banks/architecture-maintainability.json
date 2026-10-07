@@ -189,25 +189,28 @@
       "piece": "function"
     },
     {
-      "id": "architecture-maintainability.config-scattered",
+      "id": "architecture-maintainability.single-user-abstraction",
       "lens": "architecture-maintainability",
       "kind": "yes-no",
       "options": [
         {
           "id": "yes",
-          "definition": "settings for one thing now live in two places or two formats"
+          "definition": "a new helper, layer, or option serves exactly one caller, adding indirection for nothing"
         },
         {
           "id": "no",
-          "definition": "each setting has one home, read one way"
+          "definition": "each abstraction has the callers that justify it, or stays inline"
         }
       ],
       "examples": [
-        "a timeout read from flags here and from a file there, disagreeing quietly"
+        "a new loader module imported by one test helper"
       ],
       "not_for": [
-        "layered defaults with one documented order"
+        "a second caller arriving in the same change"
       ],
+      "when": {
+        "languages": ["python", "typescript", "dart", "rust", "swift", "shell"]
+      },
       "piece": "function"
     },
     {
@@ -275,24 +278,24 @@
       "piece": "function"
     },
     {
-      "id": "architecture-maintainability.layer-points-up",
+      "id": "architecture-maintainability.layer-called-up-at-runtime",
       "lens": "architecture-maintainability",
       "kind": "yes-no",
       "options": [
         {
           "id": "yes",
-          "definition": "a lower layer reaches into an upper one, or two parts need each other"
+          "definition": "a lower layer calls into an upper one at runtime"
         },
         {
           "id": "no",
-          "definition": "all references point down the layers, with none cycling back"
+          "definition": "runtime calls point down the layers like the imports do"
         }
       ],
       "examples": [
-        "a storage module importing a handler to reuse one check"
+        "a storage helper invoking a handler through a callback the handler passed down"
       ],
       "not_for": [
-        "callbacks the design passes downward"
+        "helpers both layers share by design"
       ],
       "when": {
         "languages": [
@@ -307,21 +310,21 @@
       "piece": "function"
     },
     {
-      "id": "architecture-maintainability.dead-flag-or-option",
+      "id": "architecture-maintainability.option-nothing-can-set",
       "lens": "architecture-maintainability",
       "kind": "yes-no",
       "options": [
         {
           "id": "yes",
-          "definition": "a flag, option, or setting nothing reads anymore"
+          "definition": "a flag, option, or setting exists that no caller can set or reach"
         },
         {
           "id": "no",
-          "definition": "each flag is read somewhere the tests cover"
+          "definition": "each flag is set somewhere the tests cover"
         }
       ],
       "examples": [
-        "a command-line switch left over from a removed mode"
+        "a workers count read from an option that no command defines"
       ],
       "not_for": [
         "reserved flags held for a planned use"

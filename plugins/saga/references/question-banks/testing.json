@@ -53,7 +53,7 @@
       "options": [
         {
           "id": "yes",
-          "definition": "a test writes to a live or shared system, or needs one to pass"
+          "definition": "a test writes to a live or shared system"
         },
         {
           "id": "no",

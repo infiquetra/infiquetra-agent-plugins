@@ -307,7 +307,7 @@
       "options": [
         {
           "id": "yes",
-          "definition": "a grant reaches further than the code exercises, or no grant names its need"
+          "definition": "a grant reaches further than the code exercises"
         },
         {
           "id": "no",
