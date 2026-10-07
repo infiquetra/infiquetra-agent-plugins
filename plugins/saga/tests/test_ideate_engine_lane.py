@@ -44,7 +44,7 @@ def test_dispatch_contract_adds_one_external_lane_with_identical_prompt_inputs()
     assert "In addition to the N Claude frame agents" in compact_lane
     assert "one chaperoned external-engine generator lane" in compact_lane
     assert "`offload`" in lane
-    assert "`sonnet/medium`" in lane
+    assert "`sonnet/high`" in lane
     assert "same substituted frame-agent prompt above" in compact_lane
     for prompt_input in (
         "frame",

@@ -3,7 +3,7 @@ name: codex-coder
 description: Delegate a bounded coding task to codex through the guarded codex wrapper
 tools: Bash
 model: sonnet
-effort: medium
+effort: high
 ---
 
 ## Presentation contract (Infiquetra house style)

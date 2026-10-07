@@ -18,8 +18,8 @@ build if a second vocabulary source appears in production Python.
 
 | Block | What it answers |
 |---|---|
-| `models`, `efforts`, `scalar_efforts` | the Claude model and effort vocabulary, and the portable scalar superset |
-| `work_shapes` | the tier default per work shape — the nine rows `tier_resolver.resolve()` reads; a row may carry `claude_only` and `unattended_step_down` |
+| `models`, `efforts`, `scalar_efforts` | the Claude model and effort vocabulary, and the portable scalar superset; each model carries an `effort_ceiling` (what it can run) and may carry a lower `raise_ceiling` (the strongest effort an automatic raise lands on within it) |
+| `work_shapes` | the tier default per work shape — the ten rows `tier_resolver.resolve()` reads; a row may carry `claude_only` and `unattended_step_down` |
 | `vendors` | the per-vendor palette: models, accepted efforts, effort collapse, effort application |
 | `capability_ratings` | per model family and per engine variant, with trust tiers and cost-and-speed ranks |
 | `roles` | per-role staffing defaults: the work shape a role's tier comes from, and the capability its candidates are ranked by |
@@ -184,7 +184,11 @@ being reachable.
 ## To add a model
 
 1. Add a row to `staffing.json` under `"models"` with an explicit integer `rank` and an
-   `effort_ceiling` (the strongest effort the model actually runs). **Ranks must stay contiguous
+   `effort_ceiling` (the strongest effort the model actually runs). Add a `raise_ceiling` only
+   when an effort the model can run is not worth reaching by an automatic raise: sonnet carries
+   `raise_ceiling: high` because sonnet/xhigh costs more per task than opus/high and scores lower
+   (Artificial Analysis snapshot, 2026-10-07), so a raise from sonnet/high moves to opus/high. A
+   raise never lands above the target model's raise ceiling. **Ranks must stay contiguous
    `0..n-1`** — inserting a new strongest model means renumbering the existing ranks, not squeezing
    in a duplicate or a gap. Import-time validation (`_derive_ordered`) rejects a duplicate, gapped
    or non-integer rank loudly.
@@ -311,7 +315,7 @@ or spawn kind raises rather than silently doing nothing.
 file too. Its loader reads the field into the agent's definition and warns on a value outside the
 vocabulary. It ignores `permissionMode`, `hooks` and `mcpServers` in a plugin agent file. This was
 read from the build's loader, not observed on a live request. A static file suits an agent whose
-tier is fixed, such as `agy-coder` (`sonnet/medium`). Saga does not use it for run roles: a file
+tier is fixed, such as `agy-coder` (`sonnet/high`). Saga does not use it for run roles: a file
 cannot carry a per-run resolved tier, and it would hold a copy of the roles-library prompt that
 can drift from the library.
 
@@ -320,7 +324,7 @@ silent clamp (`{#effort-collapse-max}`). Do not read another program's configura
 what it will do.
 
 **Chaperone workers are outside the cascade.** A worker dispatched with intent `offload` or
-`second-opinion` takes an intent-driven default — `sonnet/medium` and `opus/high` respectively,
+`second-opinion` takes an intent-driven default — `sonnet/high` and `opus/high` respectively,
 carried as `work_shapes` rows — and that is not a value to resolve or override. The cascade's three
 layers do not apply to it.
 

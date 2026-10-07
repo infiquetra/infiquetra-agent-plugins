@@ -1278,7 +1278,7 @@ def test_render_json_carries_the_rows_and_the_palette(
     assert data["staffing"]["rows"][0]["jev"]["state"] == "not-configured"
     assert data["lenses"]["catalogue_version"] == "1.0.0"
     assert data["palette"]["models"] == list(tier_palette.MODELS)
-    assert {"model": "haiku", "effort": "xhigh"} not in data["palette"]["pairs"]
+    assert {"model": "haiku", "effort": "xhigh"} in data["palette"]["pairs"]
     assert {"model": "haiku", "effort": "high"} in data["palette"]["pairs"]
 
 
@@ -1437,13 +1437,13 @@ def test_a_one_step_model_raise_is_shown_as_proposed(adm: ModuleType) -> None:
 def test_the_table_shows_a_model_rung_raise_the_resolver_applied(adm: ModuleType) -> None:
     """Review finding on #93: the table must word the resolver's answer, not a copy of its rules.
 
-    The real resolver accepts one model rung with the effort unchanged (sonnet/medium to
-    opus/medium for the merging worker); the Why cell must say the raise applied.
+    The real resolver accepts one model rung with the effort unchanged (haiku/medium to
+    sonnet/medium for the merging worker); the Why cell must say the raise applied.
     """
     staffing = _load_bundled_staffing()
-    raise_ = {"model": "opus", "effort": "medium", "reason": "the merge crosses a gate"}
+    raise_ = {"model": "sonnet", "effort": "medium", "reason": "the merge crosses a gate"}
     decision = staffing.resolve_role("merging-worker", jev_raise=raise_)
-    assert (decision.model, decision.effort, decision.source) == ("opus", "medium", "jev-raise")
+    assert (decision.model, decision.effort, decision.source) == ("sonnet", "medium", "jev-raise")
     record = _table_record(adm, _table_staffing())
     record.run_configuration["staffing_models_and_efforts"]["value"] = {
         "merging-worker": {
@@ -1455,7 +1455,7 @@ def test_the_table_shows_a_model_rung_raise_the_resolver_applied(adm: ModuleType
         }
     }
     (row,) = adm._staffing_rows(record, staffing)["rows"]
-    assert row["proposed"] == {"vendor": "claude", "model": "opus", "effort": "medium"}
+    assert row["proposed"] == {"vendor": "claude", "model": "sonnet", "effort": "medium"}
     assert row["why"] == "Jev raise: the merge crosses a gate"
 
 
@@ -1838,7 +1838,6 @@ def test_a_merge_keeps_the_run_wide_keys_and_the_roles_own_jev_fields(adm: Modul
 @pytest.mark.parametrize(
     ("override", "names"),
     [
-        ({"worker": {"vendor": "claude", "model": "haiku", "effort": "xhigh"}}, "ceiling is high"),
         ({"worker": {"vendor": "claude", "model": "gpt", "effort": "high"}}, "'gpt'"),
         ({"worker": {"vendor": "claude", "model": "opus", "effort": "max"}}, "'max'"),
         ({"auditor": {"vendor": "claude", "model": "opus", "effort": "high"}}, "'auditor'"),
@@ -2098,11 +2097,11 @@ def test_admission_staffs_the_worker_at_opus_medium(
     monkeypatch.chdir(repo_root)
     value = _admitted_staffing(adm, repo_root)
     worker = value["worker"]
-    assert (worker["vendor"], worker["model"], worker["effort"]) == ("claude", "opus", "medium")
+    assert (worker["vendor"], worker["model"], worker["effort"]) == ("claude", "sonnet", "high")
     assert worker["source"] == "policy"
     for role in ("merging-worker", "release-worker"):
         row = value[role]
-        assert (row["vendor"], row["model"], row["effort"]) == ("claude", "sonnet", "medium")
+        assert (row["vendor"], row["model"], row["effort"]) == ("claude", "haiku", "medium")
 
 
 def _three_paths(adm: ModuleType, repo_root: Path) -> dict[str, tuple[str, str]]:
@@ -2146,7 +2145,7 @@ def test_admission_plan_and_work_agree_with_no_overlay(
 ) -> None:
     monkeypatch.chdir(repo_root)
     paths = _three_paths(adm, repo_root)
-    assert set(paths.values()) == {("opus", "medium")}, paths
+    assert set(paths.values()) == {("sonnet", "high")}, paths
 
 
 def test_admission_plan_and_work_agree_with_an_overlay(
@@ -2203,12 +2202,12 @@ def test_admission_keeps_the_worker_and_shows_a_refused_raise(
 ) -> None:
     # Before the review repair the refusal was swallowed and the worker vanished from the plan.
     monkeypatch.chdir(repo_root)
-    previous = {"worker": {"vendor": "claude", "model": "opus", "effort": "medium",
+    previous = {"worker": {"vendor": "claude", "model": "sonnet", "effort": "high",
                            "jev_raise": bad_raise}}
     value = _admitted_staffing(adm, repo_root, previous=previous)
     assert "worker" in value, sorted(value)
     worker = value["worker"]
-    assert (worker["model"], worker["effort"], worker["source"]) == ("opus", "medium", "policy")
+    assert (worker["model"], worker["effort"], worker["source"]) == ("sonnet", "high", "policy")
     assert worker["jev_raise"] == bad_raise
     assert "jev raise" in worker["jev_raise_refused"]
 
@@ -2388,7 +2387,7 @@ def test_the_build_unit_command_explains_the_winning_layer_only_when_asked(
     explained = _plan_command(tmp_path, "--explain")
     assert explained.returncode == 0, explained.stderr
     assert explained.stdout.strip() == (
-        '{"model": "opus", "effort": "medium", "source": "policy"}'
+        '{"model": "sonnet", "effort": "high", "source": "policy"}'
     )
     set_aside = _plan_command(
         tmp_path, "--plan-model", "opus", "--plan-effort", "medium", "--jev-raise", raise_json
@@ -2403,10 +2402,10 @@ def test_the_build_unit_command_runs_as_an_agent_runs_it(tmp_path: Path) -> None
     undeclared = _plan_command(tmp_path)
     assert undeclared.returncode == 0, undeclared.stderr
     # Issue #93's acceptance criterion, literally: the default output is exactly the two-key tier.
-    assert undeclared.stdout.strip() == '{"model": "opus", "effort": "medium"}'
+    assert undeclared.stdout.strip() == '{"model": "sonnet", "effort": "high"}'
 
     mechanical = _plan_command(tmp_path, "--work-shape", "mechanical")
-    assert json.loads(mechanical.stdout) == {"model": "sonnet", "effort": "medium"}
+    assert json.loads(mechanical.stdout) == {"model": "haiku", "effort": "medium"}
 
     explicit = _plan_command(tmp_path, "--plan-model", "haiku", "--plan-effort", "low")
     assert json.loads(explicit.stdout) == {"model": "haiku", "effort": "low"}
@@ -2415,9 +2414,13 @@ def test_the_build_unit_command_runs_as_an_agent_runs_it(tmp_path: Path) -> None
     assert unknown.returncode == 2
     assert "nope" in json.loads(unknown.stderr)["error"]
 
-    unrunnable = _plan_command(tmp_path, "--plan-model", "haiku", "--plan-effort", "xhigh")
-    assert unrunnable.returncode == 2
-    assert "unrunnable" in json.loads(unrunnable.stderr)["error"]
+    # Every Claude model runs xhigh since Haiku 5.5, so haiku/xhigh is an ordinary answer now.
+    haiku_xhigh = _plan_command(tmp_path, "--plan-model", "haiku", "--plan-effort", "xhigh")
+    assert json.loads(haiku_xhigh.stdout) == {"model": "haiku", "effort": "xhigh"}
+
+    off_palette = _plan_command(tmp_path, "--plan-model", "haiku", "--plan-effort", "max")
+    assert off_palette.returncode == 2
+    assert "'max'" in json.loads(off_palette.stderr)["error"]
 
 
 @pytest.mark.parametrize("doc", TIER_DOCS, ids=lambda path: path.name)
@@ -2447,7 +2450,7 @@ def test_the_table_reads_the_overlay_admission_staffs_from_repo_root(
 
     The checkout named by ``--repo-root`` sets the mechanical shape to sonnet/high; the working
     directory's own overlay sets it to sonnet/low. With a recorded Jev raise on the merging worker
-    (sonnet/medium to opus/medium, which the checkout's overlay outranks), the table's Default,
+    (haiku/medium to sonnet/medium, which the checkout's overlay outranks), the table's Default,
     Proposed and Why must agree with the tier admission records, never with the working
     directory's overlay and never with the outranked raise.
     """
@@ -2474,7 +2477,7 @@ def test_the_table_reads_the_overlay_admission_staffs_from_repo_root(
         staffing,
         repo_root=repo_root,
     )
-    raise_ = {"model": "opus", "effort": "medium", "reason": "gate"}
+    raise_ = {"model": "sonnet", "effort": "medium", "reason": "gate"}
     seeded.run_configuration["staffing_models_and_efforts"]["value"]["merging-worker"][
         "jev_raise"
     ] = raise_
@@ -3015,7 +3018,7 @@ def test_the_state_sent_includes_the_issue_title_body_and_flags(
         "has_privacy": False,
     }
     worker = calls[0]["state"]["tasks"]["worker"]
-    assert worker["default_tier"] == "opus/medium"
+    assert worker["default_tier"] == "sonnet/high"
     assert worker["work_shape"] == "implementation"
     assert "worker__direction" in calls[0]["questions"]
     assert calls[0]["options"]["total_deadline"] == 20.0
@@ -3031,7 +3034,7 @@ def test_an_auto_raise_is_recorded_in_the_run_record_with_its_reason(
     assert (worker["model"], worker["effort"], worker["source"]) == ("opus", "high", "jev-raise")
     raise_ = worker["jev_raise"]
     assert (raise_["model"], raise_["effort"], raise_["confidence"]) == ("opus", "high", 0.85)
-    assert "one effort step" in raise_["reason"] and "0.85" in raise_["reason"]
+    assert "one model step" in raise_["reason"] and "0.85" in raise_["reason"]
     assert raise_["decision_id"] == (
         "staffing/tier-direction:infiquetra/infiquetra-agent-plugins#96:role:worker"
     )
@@ -3046,10 +3049,10 @@ def test_a_confirm_band_raise_prefills_question_4(
 
     worker = _staffing_value(record)["worker"]
     assert "jev_raise" not in worker
-    assert (worker["model"], worker["effort"]) == ("opus", "medium")
+    assert (worker["model"], worker["effort"]) == ("sonnet", "high")
     question = next(q for q in outstanding if q.key == "staffing_overrides")
     assert question.default == {"worker": {"vendor": "claude", "model": "opus", "effort": "high"}}
-    assert "raise to confirm, worker: opus/medium -> opus/high (confidence 0.70)" in question.prompt
+    assert "raise to confirm, worker: sonnet/high -> opus/high (confidence 0.70)" in question.prompt
 
 
 def test_a_lower_suggestion_is_advisory_only(
@@ -3059,7 +3062,7 @@ def test_a_lower_suggestion_is_advisory_only(
 
     merging = _staffing_value(record)["merging-worker"]
     assert (merging["model"], merging["effort"], merging["source"]) == (
-        "sonnet",
+        "haiku",
         "medium",
         "policy",
     )
@@ -3068,7 +3071,7 @@ def test_a_lower_suggestion_is_advisory_only(
     assert question.default is None
     assert "advisory lower, never applied, merging-worker" in question.prompt
     rendered = adm.render(record, outstanding, None)
-    assert "merging-worker: advisory lower, never applied, sonnet/medium -> sonnet/low" in rendered
+    assert "merging-worker: advisory lower, never applied, haiku/medium -> haiku/low" in rendered
 
 
 def test_the_operator_answer_is_logged_as_the_label(
@@ -3163,7 +3166,7 @@ def test_off_switch_makes_no_request_at_admission(
     assert calls == []
     value = _staffing_value(record)
     assert value["_tier_judgment"]["status"] == "off"
-    assert (value["worker"]["model"], value["worker"]["effort"]) == ("opus", "medium")
+    assert (value["worker"]["model"], value["worker"]["effort"]) == ("sonnet", "high")
     assert "tier_judgment" not in value["worker"]
     assert "Tier judgment: switched off" in adm.render(record, outstanding, None)
 
@@ -3278,7 +3281,7 @@ def test_dry_run_logs_no_verdict_and_the_command_line_judges_by_default(
     assert adm.main([*argv, "--dry-run"]) == 0
     assert len(calls) == 1, "the command line judges without being asked to"
     assert calls[0]["options"]["cache_dir"] == log_dir
-    assert "worker: raise applied, opus/medium -> opus/high" in capsys.readouterr().out
+    assert "worker: raise applied, sonnet/high -> opus/high" in capsys.readouterr().out
     assert _logged(log_dir) == {}, "a dry run logs nothing"
 
     assert adm.main(argv) == 0

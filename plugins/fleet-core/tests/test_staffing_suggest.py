@@ -231,7 +231,9 @@ def test_raise_at_ceiling_is_reported_not_applied() -> None:
         (("sonnet", "medium"), ("sonnet", "high")),
         (("sonnet", "xhigh"), ("opus", "xhigh")),
         (("haiku", "low"), ("haiku", "medium")),
-        (("haiku", "high"), ("sonnet", "high")),
+        (("haiku", "high"), ("haiku", "xhigh")),
+        (("haiku", "xhigh"), None),
+        (("sonnet", "high"), ("opus", "high")),
         (("fable", "high"), None),
         (("fable", "low"), None),
     ],
@@ -573,10 +575,10 @@ def test_cli_suggest_prints_default_judgment_band_and_applies(
 
     assert staffing.main(["resolve", "--shape", "mechanical", "--suggest"]) == 0
     out = capsys.readouterr().out
-    assert "default: sonnet/medium (policy)" in out
+    assert "default: haiku/medium (policy)" in out
     assert "judgment: above at confidence 0.85 (floor 0.60, auto 0.80)" in out
-    assert "in a run: auto-raise -> sonnet/high" in out
-    assert "applies: sonnet/medium" in out
+    assert "in a run: auto-raise -> haiku/high" in out
+    assert "applies: haiku/medium" in out
     assert len(verdicts) == 1
     assert verdicts[0]["label"] is None
     assert verdicts[0]["decision_id"] == "staffing/tier-direction:cli:mechanical"
@@ -590,10 +592,10 @@ def test_cli_suggest_json_carries_the_band_and_never_changes_the_decision(
 
     assert staffing.main(["resolve", "--shape", "mechanical", "--suggest", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["tier"] == "sonnet/medium"
+    assert payload["tier"] == "haiku/medium"
     assert payload["source"] == "policy"
     assert payload["consult"]["band"] == "auto-raise"
-    assert payload["consult"]["proposed"] == {"model": "sonnet", "effort": "high"}
+    assert payload["consult"]["proposed"] == {"model": "haiku", "effort": "high"}
     assert payload["consult"]["confidence"] == pytest.approx(0.85)
     assert payload["consult"]["status"] == "ok"
 

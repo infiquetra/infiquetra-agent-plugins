@@ -3,8 +3,8 @@
 # source-version: 0.33.0
 # source-commit: authored
 # source-path: scripts/fleet_commons/jev_verbs.py
-# source-sha256: cbcc70dc63258f5cf2cec60493ac0b3c99a5f5ed187af659545a0c24f4783c56
-# output-sha256: cbcc70dc63258f5cf2cec60493ac0b3c99a5f5ed187af659545a0c24f4783c56
+# source-sha256: d5aa592a32bf24264cead3d8886769d4e8c8ab034d09930eb211dc068c496116
+# output-sha256: d5aa592a32bf24264cead3d8886769d4e8c8ab034d09930eb211dc068c496116
 # --- end generated bundle stamp ---
 """The named-verb registry (plan U5, requirement R14).
 
@@ -32,10 +32,11 @@ from typing import Any
 # data with no file I/O; test_staffing_suggest.py's drift test reads staffing.json and fails in
 # both directions when a shape is missing here, named here and not there, or tiered differently.
 TIER_POLICY = (
-    "Staffing defaults by work shape: judgment -> opus/high; implementation -> opus/medium; "
-    "mechanical -> sonnet/medium; purely-mechanical -> haiku/low; read-only-survey -> "
-    "sonnet/low; offload-test-gated -> haiku/low; offload -> sonnet/medium; second-opinion -> "
-    "opus/high; divergence -> opus/high. Models from weakest to strongest: haiku, sonnet, opus, "
+    "Staffing defaults by work shape: judgment -> opus/high; implementation -> sonnet/high; "
+    "implementation-test-gated -> haiku/xhigh; mechanical -> haiku/medium; purely-mechanical -> "
+    "haiku/low; read-only-survey -> haiku/xhigh; offload-test-gated -> haiku/low; offload -> "
+    "sonnet/high; second-opinion -> opus/high; divergence -> opus/high. Models from weakest to "
+    "strongest: haiku, sonnet, opus, "
     "fable. Efforts from lowest to highest: low, medium, high, xhigh. Judge a task against its "
     "own default_tier. Answer 'above' only when the issue or the unit carries risk or reasoning "
     "the default does not cover: security, an API contract other code depends on, "
@@ -140,9 +141,9 @@ VERBS: dict[str, Verb] = {
             "model": _choice(
                 "Which model tier should run `task`?",
                 {
-                    "haiku": "cheapest; purely mechanical, bounded, predictable steps",
-                    "sonnet": "mid; mechanical edits, survey, search, summarising",
-                    "opus": "strong; implementation, judgment, design, adversarial review",
+                    "haiku": "cheapest; mechanical steps, survey, short test-gated building",
+                    "sonnet": "mid; implementation of a settled plan unit, review of unverified output",
+                    "opus": "strong; judgment, design, adversarial review, the hardest implementation",
                     "fable": "strongest; a per-unit override for the hardest work, never a default",
                 },
                 TIER_POLICY,

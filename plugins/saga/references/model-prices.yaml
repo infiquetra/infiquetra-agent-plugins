@@ -19,8 +19,8 @@
 # either way. The TypeSafe row below was read from https://docs.typesafe.ai/models on 2026-10-07.
 
 schema: model_prices.v1
-verified_on: 2026-10-03
-source: https://platform.claude.com/docs/en/about-claude/pricing (Model pricing table), read 2026-10-03
+verified_on: 2026-10-07
+source: https://platform.claude.com/docs/en/about-claude/pricing (Model pricing table), read 2026-10-07; Sonnet 5.5 cache read from the 2026-10-07 release note, which the table had not yet caught up with
 currency: USD
 
 models:
@@ -41,15 +41,29 @@ models:
     aliases: [sonnet]
     usd_per_million:
       uncached_input: 2.00
-      cache_read: 0.20
+      cache_read: 0.10
       cache_write_5m: 2.50
       cache_write_1h: 4.00
       output: 10.00
-    note: Claude Sonnet 5.5.
-  claude-haiku-4-5:
+    note: Claude Sonnet 5.5. Cache reads are 0.05 times input on this model since 2026-10-07 (were 0.20).
+  claude-haiku-5-5:
     vendor: claude
     tier: haiku
     aliases: [haiku]
+    usd_per_million:
+      uncached_input: 0.10
+      cache_read: 0.01
+      cache_write_5m: 0.125
+      cache_write_1h: 0.20
+      output: 0.50
+    note: >-
+      Claude Haiku 5.5 at its rate for prompts up to 100,000 tokens. A request whose prompt is
+      over 100,000 tokens costs five times this on every category (0.50 / 0.05 / 0.625 / 1.00 /
+      2.50). Run records hold summed usage, not per-request prompt sizes, so this report
+      under-prices any Haiku 5.5 work that crossed that line.
+  claude-haiku-4-5:
+    vendor: claude
+    tier: haiku
     usd_per_million:
       uncached_input: 1.00
       cache_read: 0.10

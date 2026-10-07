@@ -3,8 +3,8 @@
 # source-version: 0.33.0
 # source-commit: authored
 # source-path: scripts/fleet_commons/tier_palette.py
-# source-sha256: 902d76dffe9ee1820acb0122f07cd8c614e85eee9de1d2391b20b8a6e9ce5560
-# output-sha256: 902d76dffe9ee1820acb0122f07cd8c614e85eee9de1d2391b20b8a6e9ce5560
+# source-sha256: cb17b48c7b4f075458d74bbc15031b9f41a060b3c6ac7cdc28b4330a1b641a10
+# output-sha256: cb17b48c7b4f075458d74bbc15031b9f41a060b3c6ac7cdc28b4330a1b641a10
 # --- end generated bundle stamp ---
 #!/usr/bin/env python3
 """Canonical fleet tier palette — the model/effort vocabulary shared across plugins.
@@ -83,6 +83,30 @@ def _derive_effort_ceilings(registry: dict, efforts: tuple[str, ...]) -> dict[st
     return ceilings
 
 
+def _derive_raise_ceilings(
+    registry: dict, efforts: tuple[str, ...], effort_ceilings: dict[str, str]
+) -> dict[str, str]:
+    """Map each model to its ``raise_ceiling``, defaulting to its ``effort_ceiling``.
+
+    The raise ceiling is policy, not capability: the strongest effort an automatic raise lands
+    on within the model. It may sit below the effort ceiling, never above it.
+    """
+    ceilings: dict[str, str] = {}
+    for name, row in registry["models"].items():
+        ceiling = row.get("raise_ceiling", effort_ceilings[name])
+        if ceiling not in efforts:
+            raise TierPaletteError(
+                f"model {name!r} raise_ceiling {ceiling!r} is not a known effort {efforts}"
+            )
+        if efforts.index(ceiling) > efforts.index(effort_ceilings[name]):
+            raise TierPaletteError(
+                f"model {name!r} raise_ceiling {ceiling!r} is above its effort_ceiling "
+                f"{effort_ceilings[name]!r}"
+            )
+        ceilings[name] = ceiling
+    return ceilings
+
+
 _REGISTRY = _load_registry()
 
 # Closed model vocabulary, strongest-first — derived from staffing.json ``rank``.
@@ -100,6 +124,11 @@ SCALAR_EFFORTS = _derive_ordered(_REGISTRY["scalar_efforts"], "rung", "scalar ef
 # Per-model effort ceiling: the strongest effort the model actually runs. haiku
 # clamps below xhigh; the ladder ops and Tier.validate() consult this (#370).
 _EFFORT_CEILINGS = _derive_effort_ceilings(_REGISTRY, EFFORTS)
+
+# Per-model raise ceiling: the strongest effort an automatic raise lands on within the model.
+# sonnet stops at high because sonnet/xhigh costs more per task than opus/high and scores lower
+# (Artificial Analysis snapshot, 2026-10-07), so a raise from sonnet/high moves to opus.
+_RAISE_CEILINGS = _derive_raise_ceilings(_REGISTRY, EFFORTS, _EFFORT_CEILINGS)
 
 # Models cheap enough that budget-discipline lessons (brevity, mandatory final
 # emit, skim-don't-read, batch concurrency) MUST be baked into generated agent
@@ -135,6 +164,14 @@ def effort_ceiling(model: str) -> str:
     """The strongest effort ``model`` actually runs; raises ValueError when unknown."""
     try:
         return _EFFORT_CEILINGS[model]
+    except KeyError:
+        raise ValueError(f"unknown model {model!r}; expected one of {MODELS}") from None
+
+
+def raise_ceiling(model: str) -> str:
+    """The strongest effort an automatic raise lands on for ``model``; raises ValueError when unknown."""
+    try:
+        return _RAISE_CEILINGS[model]
     except KeyError:
         raise ValueError(f"unknown model {model!r}; expected one of {MODELS}") from None
 

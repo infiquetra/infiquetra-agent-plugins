@@ -3,6 +3,7 @@ name: codex-reviewer
 description: Delegate a bounded review task to codex through the guarded codex wrapper
 tools: Bash
 model: sonnet
+effort: high
 ---
 
 ## Presentation contract (Infiquetra house style)

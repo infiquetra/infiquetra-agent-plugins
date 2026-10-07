@@ -150,15 +150,15 @@ def test_plan_makes_one_request_and_records_each_unit_under_tier_judgments(
     assert tasks["U1"]["goal"] == "rotate the IAM signing key"
     assert tasks["U1"]["files"] == ["plugins/x/key.py"]
     assert tasks["U1"]["work_shape"] == "implementation"
-    assert tasks["U1"]["default_tier"] == "opus/medium"
-    assert tasks["U3"]["default_tier"] == "sonnet/low"
+    assert tasks["U1"]["default_tier"] == "sonnet/high"
+    assert tasks["U3"]["default_tier"] == "haiku/xhigh"
     assert calls[0]["state"]["issue"]["flags"]["has_security"] is True
 
     rows = {row["id"]: row for row in result["units"]}
     assert rows["U1"]["band"] == "auto-raise"
     assert rows["U1"]["tier"] == {"model": "opus", "effort": "high"}
     assert rows["U2"]["band"] == "advisory-lower"
-    assert rows["U2"]["tier"] == {"model": "opus", "effort": "medium"}
+    assert rows["U2"]["tier"] == {"model": "sonnet", "effort": "high"}
 
     record = rr.load(store, 96, warn=None)
     assert record.units == [{"name": "U2", "branch": "issue/96-u2"}], (
@@ -202,7 +202,7 @@ def test_plan_with_the_off_switch_makes_no_request_and_writes_nothing(
     assert calls == []
     assert result["status"] == "off"
     assert all(row["band"] == "not-consulted" for row in result["units"])
-    assert result["units"][0]["tier"] == {"model": "opus", "effort": "medium"}
+    assert result["units"][0]["tier"] == {"model": "sonnet", "effort": "high"}
     assert "tier_judgments" not in rr.load(store, 96, warn=None).extra
 
 
@@ -233,7 +233,7 @@ def test_label_writes_planned_tier_and_logs_each_verdict_once(
     _seed(rr, store)
     _plan(tj, staffing, store, repo_root, {"U1": ("above", 0.85), "U2": ("above", 0.7)}, [])
     log_dir = tmp_path / "typesafe"
-    finals = {"U1": "opus/high", "U2": "opus/medium", "U3": "sonnet/low"}
+    finals = {"U1": "opus/high", "U2": "sonnet/high", "U3": "haiku/xhigh"}
 
     logged = tj.run_label(96, store_root=store, finals=finals, staffing=staffing, log_dir=log_dir)
     assert logged == {"U1": "above", "U2": "same", "U3": "same"}
@@ -346,9 +346,9 @@ def test_the_plan_command_runs_end_to_end_with_the_judgment_off(
     printed = json.loads(capsys.readouterr().out)
     assert printed["status"] == "off"
     assert [row["tier"] for row in printed["units"]] == [
-        {"model": "opus", "effort": "medium"},
-        {"model": "opus", "effort": "medium"},
-        {"model": "sonnet", "effort": "low"},
+        {"model": "sonnet", "effort": "high"},
+        {"model": "sonnet", "effort": "high"},
+        {"model": "haiku", "effort": "xhigh"},
     ]
     assert "tier_judgments" not in rr.load(store, 96, warn=None).extra
 

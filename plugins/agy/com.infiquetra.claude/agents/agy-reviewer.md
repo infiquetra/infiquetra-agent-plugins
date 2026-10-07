@@ -3,6 +3,7 @@ name: agy-reviewer
 description: Delegate a bounded review task to Antigravity through the guarded agy wrapper
 tools: Bash
 model: sonnet
+effort: high
 ---
 
 ## Presentation contract (Infiquetra house style)

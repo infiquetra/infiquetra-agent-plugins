@@ -2,6 +2,53 @@
 
 ## 2026-10-07
 
+### Re-tier the staffing defaults for Haiku 5.5 and the Sonnet 5.5 cache-read cut
+
+**Decision.** `staffing.json` work-shape defaults change: `implementation` from opus/medium to
+sonnet/high; a new `implementation-test-gated` shape at haiku/xhigh for a short building unit whose
+existing tests prove the result; `mechanical` from sonnet/medium to haiku/medium;
+`read-only-survey` from sonnet/low to haiku/xhigh (a trial, with any negative finding
+cross-checked); `offload` from sonnet/medium to sonnet/high. `judgment`, `second-opinion`,
+`divergence`, `purely-mechanical` and `offload-test-gated` keep their tiers. Haiku's
+`effort_ceiling` rises to xhigh. A new optional per-model `raise_ceiling` (sonnet: high) stops an
+automatic raise at that effort, so a raise from sonnet/high moves to opus/high. Plugin agent files
+that pinned sonnet/medium or set no effort now say sonnet/high, and the saga price table carries
+the new Sonnet cache-read rate and a Haiku 5.5 row. This supersedes the price reasoning of the
+2026-10-03 entry "Tier the plan-unit builder as implementation at opus/medium"; that entry's
+category reasoning (the builder is not mechanical work) still holds.
+
+**Rationale.** On 2026-10-07 Anthropic cut Sonnet 5.5 cache reads from $0.20 to $0.10 per million
+tokens. Every Sonnet 5.5 rate is now exactly half the Opus 5.5 rate, so the 1.36 to 1.37 times
+figure, which depended on equal cache-read prices across a 97 percent cache-read input mix, is now
+2 times on any mix. The Artificial Analysis snapshot read the same day (raw page data, saved in
+infiquetra-agent-operations) puts Sonnet high at 46.8 on the Intelligence Index and 0.55 on the
+Coding Agent Index (Claude Code harness) for $0.88 per task, against Opus medium's 51.2 and $1.34.
+Haiku 5.5 xhigh matches Sonnet medium's Intelligence Index score (41.2 against 40.8) at $0.12 per
+task against $0.48, but trails it on the Coding Agent Index (0.41 against 0.46), and Haiku's price
+rises five times once a prompt passes 100,000 tokens. So Haiku takes short, checked work and
+surveys, and Sonnet high takes ordinary building. Sonnet medium, Sonnet xhigh and every Fable 5.1
+setting are dominated on that snapshot (a cheaper setting scores the same or higher), which is why
+no default lands on them and why `raise_ceiling` exists.
+
+**Rejected alternatives.**
+
+- Keep opus/medium for `implementation` until a measured run says otherwise. The 2026-10-03 entry's
+  revisit condition was a measured loss to Sonnet; the price change removed the premise first, and
+  the operator chose to measure Sonnet high as the default rather than as a trial.
+- Haiku high or xhigh for all easy, well-specified building. Haiku's Intelligence Index parity with
+  Sonnet medium does not hold on the Coding Agent Index, and long sessions cross Haiku's 100,000
+  token price line.
+- Lower sonnet's `effort_ceiling` to high instead of adding `raise_ceiling`. The ceiling is a
+  capability statement; lowering it would make an operator's deliberate sonnet/xhigh unrunnable.
+
+**Risk.** The merging and release workers and the `contract-test` alias move to haiku/medium with
+`mechanical`. The 2026-10-03 entry declined to move them upward for lack of evidence; this moves
+them down on benchmark evidence only. Watch their first runs.
+
+**Revisit when.** Saga's cost report shows sonnet/high losing to opus/medium on cost per completed
+unit after about ten units; a Haiku survey misses a finding its cross-check catches; or prices or
+the benchmark snapshot change.
+
 ### The reproduction re-run is this command's sandbox, not a reviewer session
 
 **Decision.** Issue #160 (card C10a), KTD8. `plugins/saga/scripts/review_command.py` re-runs a reproduced finding in this process. The re-run tree is an export of the packet's head commit, with the reviewer's test files laid over it. A symlink is not copied. The child environment copies `PATH`, `LANG`, `LC_ALL`, `LC_CTYPE` and `TZ` when they are set, and sets `HOME` and `TMPDIR` to the scratch directory. Credential variables are not copied. On macOS the helper is `/usr/bin/sandbox-exec` with a seatbelt that denies the network, denies mach-lookup, denies reads and writes of the real home, and allows the scratch plus the toolchain prefixes. `/private` is not readable as a whole: only `/private/etc` and `/private/var/db/timezone` are. Writes to `/dev/null`, `/dev/zero` and `/dev/dtracehelper` are allowed so pytest can start. dyld is allowed to read the root directory. The Xcode and Command Line Tools trees are included when they exist, because `/usr/bin/python3` is a shim into one of them. On Linux the helper is `bwrap --unshare-net` with a fresh `/dev` and a write bind only for the scratch. The command is an argument vector. A basename of `sh`, `bash`, `zsh`, `dash` or `env` is not run. The scratch source is `result.scratch.path`, and it must not be the real home or the reviewed repository.

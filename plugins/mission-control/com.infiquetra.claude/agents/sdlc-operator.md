@@ -49,6 +49,7 @@ description: |
   - Quick issue creation for a known type (use issues skill directly)
   - Setting a single project field on a single card (use flow skill directly with `flow set-field`)
 model: sonnet
+effort: high
 color: orange
 ---
 
