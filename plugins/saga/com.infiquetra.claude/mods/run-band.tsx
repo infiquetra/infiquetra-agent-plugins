@@ -1,5 +1,6 @@
-// The run status band (issue #105): one line per active saga run above the
-// prompt, and the issue and phase in saga's status-line entry.
+// The run status band (issue #105, review words and notice in issue #165): one
+// line per active saga run above the prompt, and the issue, the phase and
+// C3's missing-tools notice in saga's status-line entry.
 //
 // Read-only. Every word comes from `scripts/run_status.py summary --all-active`,
 // whose `band_line` the script renders once for every harness: the build loop's
@@ -41,11 +42,17 @@ const runStatus = atom({ plugin: 'saga', key: 'runStatus' } as const, [])
 const bandHidden = atom({ plugin: 'saga', key: 'bandHidden' } as const, false)
 const recordView = atom({ plugin: 'saga', key: 'recordView' } as const, null)
 
-/** Saga's status-line entry for the first run: the issue and its phase alone. */
+/**
+ * Saga's status-line entry for the first run: the issue, its phase, and C3's
+ * missing-tools notice verbatim when the run has one. This stays the only saga
+ * writer of the status line: the engine keeps one line per plugin.
+ */
 export function statusText(runs: readonly SagaRunStatus[]): string | undefined {
   const run = runs[0]
   if (run === undefined) return undefined
-  return run.phase ? `saga #${run.issue} · ${run.phase}` : `saga #${run.issue}`
+  const base = run.phase ? `saga #${run.issue} · ${run.phase}` : `saga #${run.issue}`
+  const notice = run.setup_notice?.text
+  return notice ? `${base} · ${notice}` : base
 }
 
 /** A line cut to `columns` cells, an ellipsis marking the cut. */

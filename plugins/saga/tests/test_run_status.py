@@ -457,6 +457,44 @@ def test_review_prints_from_the_review_state_document(
     assert review["merge"]["waiting"] is True
 
 
+def test_review_embeds_the_whole_document_for_state_records(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _record_with_runs(store)
+    review = _review(repo, store, capsys=capsys)["review"]
+    state = review["state"]
+    assert state["schema"] == "review_state.v1"
+    for key in (
+        "lenses",
+        "findings",
+        "pending_choices",
+        "merge_blocking",
+        "merge",
+        "disputes",
+        "consequence_disagreements",
+        "unconfirmed",
+        "where_to_look",
+        "tools",
+        "degraded_inputs",
+        "rounds",
+        "cost",
+    ):
+        assert key in state, key
+    assert state["lenses"] and state["where_to_look"] and state["rounds"]
+    assert state["lenses"] == review["lenses"]
+    assert state["pending_choices"] == review["pending_choices"]
+    assert state["merge"] == review["merge"]
+
+
+def test_review_old_shape_carries_no_embedded_document(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _record_with(store, _result(cycle=1))
+    review = _review(repo, store, capsys=capsys)["review"]
+    assert "state_schema" not in review
+    assert "state" not in review
+
+
 def test_review_state_text_prints_numbered_questions(
     repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -834,7 +872,35 @@ def test_band_line_reads_build_loop_review_cycle_and_lenses_met(
         "lenses_met": 7,
         "lenses_total": 10,
         "lenses_not_run": 0,
+        "round": None,
+        "grades": [],
     }
+
+
+def test_band_line_shows_the_round_and_grades_for_state_records(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runs = json.loads((STATE_FIXTURES / "record.json").read_text(encoding="utf-8"))["review_cycles"]
+    run_record.set_next_step(store, 412, "run /work on the plan")
+    record = run_record.load(store, 412)
+    assert record is not None
+    run_record.save(
+        store, run_record.RunRecord(**{**record.__dict__, "review_cycles": runs})
+    )
+    _tick(repo, 412, lifecycle_phase="code-review")
+    row = _band(repo, store, capsys)
+    assert row["band_line"] == (
+        "#412 · code-review · review round 3 · "
+        "correctness D, security D, testing A, architecture-maintainability A"
+    )
+    assert row["review"]["round"] == 3
+    assert row["review"]["grades"] == [
+        {"lens": "correctness", "grade": "D"},
+        {"lens": "security", "grade": "D"},
+        {"lens": "testing", "grade": "A"},
+        {"lens": "architecture-maintainability", "grade": "A"},
+    ]
+    assert row["review"]["cycle"] is None
 
 
 def test_band_text_form_prints_the_band_line(

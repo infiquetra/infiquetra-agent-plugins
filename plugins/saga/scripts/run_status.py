@@ -559,6 +559,9 @@ def state_review_view(record: run_record.RunRecord) -> dict[str, Any]:
         "lenses": document["lenses"],
         "pending_choices": document["pending_choices"],
         "merge": document["merge"],
+        # The whole document, for the panes (issue 165): they read it only
+        # through this view, never by running the review-state script.
+        "state": document,
     }
 
 
@@ -715,13 +718,48 @@ def _allowance(record: run_record.RunRecord, key: str, fallback: int) -> int:
     return value if value >= 0 else fallback
 
 
+def state_review_progress(record: run_record.RunRecord) -> dict[str, Any] | None:
+    """The code-review round and per-lens grades from the review-state document.
+
+    Built offline with no envelope, like the review view: only the round and
+    the stored grades are read, so the merge setting is never needed. The
+    old-shape keys stay, unset, so every reader of this view keeps its shape.
+    """
+    document = review_state.build_document(record, None)
+    if document["round"] is None:
+        return None
+    standard = _allowance(record, "standard_cycle_allowance", DEFAULT_STANDARD_ALLOWANCE)
+    escalated = _allowance(record, "escalated_cycle_allowance", DEFAULT_ESCALATED_ALLOWANCE)
+    return {
+        "unit": None,
+        "cycle": None,
+        "standard_allowance": standard,
+        "escalated_allowance": escalated,
+        "is_escalated": False,
+        "outcome": None,
+        "lenses_met": 0,
+        "lenses_total": 0,
+        "lenses_not_run": 0,
+        "round": document["round"],
+        "grades": [
+            {"lens": lens["lens"], "grade": lens["grade"]} for lens in document["lenses"]
+        ],
+    }
+
+
 def review_progress(record: run_record.RunRecord, unit: str | None) -> dict[str, Any] | None:
     """The latest code review cycle against its allowance, and how many lenses met their bar.
 
     The entry is *unit*'s latest ``review_result.v2`` code review when it has one, else the run's
     latest. Whether a lens met its bar is the verdict's own rule, through :func:`lens_views`; a
-    selected lens with no row counts in the total as not run.
+    selected lens with no row counts in the total as not run. A record with C1 review runs takes
+    the state branch instead: the round and grades from the review-state document.
     """
+    if any(
+        isinstance(entry, dict) and entry.get("kind") == review_state.KIND_REVIEW_RUN
+        for entry in record.review_cycles
+    ):
+        return state_review_progress(record)
     loop = review_result.LOOP_CODE_REVIEW
     entry = latest_review(record, loop=loop, unit=unit) if unit else None
     if entry is None:
@@ -743,6 +781,8 @@ def review_progress(record: run_record.RunRecord, unit: str | None) -> dict[str,
         "lenses_met": sum(1 for lens in lenses if lens["state"] == "met"),
         "lenses_total": len(lenses),
         "lenses_not_run": sum(1 for lens in lenses if lens["state"] == "not_run"),
+        "round": None,
+        "grades": [],
     }
 
 
@@ -766,6 +806,12 @@ def _build_loop_part(view: dict[str, Any]) -> str:
 
 def _review_part(view: dict[str, Any]) -> list[str]:
     parts: list[str] = []
+    if view.get("round") is not None:
+        parts.append(f"review round {view['round']}")
+        pairs = ", ".join(f"{grade['lens']} {grade['grade']}" for grade in view.get("grades") or [])
+        if pairs:
+            parts.append(pairs)
+        return parts
     if view["cycle"] is not None:
         if view["is_escalated"]:
             budget = view["standard_allowance"] + view["escalated_allowance"]

@@ -348,7 +348,10 @@ gaps. `references/findings-schema.md` carries the full output contract.
 
 The written result can be read back lens by lens on any harness: `scripts/run_status.py review`
 prints each lens's grade with its blocking and fix-later counts, with the pending questions, from the
-review-state document. In Claude Code, `/review-view` shows the same view in a pane.
+review-state document. In Claude Code, `/review-view` shows the live view in a pane: each lens's
+grade with its blocking and fix-later counts, the where-to-look list with each item's state, which
+tools ran or were missing, the round and cost so far, and a round-by-round view of what each round
+added. Choosing a grade lists that lens's findings.
 
 ### 5.2 One comment
 

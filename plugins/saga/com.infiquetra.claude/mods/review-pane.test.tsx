@@ -2,10 +2,21 @@ import type { On } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import type { SagaReview, SagaReviewFinding, SagaReviewLens } from '../types/index.d.ts'
+import type { SagaReview, SagaReviewFinding, SagaReviewLens, SagaStateReview } from '../types/index.d.ts'
 import { GOLDEN_PAGE } from './fixtures/wide-table-plan.fixture.ts'
 import { fitTables } from './plan-sections.ts'
-import { FINDING_TEXT_LIMIT, findingText, lensLabel, quoteText } from './review-findings.ts'
+import {
+  costLine,
+  FINDING_TEXT_LIMIT,
+  findingText,
+  gradeLabel,
+  lensLabel,
+  quoteText,
+  roundLabel,
+  stateFindingHeading,
+  stateHeading,
+  whereToLookLabel,
+} from './review-findings.ts'
 import { REVIEW_PANE, REVIEW_POLL_MS } from './review-pane.tsx'
 
 const CWD = '/Users/operator/repo'
@@ -81,8 +92,56 @@ function reviewOf(outcome = 'review_incomplete', cycle = 2): SagaReview {
   }
 }
 
-function viewOf(review: SagaReview | null) {
+function viewOf(review: SagaReview | SagaStateReview | null) {
   return { schema: 'review_view.v1', repo_root: CWD, issue: 108, record_path: RECORD, legacy_entries: 0, review }
+}
+
+/** The review_state.v1 fixture: two graded lenses, two where-to-look states, two rounds of deltas. */
+const STATE_DOC = {
+  schema: 'review_state.v1',
+  card: 108,
+  repo: 'infiquetra/example',
+  round: 2,
+  lenses: [
+    { lens: 'testing', grade: 'A', blocking: 0, fix_later: 1 },
+    { lens: 'security', grade: 'B', blocking: 1, fix_later: 0 },
+  ],
+  findings: [
+    { id: 'rf:aaa', lens: 'testing', severity: 'fix-later', statement: 'a flaky test hides the suite', guard: false, merge_outcome: null },
+    { id: 'rf:bbb', lens: 'security', severity: 'blocks', statement: 'a traced write to the live store', guard: true, merge_outcome: null },
+  ],
+  pending_choices: ['merge-blocking', 'fix-later:rf:aaa'],
+  merge_blocking: ['rf:bbb'],
+  merge: { waiting: true, reason: '1 blocking item left at the round limit awaits the operator' },
+  disputes: [],
+  consequence_disagreements: [],
+  unconfirmed: [],
+  where_to_look: [
+    { lens: 'security', location: 'src/a.py:12-20', questions: ['q1'], state: 'answered', finding_id: 'rf:bbb' },
+    { lens: 'testing', location: 'src/b.py:4-9', questions: [], state: 'cleared', reason: 'covered elsewhere' },
+  ],
+  tools: { ran: { ruff: '0.15.18' }, missing_notice: 'Missing mypy. Run /saga:setup.', missing_tools: ['mypy'] },
+  degraded_inputs: [],
+  rounds: [
+    { round: 1, new_blocking: ['rf:bbb'], cleared_blocking: [] },
+    { round: 2, new_blocking: [], cleared_blocking: [] },
+  ],
+  cost: { tokens_in: 10, tokens_out: 20, cost_usd: 0.05, seconds: 30 },
+  unattended: false,
+}
+
+function stateOf(): SagaStateReview {
+  return {
+    state_schema: 'review_state.v1',
+    round: 2,
+    loop: 'review_run',
+    revision: REVISION,
+    outcome: 'blocked',
+    lenses: STATE_DOC.lenses,
+    pending_choices: STATE_DOC.pending_choices,
+    merge: STATE_DOC.merge,
+    state: STATE_DOC,
+  } as SagaStateReview
 }
 
 type Fake = {
@@ -95,10 +154,23 @@ type Fake = {
   isFilled: boolean
   clock: ReturnType<typeof mock.clock>
   review: { exitCode: number; stdout: string; stderr: string }
+  summary: { exitCode: number; stdout: string; stderr: string }
 }
 
-function answer(review: SagaReview | null): Fake['review'] {
+function answer(review: SagaReview | SagaStateReview | null): Fake['review'] {
   return { exitCode: 0, stdout: JSON.stringify(viewOf(review)), stderr: '' }
+}
+
+function summaryAnswer(): Fake['summary'] {
+  return {
+    exitCode: 0,
+    stdout: JSON.stringify({
+      schema: 'run_status.v1',
+      repo_root: CWD,
+      runs: [{ issue: 108, next_step: 'review', phase: 'review', band_line: '#108 · review' }],
+    }),
+    stderr: '',
+  }
 }
 
 /** Answer every engine call the pane makes. */
@@ -113,6 +185,7 @@ function fake(on: On): Fake {
     isFilled: true,
     clock: mock.clock(on),
     review: answer(reviewOf()),
+    summary: { exitCode: 0, stdout: JSON.stringify({ schema: 'run_status.v1', repo_root: CWD, runs: [] }), stderr: '' },
   }
   on('session.start', async ($, e) => ({ cwd: e.cwd }))
   on('command.register', async ($, e) => ({ value: { command: e.name } }))
@@ -132,8 +205,7 @@ function fake(on: On): Fake {
     }
     // The run status band (issue #105) reads every active run on its own clock; it has none here.
     if (e.argv.includes('--all-active')) {
-      const none = JSON.stringify({ schema: 'run_status.v1', repo_root: CWD, runs: [] })
-      return { value: { exitCode: 0, stdout: none, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+      return { value: { ...state.summary, isStdoutTruncated: false, isStderrTruncated: false } }
     }
     state.runs.push([...e.argv])
     return { value: { ...state.review, isStdoutTruncated: false, isStderrTruncated: false } }
@@ -255,6 +327,86 @@ describe('/review-view', () => {
     const ran = await reviewView($, 'docs/plan.md')
     expect(ran.text).toContain('name an issue')
     expect(fakes.runs).toEqual([])
+  })
+})
+
+describe('the live review pane', () => {
+  test('draws grades, where-to-look, tools, round, cost and round deltas, on terminal and desktop', async ($, on) => {
+    const fakes = fake(on)
+    fakes.review = answer(stateOf())
+    await start($)
+    const ran = await reviewView($, '#108')
+    expect(ran.text).toBe('review-view: #108 round 2, blocked, 2 lenses, 1 blocking, 1 fix later.')
+    expect(fakes.opened).toEqual([REVIEW_PANE])
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount({ plugin: 'saga', surface, ...PANE })
+      expect(await ui.find({ type: 'Text', text: /^#108 · round 2 · blocked · abcdef012345$/ })).toBeDefined()
+      const rows = await lensRows(ui)
+      expect(rows.testing).toBe('testing  A  0 blocking  1 fix later')
+      expect(rows.security).toBe('security  B  1 blocking  0 fix later')
+      expect(await ui.find({ type: 'Text', text: 'security  src/a.py:12-20  answered rf:bbb  questions: q1' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'testing  src/b.py:4-9  cleared: covered elsewhere' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'ruff 0.15.18' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'Missing mypy. Run /saga:setup.' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'Round 2' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'tokens 10 in / 20 out  $0.05  30s' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'round 1  1 new blocking  0 cleared' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'round 2  0 new blocking  0 cleared' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: '  + rf:bbb' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: '  nothing added or cleared' })).toBeDefined()
+      await ui.unmount()
+    }
+  })
+
+  test('choosing a grade lists the document findings, and Quote fills the prompt', async ($, on) => {
+    const fakes = fake(on)
+    fakes.review = answer(stateOf())
+    await start($)
+    await reviewView($, '')
+    const ui = await $.ui.mount({ plugin: 'saga', surface: 'terminal', ...PANE })
+    await ui.press({ key: 'lens-security' })
+    expect(await ui.find({ type: 'Text', text: 'blocks · security · rf:bbb · guard' })).toBeDefined()
+    const text = await ui.find({ type: 'Markdown', key: 'text-0' })
+    expect(text?.props.text).toBe('a traced write to the live store\n\n**Outcome:** unanswered')
+    await ui.press({ key: 'quote-0' })
+    expect(fakes.fills).toEqual(['> [blocks · security] rf:bbb — a traced write to the live store\n\n'])
+    await ui.press({ key: 'back' })
+    expect(Object.keys(await lensRows(ui))).toEqual(['testing', 'security'])
+    await ui.unmount()
+  })
+
+  test('an unknown document version is reported, not guessed at', async ($, on) => {
+    const fakes = fake(on)
+    const newer = stateOf()
+    const review = { ...newer, state_schema: 'review_state.v2', state: { ...STATE_DOC, schema: 'review_state.v2' } }
+    fakes.review = { exitCode: 0, stdout: JSON.stringify(viewOf(review as SagaStateReview)), stderr: '' }
+    await start($)
+    const ran = await reviewView($, '')
+    expect(ran.text).toContain('unknown-version')
+    expect(ran.text).toContain('review_state.v2')
+    expect(fakes.opened).toEqual([])
+  })
+
+  test("the band's Review button opens the pane for the band's run", async ($, on) => {
+    const fakes = fake(on)
+    fakes.review = answer(stateOf())
+    fakes.summary = summaryAnswer()
+    on('ui.status', async () => ({ value: undefined }))
+    await start($)
+    await fakes.clock.settle()
+    const band = await $.ui.mount({
+      plugin: 'saga',
+      surface: 'terminal',
+      component: 'AbovePrompt',
+      props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 100, scroll: { offset: 0, bodyRows: 9 }, view: {} },
+    })
+    expect(await band.find({ type: 'Button', key: 'band-review-108' })).toBeDefined()
+    await band.press({ key: 'band-review-108' })
+    expect(fakes.opened).toEqual([REVIEW_PANE])
+    expect(fakes.runs.filter((argv) => argv.includes('review'))).toEqual([
+      ['python3', expect.stringMatching(/\/scripts\/run_status\.py$/), '--repo-root', CWD, 'review', '--issue', '108', '--json'],
+    ])
+    await band.unmount()
   })
 })
 
@@ -401,5 +553,16 @@ describe('the pane words', () => {
 
   test('a not-run lens that somehow has findings still counts them', () => {
     expect(lensLabel(lens('x', 'not_run', [finding('P1', 'a', 1, 'c')], { reason: 'r' }))).toBe('x  not run  1 finding  (r)')
+  })
+
+  test('the live labels read grades, states, rounds and cost from the document', () => {
+    const doc = stateOf().state
+    expect(gradeLabel(doc.lenses[1]!)).toBe('security  B  1 blocking  0 fix later')
+    expect(stateHeading(108, stateOf())).toBe('#108 · round 2 · blocked · abcdef012345')
+    expect(whereToLookLabel(doc.where_to_look[0]!)).toBe('security  src/a.py:12-20  answered rf:bbb  questions: q1')
+    expect(whereToLookLabel(doc.where_to_look[1]!)).toBe('testing  src/b.py:4-9  cleared: covered elsewhere')
+    expect(roundLabel(doc.rounds[0]!)).toBe('round 1  1 new blocking  0 cleared')
+    expect(costLine(doc.cost)).toBe('tokens 10 in / 20 out  $0.05  30s')
+    expect(stateFindingHeading(doc.findings[1]!)).toBe('blocks · security · rf:bbb · guard')
   })
 })

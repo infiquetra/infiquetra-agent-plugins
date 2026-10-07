@@ -1311,3 +1311,84 @@ def test_setup_card_names_fifteen_files_and_fourteen_commands() -> None:
     keys = [line.split(":", 1)[0] for line in front.splitlines() if line.strip() and not line.startswith(" ")]
     assert keys == ["name", "description"]
     assert "name: setup" in front
+
+
+def test_offer_status_reports_unrun_unoffered_on_a_fresh_home(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    code, out, err = _run(["offer-status", "--home", str(home)], capsys)
+    assert code == 0, err
+    assert json.loads(out) == {"schema": "machine_record.v1", "ran": False, "offered": False}
+    assert not (home / ".saga" / "machine.json").exists()
+
+
+def test_record_offer_sets_offered_without_running_setup(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    code, _, err = _run(["record-offer", "--home", str(home)], capsys)
+    assert code == 0, err
+    code, out, err = _run(["offer-status", "--home", str(home)], capsys)
+    assert code == 0, err
+    assert json.loads(out) == {"schema": "machine_record.v1", "ran": False, "offered": True}
+    record = json.loads((home / ".saga" / "machine.json").read_text(encoding="utf-8"))
+    assert record["ran"] is False and record["offered"] is True
+    assert record["survey"] is None
+
+
+def test_offer_status_reads_ran_from_a_recorded_survey(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = tmp_path / "repo"
+    _tree(repo)
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = _tools(tmp_path, HAPPY_TOOLS)
+    code, _, err = _run(
+        ["survey", "--repo", str(repo), "--home", str(home), "--tools", str(tools)],
+        capsys,
+        runner=_happy_runner([]),
+    )
+    assert code == 0, err
+    code, out, err = _run(["offer-status", "--home", str(home)], capsys)
+    assert code == 0, err
+    assert json.loads(out) == {"schema": "machine_record.v1", "ran": True, "offered": False}
+
+
+def test_offer_verbs_refuse_an_unreadable_machine_record(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    path = home / ".saga" / "machine.json"
+    path.parent.mkdir(parents=True)
+    path.write_text("{not json", encoding="utf-8")
+    code, _, err = _run(["offer-status", "--home", str(home)], capsys)
+    assert code == 2
+    assert "cannot be read" in err
+    code, _, err = _run(["record-offer", "--home", str(home)], capsys)
+    assert code == 2
+    assert "cannot be read" in err
+    assert path.read_text(encoding="utf-8") == "{not json"
+
+
+def test_survey_rows_carry_the_install_signal_for_the_setup_pane(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = tmp_path / "repo"
+    _tree(repo)
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = _tools(tmp_path, HAPPY_TOOLS)
+    code, raw, err = _run(
+        ["survey", "--repo", str(repo), "--home", str(home), "--tools", str(tools), "--format", "json"],
+        capsys,
+        runner=_happy_runner([]),
+    )
+    assert code == 0, err
+    by_id = {row["id"]: row for row in json.loads(raw)["tools"]}
+    assert by_id["star"]["has_install"] is True
+    assert by_id["star"]["install"] == "Not installed by setup."
+    assert by_id["py-row"]["has_install"] is False
+    assert by_id["py-row"]["install"] == "Not installed by setup."

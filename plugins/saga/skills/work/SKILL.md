@@ -1066,6 +1066,18 @@ branch. Then record `pr_refs` on the saga, set `next_step="await review on PR #N
 pull request's status to the issue via the extended `issue_progress.py` CLI (`--pr-url`,
 `--review-status`).
 
+   **In Claude Code, when the tool `mcp__saga__review_merge` is listed and
+   the operator has not disabled panes, call it with `{"issue": N, "repo": R}` —
+   `R` the checkout's owner/name — before the message instead of printing the
+   numbered questions, and read the `status` it returns.** Submitted means the
+   answers are recorded — never retype, re-ask or re-record them. Dismissed,
+   not-placed, unavailable, nothing-to-review or error means nothing was
+   recorded: run `review_state.py render --issue N --repo R --render markdown`,
+   print its numbered questions exactly as rendered, collect the replies, and
+   record them with `review_state.py answers --issue N --repo R --answers -`.
+   Timed-out means the unattended rules already ran: do not re-ask; the merge
+   follows the envelope's merge setting.
+
 The merge turn is parent-branch integration — how a lane's work reaches a shared branch — and it
 runs in Phase 3.2, before code review, which is where issue #1027's hand-over to "the integrate
 step" points. Issue #99 moved it there from this section so review sees the combined branch.

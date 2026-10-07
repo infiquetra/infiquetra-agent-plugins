@@ -1,19 +1,34 @@
 import { describe, expect, test } from 'claude-code/testing'
 import {
+  isStateReview,
+  KNOWN_REVIEW_STATE_SCHEMA,
   KNOWN_REVIEW_VIEW_SCHEMA,
   KNOWN_RUN_STATUS_SCHEMA,
   KNOWN_SCHEMA,
+  KNOWN_MACHINE_RECORD_SCHEMA,
+  KNOWN_SETUP_SURVEY_SCHEMA,
+  parseOfferStatus,
   parseRunRecordShow,
   parseRunStatusReview,
+  parseRunStatusStateReview,
   parseRunStatusSummary,
+  parseSetupSurvey,
+  readEitherReviewWith,
+  readOfferStatusWith,
   readReviewViewWith,
   readRunRecordWith,
   readRunStatusWith,
+  readSetupSurveyWith,
+  readStateReviewWith,
   runRecordRunFailed,
   runRecordShowArgv,
   runStatusReviewArgv,
   runStatusSummaryArgv,
   sagaScriptArgv,
+  setupInstallArgv,
+  setupOfferStatusArgv,
+  setupRecordOfferArgv,
+  setupSurveyArgv,
 } from './run-record.ts'
 
 const ran = (exitCode: number, stdout: string, stderr = '', isStdoutTruncated = false) => ({
@@ -293,5 +308,171 @@ describe('run_status review', () => {
       { repoRoot: '/repo' },
     )
     expect(read).toEqual({ ok: false, reason: 'error', detail: 'run_status review did not run: spawn python3 ENOENT' })
+  })
+})
+
+describe('run_status state review', () => {
+  const base = { schema: KNOWN_REVIEW_VIEW_SCHEMA, repo_root: '/repo', issue: 7, record_path: '/r.json', legacy_entries: 0 }
+  const state = { schema: KNOWN_REVIEW_STATE_SCHEMA, card: 7, repo: 'o/r', round: 2, lenses: [] }
+  const review = {
+    state_schema: KNOWN_REVIEW_STATE_SCHEMA,
+    round: 2,
+    loop: 'review_run',
+    revision: 'abc',
+    outcome: 'blocked',
+    lenses: [{ lens: 'testing', grade: 'A', blocking: 0, fix_later: 1 }],
+    pending_choices: ['fix-later:rf:1'],
+    merge: { waiting: false, reason: 'free' },
+    state,
+  }
+  const view = { ...base, review }
+
+  test('parses a state review with its embedded document', async () => {
+    const read = parseRunStatusStateReview(ran(0, JSON.stringify(view)))
+    expect(read.ok).toBe(true)
+    if (read.ok) {
+      expect(read.review.round).toBe(2)
+      expect(read.review.state).toEqual(state)
+    }
+  })
+
+  test('isStateReview tells a state review from an old-shape review and from none', async () => {
+    expect(isStateReview(review)).toBe(true)
+    expect(isStateReview({ cycle: 1, lenses: [] })).toBe(false)
+    expect(isStateReview(null)).toBe(false)
+  })
+
+  test('refuses another document version, exit 3, a failed run, cut output and a review with no state', async () => {
+    const other = { ...review, state_schema: 'review_state.v2', state: { ...state, schema: 'review_state.v2' } }
+    const cases: [ReturnType<typeof ran>, string][] = [
+      [ran(0, JSON.stringify({ ...view, review: other })), 'unknown-version'],
+      [ran(0, JSON.stringify({ ...view, schema: 'review_view.v2' })), 'unknown-version'],
+      [ran(3, '', 'run_status: unknown record version'), 'unknown-version'],
+      [ran(2, '', 'run_status: git failed'), 'error'],
+      [ran(0, JSON.stringify(view), '', true), 'unreadable'],
+      [ran(0, 'not json'), 'unreadable'],
+      [ran(0, JSON.stringify({ ...base, review: null })), 'unreadable'],
+      [ran(0, JSON.stringify({ ...base, review: { cycle: 1, lenses: [] } })), 'unreadable'],
+    ]
+    for (const [result, reason] of cases) {
+      const read = parseRunStatusStateReview(result)
+      expect(read.ok).toBe(false)
+      if (!read.ok) expect(read.reason).toBe(reason)
+    }
+  })
+
+  test('readStateReviewWith resolves to error, not a rejection, when the runner rejects', async () => {
+    const read = await readStateReviewWith(
+      async () => {
+        throw new Error('spawn python3 ENOENT')
+      },
+      '/root',
+      { repoRoot: '/repo' },
+    )
+    expect(read).toEqual({ ok: false, reason: 'error', detail: 'run_status review did not run: spawn python3 ENOENT' })
+  })
+
+  test('readEitherReviewWith passes an old-shape review through and enforces the state token', async () => {
+    const old = { ...base, review: { cycle: 1, lenses: [{ lens: 'x', state: 'met' }] } }
+    const runOld = async () => ran(0, JSON.stringify(old))
+    const legacy = await readEitherReviewWith(runOld, '/root', { repoRoot: '/repo' })
+    expect(legacy.ok).toBe(true)
+    const runState = async () => ran(0, JSON.stringify(view))
+    const state = await readEitherReviewWith(runState, '/root', { repoRoot: '/repo' })
+    expect(state.ok).toBe(true)
+    const other = { ...view, review: { ...review, state_schema: 'review_state.v2' } }
+    const runOther = async () => ran(0, JSON.stringify(other))
+    const refused = await readEitherReviewWith(runOther, '/root', { repoRoot: '/repo' })
+    expect(refused.ok).toBe(false)
+    if (!refused.ok) expect(refused.reason).toBe('unknown-version')
+    const runFailed = async () => {
+      throw new Error('spawn python3 ENOENT')
+    }
+    expect(await readEitherReviewWith(runFailed, '/root', { repoRoot: '/repo' })).toEqual({
+      ok: false,
+      reason: 'error',
+      detail: 'run_status review did not run: spawn python3 ENOENT',
+    })
+  })
+})
+
+describe('the setup survey and offer readers', () => {
+  const survey = {
+    schema: KNOWN_SETUP_SURVEY_SCHEMA,
+    tools: [{ id: 'saga-ruff', lens: 'correctness', status: 'missing', version: null, pinned_version: '1.0', has_install: true, install: null }],
+  }
+  const status = { schema: KNOWN_MACHINE_RECORD_SCHEMA, ran: false, offered: false }
+
+  test('the setup argv names the verb, the tool and the repository', async () => {
+    expect(setupSurveyArgv('/root', '/repo')).toEqual([
+      'python3',
+      '/root/scripts/saga_setup.py',
+      'survey',
+      '--repo',
+      '/repo',
+      '--format',
+      'json',
+    ])
+    expect(setupInstallArgv('/root', 'saga-ruff', '/repo')).toEqual([
+      'python3',
+      '/root/scripts/saga_setup.py',
+      'install',
+      '--tools',
+      'saga-ruff',
+      '--repo',
+      '/repo',
+    ])
+    expect(setupOfferStatusArgv('/root')).toEqual(['python3', '/root/scripts/saga_setup.py', 'offer-status'])
+    expect(setupRecordOfferArgv('/root')).toEqual(['python3', '/root/scripts/saga_setup.py', 'record-offer'])
+  })
+
+  test('parses a survey and an offer status at exit 0', async () => {
+    const readSurvey = parseSetupSurvey(ran(0, JSON.stringify(survey)))
+    expect(readSurvey.ok).toBe(true)
+    if (readSurvey.ok) expect(readSurvey.survey.tools).toHaveLength(1)
+    expect(parseOfferStatus(ran(0, JSON.stringify(status)))).toEqual({ ok: true, status })
+  })
+
+  test('refuses another version, a failed run, cut output and a body without the rows or flags', async () => {
+    const surveyCases: [ReturnType<typeof ran>, string][] = [
+      [ran(0, JSON.stringify({ ...survey, schema: 'setup_survey.v2' })), 'unknown-version'],
+      [ran(2, '', 'saga_setup: no such tool list'), 'error'],
+      [ran(0, JSON.stringify(survey), '', true), 'unreadable'],
+      [ran(0, 'not json'), 'unreadable'],
+      [ran(0, JSON.stringify({ schema: KNOWN_SETUP_SURVEY_SCHEMA })), 'unreadable'],
+    ]
+    for (const [result, reason] of surveyCases) {
+      const read = parseSetupSurvey(result)
+      expect(read.ok).toBe(false)
+      if (!read.ok) expect(read.reason).toBe(reason)
+    }
+    const statusCases: [ReturnType<typeof ran>, string][] = [
+      [ran(0, JSON.stringify({ ...status, schema: 'machine_record.v2' })), 'unknown-version'],
+      [ran(2, '', 'saga_setup: cannot be read'), 'error'],
+      [ran(0, JSON.stringify(status), '', true), 'unreadable'],
+      [ran(0, 'not json'), 'unreadable'],
+      [ran(0, JSON.stringify({ schema: KNOWN_MACHINE_RECORD_SCHEMA, ran: false })), 'unreadable'],
+    ]
+    for (const [result, reason] of statusCases) {
+      const read = parseOfferStatus(result)
+      expect(read.ok).toBe(false)
+      if (!read.ok) expect(read.reason).toBe(reason)
+    }
+  })
+
+  test('the setup readers resolve to error, not a rejection, when the runner rejects', async () => {
+    const failing = async () => {
+      throw new Error('spawn python3 ENOENT')
+    }
+    expect(await readSetupSurveyWith(failing, '/root', '/repo')).toEqual({
+      ok: false,
+      reason: 'error',
+      detail: 'saga_setup survey did not run: spawn python3 ENOENT',
+    })
+    expect(await readOfferStatusWith(failing, '/root')).toEqual({
+      ok: false,
+      reason: 'error',
+      detail: 'saga_setup offer-status did not run: spawn python3 ENOENT',
+    })
   })
 })

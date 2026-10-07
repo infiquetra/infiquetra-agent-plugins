@@ -74,7 +74,9 @@ export type SagaRunBuildLoop = {
 
 /**
  * The latest code review cycle against its allowance, and how many lenses met
- * their bar by the verdict's own rule (issue #105).
+ * their bar by the verdict's own rule (issue #105). A record with C1 review
+ * runs carries the round and grades instead (issue #165); the cycle keys stay
+ * unset and `round` and `grades` carry the state branch.
  */
 export type SagaRunReviewProgress = {
   unit: string | null
@@ -87,6 +89,10 @@ export type SagaRunReviewProgress = {
   lenses_met: number
   lenses_total: number
   lenses_not_run: number
+  /** The newest review round, or null for an old-shape record. */
+  round: number | null
+  /** One `{lens, grade}` pair per lens in document order; empty for an old-shape record. */
+  grades: { lens: string; grade: string }[]
 }
 
 /**
@@ -306,8 +312,219 @@ export type SagaReviewView = {
   issue: number | null
   record_path: string | null
   legacy_entries: number
-  review: SagaReview | null
+  review: SagaReview | SagaStateReview | null
 }
+
+// ---------------------------------------------------------------------------
+// The review-state document (issue #165)
+//
+// `scripts/review_state.py` renders a review's state and pending choices as one
+// document of schema `review_state.v1`; `run_status.py review` embeds it under
+// `state` for records with C1 review runs. A pane draws from it and nothing
+// else. The authority is `build_document` in that script. A field the panes do
+// not draw is left untyped under the index signatures.
+// ---------------------------------------------------------------------------
+
+/** The one review-state document version the panes read. */
+export type SagaReviewStateSchema = 'review_state.v1'
+
+/** One lens grade as the document prints it. */
+export type SagaStateLens = {
+  lens: string
+  grade: string
+  blocking: number
+  fix_later: number
+  [field: string]: unknown
+}
+
+/** One finding of the newest run, as the document prints it. */
+export type SagaStateFinding = {
+  id: string
+  lens: string
+  severity: string
+  statement: string
+  guard: boolean
+  merge_outcome: Record<string, unknown> | null
+  [field: string]: unknown
+}
+
+/** One where-to-look item: `file:start-end`, its state, and the fired question ids. */
+export type SagaStateWhereToLook = {
+  lens: string
+  location: string
+  questions: string[]
+  state: 'answered' | 'cleared'
+  finding_id?: string | null
+  reason?: string | null
+  [field: string]: unknown
+}
+
+/** Which tools ran, and C3's missing-tools notice verbatim. */
+export type SagaStateTools = {
+  ran: Record<string, string>
+  missing_notice: string | null
+  missing_tools: string[]
+  [field: string]: unknown
+}
+
+/** What one round added and cleared, against the round before. */
+export type SagaStateRound = {
+  round: number
+  new_blocking: string[]
+  cleared_blocking: string[]
+  [field: string]: unknown
+}
+
+/** Tokens, dollars and seconds summed across the stored runs. */
+export type SagaStateCost = {
+  tokens_in: number
+  tokens_out: number
+  cost_usd: number
+  seconds: number
+  [field: string]: unknown
+}
+
+/** Whether the merge waits, and why. */
+export type SagaStateMerge = {
+  waiting: boolean
+  reason: string
+  [field: string]: unknown
+}
+
+/** One consequence the LLM and the Jev classifier disagreed on. */
+export type SagaConsequenceDisagreement = {
+  id: string
+  llm: string
+  jev: string
+  [field: string]: unknown
+}
+
+/** The `review_state.v1` document. */
+export type SagaReviewState = {
+  schema: SagaReviewStateSchema
+  card: number
+  repo: string
+  round: number
+  lenses: SagaStateLens[]
+  findings: SagaStateFinding[]
+  pending_choices: string[]
+  merge_blocking: string[]
+  merge: SagaStateMerge
+  disputes: string[]
+  consequence_disagreements: SagaConsequenceDisagreement[]
+  unconfirmed: string[]
+  where_to_look: SagaStateWhereToLook[]
+  tools: SagaStateTools
+  degraded_inputs: unknown[]
+  rounds: SagaStateRound[]
+  cost: SagaStateCost
+  unattended: boolean | null
+  [field: string]: unknown
+}
+
+/** The state review as `run_status.py review` prints it for records with C1 runs. */
+export type SagaStateReview = {
+  state_schema: SagaReviewStateSchema
+  round: number
+  loop: string
+  revision: string
+  outcome: string
+  lenses: SagaStateLens[]
+  pending_choices: string[]
+  merge: SagaStateMerge
+  state: SagaReviewState
+}
+
+/** The answers the merge pane hands to `review_state.py answers --answers -`. */
+export type SagaMergeAnswers = {
+  answers: Record<string, string | { decision: 'merge-with-reason' | 'stop-card'; reason?: string }>
+  pane_timeout: boolean
+}
+
+/** The operator's picks while the merge pane is open. */
+export type SagaMergeSelections = {
+  fix_later: Record<string, string>
+  merge_blocking: { decision: string; reason: string }
+}
+
+/** The merge pane's session state: the document it draws, the picks, and the last refusal shown. */
+export type SagaMergeReview = {
+  issue: number
+  repo: string | null
+  data: SagaReviewState
+  selections: SagaMergeSelections
+  error: string | null
+}
+
+/** What `mcp__saga__review_merge` returns to the model. */
+export type SagaMergeReviewOutcome =
+  | { status: 'submitted'; issue: number; answers: SagaMergeAnswers; source: 'operator'; summary: string }
+  | { status: 'dismissed' | 'timed-out' | 'nothing-to-review' }
+  | { status: 'not-placed' | 'unavailable'; reason: string }
+  | { status: 'error'; reason: string; exitCode?: number; stderr?: string }
+
+// ---------------------------------------------------------------------------
+// The setup survey and the machine offer (issue #165)
+//
+// `scripts/saga_setup.py survey --format json` prints one document of schema
+// `setup_survey.v1`; the setup pane draws its tool rows and nothing else. The
+// authority is `collect` in that script. `offer-status` prints the machine
+// record's `ran` and `offered` without writing.
+// ---------------------------------------------------------------------------
+
+/** The one survey document version the setup pane reads. */
+export type SagaSetupSurveySchema = 'setup_survey.v1'
+
+/** The one machine-record version the offer reads. */
+export type SagaMachineRecordSchema = 'machine_record.v1'
+
+/** One surveyed tool row as the setup pane draws it. */
+export type SagaSetupToolRow = {
+  id: string
+  lens: string
+  status: string
+  version: string | null
+  pinned_version: string
+  has_install: boolean
+  install: string | null
+  [field: string]: unknown
+}
+
+/** What `saga_setup.py survey --format json` prints. */
+export type SagaSetupSurvey = {
+  schema: SagaSetupSurveySchema
+  tools: SagaSetupToolRow[]
+  [field: string]: unknown
+}
+
+/** What `saga_setup.py offer-status` prints. */
+export type SagaOfferStatus = {
+  schema: SagaMachineRecordSchema
+  ran: boolean
+  offered: boolean
+}
+
+/** One tool's install progress while Install runs. */
+export type SagaSetupRowProgress = {
+  state: 'queued' | 'installing' | 'done' | 'failed'
+  output: string
+}
+
+/** The setup pane's session state: the survey it draws, the ticks, and the Install progress. */
+export type SagaSetupReview = {
+  repo: string
+  survey: SagaSetupSurvey
+  ticked: Record<string, boolean>
+  progress: Record<string, SagaSetupRowProgress> | null
+  error: string | null
+}
+
+/** What `mcp__saga__setup` returns to the model. */
+export type SagaSetupOutcome =
+  | { status: 'submitted'; installed: string[]; failed: string[] }
+  | { status: 'dismissed' | 'timed-out' | 'nothing-to-review' }
+  | { status: 'not-placed' | 'unavailable'; reason: string }
+  | { status: 'error'; reason: string; exitCode?: number; stderr?: string }
 
 /**
  * The unit row a session is working, as `run_status.py --repo-root <cwd>
@@ -443,6 +660,10 @@ declare module 'claude-code' {
       recordView: SagaRecordView | null
       /** What the agent-types mod last registered (issue #106). */
       agentTypes: SagaAgentTypesState
+      /** The merge-confirmation pane's state (issue #165), or null when no confirmation is open. */
+      mergeReview: SagaMergeReview | null
+      /** The setup pane's state (issue #165), or null when no setup is open. */
+      setupReview: SagaSetupReview | null
     }
   }
 }
