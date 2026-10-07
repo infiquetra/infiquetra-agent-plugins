@@ -1437,7 +1437,11 @@ def test_inline_suppressions_are_noted_not_applied(tmp_path: Path) -> None:
     assert ("tsc", "ts-nocheck") in notes
 
 
-def test_tool_env_is_allow_listed(tmp_path: Path) -> None:
+def test_tool_env_is_allow_listed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("RUSTUP_HOME", raising=False)
+    monkeypatch.delenv("RUSTUP_TOOLCHAIN", raising=False)
     repo, _source = _ts_repo(tmp_path)
     base = _commit(repo, "base")
     (repo / "README.md").write_text("head\n", encoding="utf-8")
@@ -1452,13 +1456,14 @@ def test_tool_env_is_allow_listed(tmp_path: Path) -> None:
     assert env_seen, "no process env captured"
     allowed = {"PATH", "PATHEXT", "LANG", "LC_ALL", "LC_CTYPE", "TZ"}
     expected = {name for name in allowed if name in os.environ}
-    expected |= {"HOME", "TMPDIR", "CARGO_HOME"}
+    expected |= {"HOME", "TMPDIR", "CARGO_HOME", "RUSTUP_HOME"}
     for env in env_seen:
         assert set(env) == expected
         assert env["HOME"] != os.environ.get("HOME")
         assert Path(env["HOME"]).is_absolute()
         assert Path(env["TMPDIR"]).is_absolute()
         assert env["CARGO_HOME"].startswith(str(tmp_path / "home"))
+        assert env["RUSTUP_HOME"] == str(Path.home() / ".rustup")
 
 
 def _live_bin(name: str) -> None:

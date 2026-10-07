@@ -711,7 +711,10 @@ def _tool_env(home: Path) -> tuple[dict[str, str], list[str]]:
     TMPDIR, mirroring the relocated run. ``CARGO_HOME`` points at a persistent
     credentials-free cache under ``.saga`` so public crates resolve without
     operator credentials. Cargo-family runs override it per invocation (see
-    ``_execute``). Returns the env and the temp dirs the caller removes.
+    ``_execute``). ``RUSTUP_HOME`` passes through (defaulting to the real
+    home's ``.rustup``) so a rustup proxy finds its toolchain under the fresh
+    HOME, as does ``RUSTUP_TOOLCHAIN`` when set. Returns the env and the temp
+    dirs the caller removes.
     """
     names = ("PATH", "PATHEXT", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
     if sys.platform == "win32":
@@ -733,6 +736,11 @@ def _tool_env(home: Path) -> tuple[dict[str, str], list[str]]:
         except OSError:  # pragma: no cover - Windows ACLs
             pass
     env["CARGO_HOME"] = str(cache)
+    env["RUSTUP_HOME"] = os.environ.get("RUSTUP_HOME") or str(
+        Path.home() / ".rustup"
+    )
+    if "RUSTUP_TOOLCHAIN" in os.environ:
+        env["RUSTUP_TOOLCHAIN"] = os.environ["RUSTUP_TOOLCHAIN"]
     return env, [fresh_home, fresh_tmp]
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import shutil
 import socket
@@ -652,6 +653,71 @@ def test_each_cargo_run_gets_a_fresh_cargo_home(tmp_path: Path) -> None:
     for env in runs:
         assert env["CARGO_HOME"] != str(shared)
         assert not Path(env["CARGO_HOME"]).exists()
+
+
+def test_rust_env_carries_rustup_home_under_fresh_homes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rustup proxy finds its toolchain under the adapter's fresh HOME.
+
+    ``RUSTUP_HOME`` (and ``RUSTUP_TOOLCHAIN`` when set) pass through the
+    allow-list, while HOME stays fresh and CARGO_HOME stays per-run, so the
+    proxy resolves a toolchain without seeing operator credentials.
+    """
+    rustup_home = tmp_path / "rustup"
+    rustup_home.mkdir()
+    monkeypatch.setenv("RUSTUP_HOME", str(rustup_home))
+    monkeypatch.setenv("RUSTUP_TOOLCHAIN", "stable-example-triple")
+    repo, _source = _clippy_repo(tmp_path)
+    base = _commit(repo, "base")
+    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    home = tmp_path / "home"
+    env_seen: list[dict[str, str]] = []
+    runner = _Calls(base, _fixture("clippy.jsonl"), code=101, env_seen=env_seen)
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        home, [_adapter("clippy")], runner,
+    ) == 0
+    assert env_seen, "no process env captured"
+    shared = home / ".saga" / "cargo-home"
+    for env in env_seen:
+        assert env["RUSTUP_HOME"] == str(rustup_home)
+        assert env["RUSTUP_TOOLCHAIN"] == "stable-example-triple"
+        assert env["HOME"] != os.environ.get("HOME")
+        assert Path(env["HOME"]).is_absolute()
+        assert env["PATH"] == os.environ.get("PATH")
+    probes = [env for call, env in zip(runner.calls, env_seen) if "--version" in call]
+    runs = [env for call, env in zip(runner.calls, env_seen) if "--version" not in call]
+    assert probes and runs
+    for env in probes:
+        assert env["CARGO_HOME"] == str(shared)
+    for env in runs:
+        assert env["CARGO_HOME"] != str(shared)
+        assert not Path(env["CARGO_HOME"]).exists()
+
+
+def test_rust_env_defaults_rustup_home_to_the_real_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("RUSTUP_HOME", raising=False)
+    monkeypatch.delenv("RUSTUP_TOOLCHAIN", raising=False)
+    repo, _source = _clippy_repo(tmp_path)
+    base = _commit(repo, "base")
+    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    env_seen: list[dict[str, str]] = []
+    runner = _Calls(base, _fixture("clippy.jsonl"), code=101, env_seen=env_seen)
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("clippy")], runner,
+    ) == 0
+    assert env_seen, "no process env captured"
+    for env in env_seen:
+        assert env["RUSTUP_HOME"] == str(Path.home() / ".rustup")
+        assert "RUSTUP_TOOLCHAIN" not in env
 
 
 def test_deny_degrades_when_head_removes_the_lockfile(tmp_path: Path) -> None:
