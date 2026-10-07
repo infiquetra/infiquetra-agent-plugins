@@ -11,6 +11,15 @@
 **Rejected alternatives.** Keeping `parents[3]` as the default root. Importing the sweep tuple. Hashing the Semgrep rules directory. Adding `reviewer_answer.py` to the fingerprint in this repair. A read-back of `reviewer_configuration`, which the review command owns.
 
 **Revisit when.** The review command passes the base profile, or the Semgrep rules card lists files instead of a directory.
+### Review-tool settings come from the base commit and the plugin
+
+**Decision.** Issue #152 (card C4b). The Python, CloudFormation and CDK, shell, GitHub workflow, and Markdown adapters run at the pins in `plugins/saga/references/review-tools.yaml`: ruff and ruff format `0.15.18`, mypy `2.1.0`, bandit `1.9.4`, coverage `7.16.2`, cosmic-ray `8.7.0`, pytest-randomly `5.0.0`, pytest-socket `0.8.1`, vulture `2.16`, import-linter `2.15`, pip-audit `2.10.1`, checkov `3.3.25`, cfn-lint `1.57.2`, ShellCheck `0.11.0`, shfmt `3.14.1`, actionlint `1.7.12`, zizmor `1.30.1`, lychee `0.24.2`, markdownlint-cli2 `0.23.3`, cspell `10.3.6`, cdk-nag `3.0.2`. A dictionary, a mypy config, or an import-linter contract is taken from the base commit and written under the runner home. ruff selects every rule, isolated, and ignores `noqa`. ShellCheck and bandit do not honor inline silences; a changed line that contains `noqa`, `nosec`, or `shellcheck disable` is recorded and the file is not rewritten. cdk synth, checkov on a synthesized template, cosmic-ray, pytest-randomly, pytest-socket, and zizmor use the relocated allow-list. zizmor stays offline and receives no GitHub token. A cdk-nag synth with no report is a known gap. The two formatters are not started.
+
+**Rationale.** The commit under review can otherwise point a tool at a config that hides the finding. The pins are the context-library Python toolchain numbers where those exist, and the release checked on 2026-10-07 for the rest. import-linter's version line prints `2.15`, so the pin is that token.
+
+**Rejected alternatives.** Selecting only the drafted ruff families. Treating a comment that mentions cdk-nag as proof the aspect is applied. Passing the operator environment into a synth or a test command. Creating `review_calibration.py` in this card.
+
+**Revisit when.** Card C7 reviews the ruff family draft, the actionlint kind draft, and the curated Checkov ids, or a later card puts a sandbox around `cdk synth` beyond the allow-list.
 
 ### The targeted reviewer's sandbox blocks the home directory and allows back what the review needs
 

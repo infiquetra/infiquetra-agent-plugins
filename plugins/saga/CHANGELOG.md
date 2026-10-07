@@ -24,6 +24,11 @@
   baseline commands from. The profile's `mechanical_tool_baseline` still decides whether the
   iteration is green. Semgrep runs with metrics off, from a local rule cache. The runner is inert
   until a later card calls it.
+- Issue 152: adapters for the Python, CloudFormation and CDK, shell, GitHub workflow, and
+  Markdown tools on that runner. Each row has an exact pin. A finding cites a lens-table row, or
+  the runner's level rule when the table does not name it. ruff format and shfmt write no record.
+  Settings come from the base commit and from this plugin. The build loop still does not call the
+  runner.
 
 - Issue 163: plan review in one pass. `scripts/plan_review.py` stores the reviewer's findings as
   C1 finding records in the run record (`record`), records the author's answer to each (`answer`:
@@ -70,6 +75,12 @@
 - Issue 149: `may-block` reads the calibration file and the component bytes from the installed
   saga package. `--root` selects the base commit's profile and does not select that file. An
   unreadable profile exits 2. The fingerprint also names the Jev sweep's three paths.
+
+- Issue 152: markdownlint-cli2 findings parse with no severity word. A lychee link is compared
+  base against head, because the report has no line. cdk-nag keeps the logical resource or the
+  construct path, and a clean plugin report is not a gap. A missing cdk binary is reason
+  `missing` for checkov-cdk as well as cdk-nag. cosmic-ray's module-path is every changed
+  Python file.
 
 - Issue 189: `scripts/reviewer_answer.py` replaces known secret formats (GitHub, AWS, Slack, Stripe,
   Google, Anthropic and OpenAI-style keys, private-key blocks, JSON web tokens, bearer tokens,

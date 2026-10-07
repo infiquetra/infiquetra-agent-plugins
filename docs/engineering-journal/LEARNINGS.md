@@ -9,6 +9,21 @@
 **Mechanism.** In a checkout the script lives at `plugins/saga/scripts/`, so `parents[3]` is the repository. A marketplace install copies `plugins/saga` to the plugin root, so `parents[3]` is outside the plugin and `plugins/saga/...` does not exist there. The calibration file beside the script (`parents[1] / references`) is the one `thresholds()` already reads. Component keys stay repo-relative. `plugins/saga/<rest>` is read from `<package>/<rest>`. `--root` selects the base commit's profile and does not select those bytes.
 
 **Generalizable rule.** A script that runs in the catalog checkout and from the installed plugin resolves its own files from the package directory, and takes the tree under review only as an explicit input.
+### A finding's identity has to name what distinguishes two hits
+
+**Evidence.** Issue #152 repair. `plugins/saga/scripts/review_adapters_markdown.py` (`_MARKDOWN`, `_parse_lychee`), `plugins/saga/scripts/review_adapters_infrastructure.py` (the cdk-nag resource walk and the checkov `synth_missing` marker), and `plugins/saga/scripts/review_adapters_python.py` (`_changed_python`). The proofs are `test_markdownlint_and_cspell_are_notes_and_lychee_is_fix_later`, `test_cdk_nag_same_rule_on_a_new_resource_is_kept`, `test_cdk_nag_wrapper_clean_report_is_present`, `test_checkov_cdk_wrapper_marks_a_missing_cdk_binary`, and `test_cosmic_ray_module_path_lists_every_changed_python_file`.
+
+**Mechanism.** markdownlint-cli2 prints `path:line:col MDxxx/name message` and no severity word, so a regex that required one recorded nothing and the nonzero exit became an unparseable degraded input. Lychee names a file and a URL and no line, so a hit pinned at line 1 followed the line filter. cdk-nag's template walk kept the section name `Resources` instead of the logical id, and the log line dropped the construct path, so the same rule on a new resource shared the base finding and was dropped. `report_present` meant "the finding list is nonempty", so a plugin that ran and found nothing was recorded as a missing aspect. checkov-cdk printed `[]` when `cdk` was absent, which is a clean scan. cosmic-ray 8.7 reads a string `module-path` as one file, so only the first changed Python file was mutated.
+
+**Generalizable rule.** Parse the tool's real text, and put the resource, path, or file that distinguishes two hits into the anchor or the comparison. A missing tool is a degraded input. A clean report is an empty finding list.
+
+### A scanner's discovered config is part of the untrusted commit
+
+**Evidence.** Issue #152. The adapters in `plugins/saga/scripts/review_adapters_python.py`, `review_adapters_infrastructure.py`, `review_adapters_shell.py`, `review_adapters_workflows.py`, and `review_adapters_markdown.py`. Tests such as `test_bandit_decoy_skip_does_not_hide_the_finding` and `test_shellcheck_levels_and_an_unchanged_line_is_absent` plant a suppressing file in the tree and still expect the finding.
+
+**Mechanism.** ruff, bandit, mypy, ShellCheck, actionlint, markdownlint, cspell, zizmor, and Checkov read a config they discover next to the source. A change can add that file and switch the tool off. The adapter writes the config it wants under the runner home, or scans a copy that omits the settings file, and passes that path on the command line. The discovered file stays in the tree and is not the input. actionlint 1.7.12 still parses `.github/actionlint.yaml` in the scan directory when `-config-file` names another file, so that adapter scans a copy of the workflows.
+
+**Generalizable rule.** A review of an untrusted commit passes a config the reviewer wrote, or a copy of the source that does not contain one.
 
 ### Blocking a parent directory in Claude's sandbox and allowing paths back works; each toolchain still needs checking
 
