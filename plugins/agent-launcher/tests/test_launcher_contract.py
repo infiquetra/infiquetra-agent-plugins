@@ -5167,3 +5167,101 @@ def test_reviewer_refuses_user_settings_that_widen_the_sandbox(
         launcher.reviewer_launch(_request(launcher, repo, head, tmp_path), env=_env(home),
                                  session=session)
     assert session.calls == []
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        {".CLAUDE/settings.json": "{}"},
+        {"pkg/.Claude/skills/x/SKILL.md": "x\n"},
+        {".MCP.json": "{}"},
+        {"Claude.md": "@~/.aws/credentials\n"},
+        {"docs/CLAUDE.LOCAL.md": "@~/.netrc\n"},
+    ],
+    ids=["upper-claude-dir", "mixed-claude-dir", "upper-mcp", "mixed-claude-md", "upper-local"],
+)
+def test_reviewer_withholds_untrusted_names_in_any_case(
+    launcher: ModuleType, tmp_path: Path, files: dict[str, str]
+) -> None:
+    """A case-insensitive file system loads `.CLAUDE` as `.claude` and `Claude.md` as `CLAUDE.md`."""
+    copy = _copy_with(tmp_path, files)
+    withheld = launcher.reviewer_withhold_untrusted(copy)
+    assert withheld, files
+    for relative in files:
+        assert not (copy / relative).exists(), relative
+
+
+def _crafted_repo(tmp_path: Path, entries: list[tuple[str, str, bytes]]) -> tuple[Path, str]:
+    """A commit built straight from blobs, so it can hold paths a checkout could not."""
+    repo = tmp_path / "crafted"
+    _git(tmp_path, "init", "-q", str(repo))
+    for mode, path, data in entries:
+        blob = subprocess.run(
+            ["git", "-C", str(repo), "hash-object", "-w", "--stdin"], input=data,
+            capture_output=True, check=True,
+        ).stdout.decode().strip()
+        _git(repo, "update-index", "--add", "--cacheinfo", f"{mode},{blob},{path}")
+    tree = _git(repo, "write-tree")
+    commit = subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.email=t@example.com", "-c", "user.name=t",
+         "commit-tree", tree, "-m", "crafted"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    return repo, commit
+
+
+def test_reviewer_export_refuses_paths_that_differ_only_by_case(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    """`L` -> outside plus `l/m` would write `m` through the link on a case-insensitive disk."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    repo, commit = _crafted_repo(tmp_path, [
+        ("120000", "L", str(outside).encode()),
+        ("120000", "l/m", b"anything"),
+    ])
+    with pytest.raises(launcher.ReviewerRefused, match="differ only by case"):
+        launcher.reviewer_export_head(repo, commit, tmp_path / "copy")
+    assert list(outside.iterdir()) == []
+
+
+@pytest.mark.parametrize("name", [".git/config", ".GIT/hooks/x", "a/.Git/x", "../x", "/etc/x"])
+def test_reviewer_export_refuses_a_git_directory_or_escape_in_any_case(
+    launcher: ModuleType, tmp_path: Path, name: str
+) -> None:
+    """git refuses to build such a tree itself, so the export's own path check is tested."""
+    with pytest.raises(launcher.ReviewerRefused, match="unsafe path"):
+        launcher._reviewer_safe_path(tmp_path / "copy", name)
+
+
+def test_reviewer_export_refuses_a_write_through_a_symlinked_directory(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy = tmp_path / "copy"
+    (copy).mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (copy / "link").symlink_to(outside)
+    with pytest.raises(launcher.ReviewerRefused, match="through a symlink"):
+        launcher._reviewer_writable_at(copy, copy / "link" / "m", "link/m")
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "@docs\u2028/../../outside.md",
+        "@docs/\u00a0x",
+        "@$HOME/.netrc",
+        "@docs\\..\\..\\x",
+        "@docs/..",
+    ],
+    ids=["unicode-line-separator", "no-break-space", "variable", "backslashes", "dot-dot"],
+)
+def test_reviewer_withholds_an_import_any_parser_could_read_outside(
+    launcher: ModuleType, tmp_path: Path, line: str
+) -> None:
+    """However Claude's parser ends the token, a non-plain path withholds the file."""
+    copy = _copy_with(tmp_path, {"CLAUDE.md": f"Rules.\n{line}\n", "docs/a.md": "x\n"})
+    assert launcher.reviewer_withhold_untrusted(copy) == [
+        "CLAUDE.md (it can import a file outside the copy)"
+    ]

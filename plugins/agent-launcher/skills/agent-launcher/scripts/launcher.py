@@ -2114,12 +2114,19 @@ REVIEWER_UNTRUSTED_DIRS = (".claude",)
 REVIEWER_UNTRUSTED_FILES = (".mcp.json",)
 #: Instruction files Claude loads from the working directory and, on demand, from subdirectories.
 REVIEWER_INSTRUCTION_NAMES = ("CLAUDE.md", "CLAUDE.local.md")
+#: The same names casefolded: a case-insensitive file system loads ``.CLAUDE`` as ``.claude``.
+_REVIEWER_UNTRUSTED_DIR_NAMES = frozenset(n.casefold() for n in REVIEWER_UNTRUSTED_DIRS)
+_REVIEWER_UNTRUSTED_FILE_NAMES = frozenset(n.casefold() for n in REVIEWER_UNTRUSTED_FILES)
+_REVIEWER_INSTRUCTION_NAMES = frozenset(n.casefold() for n in REVIEWER_INSTRUCTION_NAMES)
 #: How deep Claude follows ``@`` imports.
 REVIEWER_IMPORT_DEPTH = 5
-#: A deliberately wider net than Claude's own import parser: any ``@`` followed by non-space text,
-#: inside code spans or not, is treated as an import, so no import Claude follows can be missed.
-_REVIEWER_ANY_IMPORT = re.compile(r"@([^\s]+)")
+#: A deliberately wider net than Claude's own import parser: any ``@`` followed by text up to ASCII
+#: whitespace, inside code spans or not, is treated as an import, so no import Claude follows can
+#: be missed. A token is safe only when it is a plain relative path: then every reading of it,
+#: whatever Claude's parser takes as its end, stays inside the copy.
+_REVIEWER_ANY_IMPORT = re.compile(r"@([^ \t\n\r\f\v]+)")
 _REVIEWER_IMPORT_TRAILING = "`'\")]}>.,;:!?*"
+_REVIEWER_RISKY_IMPORT = re.compile(r"\.\.|~|\$|\\|^/|[^\x21-\x7e]")
 
 
 class ReviewerRefused(Exception):
@@ -2246,6 +2253,12 @@ def _reviewer_inside(path: Path, copy: Path) -> bool:
         return False
 
 
+def _reviewer_risky_imports(content: bytes) -> list[str]:
+    """``@`` tokens that are not plain relative paths: each could name a file outside the copy."""
+    tokens = _REVIEWER_ANY_IMPORT.findall(content.decode("utf-8", "replace"))
+    return [token for token in tokens if _REVIEWER_RISKY_IMPORT.search(token)]
+
+
 def _reviewer_import_targets(content: bytes, parent: Path) -> list[tuple[str, Path]]:
     """Every ``@`` token in *content* that could be an import, with the path it would name."""
     found: list[tuple[str, Path]] = []
@@ -2272,6 +2285,8 @@ def _reviewer_imports_leave(start: Path, copy: Path) -> bool:
             content = _reviewer_read(path) if _reviewer_inside(path, copy) else None
             if content is None:
                 continue
+            if _reviewer_risky_imports(content):
+                return True
             for _token, target in _reviewer_import_targets(content, path.parent):
                 if not _reviewer_inside(target, copy):
                     return True
@@ -2301,14 +2316,15 @@ def reviewer_withhold_untrusted(copy: Path) -> list[str]:
     for path in sorted(copy.rglob("*")):
         if not (path.exists() or path.is_symlink()):
             continue  # inside a directory already withheld
-        if path.name in REVIEWER_UNTRUSTED_DIRS and (path.is_dir() or path.is_symlink()):
+        name = path.name.casefold()  # macOS and Windows file systems ignore case
+        if name in _REVIEWER_UNTRUSTED_DIR_NAMES and (path.is_dir() or path.is_symlink()):
             drop(path, "Claude would act on it outside the sandbox")
-        elif path.name in REVIEWER_UNTRUSTED_FILES:
+        elif name in _REVIEWER_UNTRUSTED_FILE_NAMES:
             drop(path, "Claude would act on it outside the sandbox")
         elif path.is_symlink() and not _reviewer_inside(path, copy):
             drop(path, "a symlink out of the copy")
     for path in sorted(copy.rglob("*")):
-        if path.name in REVIEWER_INSTRUCTION_NAMES and path.is_file() and (
+        if path.name.casefold() in _REVIEWER_INSTRUCTION_NAMES and path.is_file() and (
             _reviewer_imports_leave(path, copy)
         ):
             drop(path, "it can import a file outside the copy")
@@ -2341,7 +2357,9 @@ def reviewer_claude_widening(env: Mapping[str, str]) -> list[str]:
             continue
         sandbox = loaded.get("sandbox") if isinstance(loaded.get("sandbox"), dict) else {}
         network = sandbox.get("network") if isinstance(sandbox.get("network"), dict) else {}
-        filesystem = sandbox.get("filesystem") if isinstance(sandbox.get("filesystem"), dict) else {}
+        filesystem = (
+            sandbox.get("filesystem") if isinstance(sandbox.get("filesystem"), dict) else {}
+        )
         permissions = (
             loaded.get("permissions") if isinstance(loaded.get("permissions"), dict) else {}
         )
@@ -2379,7 +2397,7 @@ def reviewer_claude_config_sources(
     ] + [
         (f"project:{path.relative_to(copy).as_posix()}", path)
         for path in sorted(copy.rglob("*"))
-        if path.name in REVIEWER_INSTRUCTION_NAMES and path != copy / "CLAUDE.md"
+        if path.name.casefold() in _REVIEWER_INSTRUCTION_NAMES and path != copy / "CLAUDE.md"
     ]
     sources: list[tuple[str, bytes | None]] = []
     for label, path in files:
@@ -2495,9 +2513,24 @@ def _reviewer_manifest(copy: Path) -> dict[str, str]:
 
 def _reviewer_safe_path(copy: Path, relative: str) -> Path:
     parts = Path(relative).parts
-    if not parts or Path(relative).is_absolute() or any(p in ("..", ".git", "") for p in parts):
+    if (
+        not parts
+        or Path(relative).is_absolute()
+        or any(p in ("..", "") or p.casefold() == ".git" for p in parts)
+    ):
         raise ReviewerRefused(f"the head names an unsafe path {relative!r}")
     return copy.joinpath(*parts)
+
+
+def _reviewer_writable_at(copy: Path, target: Path, relative: str) -> None:
+    """Refuse a write whose directory leaves the copy or passes through a symlink."""
+    ancestor = target.parent
+    while ancestor != copy:
+        if ancestor.is_symlink():
+            raise ReviewerRefused(f"the head writes {relative!r} through a symlink")
+        ancestor = ancestor.parent
+    if not _reviewer_inside(target.parent, copy):
+        raise ReviewerRefused(f"the head writes {relative!r} outside the copy")
 
 
 def reviewer_export_head(repo: Path, head: str, copy: Path) -> dict[str, str]:
@@ -2543,6 +2576,16 @@ def reviewer_export_head(repo: Path, head: str, copy: Path) -> dict[str, str]:
         size = int(stream[offset:newline].split()[2])
         blobs.append(stream[newline + 1 : newline + 1 + size])
         offset = newline + 1 + size + 1
+    folded: dict[str, str] = {}
+    for _mode, _sha, relative in entries:
+        for depth in range(1, len(Path(relative).parts) + 1):
+            prefix = "/".join(Path(relative).parts[:depth])
+            seen = folded.setdefault(prefix.casefold(), prefix)
+            if seen != prefix:
+                # On a case-insensitive file system the two would land on one path.
+                raise ReviewerRefused(
+                    f"the head names {seen!r} and {prefix!r}, which differ only by case"
+                )
     copy.mkdir(parents=True)
     links: list[tuple[Path, bytes]] = []
     for (mode, _sha, relative), data in zip(entries, blobs, strict=True):
@@ -2551,13 +2594,13 @@ def reviewer_export_head(repo: Path, head: str, copy: Path) -> dict[str, str]:
             links.append((target, data))
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        if not _reviewer_inside(target.parent, copy):
-            raise ReviewerRefused(f"the head writes {relative!r} outside the copy")
+        _reviewer_writable_at(copy, target, relative)
         target.write_bytes(data)
         if mode == "100755":
             target.chmod(0o755)
     for target, data in links:
         target.parent.mkdir(parents=True, exist_ok=True)
+        _reviewer_writable_at(copy, target, target.relative_to(copy).as_posix())
         os.symlink(data.decode("utf-8", "surrogateescape"), target)
     return _reviewer_manifest(copy)
 
@@ -2567,12 +2610,15 @@ def reviewer_scratch_changes(copy: Path, manifest: Mapping[str, str]) -> dict[st
     now = _reviewer_manifest(copy)
 
     def keep(path: str) -> bool:
-        return not REVIEWER_SCRATCH_IGNORED.search(path) and not now.get(path, "").startswith("link:")
+        ignored = REVIEWER_SCRATCH_IGNORED.search(path)
+        return not ignored and not now.get(path, "").startswith("link:")
 
     return {
         "added": sorted(p for p in now if p not in manifest and keep(p)),
         "modified": sorted(p for p in now if p in manifest and now[p] != manifest[p] and keep(p)),
-        "deleted": sorted(p for p in manifest if p not in now and not REVIEWER_SCRATCH_IGNORED.search(p)),
+        "deleted": sorted(
+            p for p in manifest if p not in now and not REVIEWER_SCRATCH_IGNORED.search(p)
+        ),
         # A symlink the session made or changed is never a reproduction test: reading it later,
         # outside the sandbox, could read whatever it points at.
         "links": sorted(
@@ -2606,7 +2652,7 @@ def reviewer_launch_message(
     wrapper: str, prompt: str, packet: Path, copy: Path, cap: int,
     withheld: Sequence[str] = (),
 ) -> str:
-    """What the session reads on standard input: the wrapper, saga's prompt, then where things are."""
+    """What the session reads on standard input: the wrapper, saga's prompt, where things are."""
     note = (
         "\nWithheld from the scratch copy, because they would run or read outside the sandbox; "
         "the packet's change still shows them:\n"
@@ -2628,7 +2674,7 @@ def reviewer_launch_message(
 
 
 def reviewer_extract_answer(final: str | None) -> tuple[Any, str | None]:
-    """The answer from the session's final message, unwrapping one code fence; or why there is none."""
+    """The answer in the final message, unwrapping one code fence; or why there is none."""
     if not final or not final.strip():
         return None, "the session gave no final message"
     text = final.strip()
@@ -2787,7 +2833,7 @@ touch inside-written 2> /dev/null; echo "write_inside=$?" >> "$r"
 touch "${{TMPDIR:-/tmp}}/reviewer-probe-{tag}" 2> /dev/null; echo "write_tmpdir=$?" >> "$r"
 touch "/tmp/reviewer-probe-{tag}" 2> /dev/null; echo "write_tmp=$?" >> "$r"
 curl -sS -m 5 -o /dev/null https://example.com > /dev/null 2>&1; echo "network=$?" >> "$r"
-if [ -n "${{REVIEWER_PROBE_TOKEN+x}}" ]; then echo "variable=set" >> "$r"; else echo "variable=unset" >> "$r"; fi
+if [ -n "${{REVIEWER_PROBE_TOKEN+x}}" ]; then v=set; else v=unset; fi; echo "variable=$v" >> "$r"
 """
 
 REVIEWER_PROBE_MESSAGE = (
