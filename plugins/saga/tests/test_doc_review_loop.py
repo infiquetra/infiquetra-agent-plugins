@@ -62,8 +62,8 @@ def _section(text: str, heading: str) -> str:
 def test_plan_dispatches_the_review_without_an_operator_command() -> None:
     """/plan Phase 5.4 runs the review; it does not recommend that the operator run it."""
     text = PLAN_SKILL.read_text(encoding="utf-8")
-    assert "### 5.4 Dispatch the plan review, and loop until it passes" in text
-    body = _section(text, "### 5.4 Dispatch the plan review, and loop until it passes")
+    assert "### 5.4 Dispatch the plan review, once" in text
+    body = _section(text, "### 5.4 Dispatch the plan review, once")
     assert "does not recommend the review; it runs it" in body
 
     # The retired routing bullet, in the shape it used to have: a recommendation that the
@@ -76,7 +76,7 @@ def test_reviewer_resolution_names_both_branches_and_reads_the_run_record() -> N
     is read from the run record rather than probed from the environment."""
     body = _section(
         PLAN_SKILL.read_text(encoding="utf-8"),
-        "### 5.4 Dispatch the plan review, and loop until it passes",
+        "### 5.4 Dispatch the plan review, once",
     )
     assert ".claude/saga/runs/issue-<N>.json" in body
     assert "roster" in body and "plan-reviewer" in body
@@ -99,26 +99,38 @@ def test_the_roster_helper_and_role_prompt_the_dispatch_names_exist() -> None:
     assert "role_id: plan_reviewer" in PLAN_REVIEWER_ROLE.read_text(encoding="utf-8")
 
 
-def test_the_loop_bound_comes_from_the_run_record_not_a_literal() -> None:
-    """The cycle allowance is read from the record, so a run can lower it without editing
-    the skill. A literal count here would be a second copy of a settled number."""
+def test_plan_review_has_no_cycle_allowance() -> None:
+    """One pass needs no allowance: neither cycle parameter may bound the review."""
     body = _section(
         PLAN_SKILL.read_text(encoding="utf-8"),
-        "### 5.4 Dispatch the plan review, and loop until it passes",
+        "### 5.4 Dispatch the plan review, once",
     )
-    assert "standard_cycle_allowance" in body
-    assert "escalated_cycle_allowance" in body
+    assert "standard_cycle_allowance" not in body
+    assert "escalated_cycle_allowance" not in body
     assert "review_cycles" in body
-    assert re.search(r"\bthree cycles\b|\bthree standard cycles\b", body) is None
 
 
-def test_exhausting_the_allowance_stops_rather_than_passing() -> None:
+def test_one_pass_records_findings_and_gates_on_the_check() -> None:
+    """Dispatch once, store through the script, answer every finding, gate on the check."""
     body = _section(
         PLAN_SKILL.read_text(encoding="utf-8"),
-        "### 5.4 Dispatch the plan review, and loop until it passes",
+        "### 5.4 Dispatch the plan review, once",
     )
-    assert "stops and\n  reports" in body or "stops and reports" in body
-    assert "it never passes" in body
+    assert "Dispatch once" in body
+    assert "plan_review.py record" in body
+    assert "answer every finding" in body
+    assert "plan_review.py check" in body
+    for gone in (
+        "one-word override",
+        "overrides it in one word",
+        "operator's word",
+        "dispatch again",
+        "re-dispatch",
+        "Exhausted allowances",
+        "`P0`",
+        "`P1`",
+    ):
+        assert gone not in body, f"§5.4 still carries {gone!r}"
 
 
 def test_the_board_move_to_ready_for_active_follows_the_review() -> None:
@@ -128,7 +140,15 @@ def test_the_board_move_to_ready_for_active_follows_the_review() -> None:
     loop = text.index("### 5.4 Dispatch the plan review")
     move = text.index("### 5.5 Submit the card's move to `Planning` / `Ready for Active`")
     assert loop < move
-    assert "§5.4's review loop recorded a **pass**" in text
+    assert "§5.4's check exits 0 with every finding answered" in text
+
+
+def test_continuation_stops_on_the_check_not_on_allowances() -> None:
+    """§5.6 continues on the check, not on a loop exit §5.4 no longer has."""
+    text = PLAN_SKILL.read_text(encoding="utf-8")
+    body = _section(text, "### 5.6 Continue into `/work`")
+    assert "check does not exit 0" in body
+    assert "exhausted allowances" not in text
 
 
 # --------------------------------------------------------------------------- U3
@@ -141,12 +161,14 @@ def test_an_explicitly_submitted_path_is_reviewed_as_given() -> None:
     assert "never redirect it" in body
 
 
-def test_one_cycle_is_defined_as_a_result_followed_by_a_repair_batch() -> None:
-    """The definition matches the lifecycle repository's at revision 5efc869f, so the two
-    cannot mean different things by the same word."""
+def test_no_repair_loop_or_allowance_in_doc_review() -> None:
+    """One pass needs no cycle, no allowance, and no override sentence."""
     text = DOC_REVIEW_SKILL.read_text(encoding="utf-8")
-    assert "One cycle is one completed review result followed by one repair batch" in text
-    assert "A re-read after no\nrepair is not a cycle" in text
+    assert "One cycle is one completed review result followed by one repair batch" not in text
+    assert "One pass is one completed review result followed by the author's answers" in text
+    assert "standard_cycle_allowance" not in text
+    assert "escalated_cycle_allowance" not in text
+    assert "overrides in one word" not in text
 
 
 def test_the_verdict_is_bound_to_the_revision_reviewed() -> None:
@@ -165,22 +187,20 @@ def test_doc_review_is_dispatched_not_requested() -> None:
 # --------------------------------------------------------------------------- U4
 
 
-def test_work_refuses_on_an_open_p0_without_the_operator_override() -> None:
+def test_the_work_gate_blocks_on_the_check() -> None:
     """The floor gate stays blocking. This is the preservation case: if it ever passes on a
     weakened §1.3 the gate has been removed while still looking present."""
     body = _section(WORK_SKILL.read_text(encoding="utf-8"), "### 1.3 Doc-review gate")
     assert "block execution" in body
-    assert "`P0` or `P1`" in body
-    assert "operator explicitly overriding, in one word, with a rationale" in body
+    assert "plan_review.py check" in body
+    for gone in ("`P0` or `P1`", "in one word", "explicitly overriding", "--doc-review-override"):
+        assert gone not in body, f"§1.3 still carries {gone!r}"
 
 
-def test_the_work_gate_produces_no_override_from_any_condition() -> None:
-    """No automatic override: not a finding count, not an exhausted allowance, not
-    unattended mode. Card 1026's non-goal, written as an assertion."""
+def test_the_work_gate_offers_no_override() -> None:
+    """No override of any kind: not a word, not a count, not a mode, not a sentence."""
     body = _section(WORK_SKILL.read_text(encoding="utf-8"), "### 1.3 Doc-review gate")
-    assert "Nothing else produces an override" in body
-    for condition in ("finding count", "cycle allowance", "unattended mode"):
-        assert condition in body, f"§1.3 must rule out {condition!r} as an override source"
+    assert "There is no override for this gate" in body
 
 
 def test_the_work_gate_declares_its_absence_contract() -> None:
@@ -471,15 +491,16 @@ def test_doc_review_runs_the_mapping_check_and_makes_a_gap_blocking() -> None:
         "## Acceptance-criteria mapping — a blocking check",
     )
     assert "functional_checks.py map --plan <plan path> --issue <N>" in body
-    assert "`P1` finding that names its `AC-<n>`" in body
+    assert "finding record that names its `AC-<n>`" in body
+    assert "is not a finding the author answers" in body
     assert "the mapping check was skipped" in body
     assert "Exit 2 stops the review" in body
     assert "A run-level waiver on a code-bearing change is a" in body
 
 
 def test_choosing_the_proving_test_is_never_a_safe_in_place_fix() -> None:
-    body = _section(DOC_REVIEW_SKILL.read_text(encoding="utf-8"), "## Safe In-Place Fixes")
-    assert "- choosing the test that proves an acceptance criterion" in body
+    body = _section(DOC_REVIEW_SKILL.read_text(encoding="utf-8"), "## Findings")
+    assert "choosing the test becomes a finding, never an edit" in body
 
 
 def test_plan_writes_the_checks_onto_the_record_and_maps_before_dispatch() -> None:
@@ -487,6 +508,6 @@ def test_plan_writes_the_checks_onto_the_record_and_maps_before_dispatch() -> No
     start = text.index("#### 5.3a Write the functional checks onto the run record")
     section = text[start : text.index("### 5.4 ", start)]
     assert "functional_checks.py write --plan <plan path> --issue <N>" in section
-    assert "re-run it after every §5.4 repair batch" in section
-    body = _section(text, "### 5.4 Dispatch the plan review, and loop until it passes")
+    assert "re-run it after every §5.4 plan fix" in section
+    body = _section(text, "### 5.4 Dispatch the plan review, once")
     assert "functional_checks.py map --plan <plan path> --issue <N>" in body

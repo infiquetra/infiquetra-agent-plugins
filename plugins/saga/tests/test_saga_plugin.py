@@ -342,25 +342,28 @@ def test_work_engine_merge_contract() -> None:
     assert "lifecycle_phase" in corpus  # the phase the engine deliberately does not advance
 
 
-def test_document_review_second_opinion_contract_is_intact() -> None:
-    """Issue #394 gave each review surface its own advisory block, never a shared schema.
+def test_no_second_opinion_or_cross_family_seat() -> None:
+    """Issue #163 deleted Document Review's second-opinion step and cross-family seat.
 
-    Issue #1001's rewrite removed Code Review's half along with the prose it pinned -- none of
-    its seven tokens survives the rewrite -- so only Document Review's half is asserted here.
-    The negative at the end is issue #1026's card-931 repair: the reference that used to be
-    asserted as a *path string* pointed at a file defining neither name it cited.
+    This is the inversion of the retired second-opinion contract test: none of its
+    tokens may return. The negative at the end is issue #1026's card-931 repair, kept:
+    the dangling cross-reference must not come back either.
     """
     doc_skill = _read(PLUGIN_ROOT / "skills" / "doc-review" / "SKILL.md")
 
     for token in (
         "stable `D1..Dn`",
         "`D<N>`",
-        "external_opinion.state=recommended",
+        "external_opinion",
+        "claude_adjudication",
         "Never auto-dispatch",
         "late-result ingestion",
         "Claude-owned final priority/status",
+        "cross-family",
+        "external-reviewer",
+        "external seat",
     ):
-        assert token in doc_skill
+        assert token not in doc_skill, f"{token!r} came back to the skill"
     assert "../code-review/references/findings-schema.md" not in doc_skill, (
         "the dangling cross-reference came back; see card 931"
     )
@@ -1210,20 +1213,20 @@ def test_issue_progress_comments_include_required_evidence() -> None:
         next_action="/work <issue>",
         doc_review_artifact="docs/reviews/2026-05-29-doc-review.md",
         doc_review_blocked=True,
-        doc_review_fixes=["Added missing gate."],
-        doc_review_findings=["P1 Missing rollback evidence."],
-        doc_review_override="Proceeding after owner accepted risk.",
+        doc_review_findings=["Missing rollback evidence."],
+        doc_review_rejections=["Vague scope — pinned in R3 already."],
     )
     assert "doc review artifact: docs/reviews/2026-05-29-doc-review.md" in review
     assert "handoff maturity: plan-ready" in review
     assert "handoff source: docs/plans/example.md" in review
     assert "next action: /work <issue>" in review
     assert "doc review blocked: yes" in review
-    assert "doc review override: Proceeding after owner accepted risk." in review
-    assert "doc review fixes:" in review
-    assert "Added missing gate." in review
+    assert "doc review override" not in review
+    assert "doc review fixes" not in review
+    assert "doc review rejections:" in review
+    assert "Vague scope — pinned in R3 already." in review
     assert "doc review findings:" in review
-    assert "P1 Missing rollback evidence." in review
+    assert "Missing rollback evidence." in review
 
 
 def test_issue_progress_cli_renders_extended_work_fields(

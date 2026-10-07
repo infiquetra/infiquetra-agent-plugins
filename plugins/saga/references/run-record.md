@@ -419,6 +419,20 @@ and `cost_report.py` read only `review_result.v2` entries, `release_step.py` onl
 own builder-record snapshots and per-lens "may block" answers, so it can be validated, its
 severities recomputed, without the rest of the record.
 
+### Plan reviews (issue 163)
+
+A plan review is appended to `review_cycles` with `loop: "plan_review"` by
+`plan_review.py record`, never by hand. The entry carries `plan_path`,
+`plan_sha256` (the plan file's fingerprint at record time),
+`reviewed_revision` (the commit SHA, or `working tree`), the validated
+`findings` (C1 finding records, subject `plan`, `section` locations), and
+`answers` keyed by finding identity — each `fixed` with the plan section
+changed, or `rejected` with a reason. A fixed answer is accepted only when the
+plan's current fingerprint differs from the stored one. The readers above skip
+these entries the same way: the four typed readers filter on `code_review`
+loops and schemas, and `saga_spore.py` leaves `plan_review` entries out of its
+cycle count.
+
 ### `tier_judgments` — `/plan`'s per-unit tier judgments
 
 The tier judgment in `/plan` (issue #96) does **not** write unit rows. `/plan` defines its units

@@ -280,45 +280,32 @@ def test_override_without_gate_is_refused() -> None:
         ip._override_line("", "some rationale")
     with pytest.raises(ValueError):
         ip._override_line("unknown-gate", "rationale")
+    with pytest.raises(ValueError):
+        ip._override_line("doc-review", "rationale")
     # Absent rationale yields no line, not a raise.
-    assert ip._override_line("doc-review", None) is None
-    assert ip._override_line("doc-review", "") is None
     assert ip._override_line("review-gate", None) is None
+    assert ip._override_line("review-gate", "") is None
 
 
-def test_override_renders_distinguishable_labels() -> None:
+def test_rejections_render_beside_the_review_gate_override() -> None:
     ip = _issue_progress()
 
-    doc_comment = ip.render_issue_comment(
+    comment = ip.render_issue_comment(
         event="phase",
         issue_ref="o/r#1",
         destination="pr",
-        doc_review_override="doc rationale",
-    )
-    review_comment = ip.render_issue_comment(
-        event="phase",
-        issue_ref="o/r#1",
-        destination="pr",
+        doc_review_rejections=["unclear scope — pinned in R3"],
         review_gate_override="review rationale",
     )
-    assert "doc review override" in doc_comment
-    assert "review rationale" not in doc_comment
-    assert "review gate override" in review_comment
-    assert "doc rationale" not in review_comment
-    # Both distinguishable when both present.
-    both = ip.render_issue_comment(
-        event="phase",
-        issue_ref="o/r#1",
-        destination="pr",
-        doc_review_override="doc",
-        review_gate_override="rev",
-    )
-    assert "doc review override" in both
-    assert "review gate override" in both
-    assert both.count("override") == 2
+    assert "doc review rejections" in comment
+    assert "unclear scope — pinned in R3" in comment
+    assert "review gate override" in comment
+    assert "review rationale" in comment
+    assert "doc review override" not in comment
+    assert "doc review fixes" not in comment
 
 
-def test_issue_progress_cli_both_flags_render() -> None:
+def test_issue_progress_cli_rejections_and_review_override_render() -> None:
     cmd = [
         sys.executable,
         str(ROOT / "plugins" / "saga" / "scripts" / "issue_progress.py"),
@@ -328,15 +315,36 @@ def test_issue_progress_cli_both_flags_render() -> None:
         "o/r#1",
         "--destination",
         "pr",
-        "--doc-review-override",
-        "doc override text",
+        "--doc-review-rejections",
+        "rej one|rej two",
         "--review-gate-override",
         "review override text",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
     assert result.returncode == 0
-    assert "doc review override" in result.stdout
+    assert "doc review rejections" in result.stdout
+    assert "rej one" in result.stdout
+    assert "rej two" in result.stdout
     assert "review gate override" in result.stdout
+
+
+def test_issue_progress_cli_refuses_the_removed_flags() -> None:
+    for flag in ("--doc-review-override", "--doc-review-fixes"):
+        cmd = [
+            sys.executable,
+            str(ROOT / "plugins" / "saga" / "scripts" / "issue_progress.py"),
+            "--event",
+            "phase",
+            "--issue-ref",
+            "o/r#1",
+            "--destination",
+            "pr",
+            flag,
+            "x",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        assert result.returncode == 2
+        assert "unrecognized arguments" in result.stderr
 
 
 # ---------------------------------------------------------------------------
@@ -392,10 +400,12 @@ def test_skill_names_gate_verdict_validation_at_save() -> None:
 
 def test_skill_override_flag_names_its_gate() -> None:
     text = _read_skill()
-    # Phase 1.3 doc-review gate uses doc flag, 5.3 review gate uses review flag.
-    assert "--doc-review-override" in text
+    # Only the review gate keeps an override; doc-review findings travel as rejections.
+    assert "--doc-review-rejections" in text
     assert "--review-gate-override" in text
-    # 4.3 explains the two flags map to distinct labels.
+    assert "--doc-review-override" not in text
+    # 4.3 renders rejections and the one remaining override under distinct labels.
     sec43 = _section(text, "### 4.3 ", "### 4.4 ")
-    assert "doc review override" in sec43
+    assert "doc review rejections" in sec43
     assert "review gate override" in sec43
+    assert "doc review override" not in sec43

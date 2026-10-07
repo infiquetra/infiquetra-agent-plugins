@@ -1,7 +1,7 @@
 {
   "schema": "lifecycle_snapshot.v1",
   "source_repo": "https://github.com/infiquetra/infiquetra-sdlc",
-  "sdlc_revision": "e5a2be10",
+  "sdlc_revision": "f8d0994",
   "note": "Vendored from infiquetra-sdlc at the revision above. This is the data the suite checks the prompts against when no sibling checkout is reachable, which is the normal case in continuous integration. When a checkout IS reachable, test_vendored_snapshot_matches_the_live_lifecycle compares every field here against it and fails on any drift. Regenerate deliberately when the pin moves; never hand-edit.",
   "roles": {
     "product": "Product",
@@ -13,6 +13,7 @@
     "plan_reviewer": "Plan reviewer",
     "review_controller": "Review controller",
     "lens_reviewer": "Lens reviewer",
+    "targeted_reviewer": "Targeted reviewer",
     "standard_repair_implementer": "Standard repair implementer",
     "expert_repair_implementer": "Expert repair implementer",
     "release_worker": "Release worker",
@@ -49,7 +50,7 @@
       ],
       "field_descriptions": {
         "checks_with_outcome": "Each of the Issue Reviewer's six Shaping-exit checks with a pass or a fail against it.",
-        "findings": "Findings in the shared finding schema, each routed by kind: product content to Product and the operator, technical context to the Architect, operator-reserved matters to the operator.",
+        "findings": "Findings in saga's finding record (`plugins/saga/references/review-records.schema.json`, forward-looking), each routed by kind: product content to Product and the operator, technical context to the Architect, operator-reserved matters to the operator. Until saga's review switch, today's reviews still write the finding schema in config/lens-catalogue.json.",
         "verdict": "`ready` or `not ready` for the reviewed issue-body revision."
       }
     },
@@ -89,7 +90,7 @@
       ],
       "field_descriptions": {
         "checklist_answers": "The seven plan-review checklist questions with the reviewer's answer to each.",
-        "findings": "Findings in the shared finding schema, returned to the Planner.",
+        "findings": "Findings in saga's finding record (`plugins/saga/references/review-records.schema.json`, forward-looking), returned to the Planner. Until saga's review switch, today's reviews still write the finding schema in config/lens-catalogue.json.",
         "readiness_conditions": "The readiness conditions the plan meets, and the ones it does not.",
         "run_model_questions": "The three additional questions the run model adds to plan review, answered.",
         "verdict": "Ready or not ready for the reviewed plan revision."
@@ -118,7 +119,7 @@
         "concurrency_allocation": "How much concurrency each hosting session is allocated. There is no single global cap to derive one from.",
         "cycle_allowances": "The cycle allowance for each loop, with this run's values and the rule for raising one.",
         "destination": "The non-production destination the run targets, carrying whether that repository's `main` branch is directly consumed, and the repository's declared functional-test environment for the pre-review combined-branch run, or its recorded waiver and reason.",
-        "exception_decisions": "Judgment calls already made — a technical ruling, a product ruling within the recorded intent, or an operator-reserved decision — that the Delivery Manager executes against.",
+        "exception_decisions": "Judgment calls already made \u2014 a technical ruling, a product ruling within the recorded intent, or an operator-reserved decision \u2014 that the Delivery Manager executes against.",
         "executors_and_topology": "The logical executor assigned to each lens, and the physical topology the logical executors are hosted on.",
         "investigator_triggers": "The Investigator requests that are pre-approved for this run and need no fresh authorisation.",
         "models_and_efforts": "The model and effort for each role, including per-lens selections, which do not change the shared rubric.",
@@ -154,6 +155,7 @@
       "sender_role": "implementer",
       "required_fields": [
         "branch_and_revision",
+        "builder_record",
         "combined_branch_functional_run",
         "mechanical_check_results",
         "recheck_results",
@@ -163,6 +165,7 @@
       ],
       "field_descriptions": {
         "branch_and_revision": "The branch the unit was implemented on and the revision the result applies to.",
+        "builder_record": "The unit's builder record: one per unit, kept in the run record in a corpus case's builder-record format. It holds the builder's declaration for each policy question, saying whether the question applies and naming the test that proves it is handled, and every reason the builder gives, such as for a coverage gap or a surviving mutant. A repair implementer's result updates the same record for the batch it finishes.",
         "combined_branch_functional_run": "The combined-branch functional run behind the revision this result hands to review: each pass's revision, outcome and teardown outcome, the declared environment, and the passing pass on that same revision; or the recorded waiver that still applies, with its reason. The result that hands the combined branch to review carries it: the single lane's result, the result of the implementer whose change completes the combined branch once its pass has passed, or a repair batch's result. A unit result that hands nothing to review, on the integrating path, writes that the run is pending at step 6. The review controller checks this field before a cycle starts.",
         "mechanical_check_results": "The mechanical checks that ran, with the version of each tool that ran them.",
         "recheck_results": "The preflight checks re-run before this work, with what was observed and when.",
@@ -187,10 +190,10 @@
       "field_descriptions": {
         "advisory_findings": "Findings marked advisory, which are reported and never scored.",
         "checks_and_coverage_gaps": "What was checked and what was not, so missing evidence is not mistaken for success.",
-        "findings": "Findings in the shared finding schema: what is wrong, why it matters, and the evidence for it.",
+        "findings": "Findings in saga's finding record (`plugins/saga/references/review-records.schema.json`, forward-looking): what is wrong, why it matters, and the evidence for it. Until saga's review switch, today's reviews still write the finding schema in config/lens-catalogue.json.",
         "outcome": "The routing outcome the Delivery Manager acts on. An unsuccessful review routes to repair planning; a successful one proceeds to the next lifecycle step, never straight to completed delivery.",
         "per_lens_results": "For each applicable lens: its score, its threshold, its floor, its dimension scores, the executor configuration that scored it, the topology that hosted the executor, and the reference to that executor's verification. There is no aggregate score.",
-        "repair_accounting": "Beside the scores, never inside them: findings verified fixed, findings still unresolved, new findings, duplicates, withdrawn findings, and repairs that could not be verified. The finding schema in config/lens-catalogue.json settles how the three hard cases are represented: one stable finding identity, duplicate-of and withdrawn as first-class statuses, and insufficient verification evidence counted as unresolved rather than fixed.",
+        "repair_accounting": "Beside the scores, never inside them: findings verified fixed, findings still unresolved, new findings, duplicates, withdrawn findings, and repairs that could not be verified. Each is keyed by the finding identity in saga's finding record (`plugins/saga/references/review-records.schema.json`, forward-looking), which carries one finding across rounds. Until saga's review switch, today's reviews still key them by the finding schema in config/lens-catalogue.json: one stable finding identity, duplicate-of and withdrawn as first-class statuses, and insufficient verification evidence counted as unresolved rather than fixed.",
         "reviewed_scope_and_revision": "Exactly which implementation revision and which scope the result speaks about.",
         "roster_hash": "The content hash of the review roster the cycle ran under, so a result can be tied to the exact catalogue, profile, and executors that produced it."
       }
@@ -207,7 +210,7 @@
       ],
       "field_descriptions": {
         "authoritative_plan_and_revision": "The plan the amendment amends, and the revision it applies to.",
-        "diagnosis_reference": "The diagnosis the batch relies on, cited by path and revision — or the reason no diagnosis was needed.",
+        "diagnosis_reference": "The diagnosis the batch relies on, cited by path and revision \u2014 or the reason no diagnosis was needed.",
         "disputes_and_counterevidence": "Findings the Planner disputes, with the evidence against them.",
         "finding_history": "Every finding the batch answers, with its classification and its history across cycles.",
         "ordered_batch": "The repair tasks in the order they are to be done."
@@ -288,7 +291,7 @@
       ],
       "field_descriptions": {
         "grouped_failures": "Failures grouped by the cause they are suspected to share, without claiming the shared cause is established.",
-        "per_scenario_outcome": "For each prescribed scenario: its terminal state — passed, failed, or blocked with the cause named — and the evidence for it. A blocked scenario stays a visible gap and is never reported as passed.",
+        "per_scenario_outcome": "For each prescribed scenario: its terminal state \u2014 passed, failed, or blocked with the cause named \u2014 and the evidence for it. A blocked scenario stays a visible gap and is never reported as passed.",
         "per_target_conditions": "For each target: the environment it ran in, the client it ran through, and the prerequisites re-checked before testing started.",
         "version_tested": "The exact version the scenarios were exercised against."
       }
@@ -305,7 +308,7 @@
       "field_descriptions": {
         "dissent": "Dissent recorded beside the ruling where there is any.",
         "question": "The product question that was put to Product.",
-        "recorded_intent": "The part of the issue's recorded intent — its objective, its acceptance criteria, what it puts out of scope — the ruling falls under.",
+        "recorded_intent": "The part of the issue's recorded intent \u2014 its objective, its acceptance criteria, what it puts out of scope \u2014 the ruling falls under.",
         "ruling": "The ruling itself, which binds inside the run."
       }
     },
@@ -347,5 +350,5 @@
     "accessibility-human-usability": "baseline",
     "experience": "baseline"
   },
-  "content_sha256": "29116bc436c6b7de3b383e834c02a3c39893ad9e0b5e73befd4f09b0fcfbdeca"
+  "content_sha256": "03fffcd422c61d0d451149a3521d6ffc461ca6222d8b4d49714ba79e65885c4f"
 }

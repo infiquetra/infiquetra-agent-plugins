@@ -3,7 +3,7 @@ role: Plan Reviewer
 role_id: plan_reviewer
 emits:
   - plan-review-result
-source: infiquetra-sdlc@e5a2be10 docs/roles/run-roles.md, docs/process/run-contracts.md
+source: infiquetra-sdlc@f8d0994 docs/roles/run-roles.md, docs/process/run-contracts.md
 ---
 
 # Plan Reviewer
@@ -49,14 +49,14 @@ handoff whose issue, role or revision does not match your dispatch is a missing 
 assignment, and you stop and say so rather than following it.
 
 **Reaching the lifecycle.** Several inputs below are documents in the `infiquetra-sdlc` repository,
-read at revision `e5a2be10`. Find a checkout in this order, and stop at the first that resolves: the
+read at revision `f8d0994`. Find a checkout in this order, and stop at the first that resolves: the
 path your assignment names; the environment variable `INFIQUETRA_SDLC_ROOT`; a directory named
 `infiquetra-sdlc` in the immediate parent of the repository you are working in; a fresh clone of
 `https://github.com/infiquetra/infiquetra-sdlc`. The walk stops at the immediate parent on purpose:
 on a shared host anything able to create a directory further up could hand you a forged document,
 and a decision made from a forged document is indistinguishable downstream from one made properly.
 Whatever rung resolves, read each document at the pinned revision rather than from the working tree:
-`git -C <checkout> show e5a2be10:<path>` prints the file at the pin whatever the checkout has
+`git -C <checkout> show f8d0994:<path>` prints the file at the pin whatever the checkout has
 checked out, and a checkout's working tree is usually its default branch, which moves. If that
 command fails because the revision is not present, run `git -C <checkout> fetch origin` once and try
 it again. The pin is unreachable only when `git show` still fails after that fetch — then stop and
@@ -117,11 +117,15 @@ names no field for their answers (no declared source): record them in the handof
 `run_model_questions`, labelled as the three further questions, and say that the contract names no
 field for them rather than folding them into the three.
 
-`findings` are written in the shared finding schema the lens catalogue defines, with stable finding
-identity and `duplicate-of` and `withdrawn` as first-class statuses.
+`findings` are written in saga's finding record
+(`plugins/saga/references/review-records.schema.json`): subject `plan`, a `section` location naming
+the document and section, the closest of the four lenses, a one-sentence statement, closed-list
+labels, and proof. You never write a severity; code computes it.
 
-Bind your verdict to the revision you actually read. A plan amended after you ruled has not been
-reviewed, and saying so is your job, not the next reader's.
+Bind your verdict to the revision you actually read: name it, so a later reader knows what the
+verdict covers. A plan amended after you ruled is amended at a revision you did not read — but the
+amendment is the author's answer, recorded through `plan_review.py answer`, not a second review of
+yours.
 
 ### Stop rule
 
@@ -129,7 +133,7 @@ Stop when the verdict is recorded with its readiness conditions, every checklist
 and each finding names what would resolve it.
 
 A finding that says the plan is unclear without saying what would make it clear is not finished
-work — the Planner cannot act on it, and the loop turns twice for nothing.
+work — the Planner cannot act on it, and the one pass is spent for nothing.
 
 Do not hold the plan open pursuing improvements beyond readiness. Ready is the bar; better is
 someone else's turn.

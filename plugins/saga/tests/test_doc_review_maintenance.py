@@ -133,8 +133,8 @@ def test_the_undefined_enabled_by_default_wording_is_gone() -> None:
     request."""
     text = DOC_REVIEW.read_text(encoding="utf-8")
     assert "Safe fixes are enabled by default" not in text
-    assert "Safe fixes are applied and edit the reviewed document in place." in text
-    assert "report-only" in text
+    assert "Safe fixes are applied and edit the reviewed document in place." not in text
+    assert "The reviewer never edits the reviewed document." in text
 
 
 def test_the_duplicated_lifecycle_prose_was_left_alone() -> None:

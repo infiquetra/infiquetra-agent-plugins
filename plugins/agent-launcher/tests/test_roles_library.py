@@ -45,18 +45,19 @@ ROLES_DIR = PACKAGE / "roles"
 
 #: The ``infiquetra-sdlc`` revision the pinned fallbacks and the prompts' ``source:`` were taken
 #: from. Asserted against every prompt, so a prompt cannot drift to another revision unnoticed.
-SDLC_PIN = "e5a2be10"
+SDLC_PIN = "f8d0994"
 
 #: The one file exempt from the per-prompt rules, by name. The README is the directory's contract
 #: document: it carries no stop rule and it is the only file allowed to name the retired plugin,
 #: because it accounts for where each retired prompt went.
 README_NAME = "README.md"
 
-#: The only role allowed an empty ``emits`` list: its result is aggregated into the Review
-#: Controller's contract rather than posted as its own. Keyed on the role identifier, not the
+#: The only roles allowed an empty ``emits`` list: the Lens Reviewer's result is
+#: aggregated into the Review Controller's contract, and the Targeted Reviewer's into the review
+#: command's run, rather than posted as their own. Keyed on the role identifier, not the
 #: filename -- keying on the filename let any role become exempt by being renamed.
 AGGREGATED_PROMPT = "lens-reviewer.md"
-AGGREGATED_ROLE_ID = "lens_reviewer"
+AGGREGATED_ROLE_IDS = ("lens_reviewer", "targeted_reviewer")
 
 #: The machine-readable map, so a consumer never parses the README's Markdown table to select a
 #: prompt or slice a lens section.
@@ -539,8 +540,8 @@ def emits_violations(role_id: str, emits: object, filename: str) -> list[str]:
     problems: list[str] = []
     if not isinstance(emits, list):
         return [f"emits must be a list, not {type(emits).__name__}"]
-    if not emits and role_id != AGGREGATED_ROLE_ID:
-        return [f"emits is empty; only {AGGREGATED_ROLE_ID} may emit nothing of its own"]
+    if not emits and role_id not in AGGREGATED_ROLE_IDS:
+        return [f"emits is empty; only {', '.join(AGGREGATED_ROLE_IDS)} may emit nothing of its own"]
     if len(emits) != len(set(emits)):
         problems.append(f"emits repeats a contract: {emits}")
     for contract in emits:
@@ -1457,6 +1458,7 @@ def test_seeded_emits_rules_fire() -> None:
     assert emits_violations("planner", "dispatch", "planner.md")[0].startswith("emits must be")
     assert emits_violations("planner", [], "planner.md")[0].startswith("emits is empty")
     assert emits_violations("lens_reviewer", [], AGGREGATED_PROMPT) == []
+    assert emits_violations("targeted_reviewer", [], "targeted-reviewer.md") == []
     # The exemption is the role's, not the filename's: renaming a file must not confer it.
     assert emits_violations("planner", [], AGGREGATED_PROMPT)[0].startswith("emits is empty")
     assert "not a lifecycle handoff contract" in emits_violations("planner", ["nope"], "p.md")[0]

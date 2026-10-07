@@ -2,7 +2,12 @@
 
 ## [Unreleased]
 
-The roles library stays pinned to infiquetra-sdlc revision `e5a2be10`.
+The roles library moves to infiquetra-sdlc revision `f8d0994` (X1a: the lifecycle records saga's
+new review model). The snapshot gains the `targeted_reviewer` role, `implementation-result` gains
+the `builder_record` field, and the four review findings descriptions point at saga's finding
+record. The plan-reviewer, issue-reviewer, and planner prompts follow the new finding format; the
+three implementer prompts name `builder_record`; and a minimal `targeted-reviewer.md` wrapper lands
+for C8 to extend.
 
 ### Fixed
 

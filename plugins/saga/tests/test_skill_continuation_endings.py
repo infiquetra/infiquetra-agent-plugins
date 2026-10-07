@@ -105,7 +105,7 @@ def test_doc_review_bounds_its_continuation() -> None:
     text = _skill("doc-review")
     assert "classified as a **plan**" in text
     assert "standalone rather than dispatched" in text
-    assert "no `P0` and no `P1` remains" in text
+    assert "the reviewed plan's check exits 0" in text
 
 
 def test_plan_reads_the_destination_before_continuing() -> None:
