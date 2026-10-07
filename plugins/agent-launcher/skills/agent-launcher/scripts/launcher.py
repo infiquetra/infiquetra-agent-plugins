@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import time
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -2114,10 +2115,18 @@ REVIEWER_UNTRUSTED_DIRS = (".claude",)
 REVIEWER_UNTRUSTED_FILES = (".mcp.json",)
 #: Instruction files Claude loads from the working directory and, on demand, from subdirectories.
 REVIEWER_INSTRUCTION_NAMES = ("CLAUDE.md", "CLAUDE.local.md")
-#: The same names casefolded: a case-insensitive file system loads ``.CLAUDE`` as ``.claude``.
-_REVIEWER_UNTRUSTED_DIR_NAMES = frozenset(n.casefold() for n in REVIEWER_UNTRUSTED_DIRS)
-_REVIEWER_UNTRUSTED_FILE_NAMES = frozenset(n.casefold() for n in REVIEWER_UNTRUSTED_FILES)
-_REVIEWER_INSTRUCTION_NAMES = frozenset(n.casefold() for n in REVIEWER_INSTRUCTION_NAMES)
+def _reviewer_fold(name: str) -> str:
+    """A name as a forgiving file system may match it: compatibility-normalised and casefolded.
+
+    A case-insensitive file system loads ``.CLAUDE`` as ``.claude``; folding more than any file
+    system does only withholds more, never less.
+    """
+    return unicodedata.normalize("NFKC", name).casefold()
+
+
+_REVIEWER_UNTRUSTED_DIR_NAMES = frozenset(_reviewer_fold(n) for n in REVIEWER_UNTRUSTED_DIRS)
+_REVIEWER_UNTRUSTED_FILE_NAMES = frozenset(_reviewer_fold(n) for n in REVIEWER_UNTRUSTED_FILES)
+_REVIEWER_INSTRUCTION_NAMES = frozenset(_reviewer_fold(n) for n in REVIEWER_INSTRUCTION_NAMES)
 #: How deep Claude follows ``@`` imports.
 REVIEWER_IMPORT_DEPTH = 5
 #: A deliberately wider net than Claude's own import parser: any ``@`` followed by text up to ASCII
@@ -2126,7 +2135,7 @@ REVIEWER_IMPORT_DEPTH = 5
 #: whatever Claude's parser takes as its end, stays inside the copy.
 _REVIEWER_ANY_IMPORT = re.compile(r"@([^ \t\n\r\f\v]+)")
 _REVIEWER_IMPORT_TRAILING = "`'\")]}>.,;:!?*"
-_REVIEWER_RISKY_IMPORT = re.compile(r"\.\.|~|\$|\\|^/|[^\x21-\x7e]")
+_REVIEWER_RISKY_IMPORT = re.compile(r"\.\.|~|\$|%|\\|^/|[^\x21-\x7e]")
 
 
 class ReviewerRefused(Exception):
@@ -2316,7 +2325,7 @@ def reviewer_withhold_untrusted(copy: Path) -> list[str]:
     for path in sorted(copy.rglob("*")):
         if not (path.exists() or path.is_symlink()):
             continue  # inside a directory already withheld
-        name = path.name.casefold()  # macOS and Windows file systems ignore case
+        name = _reviewer_fold(path.name)
         if name in _REVIEWER_UNTRUSTED_DIR_NAMES and (path.is_dir() or path.is_symlink()):
             drop(path, "Claude would act on it outside the sandbox")
         elif name in _REVIEWER_UNTRUSTED_FILE_NAMES:
@@ -2324,7 +2333,7 @@ def reviewer_withhold_untrusted(copy: Path) -> list[str]:
         elif path.is_symlink() and not _reviewer_inside(path, copy):
             drop(path, "a symlink out of the copy")
     for path in sorted(copy.rglob("*")):
-        if path.name.casefold() in _REVIEWER_INSTRUCTION_NAMES and path.is_file() and (
+        if _reviewer_fold(path.name) in _REVIEWER_INSTRUCTION_NAMES and path.is_file() and (
             _reviewer_imports_leave(path, copy)
         ):
             drop(path, "it can import a file outside the copy")
@@ -2349,11 +2358,17 @@ def reviewer_claude_widening(env: Mapping[str, str]) -> list[str]:
     ]
     problems: list[str] = []
     for path in files:
+        if not path.exists():
+            continue
         try:
             loaded = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            # Claude may read a file this strict parser cannot (comments, trailing commas); a
+            # setting unchecked could widen the sandbox, so an unreadable file refuses the launch.
+            problems.append(f"{path} cannot be read as JSON to check it")
             continue
         if not isinstance(loaded, dict):
+            problems.append(f"{path} is not a JSON object")
             continue
         sandbox = loaded.get("sandbox") if isinstance(loaded.get("sandbox"), dict) else {}
         network = sandbox.get("network") if isinstance(sandbox.get("network"), dict) else {}
@@ -2397,7 +2412,7 @@ def reviewer_claude_config_sources(
     ] + [
         (f"project:{path.relative_to(copy).as_posix()}", path)
         for path in sorted(copy.rglob("*"))
-        if path.name.casefold() in _REVIEWER_INSTRUCTION_NAMES and path != copy / "CLAUDE.md"
+        if _reviewer_fold(path.name) in _REVIEWER_INSTRUCTION_NAMES and path != copy / "CLAUDE.md"
     ]
     sources: list[tuple[str, bytes | None]] = []
     for label, path in files:
@@ -2516,7 +2531,7 @@ def _reviewer_safe_path(copy: Path, relative: str) -> Path:
     if (
         not parts
         or Path(relative).is_absolute()
-        or any(p in ("..", "") or p.casefold() == ".git" for p in parts)
+        or any(p in ("..", "") or _reviewer_fold(p) == ".git" for p in parts)
     ):
         raise ReviewerRefused(f"the head names an unsafe path {relative!r}")
     return copy.joinpath(*parts)
@@ -2580,7 +2595,7 @@ def reviewer_export_head(repo: Path, head: str, copy: Path) -> dict[str, str]:
     for _mode, _sha, relative in entries:
         for depth in range(1, len(Path(relative).parts) + 1):
             prefix = "/".join(Path(relative).parts[:depth])
-            seen = folded.setdefault(prefix.casefold(), prefix)
+            seen = folded.setdefault(_reviewer_fold(prefix), prefix)
             if seen != prefix:
                 # On a case-insensitive file system the two would land on one path.
                 raise ReviewerRefused(
@@ -2609,16 +2624,20 @@ def reviewer_scratch_changes(copy: Path, manifest: Mapping[str, str]) -> dict[st
     """The files added, modified and deleted in the copy since the export, minus tool clutter."""
     now = _reviewer_manifest(copy)
 
-    def keep(path: str) -> bool:
-        ignored = REVIEWER_SCRATCH_IGNORED.search(path)
-        return not ignored and not now.get(path, "").startswith("link:")
+    def is_link(path: str) -> bool:
+        return now.get(path, "").startswith("link:")
 
+    # Clutter is ignored only where it is new: a tracked file at a clutter-looking path that the
+    # session modified or deleted is a change like any other.
     return {
-        "added": sorted(p for p in now if p not in manifest and keep(p)),
-        "modified": sorted(p for p in now if p in manifest and now[p] != manifest[p] and keep(p)),
-        "deleted": sorted(
-            p for p in manifest if p not in now and not REVIEWER_SCRATCH_IGNORED.search(p)
+        "added": sorted(
+            p for p in now
+            if p not in manifest and not is_link(p) and not REVIEWER_SCRATCH_IGNORED.search(p)
         ),
+        "modified": sorted(
+            p for p in now if p in manifest and now[p] != manifest[p] and not is_link(p)
+        ),
+        "deleted": sorted(p for p in manifest if p not in now),
         # A symlink the session made or changed is never a reproduction test: reading it later,
         # outside the sandbox, could read whatever it points at.
         "links": sorted(

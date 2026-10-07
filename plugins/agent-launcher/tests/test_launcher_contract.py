@@ -5265,3 +5265,56 @@ def test_reviewer_withholds_an_import_any_parser_could_read_outside(
     assert launcher.reviewer_withhold_untrusted(copy) == [
         "CLAUDE.md (it can import a file outside the copy)"
     ]
+
+
+def test_reviewer_refuses_a_settings_file_it_cannot_check(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, home: Path
+) -> None:
+    """Claude may read what a strict JSON parser cannot; unchecked, it could widen the sandbox."""
+    repo, head = reviewed_repo
+    (home / ".claude" / "settings.local.json").write_text(
+        '{\n  // a comment\n  "sandbox": {"excludedCommands": ["docker"]},\n}\n'
+    )
+    session = FakeSession("{}")
+    with pytest.raises(launcher.ReviewerRefused, match="cannot be read as JSON"):
+        launcher.reviewer_launch(_request(launcher, repo, head, tmp_path), env=_env(home),
+                                 session=session)
+    assert session.calls == []
+
+
+def test_reviewer_counts_an_edit_to_a_tracked_file_at_a_clutter_path(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy = _copy_with(tmp_path, {"src/__pycache__/real.py": "x = 1\n", "tmpabcd1234/kept.py": "y\n"})
+    manifest = launcher._reviewer_manifest(copy)
+    (copy / "src" / "__pycache__" / "real.py").write_text("x = 2\n")
+    (copy / "tmpabcd1234" / "kept.py").unlink()
+    (copy / "tmpzzzz9999").mkdir()
+    (copy / "tmpzzzz9999" / "new").write_text("tempfile fallback\n")
+    assert launcher.reviewer_scratch_changes(copy, manifest) == {
+        "added": [],
+        "modified": ["src/__pycache__/real.py"],
+        "deleted": ["tmpabcd1234/kept.py"],
+        "links": [],
+    }
+
+
+@pytest.mark.parametrize(
+    "name", ["．claude/settings.json", ".ｃｌａｕｄｅ/x.json", "ＣＬＡＵＤＥ.md"],
+    ids=["fullwidth-dot", "fullwidth-claude", "fullwidth-claude-md"],
+)
+def test_reviewer_withholds_compatibility_forms_of_untrusted_names(
+    launcher: ModuleType, tmp_path: Path, name: str
+) -> None:
+    copy = _copy_with(tmp_path, {name: "@~/.netrc\n"})
+    assert launcher.reviewer_withhold_untrusted(copy)
+    assert not (copy / name).exists()
+
+
+def test_reviewer_treats_a_percent_encoded_import_as_risky(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy = _copy_with(tmp_path, {"CLAUDE.md": "@docs/%2e%2e/%2e%2e/x\n"})
+    assert launcher.reviewer_withhold_untrusted(copy) == [
+        "CLAUDE.md (it can import a file outside the copy)"
+    ]
