@@ -1,0 +1,504 @@
+{
+  "schema": "question_bank.v1",
+  "lens": "correctness",
+  "policy": [
+    {
+      "bank": "correctness.api-contract.breaks-a-contract",
+      "policy": "correctness-13"
+    },
+    {
+      "bank": "correctness.caller-keeps-old-behavior",
+      "policy": "correctness-13"
+    },
+    {
+      "bank": "correctness.concurrent-write-without-a-lock",
+      "policy": "correctness-04"
+    },
+    {
+      "bank": "correctness.failure-reported-as-success",
+      "policy": "correctness-10"
+    },
+    {
+      "bank": "correctness.interrupt-strands-partial-state",
+      "policy": "correctness-05"
+    },
+    {
+      "bank": "correctness.old-stored-data-crashes",
+      "policy": "correctness-09"
+    },
+    {
+      "bank": "correctness.order-nothing-enforces",
+      "policy": "correctness-06"
+    },
+    {
+      "bank": "correctness.reliability.retry-repeats-effect",
+      "policy": "correctness-05"
+    },
+    {
+      "bank": "correctness.round-trip-loses-a-field",
+      "policy": "correctness-08"
+    },
+    {
+      "bank": "correctness.undocumented-error-shape",
+      "policy": "correctness-03"
+    },
+    {
+      "bank": "correctness.unvalidated-outside-data",
+      "policy": "correctness-07"
+    },
+    {
+      "bank": "correctness.zero-or-empty-breaks-it",
+      "policy": "correctness-01"
+    }
+  ],
+  "questions": [
+    {
+      "id": "correctness.reliability.retry-repeats-effect",
+      "lens": "correctness",
+      "kind": "yes-no",
+      "options": [
+        {
+          "id": "yes",
+          "definition": "a retry or rerun can repeat an effect: charging, sending, or writing twice"
+        },
+        {
+          "id": "no",
+          "definition": "every repeated effect carries a key or check that makes the rerun safe"
+        }
+      ],
+      "examples": [
+        "a card charge retried after a timeout, with no idempotency key on the request"
+      ],
+      "not_for": [
+        "read-only retries, safe to run any number of times"
+      ],
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      },
+      "piece": "function"
+    },
+    {
+      "id": "correctness.api-contract.breaks-a-contract",
+      "lens": "correctness",
+      "kind": "yes-no",
+      "options": [
+        {
+          "id": "yes",
+          "definition": "a caller-visible contract changes incompatibly: removed, renamed, or reshaped"
+        },
+        {
+          "id": "no",
+          "definition": "every contract change stays compatible, or each broken caller is updated beside it"
+        }
+      ],
+      "examples": [
+        "an HTTP response field renamed while an older client still reads the old name"
+      ],
+      "not_for": [
+        "internal refactors with no caller outside the changed code"
+      ],
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      },
+      "piece": "function"
+    },
+    {
+      "id": "correctness.performance.material-cost-or-latency",
+      "lens": "correctness",
+      "kind": "yes-no",
+      "options": [
+        {
+          "id": "yes",
+          "definition": "the change can materially move latency, throughput, memory, or money cost"
+        },
+        {
+          "id": "no",
+          "definition": "the change keeps its cost profile: same order of work, same queries, same spend"
+        }
+      ],
+      "examples": [
+        "a per-request query added inside a loop over the result rows"
+      ],
+      "not_for": [
+        "style-only edits, which move no cost"
+      ],
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      },
+      "piece": "function"
+    },
+    {
+      "id": "correctness.concurrent-write-without-a-lock",
+      "lens": "correctness",
+      "kind": "yes-no",
+      "options": [
+        {
+          "id": "yes",
+          "definition": "two actors can write the same state with no exclusion between them"
+        },
+        {
+          "id": "no",
+          "definition": "shared writes pass one lock, transaction, or compare-and-set"
+        }
+      ],
+      "examples": [
+        "two workers decrementing the same counter read from shared storage"
+      ],
+      "not_for": [
+        "one actor at a time by construction, such as a single queue consumer"
+      ],
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      },
+      "piece": "function"
+    },
+    {
+      "id": "correctness.interrupt-strands-partial-state",
+      "lens": "correctness",
+      "kind": "yes-no",
+      "options": [
+        {
+          "id": "yes",
+          "definition": "an interrupt or cancel can strand partial effects the rerun cannot finish"
+        },
+        {
+          "id": "no",
+          "definition": "every interruption point leaves state the rerun completes exactly once"
+        }
+      ],
+      "examples": [
+        "a cancel between writing the record and sending its notice, with no resume marker"
+      ],
+      "not_for": [
+        "atomic operations, which leave nothing partial"
+      ],
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      },
+      "piece": "function"
+    },
+    {
+      "id": "correctness.order-nothing-enforces",
+      "lens": "correctness",
+      "kind": "yes-no",
+      "options": [
+        {
+          "id": "yes",
+          "definition": "correctness needs an order that no lock, sequence, or check enforces"
+        },
+        {
+          "id": "no",
+          "definition": "each ordering need is enforced where the order matters"
+        }
+      ],
+      "examples": [
+        "two events handled in arrival order, with redelivery able to reorder them"
+      ],
+      "not_for": [
+        "order the platform guarantees"
+      ],
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      },
+      "piece": "function"
+    },
+    {
+      "id": "correctness.unvalidated-outside-data",
+      "lens": "correctness",
+      "kind": "yes-no",
+      "options": [
+        {
+          "id": "yes",
+          "definition": "outside data reaches a branch, query, or stored state without validation"
+        },
+        {
+          "id": "no",
+          "definition": "each boundary validates shape and range before use"
+        }
+      ],
+      "examples": [
+        "a request field used as a record key with no check that the key exists"
+      ],
+      "not_for": [
+        "data validated by an earlier boundary in the same call"
+      ],
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      },
+      "piece": "function"
+    },
+    {
+      "id": "correctness.round-trip-loses-a-field",
+      "lens": "correctness",
+      "kind": "yes-no",
+      "options": [
+        {
+          "id": "yes",
+          "definition": "a serialize-and-restore round trip can drop or alter a relied-upon field"
+        },
+        {
+          "id": "no",
+          "definition": "round trips preserve the relied-upon fields exactly"
+        }
+      ],
+      "examples": [
+        "a timestamp restored as a string where the code expects a datetime"
+      ],
+      "not_for": [
+        "display-only formatting"
+      ],
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      },
+      "piece": "function"
+    },
+    {
+      "id": "correctness.old-stored-data-crashes",
+      "lens": "correctness",
+      "kind": "yes-no",
+      "options": [
+        {
+          "id": "yes",
+          "definition": "stored data written by an older version can crash or misbehave"
+        },
+        {
+          "id": "no",
+          "definition": "old versions migrate or default to correct behavior"
+        }
+      ],
+      "examples": [
+        "a new required field read from records written before the field existed"
+      ],
+      "not_for": [
+        "a first release with no stored data in the wild"
+      ],
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      },
+      "piece": "function"
+    },
+    {
+      "id": "correctness.failure-reported-as-success",
+      "lens": "correctness",
+      "kind": "yes-no",
+      "options": [
+        {
+          "id": "yes",
+          "definition": "a failure can return ok, partial data as complete, or an empty answer"
+        },
+        {
+          "id": "no",
+          "definition": "each failure reaches the caller as a failure with its cause"
+        }
+      ],
+      "examples": [
+        "a batch step that returns its partial list when one item errors"
+      ],
+      "not_for": [
+        "declared best-effort telemetry"
+      ],
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      },
+      "piece": "function"
+    },
+    {
+      "id": "correctness.caller-keeps-old-behavior",
+      "lens": "correctness",
+      "kind": "yes-no",
+      "options": [
+        {
+          "id": "yes",
+          "definition": "a caller still relies on the previous behavior, arguments, or timing"
+        },
+        {
+          "id": "no",
+          "definition": "each caller is updated and tested against the new behavior"
+        }
+      ],
+      "examples": [
+        "a second caller of a renamed flag still passing the old word"
+      ],
+      "not_for": [
+        "callers outside the change's reach"
+      ],
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      },
+      "piece": "function"
+    },
+    {
+      "id": "correctness.undocumented-error-shape",
+      "lens": "correctness",
+      "kind": "yes-no",
+      "options": [
+        {
+          "id": "yes",
+          "definition": "an error path returns a shape or code its callers cannot rely on"
+        },
+        {
+          "id": "no",
+          "definition": "every error output matches its documented shape"
+        }
+      ],
+      "examples": [
+        "a new failure mode returning a bare string where callers read a code field"
+      ],
+      "not_for": [
+        "log lines and debug output"
+      ],
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      },
+      "piece": "function"
+    },
+    {
+      "id": "correctness.unbounded-growth",
+      "lens": "correctness",
+      "kind": "yes-no",
+      "options": [
+        {
+          "id": "yes",
+          "definition": "a list, cache, or queue can grow without bound across calls"
+        },
+        {
+          "id": "no",
+          "definition": "each accumulation has a cap, eviction, or drain"
+        }
+      ],
+      "examples": [
+        "an in-memory retry log appended on every attempt and never trimmed"
+      ],
+      "not_for": [
+        "bounded buffers with a fixed size"
+      ],
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      },
+      "piece": "function"
+    },
+    {
+      "id": "correctness.zero-or-empty-breaks-it",
+      "lens": "correctness",
+      "kind": "yes-no",
+      "options": [
+        {
+          "id": "yes",
+          "definition": "a zero, empty, or missing value can break the changed code"
+        },
+        {
+          "id": "no",
+          "definition": "zero, empty, and missing values each behave as the contract says"
+        }
+      ],
+      "examples": [
+        "dividing by a count that an empty result set leaves at zero"
+      ],
+      "not_for": [
+        "values the contract declares impossible"
+      ],
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      },
+      "piece": "function"
+    }
+  ]
+}

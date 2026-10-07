@@ -1,0 +1,365 @@
+{
+  "schema": "policy_questions.v1",
+  "questions": [
+    {
+      "id": "correctness-01",
+      "lens": "correctness",
+      "group": "what was asked",
+      "question": "Does the change do what was asked on every stated input, including the edge inputs the contract defines?",
+      "fails": "Any stated input behaves against the issue or contract, or a defined edge input is unhandled.",
+      "clears": "Every stated input, edges included, behaves as required.",
+      "proving_test": "Tests asserting each stated input's output, wired to the acceptance criteria.",
+      "not_for": [
+        "Inputs the contract leaves undefined; those belong to a new requirement, not this question."
+      ]
+    },
+    {
+      "id": "correctness-02",
+      "lens": "correctness",
+      "group": "what was asked",
+      "question": "Does every previously supported case keep working, or is each removal declared and tested?",
+      "fails": "A previously supported input or case stops working with no declaration.",
+      "clears": "All supported cases work, or each removal is declared with its replacement tested.",
+      "proving_test": "Regression tests over the previously supported cases.",
+      "not_for": [
+        "Cases never supported; absence there is a feature request, not a regression."
+      ]
+    },
+    {
+      "id": "correctness-03",
+      "lens": "correctness",
+      "group": "what was asked",
+      "question": "Is every error output part of the contract: documented, shaped, and tested?",
+      "fails": "An error path returns an undocumented shape, code, or message the callers cannot rely on.",
+      "clears": "Every error output matches its documented shape.",
+      "proving_test": "Tests asserting each error output's shape and code.",
+      "not_for": [
+        "Log lines and debug output, which carry no contract."
+      ]
+    },
+    {
+      "id": "correctness-04",
+      "lens": "correctness",
+      "group": "shared state and timing",
+      "question": "Is the change safe when two runs, threads, or tasks use it at once?",
+      "fails": "Concurrent use corrupts data, loses an update, or lets two holders claim one exclusive thing.",
+      "clears": "Concurrent use keeps every invariant, shown by a test with two simultaneous actors.",
+      "proving_test": "A concurrency test with two simultaneous actors over the shared state.",
+      "not_for": [
+        "Single-threaded scripts with no shared state; say so in the declaration."
+      ]
+    },
+    {
+      "id": "correctness-05",
+      "lens": "correctness",
+      "group": "shared state and timing",
+      "question": "Is the change safe to repeat after a partial failure: retry, interrupt, then rerun?",
+      "fails": "A retry duplicates an effect, or an interrupt strands state the rerun cannot finish.",
+      "clears": "Retry then rerun produces exactly one effect from any interruption point.",
+      "proving_test": "A retry-then-rerun test showing one effect after a mid-operation interruption.",
+      "not_for": [
+        "Read-only operations, which a rerun cannot duplicate."
+      ]
+    },
+    {
+      "id": "correctness-06",
+      "lens": "correctness",
+      "group": "shared state and timing",
+      "question": "Is every ordering assumption explicit and enforced, never assumed from arrival order?",
+      "fails": "The code relies on an order that nothing enforces: arrival, delivery, or scheduling order.",
+      "clears": "Each ordering need is enforced by a lock, a sequence, or an explicit check.",
+      "proving_test": "An out-of-order delivery test over the assumed sequence.",
+      "not_for": [
+        "Order the platform guarantees, such as a single queue's delivery order."
+      ]
+    },
+    {
+      "id": "correctness-07",
+      "lens": "correctness",
+      "group": "data crossing boundaries",
+      "question": "Is outside data validated at every trust boundary before it reaches a decision?",
+      "fails": "Unvalidated outside data reaches a branch, a query, a command, or stored state.",
+      "clears": "Each boundary validates shape and range before the data is used.",
+      "proving_test": "Hostile and malformed input tests at each boundary.",
+      "not_for": [
+        "Data already validated by an earlier boundary in the same call."
+      ]
+    },
+    {
+      "id": "correctness-08",
+      "lens": "correctness",
+      "group": "data crossing boundaries",
+      "question": "Does a serialize-and-restore round trip preserve every field the code relies on?",
+      "fails": "A round trip drops, renames, or alters a relied-upon field or type.",
+      "clears": "Round trips preserve the relied-upon fields exactly.",
+      "proving_test": "Round-trip property tests over the serialized forms.",
+      "not_for": [
+        "Display-only formatting, which carries no relied-upon data."
+      ]
+    },
+    {
+      "id": "correctness-09",
+      "lens": "correctness",
+      "group": "data crossing boundaries",
+      "question": "Does old stored data keep working: migrations, backfills, and defaults in place?",
+      "fails": "Old stored data crashes, misbehaves, or silently means something new.",
+      "clears": "Old versions migrate or default to correct behavior.",
+      "proving_test": "Old-version fixture tests exercising the migration and defaults.",
+      "not_for": [
+        "A first release with no stored data in the wild."
+      ]
+    },
+    {
+      "id": "correctness-10",
+      "lens": "correctness",
+      "group": "failures and resources",
+      "question": "Does every failure surface, never reported as success or complete data?",
+      "fails": "A failure returns ok, partial data as complete, or an empty result as the answer.",
+      "clears": "Each failure reaches the caller as a failure with its cause.",
+      "proving_test": "Fault-injection tests asserting the reported outcome on each failure.",
+      "not_for": [
+        "Best-effort telemetry, whose loss is declared and never load-bearing."
+      ]
+    },
+    {
+      "id": "correctness-11",
+      "lens": "correctness",
+      "group": "failures and resources",
+      "question": "Is every acquired resource released on every exit path, including errors?",
+      "fails": "Any exit path leaks a lock, lease, handle, subscription, or temporary claim.",
+      "clears": "Every exit path releases what the entry acquired.",
+      "proving_test": "Exit-path tests asserting release after success and after each failure.",
+      "not_for": [
+        "Resources the runtime owns, such as garbage-collected memory."
+      ]
+    },
+    {
+      "id": "correctness-12",
+      "lens": "correctness",
+      "group": "failures and resources",
+      "question": "Are timeouts and cancellation honored, with partial work left finishable?",
+      "fails": "The code ignores a deadline or cancel signal and runs on, or strands partial work.",
+      "clears": "Deadlines stop the work and cancellation leaves state the rerun can finish.",
+      "proving_test": "Cancelled and expired-deadline tests over the long operations.",
+      "not_for": [
+        "Operations that always finish far inside any deadline."
+      ]
+    },
+    {
+      "id": "correctness-13",
+      "lens": "correctness",
+      "group": "callers and readers",
+      "question": "Is every caller of changed behavior updated to the new behavior?",
+      "fails": "A caller still relies on the previous behavior, arguments, or timing.",
+      "clears": "Each caller is updated and tested against the new behavior.",
+      "proving_test": "Caller tests exercising the new behavior at each call site.",
+      "not_for": [
+        "Callers outside this change's blast radius; the changed-name search bounds that set."
+      ]
+    },
+    {
+      "id": "correctness-14",
+      "lens": "correctness",
+      "group": "callers and readers",
+      "question": "Is every reader of a changed name updated or marked unaffected?",
+      "fails": "A mention outside the diff still assumes the old name, shape, or meaning.",
+      "clears": "Each mention is updated or recorded as unaffected with its reason.",
+      "proving_test": "A clean changed-name search plus reader tests where behavior moved.",
+      "not_for": [
+        "Historical records such as merged release notes, which describe the past."
+      ]
+    },
+    {
+      "id": "correctness-15",
+      "lens": "correctness",
+      "group": "callers and readers",
+      "question": "Does the observable contract stay documented where its readers look?",
+      "fails": "Behavior changed while the documents, examples, or help describing it still show the old.",
+      "clears": "The documents, examples, and help a reader reaches first describe the new behavior.",
+      "proving_test": "Documented-example tests plus the changed-name search over the documents.",
+      "not_for": [
+        "Internal notes nobody reads to use the change."
+      ]
+    },
+    {
+      "id": "security-01",
+      "lens": "security",
+      "group": "who may act on what",
+      "question": "Does every action check that this actor may act on that object?",
+      "fails": "An actor reaches, alters, or learns about a record that is not theirs.",
+      "clears": "Each action refuses actors without a grant on that object.",
+      "proving_test": "Cross-actor tests showing refusal on records that are not theirs.",
+      "not_for": [
+        "Truly public data with no per-actor boundary."
+      ]
+    },
+    {
+      "id": "security-02",
+      "lens": "security",
+      "group": "outside text treated as instructions",
+      "question": "Is outside text never executed, queried, or commanded: always data, escaped at every sink?",
+      "fails": "Outside text reaches an interpreter, a query, a shell, or a prompt unescaped.",
+      "clears": "Each sink treats outside text as data with its escaping tested.",
+      "proving_test": "Injection-string tests per sink, including the odd encodings.",
+      "not_for": [
+        "Text the operator typed themselves into their own shell."
+      ]
+    },
+    {
+      "id": "security-03",
+      "lens": "security",
+      "group": "file permissions",
+      "question": "Is every file the change creates readable only by those who need it?",
+      "fails": "A created file, especially one bearing secrets or personal data, is readable beyond its need.",
+      "clears": "Created files carry least-privilege permissions.",
+      "proving_test": "Permission assertions on the files the change creates.",
+      "not_for": [
+        "Files the platform creates and owns, such as package caches."
+      ]
+    },
+    {
+      "id": "security-04",
+      "lens": "security",
+      "group": "secrets",
+      "question": "Does every secret come from configuration or a secret store, never from code, logs, or output?",
+      "fails": "A secret sits in code, ships in output, or lands in a log.",
+      "clears": "Secrets arrive only from configuration or the secret store, and leave no copies.",
+      "proving_test": "Configuration-only sourcing tests plus a clean secret scan of the diff.",
+      "not_for": [
+        "Inert example values in tests and documents, which unlock nothing."
+      ]
+    },
+    {
+      "id": "security-05",
+      "lens": "security",
+      "group": "data leaving",
+      "question": "Does every new outbound path carry only its intended data, redacted where it must be?",
+      "fails": "Personal or sensitive data leaves on a new path, or leaves unredacted where redaction applies.",
+      "clears": "Each outbound path is enumerated with its data and its redaction.",
+      "proving_test": "Redaction tests on each new outbound path.",
+      "not_for": [
+        "Paths the change does not touch; those were reviewed when they were built."
+      ]
+    },
+    {
+      "id": "security-06",
+      "lens": "security",
+      "group": "what the change brings in",
+      "question": "Is everything the change brings in pinned, reviewed, and minimal?",
+      "fails": "A new dependency, plugin, action, or image is unpinned, unreviewed, or broader than needed.",
+      "clears": "Each addition is pinned, reviewed for its reach, and the smallest that does the job.",
+      "proving_test": "Pin and lockfile checks plus a review note per addition.",
+      "not_for": [
+        "The toolchain itself, which the repository profile pins once."
+      ]
+    },
+    {
+      "id": "security-07",
+      "lens": "security",
+      "group": "permissions granted",
+      "question": "Is every granted permission minimal, named, and exercised?",
+      "fails": "A grant is broader than the code uses, unused, or unnamed in the change.",
+      "clears": "Each grant names its need and the code exercises exactly it.",
+      "proving_test": "Grant-enumeration tests showing each grant used and none spare.",
+      "not_for": [
+        "Permissions the platform grants by default with no request from the change."
+      ]
+    },
+    {
+      "id": "testing-01",
+      "lens": "testing",
+      "group": "the tests run the change",
+      "question": "Does a test run every changed branch?",
+      "fails": "A changed branch runs in no test.",
+      "clears": "Changed-line branch coverage is complete, or each gap is recorded unreachable with its reason.",
+      "proving_test": "The changed-line branch coverage report.",
+      "not_for": [
+        "Unchanged lines; the question is only about what this change adds."
+      ]
+    },
+    {
+      "id": "testing-02",
+      "lens": "testing",
+      "group": "the tests prove the fix",
+      "question": "Do the tests fail without the fix and pass with it?",
+      "fails": "A new test passes on the code before the change, or a regression test passes before its fix.",
+      "clears": "The two runs show red before and green after.",
+      "proving_test": "The two-runs check over the new and regression tests.",
+      "not_for": [
+        "Tests for behavior this change does not touch."
+      ]
+    },
+    {
+      "id": "testing-03",
+      "lens": "testing",
+      "group": "the tests are honest",
+      "question": "Do the tests exercise the real code under test, not a fake of it?",
+      "fails": "A double replaces the unit under test, so the test passes while the code is wrong.",
+      "clears": "Doubles stand only at the boundary; the unit under test runs for real.",
+      "proving_test": "Mutation testing over the changed lines plus review of the doubles.",
+      "not_for": [
+        "Doubles at the system boundary, such as a fake clock or a stubbed service."
+      ]
+    },
+    {
+      "id": "testing-04",
+      "lens": "testing",
+      "group": "the tests stay home",
+      "question": "Does every test stay inside its sandbox: no live or shared system written or read?",
+      "fails": "A test writes to, or depends on, a live or shared system.",
+      "clears": "Tests run network-blocked against sandbox doubles only.",
+      "proving_test": "Network-blocked test runs over the suite.",
+      "not_for": [
+        "Read-only fixtures committed with the repository."
+      ]
+    },
+    {
+      "id": "architecture-maintainability-01",
+      "lens": "architecture-maintainability",
+      "group": "fit the recorded system",
+      "question": "Does the change follow the recorded decisions and patterns, or record the new one it sets?",
+      "fails": "The change contradicts the repository instructions or a recorded decision with no new record.",
+      "clears": "The change fits the records, or carries its decision record with it.",
+      "proving_test": "The builder's declaration against the records; no tool judges prose fit.",
+      "not_for": [
+        "Brand-new ground with no recorded pattern; that is a decision to write, not a breach."
+      ]
+    },
+    {
+      "id": "architecture-maintainability-02",
+      "lens": "architecture-maintainability",
+      "group": "no machine in the code",
+      "question": "Does every machine-specific value come from configuration, never baked into the code?",
+      "fails": "An absolute path, user name, host, account, or address sits in the code outside configuration.",
+      "clears": "Machine values arrive only from configuration with documented defaults.",
+      "proving_test": "The machine-values search plus the relocated test run.",
+      "not_for": [
+        "Loopback and documentation addresses, which name no real machine."
+      ]
+    },
+    {
+      "id": "architecture-maintainability-03",
+      "lens": "architecture-maintainability",
+      "group": "one home per rule",
+      "question": "Does the change add no second copy of a value, list, or rule?",
+      "fails": "A value, list, or rule now lives in two places that can disagree.",
+      "clears": "Each value, list, and rule has one home the change reuses.",
+      "proving_test": "The duplication report over the changed lines.",
+      "not_for": [
+        "Copies that must disagree, which are a correctness question about the old behavior."
+      ]
+    },
+    {
+      "id": "architecture-maintainability-04",
+      "lens": "architecture-maintainability",
+      "group": "runs anywhere",
+      "question": "Do the tests pass from a different working directory and home directory?",
+      "fails": "The relocated run fails: the tests assumed the author's directories.",
+      "clears": "The relocated run passes.",
+      "proving_test": "The relocated test run in the build loop.",
+      "not_for": [
+        "Tests that must assert on the real home, which say so and are few."
+      ]
+    }
+  ]
+}
