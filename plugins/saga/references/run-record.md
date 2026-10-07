@@ -118,6 +118,7 @@ Twelve, in this write order. Anything else is an unknown field, handled as above
 | `main_consumed_directly` | whether this repository's `main` branch is consumed directly |
 | `change_shape` | `code`, `docs` or `mixed` |
 | `lens_proposal` | the Jev lens proposal issue #110 writes: `{probabilities: {<lens>: 0.0–1.0}, ...}`. `admission.py --render` reads `probabilities` for the lens table's Jev probability column: 0.8 and above reads pre-checked, 0.6 up to 0.8 reads consider, and lower is kept in the JSON only. Absent until #110 lands, and the column reads `not configured` |
+| `setup_notice` | one object `{text, missing_tools, sandbox_unavailable}` naming every tool that is not installed and the reproduction sandbox when it is unavailable, plus `/saga:setup`. The text is empty when nothing is missing, and the object is still stored. Absent on a record admitted before issue #150. Not a top-level key, and not a question |
 
 ### The two answers admission validates
 

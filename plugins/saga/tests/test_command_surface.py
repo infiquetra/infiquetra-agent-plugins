@@ -1,4 +1,4 @@
-"""The saga command surface is exactly thirteen commands in fourteen files.
+"""The saga command surface is exactly fourteen commands in fifteen files.
 
 Issue 1030. The card's first acceptance criterion is a count, and a count alone is a weak guard: a
 tree that deleted one survivor and kept one removed command still prints fourteen. So this module
@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 COMMANDS = REPO_ROOT / "plugins" / "saga" / "com.infiquetra.claude" / "commands"
 SKILLS = REPO_ROOT / "plugins" / "saga" / "skills"
 
-#: The thirteen commands the simplification review keeps, plus the one alias. Fourteen files.
+#: The fourteen commands that remain, plus the one alias. Fifteen files.
 SURVIVING_COMMANDS: tuple[str, ...] = (
     "brainstorm",
     "ceo-review",
@@ -33,6 +33,7 @@ SURVIVING_COMMANDS: tuple[str, ...] = (
     "plan",
     "qa",
     "retro",
+    "setup",
     "spec",
     "strategy",
     "work",
@@ -76,12 +77,12 @@ def _command_files() -> list[Path]:
     return sorted(COMMANDS.glob("*.md"))
 
 
-def test_the_command_directory_holds_exactly_fourteen_files() -> None:
-    """The card's acceptance criterion, verbatim: ``ls plugins/saga/com.infiquetra.claude/commands | wc -l`` prints 14."""
-    assert len(list(COMMANDS.iterdir())) == 14, sorted(p.name for p in COMMANDS.iterdir())
+def test_the_command_directory_holds_exactly_fifteen_files() -> None:
+    """The card's acceptance criterion, verbatim: ``ls plugins/saga/com.infiquetra.claude/commands | wc -l`` prints 15."""
+    assert len(list(COMMANDS.iterdir())) == 15, sorted(p.name for p in COMMANDS.iterdir())
 
 
-def test_the_surviving_commands_are_exactly_the_fourteen_named() -> None:
+def test_the_surviving_commands_are_exactly_the_fifteen_named() -> None:
     assert tuple(sorted(p.stem for p in _command_files())) == SURVIVING_COMMANDS
 
 
@@ -99,7 +100,7 @@ def test_a_removed_command_has_no_skill_directory(skill: str) -> None:
     )
 
 
-def test_the_skill_directories_are_exactly_the_thirteen_that_remain() -> None:
+def test_the_skill_directories_are_exactly_the_fourteen_that_remain() -> None:
     expected = tuple(sorted(set(SURVIVING_COMMANDS) - ALIAS_COMMANDS))
     assert tuple(sorted(p.name for p in SKILLS.iterdir() if p.is_dir())) == expected
 

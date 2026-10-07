@@ -8,6 +8,12 @@
   launch settings are fingerprinted, so a one-byte change to any of them makes a recorded run
   stale, and that a changed `CLAUDE.md`, `AGENTS.md` or plugin manifest fails no check.
 
+- Issue 150: `/saga:setup` checks the tools on this machine and the repository.
+  `scripts/saga_setup.py` surveys languages, tool status, credential presence, and whether the
+  reproduction sandbox is available. It writes `.saga-profile.json` only through `write`, and it
+  installs a tool or runs a step only when the operator names it. Admission stores one
+  `setup_notice` and suggests setup once per machine.
+
 - Issue 149: `references/review-calibration.json` records that no corpus run exists yet, so every
   lens reports only. `scripts/review_calibration.py may-block` prints whether a lens may block in
   a language, from the stored verdicts. `scripts/check_repo.py` calls that module's fingerprint

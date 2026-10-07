@@ -1,6 +1,6 @@
 # Saga Command Selection
 
-Saga has 14 command files and 13 routable commands. `/ceo-review` is an alias for `/founder-review`, so it is documented separately but does not add a lifecycle node. One card per command file, and `tests/test_command_surface.py` pins the surface those cards describe.
+Saga has 15 files and 14 commands. `/ceo-review` is an alias for `/founder-review`, so it is documented separately but does not add a lifecycle node. One card per command file, and `tests/test_command_surface.py` pins the surface those cards describe.
 
 ## Adjacent Command Distinctions
 
@@ -204,6 +204,25 @@ Lifecycle learning and meta-improvement engine.
 | Boundary | Owns learning capture and proposed lifecycle improvements, not SDLC mutation. |
 | Common mistakes | Letting retro silently edit existing directives; treating retro as a blocker on the work it follows. |
 | Example | `/retro task-saga-comprehensive-documentation` |
+
+### /saga:setup
+
+Check the tools on this machine and the repository.
+
+| Field | Value |
+|-------|-------|
+| Purpose | Report tool status, credential presence, and the reproduction sandbox, then record the repository facts the operator confirms. |
+| Use when | A machine or a repository has not been checked, or a run notice names a missing tool or the sandbox. |
+| Do not use when | The goal is to run the review, install a tool the operator did not name, or edit another repository's committed profile. |
+| Inputs | Repository path, the operator's answers, and the tool or step ids the operator names. |
+| Outputs | A table, a machine record under the home directory, and `.saga-profile.json` when the operator writes answers. |
+| Saga state | Does not write a run record. A later admission copies one notice onto the run. |
+| Routes in | A missing-tool notice, or the operator. |
+| Routes out | `/plan` once the notice is understood. |
+| Gates | Nothing is installed and no optional step runs unless the operator names it. |
+| Boundary | Owns the survey and the profile facts it records. Does not run review tools and does not start a saga. |
+| Common mistakes | Installing a tool the operator did not name; printing an environment value; writing the profile during a survey. |
+| Example | `/saga:setup` |
 
 ### /investigate
 

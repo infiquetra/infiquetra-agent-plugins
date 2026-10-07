@@ -531,3 +531,114 @@ tools:
     comparison: lines
     mode: report
     curated_block_rules: []
+  - id: saga-git
+    tool: git
+    languages: ["*"]
+    lens: saga
+    catalogue: false
+    purpose: Saga uses git. The review runner does not execute this row.
+    install: Install git with the operating system's own packages. Setup does not install it.
+    install_argv: null
+    default_version: "not-recorded"
+    version_args: ["--version"]
+    version_mode: any
+    timeout_seconds: 30
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+  - id: saga-gh
+    tool: gh
+    languages: ["*"]
+    lens: saga
+    catalogue: false
+    purpose: Saga uses GitHub's gh, and the account must be signed in. The review runner does not execute this row.
+    install: Install GitHub's gh and sign in outside this script. Setup does not install it and does not run an interactive login.
+    install_argv: null
+    default_version: "not-recorded"
+    version_args: ["--version"]
+    version_mode: any
+    timeout_seconds: 30
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+  - id: saga-python
+    tool: python3
+    languages: ["*"]
+    lens: saga
+    catalogue: false
+    purpose: Saga uses Python at the catalog floor, 3.12. The review runner does not execute this row.
+    install: Install Python 3.12 or newer with the operating system's own packages. Setup does not install it.
+    install_argv: null
+    default_version: "not-recorded"
+    version_args: ["--version"]
+    version_mode: minimum
+    minimum_version: "3.12"
+    timeout_seconds: 30
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+  - id: saga-uv
+    tool: uv
+    languages: ["*"]
+    lens: saga
+    catalogue: false
+    purpose: Saga uses uv for project installs. The review runner does not execute this row.
+    install: Install uv with the operating system's own packages. Setup does not install it.
+    install_argv: null
+    default_version: "not-recorded"
+    version_args: ["--version"]
+    version_mode: any
+    timeout_seconds: 30
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+  - id: saga-pyyaml
+    tool: python3
+    languages: ["*"]
+    lens: saga
+    catalogue: false
+    purpose: Saga uses PyYAML. The review runner does not execute this row.
+    install: Install PyYAML into the environment that provides python3. Setup does not install it.
+    install_argv: null
+    default_version: "not-recorded"
+    version_args: ["-c", "import yaml; print(yaml.__version__)"]
+    version_mode: any
+    timeout_seconds: 30
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []

@@ -95,8 +95,16 @@ export type SagaRunReviewProgress = {
  * envelope supplies `phase`, `plan_path` (as recorded, relative to the
  * checkout) and `plan_file` (absolute). Each is null when its store does not
  * know the run. `band_line` is the status band's line, rendered by the script
- * so every harness shows the same words.
+ * so every harness shows the same words. `setup_notice` is the one admission
+ * notice for missing tools and the reproduction sandbox, or null when the
+ * record has none.
  */
+export type SagaSetupNotice = {
+  text: string
+  missing_tools: string[]
+  sandbox_unavailable: boolean
+}
+
 export type SagaRunStatus = {
   issue: number
   repo: string | null
@@ -108,6 +116,7 @@ export type SagaRunStatus = {
   plan_file: string | null
   build_loop: SagaRunBuildLoop | null
   review: SagaRunReviewProgress | null
+  setup_notice: SagaSetupNotice | null
   band_line: string
 }
 

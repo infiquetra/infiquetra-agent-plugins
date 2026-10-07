@@ -1,0 +1,5 @@
+# Optional machine steps and repository questions. schema setup_extensions.v1.
+# A later card appends a step or a question. It does not edit saga_setup.py.
+schema: setup_extensions.v1
+steps: []
+questions: []

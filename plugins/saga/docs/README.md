@@ -16,7 +16,7 @@ These pages are the manual. The generated visual atlas and the model it was rend
 
 ## Operating Model
 
-Saga has 14 command files and 13 routable commands. `/ceo-review` is a compatibility alias for `/founder-review`. The count is pinned by `tests/test_command_surface.py`, which also names the eleven commands issue 1030 removed, so a partial revert fails on the name rather than on arithmetic.
+Saga has 15 files and 14 commands. `/ceo-review` is a compatibility alias for `/founder-review`. The count is pinned by `tests/test_command_surface.py`, which also names the eleven commands issue 1030 removed, so a partial revert fails on the name rather than on arithmetic.
 
 The main chain is a reviewed-work spine:
 

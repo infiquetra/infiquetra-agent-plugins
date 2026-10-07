@@ -205,6 +205,14 @@ a rule set other than the default makes the lenses that tool serves report only.
 stays valid, and an absent `pins` key is no difference. The profile it reads is the base commit's.
 The calibration file is the installed saga's copy, not the reviewed head's.
 
+## Languages and visibility
+
+`languages` is the top-level list of formula languages setup detected, in formula order. It can be empty. It is not the `review_tools.languages` map of test commands.
+
+`visibility` is `public` or `private`. Setup writes it from `gh repo view` when that command answers, and from the operator's answer when it does not. A failed lookup does not guess `public`.
+
+Setup writes version-only `review_tools.pins`. A pin records the version and omits `rules`, so the yaml rules stay in force. Setup does not write a pin for a saga-owned row or for a row with an empty `tool`. An existing recorded version is kept, including any `rules` already stored.
+
 The remaining nine parameters come from elsewhere and are not the profile's business:
 `staffing_models_and_efforts` from the staffing component in fleet-core; `applicable_lenses` and
 `per_lens_score_threshold` from the lens catalogue; and `standard_cycle_allowance`,
@@ -224,6 +232,12 @@ atomic, and it happens before the run record is saved, so a failed write leaves 
 outstanding rather than recorded. `--dry-run` writes nothing. Commit the file with the run's other
 changes: the declaration then reaches review in that run's pull request, and every later worktree
 sees it.
+
+**Setup writes the survey's repository facts.** `saga_setup.py write` records `languages`,
+`visibility`, version-only `review_tools.pins`, the `qa` block, and any extension answer. The
+functional-test declaration still goes through the same writer admission uses. Setup is a writer
+next to admission. Survey does not write the profile. This card does not edit this repository's
+committed profile.
 
 **Everything else is edited by hand, in a pull request**, like any other tracked configuration. A
 value changed here changes what admission stops asking, so the change belongs in review rather than

@@ -88,7 +88,7 @@ The record of the work, in the order a new reader should take it:
 | [`plugins/mission-control/`](plugins/mission-control/README.md) | `2.21.1` | SDLC management for Operations, Asgard, and CAMPPS: prepared issue drafts, live schema… | Claude, Codex, 8 skills |
 | [`plugins/orchestrate/`](plugins/orchestrate/README.md) | `6.0.1` | Run one piece of work across several herdr agent sessions, one git worktree per unit | Claude, Codex, 1 skill |
 | [`plugins/redis-channel/`](plugins/redis-channel/README.md) | `0.5.3` | Portable Redis Streams bridge | Claude, Codex, 1 skill |
-| [`plugins/saga/`](plugins/saga/README.md) | `1.2.1` | Infiquetra lifecycle plugin: one automatic run per issue — admission, plan, plan… | Claude, Codex, 13 skills |
+| [`plugins/saga/`](plugins/saga/README.md) | `1.2.1` | Infiquetra lifecycle plugin: one automatic run per issue — admission, plan, plan… | Claude, Codex, 14 skills |
 | [`plugins/unifi/`](plugins/unifi/README.md) | `2.0.7` | Portable UniFi Network and Protect package: two Agent Skills with their bundled Python… | Claude, Codex, 2 skills |
 | [`plugins/voice/`](plugins/voice/README.md) | `0.4.0` | Portable voice package: a spoken conversational loop for one explicitly bound,… | Claude, Codex, 1 skill |
 

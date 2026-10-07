@@ -159,6 +159,12 @@ def run_view(store_root: Path, repo_root: Path, issue: int) -> dict[str, Any] | 
         "build_loop": build_loop,
         "review": review,
     }
+    notice = None
+    if record is not None and isinstance(record.admission, dict):
+        stored = record.admission.get("setup_notice")
+        if isinstance(stored, dict):
+            notice = json.loads(json.dumps(stored))
+    row["setup_notice"] = notice
     row["band_line"] = band_line(row)
     return row
 

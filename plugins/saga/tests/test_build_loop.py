@@ -628,6 +628,15 @@ def test_the_check_map_comes_from_the_default_tool_list() -> None:
     assert "lizard" in uncovered
     assert "coverage" not in uncovered
     assert "relocated-test" not in uncovered
+    assert "saga-git" not in uncovered
+    unnamed = build_loop.check_map(["make house-check"])
+    unnamed_ids = {entry["catalogue_check"] for entry in unnamed["uncovered"]}
+    assert "semgrep-security" in unnamed_ids
+    assert "saga-git" not in unnamed_ids
+    # The ruff rows answer the ruff token. catalogue: false keeps saga-uv out of that answer.
+    assert build_loop.catalogue_check_for("uv run ruff check .") == "ruff-format,ruff-lint"
+    assert build_loop.catalogue_check_for("git diff --check") is None
+    assert build_loop.catalogue_check_for("python3 scripts/check_repo.py") is None
     assert "unconfigured_scanners" not in mapping
 
 

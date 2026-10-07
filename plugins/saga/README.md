@@ -19,7 +19,7 @@ the package from here on. There is no provenance manifest.
 | [`references/`](references/) | Contracts the skills and scripts share (run record, QA catalogue, plan-save). |
 | [`scripts/_bundled/`](scripts/_bundled/) | Build-time copy of the Fleet Core modules this package loads. Generated. Do not edit. |
 | [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json) | Claude packaging manifest. Paths only, into the adapter and into `skills/`. |
-| [`com.infiquetra.claude/commands/`](com.infiquetra.claude/commands/) | Claude slash commands. Fourteen files, thirteen capabilities. `/ceo-review` is an alias for `/founder-review`. |
+| [`com.infiquetra.claude/commands/`](com.infiquetra.claude/commands/) | Claude slash commands. 15 files and 14 commands. `/ceo-review` is an alias for `/founder-review`. |
 | [`com.infiquetra.claude/hooks/`](com.infiquetra.claude/hooks/) | Claude hooks: SessionStart, UserPromptSubmit, PreCompact, PreToolUse, PostToolUse. |
 
 ## How a harness reaches it

@@ -40,6 +40,23 @@ def adm() -> ModuleType:
     return _load("admission")
 
 
+@pytest.fixture(autouse=True)
+def _setup_stays_off_the_operator_machine(
+    adm: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A non-dry ``main`` must not write the operator's ``~/.saga/machine.json``."""
+    home = tmp_path / "admission-home"
+    home.mkdir()
+    monkeypatch.setattr(adm, "default_machine_home", lambda: home)
+
+    def quiet(
+        argv: list[str], *, cwd: Path | None = None, env: object = None, timeout: int = 30
+    ) -> None:
+        raise FileNotFoundError(argv[0] if argv else "tool")
+
+    monkeypatch.setattr(adm, "setup_runner", quiet)
+
+
 @pytest.fixture
 def store(tmp_path: Path) -> Path:
     root = tmp_path / "store" / "runs"
@@ -3285,3 +3302,243 @@ def test_the_tables_band_names_are_the_staffing_components(adm: ModuleType) -> N
         staffing.BAND_ADVISORY_LOWER,
     }
     assert adm._AT_CEILING == staffing.BAND_RAISE_AT_CEILING
+
+
+# ---------------------------------------------------------------------------
+# Setup notice and the one suggestion (issue #150)
+# ---------------------------------------------------------------------------
+
+
+class _Probe:
+    def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = "") -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _notice_runner(missing: str | None = "git") -> Any:
+    """Every shipped tool is installed except the named binary."""
+
+    def runner(
+        argv: list[str], *, cwd: Path | None = None, env: object = None, timeout: int = 30
+    ) -> _Probe:
+        if argv[:4] == ["gh", "repo", "view", "--json"]:
+            return _Probe(0, '{"visibility":"PUBLIC"}')
+        if argv == ["gh", "auth", "status"]:
+            return _Probe(0, "")
+        if argv == ["claude", "--version"]:
+            return _Probe(0, "1.0.0\n")
+        if missing is not None and argv and argv[0] == missing:
+            raise FileNotFoundError(missing)
+        if argv and argv[0] == "python3":
+            return _Probe(0, "Python 3.12.0\n")
+        return _Probe(0, "1.2.3\n")
+
+    return runner
+
+
+def test_setup_notice_is_replaced_and_names_the_tool(
+    adm: ModuleType, store: Path, repo_root: Path, tmp_path: Path
+) -> None:
+    run_record = _load("run_record")
+    home = tmp_path / "notice-home"
+    home.mkdir()
+    bare, bare_questions = adm.admit(
+        150,
+        "o/r",
+        store_root=store,
+        repo_root=repo_root,
+        body=_good_card(),
+        validator=_passing_validator,
+    )
+    noticed, questions = adm.admit(
+        150,
+        "o/r",
+        store_root=store,
+        repo_root=repo_root,
+        body=_good_card(),
+        validator=_passing_validator,
+        home=home,
+        runner=_notice_runner("git"),
+    )
+    notice = noticed.admission["setup_notice"]
+    assert notice["missing_tools"] == ["saga-git"]
+    assert "saga-git" in notice["text"]
+    assert "sandbox" in notice["text"]
+    assert "/saga:setup" in notice["text"]
+    assert notice["sandbox_unavailable"] is True
+    assert "setup" not in noticed.admission["pending_questions"]
+    assert {question.key for question in questions} == {question.key for question in bare_questions}
+    assert noticed.review_cycles == bare.review_cycles
+    run_record.save(store, noticed)
+    replaced, _ = adm.admit(
+        150,
+        "o/r",
+        store_root=store,
+        repo_root=repo_root,
+        body=_good_card(),
+        validator=_passing_validator,
+        home=home,
+        runner=_notice_runner(None),
+    )
+    second = replaced.admission["setup_notice"]
+    assert isinstance(second, dict)
+    assert second["text"] == "Missing sandbox. Run /saga:setup."
+    assert second != notice
+    assert replaced.review_cycles == []
+
+
+def test_setup_notice_is_empty_when_nothing_is_missing(
+    adm: ModuleType, store: Path, repo_root: Path, tmp_path: Path
+) -> None:
+    setup = _load("saga_setup")
+    home = tmp_path / "clear-home"
+    home.mkdir()
+    setup.write_machine(
+        home,
+        {
+            "schema": "machine_record.v1",
+            "ran": True,
+            "offered": True,
+            "survey": {
+                "sandbox": {"available": True, "reproduction": "available", "reason": None}
+            },
+            "updated_at": "2026-10-07T00:00:00Z",
+        },
+    )
+    record, _ = adm.admit(
+        150,
+        "o/r",
+        store_root=store,
+        repo_root=repo_root,
+        body=_good_card(),
+        validator=_passing_validator,
+        home=home,
+        runner=_notice_runner(None),
+    )
+    notice = record.admission["setup_notice"]
+    assert notice["text"] == ""
+    assert notice["missing_tools"] == []
+    assert notice["sandbox_unavailable"] is False
+
+
+def test_suggestion_prints_once_per_machine(
+    adm: ModuleType,
+    store: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    setup = _load("saga_setup")
+    _patch_main(adm, monkeypatch)
+    home = tmp_path / "suggest-home"
+    home.mkdir()
+    argv = [
+        "--issue",
+        "150",
+        "--repo",
+        "o/r",
+        "--store-root",
+        str(store),
+        "--repo-root",
+        str(repo_root),
+        "--home",
+        str(home),
+    ]
+    assert adm.main(argv) == 0
+    assert capsys.readouterr().out.count(setup.SUGGESTION) == 1
+    machine = setup.load_machine(home)
+    assert machine is not None
+    assert machine["offered"] is True
+    assert machine["ran"] is not True
+    assert adm.main(argv) == 0
+    assert setup.SUGGESTION not in capsys.readouterr().out
+
+    ran_home = tmp_path / "ran-home"
+    ran_home.mkdir()
+    setup.write_machine(
+        ran_home,
+        {
+            "schema": "machine_record.v1",
+            "ran": True,
+            "offered": False,
+            "survey": None,
+            "updated_at": "2026-10-07T00:00:00Z",
+        },
+    )
+    ran_argv = [*argv[:-1], str(ran_home)]
+    assert adm.main(ran_argv) == 0
+    assert setup.SUGGESTION not in capsys.readouterr().out
+
+    offered_home = tmp_path / "offered-home"
+    offered_home.mkdir()
+    setup.write_machine(
+        offered_home,
+        {
+            "schema": "machine_record.v1",
+            "ran": False,
+            "offered": True,
+            "survey": None,
+            "updated_at": "2026-10-07T00:00:00Z",
+        },
+    )
+    assert adm.main([*argv[:-1], str(offered_home)]) == 0
+    assert setup.SUGGESTION not in capsys.readouterr().out
+
+
+def test_suggestion_is_not_printed_on_a_dry_run(
+    adm: ModuleType,
+    store: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    setup = _load("saga_setup")
+    _patch_main(adm, monkeypatch)
+    assert _run_main(adm, store, repo_root) == 0
+    assert setup.SUGGESTION not in capsys.readouterr().out
+    assert not (tmp_path / "admission-home" / ".saga" / "machine.json").exists()
+    record, outstanding = adm.admit(
+        150,
+        "o/r",
+        store_root=store,
+        repo_root=repo_root,
+        body=_good_card(),
+        validator=_passing_validator,
+    )
+    assert "setup_notice" not in record.admission
+    rendered = adm.render(record, outstanding, None)
+    assert setup.SUGGESTION not in rendered
+    assert all(question.key != "setup" for question in outstanding)
+
+
+def test_setup_notice_is_not_an_admission_question(adm: ModuleType) -> None:
+    assert all(question.key != "setup" for question in adm.QUESTIONS)
+
+
+def test_profile_written_by_setup_drops_the_functional_test_question(
+    adm: ModuleType, store: Path, repo_root: Path
+) -> None:
+    committed = REPO_ROOT / ".saga-profile.json"
+    before = committed.read_bytes()
+    _write_profile(repo_root)
+    profile = json.loads((repo_root / ".saga-profile.json").read_text(encoding="utf-8"))
+    profile["languages"] = ["python"]
+    profile["visibility"] = "public"
+    (repo_root / ".saga-profile.json").write_text(json.dumps(profile), encoding="utf-8")
+    record, outstanding = adm.admit(
+        150,
+        "o/r",
+        store_root=store,
+        repo_root=repo_root,
+        body=_good_card(),
+        validator=_passing_validator,
+    )
+    assert "functional_test_environment" not in {question.key for question in outstanding}
+    assert record.run_configuration["concurrency_allocation"]["source"] == "profile"
+    assert record.run_configuration["concurrency_allocation"]["value"] == 10
+    assert record.admission["main_consumed_directly"] is False
+    assert record.admission["answers"]["main_consumed_directly"]["source"] == "profile"
+    assert committed.read_bytes() == before
