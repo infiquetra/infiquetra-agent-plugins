@@ -1970,20 +1970,23 @@ def test_routing_still_reads_review_result_v2(
     assert routing.replacements == []
 
 
-def test_an_allowed_review_run_does_not_route_blocking_ids(orchestrate: ModuleType) -> None:
-    raw = _review_run(
+def test_an_allowed_review_run_with_blocking_ids_is_refused(orchestrate: ModuleType) -> None:
+    """allowed and blocking are one answer. Either disagreement is a refusal."""
+    run = _run(orchestrate, _controller(orchestrate))
+    contradictory = _review_run(
         allowed=True,
         blocking=[FINDING_ID],
         extra={"report_only_blocks": ["CANARY-REPORT"]},
     )
-    run = _run(orchestrate, _controller(orchestrate))
-    routing = orchestrate.route_review_result(
-        run, raw, agents=[], controller=run.review_controller()
-    )
-    assert routing.outcome == "accepted"
-    assert routing.dispatches == []
-    assert routing.work_requests == 0
-    assert routing.replacements == []
+    with pytest.raises(SystemExit, match="disagrees with merge"):
+        orchestrate.route_review_result(
+            run, contradictory, agents=[], controller=run.review_controller()
+        )
+    empty = _review_run(allowed=False)
+    with pytest.raises(SystemExit, match="disagrees with merge"):
+        orchestrate.route_review_result(
+            run, empty, agents=[], controller=run.review_controller()
+        )
 
 
 def test_a_shorter_review_round_is_refused(

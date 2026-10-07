@@ -893,6 +893,65 @@ def test_review_launch_refuses_a_shared_out_directory(
     assert calls == []
 
 
+def test_review_launch_refuses_a_packet_that_overlaps_the_second_reviewer_output(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The second packet must not contain, equal, or sit inside a reviewer output."""
+    _write_run(
+        repo,
+        [_controller_row(), _targeted_row(), _grok_seat_row()],
+        extra_top_level=_record_top(
+            "high",
+            {"targeted-reviewer": TARGETED_STAFF, "worker": GROK_WORKER_STAFF},
+        ),
+    )
+    monkeypatch.chdir(repo)
+    packet = repo / "packet"
+    packet.mkdir()
+    calls = _install_review_runner(orchestrate, monkeypatch)
+    assert _launch(orchestrate, repo, packet, "targeted-reviewer") == 0
+    answer = (
+        test_store() / "review-launch" / "issue-1" / "targeted-reviewer" / "answer.json"
+    )
+    parent = answer.parents[1]
+    assert answer.is_relative_to(parent)
+    before = len(calls)
+    assert _launch(orchestrate, repo, parent, "external-reviewer") == 2
+    nested = answer.parent / "nested"
+    nested.mkdir()
+    assert _launch(orchestrate, repo, nested, "external-reviewer") == 2
+    assert len(calls) == before
+    assert "overlaps reviewer output" in capsys.readouterr().err
+
+
+def test_review_launch_refuses_an_out_inside_the_packet_for_the_second_reviewer(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An output directory inside the packet would leave the answer where the next seat reads."""
+    _write_run(
+        repo,
+        [_controller_row(), _targeted_row()],
+        extra_top_level=_record_top(
+            "high",
+            {"targeted-reviewer": TARGETED_STAFF, "worker": GROK_WORKER_STAFF},
+        ),
+    )
+    monkeypatch.chdir(repo)
+    packet = test_store() / "pkt"
+    packet.mkdir()
+    calls = _install_review_runner(orchestrate, monkeypatch)
+    assert _launch(orchestrate, repo, packet, "targeted-reviewer", out=str(packet / "first")) == 2
+    assert _launch(orchestrate, repo, packet, "external-reviewer", out=str(packet)) == 2
+    assert calls == []
+    assert "overlaps reviewer output" in capsys.readouterr().err
+
+
 def test_review_launch_refuses_when_the_review_subcommand_is_missing(
     orchestrate: ModuleType,
     repo: Path,
@@ -1204,7 +1263,7 @@ def test_review_transport_records_a_review_run(
             "schema": "review_records.v1",
             "kind": "review_run",
             "round": 1,
-            "merge": {"allowed": True, "blocking": ["rf:" + "ab" * 16]},
+            "merge": {"allowed": True, "blocking": []},
             "findings": [],
         },
         sort_keys=True,
@@ -1216,3 +1275,31 @@ def test_review_transport_records_a_review_run(
     assert restored.review_result == raw
     assert restored.review_outcome == "accepted"
     assert json.loads(restored.review_result)["kind"] == "review_run"
+
+
+def test_review_transport_refuses_a_contradictory_review_run(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """allowed true with blocking ids is not an acceptance. The outcome stays unset."""
+    _write_run(repo, [_controller_row()])
+    monkeypatch.chdir(repo)
+    raw = json.dumps(
+        {
+            "schema": "review_records.v1",
+            "kind": "review_run",
+            "round": 1,
+            "merge": {"allowed": True, "blocking": ["rf:" + "ab" * 16]},
+            "findings": [],
+        },
+        sort_keys=True,
+    )
+    result_path = tmp_path / "contradiction.json"
+    result_path.write_text(raw)
+    with pytest.raises(SystemExit, match="disagrees with merge"):
+        orchestrate.cmd_review_result(NS(file=str(result_path)))
+    restored = orchestrate.Run.load(TEST_ISSUE, test_store())
+    assert restored.review_outcome is None
+    assert restored.review_result == raw

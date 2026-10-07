@@ -24,8 +24,9 @@ very-high. It is not one unit per lens.
 
 **Choices are made at the layer that owns them and inherited downward.** The operator picks which
 vendors may be used at all. `/work` takes its vendors and path ownership from the plan, and the one
-`/code-review` controller takes its lenses and external-reviewer seat from Code Review's contract,
-not from an Orchestrate interview.
+`/code-review` controller takes its lenses from Code Review's contract, not from an Orchestrate
+interview. The external-reviewer seat comes from the risk tier and the run's staffing, and `start`
+or `expand` adds it.
 
 **Code Review is one controller plus one targeted reviewer.** Orchestrate launches and resumes the
 controller. The controller starts the reviewer through `review-launch`. Orchestrate persists the

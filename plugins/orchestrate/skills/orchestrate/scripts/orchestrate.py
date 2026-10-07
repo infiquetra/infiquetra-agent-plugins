@@ -1560,8 +1560,10 @@ def _review_run_location_path(finding_id: str, finding: Mapping[str, Any]) -> st
 def _route_review_run(payload: Mapping[str, Any]) -> tuple[str, list[dict[str, Any]]]:
     """Project a review run onto the outcome words the note check already knows.
 
-    Orchestrate trusts ``merge.allowed``. It does not recompute the merge, and it does not copy
-    any finding field except the id and the one location path.
+    Orchestrate does not recompute the merge. ``merge.allowed`` is true only when
+    ``merge.blocking`` is empty, which is the same answer saga's formula writes. A
+    disagreement is a refusal, not an acceptance. No finding field is copied except the
+    id and the one location path.
     """
     merge = payload.get("merge")
     if not isinstance(merge, dict):
@@ -1574,6 +1576,10 @@ def _route_review_run(payload: Mapping[str, Any]) -> tuple[str, list[dict[str, A
         isinstance(item, str) and _FINDING_ID.fullmatch(item) for item in blocking
     ):
         raise SystemExit("review run merge.blocking must be a list of finding ids")
+    if allowed != (len(blocking) == 0):
+        raise SystemExit(
+            f"review run merge.allowed {allowed!r} disagrees with merge.blocking"
+        )
     if allowed:
         return "accepted", []
     findings = payload.get("findings")
@@ -3822,6 +3828,31 @@ def _noted_review_outs(unit: Unit) -> list[Path]:
     return found
 
 
+def _paths_overlap(left: Path, right: Path) -> bool:
+    """True when the two directories are equal or one contains the other.
+
+    A packet that contains a reviewer output, or that sits inside one, hands that
+    reviewer the other seat's answer. Equality is the same leak.
+    """
+    return _path_inside(left, right) or _path_inside(right, left)
+
+
+def _reviewer_output_directories(r: Run, lifecycle: str | None) -> list[Path]:
+    """Default and noted output directories for both reviewer seats on this run."""
+    keys = {lifecycle}
+    for unit in r.units:
+        if is_review_controller(unit) or unit.role in REVIEWER_LAUNCH_ROLES:
+            keys.add(_review_lifecycle_key(unit))
+    found: list[Path] = []
+    for key in keys:
+        for role in (TARGETED_REVIEWER_ROLE, REVIEWER_SEAT_ROLE):
+            found.append(_resolved_path(_default_review_out(r, role, key)))
+    for unit in r.units:
+        if unit.role in REVIEWER_LAUNCH_ROLES:
+            found.extend(_noted_review_outs(unit))
+    return found
+
+
 def _reviewer_answer_paths() -> dict[str, str] | None:
     """Saga's prompt and schema, found beside ``run_record.py``. Never a hard-coded path."""
     candidates: list[Path] = []
@@ -3927,6 +3958,7 @@ def cmd_review_launch(args: argparse.Namespace) -> int:
             REVIEWER_SEAT_ROLE if seat == TARGETED_REVIEWER_ROLE else TARGETED_REVIEWER_ROLE
         )
         other_default = _resolved_path(_default_review_out(r, other_role, lifecycle))
+        protected = _reviewer_output_directories(r, lifecycle)
     except SystemExit as exc:
         print(exc, file=sys.stderr)
         return 2
@@ -3946,6 +3978,15 @@ def cmd_review_launch(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    if out not in protected:
+        protected.append(out)
+    for review_out in protected:
+        if _paths_overlap(packet_resolved, review_out):
+            print(
+                f"packet {args.packet} overlaps reviewer output {review_out}",
+                file=sys.stderr,
+            )
+            return 2
     try:
         launcher = _agent_launcher_script()
     except SystemExit as exc:

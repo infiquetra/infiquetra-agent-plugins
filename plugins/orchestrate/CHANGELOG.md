@@ -10,6 +10,10 @@
 
 - A review run (`review_records.v1`, kind `review_run`) routes through the same outcome words as `review_result.v2`. The Claude adapter's agent-launcher floor is now `>=1.7.2`, and `review-launch` also requires the `review` subcommand (issue #159).
 
+### Fixed
+
+- `review-launch` refuses a packet that equals, contains, or sits inside a reviewer output directory, and an `--out` that overlaps that packet. A review run whose `merge.allowed` disagrees with `merge.blocking` is refused instead of being recorded as accepted (issue #159).
+
 ## [6.1.0] - 2026-10-04
 
 Adds JSON status output, a launch-table command and two Claude Code mods, and fixes run-record loading and saving so concurrent writes are no longer lost.

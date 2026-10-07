@@ -26,6 +26,21 @@
 
 **Generalizable rule.** A reproduction check has to run against the code under test, and the line it matches has to be specific to that failure.
 ### The reviewer cannot be a go pane because the packet does not exist yet
+### A reviewer packet must not overlap a reviewer output directory
+
+**Evidence.** Issue #159 repair. `cmd_review_launch` in `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py` (`_paths_overlap`, `_reviewer_output_directories`). The proofs are `test_review_launch_refuses_a_packet_that_overlaps_the_second_reviewer_output` and `test_review_launch_refuses_an_out_inside_the_packet_for_the_second_reviewer`.
+
+**Mechanism.** The controller supplies `--packet` and `--out`. Checking each path against the store still allows the packet to be the parent of the other seat's output, or the output to sit inside the packet. The second reviewer then reads the first answer. The launch refuses when the packet equals, contains, or sits inside a default or noted output for either seat, and when the output chosen for this launch overlaps the packet.
+
+**Generalizable rule.** A caller-supplied directory that is read must not equal, contain, or sit inside a directory the same run writes.
+
+### A review run's allowed flag and its blocking list are one fact
+
+**Evidence.** Issue #159 repair. `_route_review_run` in `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`. Saga's formula sets `allowed` to `not blocking` in `plugins/saga/scripts/review_formula.py`. The proofs are `test_an_allowed_review_run_with_blocking_ids_is_refused` and `test_review_transport_refuses_a_contradictory_review_run`.
+
+**Mechanism.** Routing trusted `merge.allowed` and, when that flag was true, ignored `merge.blocking`. A record with both a true flag and blocking ids became `accepted`, which is terminal, so a later corrected record was refused as an overwrite. The two fields are the same answer. When they disagree, the run is refused before an outcome is recorded.
+
+**Generalizable rule.** Two fields that a producer always writes as one answer must be refused when they disagree, before either field is treated as the decision.
 
 **Evidence.** Issue #159. `cmd_go` filters `targeted-reviewer` and `external-reviewer` before `make_worktree`. `cmd_review_launch` returns 2 when `--packet` is not a directory.
 
