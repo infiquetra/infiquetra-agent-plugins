@@ -2,6 +2,16 @@
 
 ## 2026-10-07
 
+### may-block reads the installed saga, and the profile is the base commit's
+
+**Decision.** Issue #149 repair, after the code review of the calibration file. `may-block` reads the calibration file and the component bytes from the saga directory that contains the script (`parents[1]`). A marketplace install's root is that directory, so `parents[3]` is not a checkout. A path under `plugins/saga/` is read at `<package>/<rest>`. The repository check still hashes `<repository>/<path>`. `--root` and `--profile` select the base commit's profile and do not select the calibration file. The component list adds the three `sweep_pieces.SWEEP_COMPONENTS` paths as literals. A component is a file. An unreadable profile exits 2.
+
+**Rationale.** From the installed plugin, every `plugins/saga/...` path was missing, so a recorded run could never answer `yes cleared`. Pointing `--root` at the reviewed head makes those paths missing too, and a missing component forces report-only, which turns blocking off. C4a's test searches this file for its five path strings. C6's test reads the path sequences this module defines. Both are satisfied by literals in `COMPONENTS`. Importing `sweep_pieces` at module scope would load PyYAML on the repository-check path.
+
+**Rejected alternatives.** Keeping `parents[3]` as the default root. Importing the sweep tuple. Hashing the Semgrep rules directory. Adding `reviewer_answer.py` to the fingerprint in this repair. A read-back of `reviewer_configuration`, which the review command owns.
+
+**Revisit when.** The review command passes the base profile, or the Semgrep rules card lists files instead of a directory.
+
 ### The targeted reviewer's sandbox blocks the home directory and allows back what the review needs
 
 **Decision.** Issue #189, a follow-up to #158 (card C8 of the saga review redesign, parent #147). `reviewer_claude_settings` in `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py` now writes `sandbox.filesystem.denyRead: ["~"]` and an `allowRead` holding only three kinds of path:

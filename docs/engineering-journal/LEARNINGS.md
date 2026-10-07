@@ -2,6 +2,14 @@
 
 ## 2026-10-07
 
+### An installed saga plugin is its own root
+
+**Evidence.** Issue #149 repair. `plugins/saga/scripts/review_calibration.py` (`package_dir`, `locate`). The code review of `e1e351a` ran `may-block` from a copy laid out as `<cache>/saga/1.0.0/`.
+
+**Mechanism.** In a checkout the script lives at `plugins/saga/scripts/`, so `parents[3]` is the repository. A marketplace install copies `plugins/saga` to the plugin root, so `parents[3]` is outside the plugin and `plugins/saga/...` does not exist there. The calibration file beside the script (`parents[1] / references`) is the one `thresholds()` already reads. Component keys stay repo-relative. `plugins/saga/<rest>` is read from `<package>/<rest>`. `--root` selects the base commit's profile and does not select those bytes.
+
+**Generalizable rule.** A script that runs in the catalog checkout and from the installed plugin resolves its own files from the package directory, and takes the tree under review only as an explicit input.
+
 ### Blocking a parent directory in Claude's sandbox and allowing paths back works; each toolchain still needs checking
 
 **Evidence.** Issue #189. Live runs on 2026-10-06 and 2026-10-07 through the targeted reviewer's `claude -p` recipe on Claude Code 2.1.292 with Haiku, using only canary files and variables made for the run. `launcher.py reviewer-probe --vendor claude --model haiku` now repeats the checks, and passed all thirteen with the change in place.

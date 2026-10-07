@@ -25,8 +25,9 @@ SCHEMA_NAME = "review_calibration.v1"
 CALIBRATION_RELATIVE = "plugins/saga/references/review-calibration.json"
 TOOL_LIST_RELATIVE = "plugins/saga/references/review-tools.yaml"
 
-# Ten repo-relative paths. C4a's five are literals on purpose: test_fingerprint_names_these_paths
-# reads this file as text. A later card appends its own paths in the same change.
+# Repo-relative paths, written as literals. C4a's test reads this file as text, and C6's
+# test reads the sequence this module defines. A later card appends its own paths.
+_SAGA_PREFIX = "plugins/saga/"
 COMPONENTS: tuple[str, ...] = (
     "plugins/saga/scripts/review_formula.py",
     "plugins/saga/references/review-records.schema.json",
@@ -38,6 +39,9 @@ COMPONENTS: tuple[str, ...] = (
     "plugins/saga/references/targeted-reviewer-prompt.md",
     "plugins/saga/references/targeted-reviewer-answer.schema.json",
     "plugins/saga/references/targeted-reviewer-launch.json",
+    "plugins/fleet-core/scripts/fleet_commons/jev_sweep.py",
+    "plugins/saga/scripts/sweep_pieces.py",
+    "plugins/saga/references/model-prices.yaml",
 )
 
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
@@ -266,11 +270,53 @@ def problems_in(path: Path) -> list[str]:
     return document_problems(data)
 
 
+def package_dir() -> Path:
+    """The saga directory that contains this script.
+
+    A checkout keeps that directory at ``plugins/saga``. A marketplace install
+    copies ``plugins/saga`` itself to the plugin root, so ``parents[3]`` is
+    outside the plugin and is not a repository root.
+    """
+    return Path(__file__).resolve().parents[1]
+
+
+def default_calibration_path() -> Path:
+    """The calibration file shipped beside this script.
+
+    ``--root`` does not select it. A review passes the installed saga's file,
+    not the reviewed head's copy.
+    """
+    return package_dir() / "references" / "review-calibration.json"
+
+
+def locate(root: Path, relative: str) -> Path:
+    """The file whose bytes are hashed for a repo-relative component path.
+
+    A repository root stores the path as written. A saga package stores
+    ``plugins/saga/<rest>`` at ``<rest>``. When ``root`` is this script's own
+    package, a path outside that package is read from the checkout that
+    contains the script, which is where fleet-core's sweep file lives.
+    """
+    root = Path(root)
+    direct = root / relative
+    if direct.is_file():
+        return direct
+    if relative.startswith(_SAGA_PREFIX):
+        packaged = root / relative[len(_SAGA_PREFIX):]
+        if packaged.is_file():
+            return packaged
+    if root.resolve() == package_dir().resolve():
+        checkout = Path(__file__).resolve().parents[3] / relative
+        if checkout.is_file():
+            return checkout
+    return direct
+
+
 def thresholds(path: Path | None = None) -> list[dict[str, Any]]:
     """The sweep's threshold rows, as stored. The committed file's list is empty."""
     target = path
     if target is None:
-        target = Path(__file__).resolve().parents[1] / "references" / "review-calibration.json"
+        target = default_calibration_path()
     found = problems_in(target)
     if found:
         raise CalibrationError(found[0])
@@ -296,7 +342,7 @@ def fingerprint_drift(root: Path, recorded: Mapping[str, Any]) -> list[str]:
         if relative not in recorded:
             found.append(f"changed component: {relative}")
             continue
-        file = root / relative
+        file = locate(root, relative)
         if not file.is_file():
             found.append(f"missing component: {relative}")
             continue
@@ -380,7 +426,7 @@ def _load_tools(root: Path) -> list[dict[str, Any]]:
     import review_tools  # noqa: PLC0415  (PyYAML only on the pin path)
 
     try:
-        return review_tools.load_tool_list(root / TOOL_LIST_RELATIVE)
+        return review_tools.load_tool_list(locate(root, TOOL_LIST_RELATIVE))
     except review_tools.RunnerFailure as exc:
         raise CalibrationError(str(exc)) from exc
     except OSError as exc:
@@ -447,7 +493,7 @@ def pinned_tool(root: Path, lens: str, profile_path: Path) -> str | None:
         return None
     try:
         data = json.loads(profile_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+    except (OSError, json.JSONDecodeError) as exc:
         raise CalibrationError(f"not an identifier: {profile_path.name}") from exc
     if not isinstance(data, dict):
         raise CalibrationError("profile must be an object")
@@ -493,7 +539,7 @@ def may_block(
     if language not in review_formula.LANGUAGES:
         raise CalibrationError(f"unknown language: {language}")
     root = Path(root)
-    path = Path(calibration) if calibration is not None else root / CALIBRATION_RELATIVE
+    path = Path(calibration) if calibration is not None else default_calibration_path()
     if not path.is_file():
         raise CalibrationError(f"missing calibration file: {CALIBRATION_RELATIVE}")
     found = problems_in(path)
@@ -528,26 +574,50 @@ def build_parser() -> argparse.ArgumentParser:
     may = commands.add_parser("may-block", help="Print the answer and its reason on one line.")
     may.add_argument("--lens", required=True, help="A lens id from the formula.")
     may.add_argument("--language", required=True, help="A language id from the formula.")
-    may.add_argument("--root", type=Path, help="Repository root. Defaults to this script's repo.")
-    may.add_argument("--file", type=Path, help="Calibration JSON. Defaults to the committed file.")
+    may.add_argument(
+        "--root",
+        type=Path,
+        help=(
+            "Base commit whose .saga-profile.json is read. Never the reviewed head. "
+            "Does not select the calibration file or the component bytes; those come "
+            "from the installed saga."
+        ),
+    )
+    may.add_argument(
+        "--file",
+        type=Path,
+        help=(
+            "Calibration JSON from the installed saga. Never the reviewed head. "
+            "Defaults to this package's references/review-calibration.json."
+        ),
+    )
     may.add_argument(
         "--profile",
         type=Path,
-        help="Profile JSON. Defaults to <root>/.saga-profile.json.",
+        help=(
+            "Profile JSON from the base commit. Never the reviewed head. "
+            "Defaults to --root/.saga-profile.json when --root is set, otherwise "
+            "the checkout that contains this script."
+        ),
     )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
-    root = args.root if args.root is not None else Path(__file__).resolve().parents[3]
+    if args.profile is not None:
+        profile = args.profile
+    elif args.root is not None:
+        profile = args.root / ".saga-profile.json"
+    else:
+        profile = Path(__file__).resolve().parents[3] / ".saga-profile.json"
     try:
         line = may_block(
             args.lens,
             args.language,
-            root=root,
+            root=package_dir(),
             calibration=args.file,
-            profile=args.profile,
+            profile=profile,
         )
     except CalibrationError as exc:
         print(str(exc), file=sys.stderr)

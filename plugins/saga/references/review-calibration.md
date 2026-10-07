@@ -42,17 +42,20 @@ A threshold row is `question` (an identifier), `threshold` (a number) and `piece
 
 ## Component paths
 
-The fingerprint is a sha256 of each of these files, in order. `plugins/saga/scripts/check_repo.py` calls the one implementation in `review_calibration.py`. While `corpus_run` is `no-run`, the bytes are not compared. Once a run is recorded, a changed or missing file fails the repository check and names that path.
+The fingerprint is a sha256 of each of these files, in order. `scripts/check_repo.py` calls the one implementation in `review_calibration.py`. While `corpus_run` is `no-run`, the bytes are not compared. Once a run is recorded, a changed or missing file fails the repository check and names that path.
+
+A component is a file. A directory is a missing component. `plugins/saga/references/semgrep-rules` is not on the list; the card that adds those checks lists the files.
 
 The kinds on the list today:
 
 - The formula and the record schema (C1).
 - The default tool list, its diff and coverage helpers, and the Semgrep pack's content hash. The cached Semgrep rule packs are not a repository path. The pack's sha256 sits beside the pin in `review-tools.yaml`, and that yaml is on the list, so a pin change changes the fingerprint.
 - The reviewer's prompt, answer schema, and launch settings. The launch settings are `targeted-reviewer-launch.json` (vendor and model).
+- The sweep: `sweep_pieces.py`, `model-prices.yaml`, and fleet-core's `jev_sweep.py` (C6).
 
-Not on the list yet: question banks and the policy questions, our checks, the later tool adapters, the sweep, and the review command. A card that adds a review component adds its paths in the same change.
+Not on the list yet: question banks and the policy questions, our checks, the later tool adapters, and the review command. A card that adds a review component adds its paths in the same change.
 
-Instruction files are recorded in `reviewer_configuration` and are not fingerprinted. `may-block` does not read that field. `review_records.py` is not a component. The record schema is the contract; the validator is held to that schema by its own drift test.
+Instruction files are recorded in `reviewer_configuration` and are not fingerprinted. `may-block` does not read that field. `review_records.py` is not a component. The record schema is the contract; the validator is held to that schema by its own drift test. `reviewer_answer.py` is not a component either. It refuses an answer and caps an open-search finding; the prompt, the answer schema and the launch settings are the fingerprinted parts, and the module is held by its own tests.
 
 ```
 plugins/saga/scripts/review_formula.py
@@ -65,10 +68,15 @@ plugins/saga/references/review-tools.yaml
 plugins/saga/references/targeted-reviewer-prompt.md
 plugins/saga/references/targeted-reviewer-answer.schema.json
 plugins/saga/references/targeted-reviewer-launch.json
+plugins/fleet-core/scripts/fleet_commons/jev_sweep.py
+plugins/saga/scripts/sweep_pieces.py
+plugins/saga/references/model-prices.yaml
 ```
 
 ## The answer
 
 `python3 plugins/saga/scripts/review_calibration.py may-block --lens security --language python` prints one line and exits 0. On the committed file the line is `report-only no-run`.
 
-The first matching reason wins: no run, a stale fingerprint (the path is the third word), drift, no verdict for the language, a profile pin of another version or rule set on a tool that serves the lens, a report-only verdict, then `yes cleared`. An unknown lens, an unknown language, a malformed file, or a malformed profile exits 2 and prints no answer. The default is never `yes`.
+The calibration file and the component bytes come from the installed saga, the directory that contains this script. `--root` does not select that file. The profile is the base commit's `.saga-profile.json`, passed as `--profile` or as `--root`. A review never passes the reviewed head as `--root`, `--file` or `--profile`: a head can turn its own lenses to report-only.
+
+The first matching reason wins: no run, a stale fingerprint (the path is the third word), drift, no verdict for the language, a profile pin of another version or rule set on a tool that serves the lens, a report-only verdict, then `yes cleared`. An unknown lens, an unknown language, a malformed file, or a malformed profile exits 2 and prints no answer. An unreadable profile is a malformed profile. The default is never `yes`.

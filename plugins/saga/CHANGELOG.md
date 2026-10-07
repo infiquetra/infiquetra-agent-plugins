@@ -63,6 +63,10 @@
 
 ### Fixed
 
+- Issue 149: `may-block` reads the calibration file and the component bytes from the installed
+  saga package. `--root` selects the base commit's profile and does not select that file. An
+  unreadable profile exits 2. The fingerprint also names the Jev sweep's three paths.
+
 - Issue 189: `scripts/reviewer_answer.py` replaces known secret formats (GitHub, AWS, Slack, Stripe,
   Google, Anthropic and OpenAI-style keys, private-key blocks, JSON web tokens, bearer tokens,
   credentials in URLs, named secret assignments) and long high-entropy runs, including base64 runs

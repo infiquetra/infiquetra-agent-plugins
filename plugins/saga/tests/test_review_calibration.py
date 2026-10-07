@@ -9,6 +9,7 @@ import hashlib
 import io
 import json
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -125,17 +126,29 @@ def _recorded(
     return _write(root / calibration.CALIBRATION_RELATIVE, data)
 
 
-def _invoke(root: Path, lens: str = "security", language: str = "python") -> tuple[int, str, str]:
+def _invoke(
+    root: Path,
+    lens: str = "security",
+    language: str = "python",
+    *,
+    file: Path | None = None,
+) -> tuple[int, str, str]:
+    argv = ["may-block", "--lens", lens, "--language", language, "--root", str(root)]
+    if file is not None:
+        argv.extend(["--file", str(file)])
     stdout, stderr = io.StringIO(), io.StringIO()
     with redirect_stdout(stdout), redirect_stderr(stderr):
-        code = calibration.main(
-            ["may-block", "--lens", lens, "--language", language, "--root", str(root)]
-        )
+        code = calibration.main(argv)
     return code, stdout.getvalue(), stderr.getvalue()
 
 
 def _answer(root: Path, lens: str = "security", language: str = "python") -> str:
-    return calibration.may_block(lens, language, root=root)
+    return calibration.may_block(
+        lens,
+        language,
+        root=root,
+        calibration=root / calibration.CALIBRATION_RELATIVE,
+    )
 
 
 def test_committed_file_is_no_run() -> None:
@@ -259,6 +272,7 @@ def test_a_recorded_lens_may_omit_a_language(tmp_path: Path) -> None:
 
 def test_components_match_the_landed_cards() -> None:
     import review_tools
+    import sweep_pieces
 
     assert calibration.COMPONENTS == (
         "plugins/saga/scripts/review_formula.py",
@@ -267,6 +281,7 @@ def test_components_match_the_landed_cards() -> None:
         "plugins/saga/references/targeted-reviewer-prompt.md",
         "plugins/saga/references/targeted-reviewer-answer.schema.json",
         "plugins/saga/references/targeted-reviewer-launch.json",
+        *sweep_pieces.SWEEP_COMPONENTS,
     )
 
 
@@ -294,8 +309,11 @@ live = Path(sys.argv[1])
 pinned = Path(sys.argv[2])
 sys.path.insert(0, str(live / "plugins" / "saga" / "scripts"))
 import review_calibration
+pinned_file = pinned / "plugins" / "saga" / "references" / "review-calibration.json"
 assert review_calibration.may_block("security", "python", root=live) == "report-only no-run"
-assert review_calibration.may_block("security", "python", root=pinned) == "report-only no-run"
+assert review_calibration.may_block(
+    "security", "python", root=pinned, calibration=pinned_file
+) == "report-only no-run"
 assert "yaml" not in sys.modules
 """
     completed = subprocess.run(
@@ -417,7 +435,7 @@ def test_pinned_tool_refuses_a_malformed_profile(tmp_path: Path) -> None:
         root = tmp_path / f"bad-{index}"
         _recorded(root)
         (root / ".saga-profile.json").write_text(text, encoding="utf-8")
-        code, stdout, stderr = _invoke(root)
+        code, stdout, stderr = _invoke(root, file=root / calibration.CALIBRATION_RELATIVE)
         assert code == 2, (text, code, stdout, stderr)
         assert stdout == ""
         assert "yes" not in stdout
@@ -459,6 +477,139 @@ def test_unknown_lens_or_language_exits_2(tmp_path: Path) -> None:
         assert stderr.strip()
 
 
+_RECORD_INSTALLED = """
+import hashlib
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+script = Path(sys.argv[1])
+sys.path.insert(0, str(script.parent))
+spec = importlib.util.spec_from_file_location("installed_review_calibration", script)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+path = module.default_calibration_path()
+data = json.loads(path.read_text(encoding="utf-8"))
+data["corpus_run"] = "recorded"
+counts = {
+    "held_out_blocked": 1,
+    "held_out_defects": 10,
+    "held_out_false_blocks": 0,
+    "held_out_clean": 10,
+    "repeat_flips": 0,
+    "repeat_cases": 10,
+}
+for row in data["lenses"].values():
+    row["drift"] = "as-recorded"
+    row["overall"] = dict(counts)
+    row["languages"] = {"python": {"verdict": "cleared", **counts}}
+fingerprint = {}
+for relative in module.COMPONENTS:
+    file = module.locate(module.package_dir(), relative)
+    if not file.is_file():
+        raise SystemExit(f"missing {relative} at {file}")
+    fingerprint[relative] = hashlib.sha256(file.read_bytes()).hexdigest()
+data["fingerprint"] = fingerprint
+path.write_text(json.dumps(data), encoding="utf-8")
+"""
+
+
+def test_an_installed_copy_answers_from_the_package(tmp_path: Path) -> None:
+    """A marketplace copy is the saga directory, not a repository checkout."""
+    install = tmp_path / "cache" / "saga" / "1.0.0"
+    shutil.copytree(
+        REPO / "plugins" / "saga",
+        install,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+    script = install / "scripts" / "review_calibration.py"
+    # The sweep's fleet-core file is not inside the saga package. A checkout
+    # keeps it at parents[3] of this script. The fixture puts it there.
+    outside = script.resolve().parents[3] / "plugins/fleet-core/scripts/fleet_commons/jev_sweep.py"
+    outside.parent.mkdir(parents=True, exist_ok=True)
+    source = REPO / "plugins/fleet-core/scripts/fleet_commons/jev_sweep.py"
+    outside.write_bytes(source.read_bytes())
+
+    def run(*extra: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "may-block",
+                "--lens",
+                "security",
+                "--language",
+                "python",
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    no_run = run()
+    assert no_run.returncode == 0, no_run.stderr
+    assert no_run.stderr == ""
+    assert no_run.stdout == "report-only no-run\n"
+
+    recorded = subprocess.run(
+        [sys.executable, "-c", _RECORD_INSTALLED, str(script)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert recorded.returncode == 0, recorded.stderr
+
+    cleared = run()
+    assert cleared.returncode == 0, cleared.stderr
+    assert cleared.stderr == ""
+    assert cleared.stdout == "yes cleared\n"
+
+    rooted = run("--root", str(install))
+    assert rooted.returncode == 0, rooted.stderr
+    assert rooted.stderr == ""
+    assert rooted.stdout == "yes cleared\n"
+
+
+def test_default_calibration_is_the_installed_package(tmp_path: Path) -> None:
+    head = tmp_path / "head"
+    _recorded(head)
+    code, stdout, stderr = _invoke(head)
+    assert code == 0
+    assert stderr == ""
+    assert stdout == "report-only no-run\n"
+    default = calibration.default_calibration_path()
+    assert default == calibration.package_dir() / "references" / "review-calibration.json"
+    assert head not in default.parents
+    help_run = subprocess.run(
+        [sys.executable, str(SCRIPTS / "review_calibration.py"), "may-block", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert help_run.returncode == 0, help_run.stderr
+    for phrase in ("base commit", "installed saga", "reviewed head"):
+        assert phrase in help_run.stdout
+
+
+def test_unreadable_profile_exits_2(tmp_path: Path) -> None:
+    root = tmp_path / "locked"
+    _recorded(root)
+    profile = root / ".saga-profile.json"
+    profile.write_text("{}\n", encoding="utf-8")
+    profile.chmod(0)
+    try:
+        code, stdout, stderr = _invoke(root, file=root / calibration.CALIBRATION_RELATIVE)
+    finally:
+        profile.chmod(0o644)
+    assert code == 2
+    assert stdout == ""
+    assert "yes" not in stdout
+    assert stderr.strip()
+
+
 def _component_list(text: str) -> list[str]:
     start = text.index("## Component paths")
     fence = text.index("```", start)
@@ -488,6 +639,12 @@ def test_reference_documents_fields_kinds_and_the_add_path_rule() -> None:
     assert "targeted-reviewer-launch.json" in text
     assert "adds its paths in the same change" in text
     assert "Instruction files are recorded in `reviewer_configuration` and are not fingerprinted." in text
+    assert "scripts/check_repo.py" in text
+    assert "plugins/saga/scripts/check_repo.py" not in text
+    assert "A component is a file." in text
+    assert "reviewer_answer.py" in text
+    for phrase in ("base commit", "installed saga", "reviewed head"):
+        assert phrase in text
     section = (REFERENCES / "repository-profile.md").read_text(encoding="utf-8")
     block = section.split("### `review_tools`", 1)[1].split("\n## ", 1)[0]
     assert "may-block" in block

@@ -202,7 +202,8 @@ directory that exists only in the checkout is not used.
 
 `may-block` (`plugins/saga/scripts/review_calibration.py`) reads `review_tools.pins`. A version or
 a rule set other than the default makes the lenses that tool serves report only. An absent block
-stays valid, and an absent `pins` key is no difference.
+stays valid, and an absent `pins` key is no difference. The profile it reads is the base commit's.
+The calibration file is the installed saga's copy, not the reviewed head's.
 
 The remaining nine parameters come from elsewhere and are not the profile's business:
 `staffing_models_and_efforts` from the staffing component in fleet-core; `applicable_lenses` and
