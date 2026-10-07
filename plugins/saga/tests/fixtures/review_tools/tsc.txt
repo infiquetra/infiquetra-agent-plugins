@@ -1,0 +1,2 @@
+src/example.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'.
+src/example.ts(5,7): error TS2304: Cannot find name 'missingName'.

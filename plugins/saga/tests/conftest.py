@@ -15,8 +15,10 @@ from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parent))
 
 import os
+import socket
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -86,3 +88,44 @@ def _no_live_tier_judgment(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setenv("INFIQUETRA_TYPESAFE_TIERING", "off")
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        "allow_sockets: this test uses local sockets only, never the network",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _no_network(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest,
+) -> None:
+    """The saga suite makes no network call (issue 153).
+
+    This mirrors the per-file guard in the review adapter suites: creating a
+    socket raises. A test that needs local sockets opts out explicitly with
+    the allow_sockets mark and justifies it where the mark sits.
+    """
+    if request.node.get_closest_marker("allow_sockets") is not None:
+        real_socket = socket.socket
+
+        def allow_unix_only(
+            family: Any = None, *args: Any, **kwargs: Any
+        ) -> socket.socket:
+            seen = family
+            if seen is None:
+                seen = kwargs.get("family", socket.AF_INET)
+            if seen != socket.AF_UNIX:
+                raise AssertionError("saga tests must make no network call")
+            if family is None:
+                return real_socket(*args, **kwargs)
+            return real_socket(family, *args, **kwargs)
+
+        monkeypatch.setattr(socket, "socket", allow_unix_only)
+        return
+
+    def refuse(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("saga tests must make no network call")
+
+    monkeypatch.setattr(socket, "socket", refuse)

@@ -1,0 +1,7 @@
+error: SwiftCompile normal arm64 @ROOT@/Sources/probe/probe.swift failed with a nonzero exit code.
+@ROOT@/Sources/probe/probe.swift:6:18: [1;31merror: [1;39mcannot convert value of type 'String' to specified type 'Int'[0;0m
+4 |
+5 | public func broken() -> Int {
+@ROOT@/Sources/probe/probe.swift:6:9: [1;33mwarning: [1;39minitialization of immutable value 'never' was never used; consider replacing with assignment to '_' or removing it[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/no-usage\NoUsage]8;;\]
+@ROOT@/Sources/probe/probe.swift:6:16: [1;33mwarning: [1;39mpassing closure as a 'sending' parameter risks causing data races between code in the current isolation context and concurrent execution of the closure; this is an error in the Swift 6 language mode[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/region-isolation\RegionIsolation]8;;\::]8;;https://docs.swift.org/compiler/documentation/diagnostics/sending-closure-risks-data-race\SendingClosureRisksDataRace]8;;\]
+error: Build failed

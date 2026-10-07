@@ -47,6 +47,13 @@
 **Mechanism.** ruff, bandit, mypy, ShellCheck, actionlint, markdownlint, cspell, zizmor, and Checkov read a config they discover next to the source. A change can add that file and switch the tool off. The adapter writes the config it wants under the runner home, or scans a copy that omits the settings file, and passes that path on the command line. The discovered file stays in the tree and is not the input. actionlint 1.7.12 still parses `.github/actionlint.yaml` in the scan directory when `-config-file` names another file, so that adapter scans a copy of the workflows.
 
 **Generalizable rule.** A review of an untrusted commit passes a config the reviewer wrote, or a copy of the source that does not contain one.
+### A version probe the runner cannot read lowers every finding from that tool to fix-later
+
+**Evidence.** Issue #153. The Muter tests asserted `surviving-mutant` blocks and got fix-later. The pin `16` is Muter's real release tag (`gh release list --repo muter-mutation-testing/muter`, `Sources/muterCore/version.swift` reads `public let version = "16"`), but the runner's version regex requires a dot, so every probe returned `version-unreadable`.
+
+**Mechanism.** The formula's step 4 lowers blocks to fix-later whenever the run carries a degraded input for the finding's tool, and an off-pin note (`version-mismatch`, `version-unreadable`) does not stop the run: the tool runs, its findings land, and all of them drop one outcome. The failure therefore presents as a wrong severity, not a version error. The fix extends the matcher (`_found_version` in `review_tools.py`): a dotted version anywhere, else a bare integer only when it is the whole probe output.
+
+**Generalizable rule.** When a review finding lands one outcome below its row, check the degraded list for that tool before touching the adapter: the formula caps first and explains in `severity_basis.modifiers`.
 
 ### Blocking a parent directory in Claude's sandbox and allowing paths back works; each toolchain still needs checking
 

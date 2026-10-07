@@ -1,0 +1,28 @@
+{
+  "issues": [
+    {
+      "file": "src/unused.js",
+      "dependencies": [],
+      "devDependencies": [],
+      "exports": [],
+      "types": [],
+      "files": [{"name": "src/unused.js"}]
+    },
+    {
+      "file": "src/example.js",
+      "dependencies": [],
+      "devDependencies": [],
+      "exports": [{"name": "lonely", "line": 4}],
+      "types": [],
+      "files": []
+    },
+    {
+      "file": "package.json",
+      "dependencies": [{"name": "example-lib"}],
+      "devDependencies": [],
+      "exports": [],
+      "types": [],
+      "files": []
+    }
+  ]
+}

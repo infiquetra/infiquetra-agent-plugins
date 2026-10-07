@@ -1,0 +1,21 @@
+{
+  "modules": [],
+  "summary": {
+    "violations": [
+      {
+        "rule": {"severity": "error", "name": "no-orphans"},
+        "from": "src/orphan.js",
+        "to": "src/orphan.js"
+      },
+      {
+        "rule": {"severity": "warn", "name": "not-to-test"},
+        "from": "src/example.js",
+        "to": "test/example.test.js"
+      }
+    ],
+    "error": 1,
+    "warn": 1,
+    "info": 0,
+    "totalCruised": 3
+  }
+}

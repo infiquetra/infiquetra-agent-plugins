@@ -45,6 +45,54 @@ Nothing is installed, and no optional step runs, unless the operator names it. `
 **Rejected alternatives.** Selecting only the drafted ruff families. Treating a comment that mentions cdk-nag as proof the aspect is applied. Passing the operator environment into a synth or a test command. Creating `review_calibration.py` in this card.
 
 **Revisit when.** Card C7 reviews the ruff family draft, the actionlint kind draft, and the curated Checkov ids, or a later card puts a sandbox around `cdk synth` beyond the allow-list.
+### The repair round trusts nothing the reviewed commit can execute
+
+**Decision.** Issue #153 repair (review of `6c61818`). Four closings. Cargo
+reads `.cargo/config` as well as `.cargo/config.toml`, so the strip removes
+both names under any `.cargo` directory; each cargo invocation runs with a
+fresh `CARGO_HOME` that is deleted afterwards, so a commit's `build.rs`
+cannot plant config a later invocation reads. A committed dependency
+directory (`node_modules`, `.dart_tool`) is removed from the head worktree
+before the operator tree is linked, so tools resolve and probe only from that
+link; the base tree keeps its own, because base is trusted and a hostile base
+tree can only inflate findings, never suppress them. Mutation reports are
+deleted before the tool runs, a post-run symlink is `unparseable`, and a
+report whose parent escapes the scan root refuses the run before anything
+executes. An audit whose base scan ran and whose head scan declined records
+`lockfile-removed` instead of comparing against silence, which matches each
+tool's own readability (npm and cargo-deny read root lockfiles, osv walks).
+Base `.npmrc` auth lines are dropped at staging, and a staged JavaScript
+config with a project-relative import is declined with `config-imports-head`.
+
+**Rationale.** Settings were never the only thing the commit controls: the
+executed binaries, the parsed report bytes, the config's own imports, and the
+lockfile's absence all shape the result. Per-invocation cargo homes cost a
+registry re-resolve per run; that is accepted over shared mutable state.
+Blanket-declining importing configs is preferred over comment stripping,
+which could hide a real import inside a string.
+
+**Rejected alternatives.** Staging a base cargo config (a base `rustc-wrapper`
+would still execute). Trusting a lockfile-gated link while the committed
+tree stays (the link never happens when the directory exists). Loading staged
+configs from a temp dir (bare package imports would no longer resolve, and
+ESM ignores `NODE_PATH`). Removing the markers instead of correcting the
+decision text (it would surface deliberately suppressed findings and shift
+line numbers).
+
+**Revisit when.** A tool needs its settings loaded from the base tree rather
+than declined (path-valued config options such as `jest preset` or
+`tsconfig extends` still resolve head-side), or per-invocation cargo resolve
+costs force a shared cache with a clean-config guarantee.
+
+### Review adapters take settings only from the base commit and the plugin
+
+**Decision.** Issue #153 (card C4c of the saga review redesign). The 35 TypeScript, Dart, Rust and Swift rows run on C4a's runner with one rule: the head tree's tool settings are removed before the scan, and base-commit copies are staged back only for the settings each adapter names. A tool whose settings cannot be staged gets a CLI flag instead (clippy `-W`/`-D`), a staged generated file (tsc's extending config, SwiftLint's empty default, cargo-deny's empty config), or a generated core rule set (Dart). Inline suppressions (`eslint-disable`, `swiftlint:disable`, `ts-nocheck`) are recorded as degraded notes, and the tools still apply the markers, so for those tools the note replaces the finding rather than accompanying it. Muter gates on platform inside `invoke`, after the markers check, so a tree without Swift stays silent on Linux instead of recording a platform gap. The version matcher accepts a bare integer only when it is the whole probe output, because Muter tags its releases `16`, `15` and prints the bare number (`Sources/muterCore/version.swift`). `FINGERPRINT_COMPONENTS` grows by the four adapter modules; the yaml rides its own hash. The saga suite refuses sockets suite-wide. `review-tools.md` carries the level maps, rating bands, coverage templates, concurrency lists and gaps in one checked fence: the docs test parses the fence and fails when any value differs from the yaml, the modules or the formula.
+
+**Rationale.** The head commit is untrusted, and a tool config is code the change controls: trusting it lets a change disarm its own review. Staging base copies keeps project settings (which the base commit pins) without trusting head. Muter's platform gate cannot live in `platforms`, because the runner checks that before markers and would gap every non-Swift tree on Linux. The bare-version fallback cannot be a bare number anywhere in the output, because that would read build counts as versions; whole-output-only keeps every dotted match unchanged. The fence exists because prose level tables drift; the npm severities and deny bands live in code, not the yaml, so the test compares the fence against the code.
+
+**Rejected alternatives.** Trusting head configs with a denylist of dangerous keys, which a change can spell around. A `platforms: [darwin]` gate on Muter, which fires on trees without Swift. Pinning Muter to a dotted version it never prints, which degrades every Muter finding to fix-later through the formula's degraded cap. Moving the npm and deny rating maps into the yaml, which restructures working code and a C1-owned formula function for a docs unit. Keyword-presence docs tests, which pass while the values rot.
+
+**Revisit when.** A tool needs a setting the base commit cannot supply (then the strip list, not the trust rule, changes), Muter tags a dotted release, or C2's calibration file lands and takes the extended tuple.
 
 ### The targeted reviewer's sandbox blocks the home directory and allows back what the review needs
 

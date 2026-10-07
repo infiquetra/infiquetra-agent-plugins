@@ -642,3 +642,744 @@ tools:
     rules: []
     env_dirs: []
     lockfiles: []
+  - id: npm-audit
+    tool: npm
+    languages: ["typescript"]
+    lens: security
+    purpose: npm audit over npm lockfiles, base against head. pnpm, Yarn and pubspec stay with osv-scanner.
+    install: Install Node.js on the operator machine. This card does not install it.
+    default_version: "12.0.2"
+    version_args: ["--version"]
+    timeout_seconds: 180
+    platforms: []
+    comparison: base-head
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: ["node_modules"]
+    lockfiles: ["package-lock.json", "npm-shrinkwrap.json"]
+    base_files: [".npmrc"]
+    local_bins: ["node_modules/.bin"]
+  - id: tsc
+    tool: tsc
+    languages: ["typescript"]
+    lens: correctness
+    purpose: The TypeScript compiler in strict mode over a staged project that extends the base config.
+    install: Install TypeScript on the operator machine or in the project. This card does not install it.
+    default_version: "5.9.3"
+    version_args: ["--version"]
+    timeout_seconds: 300
+    platforms: []
+    comparison: base-head
+    type_checker: true
+    mutation: false
+    mode: report
+    silent_ok: true
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: ["node_modules"]
+    lockfiles: ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "npm-shrinkwrap.json"]
+    base_files: ["tsconfig.json", "tsconfig.app.json", "package.json"]
+    local_bins: ["node_modules/.bin"]
+  - id: eslint
+    tool: eslint
+    languages: ["typescript"]
+    lens: correctness
+    purpose: ESLint with an explicit base config, or the plugin core-rules default.
+    install: Install ESLint on the operator machine or in the project. This card does not install it.
+    default_version: "9.39.5"
+    version_args: ["--version"]
+    timeout_seconds: 300
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    silent_ok: true
+    level_map:
+      error: correctness.tool-error
+      warning: correctness.tool-warning
+    curated_block_rules: []
+    rules: []
+    env_dirs: ["node_modules"]
+    lockfiles: ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "npm-shrinkwrap.json"]
+    base_files: ["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", "eslint.config.ts", ".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml", ".eslintrc.yaml", "tsconfig.json", "package.json"]
+    local_bins: ["node_modules/.bin"]
+  - id: stryker
+    tool: stryker
+    languages: ["typescript"]
+    lens: testing
+    purpose: StrykerJS mutation testing, survivors on changed lines. Shares the review mutation cap.
+    install: Install StrykerJS and a vitest or jest runner in the project. This card does not install them.
+    default_version: "10.0.0"
+    version_args: ["--version"]
+    timeout_seconds: 900
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: true
+    mode: report
+    report_file: reports/mutation/mutation.json
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: ["node_modules"]
+    lockfiles: ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "npm-shrinkwrap.json"]
+    base_files: ["stryker.conf.json", "stryker.conf.js", "stryker.conf.mjs", "stryker.conf.cjs", "tsconfig.json", "package.json"]
+    local_bins: ["node_modules/.bin"]
+  - id: vitest-shuffle
+    tool: vitest
+    languages: ["typescript"]
+    lens: testing
+    purpose: The Vitest suite once in random order. A failure is order or network flakiness.
+    install: Install Vitest in the project. This card does not install it.
+    default_version: "4.1.11"
+    version_args: ["--version"]
+    timeout_seconds: 600
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    stream: both
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: ["node_modules"]
+    lockfiles: ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "npm-shrinkwrap.json"]
+    base_files: ["vitest.config.ts", "vitest.config.js", "vitest.config.mjs", "vitest.config.cjs", "vitest.config.mts", "vitest.config.cts", "vite.config.ts", "vite.config.js", "vite.config.mjs", "vite.config.cjs", "vite.config.mts", "vite.config.cts", "tsconfig.json", "package.json"]
+    local_bins: ["node_modules/.bin"]
+  - id: jest-shuffle
+    tool: jest
+    languages: ["typescript"]
+    lens: testing
+    purpose: The Jest suite once in random order. A failure is order or network flakiness.
+    install: Install Jest in the project. This card does not install it.
+    default_version: "30.5.2"
+    version_args: ["--version"]
+    timeout_seconds: 600
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    stream: stderr
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: ["node_modules"]
+    lockfiles: ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "npm-shrinkwrap.json"]
+    base_files: ["jest.config.ts", "jest.config.js", "jest.config.mjs", "jest.config.cjs", "jest.config.json", "babel.config.js", "babel.config.cjs", "babel.config.mjs", "babel.config.json", ".babelrc", ".babelrc.js", ".babelrc.json", ".swcrc", ".swcrc.json", "tsconfig.json", "package.json"]
+    local_bins: ["node_modules/.bin"]
+  - id: knip
+    tool: knip
+    languages: ["typescript"]
+    lens: architecture-maintainability
+    purpose: Unused files, exports, types and dependencies, base against head.
+    install: Install knip in the project. This card does not install it.
+    default_version: "6.40.0"
+    version_args: ["--version"]
+    timeout_seconds: 300
+    platforms: []
+    comparison: base-head
+    type_checker: false
+    mutation: false
+    mode: report
+    silent_ok: true
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: ["node_modules"]
+    lockfiles: ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "npm-shrinkwrap.json"]
+    base_files: ["knip.json", "knip.jsonc", ".knip.json", ".knip.jsonc", "knip.js", "knip.ts", "knip.config.js", "knip.config.ts", "tsconfig.json", "package.json"]
+    local_bins: ["node_modules/.bin"]
+  - id: dependency-cruiser
+    tool: dependency-cruiser
+    languages: ["typescript"]
+    lens: architecture-maintainability
+    purpose: The repository's own import rules from the base config, base against head.
+    install: Install dependency-cruiser in the project. This card does not install it.
+    default_version: "18.5.0"
+    version_args: ["--version"]
+    timeout_seconds: 300
+    platforms: []
+    comparison: base-head
+    type_checker: false
+    mutation: false
+    mode: report
+    silent_ok: true
+    level_map:
+      error: architecture-maintainability.structural-check-fails
+      warning: architecture-maintainability.tool-warning
+      info: architecture-maintainability.tool-style
+    curated_block_rules: []
+    rules: []
+    env_dirs: ["node_modules"]
+    lockfiles: ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "npm-shrinkwrap.json"]
+    base_files: [".dependency-cruiser.js", ".dependency-cruiser.cjs", ".dependency-cruiser.mjs", ".dependency-cruiser.json", "dependency-cruiser.config.js"]
+    local_bins: ["node_modules/.bin"]
+  - id: prettier
+    tool: prettier
+    languages: ["typescript"]
+    lens: correctness
+    purpose: Prettier formatting, fixed in the build loop. Leaves no review record.
+    install: Install Prettier in the project. This card does not install it.
+    default_version: "not-recorded"
+    version_args: ["--version"]
+    timeout_seconds: 300
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: fix
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: ["node_modules"]
+    lockfiles: ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "npm-shrinkwrap.json"]
+    base_files: []
+    local_bins: ["node_modules/.bin"]
+  - id: typescript-no-network
+    tool: node
+    languages: ["typescript"]
+    lens: testing
+    purpose: Known gap. No tool blocks the network for TypeScript test runs.
+    install: No tool exists. This row stays a gap until one does.
+    default_version: "not-recorded"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    gap_first: true
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+    base_files: []
+    local_bins: []
+  - id: vitest-coverage
+    languages: ["typescript"]
+    lens: testing
+    purpose: "Pinned coverage invocation, run inside the profile test command: vitest run --coverage --coverage.provider=v8 --coverage.reporter=lcov --coverage.reportsDirectory=. (C3 writes it.)"
+    install: Install Vitest in the project. This card does not install it.
+    default_version: "4.1.11"
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+  - id: jest-coverage
+    languages: ["typescript"]
+    lens: testing
+    purpose: "Pinned coverage invocation, run inside the profile test command: jest --coverage --coverageReporters=lcov --coverageDirectory=. (C3 writes it.)"
+    install: Install Jest in the project. This card does not install it.
+    default_version: "30.5.2"
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+  - id: dart-analyze
+    tool: dart
+    languages: ["dart"]
+    lens: correctness
+    purpose: The Dart analyzer over the whole project with the base analysis options, or a generated core-lint default.
+    install: Install the Dart SDK on the operator machine. This card does not install it.
+    default_version: "3.13.2"
+    version_args: ["--version"]
+    timeout_seconds: 300
+    platforms: []
+    comparison: base-head
+    type_checker: true
+    mutation: false
+    mode: report
+    silent_ok: true
+    level_map:
+      warning: correctness.tool-warning
+      information: correctness.tool-style
+    curated_block_rules: []
+    rules: []
+    env_dirs: [".dart_tool"]
+    lockfiles: ["pubspec.lock"]
+    base_files: ["analysis_options.yaml", "pubspec.yaml"]
+    local_bins: []
+  - id: mutate4dart
+    tool: mutate4dart
+    languages: ["dart"]
+    lens: testing
+    purpose: Dart mutants that survive the suite on changed lines.
+    install: Install mutate4dart on the operator machine. This card does not install it.
+    default_version: "0.12.2"
+    version_args: ["--version"]
+    timeout_seconds: 600
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: true
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: [".dart_tool"]
+    lockfiles: ["pubspec.lock"]
+    base_files: ["pubspec.yaml"]
+    local_bins: []
+  - id: dart-shuffle
+    tool: dart
+    languages: ["dart"]
+    lens: testing
+    purpose: The Dart suite once in random order. A failure is order or network flakiness.
+    install: Install the Dart SDK on the operator machine. This card does not install it.
+    default_version: "3.13.2"
+    version_args: ["--version"]
+    timeout_seconds: 600
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: [".dart_tool"]
+    lockfiles: ["pubspec.lock"]
+    base_files: ["pubspec.yaml"]
+    local_bins: []
+  - id: dart-format
+    tool: dart
+    languages: ["dart"]
+    lens: correctness
+    purpose: Dart formatter. It fixes in place and leaves no record.
+    install: Install the Dart SDK on the operator machine. This card does not install it.
+    default_version: "3.13.2"
+    version_args: ["--version"]
+    timeout_seconds: 300
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: fix
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: [".dart_tool"]
+    lockfiles: ["pubspec.lock"]
+    base_files: ["pubspec.yaml"]
+    local_bins: []
+  - id: dart-no-network
+    tool: dart
+    languages: ["dart"]
+    lens: testing
+    purpose: Known gap. No tool blocks the network for Dart test runs.
+    install: No tool exists. This row stays a gap until one does.
+    default_version: "not-recorded"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    gap_first: true
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+    base_files: []
+    local_bins: []
+  - id: dart-coverage
+    languages: ["dart"]
+    lens: testing
+    purpose: "Pinned coverage invocation, run inside the profile test command: dart test --coverage=.coverage && dart run coverage:format_coverage --packages=.dart_tool/package_config.json --report-on=lib --lcov --out=lcov.info --in=.coverage (C3 writes it.)"
+    install: Install the Dart SDK on the operator machine. This card does not install it.
+    default_version: "3.13.2"
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+  - id: cargo-deny
+    tool: cargo-deny
+    languages: ["rust"]
+    lens: security
+    purpose: Advisory audit over Cargo.lock with the base deny.toml, or generated empty defaults. Ratings come from each advisory's CVSS vector.
+    install: Install cargo-deny on the operator machine. This card does not install it.
+    default_version: "0.20.2"
+    version_args: ["--version"]
+    timeout_seconds: 300
+    platforms: []
+    comparison: base-head
+    type_checker: false
+    mutation: false
+    mode: report
+    stream: stderr
+    silent_ok: true
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: ["Cargo.lock"]
+    base_files: ["deny.toml"]
+    local_bins: []
+  - id: cargo-check
+    tool: cargo
+    languages: ["rust"]
+    lens: correctness
+    purpose: Compiler errors over the whole project, base against head. Warnings belong to clippy.
+    install: Install the Rust toolchain on the operator machine. This card does not install it.
+    default_version: "1.98.1"
+    version_args: ["--version"]
+    timeout_seconds: 600
+    platforms: []
+    comparison: base-head
+    type_checker: true
+    mutation: false
+    mode: report
+    silent_ok: true
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: ["Cargo.lock"]
+    base_files: ["rust-toolchain.toml", "rust-toolchain"]
+    local_bins: []
+  - id: clippy
+    tool: cargo-clippy
+    languages: ["rust"]
+    lens: correctness
+    purpose: Clippy lints plus rustc warnings on changed lines, with restated default levels that beat a hostile manifest.
+    install: Install the Rust toolchain with clippy on the operator machine. This card does not install it.
+    default_version: "0.1.98"
+    version_args: ["--version"]
+    timeout_seconds: 600
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    silent_ok: true
+    level_map:
+      error: correctness.tool-error
+      warning: correctness.tool-warning
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: ["Cargo.lock"]
+    base_files: ["clippy.toml", ".clippy.toml", "rust-toolchain.toml", "rust-toolchain"]
+    local_bins: []
+  - id: cargo-mutants
+    tool: cargo-mutants
+    languages: ["rust"]
+    lens: testing
+    purpose: Rust mutants that survive the suite on changed lines, read from the outcomes report.
+    install: Install cargo-mutants on the operator machine. This card does not install it.
+    default_version: "27.1.0"
+    version_args: ["mutants", "--version"]
+    timeout_seconds: 600
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: true
+    mode: report
+    report_file: mutants.out/outcomes.json
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: ["Cargo.lock"]
+    base_files: ["rust-toolchain.toml", "rust-toolchain"]
+    local_bins: []
+  - id: cargo-machete
+    tool: cargo-machete
+    languages: ["rust"]
+    lens: architecture-maintainability
+    purpose: Unused dependencies, base against head.
+    install: Install cargo-machete on the operator machine. This card does not install it.
+    default_version: "0.9.2"
+    version_args: ["--version"]
+    timeout_seconds: 300
+    platforms: []
+    comparison: base-head
+    type_checker: false
+    mutation: false
+    mode: report
+    silent_ok: true
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: ["Cargo.lock"]
+    base_files: []
+    local_bins: []
+  - id: rustfmt
+    tool: cargo
+    languages: ["rust"]
+    lens: correctness
+    purpose: Rust formatter. It fixes in place and leaves no record.
+    install: Install the Rust toolchain on the operator machine. This card does not install it.
+    default_version: "1.98.1"
+    version_args: ["--version"]
+    timeout_seconds: 300
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: fix
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: ["Cargo.lock"]
+    base_files: []
+    local_bins: []
+  - id: rust-shuffle
+    tool: cargo
+    languages: ["rust"]
+    lens: testing
+    purpose: Known gap. Rust has no stable test shuffle.
+    install: No tool exists. This row stays a gap until one does.
+    default_version: "not-recorded"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    gap_first: true
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+    base_files: []
+    local_bins: []
+  - id: rust-no-network
+    tool: cargo
+    languages: ["rust"]
+    lens: testing
+    purpose: Known gap. No tool blocks the network for Rust test runs.
+    install: No tool exists. This row stays a gap until one does.
+    default_version: "not-recorded"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    gap_first: true
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+    base_files: []
+    local_bins: []
+  - id: rust-coverage
+    languages: ["rust"]
+    lens: testing
+    purpose: "Pinned coverage invocation, run inside the profile test command: cargo llvm-cov --branch --lcov --output-path lcov.info (nightly; stable omits --branch) or with nextest appended. (C3 writes it.)"
+    install: Install cargo-llvm-cov on the operator machine. This card does not install it.
+    default_version: "not-recorded"
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+  - id: swift-compiler
+    tool: swift
+    languages: ["swift"]
+    lens: correctness
+    purpose: Compiler errors and strict-concurrency warnings over the whole project, base against head, each in its own build directory.
+    install: Install the Swift toolchain on the operator machine. This card does not install it.
+    default_version: "6.4.0"
+    version_args: ["package", "--version"]
+    timeout_seconds: 600
+    platforms: []
+    comparison: base-head
+    type_checker: true
+    mutation: false
+    mode: report
+    stream: stderr
+    silent_ok: true
+    level_map:
+      warning: correctness.tool-warning
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+    base_files: []
+    local_bins: []
+  - id: swiftlint
+    tool: swiftlint
+    languages: ["swift"]
+    lens: correctness
+    purpose: SwiftLint findings on changed lines with an explicit base config.
+    install: Install SwiftLint on the operator machine. This card does not install it.
+    default_version: "0.65.1"
+    version_args: ["--version"]
+    timeout_seconds: 300
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    silent_ok: true
+    level_map:
+      error: correctness.tool-error
+      warning: correctness.tool-warning
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+    base_files: [".swiftlint.yml", ".swiftlint.yaml"]
+    local_bins: []
+  - id: muter
+    tool: muter
+    languages: ["swift"]
+    lens: testing
+    purpose: Swift mutants that survive the suite on changed lines. macOS only.
+    install: Install Muter on the operator machine. This card does not install it.
+    default_version: "16"
+    version_args: ["--version"]
+    timeout_seconds: 600
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: true
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+    base_files: ["muter.conf.yml", "muter.conf.yaml", "muter.conf.json"]
+    local_bins: []
+  - id: swift-format
+    tool: swift
+    languages: ["swift"]
+    lens: correctness
+    purpose: Swift formatter. It fixes in place and leaves no record.
+    install: Install the Swift toolchain on the operator machine. This card does not install it.
+    default_version: "6.4.0"
+    version_args: ["package", "--version"]
+    timeout_seconds: 300
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: fix
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+    base_files: []
+    local_bins: []
+  - id: swift-dependency-audit
+    tool: swift
+    languages: ["swift"]
+    lens: security
+    purpose: Known gap. No audit tool reads Swift package locks.
+    install: No tool exists. This row stays a gap until one does.
+    default_version: "not-recorded"
+    version_args: ["package", "--version"]
+    timeout_seconds: 120
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    gap_first: true
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+    base_files: []
+    local_bins: []
+  - id: swift-shuffle
+    tool: swift
+    languages: ["swift"]
+    lens: testing
+    purpose: Known gap. Swift has no stable test shuffle.
+    install: No tool exists. This row stays a gap until one does.
+    default_version: "not-recorded"
+    version_args: ["package", "--version"]
+    timeout_seconds: 120
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    gap_first: true
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+    base_files: []
+    local_bins: []
+  - id: swift-no-network
+    tool: swift
+    languages: ["swift"]
+    lens: testing
+    purpose: Known gap. No tool blocks the network for Swift test runs.
+    install: No tool exists. This row stays a gap until one does.
+    default_version: "not-recorded"
+    version_args: ["package", "--version"]
+    timeout_seconds: 120
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    gap_first: true
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+    base_files: []
+    local_bins: []
+  - id: swift-coverage
+    languages: ["swift"]
+    lens: testing
+    purpose: "Pinned coverage invocation, run inside the profile test command: swift test --enable-code-coverage, then llvm-cov export -format=lcov over the test bundle into lcov.info. (C3 writes it.)"
+    install: Install the Swift toolchain on the operator machine. This card does not install it.
+    default_version: "not-recorded"
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []

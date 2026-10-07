@@ -23,6 +23,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -54,8 +55,13 @@ FINGERPRINT_COMPONENTS = (
     "plugins/saga/scripts/review_adapters_shell.py",
     "plugins/saga/scripts/review_adapters_workflows.py",
     "plugins/saga/scripts/review_adapters_markdown.py",
+    "plugins/saga/scripts/review_adapters_typescript.py",
+    "plugins/saga/scripts/review_adapters_dart.py",
+    "plugins/saga/scripts/review_adapters_rust.py",
+    "plugins/saga/scripts/review_adapters_swift.py",
 )
 _VERSION = re.compile(r"\d+\.\d+(?:\.\d+)?")
+_BARE_VERSION = re.compile(r"\d+")
 _SHA = re.compile(r"^[0-9a-f]{64}$")
 _SUFFIXES = {
     ".py": "python",
@@ -86,6 +92,83 @@ _SHARED_UPDATE_ROW = "correctness.pattern.write-skips-shared-update"
 _SHARED_UPDATE_REASON = "missing-shared-update-paths"
 _SHARED_UPDATE_NEVER = "(?!)"
 _SHARED_UPDATE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*$")
+#: Tool configs the C4c adapters strip (issue 153). Stripped in both scan trees;
+#: the base copy is staged over the stripped name where one exists (KTD4).
+_C4C_SETTINGS_NAMES = (
+    "eslint.config.js",
+    "eslint.config.mjs",
+    "eslint.config.cjs",
+    "eslint.config.ts",
+    ".eslintrc",
+    ".eslintrc.js",
+    ".eslintrc.cjs",
+    ".eslintrc.json",
+    ".eslintrc.yml",
+    ".eslintrc.yaml",
+    "tsconfig.json",
+    "analysis_options.yaml",
+    "clippy.toml",
+    ".clippy.toml",
+    "rust-toolchain.toml",
+    "rust-toolchain",
+    "deny.toml",
+    ".npmrc",
+    "stryker.conf.json",
+    "stryker.conf.js",
+    "stryker.conf.mjs",
+    "stryker.conf.cjs",
+    "vitest.config.ts",
+    "vitest.config.js",
+    "vitest.config.mjs",
+    "vitest.config.cjs",
+    "vitest.config.mts",
+    "vitest.config.cts",
+    "vite.config.ts",
+    "vite.config.js",
+    "vite.config.mjs",
+    "vite.config.cjs",
+    "vite.config.mts",
+    "vite.config.cts",
+    "jest.config.ts",
+    "jest.config.js",
+    "jest.config.mjs",
+    "jest.config.cjs",
+    "jest.config.json",
+    "babel.config.js",
+    "babel.config.cjs",
+    "babel.config.mjs",
+    "babel.config.json",
+    ".babelrc",
+    ".babelrc.js",
+    ".babelrc.json",
+    ".swcrc",
+    ".swcrc.json",
+    "muter.conf.yml",
+    "muter.conf.yaml",
+    "mutate4dart.yaml",
+    "knip.json",
+    "knip.jsonc",
+    ".knip.json",
+    ".knip.jsonc",
+    "knip.js",
+    "knip.ts",
+    "knip.config.js",
+    "knip.config.ts",
+    ".dependency-cruiser.js",
+    ".dependency-cruiser.cjs",
+    ".dependency-cruiser.mjs",
+    ".dependency-cruiser.json",
+    "dependency-cruiser.config.js",
+    ".swiftlint.yml",
+    ".swiftlint.yaml",
+)
+_STRIP_NAMES = _SETTINGS_NAMES + _C4C_SETTINGS_NAMES
+#: Cargo's config is matched by path, never by the bare name: a bare ``config.toml``
+#: would strip unrelated project files.
+_STRIP_PATHS = (".cargo/config.toml",)
+#: Directory names whose whole file list is stripped at any depth. Cargo reads
+#: ``.cargo/config`` too and prefers it when both names exist.
+_STRIP_DIR_FILES = {".cargo": ("config", "config.toml")}
 _ENV_COPIED = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
 _ENV_WINDOWS = ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT")
 # needle, lens, tool, reason. One degraded input per changed file that contains the needle.
@@ -97,7 +180,29 @@ _COMMENT_MARKERS = (
     ("ruff: ignore", "correctness", "ruff", "ruff-ignore"),
     ("nosec", "security", "bandit", "bandit-nosec"),
     ("shellcheck disable", "correctness", "shellcheck", "shellcheck-disable"),
+    ("eslint-disable", "correctness", "eslint", "eslint-disable"),
+    ("ts-nocheck", "correctness", "tsc", "ts-nocheck"),
+    ("ts-ignore", "correctness", "tsc", "ts-ignore"),
+    ("swiftlint:disable", "correctness", "swiftlint", "swiftlint-disable"),
+    ("// ignore:", "correctness", "dart", "dart-ignore"),
+    ("//ignore:", "correctness", "dart", "dart-ignore"),
+    ("#[allow(", "correctness", "clippy", "rust-allow"),
+    ("#![allow(", "correctness", "clippy", "crate-allow"),
+    ("cargo-machete", "architecture-maintainability", "cargo-machete", "machete-ignore"),
 )
+#: Language markers (basenames, matched recursively) for the C4c language gate.
+_LANGUAGE_MARKERS = {
+    "typescript": frozenset({
+        "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
+    }),
+    "dart": frozenset({"pubspec.yaml", "pubspec.lock"}),
+    "rust": frozenset({"Cargo.toml", "Cargo.lock"}),
+    "swift": frozenset({"Package.swift", "Package.resolved"}),
+}
+#: Prefix matches for marker basenames (``tsconfig.json``, ``tsconfig.base.json``).
+_LANGUAGE_MARKER_PREFIXES = {
+    "typescript": ("tsconfig.",),
+}
 
 Process = Callable[..., "ProcessResult"]
 
@@ -143,6 +248,9 @@ class ScanContext:
     base: str = ""
     test_command: str = ""
     commands: tuple[tuple[str, str], ...] = ()
+    #: Base-commit files the adapter asked for, as ``(name, path)`` in the order
+    #: ``Adapter.base_files`` names them. ``None`` means absent at base.
+    base_files: tuple[tuple[str, Path | None], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -176,6 +284,10 @@ class ParseResult:
     problems: tuple[str, ...] = ()
     items: tuple[Mapping[str, Any], ...] = ()
     gaps: tuple[tuple[str, str], ...] = ()
+    #: A parse-time degraded input as ``(reason, row)``. Set when the output
+    #: proves the run cannot answer its row (a shuffle run that executed zero
+    #: tests) instead of emitting findings.
+    gap: tuple[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -209,6 +321,28 @@ class Adapter:
     rules: tuple[RulePin, ...] = ()
     version_argv: tuple[str, ...] = ()
     narrow_env: bool = False
+    #: Saga's own trusted scripts keep the operator's environment, so operator
+    #: configuration (``gh`` authentication) reaches the tools they call.
+    #: Narrow wins: an adapter that runs untrusted code stays narrowed.
+    ambient_env: bool = False
+    #: Which stream ``parse`` reads: ``stdout``, ``stderr`` or ``both``.
+    stream: str = "stdout"
+    #: Machine report the tool writes under the scan root, read after the run.
+    report_file: str | None = None
+    #: Empty output plus exit 0 parses as zero hits, for checkers silent on
+    #: success. Runners leave this false: empty test output is a broken harness.
+    silent_ok: bool = False
+    #: Known-gap adapters short-circuit before the platforms and version probes:
+    #: ``[]`` without their language markers, ``known-gap`` with them.
+    gap_first: bool = False
+    #: Base-commit file names staged onto ``ScanContext.base_files``.
+    base_files: tuple[str, ...] = ()
+    #: Directories under the scan root searched for the tool before PATH.
+    local_bins: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.stream not in ("stdout", "stderr", "both"):
+            raise RunnerFailure(2, f"{self.id}: stream must be stdout, stderr or both")
 
 
 def load_tool_list(path: Path | None = None) -> list[dict[str, Any]]:
@@ -231,6 +365,10 @@ def default_adapters() -> list[Adapter]:
     import review_adapters_python as python_adapters
     import review_adapters_shell as shell
     import review_adapters_workflows as workflows
+    import review_adapters_typescript as typescript
+    import review_adapters_dart as dart
+    import review_adapters_rust as rust
+    import review_adapters_swift as swift
     import review_checks
 
     return [
@@ -240,6 +378,10 @@ def default_adapters() -> list[Adapter]:
         *shell.ADAPTERS,
         *workflows.ADAPTERS,
         *markdown.ADAPTERS,
+        *typescript.ADAPTERS,
+        *dart.ADAPTERS,
+        *rust.ADAPTERS,
+        *swift.ADAPTERS,
         *review_checks.ADAPTERS,
     ]
 
@@ -271,6 +413,55 @@ def _overlaps(hit: Hit, change: review_diff.Change) -> bool:
 def _display_path(path: str) -> str:
     text = path.replace("\\", "/")
     return text[2:] if text.startswith("./") else text
+
+
+def _relative_hit(hit: Hit, root: Path) -> Hit:
+    """Rewrite an absolute hit path relative to the scanned root.
+
+    Tools that print absolute paths (eslint, SwiftLint, the Swift compiler) would
+    otherwise never match the change. Relative paths pass through untouched, so no
+    C4a adapter changes. A path outside the root is matched by repo suffix (tools
+    like Muter copy the tree elsewhere and report that copy); one without a
+    unique match keeps its absolute form and the filters drop it.
+    """
+    candidate = Path(hit.path)
+    if not candidate.is_absolute():
+        return hit
+    try:
+        relative = candidate.relative_to(root)
+    except ValueError:
+        mapped = _repo_relative(candidate, root)
+        return replace(hit, path=mapped) if mapped is not None else hit
+    return replace(hit, path=relative.as_posix())
+
+
+@lru_cache(maxsize=128)
+def _tracked_files(root: str) -> tuple[str, ...]:
+    """Repo-relative tracked files under a scan root, cached per root."""
+    result = _git(Path(root), ["ls-files", "-z"])
+    if result.returncode != 0:
+        return ()
+    return tuple(
+        entry for entry in result.stdout.split("\0") if entry and entry != ".git"
+    )
+
+
+def _repo_relative(candidate: Path, root: Path) -> str | None:
+    """The repo file a foreign absolute path denotes, or None.
+
+    The match is a boundary-aware suffix that is unique across tracked files:
+    ``/tmp/muter_tmp/abc/Sources/a.swift`` denotes ``Sources/a.swift`` when no
+    other tracked file ends that way. Ambiguous or unknown paths stay absolute
+    so the filters drop them instead of misattributing the hit. Roots are
+    unique worktrees, so the cached census cannot go stale within a run.
+    """
+    text = candidate.as_posix()
+    matches = [
+        entry for entry in _tracked_files(str(root)) if text.endswith("/" + entry)
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 def subprocess_runner(
@@ -381,6 +572,9 @@ def _run(
 ) -> int:
     base_sha = _require_sha(repo, base)
     head_sha = _require_sha(repo, head)
+    _rev.cache_clear()
+    _blob.cache_clear()
+    _clean_tree.cache_clear()
     profile, profile_notes = _profile_for_run(repo, base_sha, head_sha, profile_path)
     builder_record = _load_builder(builder)
     try:
@@ -392,23 +586,23 @@ def _run(
     items: list[Mapping[str, Any]] = []
     degraded: list[dict[str, str]] = list(profile_notes)
     deadline = time.monotonic() + MUTATION_CAP_SECONDS
-    base_env = dict(os.environ)
-    # Semgrep phones home for a version check unless told not to; the scan must
-    # stay off the network and never send the operator's token.
-    base_env["SEMGREP_ENABLE_VERSION_CHECK"] = "0"
+    tool_env, tool_temps = _tool_env(home)
+    base_markers = _tree_markers(repo, base_sha)
+    head_markers = _tree_markers(repo, head_sha)
     extra: list[tuple[str, Path]] = []
     try:
         with _worktree(repo, head_sha) as head_root:
             degraded.extend(_strip_settings(head_root))
             degraded.extend(_allow_comments(head_root, change))
             for adapter in adapters:
-                _link_env(adapter, repo, head_root, base_sha, head_sha)
+                _link_env(adapter, repo, head_root, head_sha, head_sha)
             for adapter in adapters:
                 if adapter.mode == "fix" or not adapter.tool:
                     continue
                 pending.extend(_run_adapter(
                     adapter, repo, base_sha, head_sha, head_root, change, home, profile,
-                    process, base_env, deadline, degraded, items,
+                    process, tool_env, deadline, degraded, items, base_markers,
+                    head_markers,
                 ))
             measurements: list[dict[str, Any]] = []
             cov_findings: list[dict[str, Any]] = []
@@ -426,6 +620,128 @@ def _run(
     finally:
         for _language, path in extra:
             shutil.rmtree(path, ignore_errors=True)
+        for path in tool_temps:
+            shutil.rmtree(path, ignore_errors=True)
+
+
+def _marker_hit(language: str, basenames: frozenset[str]) -> bool:
+    """True when any marker basename for ``language`` is present."""
+    if basenames & _LANGUAGE_MARKERS.get(language, frozenset()):
+        return True
+    return any(
+        name.startswith(prefix)
+        for prefix in _LANGUAGE_MARKER_PREFIXES.get(language, ())
+        for name in basenames
+    )
+
+
+def _tree_markers(repo: Path, sha: str) -> frozenset[str] | None:
+    """Marker basenames committed at ``sha``. None when git cannot answer."""
+    result = _git(repo, ["ls-tree", "-r", "--name-only", sha, "--", "."])
+    if result.returncode != 0:
+        return None
+    return frozenset(
+        line.rsplit("/", 1)[-1] for line in result.stdout.splitlines() if line.strip()
+    )
+
+
+def _markers_present(adapter: Adapter, head_markers: frozenset[str]) -> bool:
+    """True when the head tree carries any of the adapter's languages."""
+    return any(
+        language == "*" or _marker_hit(language, head_markers)
+        for language in adapter.languages
+    )
+
+
+def _markers_removed(
+    adapter: Adapter,
+    base_markers: frozenset[str] | None,
+    head_markers: frozenset[str] | None,
+) -> bool:
+    """True when every concrete language of the adapter lost its markers.
+
+    The ``*`` language never counts: C4a adapters scan whatever the tree holds.
+    Unknown trees (either side None) decline to judge.
+    """
+    concrete = [language for language in adapter.languages if language != "*"]
+    if not concrete or base_markers is None or head_markers is None:
+        return False
+    return all(
+        _marker_hit(language, base_markers) and not _marker_hit(language, head_markers)
+        for language in concrete
+    )
+
+
+@contextmanager
+def _staged_base_files(
+    repo: Path, base_sha: str, names: Sequence[str]
+) -> Iterator[tuple[tuple[str, Path | None], ...]]:
+    """Materialize ``git show base:name`` content into temp files.
+
+    Yields ``(name, path)`` in order; ``None`` means absent at base. Nothing is
+    read from the reviewed tree.
+    """
+    staged: list[tuple[str, Path | None]] = []
+    directory: str | None = None
+    try:
+        for name in names:
+            try:
+                result = _git(repo, ["show", f"{base_sha}:{name}"])
+            except UnicodeDecodeError:
+                staged.append((name, None))
+                continue
+            if result.returncode != 0:
+                staged.append((name, None))
+                continue
+            if directory is None:
+                directory = tempfile.mkdtemp(prefix="saga-base-files-")
+            target = Path(directory) / name.replace("/", "_")
+            target.write_bytes(result.stdout.encode())
+            staged.append((name, target))
+        yield tuple(staged)
+    finally:
+        if directory is not None:
+            shutil.rmtree(directory, ignore_errors=True)
+
+
+def _tool_env(home: Path) -> tuple[dict[str, str], list[str]]:
+    """The environment adapter tools run under, plus temp dirs to clean.
+
+    An allow-list (PATH, locale, TZ, the Windows basics) with a fresh HOME and
+    TMPDIR, mirroring the relocated run. ``CARGO_HOME`` points at a persistent
+    credentials-free cache under ``.saga`` so public crates resolve without
+    operator credentials. Cargo-family runs override it per invocation (see
+    ``_execute``). ``RUSTUP_HOME`` passes through (defaulting to the real
+    home's ``.rustup``) so a rustup proxy finds its toolchain under the fresh
+    HOME, as does ``RUSTUP_TOOLCHAIN`` when set. Returns the env and the temp
+    dirs the caller removes.
+    """
+    names = ("PATH", "PATHEXT", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
+    if sys.platform == "win32":
+        names += ("SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "TEMP", "TMP", "COMSPEC")
+    env = {name: os.environ[name] for name in names if name in os.environ}
+    fresh_home = tempfile.mkdtemp(prefix="saga-tool-home-")
+    fresh_tmp = tempfile.mkdtemp(prefix="saga-tool-tmp-")
+    env["HOME"] = fresh_home
+    env["TMPDIR"] = fresh_tmp
+    if sys.platform == "win32":
+        env["TEMP"] = fresh_tmp
+        env["TMP"] = fresh_tmp
+    cache = _saga(home) / "cargo-home"
+    existed = cache.exists()
+    cache.mkdir(mode=0o700, exist_ok=True)
+    if not existed:
+        try:
+            os.chmod(cache, 0o700)
+        except OSError:  # pragma: no cover - Windows ACLs
+            pass
+    env["CARGO_HOME"] = str(cache)
+    env["RUSTUP_HOME"] = os.environ.get("RUSTUP_HOME") or str(
+        Path.home() / ".rustup"
+    )
+    if "RUSTUP_TOOLCHAIN" in os.environ:
+        env["RUSTUP_TOOLCHAIN"] = os.environ["RUSTUP_TOOLCHAIN"]
+    return env, [fresh_home, fresh_tmp]
 
 
 def _run_adapter(
@@ -442,7 +758,19 @@ def _run_adapter(
     deadline: float,
     degraded: list[dict[str, str]],
     items: list[Mapping[str, Any]],
+    base_markers: frozenset[str] | None,
+    head_markers: frozenset[str] | None,
 ) -> list[Hit]:
+    if _markers_removed(adapter, base_markers, head_markers):
+        degraded.append(
+            _degraded(adapter, _primary_row(adapter), "language-markers-removed")
+        )
+    if adapter.gap_first and head_markers is not None:
+        rows = adapter.gap_rows or adapter.rows[:1]
+        if _markers_present(adapter, head_markers):
+            for row in rows:
+                degraded.append(_degraded(adapter, row, "known-gap"))
+        return []
     if adapter.platforms and sys.platform not in adapter.platforms:
         degraded.append(_degraded(adapter, _primary_row(adapter), "unsupported-platform"))
         return []
@@ -462,7 +790,7 @@ def _run_adapter(
         if cache_problem is not None:
             degraded.append(_degraded(adapter, _primary_row(adapter), cache_problem))
             return []
-        version, problem = _read_version(adapter, profile, process, env)
+        version, problem = _read_version(adapter, profile, process, env, head_root)
         if problem in {"missing", "timeout"}:
             degraded.append(_degraded(adapter, _primary_row(adapter), problem))
             return []
@@ -476,25 +804,27 @@ def _run_adapter(
         if adapter.mutation:
             timeout = max(1, min(timeout, int(deadline - time.monotonic())))
         ran = version or adapter.default_version
-        context = ScanContext(
-            head_root,
-            head_root,
-            home,
-            configs,
-            base=base_sha,
-            test_command=_python_test_command(profile),
-            commands=_scan_commands(profile),
-        )
         comparison = "base-head" if adapter.type_checker else adapter.comparison
-        if comparison == "base-head":
-            hits, digests = _base_and_head(
-                adapter, repo, base_sha, head_sha, head_root, context, process, env, timeout,
-                ran, degraded, _rules_digest(rules), items,
+        with _staged_base_files(repo, base_sha, adapter.base_files) as staged:
+            context = ScanContext(
+                head_root,
+                head_root,
+                home,
+                configs,
+                base=base_sha,
+                test_command=_python_test_command(profile),
+                commands=_scan_commands(profile),
+                base_files=staged,
             )
-        else:
-            hits, digests = _once(
-                adapter, context, process, env, timeout, "head", degraded, items
-            )
+            if comparison == "base-head":
+                hits, digests = _base_and_head(
+                    adapter, repo, base_sha, head_sha, head_root, context, process, env,
+                    timeout, ran, degraded, _rules_digest(rules), items,
+                )
+            else:
+                hits, digests = _once(
+                    adapter, context, process, env, timeout, "head", degraded, items
+                )
         if not hits and not digests:
             return []
         digest = digests.get("head") or digests.get("base") or store_raw(b"", home)
@@ -554,6 +884,10 @@ def _once(
         degraded.append(_degraded(adapter, _primary_row(adapter), failure))
         return (), {}
     assert parsed is not None
+    if parsed.gap is not None:
+        reason, row = parsed.gap
+        degraded.append(_degraded(adapter, row, reason))
+        return (), {}
     if parsed.unfinished:
         degraded.append(_degraded(adapter, "testing.surviving-mutant", "cap"))
         parsed = ParseResult(
@@ -565,7 +899,8 @@ def _once(
         )
     _absorb(adapter, parsed, label, degraded, items)
     digest = store_raw((result.stdout or "").encode(), context.home)
-    return parsed.hits, {label: digest}
+    hits = tuple(_relative_hit(hit, context.root) for hit in parsed.hits)
+    return hits, {label: digest}
 
 
 def _base_and_head(
@@ -589,8 +924,9 @@ def _base_and_head(
     if cached is None:
         try:
             with _worktree(repo, base_sha) as base_root:
+                _strip_settings(base_root, only=_C4C_SETTINGS_NAMES)
                 _link_env(adapter, repo, base_root, base_sha, head_sha)
-                base_hits, _base_digest, base_problem = _scan_root(
+                base_hits, _base_digest, base_problem, base_ran = _scan_root(
                     adapter, replace(context, repo=base_root, root=base_root), process, env,
                     timeout, "base", degraded, items,
                 )
@@ -598,6 +934,7 @@ def _base_and_head(
             # The base tree declined. Head is still compared against no earlier findings.
             base_hits = ()
             base_problem = None
+            base_ran = False
         if base_problem == "empty-output":
             degraded.append(_degraded(adapter, _primary_row(adapter), base_problem))
             base_hits = ()
@@ -606,12 +943,13 @@ def _base_and_head(
             return (), {}
         else:
             _write_base_cache(
-                context.home, adapter, version, base_sha, settings, key, base_hits
+                context.home, adapter, version, base_sha, settings, key, base_hits,
+                base_ran,
             )
     else:
-        base_hits = cached
+        base_hits, base_ran = cached
     try:
-        head_hits, head_digest, head_problem = _scan_root(
+        head_hits, head_digest, head_problem, head_ran = _scan_root(
             adapter, replace(context, repo=head_root, root=head_root), process, env, timeout,
             "head", degraded, items,
         )
@@ -621,6 +959,10 @@ def _base_and_head(
     if head_problem is not None:
         degraded.append(_degraded(adapter, _primary_row(adapter), head_problem))
         return (), {}
+    if base_ran and not head_ran and _reads_lockfiles(adapter):
+        # The base audit read a lockfile the head scan does not read. Comparing
+        # against silence would drop base advisories as a clean result.
+        degraded.append(_degraded(adapter, _primary_row(adapter), "lockfile-removed"))
     base_ids = {_identity(adapter, hit) for hit in base_hits}
     kept = tuple(hit for hit in head_hits if _identity(adapter, hit) not in base_ids)
     return kept, {"head": head_digest}
@@ -635,26 +977,30 @@ def _scan_root(
     label: str,
     degraded: list[dict[str, str]],
     items: list[Mapping[str, Any]],
-) -> tuple[tuple[Hit, ...], str, str | None]:
+) -> tuple[tuple[Hit, ...], str, str | None, bool]:
     result, problem, ran = _capture(adapter, context, process, env, timeout)
     if not ran:
-        return (), "", None
+        return (), "", None, False
     if problem is not None:
-        return (), "", problem
+        return (), "", problem, True
     assert result is not None
     parsed, failure = _parsed(adapter, result, label)
     if parsed is not None:
         _note_problems(adapter, parsed, degraded)
     if failure is not None:
-        return (), "", failure
+        return (), "", failure, True
     assert parsed is not None
+    if parsed.gap is not None:
+        reason, row = parsed.gap
+        degraded.append(_degraded(adapter, row, reason))
+        return (), "", None, True
     digest = store_raw((result.stdout or "").encode(), context.home)
-    hits = parsed.hits
+    hits = tuple(_relative_hit(hit, context.root) for hit in parsed.hits)
     if parsed.unfinished:
         degraded.append(_degraded(adapter, "testing.surviving-mutant", "cap"))
         hits = tuple(replace(hit, degraded=True) for hit in hits)
     _absorb(adapter, parsed, label, degraded, items)
-    return hits, digest, None
+    return hits, digest, None, True
 
 
 def _capture(
@@ -667,6 +1013,8 @@ def _capture(
     """Run ``invoke``. jscpd is parsed from a report outside either worktree.
 
     The third value is false when ``invoke`` returned no argument vector. ``ToolGap`` propagates.
+    When the adapter declares ``stream`` or ``report_file``, the parsed text replaces
+    stdout on the returned result, so parsing and the stored raw output read the same bytes.
     """
     report_dir: Path | None = None
     scan = context
@@ -677,7 +1025,32 @@ def _capture(
         argv = adapter.invoke(scan)
         if not argv:
             return None, None, False
+        if adapter.report_file is not None:
+            # A committed report (or a symlink where the report goes) must
+            # not be what gets parsed. Refuse a report that would land
+            # outside the scan root before anything runs or is deleted.
+            report = scan.root / adapter.report_file
+            if not _within_root(scan.root, report.parent):
+                return None, "unparseable", True
+            _remove_tree(report)
         result, problem = _execute(adapter, argv, scan.root, process, env, timeout)
+        if result is not None and problem is None:
+            if adapter.report_file is not None:
+                report = scan.root / adapter.report_file
+                if report.is_symlink():
+                    return None, "unparseable", True
+                try:
+                    text = report.read_bytes().decode("utf-8", errors="replace")
+                except OSError:
+                    return None, "unparseable", True
+                result = ProcessResult(result.code, text, result.stderr)
+            elif adapter.stream == "stderr":
+                result = ProcessResult(result.code, result.stderr or "", result.stderr)
+            elif adapter.stream == "both":
+                combined = "\n".join(
+                    part for part in (result.stdout or "", result.stderr or "") if part
+                )
+                result = ProcessResult(result.code, combined, result.stderr)
         if adapter.id == "jscpd" and result is not None and problem is None and report_dir is not None:
             report = report_dir / "jscpd-report.json"
             text = report.read_text(encoding="utf-8") if report.is_file() else ""
@@ -698,10 +1071,26 @@ def _execute(
 ) -> tuple[ProcessResult | None, str | None]:
     if isinstance(argv, str) or not isinstance(argv, list):
         raise RunnerFailure(1, f"{adapter.id}: invoke returned a string command")
+    if argv and adapter.local_bins and not os.path.isabs(argv[0]):
+        resolved = _resolve_tool(adapter, cwd, argv[0])
+        argv = [resolved, *argv[1:]]
     run_env: Mapping[str, str] = env
     temps: list[Path] = []
     if adapter.narrow_env:
         run_env, temps = _relocated_env()
+    elif adapter.ambient_env:
+        run_env = dict(os.environ)
+    if adapter.tool == "semgrep":
+        # Semgrep phones home for a version check unless told not to; the scan
+        # must stay off the network and never send the operator's token.
+        run_env = {**run_env, "SEMGREP_ENABLE_VERSION_CHECK": "0"}
+    if argv and Path(argv[0]).name.startswith("cargo"):
+        # A commit's build script runs under this environment, so a shared
+        # CARGO_HOME would let it plant config the next invocation reads.
+        # Each cargo invocation gets a fresh home that dies with it.
+        cargo_home = Path(tempfile.mkdtemp(prefix="saga-cargo-home-"))
+        temps.append(cargo_home)
+        run_env = {**run_env, "CARGO_HOME": str(cargo_home)}
     try:
         try:
             result = process(argv, cwd=cwd, env=run_env, timeout=timeout, shell=False)
@@ -715,13 +1104,31 @@ def _execute(
             shutil.rmtree(path, ignore_errors=True)
 
 
+def _resolve_tool(adapter: Adapter, root: Path, tool: str) -> str:
+    """A scan-root-local tool binary wins over PATH. Otherwise the bare name."""
+    for directory in adapter.local_bins:
+        candidate = root / directory / tool
+        if candidate.is_file():
+            return str(candidate)
+        if sys.platform == "win32":
+            for suffix in (".exe", ".cmd"):
+                if candidate.with_suffix(suffix).is_file():
+                    return str(candidate.with_suffix(suffix))
+    return tool
+
+
 def _parsed(
     adapter: Adapter, result: ProcessResult, label: str
 ) -> tuple[ParseResult | None, str | None]:
-    """Empty success is ``empty-output``. A non-zero run with no hits cannot be compared."""
+    """Empty success is ``empty-output`` unless the adapter is silent on success.
+
+    A non-zero run with no hits cannot be compared. A parse-time gap wins over both.
+    """
     text = result.stdout or ""
     if not text.strip():
         if result.code == 0:
+            if adapter.silent_ok:
+                return ParseResult(()), None
             return None, "empty-output"
         if label == "base":
             return None, "base-deps-missing"
@@ -734,6 +1141,8 @@ def _parsed(
         if label == "base" and result.code != 0:
             return None, "base-deps-missing"
         return None, "unparseable"
+    if produced.gap is not None:
+        return produced, None
     if result.code != 0 and not produced.hits and not produced.unfinished:
         if label == "base":
             return produced, "base-deps-missing"
@@ -746,6 +1155,7 @@ def _read_version(
     profile: Mapping[str, Any],
     process: Process,
     env: Mapping[str, str],
+    root: Path,
 ) -> tuple[str | None, str | None]:
     pinned = _pinned_version(adapter, profile)
     if not adapter.tool:
@@ -757,10 +1167,25 @@ def _read_version(
             if adapter.version_argv
             else [adapter.tool, *adapter.version_args]
         )
+        if adapter.local_bins and probe_argv and not os.path.isabs(probe_argv[0]):
+            probe_argv = [
+                _resolve_tool(adapter, root, probe_argv[0]), *probe_argv[1:]
+            ]
+        # A probe executes the same tool binary as the scan, so by default it
+        # gets the narrowed run environment. The exceptions keep C4b's pinned
+        # contract: a narrow adapter's probe stays ambient while its scan is
+        # relocated, and saga's own trusted scripts stay ambient throughout.
+        if adapter.narrow_env or adapter.ambient_env:
+            probe_env = dict(os.environ)
+        else:
+            probe_env = env
+        if adapter.tool == "semgrep":
+            probe_env = {**probe_env, "SEMGREP_ENABLE_VERSION_CHECK": "0"}
         try:
             result = process(
                 probe_argv,
-                cwd=probe, env=env, timeout=adapter.timeout_seconds, shell=False,
+                cwd=probe, env=probe_env, timeout=adapter.timeout_seconds,
+                shell=False,
             )
         except FileNotFoundError:
             return None, "missing"
@@ -768,12 +1193,29 @@ def _read_version(
             return None, "timeout"
     finally:
         shutil.rmtree(probe, ignore_errors=True)
-    found = _VERSION.search(result.stdout or result.stderr or "")
-    if found is None:
+    version = _found_version(result.stdout or result.stderr or "")
+    if version is None:
         return pinned, "version-unreadable"
-    if found.group(0) != pinned:
-        return found.group(0), "version-mismatch"
-    return found.group(0), None
+    if version != pinned:
+        return version, "version-mismatch"
+    return version, None
+
+
+def _found_version(text: str) -> str | None:
+    """Dotted version anywhere, else a bare integer only as the whole output.
+
+    Muter tags its releases ``16``, ``15`` and prints the bare number, so the
+    dotted match never fires for it. A bare number anywhere in longer output
+    would read build counts and warning tallies as versions, hence the
+    whole-output rule.
+    """
+    found = _VERSION.search(text)
+    if found is not None:
+        return found.group(0)
+    bare = text.strip()
+    if _BARE_VERSION.fullmatch(bare):
+        return bare
+    return None
 
 
 def _saga(home: Path) -> Path:
@@ -840,6 +1282,13 @@ def _primary_row(adapter: Adapter) -> str:
     if adapter.rows:
         return adapter.rows[0]
     return f"{adapter.lens}.tool-unscoped"
+
+
+def _reads_lockfiles(adapter: Adapter) -> bool:
+    """True for dependency audits that read lockfiles as their scan input."""
+    if not adapter.lockfiles:
+        return False
+    return any(row.startswith("security.dependency") for row in adapter.rows)
 
 
 def _present(path: Path) -> bool:
@@ -1304,17 +1753,31 @@ def _load_builder(path: Path | None) -> dict[str, Any] | None:
     return data
 
 
-def _strip_settings(root: Path) -> list[dict[str, str]]:
-    """Unlink scanner settings in the head worktree. Record each path once."""
+def _strip_settings(
+    root: Path, only: tuple[str, ...] | None = None
+) -> list[dict[str, str]]:
+    """Unlink scanner settings under ``root``. Record each path once.
+
+    ``only`` limits the strip to the named basenames (the base worktree strips
+    the C4c names only, so C4a's base behavior is unchanged). ``_STRIP_PATHS``
+    and ``_STRIP_DIR_FILES`` always apply: registry and cargo configs must not
+    differ between trees.
+    """
+    names = _STRIP_NAMES if only is None else only
     found: list[str] = []
     for directory, dirnames, filenames in os.walk(root, followlinks=False):
         if ".git" in dirnames:
             dirnames.remove(".git")
         for name in filenames:
-            if name not in _SETTINGS_NAMES:
-                continue
             path = Path(directory) / name
-            found.append(path.relative_to(root).as_posix())
+            relative = path.relative_to(root).as_posix()
+            if (
+                name not in names
+                and relative not in _STRIP_PATHS
+                and name not in _STRIP_DIR_FILES.get(Path(relative).parent.name, ())
+            ):
+                continue
+            found.append(relative)
             path.unlink()
     notes = []
     for relative in sorted(set(found)):
@@ -1814,7 +2277,11 @@ def _worktree(repo: Path, revision: str) -> Iterator[Path]:
             detail = (added.stderr or added.stdout or "git worktree add failed").strip()
             raise RunnerFailure(2, detail)
         try:
-            yield path
+            # Resolved: tools compare their config's real path against the scan
+            # root, and an unresolved TMPDIR (macOS /var -> /private/var) makes
+            # every file read as outside the base path. Relative-path tools
+            # cannot tell, so no C4a adapter changes.
+            yield path.resolve()
         finally:
             _git(repo, ["worktree", "remove", "--force", str(path)])
             if path.exists():
@@ -1836,23 +2303,61 @@ def _git(
     )
 
 
-def _link_env(adapter: Adapter, repo: Path, base_root: Path, base: str, head: str) -> None:
-    """Symlink dependency directories only when this checkout is the requested head."""
+def _link_env(
+    adapter: Adapter, repo: Path, target_root: Path, target: str, head: str
+) -> None:
+    """Symlink dependency directories when this checkout carries the target's lockfiles.
+
+    The working tree must sit at the reviewed head, every lockfile present in the
+    target must match the working tree's committed copy, and the working copies
+    must be clean. Lockfiles absent from the target are skipped, so multi-lockfile
+    rows link for whichever manager the tree uses.
+    """
     if not adapter.env_dirs:
         return
+    if target == head:
+        # The reviewed tree is untrusted: a committed dependency directory
+        # would be the code the tools resolve and run. Remove it before the
+        # operator tree is linked. The base tree keeps its own: base is
+        # trusted, and removing it would lose the baseline whenever base and
+        # head lockfiles differ.
+        for name in adapter.env_dirs:
+            _remove_tree(target_root / name)
     if _rev(repo, "HEAD") != _rev(repo, head):
         return
     for lock in adapter.lockfiles:
-        base_blob = _blob(repo, base, lock)
-        if not base_blob or base_blob != _blob(repo, head, lock):
+        target_blob = _blob(repo, target, lock)
+        if target_blob is None:
+            continue
+        if _blob(repo, "HEAD", lock) != target_blob:
+            return
+        if not _clean_tree(repo, lock):
             return
     for name in adapter.env_dirs:
         source = repo / name
-        dest = base_root / name
-        if source.exists() and not dest.exists():
+        dest = target_root / name
+        if source.exists() and not os.path.lexists(dest):
             dest.symlink_to(source, target_is_directory=source.is_dir())
 
 
+def _remove_tree(path: Path) -> None:
+    """Unlink a file or symlink, or remove a directory. Missing is fine."""
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+
+
+def _within_root(root: Path, path: Path) -> bool:
+    """True when ``path`` resolves inside ``root``. Symlink escapes fail."""
+    try:
+        path.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+@lru_cache(maxsize=1024)
 def _rev(repo: Path, revision: str) -> str:
     result = _git(repo, ["rev-parse", revision])
     if result.returncode != 0:
@@ -1860,11 +2365,19 @@ def _rev(repo: Path, revision: str) -> str:
     return result.stdout.strip()
 
 
+@lru_cache(maxsize=4096)
 def _blob(repo: Path, revision: str, path: str) -> str | None:
     result = _git(repo, ["rev-parse", f"{revision}:{path}"])
     if result.returncode != 0:
         return None
     return result.stdout.strip()
+
+
+@lru_cache(maxsize=1024)
+def _clean_tree(repo: Path, path: str) -> bool:
+    """True when ``path`` matches HEAD with no staged, unstaged or untracked delta."""
+    result = _git(repo, ["status", "--porcelain", "--", path])
+    return result.returncode == 0 and not result.stdout.strip()
 
 
 def _cache_path(home: Path, adapter: Adapter, version: str, base_sha: str, settings: str) -> Path:
@@ -1879,10 +2392,11 @@ def _write_base_cache(
     settings: str,
     key: Mapping[str, str],
     hits: Sequence[Hit],
+    ran: bool,
 ) -> None:
     target = _cache_path(home, adapter, version, base_sha, settings)
     target.parent.mkdir(parents=True, exist_ok=True)
-    body = {"key": dict(key), "hits": [asdict(hit) for hit in hits]}
+    body = {"key": dict(key), "hits": [asdict(hit) for hit in hits], "ran": ran}
     target.write_text(json.dumps(body, sort_keys=True), encoding="utf-8")
     target.chmod(0o600)
 
@@ -1894,8 +2408,8 @@ def _read_base_cache(
     base_sha: str,
     settings: str,
     key: Mapping[str, str],
-) -> tuple[Hit, ...] | None:
-    """A miss leaves the file in place. A list in the old shape is a miss."""
+) -> tuple[tuple[Hit, ...], bool] | None:
+    """A miss leaves the file in place. A list, or a dict without ``ran``, is a miss."""
     target = _cache_path(home, adapter, version, base_sha, settings)
     if not target.is_file():
         return None
@@ -1904,6 +2418,8 @@ def _read_base_cache(
     except (OSError, json.JSONDecodeError):
         return None
     if not isinstance(raw, dict) or raw.get("key") != dict(key):
+        return None
+    if not isinstance(raw.get("ran"), bool):
         return None
     items = raw.get("hits")
     if not isinstance(items, list):
@@ -1918,7 +2434,7 @@ def _read_base_cache(
             hits.append(Hit(**payload))
         except TypeError:
             return None
-    return tuple(hits)
+    return tuple(hits), raw["ran"]
 
 
 def _parser() -> argparse.ArgumentParser:

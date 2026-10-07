@@ -1,0 +1,28 @@
+// Plugin default ESLint flat config (issue 153).
+// Used only when the base commit carries no ESLint config of its own.
+// Core rules only, with no imports: the default must load wherever ESLint runs,
+// including trees that never installed a lint plugin. A project that wants more
+// says so with its own base config. The inline globals are the runtimes every
+// JavaScript environment provides, so the default does not flag them.
+export default [
+  {
+    languageOptions: {
+      globals: {
+        console: "readonly",
+        process: "readonly",
+        Buffer: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+        setInterval: "readonly",
+        clearInterval: "readonly",
+        fetch: "readonly",
+        URL: "readonly",
+      },
+    },
+    rules: {
+      "no-undef": "error",
+      "no-redeclare": "error",
+      "no-unused-vars": "warn",
+    },
+  },
+];

@@ -21,6 +21,11 @@ from typing import Any
 
 import pytest
 
+# The thin-client tests below drive a resident process over owner-only
+# AF_UNIX sockets in a temp dir: local IPC, never IP traffic. That is why
+# this file opts out of the suite-wide socket refusal (issue 153).
+pytestmark = pytest.mark.allow_sockets
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 _HERE = Path(__file__).resolve().parent
 HARNESS_PATH = _HERE / "support" / "prompt_suggestion_latency.py"
@@ -763,3 +768,10 @@ def test_the_floor_shape_makes_no_request_at_all() -> None:
         shape="floor", prompt="x", socket="", transport="", commands_dir=str(SAGA_COMMANDS)
     )
     assert harness.cmd_hook(args) == 0
+
+
+def test_the_suite_guard_refuses_network_sockets_but_allows_unix() -> None:
+    with pytest.raises(AssertionError):
+        socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as unix:
+        assert unix.family == socket.AF_UNIX

@@ -1,0 +1,89 @@
+{
+  "globalMutationScore": 50,
+  "totalAppliedMutationOperators": 4,
+  "numberOfKilledMutants": 2,
+  "projectCodeCoverage": null,
+  "fileReports": [
+    {
+      "fileName": "example.swift",
+      "mutationScore": 50,
+      "appliedOperators": [
+        {
+          "mutationPoint": {
+            "mutationOperatorId": "RelationalOperatorReplacement",
+            "filePath": "/tmp/muter_tmp/abc123/Sources/example.swift",
+            "position": {
+              "utf8Offset": 42,
+              "line": 2,
+              "column": 7
+            }
+          },
+          "testSuiteOutcome": "passed",
+          "mutationSnapshot": {
+            "before": "a == b",
+            "after": "a != b",
+            "description": "Replace == with !="
+          }
+        },
+        {
+          "mutationPoint": {
+            "mutationOperatorId": "RemoveSideEffects",
+            "filePath": "/tmp/muter_tmp/abc123/Sources/example.swift",
+            "position": {
+              "utf8Offset": 90,
+              "line": 4,
+              "column": 5
+            }
+          },
+          "testSuiteOutcome": "failed",
+          "mutationSnapshot": {
+            "before": "print(x)",
+            "after": "",
+            "description": "Remove side effect"
+          }
+        },
+        {
+          "mutationPoint": {
+            "mutationOperatorId": "SwapTernary",
+            "filePath": "/tmp/muter_tmp/abc123/Sources/example.swift",
+            "position": {
+              "utf8Offset": 120,
+              "line": 6,
+              "column": 12
+            }
+          },
+          "testSuiteOutcome": "timeout",
+          "mutationSnapshot": {
+            "before": "a ? b : c",
+            "after": "a ? c : b",
+            "description": "Swap ternary branches"
+          }
+        }
+      ]
+    },
+    {
+      "fileName": "other.swift",
+      "mutationScore": 0,
+      "appliedOperators": [
+        {
+          "mutationPoint": {
+            "mutationOperatorId": "ChangeLogicalConnector",
+            "filePath": "/tmp/muter_tmp/abc123/Sources/other.swift",
+            "position": {
+              "utf8Offset": 30,
+              "line": 3,
+              "column": 9
+            }
+          },
+          "testSuiteOutcome": "passed",
+          "mutationSnapshot": {
+            "before": "a && b",
+            "after": "a || b",
+            "description": "Replace && with ||"
+          }
+        }
+      ]
+    }
+  ],
+  "timeElapsed": "00:00:12.345"
+}

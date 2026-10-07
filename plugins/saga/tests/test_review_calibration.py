@@ -55,7 +55,11 @@ def _block_network(monkeypatch: pytest.MonkeyPatch) -> None:
     def refuse(*_args: object, **_kwargs: object) -> None:
         raise OSError("network blocked")
 
-    monkeypatch.setattr(socket.socket, "connect", refuse)
+    if hasattr(socket.socket, "connect"):
+        # The suite-wide guard in conftest replaces socket.socket outright,
+        # which refuses creation before connect is reached. Patch the method
+        # only when the class is still the real one.
+        monkeypatch.setattr(socket.socket, "connect", refuse)
     monkeypatch.setattr(socket, "create_connection", refuse)
 
 

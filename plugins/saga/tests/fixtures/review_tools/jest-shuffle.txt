@@ -1,0 +1,9 @@
+FAIL __tests__/example.test.js
+  ● adds
+    expect(received).toBe(expected)
+    Expected: 4
+    Received: 3
+Seed:        1234
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 1 total
+Snapshots:   0 total

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "1.0",
+  "thresholds": {"high": 80, "low": 60, "break": 0},
+  "files": {
+    "src/example.js": {
+      "language": "javascript",
+      "mutants": [
+        {
+          "id": "0",
+          "mutatorName": "ArithmeticOperator",
+          "description": "Addition",
+          "location": {"start": {"line": 2, "column": 10}, "end": {"line": 2, "column": 11}},
+          "status": "Survived",
+          "coveredBy": ["adds"],
+          "killedBy": [],
+          "testsCompleted": 1
+        },
+        {
+          "id": "1",
+          "mutatorName": "BooleanLiteral",
+          "description": "Boolean literal",
+          "location": {"start": {"line": 3, "column": 12}, "end": {"line": 3, "column": 16}},
+          "status": "Killed",
+          "coveredBy": ["adds"],
+          "killedBy": ["adds"],
+          "testsCompleted": 1
+        }
+      ]
+    }
+  }
+}
