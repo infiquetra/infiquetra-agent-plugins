@@ -52,8 +52,9 @@ The kinds on the list today:
 - The default tool list, its diff and coverage helpers, and the Semgrep pack's content hash. The cached Semgrep rule packs are not a repository path. The pack's sha256 sits beside the pin in `review-tools.yaml`, and that yaml is on the list, so a pin change changes the fingerprint.
 - The reviewer's prompt, answer schema, and launch settings. The launch settings are `targeted-reviewer-launch.json` (vendor and model).
 - The sweep: `sweep_pieces.py`, `model-prices.yaml`, and fleet-core's `jev_sweep.py` (C6).
+- The Python, CDK, shell, workflow, and Markdown adapters (C4b).
 
-Not on the list yet: question banks and the policy questions, our checks, the later tool adapters, and the review command. A card that adds a review component adds its paths in the same change.
+Not on the list yet: question banks and the policy questions, our checks, and the review command. A card that adds a review component adds its paths in the same change.
 
 Instruction files are recorded in `reviewer_configuration` and are not fingerprinted. `may-block` does not read that field. `review_records.py` is not a component. The record schema is the contract; the validator is held to that schema by its own drift test. `reviewer_answer.py` is not a component either. It refuses an answer and caps an open-search finding; the prompt, the answer schema and the launch settings are the fingerprinted parts, and the module is held by its own tests.
 
@@ -65,6 +66,11 @@ plugins/saga/scripts/review_diff.py
 plugins/saga/scripts/coverage_lines.py
 plugins/saga/scripts/review_adapters_all_languages.py
 plugins/saga/references/review-tools.yaml
+plugins/saga/scripts/review_adapters_python.py
+plugins/saga/scripts/review_adapters_infrastructure.py
+plugins/saga/scripts/review_adapters_shell.py
+plugins/saga/scripts/review_adapters_workflows.py
+plugins/saga/scripts/review_adapters_markdown.py
 plugins/saga/references/targeted-reviewer-prompt.md
 plugins/saga/references/targeted-reviewer-answer.schema.json
 plugins/saga/references/targeted-reviewer-launch.json

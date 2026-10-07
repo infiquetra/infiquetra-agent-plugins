@@ -900,7 +900,16 @@ def test_importing_review_tools_does_not_import_the_adapters() -> None:
         "import sys\n"
         f"sys.path.insert(0, {str(SCRIPTS)!r})\n"
         "import review_tools\n"
-        "raise SystemExit('review_adapters_all_languages' in sys.modules)\n"
+        "names = (\n"
+        "    'review_adapters_all_languages',\n"
+        "    'review_adapters_python',\n"
+        "    'review_adapters_infrastructure',\n"
+        "    'review_adapters_shell',\n"
+        "    'review_adapters_workflows',\n"
+        "    'review_adapters_markdown',\n"
+        ")\n"
+        "present = [name for name in names if name in sys.modules]\n"
+        "raise SystemExit(0 if not present else 'imported ' + ','.join(present))\n"
     )
     completed = subprocess.run(
         [sys.executable, "-c", probe], capture_output=True, text=True, check=False
@@ -945,6 +954,11 @@ def test_fingerprint_names_these_paths() -> None:
         "plugins/saga/scripts/coverage_lines.py",
         "plugins/saga/scripts/review_adapters_all_languages.py",
         "plugins/saga/references/review-tools.yaml",
+        "plugins/saga/scripts/review_adapters_python.py",
+        "plugins/saga/scripts/review_adapters_infrastructure.py",
+        "plugins/saga/scripts/review_adapters_shell.py",
+        "plugins/saga/scripts/review_adapters_workflows.py",
+        "plugins/saga/scripts/review_adapters_markdown.py",
     )
     calibration = SCRIPTS / "review_calibration.py"
     if calibration.exists():

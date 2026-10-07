@@ -47,7 +47,7 @@ An adapter is a frozen object. `invoke` builds an argument vector and does not r
 
 ## The commit under review
 
-The commit under review is untrusted. Pins, rules, the test command, and `coverage_report` come from `.saga-profile.json` at the base commit. Saga's Semgrep rules and the gitleaks config come from this plugin. Scanners read a detached worktree of the head commit after `.semgrepignore`, `.gitleaks.toml`, `.gitleaksignore`, `.jscpd.json`, `whitelizard.txt`, and `osv-scanner.toml` are removed. Semgrep is started with `--disable-nosem`. gitleaks is started with `--config` pointing at `plugins/saga/references/gitleaks.toml` and with `--ignore-gitleaks-allow`. Coverage bytes come only from the relocated command's directory. The base cache is used only when its stored key matches the resolved base commit. Empty standard output with exit 0 is reason `empty-output`. The relocated command's environment copies `PATH`, `LANG`, `LC_ALL`, `LC_CTYPE`, and `TZ` when they are set, and sets `HOME`, `TMPDIR`, `TMP`, and `TEMP` to fresh directories. The command must start from a binary on `PATH`. A relative token is rewritten only when that path exists in the head worktree. A changed line that contains `gitleaks:allow`, `jscpd:ignore`, or `lizard forgives` is a degraded input, and the file is not rewritten. A relative Semgrep rule path from the base profile, other than saga's own rules, is read from a base worktree that stays open until that adapter's scans finish.
+The commit under review is untrusted. Pins, rules, the test command, and `coverage_report` come from `.saga-profile.json` at the base commit. Saga's Semgrep rules and the gitleaks config come from this plugin. Scanners read a detached worktree of the head commit after `.semgrepignore`, `.gitleaks.toml`, `.gitleaksignore`, `.jscpd.json`, `whitelizard.txt`, and `osv-scanner.toml` are removed. Semgrep is started with `--disable-nosem`. gitleaks is started with `--config` pointing at `plugins/saga/references/gitleaks.toml` and with `--ignore-gitleaks-allow`. Coverage bytes come only from the relocated command's directory. The base cache is used only when its stored key matches the resolved base commit. Empty standard output with exit 0 is reason `empty-output`. The relocated command's environment copies `PATH`, `LANG`, `LC_ALL`, `LC_CTYPE`, and `TZ` when they are set, and sets `HOME`, `TMPDIR`, `TMP`, and `TEMP` to fresh directories. The command must start from a binary on `PATH`. A relative token is rewritten only when that path exists in the head worktree. A changed line that contains `gitleaks:allow`, `jscpd:ignore`, `lizard forgives`, `noqa`, `ruff: ignore`, `nosec`, or `shellcheck disable` is a degraded input, and the file is not rewritten. cdk synth, checkov on a synthesized template, cosmic-ray, pytest-randomly, pytest-socket, and zizmor use that same allow-list. The version probe does not. A relative Semgrep rule path from the base profile, other than saga's own rules, is read from a base worktree that stays open until that adapter's scans finish.
 
 A hit carries the rule id, path, statement, anchor, optional level, line range, function, advisory ids, score and row. The runner turns hits into findings. A finding is handed in without a severity. `review_formula.py` computes the severity, and `outcomes.json` is where a reader finds it.
 
@@ -129,9 +129,86 @@ Raw tool output is `~/.saga/review-output/<sha256>`, mode 0600. `~/.saga` is cre
 - `plugins/saga/scripts/coverage_lines.py`
 - `plugins/saga/scripts/review_adapters_all_languages.py`
 - `plugins/saga/references/review-tools.yaml`
+- `plugins/saga/scripts/review_adapters_python.py`
+- `plugins/saga/scripts/review_adapters_infrastructure.py`
+- `plugins/saga/scripts/review_adapters_shell.py`
+- `plugins/saga/scripts/review_adapters_workflows.py`
+- `plugins/saga/scripts/review_adapters_markdown.py`
 
 This card does not create `review_calibration.py`. The Semgrep pack is not a repository path. The yaml sha256 is how a later fingerprint reaches the cache without a download.
 
 ## Profile
 
 The optional `review_tools` block is documented in `plugins/saga/references/repository-profile.md`. Absent is valid.
+
+## Python, CDK, shell, workflows and Markdown
+
+Issue 152 adds these adapters. A formatter (`ruff-format`, `shfmt`) is `mode: fix` and the runner does not start it, so it writes no record. Settings come from the base commit or from a file the adapter writes under the runner home. A settings file in the reviewed tree is not an input. actionlint still reads `.github/actionlint.yaml` beside the workflows when `-config-file` points elsewhere, so it scans a copy of the workflows and that file is left out of the copy. ruff lint uses `--isolated`, `--ignore-noqa`, and `--select ALL`. mypy passes `--config-file` for the base commit's config and does not pass `--strict`. An error is `correctness.type-error` (blocks). A mypy note is level `style` (note). cdk-nag raises a known gap when a project has `cdk.json` and the synth has no nag report, and reason `missing` when `cdk` itself is absent. A tree with no `cdk.json` does not degrade. Checkov blocks only the curated ids below. zizmor is started with `--offline` and receives no GitHub token.
+
+| Adapter id | Comparison | Row the record cites | Computed severity |
+|---|---|---|---|
+| `bandit` | lines | `security.scanner-high` for HIGH; `security.scanner-medium-low` for MEDIUM and LOW | blocks, excused by `scanner-false-positive`; fix later |
+| `pip-audit` | base against head | `security.dependency-high` when no tool scores the advisory | blocks unless `scanner-false-positive`; the scored severity when osv-scanner has one |
+| `mypy` | base against head, type checker | `correctness.type-error` for an error; `correctness.tool-style` for a note | blocks; note |
+| `coverage` | one head report | `testing.uncovered-branch` | blocks, excused by `coverage-gap` |
+| `cosmic-ray` | lines | `testing.surviving-mutant` | blocks, excused by `surviving-mutant` |
+| `pytest-randomly`, `pytest-socket` | lines | `testing.flaky-order-or-network` | fix later |
+| `vulture` | lines | `architecture-maintainability.complexity-dead-code-naming` | note |
+| `import-linter` | base against head | `architecture-maintainability.structural-check-fails` | blocks |
+| `cdk-nag` | base against head | `security.workflow-infra-high` for an error; `security.workflow-infra-medium-low` for a warning | blocks; fix later |
+| `checkov-cdk`, `checkov-cfn` | base against head; lines | `security.tool-curated` when the rule id is curated; `security.tool-unscoped` otherwise | blocks; fix later |
+| `zizmor` | lines | `security.workflow-infra-high` for high; `security.workflow-infra-medium-low` for medium and low; `security.tool-style` for informational | blocks; fix later; note |
+| `ruff-lint` | lines | `correctness.tool-error`, `correctness.tool-warning`, or `correctness.tool-style` from the family draft | blocks; fix later; note |
+| `actionlint` | lines | the same three correctness rows, from the kind draft | blocks; fix later; note |
+| `cfn-lint`, `shellcheck` | lines | the same three correctness rows, from the tool's level | blocks; fix later; note |
+| `markdownlint-cli2` | lines | `correctness.tool-style` | note |
+| `cspell` | lines | `architecture-maintainability.tool-style` | note |
+| `lychee` | lines | `architecture-maintainability.tool-warning` | fix later |
+| `ruff-format`, `shfmt` | not scanned | none | no record |
+
+The family draft, the kind draft, and the curated Checkov ids are the second fence. The first fence stays the semgrep map.
+
+```yaml
+ruff_family_draft:
+  F: error
+  B: error
+  S: error
+  C4: warning
+  UP: warning
+  SIM: warning
+  RUF: warning
+  E: style
+  W: style
+  N: style
+  I: style
+actionlint_kind_draft:
+  syntax-check: error
+  job-needs: error
+  events: error
+  workflow-call: error
+  glob: error
+  matrix: error
+  id: error
+  action: error
+  shell-name: error
+  env-var: error
+  runner-label: error
+  permissions: warning
+  credentials: warning  # actionlint kind, not a stored login
+  shellcheck: warning
+  pyflakes: warning
+  expression: warning
+  if-cond: warning
+  deprecated-commands: style
+checkov_curated:
+  - CKV_AWS_62
+  - CKV_AWS_63
+  - CKV_AWS_356
+  - CKV_AWS_20
+  - CKV_AWS_53
+  - CKV_AWS_54
+  - CKV_AWS_55
+  - CKV_AWS_56
+  - CKV_AWS_57
+  - CKV_AWS_70
+```

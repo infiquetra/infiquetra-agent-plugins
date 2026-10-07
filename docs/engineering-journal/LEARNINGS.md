@@ -9,6 +9,13 @@
 **Mechanism.** In a checkout the script lives at `plugins/saga/scripts/`, so `parents[3]` is the repository. A marketplace install copies `plugins/saga` to the plugin root, so `parents[3]` is outside the plugin and `plugins/saga/...` does not exist there. The calibration file beside the script (`parents[1] / references`) is the one `thresholds()` already reads. Component keys stay repo-relative. `plugins/saga/<rest>` is read from `<package>/<rest>`. `--root` selects the base commit's profile and does not select those bytes.
 
 **Generalizable rule.** A script that runs in the catalog checkout and from the installed plugin resolves its own files from the package directory, and takes the tree under review only as an explicit input.
+### A scanner's discovered config is part of the untrusted commit
+
+**Evidence.** Issue #152. The adapters in `plugins/saga/scripts/review_adapters_python.py`, `review_adapters_infrastructure.py`, `review_adapters_shell.py`, `review_adapters_workflows.py`, and `review_adapters_markdown.py`. Tests such as `test_bandit_decoy_skip_does_not_hide_the_finding` and `test_shellcheck_levels_and_an_unchanged_line_is_absent` plant a suppressing file in the tree and still expect the finding.
+
+**Mechanism.** ruff, bandit, mypy, ShellCheck, actionlint, markdownlint, cspell, zizmor, and Checkov read a config they discover next to the source. A change can add that file and switch the tool off. The adapter writes the config it wants under the runner home, or scans a copy that omits the settings file, and passes that path on the command line. The discovered file stays in the tree and is not the input. actionlint 1.7.12 still parses `.github/actionlint.yaml` in the scan directory when `-config-file` names another file, so that adapter scans a copy of the workflows.
+
+**Generalizable rule.** A review of an untrusted commit passes a config the reviewer wrote, or a copy of the source that does not contain one.
 
 ### Blocking a parent directory in Claude's sandbox and allowing paths back works; each toolchain still needs checking
 

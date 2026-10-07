@@ -20,6 +20,11 @@
   baseline commands from. The profile's `mechanical_tool_baseline` still decides whether the
   iteration is green. Semgrep runs with metrics off, from a local rule cache. The runner is inert
   until a later card calls it.
+- Issue 152: adapters for the Python, CloudFormation and CDK, shell, GitHub workflow, and
+  Markdown tools on that runner. Each row has an exact pin. A finding cites a lens-table row, or
+  the runner's level rule when the table does not name it. ruff format and shfmt write no record.
+  Settings come from the base commit and from this plugin. The build loop still does not call the
+  runner.
 
 - Issue 163: plan review in one pass. `scripts/plan_review.py` stores the reviewer's findings as
   C1 finding records in the run record (`record`), records the author's answer to each (`answer`:
