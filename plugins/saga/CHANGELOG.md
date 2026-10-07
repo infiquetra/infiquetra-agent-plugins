@@ -10,6 +10,10 @@
   `test-passes-before-change` and `test-skipped-in-ci`. Machine-specific hits are written
   to `where-to-look.json` without an answer.
 
+- Issue 155 follow-up: the test commands `review_checks.py` runs execute code from the change under
+  review, so they get the review-tools runner's allow-listed environment with a fresh `HOME` and
+  temporary directory, never the operator's. Only saga's own `gh` call keeps the full environment.
+
 - Issue 158: the calibration tests prove that the targeted reviewer's prompt, answer schema and
   launch settings are fingerprinted, so a one-byte change to any of them makes a recorded run
   stale, and that a changed `CLAUDE.md`, `AGENTS.md` or plugin manifest fails no check.

@@ -173,13 +173,23 @@ def _detached(repo: Path, revision: str) -> Iterator[Path]:
 
 
 def _run_argv(
-    argv: Sequence[str], cwd: Path, timeout: int
+    argv: Sequence[str], cwd: Path, timeout: int, *, untrusted: bool = True
 ) -> tuple[str, int] | str:
-    """Run one argument vector. A missing program or a timeout is that reason, not a hit."""
+    """Run one argument vector. A missing program or a timeout is that reason, not a hit.
+
+    A command that runs code from the change under review (its test suite) gets the review-tools
+    runner's allow-listed environment, with a fresh ``HOME`` and temporary directory, never the
+    operator's. Only saga's own trusted commands, such as ``gh``, keep the full environment.
+    """
+    env: dict[str, str] | None = None
+    temps: list[Path] = []
+    if untrusted:
+        env, temps = review_tools._relocated_env()
     try:
         proc = subprocess.run(  # nosec B603
             list(argv),
             cwd=cwd,
+            env=env,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -189,6 +199,9 @@ def _run_argv(
         return "missing"
     except subprocess.TimeoutExpired:
         return "timeout"
+    finally:
+        for path in temps:
+            shutil.rmtree(path, ignore_errors=True)
     return proc.stdout or "", proc.returncode
 
 
@@ -411,7 +424,7 @@ def _gh(args: Sequence[str], timeout: int) -> tuple[str, int] | str:
     """Run ``gh`` in a fresh empty directory so it cannot read a config from the worktree."""
     empty = Path(tempfile.mkdtemp(prefix="saga-gh-"))
     try:
-        return _run_argv(["gh", *args], empty, timeout)
+        return _run_argv(["gh", *args], empty, timeout, untrusted=False)
     finally:
         shutil.rmtree(empty, ignore_errors=True)
 

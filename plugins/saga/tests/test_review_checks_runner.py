@@ -145,3 +145,30 @@ def test_checks_fingerprint_names_the_script() -> None:
     )
     for name in (*H.C.CHECKS, *ROWS):
         assert name in tools
+
+
+def _checks_module_for_env() -> Any:
+    path = Path(__file__).resolve().parents[1] / "scripts" / "review_checks.py"
+    sys.path.insert(0, str(path.parent))
+    spec = importlib.util.spec_from_file_location("review_checks_for_env_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_change_s_test_commands_never_see_the_operator_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    checks = _checks_module_for_env()
+    monkeypatch.setenv("SAGA_FAKE_SECRET_FOR_TEST", "canary-value")
+    monkeypatch.setenv("HOME", str(tmp_path / "operator-home"))
+    probe = [sys.executable, "-c",
+             "import os; print(os.environ.get('SAGA_FAKE_SECRET_FOR_TEST', '-'), os.environ['HOME'])"]
+    out, code = checks._run_argv(probe, tmp_path, 30)
+    secret, home = out.split()
+    assert code == 0 and secret == "-"
+    assert "operator-home" not in home
+    # saga's own trusted commands keep the environment
+    out, code = checks._run_argv(probe, tmp_path, 30, untrusted=False)
+    assert out.split()[0] == "canary-value"
