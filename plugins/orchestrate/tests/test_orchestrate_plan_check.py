@@ -214,3 +214,140 @@ class TestMutationProof:
         monkeypatch.setattr(orch.Run, "save", refusing_save)
 
         assert orch.main(["plan-check", "--plan", str(write_plan(tmp_path))]) == 0
+
+
+def _controller_unit(name: str = "cr") -> dict:
+    return {
+        "name": name,
+        "vendor": "claude",
+        "task": "/saga:code-review",
+        "role": "review-controller",
+        "merge": False,
+    }
+
+
+def _seat(name: str, role: str) -> dict:
+    return {
+        "name": name,
+        "vendor": "claude",
+        "model": "opus",
+        "effort": "high",
+        "task": "Write this reviewer's answer for the packet.",
+        "role": role,
+        "merge": False,
+    }
+
+
+def _refusal(orch, plan: Path) -> str:
+    with pytest.raises(SystemExit) as caught:
+        orch.main(["plan-check", "--plan", str(plan)])
+    return str(caught.value)
+
+
+def _start_refusal(orch, bed, plan: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    repo, store = bed
+    monkeypatch.setattr(orch, "assert_agent_launcher_available", lambda: None)
+
+    def refuse_load(*_a, **_k):
+        raise AssertionError("load_record was called")
+
+    monkeypatch.setattr(orch, "load_record", refuse_load)
+    before = snapshot(repo, store)
+    with pytest.raises(SystemExit) as caught:
+        orch.main(
+            [
+                "start",
+                "--issue",
+                "30",
+                "--store-root",
+                str(store),
+                "--plan",
+                str(plan),
+                "--branch",
+                "issue/not-created",
+                "--base",
+                "HEAD",
+            ]
+        )
+    assert snapshot(repo, store) == before
+    return str(caught.value)
+
+
+def test_one_controller_and_one_targeted_reviewer_is_admitted(orch, bed, tmp_path: Path) -> None:
+    repo, store = bed
+    plan = write_plan(tmp_path, units=[_controller_unit(), _seat("targeted", "targeted-reviewer")])
+    before = snapshot(repo, store)
+    assert orch.main(["plan-check", "--plan", str(plan)]) == 0
+    assert snapshot(repo, store) == before
+    units = orch.plan_units(json.loads(plan.read_text()))
+    assert [unit.role for unit in units] == ["review-controller", "targeted-reviewer"]
+
+
+def test_a_second_targeted_reviewer_in_one_lifecycle_is_refused(
+    orch, bed, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = write_plan(
+        tmp_path,
+        units=[
+            _controller_unit(),
+            _seat("targeted-a", "targeted-reviewer"),
+            _seat("targeted-b", "targeted-reviewer"),
+        ],
+    )
+    plan_message = _refusal(orch, plan)
+    start_message = _start_refusal(orch, bed, plan, monkeypatch)
+    assert plan_message == start_message
+    assert "targeted-reviewer" in plan_message
+    assert "create exactly one" in plan_message
+
+
+def test_a_lens_roster_is_refused_before_anything_exists(
+    orch, bed, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lenses = [_seat(f"lens-{index}", "lens-reviewer") for index in range(4)]
+    plan = write_plan(tmp_path, units=[_controller_unit(), *lenses])
+    plan_message = _refusal(orch, plan)
+    start_message = _start_refusal(orch, bed, plan, monkeypatch)
+    assert plan_message == start_message
+    assert "lens roster" in plan_message
+
+
+def test_a_second_controller_is_refused_with_starts_message(
+    orch, bed, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = write_plan(tmp_path, units=[_controller_unit("cr-a"), _controller_unit("cr-b")])
+    plan_message = _refusal(orch, plan)
+    start_message = _start_refusal(orch, bed, plan, monkeypatch)
+    assert plan_message == start_message
+    assert "exactly one top-level Code Review controller" in plan_message
+
+
+def test_a_second_external_reviewer_in_one_lifecycle_is_refused(
+    orch, bed, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = write_plan(
+        tmp_path,
+        units=[
+            _controller_unit(),
+            _seat("ext-a", "external-reviewer"),
+            _seat("ext-b", "external-reviewer"),
+        ],
+    )
+    plan_message = _refusal(orch, plan)
+    start_message = _start_refusal(orch, bed, plan, monkeypatch)
+    assert plan_message == start_message
+    assert "external-reviewer" in plan_message
+    assert "create exactly one" in plan_message
+
+
+def test_plan_check_reads_no_run_record(
+    orch, bed, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse_load(*_a, **_k):
+        raise AssertionError("load_record was called")
+
+    monkeypatch.setattr(orch, "load_record", refuse_load)
+    plan = write_plan(
+        tmp_path, units=[_controller_unit(), _seat("targeted", "targeted-reviewer")]
+    )
+    assert orch.main(["plan-check", "--plan", str(plan)]) == 0

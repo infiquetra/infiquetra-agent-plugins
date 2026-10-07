@@ -195,6 +195,13 @@ REVIEW_CONTROLLER_ROLE = "review-controller"
 RUN_SLOT = "__run__"
 """Key under which an unscoped run's single-controller review state lives in ``review_states``."""
 REVIEWER_SEAT_ROLE = "external-reviewer"
+TARGETED_REVIEWER_ROLE = "targeted-reviewer"
+LENS_REVIEWER_ROLE = "lens-reviewer"
+REVIEWER_LAUNCH_ROLES = frozenset({TARGETED_REVIEWER_ROLE, REVIEWER_SEAT_ROLE})
+HIGH_RISK_TIERS = frozenset({"high", "very-high"})
+REVIEW_RUN_SCHEMA = "review_records.v1"
+REVIEW_RUN_KIND = "review_run"
+_FINDING_ID = re.compile(r"^rf:[0-9a-f]{32}$")
 WORK_FIX_ROLES = frozenset({"review-fixer", "downstream-resolver"})
 _REVIEW_SHAPED = re.compile(r"(?i)\breview\b")
 _RETIRED_TRANSPORT = re.compile(r"engine_session_runner|engine_offer|external_only")
@@ -322,8 +329,8 @@ class Unit:
     """The unit's review-loop role, when it participates in that loop.
 
     ``review-controller`` identifies the one top-level Code Review invocation. Additional
-    reviewer seats requested by that controller use ``external-reviewer`` and launch through
-    the same expand/go path as every other unit. Work workers use ``review-fixer`` or
+    reviewer seats use ``targeted-reviewer`` or ``external-reviewer`` and start through
+    ``review-launch``, not through ``go``. Work workers use ``review-fixer`` or
     ``downstream-resolver`` so an opaque result can be routed without treating a unit name as
     policy. Older run records carry no role and continue to load unchanged."""
     lifecycle: str | None = None
@@ -1378,6 +1385,43 @@ def is_reviewer_seat(unit: Unit) -> bool:
     return unit.role == REVIEWER_SEAT_ROLE
 
 
+def _review_lifecycle_key(unit: Unit | None) -> str | None:
+    """The stripped lifecycle this unit belongs to, or None when it is unscoped."""
+    if unit is None or unit.lifecycle is None:
+        return None
+    text = str(unit.lifecycle).strip()
+    return text or None
+
+
+def _refuse_duplicate_review_role(units: Sequence[Unit], role: str) -> None:
+    """One reviewer role per lifecycle. The check reads the plan and no run record."""
+    buckets: dict[str | None, list[Unit]] = {}
+    for unit in units:
+        if unit.role != role:
+            continue
+        buckets.setdefault(_review_lifecycle_key(unit), []).append(unit)
+    for key, group in buckets.items():
+        if len(group) <= 1:
+            continue
+        label = key if key else "the unscoped review"
+        names = ", ".join(unit.name for unit in group)
+        raise SystemExit(
+            f"{label} has {len(group)} {role} units ({names}); create exactly one"
+        )
+
+
+def _refuse_lens_roster_and_duplicate_seats(units: Sequence[Unit]) -> None:
+    """A review is one controller plus at most one of each reviewer seat, never a lens roster."""
+    for unit in units:
+        if unit.role == LENS_REVIEWER_ROLE:
+            raise SystemExit(
+                f"unit {unit.name!r} is a lens roster; a review is one controller plus "
+                "one targeted reviewer, not one unit per lens"
+            )
+    _refuse_duplicate_review_role(units, TARGETED_REVIEWER_ROLE)
+    _refuse_duplicate_review_role(units, REVIEWER_SEAT_ROLE)
+
+
 def assert_no_engine_prefs(plan: Mapping[str, Any]) -> None:
     """The engine-prefs seam is retired; reviewer seats live in the run unit table."""
     if plan.get("engine_prefs"):
@@ -1396,6 +1440,7 @@ def assert_review_transport(units: Sequence[Unit]) -> None:
     if not any(is_review_controller(unit) for unit in units):
         return
     assert_single_review_controller(units)
+    _refuse_lens_roster_and_duplicate_seats(units)
     for unit in units:
         if is_review_controller(unit):
             continue
@@ -1413,10 +1458,11 @@ def assert_review_transport(units: Sequence[Unit]) -> None:
                 "top-level review-controller and dispatch extra reviewer seats through "
                 f"expand/go with role {REVIEWER_SEAT_ROLE!r}"
             )
-        if is_reviewer_seat(unit):
+        if unit.role in REVIEWER_LAUNCH_ROLES:
             # The sanctioned transport. A seat's task reads like a review instruction
             # because reviewing is what the seat is for; refusing it here would leave
             # the run record with no way to express the reviewer the leaf requires.
+            # ``go`` does not pane-launch these roles. ``review-launch`` does.
             continue
         if is_standalone_review_prompt(unit):
             raise SystemExit(
@@ -1452,24 +1498,12 @@ def route_paths_overlap(left: Sequence[str], right: Sequence[str]) -> bool:
     )
 
 
-def _review_routing_fields(raw_result: str) -> tuple[str, list[dict[str, Any]]]:
-    """Read only the result fields Orchestrate is authorized to route.
+def _is_review_run(payload: Mapping[str, Any]) -> bool:
+    return payload.get("schema") == REVIEW_RUN_SCHEMA and payload.get("kind") == REVIEW_RUN_KIND
 
-    Scores, dimensions, cycles, priorities, confidence, and all other Code Review policy stay
-    untouched. The original string is persisted separately on ``Run`` before this function is
-    called by the command surface.
-    """
-    try:
-        payload = json.loads(raw_result)
-    except (TypeError, ValueError) as exc:
-        raise SystemExit(f"review result is not JSON: {exc}") from None
-    if not isinstance(payload, dict):
-        raise SystemExit("review result must be a JSON object")
-    schema = payload.get("schema")
-    if schema != REVIEW_RESULT_SCHEMA:
-        raise SystemExit(
-            f"review result has unsupported schema {schema!r}; expected {REVIEW_RESULT_SCHEMA!r}"
-        )
+
+def _route_review_result_v2(payload: Mapping[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+    """The ``review_result.v2`` envelope, unchanged, including operator owners."""
     outcome = payload.get("outcome")
     if not isinstance(outcome, str) or outcome not in REVIEW_OUTCOMES:
         raise SystemExit(f"review result has unsupported routing outcome {outcome!r}")
@@ -1503,6 +1537,94 @@ def _review_routing_fields(raw_result: str) -> tuple[str, list[dict[str, Any]]]:
         request["touched_paths"] = normalized
         requests.append(request)
     return str(outcome), requests
+
+
+def _review_run_location_path(finding_id: str, finding: Mapping[str, Any]) -> str:
+    """The one path a blocking finding contributes, normalized, or a refusal naming the id."""
+    location = finding.get("location")
+    if not isinstance(location, dict):
+        raise SystemExit(f"review run blocking id {finding_id!r} has no location path")
+    raw_path = (
+        location.get("document") if location.get("scope") == "section" else location.get("file")
+    )
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        raise SystemExit(f"review run blocking id {finding_id!r} has no location path")
+    try:
+        return _route_path(raw_path, label=f"finding {finding_id} touched path")
+    except SystemExit:
+        raise SystemExit(
+            f"review run blocking id {finding_id!r} has no location path"
+        ) from None
+
+
+def _route_review_run(payload: Mapping[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+    """Project a review run onto the outcome words the note check already knows.
+
+    Orchestrate does not recompute the merge. ``merge.allowed`` is true only when
+    ``merge.blocking`` is empty, which is the same answer saga's formula writes. A
+    disagreement is a refusal, not an acceptance. No finding field is copied except the
+    id and the one location path.
+    """
+    merge = payload.get("merge")
+    if not isinstance(merge, dict):
+        raise SystemExit("review run requires a merge object")
+    allowed = merge.get("allowed")
+    if not isinstance(allowed, bool):
+        raise SystemExit("review run merge.allowed must be a boolean")
+    blocking = merge.get("blocking", [])
+    if not isinstance(blocking, list) or not all(
+        isinstance(item, str) and _FINDING_ID.fullmatch(item) for item in blocking
+    ):
+        raise SystemExit("review run merge.blocking must be a list of finding ids")
+    if allowed != (len(blocking) == 0):
+        raise SystemExit(
+            f"review run merge.allowed {allowed!r} disagrees with merge.blocking"
+        )
+    if allowed:
+        return "accepted", []
+    findings = payload.get("findings")
+    if not isinstance(findings, list):
+        raise SystemExit("review run requires a findings list")
+    by_id: dict[str, Mapping[str, Any]] = {}
+    for finding in findings:
+        if isinstance(finding, dict) and isinstance(finding.get("id"), str):
+            by_id[str(finding["id"])] = finding
+    requests: list[dict[str, Any]] = []
+    for finding_id in blocking:
+        finding = by_id.get(finding_id)
+        if finding is None:
+            raise SystemExit(f"review run blocking id {finding_id!r} has no finding")
+        requests.append(
+            {
+                "owner": "review-fixer",
+                "fix_id": finding_id,
+                "touched_paths": [_review_run_location_path(finding_id, finding)],
+            }
+        )
+    return "repairs_requested", requests
+
+
+def _review_routing_fields(raw_result: str) -> tuple[str, list[dict[str, Any]]]:
+    """Read only the result fields Orchestrate is authorized to route.
+
+    Scores, dimensions, cycles, priorities, confidence, and all other Code Review policy stay
+    untouched. The original string is persisted separately on ``Run`` before this function is
+    called by the command surface. A review run projects onto the same outcome words.
+    """
+    try:
+        payload = json.loads(raw_result)
+    except (TypeError, ValueError) as exc:
+        raise SystemExit(f"review result is not JSON: {exc}") from None
+    if not isinstance(payload, dict):
+        raise SystemExit("review result must be a JSON object")
+    if payload.get("schema") == REVIEW_RESULT_SCHEMA:
+        return _route_review_result_v2(payload)
+    if _is_review_run(payload):
+        return _route_review_run(payload)
+    schema = payload.get("schema")
+    raise SystemExit(
+        f"review result has unsupported schema {schema!r}; expected {REVIEW_RESULT_SCHEMA!r}"
+    )
 
 
 def _unit_is_terminal(unit: Unit) -> bool:
@@ -2140,8 +2262,8 @@ def assert_agent_launcher_ingested() -> None:
 def assert_agent_launcher_available() -> None:
     """Refuse before any pane write, session or worktree creation, or tab close.
 
-    The five commands that call this: ``start``, ``expand``, ``go``, ``review-result``,
-    ``merge`` and ``clean``.
+    The commands that call this: ``start``, ``expand``, ``go``, ``review-launch``,
+    ``review-result``, ``merge`` and ``clean``.
 
     **A companion below the declared floor WARNS and the command continues** (issue #1025). The
     distinction that survives is between stale and absent: a below-floor launcher still defines
@@ -2900,6 +3022,158 @@ def parent_branch_name(issue: int, *, runner: Callable[..., Any] | None = None) 
     return f"issue/{issue}", f"issue {issue} has no sub-issues, so the standalone name"
 
 
+def _risk_tier(r: Run) -> str | None:
+    """The admission risk tier, or None when the record does not name one."""
+    record = r.record
+    admission = getattr(record, "admission", None) if record is not None else None
+    if not isinstance(admission, dict):
+        return None
+    tier = admission.get("risk_tier")
+    return tier if isinstance(tier, str) else None
+
+
+def _review_bucket_label(key: str | None) -> str:
+    return key if key else "the unscoped review"
+
+
+def _staffing_map(r: Run) -> dict[str, Mapping[str, Any]]:
+    raw = r.parameter("staffing_models_and_efforts")
+    if not isinstance(raw, dict):
+        return {}
+    return {str(role): row for role, row in raw.items() if isinstance(row, Mapping)}
+
+
+def _complete_trio(row: Mapping[str, Any] | None) -> tuple[str, str, str] | None:
+    if not isinstance(row, Mapping):
+        return None
+    vendor, model, effort = row.get("vendor"), row.get("model"), row.get("effort")
+    if not all(isinstance(item, str) and item.strip() for item in (vendor, model, effort)):
+        return None
+    return str(vendor), str(model), str(effort)
+
+
+def _second_reviewer_trio(
+    staffing: Mapping[str, Mapping[str, Any]], targeted: tuple[str, str, str]
+) -> tuple[str, str, str] | None:
+    """The first other role whose vendor differs, or the targeted trio when none does.
+
+    A differing row that does not name vendor, model, and effort is a refusal. A same-vendor
+    worker is not a substitute for the targeted row's model and effort.
+    """
+    for role in sorted(staffing):
+        if role == TARGETED_REVIEWER_ROLE:
+            continue
+        row = staffing[role]
+        vendor = row.get("vendor")
+        if not isinstance(vendor, str) or not vendor.strip() or vendor == targeted[0]:
+            continue
+        return _complete_trio(row)
+    return targeted
+
+
+def _launch_trio(r: Run, seat: str) -> tuple[str, str, str] | None:
+    staffing = _staffing_map(r)
+    targeted = _complete_trio(staffing.get(TARGETED_REVIEWER_ROLE))
+    if targeted is None:
+        return None
+    if seat == REVIEWER_SEAT_ROLE:
+        return _second_reviewer_trio(staffing, targeted)
+    return targeted
+
+
+_SECOND_REVIEWER_TASK = "Write the second reviewer's answer for this packet."
+
+
+def _external_seat_name(lifecycle: str | None) -> str:
+    if lifecycle:
+        assert_safe_path_component(lifecycle, "lifecycle")
+        return f"{REVIEWER_SEAT_ROLE}-{lifecycle}"
+    return REVIEWER_SEAT_ROLE
+
+
+def _externals_for(units: Sequence[Unit], key: str | None) -> list[Unit]:
+    return [
+        unit
+        for unit in units
+        if unit.role == REVIEWER_SEAT_ROLE and _review_lifecycle_key(unit) == key
+    ]
+
+
+def _assert_external_count(
+    units: Sequence[Unit], tier: str | None, *, allow_missing_on_high: bool
+) -> None:
+    """One external reviewer on a high tier, and none on any other tier, per lifecycle."""
+    high = tier in HIGH_RISK_TIERS
+    keys = {_review_lifecycle_key(unit) for unit in units if is_review_controller(unit)}
+    for key in keys:
+        seats = _externals_for(units, key)
+        label = _review_bucket_label(key)
+        if high:
+            if len(seats) == 1 or (len(seats) == 0 and allow_missing_on_high):
+                continue
+            raise SystemExit(
+                f"{label} has {len(seats)} external-reviewer units; "
+                f"a {tier} risk tier needs exactly one"
+            )
+        elif seats:
+            raise SystemExit(
+                f"{label} has an external-reviewer; risk tier {tier!r} starts one reviewer"
+            )
+
+
+def _add_or_rewrite_external_seats(r: Run) -> None:
+    targeted = _launch_trio(r, TARGETED_REVIEWER_ROLE)
+    if targeted is None:
+        raise SystemExit("missing targeted-reviewer staffing row")
+    second = _second_reviewer_trio(_staffing_map(r), targeted)
+    if second is None:
+        raise SystemExit("missing targeted-reviewer staffing row")
+    vendor, model, effort = second
+    seen: set[str | None] = set()
+    for controller in r.review_controllers():
+        key = _review_lifecycle_key(controller)
+        if key in seen:
+            continue
+        seen.add(key)
+        seats = _externals_for(r.units, key)
+        if len(seats) > 1:
+            continue
+        if len(seats) == 1:
+            seat = seats[0]
+            if (seat.vendor, seat.model, seat.effort) != (vendor, model, effort):
+                seat.vendor, seat.model, seat.effort = vendor, model, effort
+                print(f"rewrote {seat.name} to {vendor}/{model}/{effort}")
+            continue
+        name = _external_seat_name(key)
+        if any(unit.name == name for unit in r.units):
+            raise SystemExit(
+                f"unit {name!r} is already in this run; the external reviewer needs that name"
+            )
+        r.units.append(
+            Unit(
+                name=name,
+                vendor=vendor,
+                model=model,
+                effort=effort,
+                task=_SECOND_REVIEWER_TASK,
+                role=REVIEWER_SEAT_ROLE,
+                lifecycle=key,
+                merge=False,
+            )
+        )
+
+
+def _enforce_reviewer_count(r: Run, *, add_missing: bool) -> None:
+    """Apply the risk tier where a review controller exists. Ordinary runs stay quiet."""
+    if not any(is_review_controller(unit) for unit in r.units):
+        return
+    tier = _risk_tier(r)
+    print(f"risk tier {tier!r}")
+    if add_missing and tier in HIGH_RISK_TIERS:
+        _add_or_rewrite_external_seats(r)
+    _assert_external_count(r.units, tier, allow_missing_on_high=False)
+
+
 def cmd_start(args: argparse.Namespace) -> int:
     """Create the branch and the unit rows for one issue's run.
 
@@ -2934,6 +3208,8 @@ def cmd_start(args: argparse.Namespace) -> int:
         account=plan.get("account") or None,
         review_controller_ceiling=review_ceiling_from_plan(plan),
     )
+    # The tier can refuse, or add the second reviewer, before any branch exists.
+    _enforce_reviewer_count(r, add_missing=True)
     exists = run(["git", "rev-parse", "--verify", "--quiet", r.branch], check=False)
     if exists.returncode != 0:
         run(["git", "branch", r.branch, base])
@@ -3222,6 +3498,11 @@ def validate_expansion(r: Run, added: Mapping[str, Any]) -> list[Unit]:
         seen.add(unit.name)
     assert_dependencies_reachable(incoming, existing)
     assert_review_transport([*r.units, *incoming])
+    # High with zero seats is allowed here. ``cmd_expand`` adds the seat after this returns,
+    # and ``launch-table --issue`` must not mutate the run.
+    _assert_external_count(
+        [*r.units, *incoming], _risk_tier(r), allow_missing_on_high=True
+    )
 
     assert_vendors_available(incoming)
     assert_saga_reachable(incoming)
@@ -3242,6 +3523,10 @@ def cmd_expand(args: argparse.Namespace) -> int:
     added = load_plan(args.plan)
     incoming = validate_expansion(r, added)
     r.units.extend(incoming)
+    names_before = {unit.name for unit in r.units}
+    _enforce_reviewer_count(r, add_missing=True)
+    added_seats = [unit for unit in r.units if unit.name not in names_before]
+    shown = [*incoming, *added_seats]
     r.issues.update(added.get("issues", {}))
     r.status_map.update(added.get("status_map", {}))
     expanded_ceiling = review_ceiling_from_plan(added)
@@ -3252,7 +3537,7 @@ def cmd_expand(args: argparse.Namespace) -> int:
     if "account" in added:
         r.account = added["account"] or None
     r.save()
-    print(f"added {len(incoming)}: {', '.join(u.name for u in incoming)}")
+    print(f"added {len(shown)}: {', '.join(u.name for u in shown)}")
     print("`orchestrate.py go` to launch whatever is now eligible.")
     return 0
 
@@ -3493,7 +3778,273 @@ def _review_ingest_refusal(slot: Mapping[str, Any], incoming_raw: str) -> str | 
             f"refusing cycle-regressed review result: incoming cycle_history length "
             f"{len(incoming_history)} is shorter than stored {len(stored_history)}"
         )
+    if _is_review_run(stored) and _is_review_run(incoming):
+        stored_round = stored.get("round")
+        incoming_round = incoming.get("round")
+        stored_round_ok = isinstance(stored_round, int) and not isinstance(stored_round, bool)
+        incoming_round_ok = isinstance(incoming_round, int) and not isinstance(incoming_round, bool)
+        if stored_round_ok and incoming_round_ok and incoming_round < stored_round:
+            return (
+                "refusing cycle-regressed review result: incoming round "
+                f"{incoming_round} is shorter than stored {stored_round}"
+            )
     return None
+
+
+def _reviewer_process(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run one launcher argv. Defined after ingest so the companion cannot replace it."""
+    return subprocess.run(argv, capture_output=True, text=True, check=False)
+
+
+def _resolved_path(value: str | Path) -> Path:
+    return Path(value).expanduser().resolve(strict=False)
+
+
+def _path_inside(path: Path, base: Path) -> bool:
+    root = _resolved_path(base)
+    return path == root or root in path.parents
+
+
+def _strictly_inside(path: Path, base: Path) -> bool:
+    return _resolved_path(base) in path.parents
+
+
+def _default_review_out(r: Run, seat: str, lifecycle: str | None) -> Path:
+    if lifecycle:
+        assert_safe_path_component(lifecycle, "lifecycle")
+    assert_safe_path_component(seat, "seat")
+    out = _resolved_path(r.store_root) / "review-launch" / f"issue-{int(r.issue)}"
+    if lifecycle:
+        out = out / lifecycle
+    return out / seat
+
+
+def _noted_review_outs(unit: Unit) -> list[Path]:
+    prefix = "review-launch out "
+    found: list[Path] = []
+    for piece in unit.note.split("; "):
+        if piece.startswith(prefix):
+            found.append(_resolved_path(piece[len(prefix) :]))
+    return found
+
+
+def _paths_overlap(left: Path, right: Path) -> bool:
+    """True when the two directories are equal or one contains the other.
+
+    A packet that contains a reviewer output, or that sits inside one, hands that
+    reviewer the other seat's answer. Equality is the same leak.
+    """
+    return _path_inside(left, right) or _path_inside(right, left)
+
+
+def _reviewer_output_directories(r: Run, lifecycle: str | None) -> list[Path]:
+    """Default and noted output directories for both reviewer seats on this run."""
+    keys = {lifecycle}
+    for unit in r.units:
+        if is_review_controller(unit) or unit.role in REVIEWER_LAUNCH_ROLES:
+            keys.add(_review_lifecycle_key(unit))
+    found: list[Path] = []
+    for key in keys:
+        for role in (TARGETED_REVIEWER_ROLE, REVIEWER_SEAT_ROLE):
+            found.append(_resolved_path(_default_review_out(r, role, key)))
+    for unit in r.units:
+        if unit.role in REVIEWER_LAUNCH_ROLES:
+            found.extend(_noted_review_outs(unit))
+    return found
+
+
+def _reviewer_answer_paths() -> dict[str, str] | None:
+    """Saga's prompt and schema, found beside ``run_record.py``. Never a hard-coded path."""
+    candidates: list[Path] = []
+    override = os.environ.get(RUN_RECORD_ENV, "")
+    if override:
+        sibling = Path(override).expanduser().resolve(strict=False).parent / "reviewer_answer.py"
+        if sibling.is_file():
+            candidates.append(sibling)
+    for record in _run_record_candidates():
+        sibling = record.parent / "reviewer_answer.py"
+        if sibling.is_file() and sibling not in candidates:
+            candidates.append(sibling)
+    for path in candidates:
+        spec = importlib.util.spec_from_file_location("_orchestrate_reviewer_answer", path)
+        if spec is None or spec.loader is None:
+            continue
+        module = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(module)
+            paths = module.paths()
+        except Exception:
+            continue
+        prompt, schema = paths.get("prompt"), paths.get("schema")
+        if isinstance(paths, dict) and isinstance(prompt, str) and isinstance(schema, str):
+            return {"prompt": prompt, "schema": schema}
+    return None
+
+
+def _review_launch_controller(r: Run, selector: str | None) -> tuple[Unit | None, str | None]:
+    controllers = r.review_controllers()
+    if selector:
+        try:
+            return r.review_controller_for(selector), None
+        except SystemExit as exc:
+            return None, str(exc)
+    if len(controllers) > 1:
+        known = ", ".join(
+            unit.name + (f" (lifecycle {unit.lifecycle})" if unit.lifecycle else "")
+            for unit in controllers
+        )
+        return None, (
+            f"this run has {len(controllers)} Code Review controllers ({known}); pass "
+            "`--controller` to say which review this launch belongs to"
+        )
+    if controllers:
+        return controllers[0], None
+    return None, None
+
+
+def cmd_review_launch(args: argparse.Namespace) -> int:
+    """Start one reviewer through ``launcher.py review`` and do not read the answer.
+
+    Refusals that happen before the session print to stderr and return 2. The launcher's own
+    exit code is returned unchanged, including when the answer file is not JSON.
+    """
+    assert_agent_launcher_available()
+    r = Run.load(args.issue, args.store_root)
+    seat = str(args.seat)
+    if seat not in REVIEWER_LAUNCH_ROLES:
+        print(f"unknown reviewer seat {seat!r}", file=sys.stderr)
+        return 2
+    trio = _launch_trio(r, seat)
+    if trio is None:
+        print("missing targeted-reviewer staffing row", file=sys.stderr)
+        return 2
+    tier = _risk_tier(r)
+    if seat == REVIEWER_SEAT_ROLE and tier not in HIGH_RISK_TIERS:
+        print(
+            "the unscoped review has an external-reviewer; "
+            f"risk tier {tier!r} starts one reviewer",
+            file=sys.stderr,
+        )
+        return 2
+    controller, controller_error = _review_launch_controller(
+        r, getattr(args, "controller", None)
+    )
+    if controller_error is not None:
+        print(controller_error, file=sys.stderr)
+        return 2
+    packet = Path(args.packet).expanduser()
+    if not packet.is_dir():
+        print(f"packet {args.packet} is not a directory", file=sys.stderr)
+        return 2
+    try:
+        run_repo = _resolved_path(repo_root())
+    except SystemExit as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    given_repo = _resolved_path(args.repo)
+    if given_repo != run_repo:
+        print(f"repo {args.repo} is not the run repository {run_repo}", file=sys.stderr)
+        return 2
+    packet_resolved = _resolved_path(packet)
+    bases = [Path(r.store_root), run_repo]
+    bases.extend(Path(unit.worktree) for unit in r.units if unit.worktree)
+    if not any(_path_inside(packet_resolved, base) for base in bases):
+        print(f"packet {args.packet} is outside the run", file=sys.stderr)
+        return 2
+    lifecycle = _review_lifecycle_key(controller)
+    try:
+        default_out = _default_review_out(r, seat, lifecycle)
+        other_role = (
+            REVIEWER_SEAT_ROLE if seat == TARGETED_REVIEWER_ROLE else TARGETED_REVIEWER_ROLE
+        )
+        other_default = _resolved_path(_default_review_out(r, other_role, lifecycle))
+        protected = _reviewer_output_directories(r, lifecycle)
+    except SystemExit as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    out = _resolved_path(args.out) if getattr(args, "out", None) else _resolved_path(default_out)
+    if not _strictly_inside(out, Path(r.store_root)):
+        print(f"out {args.out or out} is outside the store", file=sys.stderr)
+        return 2
+    noted = [
+        path
+        for unit in r.units
+        if unit.role == other_role and _review_lifecycle_key(unit) == lifecycle
+        for path in _noted_review_outs(unit)
+    ]
+    if out == other_default or out in noted:
+        print(
+            f"review-launch out {out} is already the other reviewer's directory",
+            file=sys.stderr,
+        )
+        return 2
+    if out not in protected:
+        protected.append(out)
+    for review_out in protected:
+        if _paths_overlap(packet_resolved, review_out):
+            print(
+                f"packet {args.packet} overlaps reviewer output {review_out}",
+                file=sys.stderr,
+            )
+            return 2
+    try:
+        launcher = _agent_launcher_script()
+    except SystemExit as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    if launcher is None:
+        print(_REMEDIATION_MESSAGE, file=sys.stderr)
+        return 2
+    help_proc = _reviewer_process([sys.executable, str(launcher), "review", "--help"])
+    if help_proc.returncode != 0:
+        print(f"launcher.py review is unavailable. {_UPDATE_REMEDIATION}", file=sys.stderr)
+        return 2
+    answer_paths = _reviewer_answer_paths()
+    if answer_paths is None:
+        print(
+            "saga's reviewer_answer module could not be found beside run_record.py",
+            file=sys.stderr,
+        )
+        return 2
+    out.mkdir(parents=True, exist_ok=True)
+    vendor, model, effort = trio
+    argv = [
+        sys.executable,
+        str(launcher),
+        "review",
+        "--vendor",
+        vendor,
+        "--model",
+        model,
+        "--effort",
+        effort,
+        "--repo",
+        str(given_repo),
+        "--head",
+        str(args.head),
+        "--packet",
+        str(packet_resolved),
+        "--prompt",
+        answer_paths["prompt"],
+        "--schema",
+        answer_paths["schema"],
+        "--out",
+        str(out),
+    ]
+    proc = _reviewer_process(argv)
+    print(out / "answer.json")
+    print(out / "result.json")
+    print(f"launcher exit {proc.returncode}")
+    if proc.returncode == 0:
+        marked = False
+        for unit in r.units:
+            if unit.role == seat and _review_lifecycle_key(unit) == lifecycle:
+                unit.status = DONE
+                append_unit_note(unit, f"review-launch out {out}")
+                marked = True
+        if marked:
+            r.save()
+    return int(proc.returncode)
 
 
 def cmd_review_result(args: argparse.Namespace) -> int:
@@ -3615,7 +4166,9 @@ def cmd_go(args: argparse.Namespace) -> int:
     if r.unresolvable_branch:
         raise SystemExit(f"run branch {r.unresolvable_branch!r} does not resolve; cannot go")
     assert_review_transport(r.units)
-    ready = r.eligible()
+    # Count, then drop reviewer seats, before the width slice and before any worktree.
+    _enforce_reviewer_count(r, add_missing=False)
+    ready = [unit for unit in r.eligible() if unit.role not in REVIEWER_LAUNCH_ROLES]
     if not ready:
         print("nothing eligible -- either everything is running or dependencies are unmet.")
         return 0
@@ -6075,6 +6628,26 @@ def main(argv: list[str] | None = None) -> int:
         "required when the run carries more than one",
     )
     s.set_defaults(func=cmd_review_result)
+
+    s = stateful(
+        "review-launch",
+        "start one targeted or external reviewer through launcher.py review",
+    )
+    s.add_argument(
+        "--seat",
+        required=True,
+        choices=sorted(REVIEWER_LAUNCH_ROLES),
+        help="targeted-reviewer or external-reviewer",
+    )
+    s.add_argument("--packet", required=True, help="directory of the review packet")
+    s.add_argument("--repo", required=True, help="the run repository")
+    s.add_argument("--head", required=True, help="commit the reviewer reads")
+    s.add_argument("--out", help="directory for answer.json and result.json")
+    s.add_argument(
+        "--controller",
+        help="which Code Review controller this launch belongs to; required when several exist",
+    )
+    s.set_defaults(func=cmd_review_launch)
 
     s = stateful("go", "launch every unit whose dependencies are met")
     s.add_argument(

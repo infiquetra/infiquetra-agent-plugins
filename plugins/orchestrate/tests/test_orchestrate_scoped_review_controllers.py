@@ -1067,3 +1067,36 @@ def test_expanding_a_second_controller_does_not_orphan_the_first_ones_repairs(
         "the first controller's repairs must still be visible to its own resubmit gate "
         "after a second controller is expanded in"
     )
+
+
+def test_a_scoped_controller_keeps_its_review_run(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _run(
+        orchestrate,
+        _controller(orchestrate, "cr-c2", lifecycle="c2"),
+        _controller(orchestrate, "cr-c4", lifecycle="c4"),
+    )
+    _support.save_run(run, test_store())
+    raw = json.dumps(
+        {
+            "schema": "review_records.v1",
+            "kind": "review_run",
+            "round": 1,
+            "merge": {"allowed": True, "blocking": []},
+            "findings": [],
+        },
+        sort_keys=True,
+    )
+    path = tmp_path / "review-run.json"
+    path.write_text(raw)
+    monkeypatch.chdir(tmp_path)
+    assert orchestrate.cmd_review_result(NS(file=str(path), controller="cr-c2")) == 0
+    restored = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
+    c2 = restored.review_controller_for("cr-c2")
+    c4 = restored.review_controller_for("cr-c4")
+    assert restored.review_slot(c2)["review_outcome"] == "accepted"
+    assert restored.review_slot(c2)["review_result"] == raw
+    assert restored.review_slot(c4)["review_outcome"] is None
