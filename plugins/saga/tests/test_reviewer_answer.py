@@ -680,6 +680,11 @@ SAMPLES: dict[str, tuple[str, str]] = {
     "anthropic-api-key": ("sk-" + "ant-" + _mixed(30, "anthropic"), "anthropic-api-key"),
     "slack-token": ("xo" + "xb-" + _mixed(24, "slack"), "slack-token"),
     "openai-key": ("sk-" + _mixed(40, "openai"), "api-key"),
+    # Base64 with ``/``: an AWS secret access key, and a key body without its header line.
+    "aws-secret-access-key": (
+        _mixed(13, "aws1") + "/" + _mixed(7, "aws2") + "/" + _mixed(20, "aws3"), "high-entropy"
+    ),
+    "key-body": ("/".join(_mixed(16, f"body{n}") for n in range(4)), "high-entropy"),
 }
 #: The four formats the card names.
 CARD_FORMATS = ("github-token", "aws-access-key-id", "private-key", "high-entropy")
@@ -767,6 +772,8 @@ def test_scrub_runs_before_the_4000_character_cut() -> None:
         "commit 218d8283ba0a9c1384379c2aa416144f01d30f03",
         "sha256:" + hashlib.sha256(b"inert").hexdigest(),
         "test_reviewer_read_confinement_a_packet_that_reopens_home_is_refused",
+        "src/main/java/com/example/service/UserProfileController.java",
+        "/Users/example/.cache/agent-launcher/reviews/repo-0123456789ab-deadbeef/copy",
     ],
 )
 def test_scrub_leaves_ordinary_output_alone(ordinary: str) -> None:

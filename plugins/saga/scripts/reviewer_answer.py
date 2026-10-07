@@ -146,6 +146,10 @@ SCRUB_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 SCRUB_ENTROPY_MIN_RUN = 40
 SCRUB_ENTROPY_MIN_BITS = 4.0
 _SCRUB_ENTROPY_RUN = re.compile(rf"[A-Za-z0-9+=_\-]{{{SCRUB_ENTROPY_MIN_RUN},}}")
+#: A base64 secret can hold ``/`` (an AWS secret access key, a key body without its header line),
+#: which splits it into short runs the rule above never sees. A run that includes ``/`` is scrubbed
+#: when it also mixes upper case, lower case and digits, as random base64 does and paths rarely do.
+_SCRUB_SLASHED_RUN = re.compile(rf"[A-Za-z0-9+/=_\-]{{{SCRUB_ENTROPY_MIN_RUN},}}")
 _SCRUB_HASH_RUN = re.compile(r"(?i)\A(?:(?:sha\d{3}|md5|sha)[-:])?[0-9a-f]{32,}=*\Z")
 
 
@@ -176,7 +180,17 @@ def scrub_text(text: str) -> tuple[str, list[str]]:
         kinds.append("high-entropy")
         return "[scrubbed:high-entropy]"
 
-    return _SCRUB_ENTROPY_RUN.sub(entropy, text), kinds
+    def slashed(match: re.Match[str]) -> str:
+        run = match.group(0)
+        mixed = (any(c.isupper() for c in run) and any(c.islower() for c in run)
+                 and any(c.isdigit() for c in run))
+        if "/" not in run or not mixed or _shannon_bits(run) < SCRUB_ENTROPY_MIN_BITS:
+            return run
+        kinds.append("high-entropy")
+        return "[scrubbed:high-entropy]"
+
+    text = _SCRUB_ENTROPY_RUN.sub(entropy, text)
+    return _SCRUB_SLASHED_RUN.sub(slashed, text), kinds
 
 
 def scrub_finding(finding: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]:

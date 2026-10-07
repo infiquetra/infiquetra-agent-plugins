@@ -2137,6 +2137,12 @@ REVIEWER_TOOLCHAIN_COMMANDS = (
     ("python3", "python3 on the session PATH resolves here; its standard library and packages"),
     ("node", "node on the session PATH resolves here; its bundled libraries"),
 )
+#: The parts of a toolchain install allowed back, never the whole install.
+REVIEWER_TOOLCHAIN_PARTS = (
+    ("bin", "its executables"),
+    ("lib", "its standard library and packages"),
+    ("pyvenv.cfg", "the marker a virtual environment's interpreter reads at start"),
+)
 #: Paths in the scratch copy that tools write and nobody edits: Python's temp-directory fallback
 #: (the sandbox denies the system temp roots, so ``tempfile`` falls back to the working directory),
 #: pytest's caches and compiled bytecode. They never count as a change. ``.claude/`` is not among
@@ -2263,7 +2269,8 @@ def reviewer_toolchain_paths(
 
     For each interpreter on the session's ``PATH``, two candidates: the prefix as found (a virtual
     environment's directory) and the prefix it resolves to (the real install). A candidate outside
-    home needs no allow-back; one that would re-open too much is dropped.
+    home needs no allow-back; one that would re-open too much is dropped. Of a candidate kept, only
+    the parts in ``REVIEWER_TOOLCHAIN_PARTS`` that exist are allowed back.
     """
     home = _reviewer_home(env)
     homes = _reviewer_forms(home)
@@ -2282,8 +2289,17 @@ def reviewer_toolchain_paths(
             problem = reviewer_allowed_read_problem(candidate, home)
             if problem:
                 dropped.append({"path": str(candidate), "reason": problem})
-            else:
-                allowed.append({"path": str(candidate), "reason": reason})
+                continue
+            # Only the parts an interpreter reads, never the prefix itself: a prefix such as
+            # ``~/.sometool`` can hold that tool's own ``.env`` beside ``bin/`` (measured: a uv
+            # interpreter runs a real test with just ``bin`` and ``lib`` allowed back).
+            for part, why in REVIEWER_TOOLCHAIN_PARTS:
+                path = candidate / part
+                if (path.exists() or path.is_symlink()) and str(path) not in seen:
+                    seen.add(str(path))
+                    trouble = reviewer_allowed_read_problem(path, home)
+                    entry = {"path": str(path), "reason": trouble or f"{reason}; {why}"}
+                    (dropped if trouble else allowed).append(entry)
     return sorted(allowed, key=lambda i: i["path"]), sorted(dropped, key=lambda i: i["path"])
 
 

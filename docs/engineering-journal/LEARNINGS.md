@@ -15,6 +15,9 @@
   - A binary under the blocked home still runs, but cannot read its own files, so an interpreter installed under home would fail to load its standard library.
   - Git exits 128 when it cannot read its global configuration, even for `git --version`; `GIT_CONFIG_GLOBAL=/dev/null` fixes it.
   - `git init` in the copy fails under both the old and the new settings.
+  - A uv-managed Python 3.12 under home ran a real test with only its `bin` and `lib` allowed back.
+  - With nothing allowed back, the shell silently fell through to the next `python3` on `PATH` (a Homebrew 3.14), so a missing allow-back can change the interpreter rather than fail.
+  - A symlink in the allowed copy, committed or made at run time, could not read a blocked home canary: the sandbox checks the target.
 - Environment:
   - Denying 155 names through `credentials.envVars` left Python tests and git working.
   - The commands still saw variables the sandbox itself sets, such as its network-proxy settings and `SANDBOX_RUNTIME`, which are outside the launch environment.
@@ -22,7 +25,9 @@
 - Claude's Read tool, which is not a sandboxed command:
   - With the operator's user settings it read a home canary.
   - With `--setting-sources project` (measurement only) it was denied. Which user setting grants the read is not isolated.
-- Scrubbing: fleet-core's high-entropy rule also matches long CamelCase identifiers, so the scrubber can over-scrub such a name in proof. This is the safe direction, and is accepted.
+- Scrubbing:
+  - Fleet-core's high-entropy rule also matches long CamelCase identifiers, so the scrubber can over-scrub such a name in proof. This is the safe direction, and is accepted.
+  - That rule leaves `/` out of its alphabet so paths survive, which let a base64 secret containing `/` (an AWS secret access key, a key body without its header) pass in short runs. A second pass scrubs a run of 40 or more that includes `/` when it mixes upper case, lower case and digits.
 
 **Generalizable rule.** Confine by blocking the parent and allowing back named paths, then run a real test of each toolchain under the block before trusting it.
 

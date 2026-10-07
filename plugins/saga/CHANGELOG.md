@@ -54,11 +54,11 @@
 
 ### Fixed
 
-- Issue 189: `scripts/reviewer_answer.py` replaces known secret formats (GitHub, AWS, Slack,
-  Stripe, Google, Anthropic and OpenAI-style keys, private-key blocks, JSON web tokens, bearer
-  tokens, credentials in URLs, named secret assignments) and long high-entropy runs in each
-  finding's statement and proof with `[scrubbed:<kind>]`, before the record is built and before
-  Jev's state is built, and before the 4,000-character cut.
+- Issue 189: `scripts/reviewer_answer.py` replaces known secret formats (GitHub, AWS, Slack, Stripe,
+  Google, Anthropic and OpenAI-style keys, private-key blocks, JSON web tokens, bearer tokens,
+  credentials in URLs, named secret assignments) and long high-entropy runs, including base64 runs
+  that hold `/`, in each finding's statement and proof with `[scrubbed:<kind>]`, before the record
+  is built and before Jev's state is built, and before the 4,000-character cut.
 
 - Issue 151: an unknown tool level or lens is exit 2. A base tree the adapter declines to scan is an empty baseline, so head is still compared. A relocated command that is refused removes the work directories already created. A head payload that does not parse is reason `unparseable`.
 

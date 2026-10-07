@@ -4625,6 +4625,7 @@ def _toolchain_home(tmp_path: Path) -> tuple[Path, Path]:
     home = tmp_path / "home"
     real = home / ".local" / "share" / "uv" / "python" / "cpython-x" / "bin"
     real.mkdir(parents=True)
+    (real.parent / "lib").mkdir()
     (real / "python3").write_text("#!/bin/sh\n")
     (real / "python3").chmod(0o755)
     shim = home / ".local" / "bin"
@@ -4640,8 +4641,10 @@ def test_reviewer_read_confinement_allow_read_is_only_copy_packet_and_named_tool
     env = {"HOME": str(home), "PATH": str(shim)}
     allowed, dropped = launcher.reviewer_toolchain_paths(env)
     interpreter = home / ".local" / "share" / "uv" / "python" / "cpython-x"
-    assert [item["path"] for item in allowed] == [str(interpreter)]
-    assert "python3" in allowed[0]["reason"]
+    assert [item["path"] for item in allowed] == [
+        str(interpreter / "bin"), str(interpreter / "lib")
+    ]
+    assert all("python3" in item["reason"] for item in allowed)
     assert dropped == [{"path": str(home / ".local"),
                         "reason": f"{home / '.local'} is the shared root ~/.local"}]
     copy, packet = tmp_path / "copy", tmp_path / "packet"
@@ -4649,8 +4652,39 @@ def test_reviewer_read_confinement_allow_read_is_only_copy_packet_and_named_tool
     packet.mkdir()
     settings = launcher.reviewer_claude_settings(copy, packet, env)
     assert settings["sandbox"]["filesystem"]["allowRead"] == [
-        str(copy.resolve()), str(packet.resolve()), str(interpreter)
+        str(copy.resolve()), str(packet.resolve()), str(interpreter / "bin"),
+        str(interpreter / "lib"),
     ]
+
+
+def test_reviewer_read_confinement_a_toolchain_prefix_is_never_allowed_back_whole(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    """A tool home can keep its own ``.env`` beside ``bin/``; only ``bin`` and ``lib`` come back."""
+    home = tmp_path / "home"
+    prefix = home / ".sometool"
+    (prefix / "bin").mkdir(parents=True)
+    (prefix / "lib").mkdir()
+    (prefix / ".env").write_text("EXAMPLE=inert-example\n")
+    (prefix / "bin" / "node").write_text("#!/bin/sh\n")
+    (prefix / "bin" / "node").chmod(0o755)
+    allowed, _ = launcher.reviewer_toolchain_paths({"HOME": str(home), "PATH": str(prefix / "bin")})
+    paths = [item["path"] for item in allowed]
+    assert paths == [str(prefix / "bin"), str(prefix / "lib")]
+    assert str(prefix) not in paths and not any(p.endswith(".env") for p in paths)
+
+
+def test_reviewer_read_confinement_a_virtual_environment_s_marker_is_allowed_back(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    home = tmp_path / "home"
+    venv = home / "work" / ".venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("home = /usr/bin\n")
+    (venv / "bin" / "python3").write_text("#!/bin/sh\n")
+    (venv / "bin" / "python3").chmod(0o755)
+    allowed, _ = launcher.reviewer_toolchain_paths({"HOME": str(home), "PATH": str(venv / "bin")})
+    assert [item["path"] for item in allowed] == [str(venv / "bin"), str(venv / "pyvenv.cfg")]
 
 
 def test_reviewer_read_confinement_an_interpreter_outside_home_adds_nothing(
