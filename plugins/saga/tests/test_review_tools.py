@@ -11,6 +11,7 @@ import shlex
 import socket
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -313,10 +314,12 @@ def test_a_type_error_in_an_untouched_file_blocks(tmp_path: Path) -> None:
         if _version(argv):
             return T.ProcessResult(0, "1.0.0")
         if _git(cwd, "rev-parse", "HEAD") == base:
-            return T.ProcessResult(0, "")
+            return T.ProcessResult(0, "{}")
         return T.ProcessResult(0, "type-error")
 
-    def parse(_text: str) -> Any:
+    def parse(text: str) -> Any:
+        if text.strip() == "{}":
+            return T.ParseResult()
         return T.ParseResult((
             _hit(
                 rule_id="untouched",
@@ -674,9 +677,10 @@ def test_raw_output_is_owner_only_under_the_home_directory(
 
 
 def test_the_relocated_run_fails_once_and_blocks(tmp_path: Path) -> None:
-    repo, base, head = _pair(tmp_path)
+    repo, base, _head = _pair(tmp_path)
     probe = repo / "probe.py"
     probe.write_text(_PROBE, encoding="utf-8")
+    head = _commit(repo, "probe")
     prepared = tmp_path / "prepared-home"
     prepared.mkdir()
     (prepared / "sentinel").write_text("ready\n", encoding="utf-8")
@@ -692,12 +696,16 @@ def test_the_relocated_run_fails_once_and_blocks(tmp_path: Path) -> None:
         "review_tools": {"languages": {"python": {"test_command": command}}},
     })
     calls: list[list[str]] = []
+    executed: dict[str, str] = {}
 
     def runner(
         argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
     ) -> Any:
         assert shell is False and isinstance(argv, list)
         calls.append(list(argv))
+        path = Path(argv[1]).resolve()
+        executed["path"] = str(path)
+        executed["text"] = path.read_text(encoding="utf-8")
         return T.subprocess_runner(argv, cwd=cwd, env=env, timeout=timeout, shell=shell)
 
     output = tmp_path / "out"
@@ -708,7 +716,10 @@ def test_the_relocated_run_fails_once_and_blocks(tmp_path: Path) -> None:
     assert code == 0
     assert len(calls) == 1
     assert calls[0][0] == sys.executable
-    assert Path(calls[0][1]) == probe.resolve()
+    ran = Path(executed["path"])
+    assert ran != probe.resolve()
+    assert repo.resolve() not in ran.parents
+    assert executed["text"] == _PROBE
     findings = _read(output, "findings.json")
     relocated = [item for item in findings if item["rule"]["row"] == _RELOCATED]
     assert len(relocated) == 1
@@ -718,9 +729,10 @@ def test_the_relocated_run_fails_once_and_blocks(tmp_path: Path) -> None:
 
 
 def test_two_language_commands_each_run_once(tmp_path: Path) -> None:
-    repo, base, head = _pair(tmp_path)
+    repo, base, _head = _pair(tmp_path)
     (repo / "probe_py.py").write_text(_PROBE, encoding="utf-8")
     (repo / "probe_sh.py").write_text(_PROBE, encoding="utf-8")
+    head = _commit(repo, "probes")
     profile = _profile(tmp_path / "profile.json", {"review_tools": {"languages": {
         "python": {"test_command": shlex.join([sys.executable, "probe_py.py"])},
         "shell": {"test_command": shlex.join([sys.executable, "probe_sh.py"])},
@@ -776,8 +788,9 @@ def test_a_refused_later_language_command_removes_the_work_directories(
 
 
 def test_an_absent_languages_block_runs_the_functional_test_command_once(tmp_path: Path) -> None:
-    repo, base, head = _pair(tmp_path)
+    repo, base, _head = _pair(tmp_path)
     (repo / "probe.py").write_text(_PROBE, encoding="utf-8")
+    head = _commit(repo, "probe")
     profile = _profile(tmp_path / "profile.json", {
         "functional_test_environment": {
             "test_command": shlex.join([sys.executable, "probe.py"]),
@@ -850,16 +863,32 @@ def test_a_string_command_or_a_shell_is_refused(tmp_path: Path) -> None:
 
 def test_two_coverage_reports_that_disagree_exit_2(tmp_path: Path) -> None:
     repo, base, head = _pair(tmp_path)
-    (repo / "coverage.json").write_text(json.dumps({
+    profile = _profile(tmp_path / "profile.json", {"review_tools": {"languages": {
+        "python": {"test_command": "true"},
+        "shell": {"test_command": "true"},
+    }}})
+    coverage = json.dumps({
         "files": {"src/app.py": {"missing_branches": [[4, 5]], "missing_lines": []}},
-    }), encoding="utf-8")
-    (repo / "lcov.info").write_text(
-        "SF:src/app.py\nBRDA:1,0,0,0\nBRDA:4,0,0,1\nend_of_record\n", encoding="utf-8"
-    )
+    })
+    lcov = "SF:src/app.py\nBRDA:1,0,0,0\nBRDA:4,0,0,1\nend_of_record\n"
+    written: list[str] = []
+
+    def runner(
+        argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        assert shell is False
+        if argv == ["true"] and not written:
+            (cwd / "coverage.json").write_text(coverage, encoding="utf-8")
+            written.append("coverage.json")
+        elif argv == ["true"]:
+            (cwd / "lcov.info").write_text(lcov, encoding="utf-8")
+            written.append("lcov.info")
+        return T.ProcessResult(0, "")
+
     output = tmp_path / "out"
     code = _run(
-        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
-        adapters=[], runner=_Calls(_ok()), framework=True,
+        repo, base, head, profile, output, tmp_path / "home",
+        adapters=[], runner=runner, framework=True,
     )
     assert code == 2
     for name in _FOUR:
@@ -922,3 +951,741 @@ def test_fingerprint_names_these_paths() -> None:
         text = calibration.read_text(encoding="utf-8")
         for path in T.FINGERPRINT_COMPONENTS:
             assert path in text
+
+
+_SCAN_IDS = (
+    "semgrep-security",
+    "semgrep-saga",
+    "gitleaks",
+    "osv-scanner",
+    "jscpd",
+    "lizard",
+)
+
+
+def _flagged_repo(tmp: Path) -> tuple[Path, str, str]:
+    """Head commit adds ``FLAGGED`` on line 2. The working tree deletes it again."""
+    repo = tmp / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("one\n", encoding="utf-8")
+    (repo / "requirements.txt").write_text("example==1\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("one\nFLAGGED\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    (repo / "src" / "app.py").write_text("one\n", encoding="utf-8")
+    return repo, base, head
+
+
+def _flagged_body(tool_id: str, flagged: bool) -> str:
+    if not flagged:
+        if tool_id == "gitleaks":
+            return "[]"
+        if tool_id == "lizard":
+            return "nloc,ccn,tokens,params,length,file,function,start,end\n"
+        if tool_id == "jscpd":
+            return '{"duplicates":[]}'
+        return "{}"
+    if tool_id == "semgrep-security":
+        return json.dumps({"results": [{
+            "check_id": "example",
+            "path": "src/app.py",
+            "start": {"line": 2},
+            "end": {"line": 2},
+            "extra": {"severity": "ERROR", "message": "flagged"},
+        }]})
+    if tool_id == "semgrep-saga":
+        return json.dumps({"results": [{
+            "check_id": "saga.swallowed",
+            "path": "src/app.py",
+            "start": {"line": 2},
+            "end": {"line": 2},
+            "extra": {
+                "message": "flagged",
+                "metadata": {"row": "correctness.pattern.swallowed-error"},
+            },
+        }]})
+    if tool_id == "gitleaks":
+        return json.dumps([{
+            "RuleID": "example-rule",
+            "File": "src/app.py",
+            "StartLine": 2,
+            "EndLine": 2,
+        }])
+    if tool_id == "osv-scanner":
+        return json.dumps({"results": [{
+            "source": {"path": "requirements.txt"},
+            "packages": [{"vulnerabilities": [{
+                "id": "CVE-FLAGGED",
+                "severity": [{"type": "CVSS_V3", "score": "9.0"}],
+            }]}],
+        }]})
+    if tool_id == "jscpd":
+        return json.dumps({"duplicates": [{
+            "lines": 8,
+            "tokens": 60,
+            "firstFile": {"name": "src/app.py", "start": 2},
+            "secondFile": {"name": "src/other.py", "start": 2},
+        }]})
+    return (
+        "nloc,ccn,tokens,params,length,file,function,start,end\n"
+        "20,16,100,2,2,src/app.py,heavy,2,2\n"
+    )
+
+
+def _watch(adapter: Any, repo: Path) -> Any:
+    original = adapter.invoke
+
+    def invoke(context: Any) -> list[str]:
+        assert context.repo == context.root
+        assert context.repo.resolve() != repo.resolve()
+        return original(context)
+
+    return replace(adapter, invoke=invoke)
+
+
+def _tool_profile(tmp: Path, home: Path, tool_id: str) -> Path:
+    binary = {
+        "semgrep-security": "semgrep",
+        "semgrep-saga": "semgrep",
+        "gitleaks": "gitleaks",
+        "osv-scanner": "osv-scanner",
+        "jscpd": "jscpd",
+        "lizard": "lizard",
+    }[tool_id]
+    pin: dict[str, Any] = {"version": "1.0.0"}
+    if tool_id == "semgrep-security":
+        cache = T.semgrep_cache(home, "p/security-audit")
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / "rules.yml").write_text("rules: []\n", encoding="utf-8")
+        pin["rules"] = [{"pack": "p/security-audit", "sha256": T.digest_tree(cache)}]
+    return _profile(tmp / f"{tool_id}.json", {"review_tools": {"pins": {binary: pin}}})
+
+
+@pytest.mark.parametrize("tool_id", _SCAN_IDS)
+def test_head_worktree_uncommitted_edit_keeps_the_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool_id: str,
+) -> None:
+    adapters = _load("review_adapters_all_languages")
+    if tool_id == "semgrep-saga":
+        plugin = tmp_path / "plugin"
+        rules = plugin / "references" / "semgrep-rules"
+        rules.mkdir(parents=True)
+        (rules / "rule.yml").write_text("rules: []\n", encoding="utf-8")
+        monkeypatch.setattr(T, "plugin_root", lambda: plugin)
+    repo, base, head = _flagged_repo(tmp_path)
+    assert "FLAGGED" not in (repo / "src" / "app.py").read_text(encoding="utf-8")
+    home = tmp_path / "home"
+    adapter = _watch(next(item for item in adapters.ADAPTERS if item.id == tool_id), repo)
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0\n")
+        app = cwd / "src" / "app.py"
+        flagged = app.is_file() and "FLAGGED" in app.read_text(encoding="utf-8")
+        body = _flagged_body(tool_id, flagged)
+        if "--output" in argv:
+            report_dir = Path(argv[argv.index("--output") + 1])
+            report_dir.mkdir(parents=True, exist_ok=True)
+            (report_dir / "jscpd-report.json").write_text(body, encoding="utf-8")
+            return T.ProcessResult(0, "")
+        return T.ProcessResult(0, body)
+
+    runner = _Calls(handler)
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _tool_profile(tmp_path, home, tool_id), output, home,
+        adapters=[adapter], runner=runner,
+    )
+    assert code == 0, _reasons(output) if output.exists() else code
+    assert _read(output, "findings.json")
+    scans = [call["cwd"] for call in runner.calls if not _version(call["argv"])]
+    assert scans
+    assert all(path.resolve() != repo.resolve() for path in scans)
+
+
+def test_head_worktree_uncommitted_rules_stay_a_known_gap(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    rules = repo / "missing-rules"
+    rules.mkdir()
+    (rules / "rule.yml").write_text("rules: []\n", encoding="utf-8")
+    runner = _Calls(_ok())
+    output = tmp_path / "out"
+    adapter = _stub(gap_path="missing-rules", gap_rows=("correctness.pattern.swallowed-error",))
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[adapter], runner=runner,
+    )
+    assert code == 0
+    assert runner.calls == []
+    assert ("stub", "correctness.pattern.swallowed-error", "known-gap") in _reasons(output)
+
+
+def test_head_worktree_hooks_do_not_run(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("one\n", encoding="utf-8")
+    marker = tmp_path / "hook-ran"
+    hook = repo / "hooks" / "post-checkout"
+    hook.parent.mkdir()
+    hook.write_text(f"#!/bin/sh\ntouch {shlex.quote(str(marker))}\n", encoding="utf-8")
+    hook.chmod(0o755)
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    _git(repo, "config", "core.hooksPath", "hooks")
+    control = tmp_path / "control"
+    added = subprocess.run(
+        ["git", "worktree", "add", "--detach", str(control), head],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    assert marker.is_file(), added.stderr
+    marker.unlink()
+    subprocess.run(
+        ["git", "worktree", "remove", "--force", str(control)],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    output = tmp_path / "out"
+    code = _run(repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home", adapters=[])
+    assert code == 0
+    assert not marker.exists()
+
+
+def test_head_worktree_uncommitted_probe_keeps_the_failure_and_the_branch(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("one\ntwo\nthree\nfour\nfive\n", encoding="utf-8")
+    uncovered = json.dumps({
+        "files": {"src/app.py": {"missing_branches": [[4, 5]], "missing_lines": []}},
+    })
+    full = json.dumps({"files": {"src/app.py": {"missing_branches": [], "missing_lines": []}}})
+    (repo / "probe.py").write_text(
+        "import pathlib\n"
+        "pathlib.Path('coverage.json').write_text(" + repr(uncovered) + ", encoding='utf-8')\n"
+        "raise SystemExit(1)\n",
+        encoding="utf-8",
+    )
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("one\ntwo\nthree\nFOUR\nfive\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    (repo / "probe.py").write_text(
+        "import pathlib\n"
+        "pathlib.Path('coverage.json').write_text(" + repr(full) + ", encoding='utf-8')\n"
+        "raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+    command = shlex.join([sys.executable, "probe.py"])
+    profile = _profile(tmp_path / "profile.json", {"review_tools": {"languages": {"python": {
+        "test_command": command,
+        "coverage_report": "coverage.json",
+    }}}})
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, profile, output, tmp_path / "home", adapters=[], framework=True,
+    )
+    assert code == 0
+    rows = [item["rule"]["row"] for item in _read(output, "findings.json")]
+    assert _RELOCATED in rows
+    assert "testing.uncovered-branch" in rows
+    assert _read(output, "measurements.json")[0]["value"] != 1.0
+
+
+def _semgrep_cache(home: Path) -> str:
+    cache = T.semgrep_cache(home, "p/security-audit")
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "rules.yml").write_text("rules: []\n", encoding="utf-8")
+    return T.digest_tree(cache)
+
+
+def test_head_profile_pins_and_command_come_from_base(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    home = tmp_path / "home"
+    digest = _semgrep_cache(home)
+    base_profile = {
+        "review_tools": {
+            "languages": {"python": {"test_command": "echo BASEMARKER"}},
+            "pins": {"semgrep": {"version": "1.0.0", "rules": [
+                {"pack": "p/security-audit", "sha256": digest},
+            ]}},
+        },
+    }
+    (repo / ".saga-profile.json").write_text(json.dumps(base_profile), encoding="utf-8")
+    base = _commit(repo, "base")
+    head_profile = {
+        "review_tools": {
+            "languages": {"python": {"test_command": "true"}},
+            "pins": {"semgrep": {"version": "1.0.0", "rules": [
+                {"pack": "p/other", "sha256": "a" * 64},
+            ]}},
+        },
+    }
+    (repo / ".saga-profile.json").write_text(json.dumps(head_profile), encoding="utf-8")
+    head = _commit(repo, "head")
+    (repo / ".saga-profile.json").write_text(json.dumps({
+        "review_tools": {"languages": {"python": {"test_command": "echo WORKTREE"}}},
+    }), encoding="utf-8")
+    adapters = _load("review_adapters_all_languages")
+    adapter = next(item for item in adapters.ADAPTERS if item.id == "semgrep-security")
+    argv_seen: list[list[str]] = []
+
+    def handler(argv: list[str], _cwd: Path, _env: dict[str, str]) -> Any:
+        argv_seen.append(list(argv))
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0\n")
+        return T.ProcessResult(0, "{}")
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, repo / ".saga-profile.json", output, home,
+        adapters=[adapter], runner=_Calls(handler), framework=True,
+    )
+    assert code == 0
+    cache = T.semgrep_cache(home, "p/security-audit")
+    assert any(str(cache) in argv for argv in argv_seen)
+    assert ["echo", "BASEMARKER"] in argv_seen
+    assert ["true"] not in argv_seen
+    assert all("WORKTREE" not in token for argv in argv_seen for token in argv)
+    changes = [item for item in _read(output, "degraded.json") if item["reason"] == "head-profile-change"]
+    assert changes == [{
+        "lens": "security",
+        "language": "none",
+        "input": "head-profile",
+        "tool": "review-tools",
+        "reason": "head-profile-change",
+    }]
+
+
+def test_head_profile_added_when_base_has_none_is_recorded(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / ".saga-profile.json").write_text(json.dumps({
+        "review_tools": {"languages": {"python": {"test_command": "true"}}},
+    }), encoding="utf-8")
+    head = _commit(repo, "head")
+    argv_seen: list[list[str]] = []
+
+    def handler(
+        argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        argv_seen.append(list(argv))
+        return T.ProcessResult(0, "")
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, repo / ".saga-profile.json", output, tmp_path / "home",
+        adapters=[], runner=handler, framework=True,
+    )
+    assert code == 0
+    assert argv_seen == []
+    assert ("relocated-test", _RELOCATED, "known-gap") in _reasons(output)
+    assert [item["reason"] for item in _read(output, "degraded.json")].count("head-profile-change") == 1
+
+
+def test_head_profile_absent_on_both_commits_is_not_recorded(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    (repo / ".saga-profile.json").write_text(json.dumps({
+        "review_tools": {"languages": {"python": {"test_command": "true"}}},
+    }), encoding="utf-8")
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, repo / ".saga-profile.json", output, tmp_path / "home",
+        adapters=[], framework=True,
+    )
+    assert code == 0
+    assert "head-profile-change" not in [item["reason"] for item in _read(output, "degraded.json")]
+    assert ("relocated-test", _RELOCATED, "known-gap") in _reasons(output)
+
+
+def test_head_profile_malformed_head_is_recorded(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    (repo / ".saga-profile.json").write_text(json.dumps({
+        "review_tools": {"languages": {"python": {"test_command": "echo BASEMARKER"}}},
+    }), encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / ".saga-profile.json").write_text("{", encoding="utf-8")
+    head = _commit(repo, "head")
+    argv_seen: list[list[str]] = []
+
+    def handler(
+        argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        argv_seen.append(list(argv))
+        return T.ProcessResult(0, "")
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[], runner=handler, framework=True,
+    )
+    assert code == 0
+    assert ["echo", "BASEMARKER"] in argv_seen
+    assert [item["reason"] for item in _read(output, "degraded.json")].count("head-profile-change") == 1
+
+    pins = tmp_path / "pins"
+    _init(pins)
+    (pins / "README").write_text("one\n", encoding="utf-8")
+    (pins / ".saga-profile.json").write_text(json.dumps({
+        "review_tools": {"languages": {"python": {"test_command": "echo BASEMARKER"}}},
+    }), encoding="utf-8")
+    pins_base = _commit(pins, "base")
+    (pins / ".saga-profile.json").write_text(json.dumps({
+        "review_tools": {"pins": {"semgrep": {"rules": [{"pack": "p/other", "sha256": "zz"}]}}},
+    }), encoding="utf-8")
+    pins_head = _commit(pins, "head")
+    argv_seen.clear()
+    second = tmp_path / "out-pins"
+    code = _run(
+        pins, pins_base, pins_head, _bare_profile(tmp_path / "pins-profile"), second,
+        tmp_path / "home-pins", adapters=[], runner=handler, framework=True,
+    )
+    assert code == 0
+    assert ["echo", "BASEMARKER"] in argv_seen
+    assert [item["reason"] for item in _read(second, "degraded.json")].count("head-profile-change") == 1
+
+
+def test_head_profile_malformed_base_exits_2(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / ".saga-profile.json").write_text("{", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    runner = _Calls(_ok())
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[_stub()], runner=runner,
+    )
+    assert code == 2
+    assert runner.calls == []
+    for name in _FOUR:
+        assert not (output / name).exists()
+
+
+def test_saga_rules_source_is_the_plugin_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = tmp_path / "plugin"
+    rules = plugin / "references" / "semgrep-rules"
+    rules.mkdir(parents=True)
+    (rules / "rule.yml").write_text("rules: []\n", encoding="utf-8")
+    monkeypatch.setattr(T, "plugin_root", lambda: plugin)
+    adapters = _load("review_adapters_all_languages")
+    adapter = next(item for item in adapters.ADAPTERS if item.id == "semgrep-saga")
+    repo = tmp_path / "repo"
+    _init(repo)
+    evil = repo / "plugins" / "saga" / "references" / "semgrep-rules"
+    evil.mkdir(parents=True)
+    (evil / "evil.yml").write_text("rules: []\n", encoding="utf-8")
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+
+    def configs(runner: _Calls) -> list[str]:
+        found = []
+        for call in runner.calls:
+            if "--config" not in call["argv"]:
+                continue
+            index = call["argv"].index("--config")
+            found.append(call["argv"][index + 1])
+        return found
+
+    home = tmp_path / "home"
+    profile = _profile(tmp_path / "profile.json", {
+        "review_tools": {"pins": {"semgrep": {"version": "1.0.0"}}},
+    })
+    runner = _Calls(_ok("{}"))
+    code = _run(repo, base, head, profile, tmp_path / "yaml", home, adapters=[adapter], runner=runner)
+    assert code == 0
+    assert configs(runner) == [str(rules)]
+    assert all("evil.yml" not in item and str(evil) not in item for item in configs(runner))
+
+    (repo / ".saga-profile.json").write_text(json.dumps({
+        "review_tools": {"pins": {"semgrep": {"version": "1.0.0", "rules": [
+            {"path": "plugins/saga/references/semgrep-rules"},
+        ]}}},
+    }), encoding="utf-8")
+    profile_base = _commit(repo, "profile")
+    pinned = _Calls(_ok("{}"))
+    code = _run(
+        repo, profile_base, head, repo / ".saga-profile.json", tmp_path / "pinned",
+        tmp_path / "home-2", adapters=[adapter], runner=pinned,
+    )
+    assert code == 0
+    assert configs(pinned) == [str(rules)]
+
+
+def test_coverage_source_ignores_a_committed_report(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("one\ntwo\nthree\nfour\nfive\n", encoding="utf-8")
+    full = json.dumps({"files": {"src/app.py": {"missing_branches": [], "missing_lines": []}}})
+    uncovered = json.dumps({
+        "files": {"src/app.py": {"missing_branches": [[4, 5]], "missing_lines": []}},
+    })
+    (repo / "coverage.json").write_text(full, encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("one\ntwo\nthree\nFOUR\nfive\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    profile = _profile(tmp_path / "profile.json", {"review_tools": {"languages": {"python": {
+        "test_command": "true",
+        "coverage_report": "coverage.json",
+    }}}})
+
+    def runner(
+        argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        assert shell is False
+        if argv == ["true"]:
+            (cwd / "coverage.json").write_text(uncovered, encoding="utf-8")
+        return T.ProcessResult(0, "")
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, profile, output, tmp_path / "home",
+        adapters=[], runner=runner, framework=True,
+    )
+    assert code == 0
+    findings = _read(output, "findings.json")
+    assert len(findings) == 1
+    assert findings[0]["location"]["lines"] == {"start": 4, "end": 4}
+    assert _read(output, "measurements.json")[0]["value"] != 1.0
+
+
+def test_coverage_source_missing_name_stays_no_report(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    (repo / "coverage.json").write_text(json.dumps({
+        "files": {"src/app.py": {"missing_branches": [[4, 5]], "missing_lines": []}},
+    }), encoding="utf-8")
+    profile = _profile(tmp_path / "profile.json", {"review_tools": {"languages": {"python": {
+        "test_command": "true",
+        "coverage_report": "coverage.json",
+    }}}})
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, profile, output, tmp_path / "home",
+        adapters=[], runner=_Calls(_ok()), framework=True,
+    )
+    assert code == 0
+    assert _read(output, "findings.json") == []
+    assert ("coverage", "testing.uncovered-branch", "no-report") in _reasons(output)
+
+
+def test_coverage_source_refuses_a_path_outside_the_relocated_directory(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}\n", encoding="utf-8")
+    cases = (str(outside), "../coverage.json")
+    for index, report in enumerate(cases):
+        profile = _profile(tmp_path / f"profile-{index}.json", {"review_tools": {"languages": {
+            "python": {"test_command": "true", "coverage_report": report},
+        }}})
+        output = tmp_path / f"out-{index}"
+        code = _run(
+            repo, base, head, profile, output, tmp_path / f"home-{index}",
+            adapters=[], runner=_Calls(_ok()), framework=True,
+        )
+        assert code == 2
+        for name in _FOUR:
+            assert not (output / name).exists()
+
+    def runner(
+        argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        if argv == ["true"]:
+            (cwd / "coverage.json").symlink_to(outside)
+        return T.ProcessResult(0, "")
+
+    profile = _profile(tmp_path / "link.json", {"review_tools": {"languages": {"python": {
+        "test_command": "true",
+        "coverage_report": "coverage.json",
+    }}}})
+    output = tmp_path / "link-out"
+    code = _run(
+        repo, base, head, profile, output, tmp_path / "home-link",
+        adapters=[], runner=runner, framework=True,
+    )
+    assert code == 2
+    for name in _FOUR:
+        assert not (output / name).exists()
+
+
+def test_relocated_environment_is_allow_listed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ"):
+        monkeypatch.setenv(name, os.environ.get(name) or "C")
+    monkeypatch.setenv("SAGA_REVIEW_SENTINEL", "nope")
+    monkeypatch.setenv("PYTHONPATH", "/tmp/nope")
+    repo, base, head = _pair(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {
+        "review_tools": {"languages": {"python": {"test_command": "true"}}},
+    })
+    recorded: dict[str, str] = {}
+
+    def runner(
+        argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        if argv == ["true"]:
+            recorded.update(env)
+        return T.ProcessResult(0, "")
+
+    code = _run(
+        repo, base, head, profile, tmp_path / "out", tmp_path / "home",
+        adapters=[], runner=runner, framework=True,
+    )
+    assert code == 0
+    assert set(recorded) == {
+        "PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "HOME", "TMPDIR", "TMP", "TEMP",
+    }
+    assert recorded["PATH"] == os.environ["PATH"]
+    assert recorded["HOME"] != str(Path.home())
+    assert "SAGA_REVIEW_SENTINEL" not in recorded
+    assert recorded["TMPDIR"] == recorded["TMP"] == recorded["TEMP"]
+
+
+def _vuln_parse(text: str) -> Any:
+    if "VULN" not in text:
+        return T.ParseResult()
+    return T.ParseResult((
+        _hit(rule_id="vuln", anchor="vuln", whole_project=True, start=None),
+    ))
+
+
+def test_base_cache_follows_the_branch_not_the_typed_name(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "marker.txt").write_text("VULN\n", encoding="utf-8")
+    (repo / "app.py").write_text("one\n", encoding="utf-8")
+    b1 = _commit(repo, "b1")
+    _git(repo, "branch", "basebranch")
+    (repo / "app.py").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    scanned: list[str] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        scanned.append(_git(cwd, "rev-parse", "HEAD"))
+        text = (cwd / "marker.txt").read_text(encoding="utf-8")
+        return T.ProcessResult(0, "VULN" if "VULN" in text else "{}")
+
+    adapter = _stub(comparison="base-head", parse=_vuln_parse)
+    home = tmp_path / "home"
+    profile = _bare_profile(tmp_path)
+
+    def once(name: str) -> Path:
+        output = tmp_path / name
+        code = _run(
+            repo, "basebranch", head, profile, output, home,
+            adapters=[adapter], runner=_Calls(handler),
+        )
+        assert code == 0
+        return output
+
+    first = once("out-1")
+    assert b1 in scanned
+    assert _read(first, "findings.json") == []
+    scanned.clear()
+    second = once("out-2")
+    assert b1 not in scanned
+    assert head in scanned
+    assert _read(second, "findings.json") == []
+
+    _git(repo, "checkout", "basebranch")
+    (repo / "marker.txt").write_text("clean\n", encoding="utf-8")
+    b2 = _commit(repo, "b2")
+    _git(repo, "checkout", head)
+    scanned.clear()
+    third = once("out-3")
+    assert b2 in scanned
+    assert {item["rule"]["ref"] for item in _read(third, "findings.json")} == {"vuln"}
+    scanned.clear()
+    fourth = once("out-4")
+    assert b2 not in scanned
+    assert {item["rule"]["ref"] for item in _read(fourth, "findings.json")} == {"vuln"}
+
+    cache = home / ".saga" / "review-cache" / "stub" / "1.0.0" / b2
+    stored = list(cache.glob("*.json"))
+    assert len(stored) == 1
+    leftover = cache / "not-a-digest.json"
+    leftover.write_text("[]", encoding="utf-8")
+    body = json.loads(stored[0].read_text(encoding="utf-8"))
+    body["key"]["settings"] = "0" * 64
+    stored[0].write_text(json.dumps(body), encoding="utf-8")
+    scanned.clear()
+    fifth = once("out-5")
+    assert b2 in scanned
+    assert {item["rule"]["ref"] for item in _read(fifth, "findings.json")} == {"vuln"}
+    assert leftover.is_file()
+
+
+def test_empty_or_errored_stdout_is_degraded(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    scanned: list[str] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        scanned.append(_git(cwd, "rev-parse", "HEAD"))
+        return T.ProcessResult(0, "")
+
+    adapter = _stub(comparison="base-head")
+    home = tmp_path / "home"
+    profile = _bare_profile(tmp_path)
+    first = tmp_path / "out-1"
+    code = _run(
+        repo, base, head, profile, first, home, adapters=[adapter], runner=_Calls(handler),
+    )
+    assert code == 0
+    assert base in scanned and head in scanned
+    assert _read(first, "findings.json") == []
+    assert ("stub", "security.scanner-medium-low", "empty-output") in _reasons(first)
+    scanned.clear()
+    second = tmp_path / "out-2"
+    code = _run(
+        repo, base, head, profile, second, home, adapters=[adapter], runner=_Calls(handler),
+    )
+    assert code == 0
+    assert base in scanned
+    assert ("stub", "security.scanner-medium-low", "empty-output") in _reasons(second)
+
+    def clean(argv: list[str], _cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        return T.ProcessResult(0, "{}")
+
+    def parse(text: str) -> Any:
+        assert text.strip() == "{}"
+        return T.ParseResult()
+
+    third = tmp_path / "out-3"
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path / "clean"), third, tmp_path / "home-clean",
+        adapters=[_stub(comparison="base-head", parse=parse)], runner=_Calls(clean),
+    )
+    assert code == 0
+    assert "empty-output" not in [item["reason"] for item in _read(third, "degraded.json")]
+
+
+def test_untrusted_head_rule_is_documented() -> None:
+    guide = (REFERENCES / "review-tools.md").read_text(encoding="utf-8")
+    decisions = (
+        REPO_ROOT / "docs" / "engineering-journal" / "DECISIONS.md"
+    ).read_text(encoding="utf-8")
+    profile = (REFERENCES / "repository-profile.md").read_text(encoding="utf-8")
+    sentence = "The commit under review is untrusted."
+    assert sentence in guide
+    assert sentence in decisions
+    assert "head-profile-change" in profile

@@ -33,6 +33,14 @@
 
 ## 2026-10-06
 
+### A review reads the commit it was given
+
+**Evidence.** Issue #188. `plugins/saga/scripts/review_tools.py` opens one head worktree in `_run` and resolves both commits there. Tests: `test_head_worktree_uncommitted_edit_keeps_the_finding`, `test_base_cache_follows_the_branch_not_the_typed_name`.
+
+**Mechanism.** The checkout can be edited after the commit. A cache directory named with the branch the caller typed keeps serving the old commit after that branch moves. Coverage and the test command read from that same checkout let the change grade itself.
+
+**Generalizable rule.** A review reads the commit it was given, not the checkout the commit was checked out into.
+
 ### A gap on one side of a comparison is an empty set
 
 **Evidence.** Issue #151 repair. `plugins/saga/scripts/review_tools.py` `_base_and_head` treats a base `ToolGap` as no findings and still scans head. `_identity` and the adapter loop turn `FormulaError` into exit 2. Tests: `test_a_base_npm_gap_still_scans_a_lockfile_added_at_head`, `test_an_unknown_tool_level_or_lens_is_a_refusal`.

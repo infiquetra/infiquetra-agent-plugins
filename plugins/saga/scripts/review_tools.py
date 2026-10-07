@@ -35,6 +35,13 @@ import review_records
 
 SCHEMA = "review_records.v1"
 TOOL_LIST = Path(__file__).resolve().parent.parent / "references" / "review-tools.yaml"
+
+
+def plugin_root() -> Path:
+    """The ``plugins/saga`` directory that contains this file's ``scripts`` folder."""
+    return Path(__file__).resolve().parents[1]
+
+
 MUTATION_CAP_SECONDS = 900
 FINGERPRINT_COMPONENTS = (
     "plugins/saga/scripts/review_tools.py",
@@ -58,6 +65,17 @@ _SUFFIXES = {
     ".sh": "shell",
 }
 _REPORT_NAMES = ("coverage.json", "coverage.xml", "coverage.lcov", "lcov.info")
+_SETTINGS_NAMES = (
+    ".semgrepignore",
+    ".gitleaks.toml",
+    ".gitleaksignore",
+    ".jscpd.json",
+    "whitelizard.txt",
+    "osv-scanner.toml",
+)
+_SAGA_RULES = "plugins/saga/references/semgrep-rules"
+_ENV_COPIED = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
+_ENV_WINDOWS = ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT")
 
 Process = Callable[..., "ProcessResult"]
 
@@ -99,6 +117,7 @@ class ScanContext:
     root: Path
     home: Path
     configs: tuple[Path, ...] = ()
+    report_dir: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +147,7 @@ class Hit:
 class ParseResult:
     hits: tuple[Hit, ...] = ()
     unfinished: bool = False
+    problems: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -312,46 +332,57 @@ def _run(
     process: Process,
     framework: bool,
 ) -> int:
-    profile = _load_profile(profile_path)
+    base_sha = _require_sha(repo, base)
+    head_sha = _require_sha(repo, head)
+    profile, profile_notes = _profile_for_run(repo, base_sha, head_sha, profile_path)
     builder_record = _load_builder(builder)
     try:
-        change = review_diff.read(repo, base, head)
+        change = review_diff.read(repo, base_sha, head_sha)
     except review_diff.ReviewDiffError as exc:
         raise RunnerFailure(2, str(exc)) from exc
     output.mkdir(parents=True, exist_ok=True)
     pending: list[Hit] = []
-    degraded: list[dict[str, str]] = []
+    degraded: list[dict[str, str]] = list(profile_notes)
     deadline = time.monotonic() + MUTATION_CAP_SECONDS
     base_env = dict(os.environ)
-    for adapter in adapters:
-        if adapter.mode == "fix" or not adapter.tool:
-            continue
-        pending.extend(_run_adapter(
-            adapter, repo, base, head, change, home, profile, process, base_env, deadline, degraded
-        ))
-    measurements: list[dict[str, Any]] = []
-    cov_findings: list[dict[str, Any]] = []
-    extra_dirs: list[Path] = []
+    extra: list[tuple[str, Path]] = []
     try:
-        if framework:
-            relocated_hits, extra_dirs = _relocated(repo, profile, process, home, degraded)
-            pending.extend(relocated_hits)
-            cov_findings, measurements = _coverage(
-                repo, change, profile, home, degraded, extra_dirs
-            )
-        findings = _findings_from(pending) + cov_findings
-        _emit(output, findings, measurements, degraded, builder_record)
-        return 0
+        with _worktree(repo, head_sha) as head_root:
+            degraded.extend(_strip_settings(head_root))
+            degraded.extend(_allow_comments(head_root, change))
+            for adapter in adapters:
+                _link_env(adapter, repo, head_root, base_sha, head_sha)
+            for adapter in adapters:
+                if adapter.mode == "fix" or not adapter.tool:
+                    continue
+                pending.extend(_run_adapter(
+                    adapter, repo, base_sha, head_sha, head_root, change, home, profile,
+                    process, base_env, deadline, degraded,
+                ))
+            measurements: list[dict[str, Any]] = []
+            cov_findings: list[dict[str, Any]] = []
+            if framework:
+                relocated_hits, extra = _relocated(
+                    head_root, profile, process, home, degraded
+                )
+                pending.extend(relocated_hits)
+                cov_findings, measurements = _coverage(
+                    change, profile, home, degraded, extra
+                )
+            findings = _findings_from(pending) + cov_findings
+            _emit(output, findings, measurements, degraded, builder_record)
+            return 0
     finally:
-        for path in extra_dirs:
+        for _language, path in extra:
             shutil.rmtree(path, ignore_errors=True)
 
 
 def _run_adapter(
     adapter: Adapter,
     repo: Path,
-    base: str,
-    head: str,
+    base_sha: str,
+    head_sha: str,
+    head_root: Path,
     change: review_diff.Change,
     home: Path,
     profile: Mapping[str, Any],
@@ -363,17 +394,17 @@ def _run_adapter(
     if adapter.platforms and sys.platform not in adapter.platforms:
         degraded.append(_degraded(adapter, _primary_row(adapter), "unsupported-platform"))
         return []
-    if adapter.gap_path is not None and not _present(repo / adapter.gap_path):
+    if adapter.gap_path is not None and not _present(_gap_target(adapter, head_root)):
         rows = adapter.gap_rows or adapter.rows[:1]
         for row in rows:
             degraded.append(_degraded(adapter, row, "known-gap"))
         return []
     rules = _rules_for(adapter, profile)
-    configs, cache_problem = _rule_config(adapter, rules, repo, home)
+    configs, cache_problem = _rule_config(adapter, rules, repo, home, base_sha)
     if cache_problem is not None:
         degraded.append(_degraded(adapter, _primary_row(adapter), cache_problem))
         return []
-    version, problem = _read_version(adapter, profile, process, repo, env)
+    version, problem = _read_version(adapter, profile, process, env)
     if problem in {"missing", "timeout"}:
         degraded.append(_degraded(adapter, _primary_row(adapter), problem))
         return []
@@ -387,12 +418,12 @@ def _run_adapter(
     if adapter.mutation:
         timeout = max(1, min(timeout, int(deadline - time.monotonic())))
     ran = version or adapter.default_version
-    context = ScanContext(repo, repo, home, configs)
+    context = ScanContext(head_root, head_root, home, configs)
     comparison = "base-head" if adapter.type_checker else adapter.comparison
     if comparison == "base-head":
         hits, digests = _base_and_head(
-            adapter, repo, base, head, context, process, env, timeout, ran, degraded,
-            _rules_digest(rules),
+            adapter, repo, base_sha, head_sha, head_root, context, process, env, timeout,
+            ran, degraded, _rules_digest(rules),
         )
     else:
         hits, digests = _once(adapter, context, process, env, timeout, "head", degraded)
@@ -433,18 +464,19 @@ def _once(
     degraded: list[dict[str, str]],
 ) -> tuple[tuple[Hit, ...], dict[str, str]]:
     try:
-        argv = adapter.invoke(context)
+        result, problem, ran = _capture(adapter, context, process, env, timeout)
     except ToolGap as exc:
         degraded.append(_degraded(adapter, exc.row, exc.reason))
         return (), {}
-    if not argv:
+    if not ran:
         return (), {}
-    result, problem = _execute(adapter, argv, context.root, process, env, timeout)
     if problem is not None:
         degraded.append(_degraded(adapter, _primary_row(adapter), problem))
         return (), {}
     assert result is not None
     parsed, failure = _parsed(adapter, result, label)
+    if parsed is not None:
+        _note_problems(adapter, parsed, degraded)
     if failure is not None:
         degraded.append(_degraded(adapter, _primary_row(adapter), failure))
         return (), {}
@@ -452,7 +484,9 @@ def _once(
     if parsed.unfinished:
         degraded.append(_degraded(adapter, "testing.surviving-mutant", "cap"))
         parsed = ParseResult(
-            tuple(replace(hit, degraded=True) for hit in parsed.hits), unfinished=True
+            tuple(replace(hit, degraded=True) for hit in parsed.hits),
+            unfinished=True,
+            problems=parsed.problems,
         )
     digest = store_raw((result.stdout or "").encode(), context.home)
     return parsed.hits, {label: digest}
@@ -461,8 +495,9 @@ def _once(
 def _base_and_head(
     adapter: Adapter,
     repo: Path,
-    base: str,
-    head: str,
+    base_sha: str,
+    head_sha: str,
+    head_root: Path,
     context: ScanContext,
     process: Process,
     env: Mapping[str, str],
@@ -471,30 +506,38 @@ def _base_and_head(
     degraded: list[dict[str, str]],
     rules_digest: str,
 ) -> tuple[tuple[Hit, ...], dict[str, str]]:
-    cached = _read_base_cache(context.home, adapter, version, base, rules_digest)
+    settings = _settings_digest(adapter, rules_digest)
+    key = {"base": base_sha, "adapter": adapter.id, "version": version, "settings": settings}
+    cached = _read_base_cache(context.home, adapter, version, base_sha, settings, key)
     if cached is None:
         try:
-            with _worktree(repo, base) as base_root:
-                _link_env(adapter, repo, base_root, base, head)
+            with _worktree(repo, base_sha) as base_root:
+                _link_env(adapter, repo, base_root, base_sha, head_sha)
                 base_hits, _base_digest, base_problem = _scan_root(
-                    adapter, replace(context, root=base_root), process, env, timeout, "base",
-                    degraded,
+                    adapter, replace(context, repo=base_root, root=base_root), process, env,
+                    timeout, "base", degraded,
                 )
         except ToolGap:
             # The base tree declined. Head is still compared against no earlier findings.
             base_hits = ()
             base_problem = None
-        if base_problem is not None:
+        if base_problem == "empty-output":
+            degraded.append(_degraded(adapter, _primary_row(adapter), base_problem))
+            base_hits = ()
+        elif base_problem is not None:
             degraded.append(_degraded(adapter, _primary_row(adapter), base_problem))
             return (), {}
-        _write_base_cache(context.home, adapter, version, base, base_hits, rules_digest)
+        else:
+            _write_base_cache(
+                context.home, adapter, version, base_sha, settings, key, base_hits
+            )
     else:
         base_hits = cached
     try:
-        with _worktree(repo, head) as head_root:
-            head_hits, head_digest, head_problem = _scan_root(
-                adapter, replace(context, root=head_root), process, env, timeout, "head", degraded
-            )
+        head_hits, head_digest, head_problem = _scan_root(
+            adapter, replace(context, repo=head_root, root=head_root), process, env, timeout,
+            "head", degraded,
+        )
     except ToolGap as exc:
         degraded.append(_degraded(adapter, exc.row, exc.reason))
         return (), {}
@@ -515,14 +558,15 @@ def _scan_root(
     label: str,
     degraded: list[dict[str, str]],
 ) -> tuple[tuple[Hit, ...], str, str | None]:
-    argv = adapter.invoke(context)
-    if not argv:
+    result, problem, ran = _capture(adapter, context, process, env, timeout)
+    if not ran:
         return (), "", None
-    result, problem = _execute(adapter, argv, context.root, process, env, timeout)
     if problem is not None:
         return (), "", problem
     assert result is not None
     parsed, failure = _parsed(adapter, result, label)
+    if parsed is not None:
+        _note_problems(adapter, parsed, degraded)
     if failure is not None:
         return (), "", failure
     assert parsed is not None
@@ -532,6 +576,37 @@ def _scan_root(
         degraded.append(_degraded(adapter, "testing.surviving-mutant", "cap"))
         hits = tuple(replace(hit, degraded=True) for hit in hits)
     return hits, digest, None
+
+
+def _capture(
+    adapter: Adapter,
+    context: ScanContext,
+    process: Process,
+    env: Mapping[str, str],
+    timeout: int,
+) -> tuple[ProcessResult | None, str | None, bool]:
+    """Run ``invoke``. jscpd is parsed from a report outside either worktree.
+
+    The third value is false when ``invoke`` returned no argument vector. ``ToolGap`` propagates.
+    """
+    report_dir: Path | None = None
+    scan = context
+    if adapter.id == "jscpd":
+        report_dir = Path(tempfile.mkdtemp(prefix="saga-jscpd-"))
+        scan = replace(context, report_dir=report_dir)
+    try:
+        argv = adapter.invoke(scan)
+        if not argv:
+            return None, None, False
+        result, problem = _execute(adapter, argv, scan.root, process, env, timeout)
+        if adapter.id == "jscpd" and result is not None and problem is None and report_dir is not None:
+            report = report_dir / "jscpd-report.json"
+            text = report.read_text(encoding="utf-8") if report.is_file() else ""
+            result = ProcessResult(result.code, text, result.stderr)
+        return result, problem, True
+    finally:
+        if report_dir is not None:
+            shutil.rmtree(report_dir, ignore_errors=True)
 
 
 def _execute(
@@ -556,11 +631,11 @@ def _execute(
 def _parsed(
     adapter: Adapter, result: ProcessResult, label: str
 ) -> tuple[ParseResult | None, str | None]:
-    """Blank success is a clean run. A non-zero run with no hits cannot be compared."""
+    """Empty success is ``empty-output``. A non-zero run with no hits cannot be compared."""
     text = result.stdout or ""
     if not text.strip():
         if result.code == 0:
-            return ParseResult(), None
+            return None, "empty-output"
         if label == "base":
             return None, "base-deps-missing"
         return None, "unparseable"
@@ -572,8 +647,8 @@ def _parsed(
         return None, "unparseable"
     if result.code != 0 and not produced.hits and not produced.unfinished:
         if label == "base":
-            return None, "base-deps-missing"
-        return None, "unparseable"
+            return produced, "base-deps-missing"
+        return produced, "unparseable"
     return produced, None
 
 
@@ -581,21 +656,24 @@ def _read_version(
     adapter: Adapter,
     profile: Mapping[str, Any],
     process: Process,
-    repo: Path,
     env: Mapping[str, str],
 ) -> tuple[str | None, str | None]:
     pinned = _pinned_version(adapter, profile)
     if not adapter.tool:
         return pinned, None
+    probe = Path(tempfile.mkdtemp(prefix="saga-version-"))
     try:
-        result = process(
-            [adapter.tool, *adapter.version_args],
-            cwd=repo, env=env, timeout=adapter.timeout_seconds, shell=False,
-        )
-    except FileNotFoundError:
-        return None, "missing"
-    except subprocess.TimeoutExpired:
-        return None, "timeout"
+        try:
+            result = process(
+                [adapter.tool, *adapter.version_args],
+                cwd=probe, env=env, timeout=adapter.timeout_seconds, shell=False,
+            )
+        except FileNotFoundError:
+            return None, "missing"
+        except subprocess.TimeoutExpired:
+            return None, "timeout"
+    finally:
+        shutil.rmtree(probe, ignore_errors=True)
     found = _VERSION.search(result.stdout or result.stderr or "")
     if found is None:
         return pinned, "version-unreadable"
@@ -624,6 +702,20 @@ _SECRET_STATEMENT = "A secret scanner reported a match in this file."
 
 def _gap(lens: str, language: str, row: str, tool: str, reason: str) -> dict[str, str]:
     return {"lens": lens, "language": language, "input": row, "tool": tool, "reason": reason}
+
+
+def _note_problems(
+    adapter: Adapter, parsed: ParseResult, degraded: list[dict[str, str]]
+) -> None:
+    lens = adapter.lens if adapter.lens in review_formula.LENSES else "correctness"
+    for problem in parsed.problems:
+        degraded.append({
+            "lens": lens,
+            "language": "none",
+            "input": problem,
+            "tool": adapter.tool or adapter.id,
+            "reason": "semgrep-error",
+        })
 
 
 def _degraded(adapter: Adapter, row: str, reason: str) -> dict[str, str]:
@@ -682,11 +774,27 @@ def _rules_for(adapter: Adapter, profile: Mapping[str, Any]) -> tuple[RulePin, .
 
 
 def _rule_config(
-    adapter: Adapter, rules: Sequence[RulePin], repo: Path, home: Path
+    adapter: Adapter, rules: Sequence[RulePin], repo: Path, home: Path, base_sha: str
 ) -> tuple[tuple[Path, ...], str | None]:
     """Local pack directories only. A missing cache is not a download."""
     if not rules:
         return (), None
+    needs_base = any(
+        rule.path and not Path(rule.path).is_absolute() and not _is_saga_rules(rule.path)
+        for rule in rules
+    )
+    if not needs_base:
+        return _rule_paths(adapter, rules, home, None)
+    with _worktree(repo, base_sha) as base_root:
+        return _rule_paths(adapter, rules, home, base_root)
+
+
+def _rule_paths(
+    adapter: Adapter,
+    rules: Sequence[RulePin],
+    home: Path,
+    base_root: Path | None,
+) -> tuple[tuple[Path, ...], str | None]:
     paths: list[Path] = []
     for rule in rules:
         if rule.pack:
@@ -697,15 +805,36 @@ def _rule_config(
             paths.append(cache)
             continue
         if rule.path:
-            directory = Path(rule.path)
-            if not directory.is_absolute():
-                directory = repo / rule.path
+            directory = _rule_directory(rule.path, base_root)
             if not _present(directory):
                 return (), "known-gap"
             paths.append(directory)
             continue
         raise RunnerFailure(2, f"{adapter.id}: a rule needs a pack or a path")
     return tuple(paths), None
+
+
+def _is_saga_rules(path: str) -> bool:
+    return path.replace("\\", "/") == _SAGA_RULES
+
+
+def _rule_directory(path: str, base_root: Path | None) -> Path:
+    if _is_saga_rules(path):
+        return plugin_root() / "references" / "semgrep-rules"
+    directory = Path(path)
+    if directory.is_absolute():
+        return directory
+    if base_root is None:
+        raise RunnerFailure(2, "a relative rule path needs the base commit")
+    return base_root / path
+
+
+def _gap_target(adapter: Adapter, head_root: Path) -> Path:
+    if adapter.gap_path == _SAGA_RULES:
+        return plugin_root() / "references" / "semgrep-rules"
+    if adapter.gap_path is None:
+        raise RunnerFailure(1, f"{adapter.id}: gap_path is missing")
+    return head_root / adapter.gap_path
 
 
 def _row_for(adapter: Adapter, hit: Hit) -> str:
@@ -750,11 +879,19 @@ def _identity(adapter: Adapter, hit: Hit) -> str:
 
 def _load_profile(path: Path) -> dict[str, Any]:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
         raise RunnerFailure(2, f"{path}: {exc}") from exc
+    return _load_profile_text(text, str(path))
+
+
+def _load_profile_text(text: str, label: str) -> dict[str, Any]:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise RunnerFailure(2, f"{label}: {exc}") from exc
     if not isinstance(data, dict):
-        raise RunnerFailure(2, f"{path}: profile must be an object")
+        raise RunnerFailure(2, f"{label}: profile must be an object")
     test_command = _functional_command(data)
     block = data.get("review_tools")
     if block is None:
@@ -772,6 +909,75 @@ def _load_profile(path: Path) -> dict[str, Any]:
         "pins": _pins(block.get("pins")),
         "test_command": test_command,
     }
+
+
+def _profile_for_run(
+    repo: Path, base_sha: str, head_sha: str, profile_path: Path
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """Pins and the test command come from the base blob. Head edits are recorded."""
+    notes: list[dict[str, str]] = []
+    base_text = _show_text(repo, base_sha, ".saga-profile.json")
+    if base_text is None:
+        profile = _absent_profile() if _inside_repo(repo, profile_path) else _load_profile(profile_path)
+    else:
+        profile = _load_profile_text(base_text, f"{base_sha}:.saga-profile.json")
+    head_text = _show_text(repo, head_sha, ".saga-profile.json")
+    if head_text is None:
+        if base_text is not None and _configuring(profile) != _configuring(_absent_profile()):
+            notes.append(_profile_change())
+        return profile, notes
+    try:
+        head_profile = _load_profile_text(head_text, f"{head_sha}:.saga-profile.json")
+    except RunnerFailure:
+        notes.append(_profile_change())
+        return profile, notes
+    if _configuring(head_profile) != _configuring(profile):
+        notes.append(_profile_change())
+    return profile, notes
+
+
+def _absent_profile() -> dict[str, Any]:
+    return _load_profile_text("{}", "absent")
+
+
+def _configuring(profile: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "pins": profile.get("pins") or {},
+        "languages": profile.get("languages") or {},
+        "test_command": profile.get("test_command"),
+    }
+
+
+def _profile_change() -> dict[str, str]:
+    return {
+        "lens": "security",
+        "language": "none",
+        "input": "head-profile",
+        "tool": "review-tools",
+        "reason": "head-profile-change",
+    }
+
+
+def _inside_repo(repo: Path, path: Path) -> bool:
+    try:
+        path.resolve().relative_to(repo.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _show_text(repo: Path, revision: str, path: str) -> str | None:
+    result = _git(repo, ["show", f"{revision}:{path}"])
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _require_sha(repo: Path, revision: str) -> str:
+    sha = _rev(repo, revision)
+    if not sha:
+        raise RunnerFailure(2, f"{revision}: not a commit")
+    return sha
 
 
 def _functional_command(data: Mapping[str, Any]) -> str | None:
@@ -860,13 +1066,104 @@ def _load_builder(path: Path | None) -> dict[str, Any] | None:
     return data
 
 
+def _strip_settings(root: Path) -> list[dict[str, str]]:
+    """Unlink scanner settings in the head worktree. Record each path once."""
+    found: list[str] = []
+    for directory, dirnames, filenames in os.walk(root, followlinks=False):
+        if ".git" in dirnames:
+            dirnames.remove(".git")
+        for name in filenames:
+            if name not in _SETTINGS_NAMES:
+                continue
+            path = Path(directory) / name
+            found.append(path.relative_to(root).as_posix())
+            path.unlink()
+    notes = []
+    for relative in sorted(set(found)):
+        notes.append({
+            "lens": "security",
+            "language": "none",
+            "input": relative,
+            "tool": "review-tools",
+            "reason": "scanner-settings",
+        })
+    return notes
+
+
+def _allow_comments(head_root: Path, change: review_diff.Change) -> list[dict[str, str]]:
+    """One record per changed file whose new lines contain ``gitleaks:allow``.
+
+    The file is read in the head worktree. A symlink is not followed.
+    """
+    notes: list[dict[str, str]] = []
+    for item in change.files:
+        if item.status not in {"added", "modified", "renamed"} or not item.lines:
+            continue
+        path = head_root / item.path
+        if path.is_symlink() or not path.is_file():
+            continue
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        if not any(
+            1 <= number <= len(lines) and "gitleaks:allow" in lines[number - 1]
+            for number in item.lines
+        ):
+            continue
+        language = language_for(item.path)
+        if language not in review_formula.LANGUAGES:
+            language = "none"
+        notes.append({
+            "lens": "security",
+            "language": language,
+            "input": item.path,
+            "tool": "gitleaks",
+            "reason": "gitleaks-allow",
+        })
+    return notes
+
+
+def _settings_digest(adapter: Adapter, rules_digest: str) -> str:
+    """SHA-256 of the settings that change what a base scan would report."""
+    if adapter.id.startswith("semgrep") or adapter.tool == "semgrep":
+        flags: list[str] = ["--disable-nosem"]
+    elif adapter.id == "gitleaks" or adapter.tool == "gitleaks":
+        config = plugin_root() / "references" / "gitleaks.toml"
+        file_digest = hashlib.sha256(config.read_bytes()).hexdigest() if config.is_file() else ""
+        flags = ["--ignore-gitleaks-allow", file_digest]
+    else:
+        flags = []
+    payload = {
+        "adapter": adapter.id,
+        "rules": rules_digest,
+        "flags": flags,
+        "filenames": sorted(_SETTINGS_NAMES),
+        "thresholds": _row_thresholds(adapter.id),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def _row_thresholds(adapter_id: str) -> dict[str, int]:
+    for row in load_tool_list():
+        if str(row.get("id") or "") != adapter_id:
+            continue
+        raw = row.get("thresholds")
+        if not isinstance(raw, dict):
+            return {}
+        numbers: dict[str, int] = {}
+        for key, value in raw.items():
+            if isinstance(value, bool) or not isinstance(value, int):
+                continue
+            numbers[str(key)] = value
+        return numbers
+    return {}
+
+
 def _relocated(
-    repo: Path,
+    head_root: Path,
     profile: Mapping[str, Any],
     process: Process,
     home: Path,
     degraded: list[dict[str, str]],
-) -> tuple[list[Hit], list[Path]]:
+) -> tuple[list[Hit], list[tuple[str, Path]]]:
     commands = _relocated_commands(profile)
     if not commands:
         degraded.append(_gap(
@@ -874,17 +1171,17 @@ def _relocated(
         ))
         return [], []
     hits: list[Hit] = []
-    directories: list[Path] = []
+    directories: list[tuple[str, Path]] = []
     try:
         for language, command in commands:
             work = Path(tempfile.mkdtemp(prefix="saga-relocated-"))
-            directories.append(work)
-            hit = _one_relocated(repo, language, command, process, work, home, degraded)
+            directories.append((language, work))
+            hit = _one_relocated(head_root, language, command, process, work, home, degraded)
             if hit is not None:
                 hits.append(hit)
     except Exception:
         # A later command can refuse after earlier directories exist.
-        for path in directories:
+        for _language, path in directories:
             shutil.rmtree(path, ignore_errors=True)
         raise
     return hits, directories
@@ -904,8 +1201,24 @@ def _relocated_commands(profile: Mapping[str, Any]) -> list[tuple[str, str]]:
     return []
 
 
+def _relocated_env() -> tuple[dict[str, str], list[Path]]:
+    """Allow-listed names only. ``HOME`` and the temp directory are fresh and removed by the caller."""
+    env: dict[str, str] = {}
+    names = _ENV_COPIED + (_ENV_WINDOWS if sys.platform == "win32" else ())
+    for name in names:
+        if name in os.environ:
+            env[name] = os.environ[name]
+    home_dir = Path(tempfile.mkdtemp(prefix="saga-home-"))
+    tmp_dir = Path(tempfile.mkdtemp(prefix="saga-tmp-"))
+    env["HOME"] = str(home_dir)
+    env["TMPDIR"] = str(tmp_dir)
+    env["TMP"] = str(tmp_dir)
+    env["TEMP"] = str(tmp_dir)
+    return env, [home_dir, tmp_dir]
+
+
 def _one_relocated(
-    repo: Path,
+    head_root: Path,
     language: str,
     command: str,
     process: Process,
@@ -913,10 +1226,8 @@ def _one_relocated(
     home: Path,
     degraded: list[dict[str, str]],
 ) -> Hit | None:
-    argv = _rewrite_command(repo, command)
-    home_dir = Path(tempfile.mkdtemp(prefix="saga-home-"))
-    env = dict(os.environ)
-    env["HOME"] = str(home_dir)
+    argv = _rewrite_command(head_root, command)
+    env, temps = _relocated_env()
     try:
         try:
             result = process(argv, cwd=work, env=env, timeout=120, shell=False)
@@ -933,7 +1244,8 @@ def _one_relocated(
             ))
             return None
     finally:
-        shutil.rmtree(home_dir, ignore_errors=True)
+        for path in temps:
+            shutil.rmtree(path, ignore_errors=True)
     if result.code == 0:
         return None
     return Hit(
@@ -950,8 +1262,8 @@ def _one_relocated(
     )
 
 
-def _rewrite_command(repo: Path, command: str) -> list[str]:
-    """Rewrite repo-relative paths to absolute paths. Flags and PATH binaries stay as written."""
+def _rewrite_command(head_root: Path, command: str) -> list[str]:
+    """Rewrite tokens that exist in the head worktree. Flags and absolute paths stay."""
     try:
         tokens = shlex.split(command)
     except ValueError as exc:
@@ -961,7 +1273,7 @@ def _rewrite_command(repo: Path, command: str) -> list[str]:
         if token.startswith("-") or token.startswith("/"):
             argv.append(token)
             continue
-        candidate = repo / token
+        candidate = head_root / token
         if candidate.exists():
             argv.append(str(candidate.resolve()))
             continue
@@ -970,14 +1282,13 @@ def _rewrite_command(repo: Path, command: str) -> list[str]:
 
 
 def _coverage(
-    repo: Path,
     change: review_diff.Change,
     profile: Mapping[str, Any],
     home: Path,
     degraded: list[dict[str, str]],
-    extra_dirs: Sequence[Path],
+    pairs: Sequence[tuple[str, Path]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    paths = _report_paths(repo, profile, extra_dirs)
+    paths = _report_paths(pairs, profile)
     if not paths:
         degraded.append(_gap(
             "testing", _one_language(profile), _COVERAGE_ROW, "coverage", "no-report",
@@ -1001,22 +1312,36 @@ def _coverage(
     return findings, [measurement]
 
 
-def _report_paths(repo: Path, profile: Mapping[str, Any], extra_dirs: Sequence[Path]) -> list[Path]:
+def _report_paths(
+    pairs: Sequence[tuple[str, Path]], profile: Mapping[str, Any]
+) -> list[Path]:
+    """Reports from the relocated directories only. A path outside one of them is a refusal."""
+    languages = profile.get("languages") or {}
+    configured = False
     named: list[Path] = []
-    for spec in (profile.get("languages") or {}).values():
-        if not isinstance(spec, Mapping):
+    for language, directory in pairs:
+        spec = languages.get(language) if isinstance(languages, Mapping) else None
+        report = spec.get("coverage_report") if isinstance(spec, Mapping) else None
+        if not isinstance(report, str) or not report:
             continue
-        report = spec.get("coverage_report")
-        if isinstance(report, str) and report:
-            named.append(Path(report) if Path(report).is_absolute() else repo / report)
-    if named:
-        return [path for path in named if path.is_file()]
+        configured = True
+        try:
+            candidate = coverage_lines.resolve_report(report, directory)
+        except ValueError as exc:
+            raise RunnerFailure(2, str(exc)) from exc
+        if candidate.is_file():
+            named.append(candidate)
+    if configured:
+        return named
     found: list[Path] = []
-    for root in (repo, *extra_dirs):
+    for _language, directory in pairs:
         for name in _REPORT_NAMES:
-            path = root / name
-            if path.is_file():
-                found.append(path)
+            try:
+                candidate = coverage_lines.resolve_report(name, directory)
+            except ValueError as exc:
+                raise RunnerFailure(2, str(exc)) from exc
+            if candidate.is_file():
+                found.append(candidate)
     return found
 
 
@@ -1215,23 +1540,45 @@ def _write_json(path: Path, payload: object) -> None:
 
 @contextmanager
 def _worktree(repo: Path, revision: str) -> Iterator[Path]:
+    """Check out ``revision`` without running its hooks or Git LFS smudge filters.
+
+    ``core.hooksPath`` can point at a directory the commit itself tracks. An empty directory,
+    set only for this git process, is not that path.
+    """
     path = Path(tempfile.mkdtemp(prefix="saga-review-"))
-    added = _git(repo, ["worktree", "add", "--detach", str(path), revision])
-    if added.returncode != 0:
-        shutil.rmtree(path, ignore_errors=True)
-        detail = (added.stderr or added.stdout or "git worktree add failed").strip()
-        raise RunnerFailure(2, detail)
+    hooks = Path(tempfile.mkdtemp(prefix="saga-hooks-"))
+    env = dict(os.environ)
+    env["GIT_LFS_SKIP_SMUDGE"] = "1"
     try:
-        yield path
-    finally:
-        _git(repo, ["worktree", "remove", "--force", str(path)])
-        if path.exists():
+        added = _git(
+            repo,
+            ["-c", f"core.hooksPath={hooks}", "worktree", "add", "--detach", str(path), revision],
+            env,
+        )
+        if added.returncode != 0:
             shutil.rmtree(path, ignore_errors=True)
+            detail = (added.stderr or added.stdout or "git worktree add failed").strip()
+            raise RunnerFailure(2, detail)
+        try:
+            yield path
+        finally:
+            _git(repo, ["worktree", "remove", "--force", str(path)])
+            if path.exists():
+                shutil.rmtree(path, ignore_errors=True)
+    finally:
+        shutil.rmtree(hooks, ignore_errors=True)
 
 
-def _git(repo: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+def _git(
+    repo: Path, args: list[str], env: Mapping[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(  # nosec B603
-        ["git", *args], cwd=repo, capture_output=True, text=True, check=False,
+        ["git", *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=None if env is None else dict(env),
     )
 
 
@@ -1266,42 +1613,55 @@ def _blob(repo: Path, revision: str, path: str) -> str | None:
     return result.stdout.strip()
 
 
-def _cache_path(home: Path, adapter: Adapter, version: str, base: str, rules_digest: str) -> Path:
-    tool = adapter.tool or adapter.id
-    return _saga(home) / "review-cache" / tool / version / base / f"{rules_digest}.json"
+def _cache_path(home: Path, adapter: Adapter, version: str, base_sha: str, settings: str) -> Path:
+    return _saga(home) / "review-cache" / adapter.id / version / base_sha / f"{settings}.json"
 
 
 def _write_base_cache(
     home: Path,
     adapter: Adapter,
     version: str,
-    base: str,
+    base_sha: str,
+    settings: str,
+    key: Mapping[str, str],
     hits: Sequence[Hit],
-    rules_digest: str,
 ) -> None:
-    target = _cache_path(home, adapter, version, base, rules_digest)
+    target = _cache_path(home, adapter, version, base_sha, settings)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps([asdict(hit) for hit in hits]), encoding="utf-8")
+    body = {"key": dict(key), "hits": [asdict(hit) for hit in hits]}
+    target.write_text(json.dumps(body, sort_keys=True), encoding="utf-8")
     target.chmod(0o600)
 
 
 def _read_base_cache(
-    home: Path, adapter: Adapter, version: str, base: str, rules_digest: str
+    home: Path,
+    adapter: Adapter,
+    version: str,
+    base_sha: str,
+    settings: str,
+    key: Mapping[str, str],
 ) -> tuple[Hit, ...] | None:
-    target = _cache_path(home, adapter, version, base, rules_digest)
+    """A miss leaves the file in place. A list in the old shape is a miss."""
+    target = _cache_path(home, adapter, version, base_sha, settings)
     if not target.is_file():
         return None
     try:
         raw = json.loads(target.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+    if not isinstance(raw, dict) or raw.get("key") != dict(key):
+        return None
+    items = raw.get("hits")
+    if not isinstance(items, list):
+        return None
     hits: list[Hit] = []
-    for item in raw:
+    for item in items:
         if not isinstance(item, dict):
             return None
-        item["advisory_ids"] = tuple(item.get("advisory_ids") or ())
+        payload = dict(item)
+        payload["advisory_ids"] = tuple(payload.get("advisory_ids") or ())
         try:
-            hits.append(Hit(**item))
+            hits.append(Hit(**payload))
         except TypeError:
             return None
     return tuple(hits)

@@ -19,6 +19,16 @@ A candidate path is dropped, or for the copy and packet the launch is refused, w
 
 ## 2026-10-06
 
+### The commit under review is untrusted
+
+**Decision.** Issue #188. The commit under review is untrusted. The runner reads pins, rules, the test command, and `coverage_report` from `.saga-profile.json` on the base commit. It scans one detached worktree of the head commit and does not run that commit's hooks or Git LFS smudge filters. Settings files in the worktree are removed and recorded. Coverage is read only from the relocated command's directory. The relocated environment is an allow-list. The base cache names the resolved base commit and is not written when the base scan prints nothing.
+
+**Rationale.** A change can otherwise delete a flagged line in the checkout, replace the test command, point Semgrep at its own rules, or reuse a cache entry from before the base branch moved.
+
+**Rejected alternatives.** Scanning the checkout when `git status` is clean. Falling back to the head profile when the base commit has none. Rewriting the relocated command against the checkout. Recording `jscpd:ignore`, `lizard forgives`, and a `package.json` `jscpd` key in this card. Extending `FINGERPRINT_COMPONENTS` with the gitleaks config.
+
+**Revisit when.** The card that runs this runner from the review command. That card has to start the installed plugin, or the plugin at the base commit.
+
 ### The review tool list is the check map, and the runner does not copy a checkout
 
 **Decision.** Issue #151 (card C4a of the saga review redesign). Five choices. The check map is `plugins/saga/references/review-tools.yaml`: a baseline command answers the row whose binary it names, several rows that share a binary are joined in sorted order, and rows with no binary are not baseline checks. The profile's `mechanical_tool_baseline` commands still run and still decide green. Item 6 is row ids (`tool-error`, `tool-warning`, `tool-style`, `tool-curated`, `tool-unscoped`, plus the medium-low dependency and workflow rows), not a new field on the finding. The relocated test changes its working directory and its home directory and does not copy the checkout; each named language command runs once. Semgrep's rule pack is not committed. The pin is a sha256, the cache is under the user's home, metrics are off, and a missing cache is a degraded input rather than a download. `FINGERPRINT_COMPONENTS` names this card's five paths. This card does not create the calibration file.

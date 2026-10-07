@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shlex
 import socket
 import subprocess
 import sys
@@ -108,9 +109,13 @@ class _Calls:
         self.calls.append(list(argv))
         if "--version" in argv:
             return T.ProcessResult(0, "1.0.0\n")
-        if _git(Path(cwd), "rev-parse", "HEAD") == self.base:
+        body = "{}" if _git(Path(cwd), "rev-parse", "HEAD") == self.base else self.payload
+        if "--output" in argv:
+            report_dir = Path(argv[argv.index("--output") + 1])
+            report_dir.mkdir(parents=True, exist_ok=True)
+            (report_dir / "jscpd-report.json").write_text(body, encoding="utf-8")
             return T.ProcessResult(0, "")
-        return T.ProcessResult(0, self.payload)
+        return T.ProcessResult(0, body)
 
 
 def _run(
@@ -259,11 +264,13 @@ def test_missing_saga_rules_are_a_gap_and_security_still_runs(tmp_path: Path) ->
     )
 
 
-def test_saga_metadata_row_is_kept(tmp_path: Path) -> None:
+def test_saga_metadata_row_is_kept(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo, base, head = _changed_app(tmp_path)
-    rules = repo / "plugins" / "saga" / "references" / "semgrep-rules"
+    plugin = tmp_path / "plugin"
+    rules = plugin / "references" / "semgrep-rules"
     rules.mkdir(parents=True)
     (rules / "rule.yml").write_text("rules: []\n", encoding="utf-8")
+    monkeypatch.setattr(T, "plugin_root", lambda: plugin)
     profile = _profile(tmp_path / "profile.json", {"semgrep": {"version": "1.0.0"}})
     payload = (FIXTURES / "semgrep-saga.json").read_text(encoding="utf-8")
     output = tmp_path / "out"
@@ -277,11 +284,13 @@ def test_saga_metadata_row_is_kept(tmp_path: Path) -> None:
     assert R.validate(finding) == []
 
 
-def test_a_non_pattern_saga_row_exits_2(tmp_path: Path) -> None:
+def test_a_non_pattern_saga_row_exits_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo, base, head = _changed_app(tmp_path)
-    rules = repo / "plugins" / "saga" / "references" / "semgrep-rules"
+    plugin = tmp_path / "plugin"
+    rules = plugin / "references" / "semgrep-rules"
     rules.mkdir(parents=True)
     (rules / "rule.yml").write_text("rules: []\n", encoding="utf-8")
+    monkeypatch.setattr(T, "plugin_root", lambda: plugin)
     profile = _profile(tmp_path / "profile.json", {"semgrep": {"version": "1.0.0"}})
     payload = json.dumps({"results": [{
         "check_id": "saga.other",
@@ -500,7 +509,7 @@ def test_lizard_above_the_threshold_maps_to_the_complexity_row(tmp_path: Path) -
     _valid(output)
 
 
-def _coverage_repo(tmp: Path, report: str) -> tuple[Path, str, str, Path]:
+def _coverage_repo(tmp: Path) -> tuple[Path, str, str, Path]:
     repo = tmp / "repo"
     _init(repo)
     (repo / "src").mkdir()
@@ -512,14 +521,12 @@ def _coverage_repo(tmp: Path, report: str) -> tuple[Path, str, str, Path]:
     lines[9] = "LINE10\n"
     (repo / "src" / "app.py").write_text("".join(lines), encoding="utf-8")
     head = _commit(repo, "head")
-    # Untracked, so the diff stays the three source lines and not this report.
-    (repo / "coverage.json").write_text(report, encoding="utf-8")
     return repo, base, head, tmp / "profile.json"
 
 
 def test_coverage_fixtures_become_findings_and_a_measurement(tmp_path: Path) -> None:
     report = (FIXTURES / "sample-coverage.json").read_text(encoding="utf-8")
-    repo, base, head, profile_path = _coverage_repo(tmp_path, report)
+    repo, base, head, profile_path = _coverage_repo(tmp_path)
     profile_path.write_text(json.dumps({"review_tools": {"languages": {"python": {
         "test_command": "true",
         "coverage_report": "coverage.json",
@@ -531,6 +538,7 @@ def test_coverage_fixtures_become_findings_and_a_measurement(tmp_path: Path) -> 
         argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool
     ) -> Any:
         assert shell is False and isinstance(argv, list)
+        (cwd / "coverage.json").write_text(report, encoding="utf-8")
         return T.ProcessResult(0, "")
 
     code = T.run(
@@ -553,8 +561,15 @@ def test_coverage_fixtures_become_findings_and_a_measurement(tmp_path: Path) -> 
 
 def test_line_fallback_coverage_is_degraded_and_cannot_block(tmp_path: Path) -> None:
     report = json.dumps({"files": {"src/app.py": {"missing_lines": [4]}}})
-    repo, base, head, profile_path = _coverage_repo(tmp_path, report)
+    repo, base, head, profile_path = _coverage_repo(tmp_path)
+    command = shlex.join([
+        sys.executable, "-c",
+        "from pathlib import Path; Path('coverage.json').write_text("
+        + repr(report)
+        + ", encoding='utf-8')",
+    ])
     profile_path.write_text(json.dumps({"review_tools": {"languages": {"python": {
+        "test_command": command,
         "coverage_report": "coverage.json",
     }}}}), encoding="utf-8")
     output = tmp_path / "out"
@@ -571,3 +586,194 @@ def test_line_fallback_coverage_is_degraded_and_cannot_block(tmp_path: Path) -> 
     assert any(item["reason"] == "no-branch-data" for item in reasons)
     assert _severity(output, "src/app.py:4") == "fix-later"
     _valid(output)
+
+
+_SETTINGS = (
+    ".semgrepignore",
+    ".gitleaks.toml",
+    ".gitleaksignore",
+    ".jscpd.json",
+    "whitelizard.txt",
+    "osv-scanner.toml",
+)
+
+
+def test_scanner_settings_are_stripped_and_flags_are_pinned(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("one\ntwo\nthree\nfour\nfive\n", encoding="utf-8")
+    (repo / "untouched.py").write_text("stable  # gitleaks:allow\n", encoding="utf-8")
+    (repo / "requirements.txt").write_text("example==1\n", encoding="utf-8")
+    vendor = repo / "vendor"
+    vendor.mkdir()
+    (vendor / ".jscpd.json").write_text("{}\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text(
+        "one\ntwo\nthree\nFOUR  # gitleaks:allow\nfive\n", encoding="utf-8",
+    )
+    (vendor / ".jscpd.json").unlink()
+    target = tmp_path / "gitleaks-target"
+    target.write_text("keep\n", encoding="utf-8")
+    for name in _SETTINGS:
+        path = repo / name
+        if name == ".gitleaks.toml":
+            path.symlink_to(target)
+        else:
+            path.write_text("ignore\n", encoding="utf-8")
+    (repo / "src" / ".semgrepignore").write_text("ignore\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    home = tmp_path / "home"
+    cache = T.semgrep_cache(home, "p/security-audit")
+    cache.mkdir(parents=True)
+    (cache / "rules.yml").write_text("rules: []\n", encoding="utf-8")
+    profile = _profile(tmp_path / "profile.json", {
+        "semgrep": {"version": "1.0.0", "rules": [
+            {"pack": "p/security-audit", "sha256": T.digest_tree(cache)},
+        ]},
+        "gitleaks": {"version": "1.0.0"},
+        "osv-scanner": {"version": "1.0.0"},
+        "jscpd": {"version": "1.0.0"},
+        "lizard": {"version": "1.0.0"},
+    })
+    wanted = ["semgrep-security", "gitleaks", "osv-scanner", "jscpd", "lizard"]
+    adapters = [_adapter(tool_id) for tool_id in wanted]
+    calls: list[dict[str, Any]] = []
+
+    def handler(
+        argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        assert shell is False
+        record: dict[str, Any] = {"argv": list(argv), "cwd": Path(cwd)}
+        if "--version" not in argv:
+            # The runner deletes both worktrees before run() returns.
+            record["sha"] = _git(cwd, "rev-parse", "HEAD")
+            record["vendor_jscpd"] = (cwd / "vendor" / ".jscpd.json").is_file()
+        calls.append(record)
+        if "--version" in argv:
+            return T.ProcessResult(0, "1.0.0\n")
+        if record["sha"] == head:
+            for name in _SETTINGS:
+                assert not (cwd / name).exists()
+            assert not (cwd / "src" / ".semgrepignore").exists()
+            assert target.is_file()
+        if "--output" in argv:
+            report_dir = Path(argv[argv.index("--output") + 1])
+            report_dir.mkdir(parents=True, exist_ok=True)
+            (report_dir / "jscpd-report.json").write_text('{"duplicates":[]}', encoding="utf-8")
+            return T.ProcessResult(0, "")
+        if argv[0] == "gitleaks":
+            return T.ProcessResult(0, "[]")
+        if argv[0] == "lizard":
+            return T.ProcessResult(0, "nloc,ccn,tokens,params,length,file,function,start,end\n")
+        return T.ProcessResult(0, "{}")
+
+    output = tmp_path / "out"
+    code = _run(repo, base, head, profile, output, home, adapters, handler)
+    assert code == 0
+    head_dirs = {call["cwd"].resolve() for call in calls if call.get("sha") == head}
+    assert len(head_dirs) == 1
+    base_calls = [call for call in calls if call.get("sha") == base]
+    assert base_calls
+    assert any(call["vendor_jscpd"] for call in base_calls)
+    recorded = [
+        item["input"] for item in _read(output, "degraded.json") if item["reason"] == "scanner-settings"
+    ]
+    assert recorded == [
+        ".gitleaks.toml",
+        ".gitleaksignore",
+        ".jscpd.json",
+        ".semgrepignore",
+        "osv-scanner.toml",
+        "src/.semgrepignore",
+        "whitelizard.txt",
+    ]
+    assert "vendor/.jscpd.json" not in recorded
+    allows = [
+        item for item in _read(output, "degraded.json") if item["reason"] == "gitleaks-allow"
+    ]
+    assert allows == [{
+        "lens": "security",
+        "language": "python",
+        "input": "src/app.py",
+        "tool": "gitleaks",
+        "reason": "gitleaks-allow",
+    }]
+    semgrep = [call["argv"] for call in calls if "--disable-nosem" in call["argv"]]
+    assert semgrep
+    gitleaks = [call["argv"] for call in calls if call["argv"][0] == "gitleaks" and "--version" not in call["argv"]]
+    assert gitleaks
+    config = T.plugin_root() / "references" / "gitleaks.toml"
+    for argv in gitleaks:
+        assert "--ignore-gitleaks-allow" in argv
+        assert argv[argv.index("--config") + 1] == str(config)
+    toml = config.read_text(encoding="utf-8")
+    assert "useDefault = true" in toml
+    assert "url" not in toml
+
+
+def test_empty_or_errored_semgrep_errors_keep_results_and_drop_the_message(tmp_path: Path) -> None:
+    repo, base, head = _changed_app(tmp_path)
+    home = tmp_path / "home"
+    profile = _semgrep_profile(home, tmp_path)
+    payload = json.dumps({
+        "results": [{
+            "check_id": "python.lang.security.audit.example-error",
+            "path": "src/app.py",
+            "start": {"line": 4},
+            "end": {"line": 4},
+            "extra": {"severity": "ERROR", "message": "Example security finding."},
+        }],
+        "errors": [
+            {
+                "path": "src/app.py",
+                "type": "Syntax",
+                "level": "warn",
+                "message": "TOKEN_NOT_A_SECRET near the span",
+            },
+            {
+                "type": "Timeout",
+                "level": "error",
+                "message": "TOKEN_NOT_A_SECRET with no path",
+            },
+        ],
+    })
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, profile, output, home,
+        [_adapter("semgrep-security")], _Calls(base, payload),
+    )
+    assert code == 0
+    assert any(item["rule"]["row"] == "security.scanner-high" for item in _read(output, "findings.json"))
+    errors = [item for item in _read(output, "degraded.json") if item["reason"] == "semgrep-error"]
+    assert {item["input"] for item in errors} == {"src/app.py", "Timeout error"}
+    assert "TOKEN_NOT_A_SECRET" not in (output / "degraded.json").read_text(encoding="utf-8")
+
+
+def test_empty_or_errored_missing_jscpd_report_is_degraded(tmp_path: Path) -> None:
+    repo, base, head = _changed_app(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {"jscpd": {"version": "1.0.0"}})
+    scanned: list[str] = []
+
+    def handler(
+        argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        assert shell is False
+        if "--version" in argv:
+            return T.ProcessResult(0, "1.0.0\n")
+        scanned.append(_git(cwd, "rev-parse", "HEAD"))
+        return T.ProcessResult(0, "")
+
+    home = tmp_path / "home"
+    output = tmp_path / "out"
+    code = _run(repo, base, head, profile, output, home, [_adapter("jscpd")], handler)
+    assert code == 0
+    assert base in scanned and head in scanned
+    assert ("jscpd", "architecture-maintainability.duplicate", "empty-output") in [
+        (item["tool"], item["input"], item["reason"]) for item in _read(output, "degraded.json")
+    ]
+    scanned.clear()
+    second = tmp_path / "out-2"
+    code = _run(repo, base, head, profile, second, home, [_adapter("jscpd")], handler)
+    assert code == 0
+    assert base in scanned
