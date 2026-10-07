@@ -196,7 +196,9 @@ or `coverage_report` is recorded as `head-profile-change` and is not applied. `c
 is a file name inside the relocated command's directory. An absolute path or a `..` part is a
 refusal. The relocated command receives only `PATH`, `LANG`, `LC_ALL`, `LC_CTYPE`, and `TZ` from
 the parent environment, plus a fresh `HOME` and a fresh temp directory on `TMPDIR`, `TMP`, and
-`TEMP`.
+`TEMP`. The test command must start from a binary on `PATH`. A relative token such as
+`.venv/bin/pytest` is resolved only when that path exists in the head worktree, so a dependency
+directory that exists only in the checkout is not used.
 
 The remaining nine parameters come from elsewhere and are not the profile's business:
 `staffing_models_and_efforts` from the staffing component in fleet-core; `applicable_lenses` and

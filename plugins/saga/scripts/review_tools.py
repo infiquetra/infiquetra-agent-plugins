@@ -76,6 +76,12 @@ _SETTINGS_NAMES = (
 _SAGA_RULES = "plugins/saga/references/semgrep-rules"
 _ENV_COPIED = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
 _ENV_WINDOWS = ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT")
+# needle, lens, tool, reason. One degraded input per changed file that contains the needle.
+_COMMENT_MARKERS = (
+    ("gitleaks:allow", "security", "gitleaks", "gitleaks-allow"),
+    ("jscpd:ignore", "architecture-maintainability", "jscpd", "jscpd-ignore"),
+    ("lizard forgives", "architecture-maintainability", "lizard", "lizard-forgives"),
+)
 
 Process = Callable[..., "ProcessResult"]
 
@@ -400,58 +406,58 @@ def _run_adapter(
             degraded.append(_degraded(adapter, row, "known-gap"))
         return []
     rules = _rules_for(adapter, profile)
-    configs, cache_problem = _rule_config(adapter, rules, repo, home, base_sha)
-    if cache_problem is not None:
-        degraded.append(_degraded(adapter, _primary_row(adapter), cache_problem))
-        return []
-    version, problem = _read_version(adapter, profile, process, env)
-    if problem in {"missing", "timeout"}:
-        degraded.append(_degraded(adapter, _primary_row(adapter), problem))
-        return []
-    off_pin = problem in {"version-mismatch", "version-unreadable"}
-    if off_pin:
-        degraded.append(_degraded(adapter, _primary_row(adapter), str(problem)))
-    if adapter.mutation and time.monotonic() >= deadline:
-        degraded.append(_degraded(adapter, "testing.surviving-mutant", "cap"))
-        return []
-    timeout = adapter.timeout_seconds
-    if adapter.mutation:
-        timeout = max(1, min(timeout, int(deadline - time.monotonic())))
-    ran = version or adapter.default_version
-    context = ScanContext(head_root, head_root, home, configs)
-    comparison = "base-head" if adapter.type_checker else adapter.comparison
-    if comparison == "base-head":
-        hits, digests = _base_and_head(
-            adapter, repo, base_sha, head_sha, head_root, context, process, env, timeout,
-            ran, degraded, _rules_digest(rules),
-        )
-    else:
-        hits, digests = _once(adapter, context, process, env, timeout, "head", degraded)
-    if not hits and not digests:
-        return []
-    digest = digests.get("head") or digests.get("base") or store_raw(b"", home)
-    kept: list[Hit] = []
-    for hit in hits:
-        hit = replace(hit, path=_display_path(hit.path))
-        if adapter.type_checker:
-            hit = replace(hit, whole_project=True)
-        elif comparison != "base-head" and not filter_to_change((hit,), change):
-            continue
-        try:
-            row = _row_for(adapter, hit)
-        except review_formula.FormulaError as exc:
-            raise RunnerFailure(2, str(exc)) from exc
-        _require_pattern_row(adapter, row)
-        kept.append(replace(
-            hit,
-            row=row,
-            tool=adapter.tool or adapter.id,
-            version=ran,
-            degraded=hit.degraded or off_pin,
-            raw_output=digest,
-            language=hit.language or language_for(hit.path),
-        ))
-    return kept
+    with _rule_config(adapter, rules, repo, home, base_sha) as (configs, cache_problem):
+        if cache_problem is not None:
+            degraded.append(_degraded(adapter, _primary_row(adapter), cache_problem))
+            return []
+        version, problem = _read_version(adapter, profile, process, env)
+        if problem in {"missing", "timeout"}:
+            degraded.append(_degraded(adapter, _primary_row(adapter), problem))
+            return []
+        off_pin = problem in {"version-mismatch", "version-unreadable"}
+        if off_pin:
+            degraded.append(_degraded(adapter, _primary_row(adapter), str(problem)))
+        if adapter.mutation and time.monotonic() >= deadline:
+            degraded.append(_degraded(adapter, "testing.surviving-mutant", "cap"))
+            return []
+        timeout = adapter.timeout_seconds
+        if adapter.mutation:
+            timeout = max(1, min(timeout, int(deadline - time.monotonic())))
+        ran = version or adapter.default_version
+        context = ScanContext(head_root, head_root, home, configs)
+        comparison = "base-head" if adapter.type_checker else adapter.comparison
+        if comparison == "base-head":
+            hits, digests = _base_and_head(
+                adapter, repo, base_sha, head_sha, head_root, context, process, env, timeout,
+                ran, degraded, _rules_digest(rules),
+            )
+        else:
+            hits, digests = _once(adapter, context, process, env, timeout, "head", degraded)
+        if not hits and not digests:
+            return []
+        digest = digests.get("head") or digests.get("base") or store_raw(b"", home)
+        kept: list[Hit] = []
+        for hit in hits:
+            hit = replace(hit, path=_display_path(hit.path))
+            if adapter.type_checker:
+                hit = replace(hit, whole_project=True)
+            elif comparison != "base-head" and not filter_to_change((hit,), change):
+                continue
+            try:
+                row = _row_for(adapter, hit)
+            except review_formula.FormulaError as exc:
+                raise RunnerFailure(2, str(exc)) from exc
+            _require_pattern_row(adapter, row)
+            kept.append(replace(
+                hit,
+                row=row,
+                tool=adapter.tool or adapter.id,
+                version=ran,
+                degraded=hit.degraded or off_pin,
+                raw_output=digest,
+                language=hit.language or language_for(hit.path),
+            ))
+        return kept
 
 
 def _once(
@@ -773,20 +779,27 @@ def _rules_for(adapter: Adapter, profile: Mapping[str, Any]) -> tuple[RulePin, .
     )
 
 
+@contextmanager
 def _rule_config(
     adapter: Adapter, rules: Sequence[RulePin], repo: Path, home: Path, base_sha: str
-) -> tuple[tuple[Path, ...], str | None]:
-    """Local pack directories only. A missing cache is not a download."""
+) -> Iterator[tuple[tuple[Path, ...], str | None]]:
+    """Local pack directories only. A missing cache is not a download.
+
+    A relative rule path other than saga's rules is a directory inside a base
+    worktree. That worktree stays open until the caller finishes its scans.
+    """
     if not rules:
-        return (), None
+        yield (), None
+        return
     needs_base = any(
         rule.path and not Path(rule.path).is_absolute() and not _is_saga_rules(rule.path)
         for rule in rules
     )
     if not needs_base:
-        return _rule_paths(adapter, rules, home, None)
+        yield _rule_paths(adapter, rules, home, None)
+        return
     with _worktree(repo, base_sha) as base_root:
-        return _rule_paths(adapter, rules, home, base_root)
+        yield _rule_paths(adapter, rules, home, base_root)
 
 
 def _rule_paths(
@@ -1091,9 +1104,9 @@ def _strip_settings(root: Path) -> list[dict[str, str]]:
 
 
 def _allow_comments(head_root: Path, change: review_diff.Change) -> list[dict[str, str]]:
-    """One record per changed file whose new lines contain ``gitleaks:allow``.
+    """One record per changed file and silence marker on its new lines.
 
-    The file is read in the head worktree. A symlink is not followed.
+    The file is read in the head worktree and is not rewritten. A symlink is not followed.
     """
     notes: list[dict[str, str]] = []
     for item in change.files:
@@ -1103,21 +1116,21 @@ def _allow_comments(head_root: Path, change: review_diff.Change) -> list[dict[st
         if path.is_symlink() or not path.is_file():
             continue
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        if not any(
-            1 <= number <= len(lines) and "gitleaks:allow" in lines[number - 1]
-            for number in item.lines
-        ):
-            continue
+        changed = [
+            lines[number - 1] for number in item.lines if 1 <= number <= len(lines)
+        ]
         language = language_for(item.path)
         if language not in review_formula.LANGUAGES:
             language = "none"
-        notes.append({
-            "lens": "security",
-            "language": language,
-            "input": item.path,
-            "tool": "gitleaks",
-            "reason": "gitleaks-allow",
-        })
+        for needle, lens, tool, reason in _COMMENT_MARKERS:
+            if any(needle in line for line in changed):
+                notes.append({
+                    "lens": lens,
+                    "language": language,
+                    "input": item.path,
+                    "tool": tool,
+                    "reason": reason,
+                })
     return notes
 
 

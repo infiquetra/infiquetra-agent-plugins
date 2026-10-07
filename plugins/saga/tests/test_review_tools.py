@@ -1425,6 +1425,85 @@ def test_saga_rules_source_is_the_plugin_copy(
     assert configs(pinned) == [str(rules)]
 
 
+def test_relative_rule_path_survives_until_the_scan(tmp_path: Path) -> None:
+    """A base-profile rule directory still exists when the fake runner is called."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    rules = repo / "rules" / "custom"
+    rules.mkdir(parents=True)
+    (rules / "r.yml").write_text("rules: []\n", encoding="utf-8")
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("one\n", encoding="utf-8")
+    (repo / ".saga-profile.json").write_text(json.dumps({
+        "review_tools": {"pins": {"semgrep": {"version": "1.0.0", "rules": [
+            {"path": "rules/custom"},
+        ]}}},
+    }), encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("two\n", encoding="utf-8")
+    (rules / "r.yml").write_text("rules: [head]\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    (rules / "r.yml").unlink()
+    rules.rmdir()
+    rules.parent.rmdir()
+    adapters = _load("review_adapters_all_languages")
+    adapter = next(item for item in adapters.ADAPTERS if item.id == "semgrep-security")
+    seen: list[Path] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0\n")
+        config = Path(argv[argv.index("--config") + 1])
+        assert config.is_dir()
+        assert (config / "r.yml").read_text(encoding="utf-8") == "rules: []\n"
+        assert not str(config.resolve()).startswith(str(Path(cwd).resolve()))
+        seen.append(config)
+        return T.ProcessResult(0, "{}")
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, repo / ".saga-profile.json", output, tmp_path / "home",
+        adapters=[adapter], runner=_Calls(handler),
+    )
+    assert code == 0, _reasons(output) if output.exists() else code
+    assert seen
+    assert not seen[0].exists()
+    assert "known-gap" not in [item["reason"] for item in _read(output, "degraded.json")]
+
+
+def test_jscpd_and_lizard_comments_on_changed_lines_are_recorded(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("clean\n# jscpd:ignore-start\n", encoding="utf-8")
+    (repo / "old.py").write_text("# lizard forgives\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("CHANGED\n# jscpd:ignore-start\n", encoding="utf-8")
+    (repo / "dup.ts").write_text("// jscpd:ignore-end\n// lizard forgives\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home", adapters=[],
+    )
+    assert code == 0
+    notes = {
+        (item["input"], item["reason"]): item
+        for item in _read(output, "degraded.json")
+        if item["reason"] in {"jscpd-ignore", "lizard-forgives", "gitleaks-allow"}
+    }
+    assert set(notes) == {("dup.ts", "jscpd-ignore"), ("dup.ts", "lizard-forgives")}
+    assert notes[("dup.ts", "jscpd-ignore")] == {
+        "lens": "architecture-maintainability",
+        "language": "typescript",
+        "input": "dup.ts",
+        "tool": "jscpd",
+        "reason": "jscpd-ignore",
+    }
+    assert notes[("dup.ts", "lizard-forgives")]["tool"] == "lizard"
+    assert notes[("dup.ts", "lizard-forgives")]["lens"] == "architecture-maintainability"
+    assert notes[("dup.ts", "lizard-forgives")]["language"] == "typescript"
+
+
 def test_coverage_source_ignores_a_committed_report(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init(repo)

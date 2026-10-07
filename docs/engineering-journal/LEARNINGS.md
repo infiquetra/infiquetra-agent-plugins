@@ -33,6 +33,14 @@
 
 ## 2026-10-06
 
+### A path inside a worktree dies with the worktree
+
+**Evidence.** Issue #188 repair. `plugins/saga/scripts/review_tools.py` `_rule_config`. Test: `test_relative_rule_path_survives_until_the_scan`.
+
+**Mechanism.** A relative Semgrep rule path from the base profile was resolved inside a base worktree, and the worktree was removed before Semgrep ran. `--config` then named a deleted directory. The presence check had already passed, so no `known-gap` was recorded, and the pinned rules never ran.
+
+**Generalizable rule.** A path resolved inside a temporary worktree is only valid while that worktree is still open.
+
 ### A review reads the commit it was given
 
 **Evidence.** Issue #188. `plugins/saga/scripts/review_tools.py` opens one head worktree in `_run` and resolves both commits there. Tests: `test_head_worktree_uncommitted_edit_keeps_the_finding`, `test_base_cache_follows_the_branch_not_the_typed_name`.
