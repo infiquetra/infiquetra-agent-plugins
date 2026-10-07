@@ -1083,7 +1083,7 @@ def test_head_worktree_uncommitted_edit_keeps_the_finding(
     adapters = _load("review_adapters_all_languages")
     if tool_id == "semgrep-saga":
         plugin = tmp_path / "plugin"
-        rules = plugin / "references" / "semgrep-rules"
+        rules = plugin / "references" / "semgrep"
         rules.mkdir(parents=True)
         (rules / "rule.yml").write_text("rules: []\n", encoding="utf-8")
         monkeypatch.setattr(T, "plugin_root", lambda: plugin)
@@ -1388,7 +1388,7 @@ def test_saga_rules_source_is_the_plugin_copy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = tmp_path / "plugin"
-    rules = plugin / "references" / "semgrep-rules"
+    rules = plugin / "references" / "semgrep"
     rules.mkdir(parents=True)
     (rules / "rule.yml").write_text("rules: []\n", encoding="utf-8")
     monkeypatch.setattr(T, "plugin_root", lambda: plugin)
@@ -1396,7 +1396,7 @@ def test_saga_rules_source_is_the_plugin_copy(
     adapter = next(item for item in adapters.ADAPTERS if item.id == "semgrep-saga")
     repo = tmp_path / "repo"
     _init(repo)
-    evil = repo / "plugins" / "saga" / "references" / "semgrep-rules"
+    evil = repo / "plugins" / "saga" / "references" / "semgrep"
     evil.mkdir(parents=True)
     (evil / "evil.yml").write_text("rules: []\n", encoding="utf-8")
     (repo / "src").mkdir()
@@ -1421,12 +1421,14 @@ def test_saga_rules_source_is_the_plugin_copy(
     runner = _Calls(_ok("{}"))
     code = _run(repo, base, head, profile, tmp_path / "yaml", home, adapters=[adapter], runner=runner)
     assert code == 0
-    assert configs(runner) == [str(rules)]
-    assert all("evil.yml" not in item and str(evil) not in item for item in configs(runner))
+    rendered = configs(runner)
+    assert len(rendered) == 1
+    assert Path(rendered[0]).parent == home
+    assert all("evil.yml" not in item and str(evil) not in item for item in rendered)
 
     (repo / ".saga-profile.json").write_text(json.dumps({
         "review_tools": {"pins": {"semgrep": {"version": "1.0.0", "rules": [
-            {"path": "plugins/saga/references/semgrep-rules"},
+            {"path": "plugins/saga/references/semgrep"},
         ]}}},
     }), encoding="utf-8")
     profile_base = _commit(repo, "profile")
@@ -1436,7 +1438,9 @@ def test_saga_rules_source_is_the_plugin_copy(
         tmp_path / "home-2", adapters=[adapter], runner=pinned,
     )
     assert code == 0
-    assert configs(pinned) == [str(rules)]
+    rendered_pinned = configs(pinned)
+    assert len(rendered_pinned) == 1
+    assert Path(rendered_pinned[0]).parent == tmp_path / "home-2"
 
 
 def test_relative_rule_path_survives_until_the_scan(tmp_path: Path) -> None:

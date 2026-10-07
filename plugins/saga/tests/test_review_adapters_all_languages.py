@@ -241,8 +241,13 @@ def test_a_semgrep_hash_mismatch_does_not_download(tmp_path: Path) -> None:
     assert _read(output, "degraded.json")[0]["reason"] == "rule-cache-missing"
 
 
-def test_missing_saga_rules_are_a_gap_and_security_still_runs(tmp_path: Path) -> None:
+def test_missing_saga_rules_are_a_gap_and_security_still_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo, base, head = _changed_app(tmp_path)
+    plugin = tmp_path / "plugin"
+    plugin.mkdir(parents=True)
+    monkeypatch.setattr(T, "plugin_root", lambda: plugin)
     home = tmp_path / "home"
     profile = _semgrep_profile(home, tmp_path)
     payload = (FIXTURES / "semgrep-security.json").read_text(encoding="utf-8")
@@ -267,7 +272,7 @@ def test_missing_saga_rules_are_a_gap_and_security_still_runs(tmp_path: Path) ->
 def test_saga_metadata_row_is_kept(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo, base, head = _changed_app(tmp_path)
     plugin = tmp_path / "plugin"
-    rules = plugin / "references" / "semgrep-rules"
+    rules = plugin / "references" / "semgrep"
     rules.mkdir(parents=True)
     (rules / "rule.yml").write_text("rules: []\n", encoding="utf-8")
     monkeypatch.setattr(T, "plugin_root", lambda: plugin)
@@ -287,7 +292,7 @@ def test_saga_metadata_row_is_kept(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 def test_a_non_pattern_saga_row_exits_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo, base, head = _changed_app(tmp_path)
     plugin = tmp_path / "plugin"
-    rules = plugin / "references" / "semgrep-rules"
+    rules = plugin / "references" / "semgrep"
     rules.mkdir(parents=True)
     (rules / "rule.yml").write_text("rules: []\n", encoding="utf-8")
     monkeypatch.setattr(T, "plugin_root", lambda: plugin)

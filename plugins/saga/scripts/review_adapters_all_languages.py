@@ -11,6 +11,7 @@ import csv
 import hashlib
 import io
 import json
+import re
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -22,6 +23,9 @@ from review_tools import Adapter, Hit, ParseResult, RulePin, ScanContext, ToolGa
 
 _JS_SKIP = frozenset({"package-lock.json", "npm-shrinkwrap.json"})
 _JS_OK = frozenset({"pnpm-lock.yaml", "yarn.lock"})
+#: A real scan prefixes the check id with the config path, which for the saga row
+#: is a fresh temporary directory every run. The rule id is the trailing segment.
+_SAGA_RULE_ID = re.compile(r"saga\.[A-Za-z0-9-]+$")
 _WORD_SCORE = {"CRITICAL": 9.0, "HIGH": 7.0, "MEDIUM": 4.0, "LOW": 0.1}
 _PATTERN_ROWS = tuple(f"correctness.pattern.{name}" for name in review_formula._PATTERN_CHECKS)
 
@@ -80,10 +84,14 @@ def _parse_semgrep(text: str, *, saga: bool) -> ParseResult:
         start = start_obj.get("line") if isinstance(start_obj, dict) else None
         end = (item.get("end") or {}).get("line") if isinstance(item.get("end"), dict) else start
         check_id = str(item.get("check_id") or "semgrep")
+        if saga:
+            bare = _SAGA_RULE_ID.search(check_id)
+            check_id = bare.group(0) if bare else check_id
         path = str(item.get("path") or ".")
         message = str(extra.get("message") or f"Semgrep reported {check_id}.")
         metadata = extra.get("metadata") if isinstance(extra.get("metadata"), dict) else {}
         row = str(metadata.get("row") or "") if saga else ""
+        harm = str(metadata.get("harm") or "") if saga else ""
         hits.append(Hit(
             rule_id=check_id,
             path=path,
@@ -93,6 +101,7 @@ def _parse_semgrep(text: str, *, saga: bool) -> ParseResult:
             start=int(start) if isinstance(start, int) else None,
             end=int(end) if isinstance(end, int) else None,
             row=row or None,
+            consequence=harm or None,
         ))
     return ParseResult(tuple(hits), problems=_semgrep_problems(data.get("errors")))
 

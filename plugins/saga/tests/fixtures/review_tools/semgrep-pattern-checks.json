@@ -1,0 +1,112 @@
+{
+  "results": [
+    {
+      "check_id": "saga-rules-tmp.saga.release-shares-cleanup-block",
+      "path": "src/app.py",
+      "start": {
+        "line": 4
+      },
+      "end": {
+        "line": 6
+      },
+      "extra": {
+        "severity": "ERROR",
+        "message": "A lock or lease release shares its cleanup block with another step.",
+        "metadata": {
+          "row": "correctness.pattern.release-shares-cleanup",
+          "harm": "two-holders-of-one-exclusive-thing"
+        }
+      }
+    },
+    {
+      "check_id": "saga-rules-tmp.saga.swallowed-error",
+      "path": "src/app.py",
+      "start": {
+        "line": 5
+      },
+      "end": {
+        "line": 5
+      },
+      "extra": {
+        "severity": "ERROR",
+        "message": "An error is swallowed instead of handled.",
+        "metadata": {
+          "row": "correctness.pattern.swallowed-error",
+          "harm": "wrong-result-reported-as-success"
+        }
+      }
+    },
+    {
+      "check_id": "saga-rules-tmp.saga.silent-skip",
+      "path": "src/app.py",
+      "start": {
+        "line": 6
+      },
+      "end": {
+        "line": 6
+      },
+      "extra": {
+        "severity": "ERROR",
+        "message": "An item is skipped without a trace.",
+        "metadata": {
+          "row": "correctness.pattern.silent-skip",
+          "harm": "wrong-result-reported-as-success"
+        }
+      }
+    },
+    {
+      "check_id": "saga-rules-tmp.saga.write-skips-shared-update-path",
+      "path": "src/app.py",
+      "start": {
+        "line": 7
+      },
+      "end": {
+        "line": 7
+      },
+      "extra": {
+        "severity": "ERROR",
+        "message": "A write bypasses the repository's shared update path.",
+        "metadata": {
+          "row": "correctness.pattern.write-skips-shared-update",
+          "harm": "data-lost-or-corrupted"
+        }
+      }
+    },
+    {
+      "check_id": "saga-rules-tmp.saga.naive-time-comparison",
+      "path": "src/app.py",
+      "start": {
+        "line": 8
+      },
+      "end": {
+        "line": 8
+      },
+      "extra": {
+        "severity": "ERROR",
+        "message": "A naive datetime is compared against another datetime.",
+        "metadata": {
+          "row": "correctness.pattern.naive-time-comparison",
+          "harm": "wrong-result-reported-as-success"
+        }
+      }
+    },
+    {
+      "check_id": "saga-rules-tmp.saga.money-as-floating-point",
+      "path": "src/app.py",
+      "start": {
+        "line": 9
+      },
+      "end": {
+        "line": 9
+      },
+      "extra": {
+        "severity": "ERROR",
+        "message": "Money is stored as floating point.",
+        "metadata": {
+          "row": "correctness.pattern.money-as-float",
+          "harm": "money-or-resources-wrongly-moved"
+        }
+      }
+    }
+  ]
+}

@@ -62,8 +62,8 @@ tools:
       INFO: security.scanner-medium-low
     curated_block_rules: []
     rules:
-      - path: plugins/saga/references/semgrep-rules
-    gap_until_present: plugins/saga/references/semgrep-rules
+      - path: plugins/saga/references/semgrep
+    gap_until_present: plugins/saga/references/semgrep
     env_dirs: []
     lockfiles: []
   - id: gitleaks
