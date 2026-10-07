@@ -641,3 +641,189 @@ def test_records_cli_without_jev_prints_valid_records() -> None:
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout)
     assert all(R.validate(record) == [] for record in out["findings"])
+
+
+# ---------------------------------------------------------------------------
+# Scrubbing (issue 189)
+# ---------------------------------------------------------------------------
+# Every fake secret is assembled at run time from inert pieces, so no file holds one whole and
+# `scripts/check_repo.py`'s credential scan, secret scanners and push protection stay quiet.
+
+
+def _mixed(length: int, seed: str) -> str:
+    """Letters and digits in both cases, deterministic, with real entropy."""
+    import base64
+
+    text = ""
+    counter = 0
+    while len(text) < length:
+        digest = hashlib.sha512(f"{seed}-{counter}".encode()).digest()
+        text += "".join(c for c in base64.b64encode(digest).decode() if c.isalnum())
+        counter += 1
+    return text[:length]
+
+
+SAMPLES: dict[str, tuple[str, str]] = {
+    "github-token": ("gh" + "p_" + _mixed(36, "gh"), "github-token"),
+    "github-fine-grained": ("github" + "_pat_" + _mixed(40, "pat"), "github-token"),
+    "aws-access-key-id": ("AKIA" + "IOSFODNN7EXAMPLE", "aws-access-key-id"),
+    "private-key": (
+        "-----BEGIN " + "PRIVATE KEY-----\ninert\n-----END " + "PRIVATE KEY-----", "private-key"
+    ),
+    "high-entropy": (_mixed(48, "entropy"), "high-entropy"),
+    "jwt": ("ey" + "J" + _mixed(12, "a") + ".ey" + "J" + _mixed(12, "b") + "." + _mixed(12, "c"),
+            "jwt"),
+    "url-credentials": ("https://" + "inert-user:" + "inert-pass" + "@example.com",
+                        "url-credentials"),
+    "stripe-key": ("sk_" + "live_" + _mixed(24, "stripe"), "stripe-key"),
+    "google-api-key": ("AI" + "za" + _mixed(35, "google"), "google-api-key"),
+    "anthropic-api-key": ("sk-" + "ant-" + _mixed(30, "anthropic"), "anthropic-api-key"),
+    "slack-token": ("xo" + "xb-" + _mixed(24, "slack"), "slack-token"),
+    "openai-key": ("sk-" + _mixed(40, "openai"), "api-key"),
+}
+#: The four formats the card names.
+CARD_FORMATS = ("github-token", "aws-access-key-id", "private-key", "high-entropy")
+
+
+def _secret_part(sample: str) -> str:
+    """The part of a sample that must not survive (the URL sample's host may)."""
+    return sample.removesuffix("example.com")
+
+
+@pytest.mark.parametrize("name", sorted(SAMPLES))
+def test_scrub_replaces_each_known_format_with_a_marker_naming_its_kind(name: str) -> None:
+    sample, kind = SAMPLES[name]
+    text, kinds = A.scrub_text(f"the test printed {sample} and stopped")
+    assert _secret_part(sample) not in text
+    assert f"[scrubbed:{kind}]" in text and kind in kinds
+    assert text.startswith("the test printed ") and text.endswith(" and stopped")
+
+
+def _poisoned_answer() -> dict[str, Any]:
+    poisoned = answer()
+    charge = finding(poisoned, "double-charge")
+    charge["proof"]["output"] = "\n".join(SAMPLES[name][0] for name in CARD_FORMATS)
+    charge["proof"]["command"] += " # " + SAMPLES["stripe-key"][0]
+    charge["statement"] = "A retry charges twice and prints " + SAMPLES["google-api-key"][0] + "."
+    traced = finding(poisoned, "lease-kept-on-error")
+    traced["proof"]["steps"].append("src/sync/lease.py:30 logs " + SAMPLES["anthropic-api-key"][0])
+    return poisoned
+
+
+def _no_sample_in(value: Any) -> None:
+    dumped = json.dumps(value)
+    for sample, _kind in SAMPLES.values():
+        assert json.dumps(_secret_part(sample))[1:-1] not in dumped
+
+
+def test_scrub_keeps_fake_tokens_out_of_the_record() -> None:
+    out = A.to_records(_poisoned_answer(), ITEMS, RESULT, use_jev=False)
+    _no_sample_in(out)
+    charge, lease = out["findings"][0], out["findings"][1]
+    for kind in CARD_FORMATS:
+        assert f"[scrubbed:{kind}]" in charge["proof"]["output"]
+    assert "[scrubbed:stripe-key]" in charge["proof"]["command"]
+    assert "[scrubbed:google-api-key]" in charge["statement"]
+    assert "\n" not in charge["statement"]
+    assert "[scrubbed:anthropic-api-key]" in lease["proof"]["steps"][-1]
+    assert all(R.validate(record) == [] for record in out["findings"] + out["where_to_look"])
+
+
+def test_scrub_keeps_fake_tokens_out_of_the_jev_state() -> None:
+    ask = jev_says("money-or-resources-wrongly-moved")
+    A.to_records(_poisoned_answer(), ITEMS, RESULT, ask=ask)
+    state, _questions = ask.calls[0]
+    _no_sample_in(state)
+    assert "[scrubbed:github-token]" in state["output"]
+    assert "[scrubbed:google-api-key]" in state["finding"]
+
+
+def test_scrub_jev_pick_scrubs_a_finding_it_is_handed_directly() -> None:
+    ask = jev_says("money-or-resources-wrongly-moved")
+    raw = finding(_poisoned_answer(), "double-charge")
+    A.jev_pick(raw, ask)
+    _no_sample_in(ask.calls[0][0])
+
+
+def test_scrub_runs_before_the_4000_character_cut() -> None:
+    token = SAMPLES["github-token"][0]
+    poisoned = answer()
+    finding(poisoned, "double-charge")["proof"]["output"] = "x" * 3989 + " " + token
+    ask = jev_says("money-or-resources-wrongly-moved")
+    A.to_records(poisoned, ITEMS, RESULT, ask=ask)
+    output = ask.calls[0][0]["output"]
+    assert len(output) <= 4000
+    assert "gh" + "p_" not in output and token[:10] not in output
+
+
+@pytest.mark.parametrize(
+    "ordinary",
+    [
+        (
+            "FAILED tests/test_charge_retry.py::test_timeout_then_retry_charges_once - "
+            "AssertionError: charged 2 times, expected 1"
+        ),
+        "plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py:2182",
+        "commit 218d8283ba0a9c1384379c2aa416144f01d30f03",
+        "sha256:" + hashlib.sha256(b"inert").hexdigest(),
+        "test_reviewer_read_confinement_a_packet_that_reopens_home_is_refused",
+    ],
+)
+def test_scrub_leaves_ordinary_output_alone(ordinary: str) -> None:
+    assert A.scrub_text(ordinary) == (ordinary, [])
+
+
+def test_scrub_is_idempotent_and_fleet_redaction_leaves_its_markers() -> None:
+    once, _ = A.scrub_text(" ".join(sample for sample, _ in SAMPLES.values()))
+    assert A.scrub_text(once) == (once, [])
+    markers = re.findall(r"\[scrubbed:[a-z-]+\]", once)
+    assert markers
+    redact = FLEET.load("typesafe_client").redact_text
+    for marker in markers:
+        assert redact(marker) == marker
+
+
+def test_scrub_covers_every_format_fleet_core_redacts() -> None:
+    client = FLEET.load("typesafe_client")
+    fleet_samples = [
+        "Bearer " + _mixed(24, "bearer"),
+        "api_key = " + _mixed(16, "assign"),
+        SAMPLES["private-key"][0],
+        "postgres://" + "inert-user:" + "inert-pass@db.example",
+        SAMPLES["aws-access-key-id"][0],
+        SAMPLES["github-token"][0],
+        SAMPLES["openai-key"][0],
+        SAMPLES["slack-token"][0],
+        SAMPLES["jwt"][0],
+    ]
+    for sample in fleet_samples:
+        assert client.redact_text(sample) != sample, sample
+        text, kinds = A.scrub_text(sample)
+        assert kinds, sample
+        assert text != sample
+
+
+def test_scrub_covers_every_format_check_repo_bans() -> None:
+    spec = importlib.util.spec_from_file_location(
+        "check_repo", REPO_ROOT / "scripts" / "check_repo.py"
+    )
+    assert spec is not None and spec.loader is not None
+    check_repo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(check_repo)
+    for label, pattern in check_repo.CREDENTIAL_FORMATS:
+        matching = [s for s, _ in SAMPLES.values() if pattern.search(s)]
+        assert matching, f"no sample for check_repo's {label}"
+        for sample in matching:
+            text, _ = A.scrub_text(sample)
+            assert not pattern.search(text), label
+
+
+def test_scrub_records_cli_prints_no_fake_token(tmp_path: Path) -> None:
+    poisoned = tmp_path / "answer.json"
+    poisoned.write_text(json.dumps(_poisoned_answer()), encoding="utf-8")
+    proc = _cli("records", "--answer", str(poisoned),
+                "--items", str(FIXTURES / "where-to-look.json"),
+                "--result", str(FIXTURES / "launch-result.json"), "--no-jev")
+    assert proc.returncode == 0, proc.stderr
+    _no_sample_in(json.loads(proc.stdout))
+    assert "[scrubbed:aws-access-key-id]" in proc.stdout

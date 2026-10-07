@@ -1,5 +1,31 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-07
+
+### Blocking a parent directory in Claude's sandbox and allowing paths back works; each toolchain still needs checking
+
+**Evidence.** Issue #189. Live runs on 2026-10-06 and 2026-10-07 through the targeted reviewer's `claude -p` recipe on Claude Code 2.1.292 with Haiku, using only canary files and variables made for the run. `launcher.py reviewer-probe --vendor claude --model haiku` now repeats the checks, and passed all thirteen with the change in place.
+
+**Mechanism.**
+- Home blocking:
+  - `denyRead: ["~"]` made every home canary unreadable, including one beside the scratch copy.
+  - `allowRead` re-opened the copy and the packet inside it.
+  - Under the merged #187 settings, canaries in `~`, `~/.config`, `~/.local/share`, `~/.cache` and `~/.local/bin` were all readable.
+- Toolchain:
+  - A binary under the blocked home still runs, but cannot read its own files, so an interpreter installed under home would fail to load its standard library.
+  - Git exits 128 when it cannot read its global configuration, even for `git --version`; `GIT_CONFIG_GLOBAL=/dev/null` fixes it.
+  - `git init` in the copy fails under both the old and the new settings.
+- Environment:
+  - Denying 155 names through `credentials.envVars` left Python tests and git working.
+  - The commands still saw variables the sandbox itself sets, such as its network-proxy settings and `SANDBOX_RUNTIME`, which are outside the launch environment.
+  - Claude's shell snapshot exported only `PATH`.
+- Claude's Read tool, which is not a sandboxed command:
+  - With the operator's user settings it read a home canary.
+  - With `--setting-sources project` (measurement only) it was denied. Which user setting grants the read is not isolated.
+- Scrubbing: fleet-core's high-entropy rule also matches long CamelCase identifiers, so the scrubber can over-scrub such a name in proof. This is the safe direction, and is accepted.
+
+**Generalizable rule.** Confine by blocking the parent and allowing back named paths, then run a real test of each toolchain under the block before trusting it.
+
 ## 2026-10-06
 
 ### A gap on one side of a comparison is an empty set

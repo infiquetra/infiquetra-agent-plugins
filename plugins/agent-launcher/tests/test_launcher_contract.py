@@ -4578,11 +4578,14 @@ def test_reviewer_claude_argv_is_pinned(launcher: ModuleType, tmp_path: Path) ->
     ]
 
 
-def test_reviewer_claude_settings_are_pinned(launcher: ModuleType, tmp_path: Path) -> None:
-    packet = tmp_path / "packet"
+def test_reviewer_read_confinement_settings_are_pinned(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy, packet = tmp_path / "copy", tmp_path / "packet"
+    copy.mkdir()
     packet.mkdir()
     env = {"HOME": "/home/example", "GH_TOKEN": "inert-example", "PATH": "/usr/bin"}
-    settings = launcher.reviewer_claude_settings(packet, env, platform="darwin")
+    settings = launcher.reviewer_claude_settings(copy, packet, env, toolchain=[], platform="darwin")
     credentials = list(launcher.REVIEWER_CREDENTIAL_PATHS)
     assert settings == {
         "sandbox": {
@@ -4592,7 +4595,8 @@ def test_reviewer_claude_settings_are_pinned(launcher: ModuleType, tmp_path: Pat
             "allowUnsandboxedCommands": False,
             "filesystem": {
                 "denyWrite": ["/tmp", "/private/tmp", "/var/folders"],
-                "denyRead": credentials,
+                "denyRead": ["~"],
+                "allowRead": [str(copy.resolve()), str(packet.resolve())],
             },
             "network": {"strictAllowlist": True, "allowedDomains": []},
             "credentials": {"envVars": [{"name": "GH_TOKEN", "mode": "deny"}]},
@@ -4602,21 +4606,196 @@ def test_reviewer_claude_settings_are_pinned(launcher: ModuleType, tmp_path: Pat
             "deny": ["WebFetch", "WebSearch", "mcp__*"] + [f"Read({p})" for p in credentials],
         },
     }
-    assert {"~/.ssh", "~/.aws", "~/.config/gh"} <= set(credentials)
-    linux = launcher.reviewer_claude_settings(packet, env, platform="linux")
+    linux = launcher.reviewer_claude_settings(copy, packet, env, toolchain=[], platform="linux")
     assert linux["sandbox"]["filesystem"]["denyWrite"] == ["/tmp", "/var/tmp"]
 
 
-@pytest.mark.parametrize(
-    ("name", "hidden"),
-    [("GH_TOKEN", True), ("TYPESAFE_API_KEY", True), ("AWS_SECRET_ACCESS_KEY", True),
-     ("DB_PASSWORD", True), ("SSH_AUTH_SOCK", True), ("HOME", False), ("PATH", False),
-     ("LANG", False)],
-)
-def test_reviewer_credential_named_variables_are_hidden_from_sandboxed_commands(
-    launcher: ModuleType, name: str, hidden: bool
+def test_reviewer_read_confinement_the_credential_list_names_the_card_s_files(
+    launcher: ModuleType,
 ) -> None:
-    assert (name in launcher.reviewer_credential_variables({name: "inert-example"})) is hidden
+    assert {
+        "~/.ssh", "~/.aws", "~/.config/gh", "~/.git-credentials", "~/.pypirc",
+        "~/.cargo/credentials", "~/.cargo/credentials.toml", "~/.terraform.d", "~/.vault-token",
+        "~/.config/hub", "~/.local/share/keyrings", "~/.npmrc",
+    } <= set(launcher.REVIEWER_CREDENTIAL_PATHS)
+
+
+def _toolchain_home(tmp_path: Path) -> tuple[Path, Path]:
+    """A fake home whose ``~/.local/bin/python3`` links into a uv-managed interpreter."""
+    home = tmp_path / "home"
+    real = home / ".local" / "share" / "uv" / "python" / "cpython-x" / "bin"
+    real.mkdir(parents=True)
+    (real / "python3").write_text("#!/bin/sh\n")
+    (real / "python3").chmod(0o755)
+    shim = home / ".local" / "bin"
+    shim.mkdir(parents=True)
+    (shim / "python3").symlink_to(real / "python3")
+    return home, shim
+
+
+def test_reviewer_read_confinement_allow_read_is_only_copy_packet_and_named_toolchain(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    home, shim = _toolchain_home(tmp_path)
+    env = {"HOME": str(home), "PATH": str(shim)}
+    allowed, dropped = launcher.reviewer_toolchain_paths(env)
+    interpreter = home / ".local" / "share" / "uv" / "python" / "cpython-x"
+    assert [item["path"] for item in allowed] == [str(interpreter)]
+    assert "python3" in allowed[0]["reason"]
+    assert dropped == [{"path": str(home / ".local"),
+                        "reason": f"{home / '.local'} is the shared root ~/.local"}]
+    copy, packet = tmp_path / "copy", tmp_path / "packet"
+    copy.mkdir()
+    packet.mkdir()
+    settings = launcher.reviewer_claude_settings(copy, packet, env)
+    assert settings["sandbox"]["filesystem"]["allowRead"] == [
+        str(copy.resolve()), str(packet.resolve()), str(interpreter)
+    ]
+
+
+def test_reviewer_read_confinement_an_interpreter_outside_home_adds_nothing(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    usr = tmp_path / "usr" / "bin"
+    usr.mkdir(parents=True)
+    (usr / "python3").write_text("#!/bin/sh\n")
+    (usr / "python3").chmod(0o755)
+    home = tmp_path / "home"
+    home.mkdir()
+    assert launcher.reviewer_toolchain_paths({"HOME": str(home), "PATH": str(usr)}) == ([], [])
+
+
+@pytest.mark.parametrize(
+    ("relative", "why"),
+    [(".cargo/bin/node", "~/.cargo/credentials"), (".ssh/bin/python3", "~/.ssh")],
+)
+def test_reviewer_read_confinement_a_toolchain_prefix_holding_credentials_is_dropped(
+    launcher: ModuleType, tmp_path: Path, relative: str, why: str
+) -> None:
+    home = tmp_path / "home"
+    binary = home / relative
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    allowed, dropped = launcher.reviewer_toolchain_paths(
+        {"HOME": str(home), "PATH": str(binary.parent)}
+    )
+    assert allowed == []
+    assert [item["path"] for item in dropped] == [str(binary.parent.parent)]
+    assert why in dropped[0]["reason"]
+
+
+def _reopening_packets(home: Path) -> list[Path]:
+    (home / ".ssh" / "sub").mkdir(parents=True)
+    (home / ".aws").mkdir()
+    (home / ".config").mkdir()
+    (home / "elsewhere").mkdir()
+    (home / ".local" / "share" / "keyrings").mkdir(parents=True)
+    (home / "aws-link").symlink_to(home / ".aws")
+    return [
+        home, home / ".config", home / ".local" / "share", home / ".ssh", home / ".ssh" / "sub",
+        home / ".local" / "share" / "keyrings", home / "elsewhere" / ".." / ".ssh",
+        home / "aws-link",
+    ]
+
+
+def test_reviewer_read_confinement_a_packet_that_reopens_home_is_refused(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, home: Path
+) -> None:
+    repo, head = reviewed_repo
+    for packet in _reopening_packets(home):
+        packet_dir = Path(os.path.normpath(packet))
+        packet_dir.mkdir(parents=True, exist_ok=True)
+        session = FakeSession("{}")
+        with pytest.raises(launcher.ReviewerRefused, match="cannot be allowed back"):
+            launcher.reviewer_launch(
+                _request(launcher, repo, head, tmp_path, packet=packet), env=_env(home),
+                session=session,
+            )
+        assert session.calls == [], packet
+    assert not (tmp_path / "reviews").exists()
+    assert launcher.reviewer_allowed_read_problem(home / ".cache" / "x" / "copy", home) is None
+
+
+def test_reviewer_read_confinement_the_launch_names_every_allowed_read(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, home: Path
+) -> None:
+    repo, head = reviewed_repo
+    session = FakeSession(_claude_result(json.dumps(ANSWER)))
+    result, _ = launcher.reviewer_launch(
+        _request(launcher, repo, head, tmp_path), env=_env(home), session=session
+    )
+    allowed = result["sandbox_reads"]["allowed"]
+    assert [item["path"] for item in allowed[:2]] == [
+        str(Path(result["scratch"]["path"]).resolve()), str((tmp_path / "packet").resolve())
+    ]
+    assert all(item["reason"] for item in allowed)
+    settings = json.loads(
+        Path(session.calls[0]["argv"][session.calls[0]["argv"].index("--settings") + 1]).read_text()
+    )
+    assert settings["sandbox"]["filesystem"]["denyRead"] == ["~"]
+    assert settings["sandbox"]["filesystem"]["allowRead"] == [item["path"] for item in allowed]
+
+
+def test_reviewer_read_confinement_a_user_allow_read_still_refuses_the_launch(
+    launcher: ModuleType, home: Path
+) -> None:
+    (home / ".claude" / "settings.json").write_text(
+        json.dumps({"sandbox": {"filesystem": {"allowRead": ["~"]}}})
+    )
+    assert "settings.json sets sandbox.filesystem.allowRead" in launcher.reviewer_claude_widening(
+        _env(home)
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "denied"),
+    [("EXAMPLE_PLAIN", True), ("HONCHO_WORKSPACE", True), ("GH_TOKEN", True),
+     ("TYPESAFE_API_KEY", True), ("SSH_AUTH_SOCK", True), ("LC_PLAIN", True),
+     ("LC_TOKEN", True), ("PATH", False), ("HOME", False), ("LANG", False), ("LC_ALL", False),
+     ("GIT_CONFIG_GLOBAL", False)],
+)
+def test_reviewer_environment_allowlist_denies_every_name_off_the_list(
+    launcher: ModuleType, name: str, denied: bool
+) -> None:
+    assert (name in launcher.reviewer_denied_variables({name: "inert-example"})) is denied
+
+
+def test_reviewer_environment_allowlist_names_no_credential_looking_variable(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert not [n for n in launcher.REVIEWER_ENVIRONMENT_ALLOWED
+                if launcher.REVIEWER_CREDENTIAL_NAME.search(n)]
+    monkeypatch.setattr(
+        launcher, "REVIEWER_ENVIRONMENT_ALLOWED",
+        (*launcher.REVIEWER_ENVIRONMENT_ALLOWED, "EXAMPLE_TOKEN"),
+    )
+    assert launcher.reviewer_denied_variables({"EXAMPLE_TOKEN": "inert-example"}) == [
+        "EXAMPLE_TOKEN"
+    ]
+
+
+def test_reviewer_environment_allowlist_an_ordinary_named_variable_is_absent_from_commands(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, home: Path
+) -> None:
+    repo, head = reviewed_repo
+    session = FakeSession(_claude_result(json.dumps(ANSWER)))
+    launcher.reviewer_launch(
+        _request(launcher, repo, head, tmp_path),
+        env=_env(home, EXAMPLE_PLAIN="inert-example"), session=session,
+    )
+    argv = session.calls[0]["argv"]
+    settings = json.loads(Path(argv[argv.index("--settings") + 1]).read_text())
+    denied = {v["name"] for v in settings["sandbox"]["credentials"]["envVars"]}
+    assert "EXAMPLE_PLAIN" in denied
+    assert not denied & {"PATH", "HOME", "LANG", "GIT_CONFIG_GLOBAL"}
+
+
+def test_reviewer_environment_allowlist_git_reads_no_global_config(launcher: ModuleType) -> None:
+    kept = launcher.reviewer_session_environment(
+        {"GIT_CONFIG_GLOBAL": "/home/example/.gitconfig", "ANTHROPIC_API_KEY": "inert-example"}
+    )
+    assert kept == {"GIT_CONFIG_GLOBAL": os.devnull}
 
 
 def test_reviewer_the_forbidden_flag_table_names_exactly_the_launcher_vendors(launcher: ModuleType) -> None:
@@ -4631,7 +4810,7 @@ def test_reviewer_no_reviewer_recipe_turns_off_configuration_or_its_sandbox(
     for vendor, recipe in launcher.REVIEWER_RECIPES.items():
         argv = recipe.argv("model", "high", tmp_path / "settings.json")
         assert not forbidden & set(argv), (vendor, forbidden & set(argv))
-        settings = recipe.settings(tmp_path, {})
+        settings = recipe.settings(tmp_path, tmp_path, {}, toolchain=[])
         for key in ("apiKeyHelper", "enabledPlugins", "hooks", "disableAllHooks"):
             assert key not in settings, (vendor, key)
 
@@ -4643,7 +4822,9 @@ def test_reviewer_the_session_never_signs_in_with_an_api_key(launcher: ModuleTyp
         "CLAUDE_CODE_USE_VERTEX": "1", "HONCHO_WORKSPACE": "kept", "HOME": "/home/example",
     }
     kept = launcher.reviewer_session_environment(env)
-    assert kept == {"HONCHO_WORKSPACE": "kept", "HOME": "/home/example"}
+    assert kept == {
+        "HONCHO_WORKSPACE": "kept", "HOME": "/home/example", "GIT_CONFIG_GLOBAL": os.devnull
+    }
 
 
 @pytest.mark.parametrize("vendor", ["codex", "grok", "muse", "agy", "qwen", "opencode"])
@@ -4896,16 +5077,22 @@ def test_reviewer_the_prompt_fingerprint_changes_with_one_byte(
 
 HONEST = {
     "read": "1", "write_outside": "1", "write_inside": "0", "write_tmpdir": "1",
-    "write_tmp": "1", "network": "56", "variable": "unset",
+    "write_tmp": "1", "network": "56", "variable": "unset", "read_home": "1", "read_packet": "0",
+    "python_test": "0", "git": "0", "plain_variable": "unset",
 }
 
 
 def _probe_session(results: dict[str, str] | None, *, outside_write: bool = False,
-                   echo_canary: bool = False) -> Callable[..., Any]:
+                   echo_canary: bool = False, echo_home: bool = False) -> Callable[..., Any]:
     def session(argv: list[str], *, stdin: str, cwd: Path, env: Any, timeout: float) -> Any:
         script = (cwd / "probe.sh").read_text()
         outside = Path(re.search(r'cat "([^"]+)/canary.txt"', script).group(1))
+        home_canary = Path(re.search(r'cat "([^"]+)" > /dev/null 2>&1; echo "read_home', script)
+                           .group(1))
+        assert home_canary.is_file()
         output = "done"
+        if echo_home:
+            output = home_canary.read_text()
         if results is not None:
             (cwd / "inside-written").write_text("")
             (cwd / "probe-results.txt").write_text(
@@ -4928,14 +5115,99 @@ def _probe(launcher: ModuleType, tmp_path: Path, session: Any) -> tuple[dict[str
     return {v["denial"]: v["held"] for v in verdicts}, code
 
 
-def test_reviewer_the_probe_passes_when_every_denial_held(launcher: ModuleType, tmp_path: Path) -> None:
+def _home_canaries(tmp_path: Path) -> list[Path]:
+    return list(tmp_path.glob(".reviewer-probe-home-canary-*"))
+
+
+def test_reviewer_read_confinement_probe_passes_when_every_check_held(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
     held, code = _probe(launcher, tmp_path, _probe_session(HONEST))
     assert code == 0 and all(held.values())
     assert set(held) == {
         "read-credential", "write-outside", "write-inside", "write-tmpdir", "write-tmp",
-        "network", "credential-variable", "no-canary-in-output",
+        "network", "credential-variable", "read-home", "read-packet", "python-test", "git-runs",
+        "plain-variable", "no-canary-in-output",
     }
     assert not (tmp_path / "reviews").exists() or not any((tmp_path / "reviews").iterdir())
+    assert _home_canaries(tmp_path) == []
+
+
+def test_reviewer_read_confinement_probe_fails_when_the_home_canary_is_readable(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    """The card's test: a canary in the home directory, outside the old list, must stay unread."""
+    held, code = _probe(launcher, tmp_path, _probe_session({**HONEST, "read_home": "0"}))
+    assert code == 1 and held["read-home"] is False
+    assert _home_canaries(tmp_path) == []
+
+
+def test_reviewer_read_confinement_probe_fails_when_the_home_canary_value_is_seen(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    held, code = _probe(launcher, tmp_path, _probe_session(HONEST, echo_home=True))
+    assert code == 1 and held["read-home"] is True and held["no-canary-in-output"] is False
+
+
+@pytest.mark.parametrize(
+    ("key", "denial"),
+    [("read_packet", "read-packet"), ("python_test", "python-test"), ("git", "git-runs")],
+)
+def test_reviewer_read_confinement_probe_fails_when_the_packet_or_python_test_or_git_fails(
+    launcher: ModuleType, tmp_path: Path, key: str, denial: str
+) -> None:
+    held, code = _probe(launcher, tmp_path, _probe_session({**HONEST, key: "1"}))
+    assert code == 1 and held[denial] is False
+
+
+def test_reviewer_read_confinement_probe_removes_the_home_canary_when_the_session_raises(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    def session(argv: list[str], *, stdin: str, cwd: Path, env: Any, timeout: float) -> Any:
+        assert len(_home_canaries(tmp_path)) == 1
+        raise RuntimeError("the session broke")
+
+    with pytest.raises(RuntimeError):
+        _probe(launcher, tmp_path, session)
+    assert _home_canaries(tmp_path) == []
+
+
+def test_reviewer_read_confinement_probe_allows_its_packet_and_runs_a_python_test(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def session(argv: list[str], *, stdin: str, cwd: Path, env: Any, timeout: float) -> Any:
+        seen["settings"] = json.loads(Path(argv[argv.index("--settings") + 1]).read_text())
+        seen["test"] = (cwd / "tests" / "test_reviewer_probe.py").read_text()
+        seen["unittest"] = subprocess.run(
+            [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-q"], cwd=cwd,
+            capture_output=True, check=False,
+        ).returncode
+        return _probe_session(HONEST)(argv, stdin=stdin, cwd=cwd, env=env, timeout=timeout)
+
+    _probe(launcher, tmp_path, session)
+    allow = seen["settings"]["sandbox"]["filesystem"]["allowRead"]
+    assert [Path(p).name for p in allow[:2]] == ["copy", "packet"]
+    assert seen["settings"]["sandbox"]["filesystem"]["denyRead"][0] == "~"
+    assert "import unittest" in seen["test"] and seen["unittest"] == 0
+
+
+def test_reviewer_environment_allowlist_probe_fails_when_an_ordinary_variable_reaches_commands(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def session(argv: list[str], *, stdin: str, cwd: Path, env: Any, timeout: float) -> Any:
+        settings = json.loads(Path(argv[argv.index("--settings") + 1]).read_text())
+        seen["vars"] = settings["sandbox"]["credentials"]["envVars"]
+        return _probe_session({**HONEST, "plain_variable": "set"})(
+            argv, stdin=stdin, cwd=cwd, env=env, timeout=timeout
+        )
+
+    held, code = _probe(launcher, tmp_path, session)
+    assert code == 1 and held["plain-variable"] is False
+    assert {"name": "REVIEWER_PROBE_PLAIN", "mode": "deny"} in seen["vars"]
 
 
 def test_reviewer_the_probe_fails_on_a_file_written_outside(launcher: ModuleType, tmp_path: Path) -> None:

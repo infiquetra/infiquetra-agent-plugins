@@ -36,6 +36,19 @@ for C8 to extend.
 
 ### Fixed
 
+- **The targeted reviewer's sandbox reads only what the review needs (issue #189).** Claude's
+  command sandbox now blocks reads of the whole home directory and allows back only the scratch
+  copy, the review packet and the toolchain install `python3` or `node` on the session's `PATH`
+  resolves to under home. A path that would re-open home, a shared root such as `~/.config`, or a
+  credential path is never allowed back; for the copy or packet the launch refuses. The result's
+  `sandbox_reads` names each allowed path with its reason. Sandboxed commands receive only the
+  variables on `REVIEWER_ENVIRONMENT_ALLOWED`, so a secret in an ordinarily named variable no
+  longer passes, and git is pointed at `/dev/null` for its global configuration. The credential
+  path list gains `~/.git-credentials`, `~/.pypirc`, `~/.cargo/credentials*`, `~/.terraform.d`,
+  `~/.vault-token`, `~/.config/hub`, `~/.local/share/keyrings` and `~/.npmrc`. `reviewer-probe`
+  also checks that a canary planted in the home directory is unreadable, that the packet is
+  readable, that a real Python test and git run, and that an ordinary-named variable is hidden.
+
 - **A Muse launch no longer stops when Herdr names the session `maki`.** Muse Code is the agent
   Herdr detects as `maki`, so the identity check now accepts either kind for `muse`
   (`HERDR_KIND_ALIASES`, `accepted_herdr_kinds`). Every other vendor still needs Herdr to report its

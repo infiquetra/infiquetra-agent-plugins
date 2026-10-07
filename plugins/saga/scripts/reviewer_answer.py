@@ -14,10 +14,12 @@ This module does three things with an answer, and the review command (card C10a)
   output, any severity, too many open-search findings, or a scratch copy changed outside the
   reproduction tests.
 * ``records`` turns an accepted answer into review_records.v1 findings and answered where-to-look
-  records. For each reproduced finding it asks Jev (TypeSafe's classifier, through fleet-core's
-  ``consequence`` verb) for the consequence. The lower of the two picks applies, which C1's
-  formula computes; when Jev cannot answer, the finding is marked ``unconfirmed`` and the
-  reviewer's pick applies.
+  records. It first replaces known secret formats in each finding's statement and proof with a
+  marker naming their kind (``[scrubbed:github-token]``), so neither the record nor Jev's state
+  carries what a test printed. For each reproduced finding it asks Jev (TypeSafe's classifier,
+  through fleet-core's ``consequence`` verb) for the consequence. The lower of the two picks
+  applies, which C1's formula computes; when Jev cannot answer, the finding is marked
+  ``unconfirmed`` and the reviewer's pick applies.
 * ``paths`` prints where saga's prompt and schema are, with their fingerprints, so the caller can
   hand them to agent-launcher without guessing where saga is installed.
 
@@ -31,6 +33,7 @@ import argparse
 import copy
 import hashlib
 import json
+import math
 import re
 import sys
 import unicodedata
@@ -102,6 +105,104 @@ def is_claude_configuration(path: str) -> bool:
     """Whether *path* is in a ``.claude`` directory or is ``.mcp.json``, at any depth or case."""
     parts = str(path).replace("\\", "/").split("/")
     return any(unicodedata.normalize("NFKC", part).casefold() in _CLAUDE_CONFIG for part in parts)
+
+
+# ---------------------------------------------------------------------------
+# Scrubbing (issue 189)
+# ---------------------------------------------------------------------------
+
+#: Secret formats replaced in a finding's proof and statement before the record or Jev's state is
+#: built, specific kinds first. A test the reviewed change carries can print what it read; the
+#: sandbox has no network, so the record and the Jev state are where a secret would leave. Fleet-
+#: core redacts the Jev state again on transport, but with one anonymous placeholder, and it does
+#: not touch the record. This table covers fleet-core's formats and every literal format
+#: ``scripts/check_repo.py`` bans; a test keeps that parity.
+SCRUB_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    # An unterminated block runs to the end: the output may have been cut.
+    ("private-key", re.compile(
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)",
+        re.DOTALL,
+    )),
+    # Distinctive prefixes carry no word boundary: a token glued to ``_`` or a letter
+    # (``KEY_ghp_...``) has none, and matching too much only scrubs more.
+    ("github-token", re.compile(r"github_pat_[A-Za-z0-9_]{22,}")),
+    ("github-token", re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}")),
+    ("aws-access-key-id", re.compile(r"(?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}")),
+    ("slack-token", re.compile(r"xox[abposr]-[A-Za-z0-9\-]{10,}")),
+    ("stripe-key", re.compile(r"sk_(?:live|test)_[A-Za-z0-9]{16,}")),
+    ("google-api-key", re.compile(r"AIza[0-9A-Za-z_\-]{35}")),
+    ("anthropic-api-key", re.compile(r"sk-ant-[A-Za-z0-9_\-]{24,}")),
+    ("api-key", re.compile(r"\bsk-[A-Za-z0-9]{20,}\b")),
+    ("jwt", re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\b")),
+    ("bearer-token", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{8,}")),
+    ("url-credentials", re.compile(r"(?i)\b[a-z][a-z0-9+.\-]*://[^/\s:@]+:[^/\s@]+@")),
+    # Fleet-core's named assignment, with its bounded repeats (an unbounded prefix is quadratic).
+    ("named-secret", re.compile(
+        r"(?i)\b[A-Z0-9_\-]{0,32}(?:api[_-]?key|secret|token|password|passwd|access[_-]?key)"
+        r"[A-Z0-9_\-]{0,32}['\"]?\s*[=:]\s*['\"]?[^\s'\",;}\]]{6,}")),
+)
+#: Fleet-core's high-entropy rule (``typesafe_client.py``): a long run with real entropy, unless it
+#: is a hex content hash. ``/`` is outside the alphabet, so file paths survive.
+SCRUB_ENTROPY_MIN_RUN = 40
+SCRUB_ENTROPY_MIN_BITS = 4.0
+_SCRUB_ENTROPY_RUN = re.compile(rf"[A-Za-z0-9+=_\-]{{{SCRUB_ENTROPY_MIN_RUN},}}")
+_SCRUB_HASH_RUN = re.compile(r"(?i)\A(?:(?:sha\d{3}|md5|sha)[-:])?[0-9a-f]{32,}=*\Z")
+
+
+def _shannon_bits(text: str) -> float:
+    counts: dict[str, int] = {}
+    for char in text:
+        counts[char] = counts.get(char, 0) + 1
+    return -sum((n / len(text)) * math.log2(n / len(text)) for n in counts.values())
+
+
+def scrub_text(text: str) -> tuple[str, list[str]]:
+    """*text* with each secret replaced by ``[scrubbed:<kind>]``, and the kinds replaced."""
+    kinds: list[str] = []
+
+    def marker(kind: str) -> Callable[[re.Match[str]], str]:
+        def replace(_match: re.Match[str]) -> str:
+            kinds.append(kind)
+            return f"[scrubbed:{kind}]"
+        return replace
+
+    for kind, pattern in SCRUB_PATTERNS:
+        text = pattern.sub(marker(kind), text)
+
+    def entropy(match: re.Match[str]) -> str:
+        run = match.group(0)
+        if _SCRUB_HASH_RUN.match(run) or _shannon_bits(run) < SCRUB_ENTROPY_MIN_BITS:
+            return run
+        kinds.append("high-entropy")
+        return "[scrubbed:high-entropy]"
+
+    return _SCRUB_ENTROPY_RUN.sub(entropy, text), kinds
+
+
+def scrub_finding(finding: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """A copy of *finding* with its statement and every proof string scrubbed, and the kinds.
+
+    ``trigger`` is left alone: the check holds it to a closed list, so it cannot carry a secret.
+    """
+    scrubbed = copy.deepcopy(dict(finding))
+    kinds: list[str] = []
+
+    def clean(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        text, found = scrub_text(value)
+        kinds.extend(found)
+        return text
+
+    scrubbed["statement"] = clean(scrubbed.get("statement"))
+    proof = scrubbed.get("proof")
+    if isinstance(proof, dict):
+        for key in ("test", "command", "output"):
+            if key in proof:
+                proof[key] = clean(proof[key])
+        if isinstance(proof.get("steps"), list):
+            proof["steps"] = [clean(step) for step in proof["steps"]]
+    return scrubbed, kinds
 
 
 class AnswerRefused(Exception):
@@ -425,11 +526,13 @@ def jev_pick(finding: Mapping[str, Any], ask: Asker | None = None) -> tuple[str 
     client = _fleet("typesafe_client")
     verb = _fleet("jev_verbs").VERBS[JEV_VERB]
     proof = finding.get("proof") or {}
+    # Scrubbed here as well as in ``to_records``, so any caller is safe; before the cut, never
+    # after it, so no fragment of a secret survives at the 4,000th character.
     state = {
-        "finding": finding.get("statement"),
+        "finding": scrub_text(str(finding.get("statement") or ""))[0],
         "trigger": finding.get("trigger"),
-        "test": proof.get("test"),
-        "output": str(proof.get("output") or "")[:4000],
+        "test": scrub_text(str(proof.get("test") or ""))[0],
+        "output": scrub_text(str(proof.get("output") or ""))[0][:4000],
     }
     caller = ask if ask is not None else client.ask
     result = caller(state, verb.question_set())
@@ -491,7 +594,7 @@ def to_records(
     built: list[dict[str, Any]] = []
     identities: dict[str, str] = {}
     picks: list[dict[str, Any]] = []
-    for finding in answer["findings"]:
+    for finding in (scrub_finding(found)[0] for found in answer["findings"]):
         rule = {"row": finding["row"], "ref": _rule_ref(finding, items)}
         record: dict[str, Any] = {
             "kind": "finding",
