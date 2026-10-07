@@ -642,6 +642,10 @@
       "work_shape": "judgment",
       "capability": "adversarial-review"
     },
+    "targeted-reviewer": {
+      "work_shape": "judgment",
+      "capability": "adversarial-review"
+    },
     "functional-tester": {
       "work_shape": "judgment",
       "capability": "debug"

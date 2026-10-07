@@ -143,6 +143,8 @@ result = jev_widen.widen(state, "issue-flags", floors, decision_prefix="issue-fl
 | `issue-flags` | the five keyword flags plus the seven approval boundaries | 0.70 | `plugins/saga/scripts/parse_issue.py --flags` |
 | `journal-nudge` | `earns_entry` | 0.60 | `plugins/saga/hooks/journal_nudge_hook.py` |
 
+**The `consequence` verb is not a widening.** It asks which of saga's eleven review consequences a reproduced finding shows (`consequence`, one choice question, floor 0.60). Saga's targeted-reviewer check (`plugins/saga/scripts/reviewer_answer.py records`) asks it beside the reviewer's own pick and the lower of the two applies; an error, a missing key or an answer below the floor counts as no answer, and the finding is marked `unconfirmed`. There is no floor to fall back to, because the reviewer's pick is the fallback.
+
 Both thresholds are **provisional**: they come from which mistake is cheaper, not from measurement. A false flag costs an extra review lens; a false nudge costs one line on standard error, which is why the nudge can afford to be readier. Every verdict records the threshold in force, and §4 is how they get settled.
 
 **Which side each caller fails open on.** `parse_issue.py` returns the keyword result and still exits 0, because four saga skills read its JSON and a missing key would break them. The hook stays silent, asks at most once with a two-second request timeout and a three-second deadline, and never blocks a commit; `INFIQUETRA_TYPESAFE_JOURNAL_NUDGE=off` skips the call entirely.

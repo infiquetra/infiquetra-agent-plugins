@@ -194,7 +194,7 @@ def test_the_fingerprint_moves_with_a_tier_and_with_a_prompt(repo: Path, store: 
 
 def test_the_mapping_is_rosters_own(repo: Path, store: Path) -> None:
     roster = role_agent_types.load_roster(AGENT_LAUNCHER)
-    roles = set(roster.STAFFING_ROLE_TO_ROLE_ID) - {"lens-reviewer"}
+    roles = set(roster.STAFFING_ROLE_TO_ROLE_ID) - set(role_agent_types.NO_TYPE_REASONS)
     _staff(store, FULL)
     assert set(_by_role(_answer(repo, store))) == roles
     # No second copy of the mapping: the script never spells a library role id itself.
@@ -209,6 +209,15 @@ def test_merging_worker_and_the_lens_reviewer_are_skipped_by_name(repo: Path, st
     skipped = {s["role"]: s["reason"] for s in _answer(repo, store)["skipped"]}
     assert skipped["merging-worker"] == "no role prompt in the roles library"
     assert "sliced per lens" in skipped["lens-reviewer"]
+
+
+def test_the_targeted_reviewer_gets_no_subagent_type(repo: Path, store: Path) -> None:
+    """Issue #158: it runs headless through agent-launcher's reviewer launch, never in-session."""
+    _staff(store, {**FULL, "targeted-reviewer": _row("opus", "high")})
+    answer = _answer(repo, store)
+    assert "targeted-reviewer" not in _by_role(answer)
+    skipped = {s["role"]: s["reason"] for s in answer["skipped"]}
+    assert "runs headless through agent-launcher's reviewer launch" in skipped["targeted-reviewer"]
 
 
 def test_a_role_staffed_on_another_vendor_is_skipped_not_translated(repo: Path, store: Path) -> None:

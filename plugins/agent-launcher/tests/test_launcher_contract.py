@@ -4460,3 +4460,514 @@ def test_structural_detector_kills_enumerated_evasion_shapes(snippet: str) -> No
     """Issue 1002 F121: the production detector reports every enumerated catchable shape."""
     tree = ast.parse(snippet)
     assert _raw_door_calls(tree), snippet
+
+
+# --------------------------------------------------------------------------- the targeted reviewer
+# Issue #158: `launcher.py review` starts saga's targeted reviewer headless in a sandboxed scratch
+# copy, and `reviewer-probe` checks the sandbox live. Nothing here starts a real session: the
+# session is a fake binary on PATH or an injected callable.
+
+SAGA_PROMPT = REPO / "plugins" / "saga" / "references" / "targeted-reviewer-prompt.md"
+SAGA_SCHEMA = REPO / "plugins" / "saga" / "references" / "targeted-reviewer-answer.schema.json"
+SAGA_ANSWER_CLI = REPO / "plugins" / "saga" / "scripts" / "reviewer_answer.py"
+SAGA_FIXTURES = REPO / "plugins" / "saga" / "tests" / "fixtures" / "reviewer_answer"
+ANSWER = json.loads((SAGA_FIXTURES / "answer.json").read_text(encoding="utf-8"))
+
+
+def _claude_result(final: str, **over: Any) -> str:
+    """A recorded `claude -p --output-format json` result, as Claude Code 2.1.292 printed it."""
+    result = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "duration_ms": 6154,
+        "num_turns": 2,
+        "result": final,
+        "session_id": "00000000-0000-4000-8000-000000000000",
+        "total_cost_usd": 0.0705,
+        "usage": {
+            "input_tokens": 18,
+            "output_tokens": 835,
+            "cache_read_input_tokens": 49907,
+            "cache_creation_input_tokens": 14292,
+        },
+        "modelUsage": {"claude-example-model": {"inputTokens": 18, "outputTokens": 835}},
+        "permission_denials": [],
+    }
+    result.update(over)
+    return json.dumps(result)
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+@pytest.fixture
+def reviewed_repo(tmp_path: Path) -> tuple[Path, str]:
+    """A small repository with one commit, plus an uncommitted file that must not be copied."""
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "tests").mkdir()
+    (repo / "src" / "app.py").write_text("def add(a, b):\n    return a + b\n")
+    (repo / "tests" / "test_app.py").write_text("def test_reviewer_add():\n    assert True\n")
+    (repo / "CLAUDE.md").write_text("Project rules.\n")
+    _git(repo.parent, "init", "-q", str(repo))
+    _git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "add", ".")
+    _git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "base")
+    (repo / "uncommitted-secret.txt").write_text("not for the copy\n")
+    return repo, _git(repo, "rev-parse", "HEAD")
+
+
+@pytest.fixture
+def home(tmp_path: Path) -> Path:
+    """A throwaway home with a user CLAUDE.md, one import, settings and installed plugins."""
+    home = tmp_path / "home"
+    claude = home / ".claude"
+    (claude / "plugins").mkdir(parents=True)
+    (claude / "CLAUDE.md").write_text("User rules.\n@RULES.md\n")
+    (claude / "RULES.md").write_text("Imported rules.\n")
+    (claude / "settings.json").write_text(
+        json.dumps({"enabledPlugins": {"saga@example": True, "old@example": False}})
+    )
+    (claude / "plugins" / "installed_plugins.json").write_text(
+        json.dumps({"version": 2, "plugins": {"saga@example": [
+            {"scope": "user", "version": "1.3.0", "gitCommitSha": "abc"}
+        ]}})
+    )
+    return home
+
+
+def _env(home: Path, **extra: str) -> dict[str, str]:
+    return {"HOME": str(home), "PATH": os.environ.get("PATH", ""), "LANG": "C.UTF-8", **extra}
+
+
+def _request(launcher: ModuleType, repo: Path, head: str, tmp_path: Path, **over: Any) -> Any:
+    packet = tmp_path / "packet"
+    packet.mkdir(exist_ok=True)
+    values: dict[str, Any] = {
+        "vendor": "claude", "model": "opus", "effort": "high", "repo": repo, "head": head,
+        "packet": packet, "prompt": SAGA_PROMPT, "schema": SAGA_SCHEMA, "out": tmp_path / "out",
+        "work_root": tmp_path / "reviews",
+    }
+    values.update(over)
+    return launcher.ReviewerRequest(**values)
+
+
+class FakeSession:
+    """Stands in for the vendor session: records what it was given, then acts in the copy."""
+
+    def __init__(self, stdout: str, *, code: int = 0, act: Callable[[Path], None] | None = None):
+        self.stdout, self.code, self.act = stdout, code, act
+        self.calls: list[dict[str, Any]] = []
+
+    def __call__(self, argv: list[str], *, stdin: str, cwd: Path, env: Any, timeout: float) -> Any:
+        self.calls.append({"argv": argv, "stdin": stdin, "cwd": cwd, "env": dict(env)})
+        if self.act:
+            self.act(cwd)
+        return subprocess.CompletedProcess(argv, self.code, self.stdout, "")
+
+
+def test_reviewer_claude_argv_is_pinned(launcher: ModuleType, tmp_path: Path) -> None:
+    settings = tmp_path / "settings.json"
+    assert launcher.reviewer_claude_argv("opus", "high", settings) == [
+        "claude", "-p", "--model", "opus", "--effort", "high",
+        "--permission-mode", "dontAsk", "--settings", str(settings),
+        "--output-format", "json", "--no-session-persistence",
+    ]
+
+
+def test_reviewer_claude_settings_are_pinned(launcher: ModuleType, tmp_path: Path) -> None:
+    packet = tmp_path / "packet"
+    packet.mkdir()
+    env = {"HOME": "/home/example", "GH_TOKEN": "inert-example", "PATH": "/usr/bin"}
+    settings = launcher.reviewer_claude_settings(packet, env, platform="darwin")
+    credentials = list(launcher.REVIEWER_CREDENTIAL_PATHS)
+    assert settings == {
+        "sandbox": {
+            "enabled": True,
+            "failIfUnavailable": True,
+            "autoAllowBashIfSandboxed": True,
+            "allowUnsandboxedCommands": False,
+            "filesystem": {
+                "denyWrite": ["/tmp", "/private/tmp", "/var/folders"],
+                "denyRead": credentials,
+            },
+            "network": {"strictAllowlist": True, "allowedDomains": []},
+            "credentials": {"envVars": [{"name": "GH_TOKEN", "mode": "deny"}]},
+        },
+        "permissions": {
+            "allow": ["Bash", "Edit(./**)", f"Read(/{packet.resolve()}/**)"],
+            "deny": ["WebFetch", "WebSearch", "mcp__*"] + [f"Read({p})" for p in credentials],
+        },
+    }
+    assert {"~/.ssh", "~/.aws", "~/.config/gh"} <= set(credentials)
+    linux = launcher.reviewer_claude_settings(packet, env, platform="linux")
+    assert linux["sandbox"]["filesystem"]["denyWrite"] == ["/tmp", "/var/tmp"]
+
+
+@pytest.mark.parametrize(
+    ("name", "hidden"),
+    [("GH_TOKEN", True), ("TYPESAFE_API_KEY", True), ("AWS_SECRET_ACCESS_KEY", True),
+     ("DB_PASSWORD", True), ("SSH_AUTH_SOCK", True), ("HOME", False), ("PATH", False),
+     ("LANG", False)],
+)
+def test_reviewer_credential_named_variables_are_hidden_from_sandboxed_commands(
+    launcher: ModuleType, name: str, hidden: bool
+) -> None:
+    assert (name in launcher.reviewer_credential_variables({name: "inert-example"})) is hidden
+
+
+def test_reviewer_the_forbidden_flag_table_names_exactly_the_launcher_vendors(launcher: ModuleType) -> None:
+    assert set(launcher.REVIEWER_FORBIDDEN_FLAGS) == set(launcher.VENDOR_FLAGS)
+    assert all(launcher.REVIEWER_FORBIDDEN_FLAGS.values())
+
+
+def test_reviewer_no_reviewer_recipe_turns_off_configuration_or_its_sandbox(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    forbidden = {flag for flags in launcher.REVIEWER_FORBIDDEN_FLAGS.values() for flag in flags}
+    for vendor, recipe in launcher.REVIEWER_RECIPES.items():
+        argv = recipe.argv("model", "high", tmp_path / "settings.json")
+        assert not forbidden & set(argv), (vendor, forbidden & set(argv))
+        settings = recipe.settings(tmp_path, {})
+        for key in ("apiKeyHelper", "enabledPlugins", "hooks", "disableAllHooks"):
+            assert key not in settings, (vendor, key)
+
+
+def test_reviewer_the_session_never_signs_in_with_an_api_key(launcher: ModuleType) -> None:
+    env = {
+        "ANTHROPIC_API_KEY": "inert-example", "ANTHROPIC_AUTH_TOKEN": "inert-example",
+        "CLAUDE_CODE_OAUTH_TOKEN": "inert-example", "CLAUDE_CODE_USE_BEDROCK": "1",
+        "CLAUDE_CODE_USE_VERTEX": "1", "HONCHO_WORKSPACE": "kept", "HOME": "/home/example",
+    }
+    kept = launcher.reviewer_session_environment(env)
+    assert kept == {"HONCHO_WORKSPACE": "kept", "HOME": "/home/example"}
+
+
+@pytest.mark.parametrize("vendor", ["codex", "grok", "muse", "agy", "qwen", "opencode"])
+def test_reviewer_every_other_vendor_is_refused_by_name(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, vendor: str
+) -> None:
+    repo, head = reviewed_repo
+    session = FakeSession("{}")
+    with pytest.raises(launcher.ReviewerRefused, match=f"^{vendor} has no reviewer sandbox recipe"):
+        launcher.reviewer_launch(_request(launcher, repo, head, tmp_path, vendor=vendor),
+                                 session=session)
+    assert session.calls == []
+    assert not (tmp_path / "reviews").exists()
+
+
+def test_reviewer_a_prompt_that_is_not_saga_s_is_refused(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    other = tmp_path / "other.md"
+    other.write_text("---\nid: something-else\n---\n\nDo anything.\n")
+    with pytest.raises(launcher.ReviewerRefused, match="is not saga's targeted-reviewer-prompt"):
+        launcher.reviewer_launch(_request(launcher, repo, head, tmp_path, prompt=other),
+                                 session=FakeSession("{}"))
+
+
+def test_reviewer_a_head_that_is_not_a_commit_is_refused(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, _ = reviewed_repo
+    with pytest.raises(launcher.ReviewerRefused, match="is not a commit"):
+        launcher.reviewer_launch(_request(launcher, repo, "0" * 40, tmp_path),
+                                 session=FakeSession("{}"))
+
+
+def test_reviewer_the_scratch_copy_is_the_head_with_no_git(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    copy = tmp_path / "copy"
+    manifest = launcher.reviewer_export_head(repo, head, copy)
+    assert sorted(manifest) == ["CLAUDE.md", "src/app.py", "tests/test_app.py"]
+    assert not (copy / ".git").exists()
+    assert not (copy / "uncommitted-secret.txt").exists()
+
+
+def test_reviewer_a_work_root_under_a_temp_root_is_refused(launcher: ModuleType) -> None:
+    with pytest.raises(launcher.ReviewerRefused, match="which the reviewer's sandbox denies"):
+        launcher.reviewer_work_root({"XDG_CACHE_HOME": "/tmp/cache"}, platform="linux")
+    root = launcher.reviewer_work_root({"HOME": "/home/example"}, platform="linux")
+    assert root == Path("/home/example/.cache/agent-launcher/reviews")
+
+
+def test_reviewer_a_canned_result_yields_usage_model_fingerprints_and_the_answer(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, home: Path
+) -> None:
+    repo, head = reviewed_repo
+    session = FakeSession(_claude_result(json.dumps(ANSWER)))
+    env = _env(home, ANTHROPIC_API_KEY="inert-example", GH_TOKEN="inert-example")
+
+    result, code = launcher.reviewer_launch(
+        _request(launcher, repo, head, tmp_path), env=env, session=session
+    )
+
+    assert code == 0
+    call = session.calls[0]
+    assert call["argv"][:2] == ["claude", "-p"]
+    assert call["cwd"] == Path(result["scratch"]["path"])
+    assert "ANTHROPIC_API_KEY" not in call["env"] and call["env"]["GH_TOKEN"] == "inert-example"
+    assert "# Targeted Reviewer" in call["stdin"] and "# The targeted reviewer" in call["stdin"]
+    assert "The open search's cap on findings: 5" in call["stdin"]
+    settings = json.loads(Path(call["argv"][call["argv"].index("--settings") + 1]).read_text())
+    assert {"name": "GH_TOKEN", "mode": "deny"} in settings["sandbox"]["credentials"]["envVars"]
+    assert result["schema"] == "targeted_reviewer_launch.v1"
+    assert result["vendor"] == "claude"
+    assert result["model"] == {"requested": "opus", "resolved": ["claude-example-model"]}
+    assert result["usage"] == {
+        "input_tokens": 18, "output_tokens": 835, "cache_read_input_tokens": 49907,
+        "cache_creation_input_tokens": 14292, "cost_usd": 0.0705, "seconds": 6.154,
+        "turns": 2, "session_id": "00000000-0000-4000-8000-000000000000",
+    }
+    assert result["prompt_sha256"] == hashlib.sha256(SAGA_PROMPT.read_bytes()).hexdigest()
+    assert result["schema_sha256"] == hashlib.sha256(SAGA_SCHEMA.read_bytes()).hexdigest()
+    assert len(result["configuration"]["fingerprint"]) == 64
+    assert "plugin:saga@example" in result["configuration"]["sources"]
+    assert not any("/" in label.split(":", 1)[0] for label in result["configuration"]["sources"])
+    assert json.loads((tmp_path / "out" / "answer.json").read_text()) == ANSWER
+    assert json.loads((tmp_path / "out" / "result.json").read_text()) == result
+
+
+def test_reviewer_the_launch_runs_a_real_process_with_the_copy_as_its_directory(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, home: Path
+) -> None:
+    """The whole path through a fake `claude` on PATH: argv, stdin, cwd and environment."""
+    repo, head = reviewed_repo
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    record = tmp_path / "seen.json"
+    fake = bin_dir / "claude"
+    fake.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "if sys.argv[1:] == ['--version']:\n"
+        "    print('9.9.9 (Claude Code)'); sys.exit(0)\n"
+        "stdin = sys.stdin.read()\n"
+        f"json.dump({{'argv': sys.argv[1:], 'cwd': os.getcwd(), 'stdin': stdin,\n"
+        f"           'api_key': 'ANTHROPIC_API_KEY' in os.environ}}, open({str(record)!r}, 'w'))\n"
+        f"print({_claude_result(json.dumps(ANSWER))!r})\n"
+    )
+    fake.chmod(0o755)
+    env = _env(home, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+               ANTHROPIC_API_KEY="inert-example")
+
+    result, code = launcher.reviewer_launch(_request(launcher, repo, head, tmp_path), env=env)
+
+    seen = json.loads(record.read_text())
+    assert code == 0
+    assert seen["argv"][0] == "-p" and seen["api_key"] is False
+    assert Path(seen["cwd"]).resolve() == Path(result["scratch"]["path"]).resolve()
+    assert "# The targeted reviewer" in seen["stdin"]
+    assert result["vendor_version"] == "9.9.9 (Claude Code)"
+
+
+def test_reviewer_a_fenced_final_message_still_parses(launcher: ModuleType) -> None:
+    answer, error = launcher.reviewer_extract_answer("```json\n" + json.dumps(ANSWER) + "\n```")
+    assert (answer, error) == (ANSWER, None)
+
+
+def test_reviewer_no_parsable_answer_exits_3_and_writes_no_answer(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, home: Path
+) -> None:
+    repo, head = reviewed_repo
+    result, code = launcher.reviewer_launch(
+        _request(launcher, repo, head, tmp_path), env=_env(home),
+        session=FakeSession(_claude_result("I could not finish the review.")),
+    )
+    assert code == 3 and result["exit"] == 3
+    assert result["answer_path"] is None and result["error"] == "the final message is not JSON"
+    assert not (tmp_path / "out" / "answer.json").exists()
+
+
+def test_reviewer_a_timed_out_session_exits_124(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, home: Path
+) -> None:
+    repo, head = reviewed_repo
+    result, code = launcher.reviewer_launch(
+        _request(launcher, repo, head, tmp_path), env=_env(home),
+        session=FakeSession("", code=124),
+    )
+    assert code == 124 and result["error"] == "the session timed out"
+
+
+def test_reviewer_the_scratch_changes_name_every_edit_and_saga_refuses_a_non_test_edit(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, home: Path
+) -> None:
+    repo, head = reviewed_repo
+
+    def edit(copy: Path) -> None:
+        (copy / "tests" / "test_charge_retry.py").write_text("def test_reviewer_x():\n    assert False\n")
+        (copy / "src" / "app.py").write_text("def add(a, b):\n    return a - b\n")
+        (copy / ".claude").mkdir()
+        (copy / ".claude" / ".cc-writes").write_text("vendor state\n")
+        (copy / "tmpabcd1234").mkdir()
+        (copy / "tmpabcd1234" / "scratch").write_text("tempfile fallback\n")
+
+    result, _ = launcher.reviewer_launch(
+        _request(launcher, repo, head, tmp_path), env=_env(home),
+        session=FakeSession(_claude_result(json.dumps(ANSWER)), act=edit),
+    )
+    assert result["scratch"]["changes"] == {
+        "added": ["tests/test_charge_retry.py"], "modified": ["src/app.py"], "deleted": [],
+    }
+    refused = subprocess.run(
+        [sys.executable, str(SAGA_ANSWER_CLI), "check",
+         "--answer", str(tmp_path / "out" / "answer.json"),
+         "--items", str(SAGA_FIXTURES / "where-to-look.json"),
+         "--result", str(tmp_path / "out" / "result.json")],
+        capture_output=True, text=True, check=False,
+    )
+    assert refused.returncode == 1
+    assert "scratch.changes: src/app.py (modified) is not a reproduction test" in refused.stderr
+    assert "test_charge_retry.py" not in refused.stderr
+
+
+def _fingerprint(launcher: ModuleType, copy: Path, home: Path) -> str:
+    sources = launcher.reviewer_claude_config_sources(copy, _env(home))
+    return launcher.reviewer_configuration_fingerprint(sources)["fingerprint"]
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["user-claude-md", "project-claude-md", "imported-file", "plugin-enabled", "plugin-version",
+     "project-claude-md-created"],
+)
+def test_reviewer_the_configuration_fingerprint_tracks_instruction_files_and_plugins(
+    launcher: ModuleType, tmp_path: Path, home: Path, change: str
+) -> None:
+    copy = tmp_path / "copy"
+    copy.mkdir()
+    if change != "project-claude-md-created":
+        (copy / "CLAUDE.md").write_text("Project rules.\n")
+    before = _fingerprint(launcher, copy, home)
+    claude = home / ".claude"
+    if change == "user-claude-md":
+        (claude / "CLAUDE.md").write_text("User rules, edited.\n@RULES.md\n")
+    elif change in ("project-claude-md", "project-claude-md-created"):
+        (copy / "CLAUDE.md").write_text("Project rules, edited.\n")
+    elif change == "imported-file":
+        (claude / "RULES.md").write_text("Imported rules, edited.\n")
+    elif change == "plugin-enabled":
+        (claude / "settings.json").write_text(
+            json.dumps({"enabledPlugins": {"saga@example": True, "old@example": True}})
+        )
+    else:
+        (claude / "plugins" / "installed_plugins.json").write_text(
+            json.dumps({"version": 2, "plugins": {"saga@example": [
+                {"scope": "user", "version": "1.4.0", "gitCommitSha": "def"}
+            ]}})
+        )
+    assert _fingerprint(launcher, copy, home) != before
+
+
+def test_reviewer_the_configuration_fingerprint_ignores_other_files(
+    launcher: ModuleType, tmp_path: Path, home: Path
+) -> None:
+    copy = tmp_path / "copy"
+    (copy / "src").mkdir(parents=True)
+    before = _fingerprint(launcher, copy, home)
+    (copy / "src" / "app.py").write_text("print('changed')\n")
+    (home / ".claude" / "unrelated.txt").write_text("not configuration\n")
+    assert _fingerprint(launcher, copy, home) == before
+
+
+def test_reviewer_the_prompt_fingerprint_changes_with_one_byte(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, home: Path
+) -> None:
+    repo, head = reviewed_repo
+    edited = tmp_path / "prompt.md"
+    edited.write_bytes(SAGA_PROMPT.read_bytes() + b" ")
+    result, _ = launcher.reviewer_launch(
+        _request(launcher, repo, head, tmp_path, prompt=edited), env=_env(home),
+        session=FakeSession(_claude_result(json.dumps(ANSWER))),
+    )
+    assert result["prompt_sha256"] == hashlib.sha256(edited.read_bytes()).hexdigest()
+    assert result["prompt_sha256"] != hashlib.sha256(SAGA_PROMPT.read_bytes()).hexdigest()
+
+
+# The probe: every verdict comes from the command's own results and the filesystem.
+
+HONEST = {
+    "read": "1", "write_outside": "1", "write_inside": "0", "write_tmpdir": "1",
+    "write_tmp": "1", "network": "56", "variable": "unset",
+}
+
+
+def _probe_session(results: dict[str, str] | None, *, outside_write: bool = False,
+                   echo_canary: bool = False) -> Callable[..., Any]:
+    def session(argv: list[str], *, stdin: str, cwd: Path, env: Any, timeout: float) -> Any:
+        script = (cwd / "probe.sh").read_text()
+        outside = Path(re.search(r'cat "([^"]+)/canary.txt"', script).group(1))
+        output = "done"
+        if results is not None:
+            (cwd / "inside-written").write_text("")
+            (cwd / "probe-results.txt").write_text(
+                "".join(f"{key}={value}\n" for key, value in results.items())
+            )
+        if outside_write:
+            (outside / "written").write_text("")
+        if echo_canary:
+            output = (outside / "canary.txt").read_text()
+        return subprocess.CompletedProcess(argv, 0, output, "")
+
+    return session
+
+
+def _probe(launcher: ModuleType, tmp_path: Path, session: Any) -> tuple[dict[str, bool], int]:
+    verdicts, code = launcher.reviewer_probe(
+        "claude", "haiku", env={"HOME": str(tmp_path)}, session=session,
+        work_root=tmp_path / "reviews",
+    )
+    return {v["denial"]: v["held"] for v in verdicts}, code
+
+
+def test_reviewer_the_probe_passes_when_every_denial_held(launcher: ModuleType, tmp_path: Path) -> None:
+    held, code = _probe(launcher, tmp_path, _probe_session(HONEST))
+    assert code == 0 and all(held.values())
+    assert set(held) == {
+        "read-credential", "write-outside", "write-inside", "write-tmpdir", "write-tmp",
+        "network", "credential-variable", "no-canary-in-output",
+    }
+    assert not (tmp_path / "reviews").exists() or not any((tmp_path / "reviews").iterdir())
+
+
+def test_reviewer_the_probe_fails_on_a_file_written_outside(launcher: ModuleType, tmp_path: Path) -> None:
+    held, code = _probe(launcher, tmp_path, _probe_session(HONEST, outside_write=True))
+    assert code == 1 and held["write-outside"] is False
+
+
+def test_reviewer_the_probe_fails_on_a_credential_read(launcher: ModuleType, tmp_path: Path) -> None:
+    held, code = _probe(launcher, tmp_path, _probe_session({**HONEST, "read": "0"}))
+    assert code == 1 and held["read-credential"] is False
+
+
+def test_reviewer_the_probe_fails_when_a_canary_value_is_seen_despite_a_denied_read(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    held, code = _probe(launcher, tmp_path, _probe_session(HONEST, echo_canary=True))
+    assert code == 1 and held["read-credential"] is True and held["no-canary-in-output"] is False
+
+
+def test_reviewer_the_probe_fails_with_no_results_file(launcher: ModuleType, tmp_path: Path) -> None:
+    held, code = _probe(launcher, tmp_path, _probe_session(None))
+    assert code == 1 and held == {"results": False}
+
+
+def test_reviewer_the_probe_hides_its_canary_variable_through_the_ordinary_rule(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def session(argv: list[str], *, stdin: str, cwd: Path, env: Any, timeout: float) -> Any:
+        settings = json.loads(Path(argv[argv.index("--settings") + 1]).read_text())
+        seen["vars"] = settings["sandbox"]["credentials"]["envVars"]
+        return _probe_session(HONEST)(argv, stdin=stdin, cwd=cwd, env=env, timeout=timeout)
+
+    _probe(launcher, tmp_path, session)
+    assert {"name": "REVIEWER_PROBE_TOKEN", "mode": "deny"} in seen["vars"]

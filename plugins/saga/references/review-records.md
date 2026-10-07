@@ -196,6 +196,26 @@ which is the same as every lens at C or better.
 
 The formula is pure: the same inputs, in any order, give byte-identical output.
 
+## The targeted reviewer's answer
+
+The LLM reviewer (issue 158) does not write these records itself. It answers in its own shape,
+[`targeted-reviewer-answer.schema.json`](targeted-reviewer-answer.schema.json), following
+[`targeted-reviewer-prompt.md`](targeted-reviewer-prompt.md), and
+`scripts/reviewer_answer.py` turns that answer into records:
+
+```bash
+python3 plugins/saga/scripts/reviewer_answer.py check --answer <answer> --items <where-to-look list> [--result <launch result>]
+python3 plugins/saga/scripts/reviewer_answer.py records --answer <answer> --items <list> --result <launch result> [--no-jev]
+```
+
+`check` refuses the answer, one `<field>: <why>` line per problem, when it skips an item
+(`items.2: where-to-look item 2 (src/sync/lease.py:5-30) has no answer`), carries any severity,
+reproduces a finding without its test, command and output, or reports more open-search findings
+than the cap. `records` fills each finding's identity, its `llm` source from the launch result and,
+for a reproduced finding, Jev's consequence pick; when Jev cannot answer, `consequence_jev` is null
+and `unconfirmed` is true. The proof keeps the reviewer's `command`, which the review command needs
+to re-run the test.
+
 ## Storage
 
 Records live in the issue's run record (`references/run-record.md`, "Review runs and builder

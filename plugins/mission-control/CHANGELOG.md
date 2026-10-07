@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The bundled Fleet Core `staffing.json` and `jev_verbs.py` are regenerated for issue 158 (a
+  `targeted-reviewer` staffing role and a `consequence` Jev verb). Mission Control calls neither.
+
 ### Fixed
 
 - `issue prepare` no longer records the handoff source's path as the card's `Objective` (#111).

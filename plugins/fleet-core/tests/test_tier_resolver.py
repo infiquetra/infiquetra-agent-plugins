@@ -477,6 +477,16 @@ def test_resolve_role_passes_the_raise_through(no_overlay: pathlib.Path) -> None
     assert (decision.tier, decision.source) == ("opus/high", "jev-raise")
 
 
+def test_the_targeted_reviewer_resolves_at_the_judgment_tier(no_overlay: pathlib.Path) -> None:
+    """Issue #158: one reviewer per review, tiered like the lens reviewer it will replace."""
+    decision = staffing.resolve_role("targeted-reviewer", require_lens=False)
+    assert (decision.vendor, decision.model, decision.effort) == ("claude", "opus", "high")
+    assert decision.work_shape == "judgment"
+    # It reviews, so asking without saying it needs no lens fails loud rather than guessing.
+    with pytest.raises(staffing.StaffingError, match="needs a lens"):
+        staffing.resolve_role("targeted-reviewer")
+
+
 def test_undeclared_build_units_run_at_the_worker_shape() -> None:
     assert staffing.unit_work_shape_default() == staffing.roles()["worker"]["work_shape"]
     assert staffing.unit_work_shape_default() == "implementation"

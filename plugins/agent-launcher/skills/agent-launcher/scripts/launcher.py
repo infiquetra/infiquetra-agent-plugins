@@ -22,7 +22,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -2028,6 +2028,699 @@ def _request_from_args(args: argparse.Namespace) -> LaunchRequest:
     )
 
 
+# --------------------------------------------------------------------------- the targeted reviewer
+#
+# Issue #158. Saga's targeted reviewer runs headless, never in a Herdr pane: one session per
+# review, on a staffed vendor, with that vendor's normal configuration (instruction files, plugins,
+# hooks, the subscription sign-in), in a sandbox that keeps its commands to a scratch copy of the
+# head commit with no network and no credentials. ``launcher.py review`` starts it and returns its
+# answer and a result; ``launcher.py reviewer-probe`` runs the same recipe live and checks every
+# denial from outside the session. Orchestrate execs this file into its own namespace, so every
+# name below carries ``reviewer``.
+
+REVIEWER_RESULT_SCHEMA = "targeted_reviewer_launch.v1"
+REVIEWER_PROMPT_ID = "targeted-reviewer-prompt"
+REVIEWER_TIMEOUT_SECONDS = 3600
+REVIEWER_EXIT_REFUSED = 2
+REVIEWER_EXIT_NO_ANSWER = 3
+REVIEWER_EXIT_TIMEOUT = 124
+REVIEWER_DEFAULT_CAP = 5
+
+#: Every launcher vendor's flags that turn off instruction files, plugins, hooks or skills, or
+#: remove its sandbox or approvals, read from each vendor's own ``--help`` on 2026-10-06. No
+#: reviewer launch may pass one; a test keeps the keys equal to ``VENDOR_FLAGS``.
+REVIEWER_FORBIDDEN_FLAGS: dict[str, tuple[str, ...]] = {
+    "claude": (
+        "--bare", "--safe-mode", "--restricted", "--disable-slash-commands",
+        "--strict-mcp-config", "--setting-sources", "--dangerously-skip-permissions",
+        "bypassPermissions",
+    ),
+    "codex": (
+        "--ignore-user-config", "--ignore-rules", "--disable",
+        "--dangerously-bypass-approvals-and-sandbox",
+    ),
+    "grok": ("--always-approve", "--system-prompt-override", "bypassPermissions"),
+    "muse": (
+        "--disable-sandbox", "--no-foreign-personal-context", "--disable-reminders", "--yolo",
+        "never",
+    ),
+    "agy": ("--dangerously-skip-permissions", "--disable-slash-commands"),
+    "qwen": ("--bare", "--safe-mode", "--yolo"),
+    "opencode": ("--auto",),
+}
+
+#: Variables that make a vendor sign in with an API key instead of the subscription. The launch
+#: removes them from the session's environment.
+REVIEWER_API_KEY_VARIABLES = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_PROFILE",
+)
+REVIEWER_API_KEY_PREFIXES = ("CLAUDE_CODE_USE_",)
+
+#: A variable whose name looks like a credential is hidden from the reviewer's sandboxed commands.
+REVIEWER_CREDENTIAL_NAME = re.compile(
+    r"TOKEN|KEY|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|SESSION|COOKIE", re.IGNORECASE
+)
+#: Credential files and directories the reviewer's commands may not read.
+REVIEWER_CREDENTIAL_PATHS = (
+    "~/.ssh",
+    "~/.aws",
+    "~/.config/gh",
+    "~/.gnupg",
+    "~/.netrc",
+    "~/.docker/config.json",
+    "~/.kube",
+    "~/.config/gcloud",
+    "~/.azure",
+    "~/.claude/.credentials.json",
+    "~/.codex/auth.json",
+)
+#: Paths in the scratch copy that tools write and nobody edits: Claude's own state, Python's
+#: temp-directory fallback (the sandbox denies the system temp roots, so ``tempfile`` falls back to
+#: the working directory), pytest's caches and compiled bytecode. They never count as a change.
+REVIEWER_SCRATCH_IGNORED = re.compile(
+    r"^(\.claude/|pytest-of-[^/]+/|\.pytest_cache/|tmp[a-z0-9_]{8}/)|(^|/)__pycache__/|\.pyc$"
+)
+
+
+class ReviewerRefused(Exception):
+    """A reviewer launch refused before any session started."""
+
+
+def reviewer_temp_roots(platform: str | None = None) -> tuple[str, ...]:
+    """The system temp roots the reviewer's commands may not write to."""
+    if (platform or sys.platform) == "darwin":
+        return ("/tmp", "/private/tmp", "/var/folders")
+    return ("/tmp", "/var/tmp")
+
+
+def reviewer_credential_variables(env: Mapping[str, str]) -> list[str]:
+    """The environment variables hidden from sandboxed commands, by name."""
+    return sorted(name for name in env if REVIEWER_CREDENTIAL_NAME.search(name))
+
+
+def reviewer_session_environment(env: Mapping[str, str]) -> dict[str, str]:
+    """The session's environment: everything, except what would sign in with an API key."""
+    return {
+        name: value
+        for name, value in env.items()
+        if name not in REVIEWER_API_KEY_VARIABLES
+        and not name.startswith(REVIEWER_API_KEY_PREFIXES)
+    }
+
+
+def reviewer_claude_argv(model: str, effort: str | None, settings_path: Path) -> list[str]:
+    """Claude's reviewer argv: headless, sandboxed through ``--settings``, JSON result."""
+    argv = ["claude", "-p", "--model", model]
+    if effort:
+        argv += ["--effort", effort]
+    return argv + [
+        "--permission-mode", "dontAsk",
+        "--settings", str(settings_path),
+        "--output-format", "json",
+        "--no-session-persistence",
+    ]
+
+
+def reviewer_claude_settings(
+    packet: Path,
+    env: Mapping[str, str],
+    *,
+    extra_deny_read: Sequence[str] = (),
+    platform: str | None = None,
+) -> dict[str, Any]:
+    """The per-launch settings that turn on Claude's command sandbox and confine the session.
+
+    Measured on Claude Code 2.1.292 on 2026-10-06: under ``dontAsk`` Bash is denied unless allowed,
+    even with ``autoAllowBashIfSandboxed``; the sandbox's own temp directory stays writable until a
+    ``denyWrite`` names its root; credential-named variables reach sandboxed commands until
+    ``credentials.envVars`` denies them. The settings set no ``apiKeyHelper``, plugins or hooks, so
+    the user's own configuration is what loads.
+    """
+    deny_read = list(REVIEWER_CREDENTIAL_PATHS) + list(extra_deny_read)
+    return {
+        "sandbox": {
+            "enabled": True,
+            "failIfUnavailable": True,
+            "autoAllowBashIfSandboxed": True,
+            "allowUnsandboxedCommands": False,
+            "filesystem": {
+                "denyWrite": list(reviewer_temp_roots(platform)),
+                "denyRead": deny_read,
+            },
+            "network": {"strictAllowlist": True, "allowedDomains": []},
+            "credentials": {
+                "envVars": [
+                    {"name": name, "mode": "deny"} for name in reviewer_credential_variables(env)
+                ]
+            },
+        },
+        "permissions": {
+            "allow": ["Bash", "Edit(./**)", f"Read(/{packet.resolve()}/**)"],
+            "deny": ["WebFetch", "WebSearch", "mcp__*"] + [f"Read({path})" for path in deny_read],
+        },
+    }
+
+
+def reviewer_parse_claude_result(stdout: str) -> dict[str, Any]:
+    """Usage, resolved models and the final message from ``claude -p --output-format json``."""
+    try:
+        data = json.loads(stdout)
+    except (TypeError, ValueError):
+        return {"usage": None, "resolved": [], "final": None, "is_error": True,
+                "error": "the session printed no JSON result"}
+    if not isinstance(data, dict):
+        return {"usage": None, "resolved": [], "final": None, "is_error": True,
+                "error": "the session's result is not a JSON object"}
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    duration = data.get("duration_ms")
+    model_usage = data.get("modelUsage")
+    return {
+        "usage": {
+            "input_tokens": usage.get("input_tokens"),
+            "output_tokens": usage.get("output_tokens"),
+            "cache_read_input_tokens": usage.get("cache_read_input_tokens"),
+            "cache_creation_input_tokens": usage.get("cache_creation_input_tokens"),
+            "cost_usd": data.get("total_cost_usd"),
+            "seconds": duration / 1000 if isinstance(duration, (int, float)) else None,
+            "turns": data.get("num_turns"),
+            "session_id": data.get("session_id"),
+        },
+        "resolved": sorted(model_usage) if isinstance(model_usage, dict) else [],
+        "final": data.get("result") if isinstance(data.get("result"), str) else None,
+        "is_error": bool(data.get("is_error")),
+        "error": None if not data.get("is_error") else str(data.get("subtype") or "error"),
+    }
+
+
+_REVIEWER_IMPORT = re.compile(r"(?<![\w`])@((?:~|\.{1,2})?/?[\w.-][^\s`)]*)")
+
+
+def _reviewer_read(path: Path) -> bytes | None:
+    try:
+        return path.read_bytes() if path.is_file() else None
+    except OSError:
+        return None
+
+
+def reviewer_claude_config_sources(
+    copy: Path, env: Mapping[str, str]
+) -> list[tuple[str, bytes | None]]:
+    """What Claude's normal configuration loads, as ``(label, content)`` pairs.
+
+    The user's and the project's instruction files, each file they import with ``@path`` one level
+    deep, and the enabled plugins with their installed versions. A missing file is recorded as
+    absent, so creating one changes the fingerprint. Labels never carry an absolute path.
+    """
+    home = Path(env.get("HOME") or Path.home())
+    base = Path(env["CLAUDE_CONFIG_DIR"]) if env.get("CLAUDE_CONFIG_DIR") else home / ".claude"
+    files = [
+        ("user:CLAUDE.md", base / "CLAUDE.md"),
+        ("project:CLAUDE.md", copy / "CLAUDE.md"),
+        ("project:.claude/CLAUDE.md", copy / ".claude" / "CLAUDE.md"),
+        ("project:CLAUDE.local.md", copy / "CLAUDE.local.md"),
+    ]
+    sources: list[tuple[str, bytes | None]] = []
+    for label, path in files:
+        content = _reviewer_read(path)
+        sources.append((label, content))
+        if content is None:
+            continue
+        for token in sorted(set(_REVIEWER_IMPORT.findall(content.decode("utf-8", "replace")))):
+            target = Path(token).expanduser() if token.startswith("~") else path.parent / token
+            sources.append((f"import:{label}:{token}", _reviewer_read(target)))
+
+    enabled: set[str] = set()
+    for settings in (base / "settings.json", copy / ".claude" / "settings.json"):
+        try:
+            loaded = json.loads(settings.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        plugins = loaded.get("enabledPlugins") if isinstance(loaded, dict) else None
+        if isinstance(plugins, dict):
+            enabled |= {str(name) for name, on in plugins.items() if on is True}
+    try:
+        installed = json.loads((base / "plugins" / "installed_plugins.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        installed = {}
+    entries = installed.get("plugins", {}) if isinstance(installed, dict) else {}
+    for name in sorted(enabled):
+        rows = entries.get(name) if isinstance(entries, dict) else None
+        versions = sorted(
+            f"{row.get('version')}@{row.get('gitCommitSha') or ''}"
+            for row in (rows or [])
+            if isinstance(row, dict)
+        )
+        sources.append((f"plugin:{name}", ",".join(versions).encode("utf-8")))
+    return sources
+
+
+def reviewer_configuration_fingerprint(
+    sources: Sequence[tuple[str, bytes | None]],
+) -> dict[str, Any]:
+    """SHA-256 over the sorted ``(label, content digest)`` pairs, and the labels that went in."""
+    pairs = sorted(
+        (label, hashlib.sha256(content).hexdigest() if content is not None else "absent")
+        for label, content in sources
+    )
+    digest = hashlib.sha256(json.dumps(pairs, separators=(",", ":")).encode("utf-8"))
+    return {"fingerprint": digest.hexdigest(), "sources": [label for label, _ in pairs]}
+
+
+@dataclass(frozen=True)
+class ReviewerRecipe:
+    """How one vendor runs the targeted reviewer: argv, sandbox settings, result, configuration."""
+
+    binary: str
+    argv: Any
+    settings: Any
+    parse: Any
+    config_sources: Any
+
+
+#: The vendors with a reviewer recipe. A vendor joins only when ``reviewer-probe`` passes on it;
+#: every other vendor is refused by name (plan KTD2: codex-cli 0.160.1's workspace-write sandbox
+#: read a file outside its workspace on 2026-10-06).
+REVIEWER_RECIPES: dict[str, ReviewerRecipe] = {
+    "claude": ReviewerRecipe(
+        binary="claude",
+        argv=reviewer_claude_argv,
+        settings=reviewer_claude_settings,
+        parse=reviewer_parse_claude_result,
+        config_sources=reviewer_claude_config_sources,
+    ),
+}
+
+
+def reviewer_recipe(vendor: str) -> ReviewerRecipe:
+    recipe = REVIEWER_RECIPES.get(vendor)
+    if recipe is None:
+        raise ReviewerRefused(
+            f"{vendor} has no reviewer sandbox recipe that denies writes outside the copy, network "
+            "and credential reads; it cannot staff the targeted reviewer"
+        )
+    return recipe
+
+
+def reviewer_work_root(env: Mapping[str, str], platform: str | None = None) -> Path:
+    """Where scratch copies live: outside every temp root the sandbox denies."""
+    cache = env.get("XDG_CACHE_HOME") or str(Path(env.get("HOME") or Path.home()) / ".cache")
+    root = Path(cache).expanduser() / "agent-launcher" / "reviews"
+    for temp in reviewer_temp_roots(platform):
+        if any(
+            str(path) == temp or str(path).startswith(temp.rstrip("/") + "/")
+            for path in (root, root.resolve())
+        ):
+            raise ReviewerRefused(
+                f"the scratch copy would sit under {temp}, which the reviewer's sandbox denies"
+            )
+    return root
+
+
+def _reviewer_manifest(copy: Path) -> dict[str, str]:
+    manifest: dict[str, str] = {}
+    for path in sorted(copy.rglob("*")):
+        if path.is_file() and not path.is_symlink():
+            manifest[path.relative_to(copy).as_posix()] = hashlib.sha256(
+                path.read_bytes()
+            ).hexdigest()
+    return manifest
+
+
+def reviewer_export_head(repo: Path, head: str, copy: Path) -> dict[str, str]:
+    """Export *head*'s tracked files into *copy* with no ``.git``, and return their manifest."""
+    resolved = run(
+        ["git", "-C", str(repo), "rev-parse", "--verify", f"{head}^{{commit}}"],
+        check=False, timeout=30,
+    )
+    if resolved.returncode != 0:
+        raise ReviewerRefused(f"{head} is not a commit in {repo}")
+    copy.mkdir(parents=True)
+    archive = subprocess.run(
+        ["git", "-C", str(repo), "archive", "--format=tar", resolved.stdout.strip()],
+        capture_output=True, timeout=300, check=False,
+    )
+    if archive.returncode != 0:
+        raise ReviewerRefused(f"git archive failed: {archive.stderr.decode(errors='replace')}")
+    untar = subprocess.run(
+        ["tar", "-x", "-f", "-", "-C", str(copy)], input=archive.stdout,
+        capture_output=True, timeout=300, check=False,
+    )
+    if untar.returncode != 0:
+        raise ReviewerRefused(f"extracting the copy failed: {untar.stderr.decode(errors='replace')}")
+    return _reviewer_manifest(copy)
+
+
+def reviewer_scratch_changes(copy: Path, manifest: Mapping[str, str]) -> dict[str, list[str]]:
+    """The files added, modified and deleted in the copy since the export, minus tool clutter."""
+    now = _reviewer_manifest(copy)
+    keep = lambda path: not REVIEWER_SCRATCH_IGNORED.search(path)  # noqa: E731
+    return {
+        "added": sorted(p for p in now if p not in manifest and keep(p)),
+        "modified": sorted(p for p in now if p in manifest and now[p] != manifest[p] and keep(p)),
+        "deleted": sorted(p for p in manifest if p not in now and keep(p)),
+    }
+
+
+def _reviewer_front_matter(text: str) -> dict[str, str]:
+    if not text.startswith("---\n"):
+        return {}
+    head = text[4:].split("\n---", 1)[0]
+    pairs = (line.split(":", 1) for line in head.splitlines() if ":" in line)
+    return {key.strip(): value.strip() for key, value in pairs}
+
+
+def _reviewer_body(text: str) -> str:
+    if text.startswith("---\n") and "\n---" in text[4:]:
+        return text[4:].split("\n---", 1)[1].lstrip("-").lstrip("\n")
+    return text
+
+
+def reviewer_wrapper_path() -> Path:
+    """The roles library's wrapper, beside this script's package root."""
+    source = Path(reviewer_wrapper_path.__code__.co_filename).resolve()
+    return source.parents[3] / "roles" / "targeted-reviewer.md"
+
+
+def reviewer_launch_message(
+    wrapper: str, prompt: str, packet: Path, copy: Path, cap: int
+) -> str:
+    """What the session reads on standard input: the wrapper, saga's prompt, then where things are."""
+    return (
+        f"{_reviewer_body(wrapper).rstrip()}\n\n"
+        "---\n\n"
+        f"{_reviewer_body(prompt).rstrip()}\n\n"
+        "---\n\n"
+        "# This review\n\n"
+        f"- The review packet: `{packet.resolve()}`\n"
+        f"- The scratch copy, your working directory: `{copy.resolve()}`\n"
+        f"- The open search's cap on findings: {cap}\n\n"
+        "Your final message is the answer JSON and nothing else.\n"
+    )
+
+
+def reviewer_extract_answer(final: str | None) -> tuple[Any, str | None]:
+    """The answer from the session's final message, unwrapping one code fence; or why there is none."""
+    if not final or not final.strip():
+        return None, "the session gave no final message"
+    text = final.strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*\n(.*)\n```", text, re.DOTALL)
+    if fenced:
+        text = fenced.group(1)
+    try:
+        answer = json.loads(text)
+    except ValueError:
+        return None, "the final message is not JSON"
+    if not isinstance(answer, dict):
+        return None, "the final message is not a JSON object"
+    return answer, None
+
+
+def reviewer_run_session(
+    argv: list[str], *, stdin: str, cwd: Path, env: Mapping[str, str], timeout: float
+) -> subprocess.CompletedProcess[str]:
+    """Run the session; a timeout comes back as exit 124, never an exception."""
+    try:
+        return subprocess.run(
+            argv, input=stdin, cwd=str(cwd), env=dict(env), capture_output=True, text=True,
+            timeout=timeout, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(argv, REVIEWER_EXIT_TIMEOUT, "", "timed out")
+    except OSError as exc:
+        return subprocess.CompletedProcess(argv, 127, "", str(exc))
+
+
+def _reviewer_vendor_version(binary: str, env: Mapping[str, str]) -> str | None:
+    try:
+        proc = subprocess.run(
+            [binary, "--version"], capture_output=True, text=True, timeout=20, env=dict(env),
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return proc.stdout.strip() or None if proc.returncode == 0 else None
+
+
+@dataclass
+class ReviewerRequest:
+    """One targeted-reviewer launch."""
+
+    vendor: str
+    model: str
+    effort: str
+    repo: Path
+    head: str
+    packet: Path
+    prompt: Path
+    schema: Path
+    out: Path
+    open_search_cap: int = REVIEWER_DEFAULT_CAP
+    timeout: float = REVIEWER_TIMEOUT_SECONDS
+    work_root: Path | None = None
+
+
+def reviewer_launch(
+    request: ReviewerRequest,
+    *,
+    env: Mapping[str, str] | None = None,
+    session: Any = reviewer_run_session,
+) -> tuple[dict[str, Any], int]:
+    """Start the targeted reviewer headless and return ``(result, exit code)``.
+
+    Refusals (``ReviewerRefused``) happen before anything is created: a vendor with no recipe, a
+    prompt that is not saga's, a missing packet or schema, or a head that is not a commit.
+    """
+    environ = dict(os.environ if env is None else env)
+    recipe = reviewer_recipe(request.vendor)
+    try:
+        prompt_bytes = request.prompt.read_bytes()
+    except OSError as exc:
+        raise ReviewerRefused(f"cannot read the prompt {request.prompt}: {exc}") from None
+    prompt_text = prompt_bytes.decode("utf-8")
+    if _reviewer_front_matter(prompt_text).get("id") != REVIEWER_PROMPT_ID:
+        raise ReviewerRefused(f"{request.prompt} is not saga's {REVIEWER_PROMPT_ID}")
+    if not request.schema.is_file():
+        raise ReviewerRefused(f"the answer schema {request.schema} does not exist")
+    if not request.packet.is_dir():
+        raise ReviewerRefused(f"the review packet {request.packet} is not a directory")
+    wrapper = reviewer_wrapper_path()
+    if not wrapper.is_file():
+        raise ReviewerRefused(f"the roles library's wrapper {wrapper} is missing")
+
+    root = (request.work_root or reviewer_work_root(environ)) / (
+        f"{request.repo.resolve().name}-{request.head[:12]}-{os.urandom(4).hex()}"
+    )
+    copy = root / "copy"
+    manifest = reviewer_export_head(request.repo, request.head, copy)
+    session_env = reviewer_session_environment(environ)
+    settings_path = root / "settings.json"
+    settings_path.write_text(
+        json.dumps(recipe.settings(request.packet, session_env), indent=2) + "\n", "utf-8"
+    )
+    configuration = reviewer_configuration_fingerprint(recipe.config_sources(copy, session_env))
+    message = reviewer_launch_message(
+        wrapper.read_text(encoding="utf-8"), prompt_text, request.packet, copy,
+        request.open_search_cap,
+    )
+    argv = recipe.argv(request.model, request.effort, settings_path)
+    proc = session(argv, stdin=message, cwd=copy, env=session_env, timeout=request.timeout)
+    parsed = recipe.parse(proc.stdout)
+    answer, missing = reviewer_extract_answer(parsed["final"])
+
+    request.out.mkdir(parents=True, exist_ok=True)
+    answer_path = request.out / "answer.json"
+    if answer is not None:
+        answer_path.write_text(json.dumps(answer, indent=2, ensure_ascii=False) + "\n", "utf-8")
+    if proc.returncode == REVIEWER_EXIT_TIMEOUT:
+        code, error = REVIEWER_EXIT_TIMEOUT, "the session timed out"
+    elif answer is None:
+        code, error = REVIEWER_EXIT_NO_ANSWER, parsed.get("error") or missing
+    else:
+        code, error = 0, parsed.get("error")
+    result = {
+        "schema": REVIEWER_RESULT_SCHEMA,
+        "vendor": request.vendor,
+        "vendor_version": _reviewer_vendor_version(recipe.binary, session_env),
+        "model": {"requested": request.model, "resolved": parsed["resolved"]},
+        "effort": request.effort,
+        "usage": parsed["usage"],
+        "prompt_sha256": hashlib.sha256(prompt_bytes).hexdigest(),
+        "schema_sha256": hashlib.sha256(request.schema.read_bytes()).hexdigest(),
+        "configuration": configuration,
+        "scratch": {"path": str(copy), "changes": reviewer_scratch_changes(copy, manifest)},
+        "answer_path": str(answer_path) if answer is not None else None,
+        "exit": code,
+        "error": error,
+    }
+    (request.out / "result.json").write_text(json.dumps(result, indent=2) + "\n", "utf-8")
+    return result, code
+
+
+#: The fixed command the probe asks the session to run. Each line records its own exit status in
+#: ``probe-results.txt`` inside the copy, so every verdict comes from the command, never the model.
+REVIEWER_PROBE_SCRIPT = """\
+r=probe-results.txt
+: > "$r"
+cat "{outside}/canary.txt" > /dev/null 2>&1; echo "read=$?" >> "$r"
+touch "{outside}/written" 2> /dev/null; echo "write_outside=$?" >> "$r"
+touch inside-written 2> /dev/null; echo "write_inside=$?" >> "$r"
+touch "${{TMPDIR:-/tmp}}/reviewer-probe-{tag}" 2> /dev/null; echo "write_tmpdir=$?" >> "$r"
+touch "/tmp/reviewer-probe-{tag}" 2> /dev/null; echo "write_tmp=$?" >> "$r"
+curl -sS -m 5 -o /dev/null https://example.com > /dev/null 2>&1; echo "network=$?" >> "$r"
+if [ -n "${{REVIEWER_PROBE_TOKEN+x}}" ]; then echo "variable=set" >> "$r"; else echo "variable=unset" >> "$r"; fi
+"""
+
+REVIEWER_PROBE_MESSAGE = (
+    "Run exactly this one Bash command, from your working directory, and then reply with the "
+    "single word done: sh probe.sh"
+)
+
+
+def reviewer_probe_verdicts(
+    root: Path, outside: Path, tag: str, canaries: Sequence[str], session_output: str
+) -> list[dict[str, Any]]:
+    """Judge each denial from outside the session: the filesystem and the command's own results."""
+    copy = root / "copy"
+    results_path = copy / "probe-results.txt"
+    try:
+        lines = results_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return [{"denial": "results", "held": False,
+                 "detail": "probe-results.txt is missing: the command did not run"}]
+    results = dict(line.split("=", 1) for line in lines if "=" in line)
+    seen = results_path.read_text(encoding="utf-8") + "\n" + session_output
+
+    def nonzero(key: str) -> bool:
+        return results.get(key, "0") not in ("", "0")
+
+    verdicts = [
+        ("read-credential", nonzero("read"), f"read={results.get('read')}"),
+        ("write-outside", nonzero("write_outside") and not (outside / "written").exists(),
+         f"write_outside={results.get('write_outside')}"),
+        ("write-inside", results.get("write_inside") == "0" and (copy / "inside-written").exists(),
+         f"write_inside={results.get('write_inside')}"),
+        ("write-tmpdir", nonzero("write_tmpdir"), f"write_tmpdir={results.get('write_tmpdir')}"),
+        ("write-tmp", nonzero("write_tmp") and not Path(f"/tmp/reviewer-probe-{tag}").exists(),
+         f"write_tmp={results.get('write_tmp')}"),
+        ("network", nonzero("network"), f"network={results.get('network')}"),
+        ("credential-variable", results.get("variable") == "unset",
+         f"variable={results.get('variable')}"),
+        ("no-canary-in-output", not any(c in seen for c in canaries),
+         "a canary value appeared in the results or the session's output"
+         if any(c in seen for c in canaries) else "no canary value seen"),
+    ]
+    return [{"denial": name, "held": held, "detail": detail} for name, held, detail in verdicts]
+
+
+def reviewer_probe(
+    vendor: str,
+    model: str,
+    effort: str | None = None,
+    *,
+    env: Mapping[str, str] | None = None,
+    session: Any = reviewer_run_session,
+    work_root: Path | None = None,
+    keep: bool = False,
+) -> tuple[list[dict[str, Any]], int]:
+    """Run *vendor*'s reviewer recipe live on a fixed command and check each denial."""
+    recipe = reviewer_recipe(vendor)
+    tag = os.urandom(6).hex()
+    canary_file = f"reviewer-probe-canary-{os.urandom(8).hex()}"
+    canary_variable = f"reviewer-probe-variable-{os.urandom(8).hex()}"
+    environ = dict(os.environ if env is None else env)
+    environ["REVIEWER_PROBE_TOKEN"] = canary_variable
+    root = (work_root or reviewer_work_root(environ)) / f"probe-{tag}"
+    copy, outside = root / "copy", root / "outside"
+    copy.mkdir(parents=True)
+    outside.mkdir()
+    (outside / "canary.txt").write_text(canary_file + "\n", "utf-8")
+    (copy / "probe.sh").write_text(REVIEWER_PROBE_SCRIPT.format(outside=outside, tag=tag), "utf-8")
+    session_env = reviewer_session_environment(environ)
+    settings_path = root / "settings.json"
+    settings = recipe.settings(copy, session_env, extra_deny_read=[str(outside)])
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n", "utf-8")
+    try:
+        proc = session(
+            recipe.argv(model, effort, settings_path), stdin=REVIEWER_PROBE_MESSAGE, cwd=copy,
+            env=session_env, timeout=300,
+        )
+        verdicts = reviewer_probe_verdicts(
+            root, outside, tag, (canary_file, canary_variable),
+            (proc.stdout or "") + (proc.stderr or ""),
+        )
+    finally:
+        Path(f"/tmp/reviewer-probe-{tag}").unlink(missing_ok=True)
+        if not keep:
+            shutil.rmtree(root, ignore_errors=True)
+    return verdicts, 0 if all(v["held"] for v in verdicts) else 1
+
+
+def _reviewer_args(sub: Any) -> None:
+    review_p = sub.add_parser(
+        "review",
+        help="Start saga's targeted reviewer headless in a sandboxed scratch copy (issue #158)",
+        description=(
+            "Start saga's targeted reviewer headless on a vendor with a reviewer recipe, with its "
+            "normal configuration, in a sandboxed export of --head. Writes answer.json and "
+            "result.json to --out and prints the result. Exit 0 answer; 2 refused before "
+            "anything started; 3 no parsable answer; 124 timed out."
+        ),
+    )
+    review_p.add_argument("--vendor", required=True)
+    review_p.add_argument("--model", required=True)
+    review_p.add_argument("--effort", required=True)
+    review_p.add_argument("--repo", required=True, type=Path, help="The repository to export")
+    review_p.add_argument("--head", required=True, help="The commit under review")
+    review_p.add_argument("--packet", required=True, type=Path, help="The review packet directory")
+    review_p.add_argument(
+        "--prompt", required=True, type=Path,
+        help="saga's targeted-reviewer-prompt.md (reviewer_answer.py paths prints it)",
+    )
+    review_p.add_argument("--schema", required=True, type=Path, help="saga's answer schema")
+    review_p.add_argument("--out", required=True, type=Path, help="Where answer and result go")
+    review_p.add_argument("--open-search-cap", type=int, default=REVIEWER_DEFAULT_CAP)
+    review_p.add_argument("--timeout", type=float, default=REVIEWER_TIMEOUT_SECONDS)
+    probe_p = sub.add_parser(
+        "reviewer-probe",
+        help="Run a vendor's reviewer recipe live and check every sandbox denial",
+        description=(
+            "Run the reviewer recipe on one fixed command and check, from outside the session, "
+            "that a credential read, writes outside the copy and to the temp roots, the network "
+            "and a credential variable are denied and a write inside the copy works. Exit 0 when "
+            "every denial held, 1 otherwise, 2 for a vendor with no recipe."
+        ),
+    )
+    probe_p.add_argument("--vendor", required=True)
+    probe_p.add_argument("--model", default="haiku")
+    probe_p.add_argument("--effort", default=None)
+    probe_p.add_argument("--keep", action="store_true", help="Keep the probe directory")
+
+
+def _reviewer_cli(args: argparse.Namespace) -> int:
+    try:
+        if args.cmd == "reviewer-probe":
+            verdicts, code = reviewer_probe(args.vendor, args.model, args.effort, keep=args.keep)
+            json.dump(verdicts, sys.stdout, indent=2)
+            sys.stdout.write("\n")
+            return code
+        result, code = reviewer_launch(
+            ReviewerRequest(
+                vendor=args.vendor, model=args.model, effort=args.effort, repo=args.repo,
+                head=args.head, packet=args.packet, prompt=args.prompt, schema=args.schema,
+                out=args.out, open_search_cap=args.open_search_cap, timeout=args.timeout,
+            )
+        )
+    except ReviewerRefused as refused:
+        print(f"launcher: {refused}", file=sys.stderr)
+        return REVIEWER_EXIT_REFUSED
+    json.dump(result, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return code
+
+
 def _add_launch_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--vendor", required=True)
     parser.add_argument("--task", required=True, help="Herdr tab label and agent name")
@@ -2083,6 +2776,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     close_p.add_argument("--receipt-json", required=True, help="Launch receipt proving ownership")
     sub.add_parser("roster", help="Vendors this machine can launch that this plugin can drive")
+    _reviewer_args(sub)
     return parser
 
 
@@ -2118,6 +2812,8 @@ def _load_receipt(raw: str) -> dict[str, Any]:
 
 def cli_main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    if args.cmd in ("review", "reviewer-probe"):
+        return _reviewer_cli(args)
     if args.cmd == "roster":
         for name, flags in roster():
             print(f"{name}\t{flags}")

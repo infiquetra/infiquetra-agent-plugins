@@ -132,6 +132,13 @@ orchestrator.
 The Lens Reviewer is one file carrying a shared reviewer half and one section per lens, keyed
 `#### <lens-id>` to the lifecycle's lens catalogue.
 
+The Targeted Reviewer is a thin wrapper. Its instructions are saga's
+`plugins/saga/references/targeted-reviewer-prompt.md`, which `launcher.py review` sends after the
+wrapper's text, and it is started headless by that launch, never as a roster pane. Its answer goes
+to saga's review command, so it sends no lifecycle contract of its own. And like the Issue Reviewer
+it varies the shared `**Where these come from.**` paragraph, because it has no dispatch and must not
+read the issue, where another reviewer's findings may be.
+
 ### Slicing the Lens Reviewer
 
 A consumer sends two pieces, joined by a blank line:
@@ -211,6 +218,10 @@ The structural test reads the expected set from the map table and from the snaps
 inside the test. A row without a file fails, a file without a row fails, and a prompt whose
 `role_id` the lifecycle does not name fails — so no half can drift alone, and a role the lifecycle
 has not declared cannot be introduced by adding a file.
+
+The Targeted Reviewer is the worked case. The lifecycle named `targeted_reviewer` at `f8d0994` (its
+X1a change). Issue #163 moved the pin there, regenerated the snapshot and landed a minimal prompt
+with its map row and index entry; issue #158 replaced the prompt with the full wrapper.
 
 ## Exemptions this file claims
 

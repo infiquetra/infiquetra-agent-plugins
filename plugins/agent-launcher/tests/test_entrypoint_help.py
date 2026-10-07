@@ -37,3 +37,18 @@ def test_entrypoint_help_exits_zero(name: str) -> None:
     assert "usage:" in completed.stdout.lower()
     assert "Traceback" not in completed.stderr
     assert "ModuleNotFoundError" not in completed.stderr
+
+
+@pytest.mark.parametrize("subcommand", ["review", "reviewer-probe"])
+def test_reviewer_subcommand_help_exits_zero(subcommand: str) -> None:
+    """Issue #158: the reviewer launch and its probe answer --help without starting a session."""
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPTS / "launcher.py"), subcommand, "--help"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "--vendor" in completed.stdout
+    assert "Traceback" not in completed.stderr

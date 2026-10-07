@@ -1,0 +1,7 @@
+{
+  "schema": "targeted_reviewer_launch_settings.v1",
+  "role": "targeted-reviewer",
+  "vendor": "claude",
+  "model": "opus",
+  "effort": "high"
+}

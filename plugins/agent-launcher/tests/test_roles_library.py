@@ -1067,10 +1067,11 @@ def shared_block(text: str, opener: str) -> str:
     return "\n".join(lines[start:end])
 
 
-#: The one role whose inputs paragraph legitimately differs: it acts at the Shaping exit, before the
-#: run's first step, so it has no dispatch and no `stop_condition`. Every other shared block is
-#: identical in its file too; only this opener varies, and only for this role.
-DISPATCHLESS_PROMPT = "issue-reviewer.md"
+#: The roles whose inputs paragraph legitimately differs, because neither has a dispatch: the Issue
+#: Reviewer acts at the Shaping exit, before the run's first step, and the Targeted Reviewer is
+#: started by agent-launcher's reviewer launch with the review packet as its one input (issue #158).
+#: Every other shared block is identical in their files too; only this opener varies.
+DISPATCHLESS_PROMPTS = ("issue-reviewer.md", "targeted-reviewer.md")
 DISPATCHLESS_OPENER = "**Where these come from.**"
 
 
@@ -1284,16 +1285,17 @@ def test_changelog_names_the_pin() -> None:
     )
 
 
-def test_the_dispatchless_prompt_says_why_it_differs() -> None:
-    """The one allowed variant has to explain itself, or it reads as drift."""
-    text = (ROLES_DIR / DISPATCHLESS_PROMPT).read_text(encoding="utf-8")
+@pytest.mark.parametrize("name", DISPATCHLESS_PROMPTS)
+def test_the_dispatchless_prompt_says_why_it_differs(name: str) -> None:
+    """Each allowed variant has to explain itself, or it reads as drift."""
+    text = (ROLES_DIR / name).read_text(encoding="utf-8")
     block = shared_block(text, DISPATCHLESS_OPENER)
     assert "no dispatch" in block, (
-        f"{DISPATCHLESS_PROMPT} varies the shared inputs paragraph without saying it has no dispatch"
+        f"{name} varies the shared inputs paragraph without saying it has no dispatch"
     )
     # And it must not also claim to have one, which is what made this file contradict itself.
     assert "Your dispatch names the issue" not in text, (
-        f"{DISPATCHLESS_PROMPT} both denies and claims a dispatch"
+        f"{name} both denies and claims a dispatch"
     )
 
 
@@ -1310,7 +1312,7 @@ def test_shared_blocks_are_byte_identical_across_every_prompt(opener: str) -> No
     considered = [
         p
         for p in PROMPT_FILES
-        if not (opener == DISPATCHLESS_OPENER and p.name == DISPATCHLESS_PROMPT)
+        if not (opener == DISPATCHLESS_OPENER and p.name in DISPATCHLESS_PROMPTS)
     ]
     blocks = {p.name: shared_block(p.read_text(encoding="utf-8"), opener) for p in considered}
     distinct = set(blocks.values())
@@ -1568,3 +1570,23 @@ def test_seeded_parser_keeps_colons_in_values() -> None:
 def test_seeded_parser_returns_empty_for_no_frontmatter() -> None:
     """Absence is not an error here -- the required-key check reports it, loudly."""
     assert parse_frontmatter("# Just a heading\n") == {}
+
+
+def test_only_the_contractless_roles_may_emit_nothing() -> None:
+    """Issue #158: every role but the two contract-less reviewers must send a contract."""
+    for role_id in AGGREGATED_ROLE_IDS:
+        assert emits_violations(role_id, [], f"{role_id}.md") == []
+    for role_id in sorted(set(ROLE_IDS) - set(AGGREGATED_ROLE_IDS) - {"operator"}):
+        assert emits_violations(role_id, [], f"{role_id}.md"), role_id
+
+
+def test_the_targeted_reviewer_wrapper_names_only_saga_s_prompt_schema_and_check() -> None:
+    """The wrapper adds nothing to saga's instructions; it points at them (issue #158)."""
+    text = (ROLES_DIR / "targeted-reviewer.md").read_text(encoding="utf-8")
+    assert "plugins/saga/references/targeted-reviewer-prompt.md" in text
+    named = set(re.findall(r"plugins/saga/[\w./-]+", text))
+    assert named <= {
+        "plugins/saga/references/targeted-reviewer-prompt.md",
+        "plugins/saga/references/targeted-reviewer-answer.schema.json",
+        "plugins/saga/scripts/reviewer_answer.py",
+    }, named

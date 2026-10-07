@@ -9,6 +9,23 @@ record. The plan-reviewer, issue-reviewer, and planner prompts follow the new fi
 three implementer prompts name `builder_record`; and a minimal `targeted-reviewer.md` wrapper lands
 for C8 to extend.
 
+### Added
+
+- **The targeted reviewer, started headless.** `launcher.py review` starts saga's targeted
+  reviewer on its staffed vendor with that vendor's normal configuration (instruction files,
+  plugins, hooks and the subscription sign-in), in a fresh export of the head commit with no `.git`.
+  For Claude it runs `claude -p` with a per-launch `--settings` file that turns on the command
+  sandbox and fails closed: writes outside the scratch copy, every temp root, the network and
+  credential files are denied, and credential-named environment variables are hidden from
+  sandboxed commands. It removes API-key variables, so the session never uses an API key, and
+  returns the answer plus a result with the session's usage, the vendor and its version, the
+  requested and resolved model, the prompt and schema fingerprints, a fingerprint of the
+  instruction files and enabled plugins, and the scratch copy's changes. Every other vendor is
+  refused by name until it has a sandbox recipe that passes `launcher.py reviewer-probe`, which runs
+  the recipe live and checks each denial from outside the session.
+- **`roles/targeted-reviewer.md`**, a thin wrapper naming saga's prompt. The roster plans it one
+  seat, never one per lens, and leaves it to `launcher.py review` rather than opening a pane.
+
 ### Fixed
 
 - **A Muse launch no longer stops when Herdr names the session `maki`.** Muse Code is the agent

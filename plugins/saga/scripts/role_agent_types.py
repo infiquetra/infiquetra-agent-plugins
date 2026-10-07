@@ -24,9 +24,10 @@ row, admission's fill from the resolver included, is simply answered again, so t
 overlay and a recorded raise apply to it exactly as they do everywhere else.
 
 **Which roles.** Every role agent-launcher's roster maps to a roles-library prompt
-(``roster.STAFFING_ROLE_TO_ROLE_ID``, imported, never copied), except two. The lens reviewer's
-prompt is sliced per lens, so one type cannot carry it. ``merging-worker`` has no prompt at all
-(roster's own refusal). A role staffed on a vendor other than ``claude`` is reported as skipped,
+(``roster.STAFFING_ROLE_TO_ROLE_ID``, imported, never copied), except three. The lens reviewer's
+prompt is sliced per lens, so one type cannot carry it. The targeted reviewer runs headless through
+agent-launcher's reviewer launch, in a sandbox an in-session subagent would not have (issue #158).
+``merging-worker`` has no prompt at all (roster's own refusal). A role staffed on a vendor other than ``claude`` is reported as skipped,
 never translated. A ``claude`` vendor name is a staffing value here, not harness behaviour: the
 script names no harness and no agent type.
 
@@ -71,6 +72,16 @@ ROLES_SUBPATH = Path("roles")
 
 #: The roster role whose prompt is cut per lens.
 LENS_ROLE = "lens-reviewer"
+
+#: Mapped roles that get no in-session subagent type, and why. Each is reported as skipped when the
+#: run staffs it.
+NO_TYPE_REASONS: dict[str, str] = {
+    LENS_ROLE: "its prompt is sliced per lens; one type cannot carry it",
+    "targeted-reviewer": (
+        "it runs headless through agent-launcher's reviewer launch; no in-session subagent "
+        "carries it"
+    ),
+}
 
 #: The vendor whose roles this answer covers.
 VENDOR = "claude"
@@ -327,11 +338,9 @@ def role_agent_types(
         if role not in mapping:
             skipped.append({"role": str(role), "reason": "no role prompt in the roles library"})
     for role in sorted(mapping):
-        if role == LENS_ROLE:
+        if role in NO_TYPE_REASONS:
             if role in rows:
-                skipped.append(
-                    {"role": role, "reason": "its prompt is sliced per lens; one type cannot carry it"}
-                )
+                skipped.append({"role": role, "reason": NO_TYPE_REASONS[role]})
             continue
         role_id = mapping[role]
         try:

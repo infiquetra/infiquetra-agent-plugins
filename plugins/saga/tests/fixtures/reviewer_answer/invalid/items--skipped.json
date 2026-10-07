@@ -1,0 +1,80 @@
+{
+  "schema": "targeted_reviewer_answer.v1",
+  "items": [
+    {
+      "index": 0,
+      "file": "src/billing/charge.py",
+      "answer": {
+        "kind": "finding",
+        "finding": "double-charge"
+      }
+    },
+    {
+      "index": 1,
+      "file": "src/reports/staff.py",
+      "answer": {
+        "kind": "cleared",
+        "reason": "The tenant filter is required by the only caller and checked at src/reports/staff.py:12."
+      }
+    }
+  ],
+  "findings": [
+    {
+      "key": "double-charge",
+      "origin": {
+        "item": 0
+      },
+      "lens": "correctness",
+      "row": "judged",
+      "location": {
+        "scope": "lines",
+        "file": "src/billing/charge.py",
+        "lines": {
+          "start": 40,
+          "end": 52
+        },
+        "function": "charge_with_retry",
+        "anchor": "for attempt in range(3):"
+      },
+      "language": "python",
+      "statement": "A retry after a timeout charges the card a second time.",
+      "consequence": "money-or-resources-wrongly-moved",
+      "trigger": "retry",
+      "evidence": "reproduced",
+      "proof": {
+        "test": "tests/test_charge_retry.py::test_timeout_then_retry_charges_once",
+        "command": "python3 -m pytest tests/test_charge_retry.py -q",
+        "output": "AssertionError: charged 2 times, expected 1"
+      },
+      "introduced": true
+    },
+    {
+      "key": "stale-readme",
+      "origin": "open-search",
+      "lens": "correctness",
+      "row": "judged",
+      "location": {
+        "scope": "lines",
+        "file": "README.md",
+        "lines": {
+          "start": 3,
+          "end": 9
+        },
+        "function": null,
+        "anchor": "## Reports"
+      },
+      "language": "markdown",
+      "statement": "The README still describes the report without its new filter.",
+      "consequence": "misleads-a-person",
+      "trigger": "normal-use",
+      "evidence": "traced",
+      "proof": {
+        "steps": [
+          "README.md:3 describes the old report",
+          "src/reports/staff.py:10 adds the filter"
+        ]
+      },
+      "introduced": false
+    }
+  ]
+}

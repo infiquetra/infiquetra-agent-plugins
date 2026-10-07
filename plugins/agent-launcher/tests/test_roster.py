@@ -865,3 +865,64 @@ def test_saving_the_roster_lands_on_a_fresh_read_under_the_record_lock(
     assert reread.roster == [{"role": "worker"}]
     assert reread.units == [{"id": "u1", "usage": {"entries": [{"x": 1}]}}]
     assert rr.lock_path(store, 95).is_file()
+
+
+# --------------------------------------------------------------------------- issue #158: headless
+
+
+TARGETED = {
+    "planner": {"vendor": "claude", "model": "opus", "effort": "high"},
+    "targeted-reviewer": {"vendor": "claude", "model": "opus", "effort": "high"},
+}
+
+
+def test_the_targeted_reviewer_gets_one_seat_never_one_per_lens(
+    roster: ModuleType, rr: ModuleType, store: Path
+) -> None:
+    _record(rr, store, staffing=TARGETED, lenses=["correctness", "security", "testing"])
+    record = roster.load_record(store, 4242)
+    seats = [s for s in roster.plan_seats(record) if s.role == "targeted-reviewer"]
+    assert len(seats) == 1
+    seat = seats[0]
+    assert (seat.pane_name, seat.lens, seat.headless) == (
+        "issue-4242-targeted-reviewer", None, True,
+    )
+    assert (seat.role_id, seat.prompt_file) == ("targeted_reviewer", "targeted-reviewer.md")
+
+
+def test_up_opens_no_pane_and_records_no_row_for_the_headless_seat(
+    roster: ModuleType, rr: ModuleType, store: Path
+) -> None:
+    _record(rr, store, staffing=TARGETED, lenses=["correctness"])
+    runner = FakeRunner()
+    said: list[str] = []
+
+    code = roster.up(store, 4242, runner=runner, env=IN_PANE, out=said.append)
+
+    assert code == roster.EXIT_OK
+    launches = runner.commands("launcher.py", "launch")
+    assert len(launches) == 1
+    assert not any("targeted-reviewer" in " ".join(c) for c in launches)
+    assert [row["role"] for row in _rows(rr, store)] == ["planner"]
+    assert any("targeted-reviewer is headless" in line for line in said)
+
+
+def test_a_headless_seat_counts_against_no_pane_allocation(
+    roster: ModuleType, rr: ModuleType, store: Path
+) -> None:
+    _record(rr, store, staffing=TARGETED, lenses=["correctness"], concurrency=1)
+    runner = FakeRunner()
+
+    code = roster.up(store, 4242, runner=runner, env=IN_PANE, out=lambda _: None)
+
+    assert code == roster.EXIT_OK
+    assert len(runner.commands("launcher.py", "launch")) == 1
+
+
+def test_the_dry_run_says_how_the_headless_seat_starts(
+    roster: ModuleType, rr: ModuleType, store: Path
+) -> None:
+    _record(rr, store, staffing=TARGETED, lenses=["correctness"])
+    said: list[str] = []
+    roster.up(store, 4242, dry_run=True, env=IN_PANE, out=said.append)
+    assert "start  started by `launcher.py review`" in "\n".join(said)
