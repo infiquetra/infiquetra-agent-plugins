@@ -1873,3 +1873,142 @@ def test_retrying_review_result_does_not_reprompt_a_worker_that_already_took_its
     sent.clear()
     assert orchestrate.cmd_review_result(NS(file=str(result_path))) == 1
     assert sent == ["second"]
+
+
+FINDING_ID = "rf:" + ("ab" * 16)
+
+
+def _review_run(
+    *,
+    allowed: bool,
+    blocking: list[str] | None = None,
+    findings: list[dict[str, Any]] | None = None,
+    round_number: int = 1,
+    extra: dict[str, Any] | None = None,
+) -> str:
+    payload: dict[str, Any] = {
+        "schema": "review_records.v1",
+        "kind": "review_run",
+        "round": round_number,
+        "merge": {"allowed": allowed, "blocking": [] if blocking is None else blocking},
+        "findings": [] if findings is None else findings,
+    }
+    if extra:
+        payload.update(extra)
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+def test_routing_reads_a_review_run(orchestrate: ModuleType) -> None:
+    finding_id = FINDING_ID
+    worker = _worker(orchestrate, "fixer", "review-fixer", "src/lease.py")
+    controller = _controller(orchestrate)
+    run = _run(orchestrate, worker, controller)
+    raw = _review_run(
+        allowed=False,
+        blocking=[finding_id],
+        findings=[
+            {
+                "id": finding_id,
+                "statement": "CANARY",
+                "location": {"scope": "file", "file": "./src/lease.py"},
+            }
+        ],
+    )
+    routing = orchestrate.route_review_result(
+        run, raw, agents=_live(worker), controller=controller
+    )
+    assert routing.outcome == "repairs_requested"
+    sent: list[str] = []
+    orchestrate.dispatch_review_routing(routing, sender=lambda _unit, text: sent.append(text))
+    assert sent
+    assert "src/lease.py" in sent[0]
+    assert finding_id in sent[0]
+    assert "CANARY" not in sent[0]
+
+    bad = _review_run(
+        allowed=False,
+        blocking=[finding_id],
+        findings=[
+            {
+                "id": finding_id,
+                "statement": "CANARY",
+                "location": {"scope": "file", "file": "../src/lease.py"},
+            }
+        ],
+    )
+    with pytest.raises(SystemExit, match=finding_id):
+        orchestrate.route_review_result(run, bad, agents=_live(worker), controller=controller)
+
+
+def test_routing_still_reads_review_result_v2(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = _controller(orchestrate)
+    run = _run(orchestrate, controller)
+    accepted = _result("accepted")
+    path = tmp_path / "accepted.json"
+    path.write_text(accepted)
+    _support.save_run(run, test_store())
+    monkeypatch.chdir(tmp_path)
+    assert orchestrate.cmd_review_result(NS(file=str(path))) == 0
+    restored = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
+    assert restored.review_outcome == "accepted"
+    assert json.loads(restored.review_result)["schema"] == "review_result.v2"
+
+    human = _run(orchestrate, _controller(orchestrate))
+    routing = orchestrate.route_review_result(
+        human,
+        _result("repairs_requested", _request("op-1", "human", "docs/readme.md")),
+        agents=[],
+        controller=human.review_controller(),
+    )
+    assert routing.outcome == "repairs_requested"
+    assert routing.operator_requests
+    assert routing.dispatches == []
+    assert routing.replacements == []
+
+
+def test_an_allowed_review_run_does_not_route_blocking_ids(orchestrate: ModuleType) -> None:
+    raw = _review_run(
+        allowed=True,
+        blocking=[FINDING_ID],
+        extra={"report_only_blocks": ["CANARY-REPORT"]},
+    )
+    run = _run(orchestrate, _controller(orchestrate))
+    routing = orchestrate.route_review_result(
+        run, raw, agents=[], controller=run.review_controller()
+    )
+    assert routing.outcome == "accepted"
+    assert routing.dispatches == []
+    assert routing.work_requests == 0
+    assert routing.replacements == []
+
+
+def test_a_shorter_review_round_is_refused(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = _controller(orchestrate)
+    run = _run(orchestrate, controller)
+    stored = _review_run(allowed=False, round_number=2)
+    incoming = _review_run(allowed=False, round_number=1)
+    run.write_review_slot(controller, review_result=stored, review_outcome="repairs_requested")
+    _support.save_run(run, test_store())
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "incoming.json"
+    path.write_text(incoming)
+    with pytest.raises(SystemExit, match="cycle-regressed"):
+        orchestrate.cmd_review_result(NS(file=str(path)))
+
+    terminal = _run(orchestrate, _controller(orchestrate))
+    accepted = _result("accepted")
+    terminal.write_review_slot(
+        terminal.review_controller(), review_result=accepted, review_outcome="accepted"
+    )
+    _support.save_run(terminal, test_store())
+    path.write_text(_review_run(allowed=True, round_number=1))
+    with pytest.raises(SystemExit, match="terminal review outcome"):
+        orchestrate.cmd_review_result(NS(file=str(path)))

@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `orchestrate.py review-launch` starts one targeted reviewer, and on a high or very-high risk tier one external reviewer, through `launcher.py review`. Orchestrate does not read the answer. `go` does not open a pane for either seat (issue #159).
+
+### Changed
+
+- A review run (`review_records.v1`, kind `review_run`) routes through the same outcome words as `review_result.v2`. The Claude adapter's agent-launcher floor is now `>=1.7.2`, and `review-launch` also requires the `review` subcommand (issue #159).
+
 ## [6.1.0] - 2026-10-04
 
 Adds JSON status output, a launch-table command and two Claude Code mods, and fixes run-record loading and saving so concurrent writes are no longer lost.
@@ -75,7 +85,7 @@ Adds JSON status output, a launch-table command and two Claude Code mods, and fi
 - Upstream `tests/test_orchestrate*.py`, `tests/orchestrate_support.py`, and `tests/test_review_loop_end_to_end.py` now live under `plugins/orchestrate/tests/`. The triage table omitted `test_orchestrate_review_loop.py` and `test_orchestrate_review_transport.py`; the package note `tests/test_orchestrate*.py` includes them, so they are carried.
 - The suite pins `ORCHESTRATE_RUN_RECORD` at a frozen copy of saga's `run_record.py` from acc99fe7 while `plugins/saga` is absent. Production still prefers the sibling `plugins/saga/scripts/run_record.py` when the variable is unset.
 - The suite pins `AGENT_LAUNCHER_ROOT` at a frozen agent-launcher 1.7.0 from the same commit, plus its `composer.py`. This catalog's `plugins/agent-launcher` is 1.0.0 and does not define the names Orchestrate execs, so an unset variable degrades instead of ingesting it. Production resolution is unchanged: sibling, then the variable.
-- `tests/test_review_loop_end_to_end.py` skips until `plugins/saga/scripts/review_consensus.py` exists. It drives saga's review engine and Orchestrate together.
+- The end-to-end review test skipped until saga's scoring module was in this catalog. It drives that review path and Orchestrate together.
 - `test_stage_skills_do_not_invoke_retired_transport_as_launch_path` skips until saga's stage skills are in this catalog. Its premise is those files in the upstream repository layout, and it does not call the driver.
 - `test_fleet_commons_internal_team_execution_routing_unaffected` skips when `fleet_commons.tier_resolver` cannot be imported. It guards Fleet Core's tier resolver, not the driver. After rebase onto `origin/main` this catalog's fleet-core ships that module, so the test runs.
 - Dropped tests: none.

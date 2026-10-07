@@ -11,7 +11,8 @@ the operator how to split it, and run the pieces across herdr agent sessions.
 Each unit gets its own git worktree and branch, so sessions cannot overwrite each other. Each unit
 can invoke any saga capability (`/plan`, `/brainstorm`, `/doc-review`, `/work`, `/code-review`,
 `/qa`, `/investigate`, …) or just take a plain prompt. Any agent configured on this machine can run
-any unit. Code Review is one top-level controller unit, not one Orchestrate unit per lens or reviewer.
+any unit. Code Review is one controller plus one targeted reviewer, and a second reviewer when
+the risk tier is high or very-high. It is not one Orchestrate unit per lens.
 
 ## How to use it
 
@@ -42,6 +43,8 @@ python3 "$S" settle --issue 42                     # sessions with branch eviden
 python3 "$S" launch-table --plan next.json --issue 42  # an expansion's table, checked as expand checks it
 python3 "$S" expand --issue 42 --plan next.json    # append units a finished phase named
 python3 "$S" review-result --issue 42 --file <result.json>  # persist the typed result and route repairs
+python3 "$S" review-launch --issue 42 --seat targeted-reviewer \
+    --packet <packet> --repo <repo> --head <sha>   # start one reviewer; the answer stays unread
 python3 "$S" merge --issue 42                      # one merge turn per ready unit, onto the parent branch
 python3 "$S" park --issue 42 --unit <name> --evidence "<err>"  # record push-succeeded / PR-blocked unit
 python3 "$S" resume --issue 42 --unit <name>       # open/adopt missing PR and continue run
@@ -98,7 +101,9 @@ each row by its name. A plan unit with no row of its name stays pending, the wri
 
 **Single launch seam and no-focus invariant.** Every run unit, including units added at a later
 phase boundary, must be persisted through `start` or `expand` before any worktree or session is
-created, and must launch only through `go` via the shared `agent-launcher` plugin (`agent_argv`).
+created. Ordinary units launch only through `go` via the shared `agent-launcher` plugin
+(`agent_argv`). `targeted-reviewer` and `external-reviewer` are not pane-launched by `go`. The
+controller starts them through `review-launch` after the packet exists.
 Never create worktrees manually or invoke `agents` directly for a run unit. Direct wrapper calls
 bypass the background launch flags (`--no-focus --current --herdr --herdr-control-only`) and steal
 operator UI focus. The launch contract lives in the sibling package `plugins/agent-launcher`. That
@@ -109,9 +114,11 @@ copy. It declares the Agent Launcher floor in the Claude adapter manifest and
 reads that declaration at runtime. Discovery and import never kill `--help`,
 `status`, or other read-only recovery commands merely because the companion is
 stale or unusable. The commands that write a pane, create a session or worktree,
-or close a tab -- `start`, `expand`, `go`, `review-result`, `merge` and `clean`
+or close a tab -- `start`, `expand`, `go`, `review-launch`, `review-result`, `merge` and `clean`
 -- warn and continue when the companion is below the declared floor, and the
-warning names `claude plugin update agent-launcher@infiquetra-plugins`. A missing
+warning names `claude plugin update agent-launcher@infiquetra-plugins`. `review-launch` also
+requires `launcher.py review`. When that subcommand's `--help` exits non-zero, `review-launch`
+refuses and names the same update remedy. A missing
 or unusable companion still refuses, and the refusal names
 `claude plugin install agent-launcher@infiquetra-plugins`. `roster` and `saga` write nothing, so a
 companion below the floor still serves them; they refuse, with the install remedy, only when no
@@ -137,18 +144,26 @@ worktree or session named outside that series is invisible to both commands, whi
 reason never to make one.
 
 **Reviewer seats live in the run record, not engine-prefs.** The `.saga/engine-prefs.json` seam is
-retired (#776). External-reviewer selection is a named unit in the plan (`role: external-reviewer`)
-launched through `expand`/`go`. A plan that still carries `engine_prefs` is refused. When a Code
-Review phase is present, Orchestrate refuses plain review prompts, direct reviewer launches, and
-duplicate review units. Halt; never fall back to the retired saga external-engine runner.
+retired (#776). A plan that still carries `engine_prefs` is refused. When a Code Review phase is
+present, Orchestrate refuses plain review prompts, direct reviewer launches, a lens roster, and a
+second controller. Halt; never fall back to the retired saga external-engine runner.
+
+The targeted reviewer, and on a high or very-high risk tier the external reviewer, start through
+`review-launch`. `go` does not open a pane or a worktree for either seat. The controller calls
+`review-launch` after the packet exists, and Orchestrate does not read the answer. An operator
+whose plan already names an `external-reviewer` pane should drop that seat. The targeted reviewer
+arrives through `review-launch`, and a high or very-high tier is what adds the second seat. A
+null, low, or medium tier refuses an already-present external seat. A controller-only plan still
+loads.
 
 **One review phase has one controller, and it owns acceptance.** Its plan row declares
 `role: "review-controller"`; `start` and `expand` refuse a second. Work rows that may receive repairs
 declare `role: "review-fixer"` or `role: "downstream-resolver"` and repository-relative `paths`.
 When the controller emits its typed result, run `review-result --file <path>`. Orchestrate first
 stores the complete UTF-8 string verbatim, then reads only its routing envelope: outcome and the fix
-request identity, owner role, and touched paths. It never imports the scorer or makes a second
-acceptance decision.
+request identity, owner role, and touched paths. A review run (`review_records.v1`, kind
+`review_run`) uses those same outcome words. Every blocking id is owned by `review-fixer`. It never
+imports the scorer or makes a second acceptance decision.
 
 **Several independent child lifecycles, each with its own frozen target, declare a `lifecycle` per
 controller.** This is the only shape in which more than one controller loads. It exists because a

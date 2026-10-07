@@ -25,6 +25,13 @@
 **Mechanism.** The re-run copied only the reviewer's test file into an empty directory, so a test that imports the change failed with `ModuleNotFoundError`. The match used the first line of the recorded output, and for a Python failure that line is `Traceback (most recent call last):`, which the unrelated crash also prints. The finding stayed reproduced. The re-run now exports the head commit and lays the reviewer's test files over that tree. The matched line is the last recorded line that is not a generic header, and a recorded test id has to appear in the captured output as well.
 
 **Generalizable rule.** A reproduction check has to run against the code under test, and the line it matches has to be specific to that failure.
+### The reviewer cannot be a go pane because the packet does not exist yet
+
+**Evidence.** Issue #159. `cmd_go` filters `targeted-reviewer` and `external-reviewer` before `make_worktree`. `cmd_review_launch` returns 2 when `--packet` is not a directory.
+
+**Mechanism.** The controller writes the packet after its own session starts. `go` opens panes before that packet exists, and the reviewer launch refuses a missing packet. Starting the reviewer from `go` would either launch with no packet or take a worker's concurrency slot while it waited.
+
+**Generalizable rule.** A session that needs an artifact the controller has not written yet cannot be opened by the same launch that starts the controller.
 
 ### A shared binary is not a catalogue claim, and admission does not touch the home directory unless asked
 

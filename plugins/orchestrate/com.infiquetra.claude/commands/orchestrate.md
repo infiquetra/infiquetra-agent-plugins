@@ -19,16 +19,18 @@ it. Each unit gets its own git worktree and branch, so sessions cannot overwrite
 A single issue is one lifecycle. A parent issue with children is one lifecycle per child, each with
 its own phases. A phase is not always one unit: three vendors writing competing plans is one phase
 and three units, and `/work` is one phase and however many units the plan calls for. Code Review is
-the exception: its phase is one top-level controller unit, and that controller owns its lens work.
+one controller plus one targeted reviewer, and a second reviewer when the risk tier is high or
+very-high. It is not one unit per lens.
 
 **Choices are made at the layer that owns them and inherited downward.** The operator picks which
 vendors may be used at all. `/work` takes its vendors and path ownership from the plan, and the one
 `/code-review` controller takes its lenses and external-reviewer seat from Code Review's contract,
 not from an Orchestrate interview.
 
-**Code Review is one controller, not one unit per reviewer.** Orchestrate launches and resumes that
-controller, persists its typed result verbatim, and routes only the result's owner, touched paths,
-and outcome. It never scores a lens or rebuilds Code Review policy.
+**Code Review is one controller plus one targeted reviewer.** Orchestrate launches and resumes the
+controller. The controller starts the reviewer through `review-launch`. Orchestrate persists the
+typed result verbatim and routes only the outcome and the fix request's owner, touched paths, and
+identity. It never scores a lens or rebuilds Code Review policy.
 
 ## Phase 1 — read the input
 
@@ -132,9 +134,9 @@ order — not a checklist, and stop as soon as the answers determine the table:
    of each other. If so, **this session reads all of them and writes the merged plan itself** — no
    merge unit, no extra tab. Say which parts came from where.
 5. **Which review shape applies?** Independent `/doc-review` passes may still be separate rows when
-   the operator asks for them. A `/code-review` phase is always one row with
-   `role: "review-controller"`, using a vendor other than the builders. Do not ask for a Code Review
-   reviewer count and do not turn lenses into Orchestrate units; Code Review owns both.
+   the operator asks for them. A `/code-review` phase is one controller plus one targeted reviewer.
+   Do not ask for a reviewer count and do not turn lenses into Orchestrate units. The second seat
+   is an `external-reviewer`, and a high or very-high risk tier adds it through `review-launch`.
 6. **Anything out of scope?**
 
 Do **not** ask about `/work` vendors or `/code-review` lenses. Those come from the plan.
@@ -146,21 +148,25 @@ orchestration-of-orchestration this plugin exists to avoid.
 ### Reviewer seats live in the run, not engine-prefs
 
 The `.saga/engine-prefs.json` seam is retired (#776). A plan that still carries `engine_prefs` is
-refused. Represent an external reviewer as a named unit with `role: "external-reviewer"` and the
-vendor/model/effort Herdr will launch. When a Saga Code Review phase is present, Orchestrate refuses
-plain review prompts, direct reviewer launches, and duplicate review units. Halt rather than falling
-back to the retired saga runner.
+refused. The targeted reviewer is not a Herdr pane. The controller calls `review-launch` once the
+packet exists, and that command calls `launcher.py review`. `go` does not open a pane for
+`targeted-reviewer` or `external-reviewer`. A high or very-high risk tier adds one
+`external-reviewer`. Any other tier starts one reviewer. An operator whose plan already names an
+`external-reviewer` pane should drop that seat: the targeted reviewer arrives through
+`review-launch`, and the tier is what adds the second seat. A null, low, or medium tier refuses an
+already-present external seat. A controller-only plan still loads. When a Saga Code Review phase is
+present, Orchestrate refuses plain review prompts, direct reviewer launches, a lens roster, and a
+second controller. Halt rather than falling back to the retired saga runner.
+
+The controller owns acceptance. Its lenses, cycle state, and typed outcome stay with Code Review.
+Orchestrate does not score lenses and does not decide review policy. A review run routes through
+the same outcome words as `review_result.v2`.
 
 **A unit is also told, whatever its capability, never to stop on a question.** Saga still asks about
 destination, scope class, resume-versus-mint — and every one of those in a background tab is a unit
 lost. The dispatched task carries the rule: take the most defensible option from a known set and say
 which; for a real question about the work, write it into the output and stop, so this session can
 bring it to the operator instead of a tab swallowing it.
-
-The one `/code-review` controller runs its own lens consensus. Its lenses, acceptance, external seat,
-cycle state, and typed outcome are its business, not something to rebuild here. Additional reviewer
-seats are named Herdr sessions on the same expand/go path as every other unit. The interview does
-not ask Orchestrate to decide review policy.
 
 ## Phase 3 — hand over the table
 
@@ -557,16 +563,16 @@ land in `Planning`; `work`, `fix` and `codereview` in `Active`. That is all five
 `Verify` or `Retro` — those begin only after conditions a run cannot observe — and a `status_map`
 override naming either stage is refused at submission, not merely absent from the default map.
 
-**Install saga 0.151.0 or later, mission-control 2.15.1 or later, and agent-launcher 1.4.0 or later before relying on this.**
-Both floors are declared in `plugin.json`; saga's is enforced — a saga below its floor is
-refused before any submission, because an older saga silently drops the `Stage` half and reports
-success. The agent-launcher floor is enforced at runtime as a command-by-state matrix:
-`--help` survives a stale or missing companion, `status` and `check` degrade to
-liveness-unknown when it is missing or unusable, and the seven pane-write, session-create or
-tab-close commands -- `start`, `expand`, `go`, `review-result`, `merge`, `clean`, and `go` (a relaunch builds a fresh worktree) --
-refuse with an update or install remedy. `roster` and `saga` write nothing, so a stale companion still
-serves them; only a missing or unusable one refuses them. The mission-control floor is a
-declaration the installer reads.
+**Install saga 0.151.0 or later, mission-control 2.15.1 or later, and agent-launcher 1.7.2 or later before relying on this.**
+Saga's floor and the mission-control floor are declared in `plugin.json`. Saga's is enforced: a
+saga below its floor is refused before any submission, because an older saga silently drops the
+`Stage` half and reports success. The mission-control floor is a declaration the installer reads.
+The agent-launcher floor is `>=1.7.2`. `review-launch` also needs `launcher.py review`. When that
+subcommand's `--help` fails, `review-launch` refuses and names
+`claude plugin update agent-launcher@infiquetra-plugins`. The other commands that write a pane,
+create a session or worktree, or close a tab warn and continue when the companion is below the
+numeric floor. A missing or unusable companion still refuses, and the refusal names the install
+remedy. `roster` and `saga` write nothing, so a companion below the floor still serves them.
 
 Read the exit code, not the prose. `merge` and `announce` both exit **2** when a card was not
 updated, and every failure prints its reason and whether a retry can clear it. `merge`'s full
