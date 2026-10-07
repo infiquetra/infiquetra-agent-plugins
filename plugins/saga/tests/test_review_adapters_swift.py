@@ -518,7 +518,10 @@ def _muter_changed_repo(tmp_path: Path) -> tuple[Path, str, str]:
     return repo, base, head
 
 
-def test_muter_survivors_map_into_repo_and_block(tmp_path: Path) -> None:
+def test_muter_survivors_map_into_repo_and_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(A, "_platform", lambda: "darwin")
     repo, base, head = _muter_changed_repo(tmp_path)
     output = tmp_path / "out"
     snapshots: list[tuple[list[str], bool | None, dict[str, str | None]]] = []
@@ -550,7 +553,10 @@ def test_muter_survivors_map_into_repo_and_block(tmp_path: Path) -> None:
     assert state["muter.conf.yml"] == _MUTER_CONFIG
 
 
-def test_muter_ambiguous_suffix_is_dropped(tmp_path: Path) -> None:
+def test_muter_ambiguous_suffix_is_dropped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(A, "_platform", lambda: "darwin")
     repo = _muter_repo(tmp_path)
     (repo / "example.swift").write_text(
         "public func other() -> Int {\n"
@@ -580,7 +586,10 @@ def test_muter_ambiguous_suffix_is_dropped(tmp_path: Path) -> None:
     assert files == {"Sources/other.swift"}
 
 
-def test_muter_not_configured_when_base_has_no_config(tmp_path: Path) -> None:
+def test_muter_not_configured_when_base_has_no_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(A, "_platform", lambda: "darwin")
     repo = _muter_repo(tmp_path, muter=None)
     base = _commit(repo, "base")
     (repo / "README.md").write_text("head\n", encoding="utf-8")
@@ -654,7 +663,10 @@ def test_muter_past_deadline_records_cap(
     assert all(Path(call[0]).name != "muter" or "--version" in call for call in runner.calls)
 
 
-def test_muter_older_major_is_a_mismatch_that_lowers(tmp_path: Path) -> None:
+def test_muter_older_major_is_a_mismatch_that_lowers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(A, "_platform", lambda: "darwin")
     repo, base, head = _muter_changed_repo(tmp_path)
     output = tmp_path / "out"
     versions = dict(_SWIFT_VERSIONS)
@@ -671,7 +683,10 @@ def test_muter_older_major_is_a_mismatch_that_lowers(tmp_path: Path) -> None:
     assert _severity(output, "surviving-mutant") == "fix-later"
 
 
-def test_muter_timeout_leaves_timeout_with_no_partials(tmp_path: Path) -> None:
+def test_muter_timeout_leaves_timeout_with_no_partials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(A, "_platform", lambda: "darwin")
     repo = _muter_repo(tmp_path)
     base = _commit(repo, "base")
     (repo / "README.md").write_text("head\n", encoding="utf-8")
