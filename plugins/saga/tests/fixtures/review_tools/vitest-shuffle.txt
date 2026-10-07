@@ -1,0 +1,7 @@
+Running tests with seed "42"
+ ❯ test/example.test.js (1 test | 1 failed) 4ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ─⎯⎯⎯⎯⎯⎯⎯
+ FAIL  test/example.test.js > adds
+AssertionError: expected 3 to be 4
+ Test Files  1 failed (1)
+      Tests  1 failed (1)

@@ -948,6 +948,126 @@ def test_docs_cover_the_framework() -> None:
 
 
 def test_fingerprint_names_these_paths() -> None:
+    assert T.FINGERPRINT_COMPONENTS[:5] == (
+        "plugins/saga/scripts/review_tools.py",
+        "plugins/saga/scripts/review_diff.py",
+        "plugins/saga/scripts/coverage_lines.py",
+        "plugins/saga/scripts/review_adapters_all_languages.py",
+        "plugins/saga/references/review-tools.yaml",
+    )
+
+
+_C4C_IDS = (
+    "npm-audit", "tsc", "eslint", "stryker", "vitest-shuffle", "jest-shuffle",
+    "knip", "dependency-cruiser", "prettier", "typescript-no-network",
+    "vitest-coverage", "jest-coverage", "dart-analyze", "mutate4dart",
+    "dart-shuffle", "dart-format", "dart-no-network", "dart-coverage",
+    "cargo-deny", "cargo-check", "clippy", "cargo-mutants", "cargo-machete",
+    "rustfmt", "rust-shuffle", "rust-no-network", "rust-coverage",
+    "swift-compiler", "swiftlint", "muter", "swift-format",
+    "swift-dependency-audit", "swift-shuffle", "swift-no-network",
+    "swift-coverage",
+)
+
+_C4C_COVERAGE = (
+    "vitest-coverage", "jest-coverage", "dart-coverage", "rust-coverage",
+    "swift-coverage",
+)
+
+_C4C_GAP_NAMES = (
+    "Swift dependency audit",
+    "Flutter branch coverage",
+    "Rust branch coverage on a stable toolchain",
+    "Muter on Linux",
+    "Random order in Rust and Swift",
+    "No network blocking outside Python",
+)
+
+
+def _c4c_fence(guide: str) -> Any:
+    for fence in guide.split("```yaml")[1:]:
+        parsed = yaml.safe_load(fence.split("```", 1)[0])
+        if isinstance(parsed, dict) and "c4c_level_maps" in parsed:
+            return parsed
+    raise AssertionError("the c4c fence is missing from review-tools.md")
+
+
+def test_docs_carry_c4c_outcome_table_and_gaps() -> None:
+    guide = (REFERENCES / "review-tools.md").read_text(encoding="utf-8")
+    document = yaml.safe_load(
+        (REFERENCES / "review-tools.yaml").read_text(encoding="utf-8")
+    )
+    rows = {row["id"]: row for row in document["tools"]}
+    assert set(_C4C_IDS) == set(rows) - {
+        "semgrep-security", "semgrep-saga", "gitleaks", "osv-scanner", "jscpd",
+        "lizard", "coverage", "relocated-test", "universal-ctags",
+        "bandit", "pip-audit", "mypy", "ruff-lint", "ruff-format", "vulture",
+        "import-linter", "cosmic-ray", "pytest-randomly", "pytest-socket",
+        "cdk-nag", "checkov-cdk", "checkov-cfn", "cfn-lint", "shellcheck",
+        "shfmt", "zizmor", "actionlint", "markdownlint-cli2", "lychee",
+        "cspell", "saga-git", "saga-gh", "saga-python", "saga-uv",
+        "saga-pyyaml",
+    }
+    for row_id in _C4C_IDS:
+        assert row_id in guide
+    parsed = _c4c_fence(guide)
+    assert parsed["c4c_level_maps"] == {
+        row_id: rows[row_id].get("level_map") or {}
+        for row_id in _C4C_IDS
+        if (rows[row_id].get("level_map") or {})
+    }
+    npm = parsed["c4c_npm_rows"]
+    TS = _load("review_adapters_typescript")
+    for word in ("critical", "high", "moderate", "low", "info"):
+        assert TS._npm_row(word) == npm[word]
+    assert TS._npm_row("bogus") == npm["default"]
+    assert TS._npm_row("") == npm["default"]
+    bands = parsed["c4c_deny_bands"]["bands"]
+    unscored = parsed["c4c_deny_bands"]["unscored"]
+    formula = _load("review_formula")
+    assert formula.dependency_row(None) == unscored
+    for score in (0.0, 3.9, 6.9, 7.0, 9.8, 10.0):
+        candidates = [band for band in bands if score >= band["at_least"]]
+        expected = max(candidates, key=lambda band: band["at_least"])["row"]
+        assert formula.dependency_row(score) == expected
+    assert parsed["c4c_coverage"] == {
+        row_id: rows[row_id]["purpose"] for row_id in _C4C_COVERAGE
+    }
+    concurrency = parsed["c4c_swift_concurrency"]
+    SW = _load("review_adapters_swift")
+    assert tuple(concurrency["id_hints"]) == SW._CONCURRENCY_ID_HINTS
+    assert tuple(concurrency["phrases"]) == SW._CONCURRENCY_PHRASES
+    gaps = parsed["c4c_gaps"]
+    assert [gap["name"] for gap in gaps] == list(_C4C_GAP_NAMES)
+    adapter_rows: dict[str, tuple[str, ...]] = {}
+    for name in (
+        "review_adapters_typescript", "review_adapters_dart",
+        "review_adapters_rust", "review_adapters_swift",
+    ):
+        adapter_rows.update(_load(name)._ROWS)
+    runner_source = (SCRIPTS / "review_tools.py").read_text(encoding="utf-8")
+    swift_source = (SCRIPTS / "review_adapters_swift.py").read_text(encoding="utf-8")
+    for gap in gaps:
+        for adapter_id in gap["adapters"]:
+            assert gap["row"] in adapter_rows[adapter_id]
+        if gap["reason"] == "known-gap":
+            for adapter_id in gap["adapters"]:
+                assert rows[adapter_id].get("gap_first") is True
+        elif gap["name"] == "Muter on Linux":
+            assert rows["muter"].get("platforms") == []
+            assert gap["reason"] in swift_source
+        else:
+            assert gap["adapters"] == []
+            assert gap["reason"] in runner_source
+    served = [
+        row_id for row_id in _C4C_IDS if (rows[row_id].get("tool") or "")
+    ]
+    adapters = T.default_adapters()
+    for row_id in served:
+        assert sum(1 for item in adapters if item.id == row_id) == 1
+
+
+def test_fingerprint_names_c4c_paths() -> None:
     assert T.FINGERPRINT_COMPONENTS == (
         "plugins/saga/scripts/review_tools.py",
         "plugins/saga/scripts/review_diff.py",
@@ -959,6 +1079,10 @@ def test_fingerprint_names_these_paths() -> None:
         "plugins/saga/scripts/review_adapters_shell.py",
         "plugins/saga/scripts/review_adapters_workflows.py",
         "plugins/saga/scripts/review_adapters_markdown.py",
+        "plugins/saga/scripts/review_adapters_typescript.py",
+        "plugins/saga/scripts/review_adapters_dart.py",
+        "plugins/saga/scripts/review_adapters_rust.py",
+        "plugins/saga/scripts/review_adapters_swift.py",
     )
     calibration = SCRIPTS / "review_calibration.py"
     if calibration.exists():

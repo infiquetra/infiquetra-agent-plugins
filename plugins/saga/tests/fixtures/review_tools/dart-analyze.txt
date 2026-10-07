@@ -1,0 +1,7 @@
+Analyzing probe...
+
+  error - lib/add.dart:6:10 - A value of type 'int' can't be returned from the function 'greet' because it has a return type of 'String'. - return_of_invalid_type
+warning - lib/add.dart:1:8 - Unused import: 'dart:async'. Try removing the import directive. - unused_import
+   info - lib/add.dart:9:7 - The type name 'badName' isn't an UpperCamelCase identifier. Try changing the name to follow the UpperCamelCase style. - camel_case_types
+
+3 issues found.

@@ -33,6 +33,17 @@
   a language, from the stored verdicts. `scripts/check_repo.py` calls that module's fingerprint
   check and, once a run is recorded, fails naming the component that changed.
 
+- Issue 153: review adapters for TypeScript, Dart, Rust and Swift on the review runner
+  (`scripts/review_adapters_typescript.py`, `review_adapters_dart.py`,
+  `review_adapters_rust.py`, `review_adapters_swift.py`, 35 new rows in
+  `references/review-tools.yaml`). Type checkers compare base against head over the whole
+  project; linters take their outcome from their own level; dependency audits compare
+  lockfiles; shuffle adapters run suites in random order; mutation adapters share the
+  900 second cap; the six known gaps record degraded inputs, never a pass. The runner
+  gains report-file and stream parsing, gap short-circuiting, base-file staging with
+  head-config stripping, and bare-integer version matching. The saga suite refuses
+  sockets suite-wide. `references/review-tools.md` documents every outcome mapping.
+
 - Issue 156: `scripts/sweep_pieces.py` cuts one piece per changed function for `jev sweep`.
   `references/review-tools.yaml` gains a Universal Ctags row the review runner does not execute.
   `references/model-prices.yaml` prices TypeSafe input. The fleet bundle includes `jev_sweep`.

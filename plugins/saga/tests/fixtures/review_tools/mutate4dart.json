@@ -1,0 +1,24 @@
+{
+  "score": 0.0,
+  "methods": [
+    {
+      "file": "lib/add.dart",
+      "method": "(top-level).add",
+      "line": 1,
+      "complexity": 1,
+      "crap": null,
+      "score": 0.0,
+      "mutants": [
+        {
+          "line": 2,
+          "operator": "arithmetic",
+          "replacement": "-",
+          "status": "survived",
+          "tests": [
+            "test/add_test.dart"
+          ]
+        }
+      ]
+    }
+  ]
+}

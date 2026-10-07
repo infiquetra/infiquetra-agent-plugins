@@ -1,0 +1,62 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "example-lib": {
+      "name": "example-lib",
+      "severity": "high",
+      "via": [
+        {
+          "source": 1212345,
+          "name": "example-lib",
+          "dependency": "example-lib",
+          "title": "example-lib has an example flaw",
+          "url": "https://github.com/advisories/GHSA-AAAA-BBBB-CCCC",
+          "severity": "high",
+          "cwe": ["CWE-0200"],
+          "cvss": {"score": 7.5, "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"},
+          "range": "<2.0.0"
+        }
+      ],
+      "range": "<2.0.0"
+    },
+    "sample-util": {
+      "name": "sample-util",
+      "severity": "moderate",
+      "via": [
+        {
+          "source": 1543210,
+          "name": "sample-util",
+          "dependency": "sample-util",
+          "title": "sample-util has a moderate example flaw",
+          "url": "https://github.com/advisories/GHSA-DDDD-EEEE-FFFF",
+          "severity": "moderate",
+          "range": "<1.2.0"
+        }
+      ],
+      "range": "<1.2.0"
+    },
+    "quiet-pkg": {
+      "name": "quiet-pkg",
+      "severity": "info",
+      "via": [
+        {
+          "name": "quiet-pkg",
+          "dependency": "quiet-pkg",
+          "title": "quiet-pkg has an informational example note",
+          "url": "https://github.com/advisories/GHSA-1111-2222-3333",
+          "severity": "info",
+          "range": "<0.3.0"
+        }
+      ],
+      "range": "<0.3.0"
+    },
+    "unrated-pkg": {
+      "name": "unrated-pkg",
+      "via": [
+        {"url": "https://example.com/advisories/EXAMPLE-1", "title": "unrated example flaw", "range": "<0.1.0"}
+      ],
+      "range": "<0.1.0"
+    }
+  },
+  "metadata": {"vulnerabilities": {"info": 1, "low": 0, "moderate": 1, "high": 1, "critical": 0}}
+}

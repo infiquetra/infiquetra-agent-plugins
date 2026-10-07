@@ -21,6 +21,11 @@ from typing import Any
 
 import pytest
 
+# The thin-client tests below drive a resident process over owner-only
+# AF_UNIX sockets in a temp dir: local IPC, never IP traffic. That is why
+# this file opts out of the suite-wide socket refusal (issue 153).
+pytestmark = pytest.mark.allow_sockets
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 _HERE = Path(__file__).resolve().parent
 HARNESS_PATH = _HERE / "support" / "prompt_suggestion_latency.py"

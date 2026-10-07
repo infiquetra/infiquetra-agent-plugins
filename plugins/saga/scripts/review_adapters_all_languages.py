@@ -195,20 +195,28 @@ _SCAN_LOCKFILES = frozenset({
 })
 
 
-def _invoke_osv(context: ScanContext) -> list[str]:
-    found = [path for path in _lockfiles(context.root) if path.name in _SCAN_LOCKFILES | _JS_SKIP]
-    names = {path.name for path in found}
-    scannable = [path for path in found if path.name not in _JS_SKIP]
-    if (names & _JS_SKIP) and not (names & _JS_OK) and not scannable:
-        raise ToolGap("known-gap", "security.dependency-high")
-    if not scannable:
-        return []
-    argv = ["osv-scanner", "scan", "source", "--format", "json"]
-    for path in scannable:
-        relative = path.relative_to(context.root).as_posix()
-        token = f"requirements.txt:{relative}" if path.name == "requirements.txt" else relative
-        argv.extend(["--lockfile", token])
-    return argv
+def _invoke_osv(npm_audit: bool):
+    """osv-scanner over every scannable lockfile. The npm-only gap stands only
+    while no ``npm-audit`` row owns npm's lockfiles (issue 153)."""
+
+    def invoke(context: ScanContext) -> list[str]:
+        found = [path for path in _lockfiles(context.root) if path.name in _SCAN_LOCKFILES | _JS_SKIP]
+        names = {path.name for path in found}
+        scannable = [path for path in found if path.name not in _JS_SKIP]
+        if (names & _JS_SKIP) and not (names & _JS_OK) and not scannable:
+            if npm_audit:
+                return []
+            raise ToolGap("known-gap", "security.dependency-high")
+        if not scannable:
+            return []
+        argv = ["osv-scanner", "scan", "source", "--format", "json"]
+        for path in scannable:
+            relative = path.relative_to(context.root).as_posix()
+            token = f"requirements.txt:{relative}" if path.name == "requirements.txt" else relative
+            argv.extend(["--lockfile", token])
+        return argv
+
+    return invoke
 
 
 def _lockfiles(root: Path) -> list[Path]:
@@ -409,11 +417,15 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
     min_lines = int(jscpd.get("min_lines") or 5)
     min_tokens = int(jscpd.get("min_tokens") or 50)
     cyclomatic = int(lizard.get("cyclomatic") or 15)
+    npm_audit = any(
+        isinstance(row, dict) and str(row.get("id") or "") == "npm-audit"
+        for row in tools
+    )
     invoke = {
         "semgrep-security": _invoke_semgrep_security,
         "semgrep-saga": _invoke_semgrep_saga,
         "gitleaks": _invoke_gitleaks,
-        "osv-scanner": _invoke_osv,
+        "osv-scanner": _invoke_osv(npm_audit),
         "jscpd": _invoke_jscpd(min_lines, min_tokens),
         "lizard": _invoke_lizard(cyclomatic),
         "coverage": lambda _context: [],

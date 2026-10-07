@@ -1,0 +1,27 @@
+[
+  {
+    "filePath": "@ROOT@/src/example.js",
+    "messages": [
+      {
+        "ruleId": "no-undef",
+        "severity": 2,
+        "message": "'missingName' is not defined.",
+        "line": 5,
+        "column": 7,
+        "endLine": 5,
+        "endColumn": 18
+      },
+      {
+        "ruleId": "no-unused-vars",
+        "severity": 1,
+        "message": "'unusedVar' is assigned a value but never used.",
+        "line": 2,
+        "column": 7,
+        "endLine": 2,
+        "endColumn": 16
+      }
+    ],
+    "errorCount": 1,
+    "warningCount": 1
+  }
+]

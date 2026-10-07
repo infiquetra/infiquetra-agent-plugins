@@ -144,6 +144,116 @@ A numeric CVSS score is used as the number, including the string `"9.0"`. A vect
 
 The parser reads `RuleID`, `File`, `StartLine` and `EndLine`. It drops `Match` and `Secret`. The statement is "A secret scanner reported a match in this file." The anchor is the rule id and the path. The raw bytes may contain the match. The record cites the sha256 and does not.
 
+## The four languages
+
+TypeScript, Dart, Rust and Swift each get one adapter module, built from the yaml rows and wired into the default list in its own unit, so there is never a row without wiring:
+
+- `plugins/saga/scripts/review_adapters_typescript.py`
+- `plugins/saga/scripts/review_adapters_dart.py`
+- `plugins/saga/scripts/review_adapters_rust.py`
+- `plugins/saga/scripts/review_adapters_swift.py`
+
+The second fence is the same data as the yaml and the adapter modules. A test parses all three and fails when the values differ: the level maps against the rows' `level_map`, the npm severities against the TypeScript module, the cargo-deny bands against `review_formula.dependency_row`, the coverage templates against the coverage rows' `purpose`, the Swift concurrency lists against the Swift module, and each gap against its rows and the code that emits its reason.
+
+```yaml
+c4c_level_maps:
+  eslint:
+    error: correctness.tool-error
+    warning: correctness.tool-warning
+  dependency-cruiser:
+    error: architecture-maintainability.structural-check-fails
+    warning: architecture-maintainability.tool-warning
+    info: architecture-maintainability.tool-style
+  dart-analyze:
+    warning: correctness.tool-warning
+    information: correctness.tool-style
+  clippy:
+    error: correctness.tool-error
+    warning: correctness.tool-warning
+  swift-compiler:
+    warning: correctness.tool-warning
+  swiftlint:
+    error: correctness.tool-error
+    warning: correctness.tool-warning
+c4c_npm_rows:
+  critical: security.dependency-high
+  high: security.dependency-high
+  moderate: security.dependency-medium-low
+  low: security.dependency-medium-low
+  info: security.dependency-medium-low
+  default: security.dependency-high
+c4c_deny_bands:
+  bands:
+    - {at_least: 7.0, row: security.dependency-high}
+    - {at_least: 0.0, row: security.dependency-medium-low}
+  unscored: security.dependency-high
+c4c_coverage:
+  vitest-coverage: "Pinned coverage invocation, run inside the profile test command: vitest run --coverage --coverage.provider=v8 --coverage.reporter=lcov --coverage.reportsDirectory=. (C3 writes it.)"
+  jest-coverage: "Pinned coverage invocation, run inside the profile test command: jest --coverage --coverageReporters=lcov --coverageDirectory=. (C3 writes it.)"
+  dart-coverage: "Pinned coverage invocation, run inside the profile test command: dart test --coverage=.coverage && dart run coverage:format_coverage --packages=.dart_tool/package_config.json --report-on=lib --lcov --out=lcov.info --in=.coverage (C3 writes it.)"
+  rust-coverage: "Pinned coverage invocation, run inside the profile test command: cargo llvm-cov --branch --lcov --output-path lcov.info (nightly; stable omits --branch) or with nextest appended. (C3 writes it.)"
+  swift-coverage: "Pinned coverage invocation, run inside the profile test command: swift test --enable-code-coverage, then llvm-cov export -format=lcov over the test bundle into lcov.info. (C3 writes it.)"
+c4c_swift_concurrency:
+  id_hints: [Isolation, Sendable, Sending, Concurrency, DataRace, Actor]
+  phrases: [data race, data-race, sendable, sending, concurrent, isolation]
+c4c_gaps:
+  - name: Swift dependency audit
+    adapters: [swift-dependency-audit]
+    row: security.dependency-high
+    reason: known-gap
+  - name: Flutter branch coverage
+    adapters: []
+    row: testing.uncovered-branch
+    reason: no-branch-data
+  - name: Rust branch coverage on a stable toolchain
+    adapters: []
+    row: testing.uncovered-branch
+    reason: no-branch-data
+  - name: Muter on Linux
+    adapters: [muter]
+    row: testing.surviving-mutant
+    reason: unsupported-platform
+  - name: Random order in Rust and Swift
+    adapters: [rust-shuffle, swift-shuffle]
+    row: testing.flaky-order-or-network
+    reason: known-gap
+  - name: No network blocking outside Python
+    adapters: [typescript-no-network, dart-no-network, rust-no-network, swift-no-network]
+    row: testing.flaky-order-or-network
+    reason: known-gap
+```
+
+## TypeScript
+
+`tsc` is the type checker: base against head over the whole project, `correctness.type-error`, blocks. It runs against a staged config that extends the base tsconfig, never the head tree's. `eslint` takes its outcome from its own level on changed lines: severity 2 is `correctness.tool-error` and blocks, severity 1 is `correctness.tool-warning` and fixes later. `npm-audit` compares the lockfiles base against head; the severity words map per the fence (`critical` and `high` block, `moderate`, `low` and `info` fix later, anything unrated blocks). `stryker` keeps surviving mutants on changed lines, `testing.surviving-mutant`, blocks, sharing the 900 second mutation cap; its JSON report is read after the run. `vitest-shuffle` and `jest-shuffle` run the suites in random order on changed lines, `testing.flaky-order-or-network`, fix later; a run with no tests is reason `no-tests-ran`, never a pass. `knip` compares unused files, exports, types and dependencies base against head, `architecture-maintainability.complexity-dead-code-naming`, note. `dependency-cruiser` compares rule violations base against head per the fence (`error` blocks). `prettier` is fix mode: it reformats and writes no record. `typescript-no-network` is a known gap (see below). `vitest-coverage` and `jest-coverage` are data rows; C3 writes their fenced invocations into the profile test command.
+
+## Dart
+
+`dart-analyze` is the type checker: base against head over the whole project. Errors are `correctness.type-error` and block; `warning` and `information` map per the fence. `mutate4dart` keeps surviving mutants on changed lines, `testing.surviving-mutant`, blocks, sharing the 900 second mutation cap. `dart-shuffle` runs the suite in random order on changed lines, `testing.flaky-order-or-network`, fix later; a run with no tests is reason `no-tests-ran`, never a pass. `dart-format` is fix mode: it reformats and writes no record. `dart-no-network` is a known gap (see below). `dart-coverage` is a data row; C3 writes its fenced invocation into the profile test command. A Flutter report carries no branch data, so the line fallback applies and the findings are degraded.
+
+## Rust
+
+`cargo-check` is the type checker: base against head over the whole project, `correctness.type-error`, blocks. `clippy` takes its outcome from its own level on changed lines: `error` blocks, `warning` fixes later. `cargo-deny` compares advisories base against head over `Cargo.lock`; the CVSS bands map per the fence (unscored blocks, 7.0 and above blocks, below fixes later). `cargo-mutants` keeps missed mutants on changed lines, `testing.surviving-mutant`, blocks, sharing the 900 second mutation cap; its JSON report is read after the run. `cargo-machete` compares unused dependencies base against head, `architecture-maintainability.complexity-dead-code-naming`, note. `rustfmt` is fix mode: it reformats and writes no record. `rust-shuffle` and `rust-no-network` are known gaps (see below). `rust-coverage` is a data row; C3 writes its fenced invocation into the profile test command, with `--branch` on nightly only. A stable-toolchain report carries no branch data, so the line fallback applies and the findings are degraded.
+
+## Swift
+
+`swift-compiler` is the type checker: base against head over the whole project, each tree in its own build directory, with strict concurrency on. Errors are `correctness.type-error` and block; warnings are `correctness.tool-warning` and fix later, except the strict-concurrency family, which blocks: a diagnostic whose id contains one of `Isolation`, `Sendable`, `Sending`, `Concurrency`, `DataRace` or `Actor`, or whose message contains one of `data race`, `data-race`, `sendable`, `sending`, `concurrent` or `isolation`. `swiftlint` takes its outcome from its own level on changed lines: `error` blocks, `warning` fixes later. `muter` keeps surviving mutants on changed lines, `testing.surviving-mutant`, blocks, sharing the 900 second mutation cap; it runs on macOS only. `swift-format` is fix mode: it reformats and writes no record. `swift-dependency-audit`, `swift-shuffle` and `swift-no-network` are known gaps (see below). `swift-coverage` is a data row; C3 writes its fenced invocation into the profile test command.
+
+## Known gaps
+
+Each gap is a degraded input naming the tool, the row and the reason, never a pass or a fail:
+
+| Gap | Tool | Row | Reason |
+|---|---|---|---|
+| Swift dependency audit | swift | `security.dependency-high` | known-gap |
+| Flutter branch coverage | coverage | `testing.uncovered-branch` | no-branch-data |
+| Rust branch coverage on a stable toolchain | coverage | `testing.uncovered-branch` | no-branch-data |
+| Muter on Linux | muter | `testing.surviving-mutant` | unsupported-platform |
+| Random order in Rust and Swift | cargo, swift | `testing.flaky-order-or-network` | known-gap |
+| No network blocking outside Python | node, dart, cargo, swift | `testing.flaky-order-or-network` | known-gap |
+
+No audit tool reads Swift package locks, so the dependency gap short-circuits before the version probe. The two branch-coverage gaps arrive through the framework's line fallback, not through an adapter. Muter refuses Linux from its own `invoke`, after the markers check, so a tree without Swift stays silent. The shuffle and no-network gaps short-circuit before the version probe, so a missing binary still records the gap.
+
 ## Coverage and the relocated run
 
 Coverage prefers branches. One finding per uncovered changed line on `testing.uncovered-branch`, plus one measurement, metric `changed-line branch coverage`, threshold 1.0, direction at-least. Zero changed lines measure 1.0 and produce no finding. A changed file with no branch data makes the report a line fallback: the findings are `degraded: true` and the degraded input reason is `no-branch-data`. No report is reason `no-report` and produces no finding. Two reports whose uncovered sets differ are exit 2.
@@ -168,6 +278,10 @@ Raw tool output is `~/.saga/review-output/<sha256>`, mode 0600. `~/.saga` is cre
 - `plugins/saga/scripts/review_adapters_shell.py`
 - `plugins/saga/scripts/review_adapters_workflows.py`
 - `plugins/saga/scripts/review_adapters_markdown.py`
+- `plugins/saga/scripts/review_adapters_typescript.py`
+- `plugins/saga/scripts/review_adapters_dart.py`
+- `plugins/saga/scripts/review_adapters_rust.py`
+- `plugins/saga/scripts/review_adapters_swift.py`
 
 This card does not create `review_calibration.py`. The Semgrep pack is not a repository path. The yaml sha256 is how a later fingerprint reaches the cache without a download.
 

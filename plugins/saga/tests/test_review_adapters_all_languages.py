@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import shlex
+from dataclasses import replace
 import socket
 import subprocess
 import sys
@@ -375,7 +376,38 @@ def test_osv_scanner_skips_npm_and_maps_scores(tmp_path: Path) -> None:
     _valid(output)
 
 
+def _osv_without_npm_audit() -> Any:
+    """osv-scanner as built when no npm-audit row exists (synthetic, issue 153)."""
+    return replace(_adapter("osv-scanner"), invoke=A._invoke_osv(False))
+
+
 def test_an_npm_only_tree_is_a_known_gap(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "package-lock.json").write_text("{}\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "package-lock.json").write_text("{ }\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    profile = _profile(tmp_path / "profile.json", {"osv-scanner": {"version": "1.0.0"}})
+    runner = _Calls(base, (FIXTURES / "osv-scanner.json").read_text(encoding="utf-8"))
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, profile, output, tmp_path / "home", [_osv_without_npm_audit()], runner,
+    )
+    assert code == 0
+    assert all("scan" not in argv for argv in runner.calls)
+    assert all("package-lock.json" not in " ".join(argv) for argv in runner.calls)
+    assert _read(output, "degraded.json") == [{
+        "lens": "security",
+        "language": "none",
+        "input": "security.dependency-high",
+        "tool": "osv-scanner",
+        "reason": "known-gap",
+    }]
+    assert _read(output, "findings.json") == []
+
+
+def test_an_npm_audit_row_retires_the_osv_npm_gap(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init(repo)
     (repo / "package-lock.json").write_text("{}\n", encoding="utf-8")
@@ -390,14 +422,7 @@ def test_an_npm_only_tree_is_a_known_gap(tmp_path: Path) -> None:
     )
     assert code == 0
     assert all("scan" not in argv for argv in runner.calls)
-    assert all("package-lock.json" not in " ".join(argv) for argv in runner.calls)
-    assert _read(output, "degraded.json") == [{
-        "lens": "security",
-        "language": "none",
-        "input": "security.dependency-high",
-        "tool": "osv-scanner",
-        "reason": "known-gap",
-    }]
+    assert _read(output, "degraded.json") == []
     assert _read(output, "findings.json") == []
 
 

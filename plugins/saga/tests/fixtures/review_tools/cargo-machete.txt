@@ -1,0 +1,4 @@
+cargo-machete found the following unused dependencies in this directory:
+example -- ./Cargo.toml:
+
+	example-lib

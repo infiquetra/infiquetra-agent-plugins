@@ -1,0 +1,38 @@
+[
+  {
+    "character": 19,
+    "file": "@ROOT@/Sources/probe/probe.swift",
+    "line": 1,
+    "reason": "Variable name 'a' should be between 3 and 40 characters long",
+    "rule_id": "identifier_name",
+    "severity": "Error",
+    "type": "Identifier Name"
+  },
+  {
+    "character": 29,
+    "file": "@ROOT@/Sources/probe/probe.swift",
+    "line": 1,
+    "reason": "Variable name 'b' should be between 3 and 40 characters long",
+    "rule_id": "identifier_name",
+    "severity": "Error",
+    "type": "Identifier Name"
+  },
+  {
+    "character": 9,
+    "file": "@ROOT@/Sources/probe/probe.swift",
+    "line": 2,
+    "reason": "Variable name 'x' should be between 3 and 40 characters long",
+    "rule_id": "identifier_name",
+    "severity": "Error",
+    "type": "Identifier Name"
+  },
+  {
+    "character": 20,
+    "file": "@ROOT@/Sources/probe/probe.swift",
+    "line": 2,
+    "reason": "Line should be 120 characters or less; currently it has 200 characters",
+    "rule_id": "line_length",
+    "severity": "Warning",
+    "type": "Line Length"
+  }
+]

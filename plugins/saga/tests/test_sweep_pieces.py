@@ -419,6 +419,8 @@ def test_sweep_components_name_the_three_paths() -> None:
 def test_c4a_fingerprint_is_unchanged() -> None:
     # C6 left C4a's five paths as the prefix. A later card may append.
     tools = _load("review_tools")
+    # C4b and C4c each append their adapter modules after these five; the
+    # full tuple is asserted by test_fingerprint_names_c4c_paths.
     assert tools.FINGERPRINT_COMPONENTS[:5] == (
         "plugins/saga/scripts/review_tools.py",
         "plugins/saga/scripts/review_diff.py",
