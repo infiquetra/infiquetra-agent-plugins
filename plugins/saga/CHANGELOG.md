@@ -54,6 +54,14 @@
 
 ### Fixed
 
+- Issue 189: `scripts/reviewer_answer.py` replaces known secret formats (GitHub, AWS, Slack, Stripe,
+  Google, Anthropic and OpenAI-style keys, private-key blocks, JSON web tokens, bearer tokens,
+  credentials in URLs, named secret assignments) and long high-entropy runs, including base64 runs
+  that hold `/`, with `[scrubbed:<kind>]` in every free-text string a record stores: each
+  finding's statement, dispute text, location (anchor, file, function) and proof, and each cleared
+  item's reason. It does so before the record is built, before Jev's state is built, and before
+  the 4,000-character cut.
+
 - Issue 151: an unknown tool level or lens is exit 2. A base tree the adapter declines to scan is an empty baseline, so head is still compared. A relocated command that is refused removes the work directories already created. A head payload that does not parse is reason `unparseable`.
 
 - Issue 144: `/work` §5.3 no longer tells the worker to re-run `/code-review` while "capturing a

@@ -2080,11 +2080,32 @@ REVIEWER_API_KEY_VARIABLES = (
 )
 REVIEWER_API_KEY_PREFIXES = ("CLAUDE_CODE_USE_",)
 
-#: A variable whose name looks like a credential is hidden from the reviewer's sandboxed commands.
+#: A variable whose name looks like a credential never reaches the reviewer's sandboxed commands,
+#: even if it is added to the allow-list below.
 REVIEWER_CREDENTIAL_NAME = re.compile(
     r"TOKEN|KEY|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|SESSION|COOKIE", re.IGNORECASE
 )
-#: Credential files and directories the reviewer's commands may not read.
+#: The only launch-environment variables the reviewer's sandboxed commands receive (issue #189).
+#: Every other name is denied, whatever it is called. Measured on Claude Code 2.1.292: a Python
+#: test and git run with exactly these. The sandbox adds its own proxy and runtime variables, which
+#: are not in the launch environment.
+REVIEWER_ENVIRONMENT_ALLOWED = (
+    "PATH",  # finds the toolchain
+    "HOME",  # tools resolve ``~`` against it; the sandbox blocks reads under it
+    "USER",  # some tools look up the current user
+    "LOGNAME",  # the same, by its older name
+    "SHELL",  # the shell commands run in
+    "TERM",  # terminal-aware output
+    "LANG",  # text encoding
+    "LC_ALL",  # text encoding, when set
+    "LC_CTYPE",  # text encoding, when set
+    "TZ",  # time zone
+    "TMPDIR",  # where temp files go; the sandbox sets its own
+    "GIT_CONFIG_GLOBAL",  # points git at /dev/null, because home is unreadable
+)
+#: Credential files and directories. The sandbox blocks the whole home directory, so this list no
+#: longer feeds ``denyRead``. It feeds the permission layer's ``Read`` deny rules, and the check
+#: that a path allowed back re-opens none of these.
 REVIEWER_CREDENTIAL_PATHS = (
     "~/.ssh",
     "~/.aws",
@@ -2097,6 +2118,30 @@ REVIEWER_CREDENTIAL_PATHS = (
     "~/.azure",
     "~/.claude/.credentials.json",
     "~/.codex/auth.json",
+    "~/.git-credentials",
+    "~/.pypirc",
+    "~/.cargo/credentials",
+    "~/.cargo/credentials.toml",
+    "~/.terraform.d",
+    "~/.vault-token",
+    "~/.config/hub",
+    "~/.local/share/keyrings",
+    "~/.npmrc",
+)
+#: Directories under home that hold many tools' state; allowing one back would re-open them all.
+REVIEWER_SHARED_ROOTS = ("~/.config", "~/.local", "~/.local/share", "~/.cache", "~/Library")
+#: Interpreters a reviewed repository's tests run on. When one on the session's ``PATH`` lives
+#: under home, its install is allowed back: a binary under a blocked home runs but cannot read its
+#: own files (measured on Claude Code 2.1.292).
+REVIEWER_TOOLCHAIN_COMMANDS = (
+    ("python3", "python3 on the session PATH resolves here; its standard library and packages"),
+    ("node", "node on the session PATH resolves here; its bundled libraries"),
+)
+#: The parts of a toolchain install allowed back, never the whole install.
+REVIEWER_TOOLCHAIN_PARTS = (
+    ("bin", "its executables"),
+    ("lib", "its standard library and packages"),
+    ("pyvenv.cfg", "the marker a virtual environment's interpreter reads at start"),
 )
 #: Paths in the scratch copy that tools write and nobody edits: Python's temp-directory fallback
 #: (the sandbox denies the system temp roots, so ``tempfile`` falls back to the working directory),
@@ -2151,19 +2196,111 @@ def reviewer_temp_roots(platform: str | None = None) -> tuple[str, ...]:
     return ("/tmp", "/var/tmp")
 
 
-def reviewer_credential_variables(env: Mapping[str, str]) -> list[str]:
-    """The environment variables hidden from sandboxed commands, by name."""
-    return sorted(name for name in env if REVIEWER_CREDENTIAL_NAME.search(name))
+def reviewer_denied_variables(env: Mapping[str, str]) -> list[str]:
+    """The environment variables hidden from sandboxed commands: every name off the allow-list."""
+    return sorted(
+        name for name in env
+        if name not in REVIEWER_ENVIRONMENT_ALLOWED or REVIEWER_CREDENTIAL_NAME.search(name)
+    )
 
 
 def reviewer_session_environment(env: Mapping[str, str]) -> dict[str, str]:
-    """The session's environment: everything, except what would sign in with an API key."""
-    return {
+    """The session's environment: everything, except what would sign in with an API key.
+
+    Git fails outright when it cannot read its global configuration, and the sandbox makes the home
+    directory unreadable, so git is pointed at ``/dev/null`` instead (measured on 2.1.292).
+    """
+    kept = {
         name: value
         for name, value in env.items()
         if name not in REVIEWER_API_KEY_VARIABLES
         and not name.startswith(REVIEWER_API_KEY_PREFIXES)
     }
+    kept["GIT_CONFIG_GLOBAL"] = os.devnull
+    return kept
+
+
+def _reviewer_home(env: Mapping[str, str]) -> Path:
+    return Path(env.get("HOME") or Path.home())
+
+
+def _reviewer_expand(path: str, home: Path) -> Path:
+    if path == "~":
+        return home
+    return home / path[2:] if path.startswith("~/") else Path(path)
+
+
+def _reviewer_forms(path: Path) -> set[Path]:
+    """*path* as written, with ``..`` collapsed, and resolved through every symlink."""
+    written = Path(os.path.normpath(path))
+    try:
+        return {written, written.resolve()}
+    except (OSError, RuntimeError):
+        return {written}
+
+
+def reviewer_allowed_read_problem(path: Path, home: Path) -> str | None:
+    """Why allowing *path* back inside the blocked home would re-open too much, or ``None``.
+
+    A path fails when, as written or resolved, it is the home directory or above it, is a shared
+    root such as ``~/.config``, or is equal to, inside, or above a credential path. Being inside
+    home is not a failure: the scratch copy lives under ``~/.cache``.
+    """
+    forms = _reviewer_forms(home / path)
+    homes = _reviewer_forms(home)
+    for form in forms:
+        if any(form == h or h.is_relative_to(form) for h in homes):
+            return f"{path} is the home directory or above it"
+        for root in REVIEWER_SHARED_ROOTS:
+            if any(form == r for h in homes for r in _reviewer_forms(_reviewer_expand(root, h))):
+                return f"{path} is the shared root {root}"
+        for credential in REVIEWER_CREDENTIAL_PATHS:
+            for h in homes:
+                for c in _reviewer_forms(_reviewer_expand(credential, h)):
+                    if form == c or form.is_relative_to(c) or c.is_relative_to(form):
+                        return f"{path} is, is inside, or holds the credential path {credential}"
+    return None
+
+
+def reviewer_toolchain_paths(
+    env: Mapping[str, str],
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """The toolchain installs under home to allow back, and the candidates dropped, with reasons.
+
+    For each interpreter on the session's ``PATH``, two candidates: the prefix as found (a virtual
+    environment's directory) and the prefix it resolves to (the real install). A candidate outside
+    home needs no allow-back; one that would re-open too much is dropped. Of a candidate kept, only
+    the parts in ``REVIEWER_TOOLCHAIN_PARTS`` that exist are allowed back.
+    """
+    home = _reviewer_home(env)
+    homes = _reviewer_forms(home)
+    allowed: list[dict[str, str]] = []
+    dropped: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for command, reason in REVIEWER_TOOLCHAIN_COMMANDS:
+        found = shutil.which(command, path=env.get("PATH", ""))
+        if not found:
+            continue
+        binary = Path(os.path.normpath(Path(found).absolute()))
+        for candidate in (binary.parent.parent, binary.resolve().parent.parent):
+            if str(candidate) in seen or not any(candidate.is_relative_to(h) for h in homes):
+                continue
+            seen.add(str(candidate))
+            problem = reviewer_allowed_read_problem(candidate, home)
+            if problem:
+                dropped.append({"path": str(candidate), "reason": problem})
+                continue
+            # Only the parts an interpreter reads, never the prefix itself: a prefix such as
+            # ``~/.sometool`` can hold that tool's own ``.env`` beside ``bin/`` (measured: a uv
+            # interpreter runs a real test with just ``bin`` and ``lib`` allowed back).
+            for part, why in REVIEWER_TOOLCHAIN_PARTS:
+                path = candidate / part
+                if (path.exists() or path.is_symlink()) and str(path) not in seen:
+                    seen.add(str(path))
+                    trouble = reviewer_allowed_read_problem(path, home)
+                    entry = {"path": str(path), "reason": trouble or f"{reason}; {why}"}
+                    (dropped if trouble else allowed).append(entry)
+    return sorted(allowed, key=lambda i: i["path"]), sorted(dropped, key=lambda i: i["path"])
 
 
 def reviewer_claude_argv(model: str, effort: str | None, settings_path: Path) -> list[str]:
@@ -2180,9 +2317,11 @@ def reviewer_claude_argv(model: str, effort: str | None, settings_path: Path) ->
 
 
 def reviewer_claude_settings(
+    copy: Path,
     packet: Path,
     env: Mapping[str, str],
     *,
+    toolchain: Sequence[Mapping[str, str]] | None = None,
     extra_deny_read: Sequence[str] = (),
     platform: str | None = None,
 ) -> dict[str, Any]:
@@ -2190,11 +2329,17 @@ def reviewer_claude_settings(
 
     Measured on Claude Code 2.1.292 on 2026-10-06: under ``dontAsk`` Bash is denied unless allowed,
     even with ``autoAllowBashIfSandboxed``; the sandbox's own temp directory stays writable until a
-    ``denyWrite`` names its root; credential-named variables reach sandboxed commands until
-    ``credentials.envVars`` denies them. The settings set no ``apiKeyHelper``, plugins or hooks, so
-    the user's own configuration is what loads.
+    ``denyWrite`` names its root; any variable reaches sandboxed commands until
+    ``credentials.envVars`` denies it by name. Issue #189 measured that ``denyRead: ["~"]`` blocks
+    the whole home directory and ``allowRead`` re-opens a path inside it, so commands read only the
+    copy, the packet and the toolchain *toolchain* names (derived from *env* when not given). The
+    settings set no ``apiKeyHelper``, plugins or hooks, so the user's own configuration is what
+    loads.
     """
-    deny_read = list(REVIEWER_CREDENTIAL_PATHS) + list(extra_deny_read)
+    if toolchain is None:
+        toolchain = reviewer_toolchain_paths(env)[0]
+    allow_read = [str(copy.resolve()), str(packet.resolve())]
+    allow_read += [item["path"] for item in toolchain if item["path"] not in allow_read]
     return {
         "sandbox": {
             "enabled": True,
@@ -2203,12 +2348,13 @@ def reviewer_claude_settings(
             "allowUnsandboxedCommands": False,
             "filesystem": {
                 "denyWrite": list(reviewer_temp_roots(platform)),
-                "denyRead": deny_read,
+                "denyRead": ["~"] + list(extra_deny_read),
+                "allowRead": allow_read,
             },
             "network": {"strictAllowlist": True, "allowedDomains": []},
             "credentials": {
                 "envVars": [
-                    {"name": name, "mode": "deny"} for name in reviewer_credential_variables(env)
+                    {"name": name, "mode": "deny"} for name in reviewer_denied_variables(env)
                 ]
             },
         },
@@ -2216,7 +2362,8 @@ def reviewer_claude_settings(
             # ``//`` starts an absolute path in a permission rule; ``/`` is relative to the settings
             # file. ``packet.resolve()`` begins with ``/``, so this reads ``Read(//<packet>/**)``.
             "allow": ["Bash", "Edit(./**)", f"Read(/{packet.resolve()}/**)"],
-            "deny": ["WebFetch", "WebSearch", "mcp__*"] + [f"Read({path})" for path in deny_read],
+            "deny": ["WebFetch", "WebSearch", "mcp__*"]
+            + [f"Read({path})" for path in list(REVIEWER_CREDENTIAL_PATHS) + list(extra_deny_read)],
         },
     }
 
@@ -2794,13 +2941,23 @@ def reviewer_launch(
         f"{request.repo.resolve().name}-{request.head[:12]}-{os.urandom(4).hex()}"
     )
     copy = root / "copy"
+    session_env = reviewer_session_environment(environ)
+    home = _reviewer_home(session_env)
+    for label, path in (("scratch copy", copy), ("review packet", request.packet)):
+        problem = reviewer_allowed_read_problem(path.absolute(), home)
+        if problem:
+            raise ReviewerRefused(f"the {label} cannot be allowed back inside the blocked home: "
+                                  f"{problem}")
+    toolchain, dropped = reviewer_toolchain_paths(session_env)
     reviewer_export_head(request.repo, request.head, copy)
     withheld = reviewer_withhold_untrusted(copy)
     manifest = _reviewer_manifest(copy)
-    session_env = reviewer_session_environment(environ)
     settings_path = root / "settings.json"
     settings_path.write_text(
-        json.dumps(recipe.settings(request.packet, session_env), indent=2) + "\n", "utf-8"
+        json.dumps(
+            recipe.settings(copy, request.packet, session_env, toolchain=toolchain), indent=2
+        ) + "\n",
+        "utf-8",
     )
     configuration = reviewer_configuration_fingerprint(recipe.config_sources(copy, session_env))
     message = reviewer_launch_message(
@@ -2837,6 +2994,13 @@ def reviewer_launch(
             "withheld": withheld,
             "changes": reviewer_scratch_changes(copy, manifest),
         },
+        "sandbox_reads": {
+            "allowed": [
+                {"path": str(copy.resolve()), "reason": "the scratch copy the review works in"},
+                {"path": str(request.packet.resolve()), "reason": "the review packet"},
+            ] + list(toolchain),
+            "dropped": dropped,
+        },
         "answer_path": str(answer_path) if answer is not None else None,
         "exit": code,
         "error": error,
@@ -2857,6 +3021,21 @@ touch "${{TMPDIR:-/tmp}}/reviewer-probe-{tag}" 2> /dev/null; echo "write_tmpdir=
 touch "/tmp/reviewer-probe-{tag}" 2> /dev/null; echo "write_tmp=$?" >> "$r"
 curl -sS -m 5 -o /dev/null https://example.com > /dev/null 2>&1; echo "network=$?" >> "$r"
 if [ -n "${{REVIEWER_PROBE_TOKEN+x}}" ]; then v=set; else v=unset; fi; echo "variable=$v" >> "$r"
+cat "{home_canary}" > /dev/null 2>&1; echo "read_home=$?" >> "$r"
+cat "{packet}/packet.txt" > /dev/null 2>&1; echo "read_packet=$?" >> "$r"
+python3 -m unittest discover -s tests -q > /dev/null 2>&1; echo "python_test=$?" >> "$r"
+git --version > /dev/null 2>&1; echo "git=$?" >> "$r"
+[ -n "${{REVIEWER_PROBE_PLAIN+x}}" ] && v=set || v=unset; echo "plain_variable=$v" >> "$r"
+"""
+
+#: A real Python test the probe runs in the copy: blocking home must leave the toolchain working.
+REVIEWER_PROBE_TEST = """\
+import unittest
+
+
+class ReviewerProbeTest(unittest.TestCase):
+    def test_the_toolchain_runs(self):
+        self.assertEqual(sum([1, 2]), 3)
 """
 
 REVIEWER_PROBE_MESSAGE = (
@@ -2896,6 +3075,15 @@ def reviewer_probe_verdicts(
          f"network={results.get('network')}"),
         ("credential-variable", results.get("variable") == "unset",
          f"variable={results.get('variable')}"),
+        # Issue #189: the whole home directory is blocked, and only what the review needs is back.
+        ("read-home", nonzero("read_home"), f"read_home={results.get('read_home')}"),
+        ("read-packet", results.get("read_packet") == "0",
+         f"read_packet={results.get('read_packet')}"),
+        ("python-test", results.get("python_test") == "0",
+         f"python_test={results.get('python_test')}"),
+        ("git-runs", results.get("git") == "0", f"git={results.get('git')}"),
+        ("plain-variable", results.get("plain_variable") == "unset",
+         f"plain_variable={results.get('plain_variable')}"),
         ("no-canary-in-output", not any(c in seen for c in canaries),
          "a canary value appeared in the results or the session's output"
          if any(c in seen for c in canaries) else "no canary value seen"),
@@ -2913,33 +3101,51 @@ def reviewer_probe(
     work_root: Path | None = None,
     keep: bool = False,
 ) -> tuple[list[dict[str, Any]], int]:
-    """Run *vendor*'s reviewer recipe live on a fixed command and check each denial."""
+    """Run *vendor*'s reviewer recipe live on a fixed command and check each denial.
+
+    Besides the probe directory it plants one canary file directly in the home directory, outside
+    every credential path, and removes it however the probe ends.
+    """
     recipe = reviewer_recipe(vendor)
     tag = os.urandom(6).hex()
     canary_file = f"reviewer-probe-canary-{os.urandom(8).hex()}"
     canary_variable = f"reviewer-probe-variable-{os.urandom(8).hex()}"
+    canary_home = f"reviewer-probe-home-{os.urandom(8).hex()}"
+    canary_plain = f"reviewer-probe-plain-{os.urandom(8).hex()}"
     environ = dict(os.environ if env is None else env)
     environ["REVIEWER_PROBE_TOKEN"] = canary_variable
+    environ["REVIEWER_PROBE_PLAIN"] = canary_plain
     root = (work_root or reviewer_work_root(environ)) / f"probe-{tag}"
-    copy, outside = root / "copy", root / "outside"
-    copy.mkdir(parents=True)
+    copy, outside, packet = root / "copy", root / "outside", root / "packet"
+    home_canary = _reviewer_home(environ) / f".reviewer-probe-home-canary-{tag}"
+    (copy / "tests").mkdir(parents=True)
     outside.mkdir()
+    packet.mkdir()
     (outside / "canary.txt").write_text(canary_file + "\n", "utf-8")
-    (copy / "probe.sh").write_text(REVIEWER_PROBE_SCRIPT.format(outside=outside, tag=tag), "utf-8")
-    session_env = reviewer_session_environment(environ)
-    settings_path = root / "settings.json"
-    settings = recipe.settings(copy, session_env, extra_deny_read=[str(outside)])
-    settings_path.write_text(json.dumps(settings, indent=2) + "\n", "utf-8")
+    (packet / "packet.txt").write_text("the review packet\n", "utf-8")
+    (copy / "tests" / "test_reviewer_probe.py").write_text(REVIEWER_PROBE_TEST, "utf-8")
+    (copy / "probe.sh").write_text(
+        REVIEWER_PROBE_SCRIPT.format(
+            outside=outside, tag=tag, home_canary=home_canary, packet=packet
+        ),
+        "utf-8",
+    )
     try:
+        home_canary.write_text(canary_home + "\n", "utf-8")
+        session_env = reviewer_session_environment(environ)
+        settings_path = root / "settings.json"
+        settings = recipe.settings(copy, packet, session_env, extra_deny_read=[str(outside)])
+        settings_path.write_text(json.dumps(settings, indent=2) + "\n", "utf-8")
         proc = session(
             recipe.argv(model, effort, settings_path), stdin=REVIEWER_PROBE_MESSAGE, cwd=copy,
             env=session_env, timeout=300,
         )
         verdicts = reviewer_probe_verdicts(
-            root, outside, tag, (canary_file, canary_variable),
+            root, outside, tag, (canary_file, canary_variable, canary_home, canary_plain),
             (proc.stdout or "") + (proc.stderr or ""),
         )
     finally:
+        home_canary.unlink(missing_ok=True)
         Path(f"/tmp/reviewer-probe-{tag}").unlink(missing_ok=True)
         if not keep:
             shutil.rmtree(root, ignore_errors=True)
@@ -2976,9 +3182,11 @@ def _reviewer_args(sub: Any) -> None:
         help="Run a vendor's reviewer recipe live and check every sandbox denial",
         description=(
             "Run the reviewer recipe on one fixed command and check, from outside the session, "
-            "that a credential read, writes outside the copy and to the temp roots, the network "
-            "and a credential variable are denied and a write inside the copy works. Exit 0 when "
-            "every denial held, 1 otherwise, 2 for a vendor with no recipe."
+            "that a credential read, a read of a canary planted in the home directory, writes "
+            "outside the copy and to the temp roots, the network, a credential variable and an "
+            "ordinary-named variable are denied, and that a write inside the copy, a read of the "
+            "packet, a real Python test and git work. Exit 0 when every check held, 1 otherwise, "
+            "2 for a vendor with no recipe."
         ),
     )
     probe_p.add_argument("--vendor", required=True)
