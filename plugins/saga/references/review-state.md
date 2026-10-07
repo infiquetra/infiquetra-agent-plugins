@@ -66,9 +66,11 @@ limit (round 3) or an early stop (a round that leaves the same blocking
 identities): merge with a recorded reason, or stop the card. Each fix-later
 item carries its own choice. The merge waits when the blocking question is
 pending — under either merge setting, since only the operator can answer it —
-or when the envelope's merge gate says `gate`; with `auto` and no blocking
-items it is free to proceed. Fix-later choices never hold a merge. Without an
-envelope the setting is unknown, so the merge waits rather than guessing.
+or when the envelope's merge gate says `gate`. With `auto` it is free to
+proceed only once the newest run's merge answer allows it, so an unattended
+merge never lands on open blocking items. Fix-later choices never hold a
+merge. Without an envelope the setting is unknown, so the merge waits rather
+than guessing.
 
 ## Answers
 
@@ -92,11 +94,16 @@ map; the script applies the unattended rules itself. A timeout beside a
 non-empty map is refused: the answers come from the harness, which this card
 treats as untrusted. Unattended — the envelope's run mode, or a timeout —
 files nothing apart from the security guard, and `file-as-issue` answers are
-recorded `left` with the reason `unattended`.
+recorded `left` with the reason `unattended`. A `merge-blocking` answer under
+an unattended envelope is refused unrecorded: only the operator can merge
+with a reason or stop the card, and in an unattended run no operator is
+present.
 
 An empty answers map from an attended run means "nothing more to say": with
 the `file` unattended default it files the follow-up bundle (below). Partial
 answers never bundle, so the operator keeps choosing until confirmation.
+Unless `--profile` names an explicit file, the unattended default comes from
+the base commit's profile; a head change to the key is ignored and noted.
 
 ## Filing
 

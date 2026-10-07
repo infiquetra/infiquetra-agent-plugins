@@ -552,6 +552,57 @@ def test_filing_partial_creation_records_and_never_retries(
     assert len(mc.calls) == calls
 
 
+def test_filing_default_resolution_finds_the_installed_script() -> None:
+    script = review_state.resolve_mission_control(None)
+    assert script.name == "sdlc_manager.py" and script.is_file()
+
+
+def test_filing_leave_only_needs_no_resolution(
+    staged: dict[str, Path], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("resolution ran for a call that files nothing")
+
+    monkeypatch.setattr(review_state, "resolve_mission_control", refuse)
+    review_state.do_answers(
+        staged["record"], None, None,
+        {f"fix-later:{_guard_id(staged)}": "fix-now",
+         f"fix-later:{_plain_id(staged)}": "leave"},
+        False, _envelope(), "leave", None, FakeMissionControl())
+
+
+def test_filing_unresolvable_mission_control_refuses_that_answer(
+    staged: dict[str, Path], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing(explicit: Any = None) -> Any:
+        raise review_state.ReviewStateError("mission-control could not be resolved")
+
+    monkeypatch.setattr(review_state, "resolve_mission_control", missing)
+    key = f"fix-later:{_plain_id(staged)}"
+    with pytest.raises(review_state.ReviewStateError, match="mission-control"):
+        review_state.do_answers(
+            staged["record"], None, None, {key: "file-as-issue"}, False,
+            _envelope(), "leave", None, FakeMissionControl())
+    assert _outcome_of(staged["record"], _plain_id(staged)) is None
+
+
+def test_filing_partial_application_names_what_landed(
+    staged: dict[str, Path],
+) -> None:
+    mc = FakeMissionControl(mode="create-refusal")
+    plain = _plain_id(staged)
+    assert f"fix-later:{plain}" < f"fix-later:{_guard_id(staged)}"  # applies first
+    with pytest.raises(review_state.ReviewStateError, match="already recorded") as excinfo:
+        review_state.do_answers(
+            staged["record"], None, None,
+            {f"fix-later:{plain}": "fix-now",
+             f"fix-later:{_guard_id(staged)}": "file-as-issue"},
+            False, _envelope(), "leave", FAKE_MC, mc)
+    assert "fixed-now" in str(excinfo.value)
+    assert _outcome_of(staged["record"], plain) == {"outcome": "fixed-now"}
+    assert _outcome_of(staged["record"], _guard_id(staged)) is None
+
+
 def test_filing_failures_refuse_that_answer_unrecorded(staged: dict[str, Path]) -> None:
     for mode in ("prepare-refusal", "prepare-unparsable", "create-refusal", "create-no-number"):
         record = staged["record"].parent / f"record-{mode}.json"
@@ -647,12 +698,33 @@ def test_unattended_merge_wait_follows_the_gate_and_the_round_rules(
     assert review_state.merge_display(early, _envelope("unattended.json"))["waiting"] is True
     assert review_state.merge_display(
         review_state.review_runs(_record(staged["clear"])), None)["waiting"] is True
+    first_round_only = [
+        e for e in _record(staged["record"])["review_cycles"]
+        if isinstance(e, dict) and e.get("kind") == "review_run"
+    ][:1]
+    mid_loop = review_state.merge_display(first_round_only, _envelope("unattended.json"))
+    assert mid_loop["waiting"] is True
+    assert "2 blocking items are left" in mid_loop["reason"]
+
+
+def test_unattended_merge_decision_is_refused_unrecorded(
+    staged: dict[str, Path],
+) -> None:
+    for decision in ({"decision": "stop-card"},
+                     {"decision": "merge-with-reason", "reason": "ship"}):
+        before = _sha(staged["record"])
+        with pytest.raises(review_state.ReviewStateError, match="unattended run"):
+            _answers(staged["record"], {"merge-blocking": decision}, FakeMissionControl(),
+                     envelope="unattended.json")
+        assert _sha(staged["record"]) == before
+    entries = [e for e in _record(staged["record"])["review_cycles"]
+               if isinstance(e, dict) and e.get("loop") == "merge_confirmation"]
+    assert entries == []
 
 
 def test_unattended_file_default_bundle_never_files(staged: dict[str, Path]) -> None:
     mc = FakeMissionControl()
-    _answers(staged["record"], {"merge-blocking": {"decision": "stop-card"}}, mc,
-             envelope="unattended.json", profile="file")
+    _answers(staged["record"], {}, mc, envelope="unattended.json", profile="file")
     creates = [c for c in mc.calls if "create-prepared" in c[0]]
     assert len(creates) == 1  # the guard's only; no bundle
 
@@ -675,6 +747,95 @@ def test_profile_default_reads_leave_file_or_absent(tmp_path: Path) -> None:
     bad.write_text(json.dumps({"fix_later_unattended_default": "sometimes"}), encoding="utf-8")
     with pytest.raises(review_state.ReviewStateError, match="fix_later_unattended_default"):
         review_state.load_profile_default(bad)
+
+
+def _git(repo: Path, *args: str) -> str:
+    import subprocess
+
+    completed = subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", *args],
+        cwd=str(repo), check=True, capture_output=True, text=True,
+    )
+    return completed.stdout.strip()
+
+
+@pytest.fixture()
+def profile_repo(tmp_path: Path) -> dict[str, Any]:
+    """A git repo whose base sets the key to `file` and whose head clears it."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / ".saga-profile.json").write_text(
+        json.dumps({"schema": "repository_profile.v1",
+                    "fix_later_unattended_default": "file"}), encoding="utf-8")
+    _git(repo, "add", ".saga-profile.json")
+    _git(repo, "commit", "-qm", "base")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / ".saga-profile.json").write_text(
+        json.dumps({"schema": "repository_profile.v1"}), encoding="utf-8")
+    _git(repo, "commit", "-qam", "head")
+    return {"root": repo, "base": base, "head": _git(repo, "rev-parse", "HEAD")}
+
+
+def test_profile_default_comes_from_the_base_commit(
+    profile_repo: dict[str, Any],
+) -> None:
+    default, note = review_state.profile_default_from_base(
+        profile_repo["root"], profile_repo["base"], profile_repo["head"],
+        review_state._completed)
+    assert default == "file"
+    assert note is not None and "head profile change" in note and "base 'file' wins" in note
+
+
+def test_profile_default_missing_base_blob_means_leave(
+    profile_repo: dict[str, Any],
+) -> None:
+    default, note = review_state.profile_default_from_base(
+        profile_repo["root"], "0" * 40, profile_repo["head"], review_state._completed)
+    assert (default, note) == ("leave", None)
+
+
+def test_profile_default_invalid_base_value_is_refused(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "bad"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / ".saga-profile.json").write_text(
+        json.dumps({"fix_later_unattended_default": "sometimes"}), encoding="utf-8")
+    _git(repo, "add", ".saga-profile.json")
+    _git(repo, "commit", "-qm", "base")
+    base = _git(repo, "rev-parse", "HEAD")
+    with pytest.raises(review_state.ReviewStateError, match="fix_later_unattended_default"):
+        review_state.profile_default_from_base(repo, base, base, review_state._completed)
+
+
+def _write_json(tmp_path: Path, payload: Any) -> Path:
+    path = tmp_path / "answers.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_profile_answers_without_the_flag_reads_the_base(
+    staged: dict[str, Path], profile_repo: dict[str, Any], tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    record = tmp_path / "record.json"
+    raw = _record(staged["clear"])
+    for entry in raw["review_cycles"]:
+        if isinstance(entry, dict) and entry.get("kind") == "review_run":
+            entry["base"] = profile_repo["base"]
+            entry["head"] = profile_repo["head"]
+    record.write_text(json.dumps(raw), encoding="utf-8")
+    code = review_state.main(
+        ["answers", "--record", str(record), "--envelope", str(staged["envelope"]),
+         "--repo-root", str(profile_repo["root"]), "--mission-control",
+         str(FIXTURES / "fake-sdlc-manager.py"), "--answers",
+         str(_write_json(tmp_path, {"answers": {}}))])
+    out, err = capsys.readouterr()
+    assert code == 0
+    assert "head profile change" in err
+    assert "follow-up bundle filed" in out
 
 
 def test_profile_file_default_bundles_leftovers_once_at_confirmation(
@@ -796,6 +957,3 @@ def test_publish_failure_records_nothing(staged: dict[str, Path]) -> None:
     assert _sha(staged["record"]) == before
     with pytest.raises(review_state.ReviewStateError, match="no recorded round 9"):
         review_state.do_publish(_record(staged["record"]), 9, "7", "o/r", FakeGh())
-
-
-

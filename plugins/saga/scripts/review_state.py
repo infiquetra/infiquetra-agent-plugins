@@ -78,9 +78,6 @@ FILE_PROJECT = "operations"
 FILE_STAGE = "Shaping"
 FILE_STATUS = "Discovering"
 
-#: Mission-control markers, the way ``board_progression.py`` resolves them.
-MISSION_CONTROL_MARKERS = ("scripts/sdlc_manager.py", "config/sdlc-schema.json")
-
 #: The fix-later choices.
 CHOICES = ("fix-now", "file-as-issue", "leave")
 
@@ -314,8 +311,10 @@ def merge_display(
 
     Blocking items at the round limit or an early stop always wait: only the
     operator can merge with a reason or stop the card. Otherwise the envelope's
-    merge setting decides, and fix-later choices never hold a merge. Without an
-    envelope the setting is unknown, so the merge waits rather than guessing.
+    merge setting decides — but ``auto`` still waits until the newest run's
+    merge answer allows it, so an unattended merge never lands on open
+    blocking items. Fix-later choices never hold a merge. Without an envelope
+    the setting is unknown, so the merge waits rather than guessing.
     """
     state = round_state(runs)
     blocking = _blocking_of(runs[-1]) if runs else []
@@ -336,9 +335,19 @@ def merge_display(
         }
     if envelope.get("merge") == "gate":
         return {"waiting": True, "reason": "the envelope holds the merge for the operator"}
+    newest = runs[-1] if runs else {}
+    merge = newest.get("merge") if isinstance(newest.get("merge"), Mapping) else {}
+    if merge.get("allowed") is True:
+        return {
+            "waiting": False,
+            "reason": "no blocking items are left and the envelope allows the merge to proceed",
+        }
     return {
-        "waiting": False,
-        "reason": "no blocking items are left and the envelope allows the merge to proceed",
+        "waiting": True,
+        "reason": (
+            f"{len(blocking)} blocking items are left; "
+            "auto merges once every lens is at C or better"
+        ),
     }
 
 
@@ -693,6 +702,11 @@ def check_answers(
             "pane_timeout is true with answers present: a timeout carries no answers, "
             "and only the unattended rules apply"
         )
+    if envelope.get("run_mode") == "unattended" and MERGE_CHOICE in answers:
+        raise ReviewStateError(
+            f"choice key {MERGE_CHOICE!r} cannot be answered in an unattended run: "
+            "only the operator can merge with a reason or stop the card"
+        )
     runs = review_runs(record)
     if not runs:
         if answers:
@@ -849,22 +863,34 @@ Runner = Callable[..., Any]
 
 
 def resolve_mission_control(explicit: str | None = None) -> Path:
-    """The ``sdlc_manager.py`` to file through: the flag, else this repo's own."""
+    """The ``sdlc_manager.py`` to file through.
+
+    An explicit flag wins, resolved absolute (the filer runs with a temporary
+    working directory, where a relative path would point nowhere). Otherwise
+    fleet-core's install resolution, the way ``board_progression.py`` resolves
+    it — never the working tree, which during a review is the change under
+    review. Imported lazily so ``--help`` stays standard-library only.
+    """
     if explicit:
         path = Path(explicit)
         if not path.is_file():
             raise ReviewStateError(f"no mission-control script at {path}")
-        # Absolute: the filer runs with a temporary working directory, where a
-        # relative path would point nowhere.
         return path.resolve()
-    sibling = Path(__file__).resolve().parent.parent / "mission-control" / "scripts" / "sdlc_manager.py"
-    if sibling.is_file():
-        return sibling
-    for base in (Path.cwd(), *Path.cwd().parents):
-        candidate = base / "plugins" / "mission-control" / "scripts" / "sdlc_manager.py"
-        if candidate.is_file():
-            return candidate
-    raise ReviewStateError("mission-control's sdlc_manager.py was not found; pass --mission-control")
+    try:
+        import board_progression  # noqa: PLC0415  (only when filing, by design)
+
+        root, _rung = board_progression.resolve_mission_control_root()
+    except (ImportError, RuntimeError) as exc:
+        raise ReviewStateError(
+            f"mission-control could not be resolved: {exc} "
+            "(pass --mission-control, or set MISSION_CONTROL_ROOT)"
+        ) from exc
+    script = Path(root) / "scripts" / "sdlc_manager.py"
+    if not script.is_file():
+        raise ReviewStateError(
+            f"mission-control resolved to {root}, which holds no scripts/sdlc_manager.py"
+        )
+    return script
 
 
 def _fenced(text: str) -> str:
@@ -1021,7 +1047,7 @@ def _sidecar_number(draft: Path) -> int | None:
 
 
 def file_issue(
-    mc: Path,
+    mc: Path | None,
     runner: Runner,
     *,
     repo: str,
@@ -1033,10 +1059,13 @@ def file_issue(
 ) -> int:
     """File one defect through mission-control; return the created number.
 
+    Mission-control is resolved here, on first filing — never before the
+    answers are read — so an answers call that files nothing never needs it.
     After every create invocation the sidecar is re-read: a recorded number
     means the issue exists and is returned even when post-create steps failed.
     Anything else raises, and the caller records nothing.
     """
+    script = mc if mc is not None else resolve_mission_control(None)
     bare = str(repo).split("/")[-1] if "/" in str(repo) else str(repo)
     with tempfile.TemporaryDirectory(prefix="review-state-file-") as tmp:
         workdir = Path(tmp)
@@ -1044,7 +1073,7 @@ def file_issue(
         prepared = runner(
             [
                 sys.executable,
-                str(mc),
+                str(script),
                 "--format",
                 "json",
                 "issue",
@@ -1083,7 +1112,7 @@ def file_issue(
         created = runner(
             [
                 sys.executable,
-                str(mc),
+                str(script),
                 "--format",
                 "json",
                 "issue",
@@ -1108,22 +1137,72 @@ def file_issue(
         raise FilerError(f"mission-control filed nothing: {_tail(created.stderr)}")
 
 
+def _profile_value(raw: Any, where: str) -> str:
+    if not isinstance(raw, dict):
+        raise ReviewStateError(f"{where} does not hold a JSON object")
+    value = raw.get(PROFILE_KEY, "leave")
+    if value not in PROFILE_VALUES:
+        raise ReviewStateError(
+            f"{where} sets {PROFILE_KEY} to {value!r}, not one of {', '.join(PROFILE_VALUES)}"
+        )
+    return str(value)
+
+
 def load_profile_default(path: Path) -> str:
-    """The unattended default: a missing file or key means ``leave``."""
+    """The unattended default from an explicit file: missing file or key is ``leave``."""
     if not path.is_file():
         return "leave"
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise ReviewStateError(f"{path} is not valid JSON: {exc}") from exc
-    if not isinstance(raw, dict):
-        raise ReviewStateError(f"{path} does not hold a JSON object")
-    value = raw.get(PROFILE_KEY, "leave")
-    if value not in PROFILE_VALUES:
+    return _profile_value(raw, str(path))
+
+
+def _show_blob(repo_root: Path, revision: str, runner: Runner) -> str | None:
+    """The blob's text, or None when the revision or path is not in the repo."""
+    completed = runner(
+        ["git", "-C", str(repo_root), "show", f"{revision}:.saga-profile.json"]
+    )
+    if completed.returncode != 0:
+        return None
+    return completed.stdout
+
+
+def profile_default_from_base(
+    repo_root: Path, base_sha: str, head_sha: str, runner: Runner
+) -> tuple[str, str | None]:
+    """The unattended default from the base commit, as the review runner reads it.
+
+    The working tree is the head of the change under review, so a head change
+    to the key is ignored — and noted, so the operator sees it was. Returns
+    ``(default, note)``; a missing base blob means ``leave`` with no note.
+    """
+    base_text = _show_blob(repo_root, base_sha, runner)
+    if base_text is None:
+        return "leave", None
+    try:
+        base_raw = json.loads(base_text)
+    except json.JSONDecodeError as exc:
         raise ReviewStateError(
-            f"{path} sets {PROFILE_KEY} to {value!r}, not one of {', '.join(PROFILE_VALUES)}"
-        )
-    return str(value)
+            f"{base_sha}:.saga-profile.json is not valid JSON: {exc}"
+        ) from exc
+    default = _profile_value(base_raw, f"{base_sha}:.saga-profile.json")
+    head_text = _show_blob(repo_root, head_sha, runner)
+    note: str | None = None
+    if head_text is not None:
+        try:
+            head_raw = json.loads(head_text)
+        except json.JSONDecodeError:
+            head_raw = None
+        head_value = head_raw.get(PROFILE_KEY, "leave") if isinstance(head_raw, dict) else "leave"
+        base_value = base_raw.get(PROFILE_KEY, "leave") if isinstance(base_raw, dict) else "leave"
+        if head_value != base_value:
+            note = (
+                f"head profile change to {PROFILE_KEY} ignored "
+                f"(head {head_value!r}, base {base_value!r} wins)"
+            )
+    return default, note
 
 
 # ---------------------------------------------------------------------------
@@ -1146,7 +1225,7 @@ def do_answers(
     timeout: bool,
     envelope: Mapping[str, Any],
     profile_default: str,
-    mc: Path,
+    mc: Path | None,
     runner: Runner,
 ) -> list[str]:
     """Validate everything, then record each answer in its own locked update.
@@ -1167,37 +1246,43 @@ def do_answers(
     check_answers(answers, timeout, record0, envelope)
     unattended = envelope.get("run_mode") == "unattended" or timeout
     recorded: list[str] = []
-    for key in sorted(answers):
-        if key == MERGE_CHOICE:
-            continue
-        recorded.append(
-            mutate_record(
-                record_file,
-                store_root,
-                issue,
-                lambda rec, k=key, c=answers[key]: _apply_fix_later(
-                    rec, envelope, unattended, mc, runner, k, c
-                ),
+    try:
+        for key in sorted(answers):
+            if key == MERGE_CHOICE:
+                continue
+            recorded.append(
+                mutate_record(
+                    record_file,
+                    store_root,
+                    issue,
+                    lambda rec, k=key, c=answers[key]: _apply_fix_later(
+                        rec, envelope, unattended, mc, runner, k, c
+                    ),
+                )
             )
-        )
-    if MERGE_CHOICE in answers:
-        recorded.append(
-            mutate_record(
-                record_file,
-                store_root,
-                issue,
-                lambda rec: _apply_merge(rec, answers[MERGE_CHOICE]),
+        if MERGE_CHOICE in answers:
+            recorded.append(
+                mutate_record(
+                    record_file,
+                    store_root,
+                    issue,
+                    lambda rec: _apply_merge(rec, answers[MERGE_CHOICE]),
+                )
             )
+        recorded.extend(
+            _apply_guard(record_file, store_root, issue, envelope, mc, runner, unattended)
         )
-    recorded.extend(
-        _apply_guard(record_file, store_root, issue, envelope, mc, runner, unattended)
-    )
-    bundle: str | None = _maybe_bundle(
-        record_file, store_root, issue, answers, envelope, profile_default,
-        unattended, mc, runner,
-    )
-    if bundle is not None:
-        recorded.append(bundle)
+        bundle: str | None = _maybe_bundle(
+            record_file, store_root, issue, answers, envelope, profile_default,
+            unattended, mc, runner,
+        )
+        if bundle is not None:
+            recorded.append(bundle)
+    except ReviewStateError as exc:
+        kept = "; ".join(recorded) if recorded else "none"
+        raise ReviewStateError(
+            f"{exc} (already recorded in this call and kept: {kept})"
+        ) from exc
     return recorded
 
 
@@ -1210,7 +1295,7 @@ def _apply_fix_later(
     record: run_record.RunRecord,
     envelope: Mapping[str, Any],
     unattended: bool,
-    mc: Path,
+    mc: Path | None,
     runner: Runner,
     key: str,
     choice: str,
@@ -1285,7 +1370,7 @@ def _apply_guard(
     store_root: Path | None,
     issue: int | None,
     envelope: Mapping[str, Any],
-    mc: Path,
+    mc: Path | None,
     runner: Runner,
     unattended: bool,
 ) -> list[str]:
@@ -1321,7 +1406,7 @@ def _apply_guard(
 
 
 def _file_guard_item(
-    record: run_record.RunRecord, mc: Path, runner: Runner, finding_id: str
+    record: run_record.RunRecord, mc: Path | None, runner: Runner, finding_id: str
 ) -> str:
     runs = review_runs(as_dict(record))
     finding = _finding_by_id(runs[-1]).get(finding_id) if runs else None
@@ -1351,7 +1436,7 @@ def _maybe_bundle(
     envelope: Mapping[str, Any],
     profile_default: str,
     unattended: bool,
-    mc: Path,
+    mc: Path | None,
     runner: Runner,
 ) -> str | None:
     """One follow-up issue for the leftovers, at an attended confirmation.
@@ -1556,7 +1641,14 @@ def build_parser() -> argparse.ArgumentParser:
     answered.add_argument("--envelope", default=None, help="A validated envelope JSON file.")
     answered.add_argument("--answers", required=True, help="The answers file, or - for stdin.")
     answered.add_argument(
-        "--profile", default=".saga-profile.json", help="The repository profile."
+        "--profile",
+        default=None,
+        help="An explicit profile file (default: the key from the base commit).",
+    )
+    answered.add_argument(
+        "--repo-root",
+        default=None,
+        help="The reviewed checkout (default: the working directory).",
     )
     answered.add_argument("--mission-control", default=None, help="sdlc_manager.py override.")
     published = sub.add_parser("publish", help="Post one round's comment.", parents=[shared])
@@ -1587,8 +1679,25 @@ def main(
                 print(render_markdown(document), file=out, end="")
         elif args.verb == "answers":
             envelope = _resolve_envelope(args, run)
-            profile_default = load_profile_default(Path(args.profile))
-            mc = resolve_mission_control(args.mission_control)
+            if args.profile:
+                profile_default = load_profile_default(Path(args.profile))
+            else:
+                runs = review_runs(_read_record_for_view(record_file, store_root, issue))
+                if not runs:
+                    profile_default, note = "leave", None
+                else:
+                    repo_root = (
+                        Path(args.repo_root).resolve() if args.repo_root else Path.cwd()
+                    )
+                    profile_default, note = profile_default_from_base(
+                        repo_root, str(runs[-1].get("base", "")),
+                        str(runs[-1].get("head", "")), run,
+                    )
+                if note is not None:
+                    print(f"review_state: {note}", file=sys.stderr)
+            # An explicit flag is validated now; otherwise resolution waits for
+            # the first filing, so a call that files nothing never needs it.
+            mc = resolve_mission_control(args.mission_control) if args.mission_control else None
             payload, timeout = load_answers_file(args.answers)
             for line in do_answers(
                 record_file, store_root, issue, payload, timeout,
@@ -1611,6 +1720,3 @@ def main(
 
 if __name__ == "__main__":
     sys.exit(main())
-
-
-

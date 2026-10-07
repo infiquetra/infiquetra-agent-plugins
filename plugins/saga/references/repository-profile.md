@@ -243,7 +243,8 @@ reads it for the follow-up bundle:
 
 Any other value is refused naming the key. The default is `leave` because
 unattended filing is the exception: only the security guard files without an
-operator.
+operator. The runner reads the key from the base commit. A head change to it
+is noted and is not applied.
 
 ## Languages and visibility
 
