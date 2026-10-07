@@ -1,0 +1,76 @@
+[
+  {
+    "kind": "finding",
+    "schema": "review_records.v1",
+    "subject": "plan",
+    "lens": "correctness",
+    "rule": {
+      "row": "judged",
+      "ref": "plan.q-rollback"
+    },
+    "source": {
+      "kind": "llm",
+      "name": "plan-reviewer",
+      "model": "example-model-1"
+    },
+    "location": {
+      "scope": "section",
+      "document": "docs/plans/2026-10-06-example-plan.md",
+      "section": "Scope Boundaries",
+      "anchor": "Scope Boundaries"
+    },
+    "language": "markdown",
+    "statement": "The plan never names a rollback step for a failed deploy.",
+    "consequence": "required-behaviour-missing",
+    "trigger": "normal-use",
+    "evidence": "traced",
+    "proof": {
+      "steps": [
+        "Scope Boundaries names no rollback step"
+      ]
+    },
+    "introduced": true,
+    "degraded": false,
+    "consequence_jev": null,
+    "unconfirmed": false,
+    "merge_outcome": null,
+    "id": "rf:8c419fd8b0e882439ce8c9f0d3372ea4"
+  },
+  {
+    "kind": "finding",
+    "schema": "review_records.v1",
+    "subject": "plan",
+    "lens": "correctness",
+    "rule": {
+      "row": "judged",
+      "ref": "plan.q-scope"
+    },
+    "source": {
+      "kind": "llm",
+      "name": "plan-reviewer",
+      "model": "example-model-1"
+    },
+    "location": {
+      "scope": "section",
+      "document": "docs/plans/2026-10-06-example-plan.md",
+      "section": "Requirements",
+      "anchor": "Requirements"
+    },
+    "language": "markdown",
+    "statement": "The scope boundary lets two implementers read different behaviour.",
+    "consequence": "misleads-a-person",
+    "trigger": "normal-use",
+    "evidence": "traced",
+    "proof": {
+      "steps": [
+        "Requirements never pins the boundary"
+      ]
+    },
+    "introduced": true,
+    "degraded": false,
+    "consequence_jev": null,
+    "unconfirmed": false,
+    "merge_outcome": null,
+    "id": "rf:25735f99a1cf6e50e1b756df10264b9c"
+  }
+]
