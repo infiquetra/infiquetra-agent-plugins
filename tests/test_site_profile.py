@@ -1101,7 +1101,12 @@ class MutationProofBindingTest(unittest.TestCase):
         changes a graded file's bytes. Counting that as a kill made every
         mutation a kill by construction -- see the cycle-12 proof's header.
 
-        The document is cycle 25. Cycle 24 remains the proof of the bytes
+        The document is cycle 26. Cycle 25 remains the proof of the bytes
+        before issue #154 exempted paired Semgrep rule-test targets from the
+        module-source check; cycle 26 re-grades only that exemption (six
+        mutations, six killed) and carries the other four digests.
+
+        Cycle 25's account follows. Cycle 24 remains the proof of the bytes
         before issue #149 added ``check_review_calibration`` to
         ``scripts/check_repo.py``; cycle 25 re-grades only that guard (seven
         mutations, seven killed) and carries the other four digests.
@@ -1149,7 +1154,7 @@ class MutationProofBindingTest(unittest.TestCase):
         """
         root = self.EVIDENCE.parent.parent
         recorded = self._recorded(
-            "2026-10-07-cycle25-mutation-proof-review-calibration.txt"
+            "2026-10-07-cycle26-mutation-proof-semgrep-targets.txt"
         )
         self.assertEqual(set(recorded), set(self.GRADED), recorded)
         for relative in self.GRADED:

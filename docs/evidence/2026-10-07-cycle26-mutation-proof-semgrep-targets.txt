@@ -1,0 +1,70 @@
+# Cycle-26 mutation proof - the module-source check exempts Semgrep rule-test targets
+# Digests are bound by MutationProofBindingTest: change a graded file
+# without re-running this proof and the suite fails. Paths are repository-relative.
+#
+# Supersedes 2026-10-07-cycle25-mutation-proof-review-calibration.txt for
+# the binding test only. Cycle 25 is preserved unedited. Reason: issue #154
+# ships TypeScript rule-test targets beside saga's Semgrep rules, and Semgrep
+# pairs each target with the rule file in the same directory, so
+# check_claude_module_sources accepts a TypeScript or JavaScript file under
+# plugins/saga/references/semgrep/ when its stem names a .yaml rule file
+# beside it. Anything unpaired is still refused.
+#
+# The other four graded files were not edited and were not re-graded:
+#   plugins/unifi/scripts/site_profile.py
+#   scripts/assess_clients.py
+#   scripts/check_compatibility_matrix.py
+#   scripts/port_config.py
+# Their cycle-25 digests are carried below.
+#
+# This cycle re-graded ONLY the exemption branch and its directory constant.
+# Every other guard inside scripts/check_repo.py was not re-patched here.
+#
+# Runner: each mutation is one exact string replacement in scripts/check_repo.py,
+# then `python3 -m unittest tests.test_check_repo.ClaudeModuleSourceTests`,
+# then the pristine bytes are written back. MutationProofBindingTest lives in
+# tests.test_site_profile and is not part of that command, so the runner
+# excludes it from grading. The exclusion is stated here. A mutation counts as
+# killed only when that command fails a test that passed at baseline. Each
+# mutation names the first test that killed it. The baseline was green
+# (17 tests, OK) before any mutation. The digest block was hashed from the
+# restored bytes after this run. No earlier round of these six mutations
+# found a survivor.
+#
+# One clause was removed before grading rather than mutated: the first draft
+# of the branch also required the file to carry a module suffix, but files
+# without one skip below the branch anyway, so no test could observe the
+# clause. The shipped branch omits it.
+
+## scripts/check_repo.py -- one guard, six mutations, six killed
+
+## MUTATION 1: the exemption branch deleted
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_a_semgrep_rule_test_target_beside_its_rule_is_accepted
+   FAILED (failures=2)
+## MUTATION 2: the pairing requirement replaced by True
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_an_unpaired_typescript_file_in_the_rules_directory_is_refused
+   FAILED (failures=1)
+## MUTATION 3: the exempted directory renamed to semgrepX
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_a_semgrep_rule_test_target_beside_its_rule_is_accepted
+   FAILED (failures=2)
+## MUTATION 4: the pairing suffix changed to .yml
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_a_semgrep_rule_test_target_beside_its_rule_is_accepted
+   FAILED (failures=2)
+## MUTATION 5: the stem lookup changed to the full file name
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_a_semgrep_rule_test_target_beside_its_rule_is_accepted
+   FAILED (failures=2)
+## MUTATION 6: the directory match shortened to three parts
+   Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_a_semgrep_rule_test_target_beside_its_rule_is_accepted
+   FAILED (failures=2)
+
+## RESTORED
+# carried from cycle 25, not re-graded in this cycle:
+plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
+# carried from cycle 25, not re-graded in this cycle:
+scripts/assess_clients.py sha256: 375eccd3b7252cd7ae1754682fa7bb4b5fe8b1a1a1536c5bc4f74b0b35a684e1
+# carried from cycle 25, not re-graded in this cycle:
+scripts/check_compatibility_matrix.py sha256: c5c5752c038325c63a67c7c790ef88922c6c30e9a520ea77c7ad7d4fdc489808
+scripts/check_repo.py sha256: 78e99b427e7dc8cf43df14d62b82d553b793111f3d48886c7372f5d9b20e071e
+# carried from cycle 25, not re-graded in this cycle:
+scripts/port_config.py sha256: 56216b7c8018b361d611356e21bc2383cb7d71ebf478f28436fee3c5c8e46b17
+byte-identical to pristine: YES
