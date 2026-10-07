@@ -4,6 +4,14 @@
 
 ### Added
 
+- Issue 151: `scripts/review_tools.py` writes findings for what a change introduces, from a
+  repository, two commits, a profile and an output directory. It does not read a run record. Line
+  findings stay on the diff; a whole-project result stays only when it is new at head; a missing
+  tool is a degraded input. `references/review-tools.yaml` is the list `build_loop.py` classifies
+  baseline commands from. The profile's `mechanical_tool_baseline` still decides whether the
+  iteration is green. Semgrep runs with metrics off, from a local rule cache. The runner is inert
+  until a later card calls it.
+
 - Issue 163: plan review in one pass. `scripts/plan_review.py` stores the reviewer's findings as
   C1 finding records in the run record (`record`), records the author's answer to each (`answer`:
   fixed with the plan section changed, rejected with a reason), and gates on every finding answered

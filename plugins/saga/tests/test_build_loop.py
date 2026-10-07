@@ -168,12 +168,7 @@ def test_the_python_baseline_runs_and_records_each_result_with_its_catalogue_che
     assert build_loop.main(["--record", str(path), "--unit", "U1"], runner=runner) == 0
 
     baseline = _block(path)["iterations"][0]["baseline"]
-    assert [entry["catalogue_check"] for entry in baseline] == [
-        "ruff",
-        "ruff",
-        "mypy",
-        "pytest-coverage",
-    ]
+    assert [entry["catalogue_check"] for entry in baseline] == [None, None, None, None]
     assert {entry["status"] for entry in baseline} == {"pass"}
     # Every command reached the runner, not merely the first.
     assert sum(1 for call in runner.calls if call[:1] != ["git"]) == 4
@@ -584,21 +579,79 @@ def test_the_dry_run_prints_the_checks_and_whether_a_preview_is_declared(
     assert build_loop.main(["--record", str(record_file), "--dry-run"], runner=FakeRunner()) == 0
     out = capsys.readouterr().out
     assert "uv run ruff check ." in out
-    assert "answers: ruff" in out
+    assert "answers: no catalogue check (repository-specific entry)" in out
     assert "branch preview: none declared" in out
     assert "none prescribed in the run record" in out
 
 
-def test_the_dry_run_names_every_uncovered_catalogue_check_and_unconfigured_scanner(
+def test_the_dry_run_names_every_uncovered_review_tool(
     record_file: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The gap is visible in the loop's own output rather than silently absent."""
+    """The gap is the review-tool list, and bandit is not a catalogue check."""
     assert build_loop.main(["--record", str(record_file), "--dry-run"], runner=FakeRunner()) == 0
     out = capsys.readouterr().out
-    for uncovered in ("mypy", "bandit", "pytest-coverage"):
+    for uncovered in (
+        "semgrep-saga",
+        "semgrep-security",
+        "gitleaks",
+        "osv-scanner",
+        "jscpd",
+        "lizard",
+    ):
         assert uncovered in out
-    for scanner in build_loop.NAMED_SCANNERS:
-        assert scanner in out
+    assert "bandit" not in out
+    assert "Named scanners" not in out
+    section = out.split("Review tools this baseline does not name:", 1)[1]
+    section = section.split("Child-scoped functional checks", 1)[0]
+    assert "\n  coverage " not in section
+    assert "relocated-test" not in section
+
+
+def test_the_check_map_comes_from_the_default_tool_list() -> None:
+    """``semgrep scan`` answers both semgrep rows. ``gitleaks detect`` answers gitleaks."""
+    mapping = build_loop.check_map(["semgrep scan", "gitleaks detect", "make house-check"])
+    assert [entry["catalogue_check"] for entry in mapping["commands"]] == [
+        "semgrep-saga,semgrep-security",
+        "gitleaks",
+        None,
+    ]
+    uncovered = {entry["catalogue_check"] for entry in mapping["uncovered"]}
+    assert "semgrep-saga" not in uncovered
+    assert "gitleaks" not in uncovered
+    assert "osv-scanner" in uncovered
+    assert "jscpd" in uncovered
+    assert "lizard" in uncovered
+    assert "coverage" not in uncovered
+    assert "relocated-test" not in uncovered
+    assert "unconfigured_scanners" not in mapping
+
+
+def test_saga_scripts_do_not_read_mechanical_checks() -> None:
+    """The lifecycle map is not a source this package reads."""
+    roots = (REPO_ROOT / "plugins" / "saga" / "scripts", REPO_ROOT / "plugins" / "saga" / "skills")
+    offenders = []
+    for root in roots:
+        for path in root.rglob("*"):
+            if path.suffix not in {".py", ".md"}:
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            if "mechanical_checks" in text:
+                offenders.append(str(path.relative_to(REPO_ROOT)))
+    assert offenders == []
+
+
+def test_importing_build_loop_does_not_import_the_adapters() -> None:
+    """The tool list is a yaml read. Importing the loop does not import the adapters."""
+    probe = (
+        "import sys\n"
+        f"sys.path.insert(0, {str(SCRIPTS)!r})\n"
+        "import build_loop\n"
+        "raise SystemExit('review_adapters_all_languages' in sys.modules)\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_the_dry_run_says_a_preview_is_declared_when_it_is(

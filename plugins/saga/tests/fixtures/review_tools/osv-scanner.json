@@ -1,0 +1,43 @@
+{
+  "results": [
+    {
+      "source": {"path": "poetry.lock", "type": "lockfile"},
+      "packages": [
+        {
+          "package": {"name": "example-pkg"},
+          "vulnerabilities": [
+            {
+              "id": "CVE-2026-0001",
+              "aliases": [],
+              "severity": [{"type": "CVSS_V3", "score": "9.0"}]
+            },
+            {
+              "id": "CVE-2026-0002",
+              "aliases": [],
+              "severity": [{"type": "CVSS_V3", "score": "4.0"}]
+            },
+            {
+              "id": "CVE-2026-0003",
+              "aliases": []
+            },
+            {
+              "id": "CVE-2026-0004",
+              "aliases": [],
+              "severity": [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L"}],
+              "database_specific": {"severity": "HIGH"}
+            },
+            {
+              "id": "CVE-2026-0100",
+              "aliases": ["GHSA-1"],
+              "severity": [{"type": "CVSS_V3", "score": "5.0"}]
+            },
+            {
+              "id": "GHSA-1",
+              "aliases": ["CVE-2026-0100"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

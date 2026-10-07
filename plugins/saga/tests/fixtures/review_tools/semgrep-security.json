@@ -1,0 +1,25 @@
+{
+  "results": [
+    {
+      "check_id": "python.lang.security.audit.example-error",
+      "path": "src/app.py",
+      "start": {"line": 4},
+      "end": {"line": 4},
+      "extra": {"severity": "ERROR", "message": "Example security finding."}
+    },
+    {
+      "check_id": "python.lang.security.audit.example-warning",
+      "path": "src/app.py",
+      "start": {"line": 4},
+      "end": {"line": 4},
+      "extra": {"severity": "WARNING", "message": "Example warning."}
+    },
+    {
+      "check_id": "python.lang.security.audit.example-info",
+      "path": "src/app.py",
+      "start": {"line": 4},
+      "end": {"line": 4},
+      "extra": {"severity": "INFO", "message": "Example info."}
+    }
+  ]
+}

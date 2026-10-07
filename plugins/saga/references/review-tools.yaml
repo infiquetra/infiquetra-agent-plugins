@@ -1,0 +1,203 @@
+# Review tools for issue 151. schema review_tools.v1.
+#
+# The semgrep-security sha256 is the digest of the literal bytes
+# "review-tools pin placeholder, not a semgrep pack digest\n"
+# (69eb7c264e464651a0cc32c4e486a91f7abb548e577947342b5ce88b491bff68).
+# It is not the Semgrep registry digest of p/security-audit. The Semgrep Rules
+# License v1.0 forbids shipping those rules in this repository. A missing cache
+# is a degraded input; this file does not fetch a pack.
+schema: review_tools.v1
+semgrep_level_map:
+  ERROR: security.scanner-high
+  WARNING: security.scanner-medium-low
+  INFO: security.scanner-medium-low
+thresholds:
+  jscpd:
+    min_lines: 5
+    min_tokens: 50
+  lizard:
+    cyclomatic: 15
+tools:
+  - id: semgrep-security
+    tool: semgrep
+    languages: ["*"]
+    lens: security
+    purpose: Pinned Semgrep security pack, metrics off, local cache only.
+    install: Install semgrep on the operator machine. This card does not install it.
+    default_version: "not-recorded"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map:
+      ERROR: security.scanner-high
+      WARNING: security.scanner-medium-low
+      INFO: security.scanner-medium-low
+    curated_block_rules: []
+    rules:
+      - pack: p/security-audit
+        sha256: 69eb7c264e464651a0cc32c4e486a91f7abb548e577947342b5ce88b491bff68
+    env_dirs: []
+    lockfiles: []
+  - id: semgrep-saga
+    tool: semgrep
+    languages: ["*"]
+    lens: correctness
+    purpose: Saga pattern rules. A missing or empty directory is a known gap per pattern row.
+    install: Install semgrep on the operator machine. This card does not install it.
+    default_version: "not-recorded"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map:
+      ERROR: security.scanner-high
+      WARNING: security.scanner-medium-low
+      INFO: security.scanner-medium-low
+    curated_block_rules: []
+    rules:
+      - path: plugins/saga/references/semgrep-rules
+    gap_until_present: plugins/saga/references/semgrep-rules
+    env_dirs: []
+    lockfiles: []
+  - id: gitleaks
+    tool: gitleaks
+    languages: ["*"]
+    lens: security
+    purpose: Secret matches on changed lines. The record stores the rule and path, never the match.
+    install: Install gitleaks on the operator machine. This card does not install it.
+    default_version: "not-recorded"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+  - id: osv-scanner
+    tool: osv-scanner
+    languages: ["*"]
+    lens: security
+    purpose: Lockfile advisories compared base against head. npm lockfiles are a known gap.
+    install: Install osv-scanner on the operator machine. This card does not install it.
+    default_version: "not-recorded"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    platforms: []
+    comparison: base-head
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles:
+      - pnpm-lock.yaml
+      - yarn.lock
+      - pubspec.lock
+      - mix.lock
+      - go.mod
+      - composer.lock
+      - Pipfile.lock
+      - poetry.lock
+      - pdm.lock
+      - requirements.txt
+      - renv.lock
+      - Gemfile.lock
+      - Cargo.lock
+      - conan.lock
+      - gradle.lockfile
+      - buildscript-gradle.lockfile
+  - id: jscpd
+    tool: jscpd
+    languages: ["*"]
+    lens: architecture-maintainability
+    purpose: Duplicated regions compared base against head.
+    install: Install jscpd on the operator machine. This card does not install it.
+    default_version: "not-recorded"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    platforms: []
+    comparison: base-head
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    thresholds:
+      min_lines: 5
+      min_tokens: 50
+    env_dirs: []
+    lockfiles: []
+  - id: lizard
+    tool: lizard
+    languages: ["*"]
+    lens: architecture-maintainability
+    purpose: Functions whose cyclomatic complexity is at least the threshold, on changed lines.
+    install: Install lizard on the operator machine. This card does not install it.
+    default_version: "not-recorded"
+    version_args: ["--version"]
+    timeout_seconds: 120
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    thresholds:
+      cyclomatic: 15
+    env_dirs: []
+    lockfiles: []
+  - id: coverage
+    tool: ""
+    languages: ["*"]
+    lens: testing
+    purpose: One head coverage report matched to the diff. Not a second tool run.
+    install: The test command writes the report. This card does not install a coverage tool.
+    default_version: "not-recorded"
+    version_args: []
+    timeout_seconds: 120
+    platforms: []
+    comparison: lines
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []
+  - id: relocated-test
+    tool: ""
+    languages: ["*"]
+    lens: architecture-maintainability
+    purpose: The test command run once from an empty directory. Not a line filter.
+    install: The profile names the command. This card does not install it.
+    default_version: "not-recorded"
+    version_args: []
+    timeout_seconds: 120
+    platforms: []
+    comparison: base-head
+    type_checker: false
+    mutation: false
+    mode: report
+    level_map: {}
+    curated_block_rules: []
+    rules: []
+    env_dirs: []
+    lockfiles: []

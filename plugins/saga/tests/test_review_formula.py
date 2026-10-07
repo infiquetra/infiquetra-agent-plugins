@@ -87,6 +87,28 @@ EXPECTED_ROWS: dict[str, tuple[str, str | None, bool]] = {
     "correctness.workflow-dead-end": ("blocks", None, False),
     "correctness.ci-matrix-fails": ("blocks", None, False),
     "correctness.dispute": ("fix-later", None, False),
+    "correctness.tool-error": ("blocks", None, False),
+    "correctness.tool-warning": ("fix-later", None, False),
+    "correctness.tool-style": ("note", None, False),
+    "correctness.tool-curated": ("blocks", None, False),
+    "correctness.tool-unscoped": ("fix-later", None, False),
+    "security.tool-error": ("blocks", None, False),
+    "security.tool-warning": ("fix-later", None, False),
+    "security.tool-style": ("note", None, False),
+    "security.tool-curated": ("blocks", None, False),
+    "security.tool-unscoped": ("fix-later", None, False),
+    "security.dependency-medium-low": ("fix-later", None, False),
+    "security.workflow-infra-medium-low": ("fix-later", None, False),
+    "testing.tool-error": ("blocks", None, False),
+    "testing.tool-warning": ("fix-later", None, False),
+    "testing.tool-style": ("note", None, False),
+    "testing.tool-curated": ("blocks", None, False),
+    "testing.tool-unscoped": ("fix-later", None, False),
+    "architecture-maintainability.tool-error": ("blocks", None, False),
+    "architecture-maintainability.tool-warning": ("fix-later", None, False),
+    "architecture-maintainability.tool-style": ("note", None, False),
+    "architecture-maintainability.tool-curated": ("blocks", None, False),
+    "architecture-maintainability.tool-unscoped": ("fix-later", None, False),
 }
 FIXED_ROWS = sorted(EXPECTED_ROWS)
 JUDGED_ROWS = {
@@ -519,3 +541,103 @@ def test_compute_command_refuses_a_preset_severity(
     inputs.write_text(json.dumps({"findings": [finding]}), encoding="utf-8")
     assert F.main(["compute", str(inputs)]) == 1
     assert "severity" in capsys.readouterr().err
+
+
+# --- item 6: tool findings the lens tables do not name -----------------------------------------
+
+
+@pytest.mark.parametrize("lens", list(F.LENSES))
+def test_tool_levels_use_the_row_for_that_lens(lens: str) -> None:
+    """Error blocks, warning is fix later, and style and information are the same note."""
+    error = F.tool_row(lens, "error", "E1", ())
+    warning = F.tool_row(lens, "warning", "W1", ())
+    style = F.tool_row(lens, "style", "S1", ())
+    info = F.tool_row(lens, "info", "I1", ())
+    assert error == f"{lens}.tool-error"
+    assert F.ROWS[error].lens == lens
+    assert severity(tool_finding(error)) == "blocks"
+    assert severity(tool_finding(warning)) == "fix-later"
+    assert style.endswith(".tool-style") and info.endswith(".tool-style")
+    assert severity(tool_finding(info)) == "note"
+    unscoped = F.tool_row(lens, None, "U1", ())
+    curated = F.tool_row(lens, None, "U1", ("U1",))
+    assert unscoped.endswith(".tool-unscoped")
+    assert severity(tool_finding(unscoped)) == "fix-later"
+    assert curated.endswith(".tool-curated")
+    excused = severity(
+        tool_finding(curated),
+        builder_records=[reason("rf:1", "scanner-false-positive")],
+    )
+    assert excused == "blocks"
+
+
+def test_a_dependency_with_no_score_blocks_until_a_false_positive_reason() -> None:
+    row = F.dependency_row(None)
+    assert row == "security.dependency-high"
+    assert severity(tool_finding(row, "rf:dep")) == "blocks"
+    noted = severity(
+        tool_finding(row, "rf:dep"),
+        builder_records=[reason("rf:dep", "scanner-false-positive")],
+    )
+    assert noted == "note"
+
+
+def test_medium_low_and_zero_dependency_scores_are_fix_later() -> None:
+    for score in (6.9, 4.0, 3.9, 0.1, 0.0):
+        row = F.dependency_row(score)
+        assert row == "security.dependency-medium-low"
+        assert severity(tool_finding(row)) == "fix-later"
+    assert F.dependency_row(7.0) == "security.dependency-high"
+    assert F.dependency_row(9.0) == "security.dependency-high"
+
+
+def test_medium_and_low_workflow_words_are_fix_later() -> None:
+    for word in ("medium", "low"):
+        row = F.workflow_row(word)
+        assert row == "security.workflow-infra-medium-low"
+        assert severity(tool_finding(row)) == "fix-later"
+
+
+def test_two_tools_reporting_one_advisory_take_the_scored_severity() -> None:
+    merged = F.merge_advisories(
+        [
+            {
+                "advisory_ids": ["GHSA-EXAMPLE", "CVE-2026-0000"],
+                "tool": "osv-scanner",
+                "score": None,
+                "row": "security.dependency-high",
+            },
+            {
+                "advisory_ids": ["CVE-2026-0000"],
+                "tool": "pip-audit",
+                "score": 5.0,
+                "row": "security.dependency-medium-low",
+            },
+        ]
+    )
+    assert len(merged) == 1
+    assert merged[0]["row"] == "security.dependency-medium-low"
+    assert merged[0]["canonical_id"] == "CVE-2026-0000"
+    assert severity(tool_finding(merged[0]["row"])) == "fix-later"
+
+
+def test_two_unscored_advisories_merge_into_one_block() -> None:
+    merged = F.merge_advisories(
+        [
+            {
+                "advisory_ids": ["GHSA-EXAMPLE"],
+                "tool": "osv-scanner",
+                "score": None,
+                "row": "security.dependency-high",
+            },
+            {
+                "advisory_ids": ["GHSA-EXAMPLE", "CVE-2026-0000"],
+                "tool": "pip-audit",
+                "score": None,
+                "row": "security.dependency-high",
+            },
+        ]
+    )
+    assert len(merged) == 1
+    assert merged[0]["canonical_id"] == "CVE-2026-0000"
+    assert severity(tool_finding(merged[0]["row"])) == "blocks"

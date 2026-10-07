@@ -1,0 +1,10 @@
+[
+  {
+    "RuleID": "example-rule",
+    "File": "src/app.py",
+    "StartLine": 4,
+    "EndLine": 4,
+    "Match": "EXAMPLE_NOT_A_SECRET",
+    "Secret": "inert marker EXAMPLE_NOT_A_SECRET"
+  }
+]

@@ -6,10 +6,12 @@ every result on the unit's row in the run record; `tests/test_build_loop.py` fai
 and the code disagree about the record block's key set or the exit-code table, so the two cannot
 drift apart silently.
 
-**Source of the check map:** `infiquetra/infiquetra-sdlc` at revision `5efc869f` —
-`config/lens-catalogue.json` for `mechanical_checks` (the check-to-dimension map and its six rules)
-and `docs/lifecycle/run-model.md` step 5 for the exit criterion and the branch-preview rule. The
-combined-branch pass follows the run model at revision `e5a2be10`, section "Prove the combined
+**Source of the check map:** `plugins/saga/references/review-tools.yaml`. A baseline command
+answers the yaml row whose `tool` is one of its argument tokens. Several rows that share a binary
+answer their ids sorted and joined. A command no row claims stays repository-specific: it still
+runs, and the iteration is green when the profile's `mechanical_tool_baseline` commands pass. The
+lifecycle repository's `mechanical_checks` map is not read. Retiring that map is a later card.
+The combined-branch pass follows the run model at revision `e5a2be10`, section "Prove the combined
 branch works, before review", which issue #174 there added.
 
 ## What the criterion is made of
@@ -41,11 +43,22 @@ paraphrase. The third and the fifth are the ones that shape this module's behavi
 
 ## The check map
 
-The catalogue names four checks for the `python` stack. The loop matches a baseline command to a
-check by the tool's name appearing as an argument token, by basename, so `uv run ruff check .` and
-`/opt/bin/ruff check .` both answer `ruff`. A command no check claims is reported as a
-repository-specific entry, which is information rather than an error: a repository may run more
-than the catalogue names.
+`build_loop.py` classifies each baseline command from `plugins/saga/references/review-tools.yaml`.
+The match is the row's `tool` field, the binary name, appearing as an argument token by basename.
+`semgrep scan` answers `semgrep-saga,semgrep-security`. `gitleaks detect` answers `gitleaks`. A
+command no row claims is a repository-specific entry, which is information rather than an error,
+and it still runs.
+
+Rows whose `tool` is empty (coverage, the relocated test run) are not baseline checks. They do
+not appear as uncovered. Until later cards add rows for them, ruff, mypy and pytest stay
+repository-specific, and `catalogue_check` for those commands is null.
+
+The dry run's uncovered list is every yaml row with a binary that no baseline command names. The
+heading is "Review tools this baseline does not name:". An empty list reads "none — every review
+tool with a binary is named".
+
+The table below is the old catalogue's picture of four Python checks. It is history. The dry run
+does not print it, and it does not name bandit.
 
 | Catalogue check | The catalogue's statement of it | Result kind |
 |---|---|---|
@@ -53,10 +66,6 @@ than the catalogue names.
 | `mypy` | static type checking in **strict mode** | pass-or-fail, caps at 5 on failure |
 | `bandit` | static security analysis of Python source | pass-or-fail, caps at 5 on failure |
 | `pytest-coverage` | measured statement coverage of the changed code, against the standard's 80 percent floor | measured |
-
-The catalogue's pinned version for every one of the four reads `UNKNOWN` and is owned by the
-organisation context library. This document cites the checks and re-declares no version, which is
-the catalogue's own rule C1e: the context library is cited, not edited.
 
 ### This repository, with every divergence named
 
@@ -86,23 +95,25 @@ uv run python -m bandit -r plugins/ scripts/ tests/ tools/ -ll -q
 Adding that command to the profile's `mechanical_tool_baseline` would make the build loop unable to
 reach green on its first iteration and on every iteration after it, for 145 findings that predate
 the card that built this loop. A loop that can never go green is a refusal wearing a loop's
-clothes, and the loop's own rule is that a failing check is an iteration and never a refusal. So
-bandit is reported by `--dry-run` as an uncovered catalogue check rather than promoted into the
+clothes, and the loop's own rule is that a failing check is an iteration and never a refusal.
+Bandit is not a row in `review-tools.yaml`, so the dry run does not name it. It stays off the
 baseline, and widening the baseline is a `.saga-profile.json` change that belongs in its own card.
 
 Issue 1027 recorded the alternative it did not take: the operator may prefer bandit left advisory
 as continuous integration has it, promoted whole after a clean-up card, or scoped to the unit's own
 diff — the third needing a profile field `repository_profile.v1` does not have.
 
-### The named scanners
+### Scanners the tool list names
 
-The card that built this loop names four security and dependency scanners as baseline entries
-"where configured": `pip-audit`, `gitleaks` or `detect-secrets`, and `semgrep`. None of them is
-configured in this repository — none appears in `pyproject.toml`, in `.github/workflows/ci.yml`, or
-in any configuration file. The dry run reports each by name as not configured rather than dropping
-the clause silently. They are reported separately from an uncovered catalogue check, because a tool
-a repository has never configured is a different fact from a catalogue check whose baseline command
-is missing.
+The every-language tools with a binary live in `review-tools.yaml`: semgrep (two rows), gitleaks,
+osv-scanner, jscpd and lizard. A baseline that does not name one of those binaries lists it under
+"Review tools this baseline does not name:". Coverage and the relocated test run have no binary,
+so they are not part of that list. The runner that executes them is separate from this loop; the
+loop does not invoke it.
+
+The quoted rules above are the lifecycle catalogue's historical `mechanical_checks.rules`. This
+loop does not read that map. The key `catalogue_check` stays on the iteration record: its value is
+a yaml row id, several ids joined with a comma, or null.
 
 ## The functional-test environment
 
@@ -393,7 +404,8 @@ same row is left alone.
 <!-- END ITERATION KEYS -->
 
 Each result carries `name`, `command`, `catalogue_check`, `status`, `exit_code`,
-`duration_seconds` and `detail`. `catalogue_check` is `null` for a repository-specific entry.
+`duration_seconds` and `detail`. `catalogue_check` is a yaml row id, several ids joined with a
+comma, or `null` for a repository-specific entry.
 
 `handed_to_code_review.revision` is a **full forty-character commit identifier**, because
 `/code-review` Phase 0.2 freezes exactly that value and refuses an abbreviation or a symbolic
@@ -482,7 +494,8 @@ about the path it was handed is clearer than the loop silently dropping the argu
 checks, so `--repo-root` names it rather than the loop inheriting whatever directory the caller
 happened to be in. `--profile` is separate from it: a caller that wants a different profile is not
 thereby asking for a different repository, and conflating the two moved the revision lookup to a
-directory that was not a checkout.
+directory that was not a checkout. The review runner's relocated test is not one of these checks.
+This loop does not start it.
 
 ## Related
 

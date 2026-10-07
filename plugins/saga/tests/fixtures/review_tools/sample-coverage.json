@@ -1,0 +1,10 @@
+{
+  "files": {
+    "src/app.py": {
+      "executed_lines": [2, 10],
+      "missing_lines": [],
+      "executed_branches": [[2, 3], [10, 11]],
+      "missing_branches": [[4, 5]]
+    }
+  }
+}

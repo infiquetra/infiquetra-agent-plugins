@@ -97,6 +97,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import environment_lease  # noqa: E402  (after the sys.path shim, by design)
 import functional_environment  # noqa: E402  (after the sys.path shim, by design)
 import merge_turn  # noqa: E402  (after the sys.path shim, by design)
+import review_tools  # noqa: E402  (after the sys.path shim, by design)
 import run_record  # noqa: E402  (after the sys.path shim, by design)
 
 #: The key this module owns on a unit's row. One key, documented in
@@ -133,40 +134,10 @@ RUNS_ENVIRONMENT = "environment"
 #: and no unit is held back by it."
 STATUS_NO_PREVIEW = "no-preview-declared"
 
-#: The lens catalogue's check-to-dimension map for the ``python`` stack, at sdlc revision
-#: ``5efc869f``: the four check identifiers and the tool token that identifies each one inside a
-#: baseline command. The catalogue's pinned versions all read ``UNKNOWN`` and are owned by the
-#: organisation context library, so this map cites the checks and re-declares no version.
-CATALOGUE_CHECKS: dict[str, dict[str, str]] = {
-    "ruff": {
-        "tool": "ruff",
-        "purpose": "lint and format conformance for Python source",
-    },
-    "mypy": {
-        "tool": "mypy",
-        "purpose": "static type checking in strict mode",
-    },
-    "bandit": {
-        "tool": "bandit",
-        "purpose": "static security analysis of Python source",
-    },
-    "pytest-coverage": {
-        "tool": "pytest",
-        "purpose": "measured statement coverage of the changed code",
-    },
-}
-
-#: Scanners the card names as baseline entries "where configured". They are not lens-catalogue
-#: checks, so they are reported separately from an uncovered catalogue check: a tool a repository
-#: has never configured is a different fact from a catalogue check its baseline does not answer.
-NAMED_SCANNERS: tuple[str, ...] = ("pip-audit", "gitleaks", "detect-secrets", "semgrep")
-
-#: Why an uncovered catalogue check is uncovered. Deliberately general: the reason a PARTICULAR
-#: repository leaves a check out belongs in that repository's reading of
-#: ``references/mechanical-baseline.md``, not hard-coded into a script every repository runs.
+#: Why a review tool is uncovered. The list itself is ``review-tools.yaml``, not a copy of it.
 UNCOVERED_REASON = (
     "no baseline command in the repository profile names this tool; "
-    "see plugins/saga/references/mechanical-baseline.md"
+    "see plugins/saga/references/review-tools.yaml"
 )
 
 #: Exit codes. The first four are ``run_record.py``'s, unchanged, so a caller learns one table.
@@ -398,40 +369,47 @@ def _tokens(command: str) -> list[str]:
 
 
 def catalogue_check_for(command: str) -> str | None:
-    """Which lens-catalogue check *command* answers, or ``None`` for a repository-specific entry."""
+    """Which review-tool row *command* answers, or ``None`` for a repository-specific entry.
+
+    Several rows can share one binary. Their ids are sorted and joined, so ``semgrep scan``
+    answers ``semgrep-saga,semgrep-security``. A row with an empty ``tool`` is not a baseline check.
+    """
     tokens = set(_tokens(command))
-    for check_id, spec in CATALOGUE_CHECKS.items():
-        if spec["tool"] in tokens:
-            return check_id
-    return None
+    matched = sorted(
+        str(row["id"])
+        for row in review_tools.load_tool_list()
+        if row.get("tool") and str(row["tool"]) in tokens
+    )
+    if not matched:
+        return None
+    return ",".join(matched)
 
 
 def check_map(baseline: Sequence[str]) -> dict[str, Any]:
-    """Map *baseline* onto the catalogue's checks and name what is not covered.
+    """Map *baseline* onto ``review-tools.yaml`` and name the tools no command answers.
 
-    A catalogue check no command answers is reported as uncovered with a reason. A command no
-    catalogue check claims is reported as repository-specific, which is information rather than an
-    error: a repository may run more than the catalogue names.
+    A command no row claims is repository-specific. It still runs: green is the profile's
+    ``mechanical_tool_baseline``, not this map. Rows with an empty ``tool`` are not baseline
+    checks and do not appear as uncovered.
     """
-    covered: dict[str, list[str]] = {}
+    rows = [row for row in review_tools.load_tool_list() if row.get("tool")]
+    covered: set[str] = set()
     commands: list[dict[str, Any]] = []
     for command in baseline:
         check_id = catalogue_check_for(command)
         commands.append({"command": command, "catalogue_check": check_id})
         if check_id is not None:
-            covered.setdefault(check_id, []).append(command)
+            covered.update(check_id.split(","))
     uncovered = [
-        {"catalogue_check": check_id, "purpose": spec["purpose"], "reason": UNCOVERED_REASON}
-        for check_id, spec in CATALOGUE_CHECKS.items()
-        if check_id not in covered
+        {
+            "catalogue_check": str(row["id"]),
+            "purpose": str(row.get("purpose") or ""),
+            "reason": UNCOVERED_REASON,
+        }
+        for row in rows
+        if str(row["id"]) not in covered
     ]
-    named_tokens = {token for command in baseline for token in _tokens(command)}
-    unconfigured = [scanner for scanner in NAMED_SCANNERS if scanner not in named_tokens]
-    return {
-        "commands": commands,
-        "uncovered": uncovered,
-        "unconfigured_scanners": unconfigured,
-    }
+    return {"commands": commands, "uncovered": uncovered}
 
 
 # ---------------------------------------------------------------------------
@@ -787,21 +765,13 @@ def format_dry_run(
         lines.append("  none declared in the run record")
 
     lines.append("")
-    lines.append("Catalogue checks this baseline does not cover:")
+    lines.append("Review tools this baseline does not name:")
     if mapping["uncovered"]:
         for entry in mapping["uncovered"]:
             lines.append(f"  {entry['catalogue_check']} — {entry['purpose']}")
             lines.append(f"      {entry['reason']}")
     else:
-        lines.append("  none — every catalogue check for this stack is covered")
-
-    lines.append("")
-    lines.append("Named scanners not configured in this repository's baseline:")
-    if mapping["unconfigured_scanners"]:
-        for scanner in mapping["unconfigured_scanners"]:
-            lines.append(f"  {scanner}")
-    else:
-        lines.append("  none")
+        lines.append("  none — every review tool with a binary is named")
 
     lines.append("")
     lines.append("Child-scoped functional checks, from the plan:")

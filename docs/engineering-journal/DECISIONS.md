@@ -2,6 +2,16 @@
 
 ## 2026-10-06
 
+### The review tool list is the check map, and the runner does not copy a checkout
+
+**Decision.** Issue #151 (card C4a of the saga review redesign). Five choices. The check map is `plugins/saga/references/review-tools.yaml`: a baseline command answers the row whose binary it names, several rows that share a binary are joined in sorted order, and rows with no binary are not baseline checks. The profile's `mechanical_tool_baseline` commands still run and still decide green. Item 6 is row ids (`tool-error`, `tool-warning`, `tool-style`, `tool-curated`, `tool-unscoped`, plus the medium-low dependency and workflow rows), not a new field on the finding. The relocated test changes its working directory and its home directory and does not copy the checkout; each named language command runs once. Semgrep's rule pack is not committed. The pin is a sha256, the cache is under the user's home, metrics are off, and a missing cache is a degraded input rather than a download. `FINGERPRINT_COMPONENTS` names this card's five paths. This card does not create the calibration file.
+
+**Rationale.** The build loop was carrying a second copy of a catalogue it does not own, and the commands a repository already runs are what decide green. A copied checkout on every unit would duplicate a search a later card owns. The Semgrep Rules License v1.0 forbids shipping the pack. The fingerprint has to exist before the calibration file does, or the later card has nothing to include.
+
+**Rejected alternatives.** Keep reading the lifecycle `mechanical_checks` map, and rename the iteration key. Put a level or the advisory ids on the finding. Copy the tree for the relocated run. Vendor the Semgrep pack. Create the calibration file in this card.
+
+**Revisit when.** The Semgrep rules license allows redistribution, and then the cache can be shipped instead of hashed. Also when the calibration file exists, and then the component tuple belongs in that file.
+
 ### Saga's review records: computed severity, a line-free identity, and storage in existing keys
 
 **Decision.** Issue #148 (card C1 of the saga review redesign, parent #147). Three load-bearing choices. First, a severity is never handed in: a finding arrives without one, `review_formula.py` computes it with the row and modifiers that produced it, and validating a stored review run recomputes every severity from the inputs the run embeds and refuses a difference. Second, a finding's identity is a SHA-256 of lens, row, rule reference, file, function and the stored anchor text, with no line number. Third, review runs are appended to the run record's `review_cycles` with `loop: "review_run"`, and builder records are a unit-row key, `builder_record`; no new top-level key.

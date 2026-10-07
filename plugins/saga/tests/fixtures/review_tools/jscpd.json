@@ -1,0 +1,16 @@
+{
+  "duplicates": [
+    {
+      "lines": 8,
+      "tokens": 60,
+      "firstFile": {"name": "src/a.py", "start": 10},
+      "secondFile": {"name": "src/b.py", "start": 4}
+    },
+    {
+      "lines": 2,
+      "tokens": 10,
+      "firstFile": {"name": "src/c.py", "start": 1},
+      "secondFile": {"name": "src/d.py", "start": 1}
+    }
+  ]
+}
