@@ -15,6 +15,12 @@
       ]
     },
     {
+      "name": "jev_sweep",
+      "destinations": [
+        "scripts/_bundled/jev_sweep.py"
+      ]
+    },
+    {
       "name": "jev_verbs",
       "destinations": [
         "scripts/_bundled/jev_verbs.py"

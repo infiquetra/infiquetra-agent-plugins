@@ -81,6 +81,8 @@ class ModelPrice:
     tier: str
     aliases: tuple[str, ...]
     rates: Mapping[str, Decimal] | None
+    source: str = ""
+    verified_on: date | None = None
 
 
 @dataclass(frozen=True)
@@ -168,6 +170,11 @@ def load_prices(path: Path) -> PriceTable:
         aliases = entry.get("aliases") or []
         if not isinstance(aliases, list):
             raise CostReportError(f"{path}: {model}.aliases must be a list")
+        row_source = entry.get("source") or ""
+        if not isinstance(row_source, str):
+            raise CostReportError(f"{path}: {model}.source must be a string")
+        row_verified = entry.get("verified_on")
+        row_date = None if row_verified in (None, "") else _as_date(row_verified, path)
         models.append(
             ModelPrice(
                 model=str(model),
@@ -175,6 +182,8 @@ def load_prices(path: Path) -> PriceTable:
                 tier=str(entry.get("tier") or model),
                 aliases=tuple(str(alias) for alias in aliases),
                 rates=_rates(str(model), entry["usd_per_million"], path),
+                source=row_source,
+                verified_on=row_date,
             )
         )
     return PriceTable(

@@ -4,6 +4,10 @@
 
 ### Added
 
+- Issue 156: `scripts/sweep_pieces.py` cuts one piece per changed function for `jev sweep`.
+  `references/review-tools.yaml` gains a Universal Ctags row the review runner does not execute.
+  `references/model-prices.yaml` prices TypeSafe input. The fleet bundle includes `jev_sweep`.
+
 - Issue 151: `scripts/review_tools.py` writes findings for what a change introduces, from a
   repository, two commits, a profile and an output directory. It does not read a run record. Line
   findings stay on the diff; a whole-project result stays only when it is new at head; a missing

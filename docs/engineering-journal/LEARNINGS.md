@@ -31,6 +31,14 @@
 
 **Generalizable rule.** Confine by blocking the parent and allowing back named paths, then run a real test of each toolchain under the block before trusting it.
 
+### The sweep points at code and leaves the answer for a later card
+
+**Evidence.** Issue #156. `docs/plans/2026-10-06-issue-156-plan.md`. `plugins/fleet-core/scripts/fleet_commons/jev_sweep.py` returns a where-to-look item with no `answer`. `plugins/saga/scripts/sweep_pieces.py` reads the head blob with `git show` and runs `ctags --options=NONE`.
+
+**Mechanism.** `review_records` requires `answer` on a where-to-look record. This card leaves it off because card C8 writes the finding or the cleared reason. The changed file is untrusted, so Ctags sees a `0o600` copy in a `0o700` directory and is invoked with `--options=NONE`, not the worktree and not the repository's Ctags config.
+
+**Generalizable rule.** A record that a later card completes stays invalid until that card writes the missing field, and an untrusted blob is parsed from a private copy with the tool's own config turned off.
+
 ## 2026-10-06
 
 ### A gap on one side of a comparison is an empty set

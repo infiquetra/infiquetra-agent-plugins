@@ -65,7 +65,8 @@ Not by installing this package. A consuming plugin lists the modules it needs
 in `fleet-bundle.json`. The build step copies each one into that plugin as a
 generated, read-only, digest-stamped file. The installable artifact is already
 complete when a user receives it. Agent Plugins has no dependency field, so
-there is nothing to declare at install time.
+there is nothing to declare at install time. Saga declares `jev_sweep`, and the
+bundler writes `scripts/_bundled/jev_sweep.py`.
 
 A module that needs another module loads it from the same directory. That is
 what lets one file work in `scripts/fleet_commons/` and in any generated

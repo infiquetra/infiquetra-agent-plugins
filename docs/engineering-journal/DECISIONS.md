@@ -17,6 +17,16 @@ A candidate path is dropped, or for the copy and packet the launch is refused, w
 
 **Revisit when.** A Claude Code release changes how `allowRead` works inside a denied parent (`reviewer-probe` checks it live), a second vendor gets a reviewer recipe, or the follow-up on Claude's Read tool lands. That follow-up is needed because, with the operator's user settings loaded, the Read tool read a home canary that the same settings without user settings denied.
 
+### The Jev sweep may send a changed function, a changed block, or a small file
+
+**Decision.** Issue #156 (card C6 of the saga review redesign). After redaction, `jev sweep` may send the changed function, the changed block with 20 lines on each side, and a whole file of at most 400 lines. It returns at most 30 items and stops at $1. It only points. It does not block, clear, or grade. A failed classifier returns no items and a degraded mark, and the review continues.
+
+**Rationale.** The previous data rule allowed diffs and findings, not a whole function or a small file. The sweep's question is about the changed code, and the client's `prepare_state` is the only path that builds a request. The caps keep one review from sending an unbounded tree or spending without a stop.
+
+**Rejected alternatives.** Sending an unbounded file. Sending code through any path other than `typesafe_client.ask`. Treating the sweep as a gate.
+
+**Revisit when.** A corpus run shows 400 lines is the wrong size, or a second classifier replaces Jev.
+
 ## 2026-10-06
 
 ### The review tool list is the check map, and the runner does not copy a checkout

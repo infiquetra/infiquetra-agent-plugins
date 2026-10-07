@@ -12,7 +12,7 @@ State sent to TypeSafe leaves this machine and reaches a third-party vendor. The
 
 ### May be sent, after redaction
 
-Issue bodies, plan and requirements text, code-review findings, diffs, commit messages, file paths, and the repository's own policy documents. This is content this fleet already sends to other model vendors through the external-engine HTTP bridge, so sending it here creates no new class of exposure.
+Issue bodies, plan and requirements text, code-review findings, diffs, commit messages, file paths, and the repository's own policy documents. This is content this fleet already sends to other model vendors through the external-engine HTTP bridge, so sending it here creates no new class of exposure. The sweep may send, after redaction, the changed function, the changed block with 20 lines on each side, and a whole file of at most 400 lines. The sweep returns at most 30 items and spends at most $1.
 
 ### May never be sent
 
@@ -102,7 +102,12 @@ The cache is keyed on the **requested** model alias, because the resolved versio
 6. Redact before sending, never send raw transcripts, and obey the data rule above.
 7. Log every verdict with the resolved model version, outside model context. Pin it, and re-judge when the alias moves.
 8. Fail open by documented policy, per gate, and say which side fails open.
+
+The sweep fails open to no items and a degraded mark, and the review continues. That open side can hide a real defect.
+
 9. Never use it for arithmetic, counting, date comparison, adversarial screening, live external state, generation, main-session model routing, or controller staffing from benchmark tables.
+
+The sweep only points and never blocks or clears, so adversarial screening does not cover it.
 10. Suggest first. A decision becomes automatic only after a recorded harness run at the chosen band, and the operator can always override. One raise-only exception, decided 2026-10-04 (`docs/engineering-journal/DECISIONS.md`): saga staffing's tier judgment (§7) applies a tier raise by itself at confidence 0.8 or above — one step, effort first, never to Fable, never past the palette's top effort, never over a tier the operator set — and records the raise with its reason in the run record, where the operator can still override it. A raise from 0.6 up to 0.8 waits for the operator. A suggestion to lower a tier stays advisory until the harness has scored about thirty labeled verdicts; nothing lowers a tier automatically. Below 0.6 a judgment is logged and not shown.
 
 ---

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -179,7 +181,7 @@ def test_the_tool_and_the_registry_carry_the_same_verbs() -> None:
         action for action in parser._actions if hasattr(action, "choices") and action.choices
     ]
     declared = set(subparsers[0].choices)
-    assert declared == set(jev_verbs.verb_names()) | {"ask", "eval"}
+    assert declared == set(jev_verbs.verb_names()) | {"ask", "eval", "sweep"}
 
 
 def test_a_verb_carries_its_policy_text_in_one_place() -> None:
@@ -327,5 +329,157 @@ def test_eval_on_a_missing_path_exits_non_zero(capsys) -> None:
     code, _out, err = _run(["e" + "val", "--cached", "/nonexistent/path"], capsys)
     assert code == 1
     assert "no such" in err
+
+
+# --------------------------------------------------------------------------- #
+# sweep
+# --------------------------------------------------------------------------- #
+
+JEV = REPO_ROOT / "plugins/fleet-core/scripts/jev.py"
+
+
+def _sweep_files(tmp_path: Path, *, bank: object | None = None) -> list[str]:
+    payload = bank if bank is not None else {
+        "schema": "question_bank.v1",
+        "questions": [{
+            "id": "leak",
+            "lens": "security",
+            "kind": "yes-no",
+            "options": [
+                {"id": "yes", "definition": "yes"},
+                {"id": "no", "definition": "no"},
+            ],
+            "piece": "function",
+        }],
+    }
+    piece = [{
+        "id": "a.py:1-2",
+        "path": "a.py",
+        "language": "python",
+        "kind": "function",
+        "text": "def f():\n    return 1\n",
+        "degraded": False,
+        "location": {
+            "scope": "lines",
+            "file": "a.py",
+            "lines": {"start": 1, "end": 2},
+            "function": "f",
+            "anchor": "def f():",
+        },
+    }]
+    rate = {
+        "uncached_input": 0,
+        "cache_read": 0,
+        "cache_write_5m": 0,
+        "cache_write_1h": 0,
+        "output": 0,
+    }
+    paths = {}
+    for name, body in (
+        ("bank", payload),
+        ("pieces", piece),
+        ("thresholds", {}),
+        ("rate", rate),
+    ):
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps(body), encoding="utf-8")
+        paths[name] = path
+    return [
+        "--bank", str(paths["bank"]),
+        "--pieces", str(paths["pieces"]),
+        "--thresholds", str(paths["thresholds"]),
+        "--rate", str(paths["rate"]),
+    ]
+
+
+def _sweep_env(tmp_path: Path) -> dict[str, str]:
+    env = dict(os.environ)
+    env.pop("TYPESAFE_API_KEY", None)
+    env["INFIQUETRA_TYPESAFE_LOG_DIR"] = str(tmp_path / "log")
+    env["TYPESAFE_BASE_URL"] = "http://127.0.0.1:9"
+    return env
+
+
+def _sweep_proc(tmp_path: Path, extra: list[str] | None = None, bank: object | None = None):
+    return subprocess.run(
+        [sys.executable, str(JEV), "sweep", *_sweep_files(tmp_path, bank=bank), *(extra or [])],
+        capture_output=True,
+        text=True,
+        env=_sweep_env(tmp_path),
+        check=False,
+    )
+
+
+def test_sweep_help_exits_zero_and_names_its_inputs() -> None:
+    proc = subprocess.run(
+        [sys.executable, str(JEV), "sweep", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0
+    for word in ("bank", "pieces", "thresholds", "rate", "repo", "head"):
+        assert word in proc.stdout
+
+
+def test_sweep_refuses_a_missing_bank_file(tmp_path: Path) -> None:
+    flags = _sweep_files(tmp_path)
+    flags[1] = str(tmp_path / "missing-bank.json")
+    proc = subprocess.run(
+        [sys.executable, str(JEV), "sweep", *flags],
+        capture_output=True,
+        text=True,
+        env=_sweep_env(tmp_path),
+        check=False,
+    )
+    assert proc.returncode == 2
+    assert proc.stdout == ""
+    assert proc.stderr.startswith("ERROR:")
+
+
+def test_sweep_refuses_a_bank_that_is_not_the_schema(tmp_path: Path) -> None:
+    proc = _sweep_proc(tmp_path, bank={"schema": "nope"})
+    assert proc.returncode == 2
+    assert proc.stdout == ""
+    assert proc.stderr.startswith("ERROR:")
+
+
+def test_sweep_accepts_an_empty_threshold_object(tmp_path: Path) -> None:
+    proc = _sweep_proc(tmp_path)
+    assert proc.returncode == 0
+    payload = json.loads(proc.stdout)
+    assert payload["failed"] is True
+    assert payload["items"] == []
+    assert payload["degraded"] == [{"reason": "no-key"}]
+
+
+def test_sweep_runs_as_a_subprocess_without_a_network(tmp_path: Path) -> None:
+    proc = _sweep_proc(tmp_path)
+    assert proc.returncode == 0
+    json.loads(proc.stdout)
+    assert "Traceback" not in proc.stderr
+
+
+def test_sweep_defaults_the_repository_and_the_head(tmp_path: Path, monkeypatch, capsys) -> None:
+    seen: dict[str, str] = {}
+
+    def fake_sweep(_bank, _pieces, _thresholds, _rate, *, repo="local", head="unknown", **_kwargs):
+        seen["repo"] = repo
+        seen["head"] = head
+        return {
+            "items": [],
+            "degraded": [],
+            "failed": False,
+            "model": "",
+            "spend": "0",
+            "seconds": "0",
+        }
+
+    monkeypatch.setattr(jev.jev_sweep, "sweep", fake_sweep)
+    code, out, err = _run(["sweep", *_sweep_files(tmp_path)], capsys)
+    assert code == 0
+    assert err == ""
+    assert json.loads(out)["failed"] is False
+    assert seen == {"repo": "local", "head": "unknown"}
 
 
