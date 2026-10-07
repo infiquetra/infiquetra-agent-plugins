@@ -2,6 +2,14 @@
 
 ## 2026-10-07
 
+### A later fingerprint path has to land before a test that pins the last entry
+
+**Evidence.** Issue #160, after rebasing onto main. `plugins/saga/tests/test_review_checks_runner.py` (`test_checks_fingerprint_names_the_script`) asserts `COMPONENTS[-1]` is `plugins/saga/scripts/review_checks.py`. Card C5 kept that path last the same way. The review command is the entry before it in `plugins/saga/scripts/review_calibration.py`.
+
+**Mechanism.** The scripted-checks card proved its script was fingerprinted by requiring it to be the last path. Appending `review_command.py` after that path fails the test even though the script is still on the list.
+
+**Generalizable rule.** When a test pins the last entry of a shared list, a new entry goes before that pin.
+
 ### A non-zero exit is not the recorded failure
 
 **Evidence.** Issue #160. `plugins/saga/scripts/review_command.py` (`_matches`, `_downgrade`, `_rerun_one`).
