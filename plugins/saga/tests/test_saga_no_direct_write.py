@@ -78,6 +78,16 @@ _DENYLIST_SOURCES = frozenset(
     }
 )
 
+# The pattern rule encodes the signatures it detects, and its test target and
+# tests quote them as scan data. None of the three composes or executes a write.
+_PATTERN_DATA_SOURCES = frozenset(
+    {
+        (SAGA_ROOT / "references" / "semgrep" / "write-skips-shared-update-path.yaml").resolve(),
+        (SAGA_ROOT / "references" / "semgrep" / "write-skips-shared-update-path.py").resolve(),
+        (SAGA_ROOT / "tests" / "test_pattern_checks.py").resolve(),
+    }
+)
+
 # The op-kind vocabulary is ALLOWED without further proof only in the submission/gating core: the
 # certificate (definition + field gating), the one legal writer (board_progression), and the
 # reconcile controller. Every other file must show a submission seam to name the op at all.
@@ -217,6 +227,8 @@ def _iter_plugin_sources(plugin_dir: Path) -> list[Path]:
         # denylist. They now live in the package, and reading the denylist back
         # as an offense would make the guard fail on itself.
         if path.resolve() in _DENYLIST_SOURCES:
+            continue
+        if path.resolve() in _PATTERN_DATA_SOURCES:
             continue
         files.append(path)
     return sorted(files)

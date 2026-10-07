@@ -103,12 +103,25 @@ _DENYLIST_SOURCES = frozenset(
     }
 )
 
+# The pattern rule's test target and tests quote the tokens as scan data.
+# Neither composes or executes a write.
+_PATTERN_DATA_SOURCES = frozenset(
+    {
+        (
+            SAGA_ROOT / "references" / "semgrep" / "write-skips-shared-update-path.py"
+        ).resolve(),
+        (SAGA_ROOT / "tests" / "test_pattern_checks.py").resolve(),
+    }
+)
+
 
 def _iter_saga_python(root: Path = SAGA_ROOT) -> list[Path]:
     return sorted(
         path
         for path in root.rglob("*.py")
-        if path.is_file() and path.resolve() not in _DENYLIST_SOURCES
+        if path.is_file()
+        and path.resolve() not in _DENYLIST_SOURCES
+        and path.resolve() not in _PATTERN_DATA_SOURCES
     )
 
 

@@ -785,6 +785,14 @@ questions:
     profile_key: team_nickname
 """
 
+# Write-mechanics tests run against an empty registry, so a question a later
+# card registers never changes what these answers must cover.
+EMPTY_EXTENSIONS = """
+schema: setup_extensions.v1
+steps: []
+questions: []
+"""
+
 
 def test_extension_step_survey_does_not_run_the_step(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1008,7 +1016,7 @@ def test_profile_write_keeps_key_order(tmp_path: Path, capsys: pytest.CaptureFix
     (repo / "a.py").write_text("print(1)\n", encoding="utf-8")
     original = {"schema": "repository_profile.v1", "repo": "example", "zebra": 1}
     (repo / ".saga-profile.json").write_text(json.dumps(original), encoding="utf-8")
-    code, _out, err = _write(repo, BASICS, capsys, tools=_tools(tmp_path, EMPTY_TOOLS))
+    code, _out, err = _write(repo, BASICS, capsys, tools=_tools(tmp_path, EMPTY_TOOLS), extensions=_extensions(tmp_path, EMPTY_EXTENSIONS))
     assert code == 0, err
     loaded = json.loads((repo / ".saga-profile.json").read_text(encoding="utf-8"))
     assert list(loaded)[:3] == ["schema", "repo", "zebra"]
@@ -1020,7 +1028,7 @@ def test_profile_write_keeps_key_order(tmp_path: Path, capsys: pytest.CaptureFix
 def test_profile_write_creates_the_absent_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
-    code, _out, err = _write(repo, BASICS, capsys, tools=_tools(tmp_path, EMPTY_TOOLS))
+    code, _out, err = _write(repo, BASICS, capsys, tools=_tools(tmp_path, EMPTY_TOOLS), extensions=_extensions(tmp_path, EMPTY_EXTENSIONS))
     assert code == 0, err
     text = (repo / ".saga-profile.json").read_text(encoding="utf-8")
     loaded = json.loads(text)
@@ -1042,7 +1050,7 @@ def test_profile_write_is_atomic(
 
     monkeypatch.setattr(setup.os, "replace", boom)
     with pytest.raises(OSError, match="replace failed"):
-        _write(repo, BASICS, capsys, tools=_tools(tmp_path, EMPTY_TOOLS))
+        _write(repo, BASICS, capsys, tools=_tools(tmp_path, EMPTY_TOOLS), extensions=_extensions(tmp_path, EMPTY_EXTENSIONS))
     assert (repo / ".saga-profile.json").read_text(encoding="utf-8") == original
     extras = [path.name for path in repo.iterdir() if path.name.startswith(".saga-profile.")]
     assert extras == [".saga-profile.json"]
@@ -1098,7 +1106,7 @@ def test_profile_write_pins_are_version_only(tmp_path: Path, capsys: pytest.Capt
     (repo / ".saga-profile.json").write_text(json.dumps(seeded), encoding="utf-8")
     tools = _tools(tmp_path, PIN_TOOLS)
     try:
-        code, _out, err = _write(repo, {}, capsys, tools=tools)
+        code, _out, err = _write(repo, {}, capsys, tools=tools, extensions=_extensions(tmp_path, EMPTY_EXTENSIONS))
         assert code == 0, err
         pins = json.loads((repo / ".saga-profile.json").read_text(encoding="utf-8"))
         pins = pins["review_tools"]["pins"]
@@ -1106,7 +1114,7 @@ def test_profile_write_pins_are_version_only(tmp_path: Path, capsys: pytest.Capt
         assert pins["semgrep"] == {"version": "1.2.3"}
         assert "rules" not in pins["semgrep"]
         _public.semgrep = "semgrep 9.9.9\n"  # type: ignore[attr-defined]
-        code, _out, err = _write(repo, {}, capsys, tools=tools)
+        code, _out, err = _write(repo, {}, capsys, tools=tools, extensions=_extensions(tmp_path, EMPTY_EXTENSIONS))
         assert code == 0, err
         again = json.loads((repo / ".saga-profile.json").read_text(encoding="utf-8"))
         assert again["review_tools"]["pins"]["semgrep"]["version"] == "1.2.3"
@@ -1126,7 +1134,7 @@ def test_profile_write_visibility(tmp_path: Path, capsys: pytest.CaptureFixture[
     )
     assert code == 0, err
     assert all(row["key"] != "visibility" for row in json.loads(raw)["questions"])
-    code, _out, err = _write(repo, BASICS, capsys, tools=tools)
+    code, _out, err = _write(repo, BASICS, capsys, tools=tools, extensions=_extensions(tmp_path, EMPTY_EXTENSIONS))
     assert code == 0, err
     assert json.loads((repo / ".saga-profile.json").read_text(encoding="utf-8"))["visibility"] == "public"
 
@@ -1149,7 +1157,7 @@ def test_profile_write_visibility(tmp_path: Path, capsys: pytest.CaptureFixture[
     assert code == 0, err
     assert any(row["key"] == "visibility" for row in json.loads(raw)["questions"])
     code, _out, err = _write(
-        private, {**BASICS, "visibility": "private"}, capsys, tools=tools, runner=closed
+        private, {**BASICS, "visibility": "private"}, capsys, tools=tools, runner=closed, extensions=_extensions(tmp_path, EMPTY_EXTENSIONS)
     )
     assert code == 0, err
     assert json.loads((private / ".saga-profile.json").read_text(encoding="utf-8"))["visibility"] == "private"
@@ -1158,7 +1166,7 @@ def test_profile_write_visibility(tmp_path: Path, capsys: pytest.CaptureFixture[
     secret.mkdir()
     (secret / ".saga-profile.json").write_text(starter, encoding="utf-8")
     code, _out, err = _write(
-        secret, {**BASICS, "visibility": "secret"}, capsys, tools=tools, runner=closed
+        secret, {**BASICS, "visibility": "secret"}, capsys, tools=tools, runner=closed, extensions=_extensions(tmp_path, EMPTY_EXTENSIONS)
     )
     assert code == 2
     assert "public or private" in err
@@ -1175,14 +1183,14 @@ def test_profile_write_functional_test(tmp_path: Path, capsys: pytest.CaptureFix
         seen["resolved"] = resolved
         return root / ".saga-profile.json"
 
-    code, _out, err = _write(repo, BASICS, capsys, tools=tools, declaration_writer=spy)
+    code, _out, err = _write(repo, BASICS, capsys, tools=tools, extensions=_extensions(tmp_path, EMPTY_EXTENSIONS), declaration_writer=spy)
     assert code == 0, err
     assert seen["resolved"]["mode"] == "declared"
     assert seen["resolved"]["test_command"] == LOCAL["test_command"]
 
     real = tmp_path / "real"
     real.mkdir()
-    code, _out, err = _write(real, BASICS, capsys, tools=tools)
+    code, _out, err = _write(real, BASICS, capsys, tools=tools, extensions=_extensions(tmp_path, EMPTY_EXTENSIONS))
     assert code == 0, err
     environment = _load("functional_environment")
     resolved = environment.resolve(json.loads((real / ".saga-profile.json").read_text(encoding="utf-8")))
@@ -1198,7 +1206,7 @@ def test_profile_write_functional_test(tmp_path: Path, capsys: pytest.CaptureFix
     assert code == 0, err
     assert all(row["key"] != "functional_test_environment" for row in json.loads(raw)["questions"])
     before = (real / ".saga-profile.json").read_bytes()
-    code, _out, err = _write(real, {"functional_test_environment": LOCAL}, capsys, tools=tools)
+    code, _out, err = _write(real, {"functional_test_environment": LOCAL}, capsys, tools=tools, extensions=_extensions(tmp_path, EMPTY_EXTENSIONS))
     assert code == 2
     assert (real / ".saga-profile.json").read_bytes() == before
 
@@ -1208,7 +1216,7 @@ def test_profile_write_qa_block(tmp_path: Path, capsys: pytest.CaptureFixture[st
     repo = tmp_path / "repo"
     repo.mkdir()
     tools = _tools(tmp_path, EMPTY_TOOLS)
-    code, _out, err = _write(repo, BASICS, capsys, tools=tools)
+    code, _out, err = _write(repo, BASICS, capsys, tools=tools, extensions=_extensions(tmp_path, EMPTY_EXTENSIONS))
     assert code == 0, err
     qa = _load("qa_strategies")
     assert qa.load_profile(repo)["schema"] == "qa_profile.v1"
@@ -1231,7 +1239,7 @@ def test_profile_write_qa_block(tmp_path: Path, capsys: pytest.CaptureFixture[st
         "strategies": {"example": {"required": True}},
         "ceiling": {"max_duration_seconds": 60},
     }
-    code, _out, err = _write(other, {"qa": missing}, capsys, tools=tools)
+    code, _out, err = _write(other, {"qa": missing}, capsys, tools=tools, extensions=_extensions(tmp_path, EMPTY_EXTENSIONS))
     assert code == 2
     assert "max_direct_cost" in err
     assert (other / ".saga-profile.json").read_text(encoding="utf-8") == starter
@@ -1240,7 +1248,7 @@ def test_profile_write_qa_block(tmp_path: Path, capsys: pytest.CaptureFixture[st
         "strategies": {"example": {"required": False}},
         "ceiling": {"max_duration_seconds": 60, "max_direct_cost": 0},
     }
-    code, _out, err = _write(other, {"qa": optional}, capsys, tools=tools)
+    code, _out, err = _write(other, {"qa": optional}, capsys, tools=tools, extensions=_extensions(tmp_path, EMPTY_EXTENSIONS))
     assert code == 2
     assert (other / ".saga-profile.json").read_text(encoding="utf-8") == starter
 
@@ -1278,7 +1286,7 @@ def test_profile_write_leaves_the_committed_profile_bytes_unchanged(
     before = committed.read_bytes()
     repo = tmp_path / "repo"
     repo.mkdir()
-    code, _out, err = _write(repo, BASICS, capsys, tools=_tools(tmp_path, EMPTY_TOOLS))
+    code, _out, err = _write(repo, BASICS, capsys, tools=_tools(tmp_path, EMPTY_TOOLS), extensions=_extensions(tmp_path, EMPTY_EXTENSIONS))
     assert code == 0, err
     assert committed.read_bytes() == before
 

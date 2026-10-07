@@ -47,6 +47,12 @@ COMPONENTS: tuple[str, ...] = (
     "plugins/fleet-core/scripts/fleet_commons/jev_sweep.py",
     "plugins/saga/scripts/sweep_pieces.py",
     "plugins/saga/references/model-prices.yaml",
+    "plugins/saga/references/semgrep/release-shares-cleanup-block.yaml",
+    "plugins/saga/references/semgrep/swallowed-error.yaml",
+    "plugins/saga/references/semgrep/silent-skip.yaml",
+    "plugins/saga/references/semgrep/write-skips-shared-update-path.yaml",
+    "plugins/saga/references/semgrep/naive-time-comparison.yaml",
+    "plugins/saga/references/semgrep/money-as-floating-point.yaml",
     "plugins/saga/scripts/review_checks.py",
 )
 

@@ -282,6 +282,12 @@ def test_components_match_the_landed_cards() -> None:
         "plugins/saga/references/targeted-reviewer-answer.schema.json",
         "plugins/saga/references/targeted-reviewer-launch.json",
         *sweep_pieces.SWEEP_COMPONENTS,
+        "plugins/saga/references/semgrep/release-shares-cleanup-block.yaml",
+        "plugins/saga/references/semgrep/swallowed-error.yaml",
+        "plugins/saga/references/semgrep/silent-skip.yaml",
+        "plugins/saga/references/semgrep/write-skips-shared-update-path.yaml",
+        "plugins/saga/references/semgrep/naive-time-comparison.yaml",
+        "plugins/saga/references/semgrep/money-as-floating-point.yaml",
         "plugins/saga/scripts/review_checks.py",
     )
 
@@ -449,6 +455,14 @@ def _security_rules(root: Path) -> list[dict[str, Any]]:
     ]
 
 
+def _semgrep_default(root: Path) -> str:
+    import review_tools
+
+    tools = review_tools.load_tool_list(root / calibration.TOOL_LIST_RELATIVE)
+    row = next(item for item in tools if item.get("id") == "semgrep-security")
+    return str(row["default_version"])
+
+
 def test_pinned_tool_off_default_reports_only(tmp_path: Path) -> None:
     root = tmp_path / "pins"
     _recorded(root)
@@ -459,7 +473,7 @@ def test_pinned_tool_off_default_reports_only(tmp_path: Path) -> None:
 
     equal = tmp_path / "equal"
     _recorded(equal)
-    _profile(equal, {"semgrep": {"version": "not-recorded"}})
+    _profile(equal, {"semgrep": {"version": _semgrep_default(equal)}})
     assert _answer(equal, lens="security") == "yes cleared"
     assert _answer(equal, lens="correctness") == "yes cleared"
 
@@ -502,8 +516,10 @@ def test_pinned_tool_reads_the_root_tool_list(tmp_path: Path) -> None:
     _recorded(root)
     listing = root / calibration.TOOL_LIST_RELATIVE
     listing.write_text(
-        listing.read_text(encoding="utf-8").replace(
-            'default_version: "not-recorded"', 'default_version: "from-root"'
+        re.sub(
+            r'default_version: "[^"]*"',
+            'default_version: "from-root"',
+            listing.read_text(encoding="utf-8"),
         ),
         encoding="utf-8",
     )

@@ -292,6 +292,12 @@ ENGINE_MODULE_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", 
 # The only directory a module source may sit in: a package's Claude adapter.
 CLAUDE_ADAPTER_DIRECTORY_NAME = "com.infiquetra.claude"
 
+# Semgrep rule-test targets are scan data, not module source, and Semgrep pairs
+# each target with the rule file beside it, so they cannot live anywhere else.
+# A TypeScript or JavaScript file here is accepted only when its stem names a
+# rule file in the same directory; anything unpaired is still refused.
+SEMGREP_RULE_TEST_DIRECTORY = ("plugins", "saga", "references", "semgrep")
+
 # When the repository is a git work tree, the module-source check takes its
 # candidates from git (tracked files plus untracked files ``.gitignore`` does not
 # exclude), so ``.gitignore`` stays the one authority on what can be committed.
@@ -1118,7 +1124,9 @@ def check_claude_module_sources(root: Path) -> list[str]:
     holds distribution metadata only (DECISIONS.md, 2026-08-25). In a git work
     tree the candidates are the files git would let a commit carry; otherwise a
     walk prunes what ``.gitignore`` excludes. Either way the engine-written
-    ``.claude-plugin/types/`` is skipped, because it ignores itself in git.
+    ``.claude-plugin/types/`` is skipped, because it ignores itself in git, and
+    a Semgrep rule-test target beside its rule file is skipped, because it is
+    scan data Semgrep requires beside the rule.
     """
     candidates = _git_candidate_files(root)
     if candidates is None:
@@ -1132,6 +1140,10 @@ def check_claude_module_sources(root: Path) -> list[str]:
             parts[index : index + 2] == ENGINE_WRITTEN_TYPES_DIRECTORY
             for index in range(len(parts) - 2)
         ):
+            continue
+        if tuple(parts[:4]) == SEMGREP_RULE_TEST_DIRECTORY and (
+            root / Path(*parts[:-1]) / (Path(parts[-1]).stem + ".yaml")
+        ).is_file():
             continue
         at_package_root = len(parts) == 3 and parts[0] == "plugins"
         if at_package_root and parts[2] == ENGINE_WRITTEN_PACKAGE_TSCONFIG:

@@ -205,6 +205,28 @@ a rule set other than the default makes the lenses that tool serves report only.
 stays valid, and an absent `pins` key is no difference. The profile it reads is the base commit's.
 The calibration file is the installed saga's copy, not the reviewed head's.
 
+### `review`
+
+Optional. An absent block is valid: the shared-update-path rule runs degraded and cannot
+block on its own. `/saga:setup` asks for the block when the profile has none.
+
+```json
+"review": {
+  "shared_update_paths": {
+    "python": ["example_shared_write"],
+    "typescript": ["illustrative_update_path"]
+  }
+}
+```
+
+`shared_update_paths` names, per formula language, the functions, methods, or modules
+through which this repository routes its shared updates. Omit languages with none. Each
+name must be identifier-shaped (letters, digits, underscore, and dots); anything else,
+or a missing, empty, or non-mapping key, takes the degraded path. The runner reads the
+key from the base commit. A head change to it is recorded as `head-profile-change` and
+is not applied. Later review settings take their own top-level profile keys instead of
+sharing `review`.
+
 ## Languages and visibility
 
 `languages` is the top-level list of formula languages setup detected, in formula order. It can be empty. It is not the `review_tools.languages` map of test commands.

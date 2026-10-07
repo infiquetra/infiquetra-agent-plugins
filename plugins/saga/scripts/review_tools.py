@@ -78,7 +78,14 @@ _SETTINGS_NAMES = (
     "whitelizard.txt",
     "osv-scanner.toml",
 )
-_SAGA_RULES = "plugins/saga/references/semgrep-rules"
+_SAGA_RULES = "plugins/saga/references/semgrep"
+#: The shared-update rule this card's render prepares: its file, its C1 row, the
+#: degraded reason without a usable key, and the pattern that matches nothing.
+_SHARED_UPDATE_FILE = "write-skips-shared-update-path.yaml"
+_SHARED_UPDATE_ROW = "correctness.pattern.write-skips-shared-update"
+_SHARED_UPDATE_REASON = "missing-shared-update-paths"
+_SHARED_UPDATE_NEVER = "(?!)"
+_SHARED_UPDATE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*$")
 _ENV_COPIED = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
 _ENV_WINDOWS = ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT")
 # needle, lens, tool, reason. One degraded input per changed file that contains the needle.
@@ -159,6 +166,7 @@ class Hit:
     raw_output: str = ""
     tool: str = ""
     version: str = ""
+    consequence: str | None = None
 
 
 @dataclass(frozen=True)
@@ -385,6 +393,9 @@ def _run(
     degraded: list[dict[str, str]] = list(profile_notes)
     deadline = time.monotonic() + MUTATION_CAP_SECONDS
     base_env = dict(os.environ)
+    # Semgrep phones home for a version check unless told not to; the scan must
+    # stay off the network and never send the operator's token.
+    base_env["SEMGREP_ENABLE_VERSION_CHECK"] = "0"
     extra: list[tuple[str, Path]] = []
     try:
         with _worktree(repo, head_sha) as head_root:
@@ -441,7 +452,13 @@ def _run_adapter(
             degraded.append(_degraded(adapter, row, "known-gap"))
         return []
     rules = _rules_for(adapter, profile)
-    with _rule_config(adapter, rules, repo, home, base_sha) as (configs, cache_problem):
+    review = profile.get("review") if isinstance(profile, Mapping) else None
+    with _rule_config(adapter, rules, repo, home, base_sha, review) as (
+        configs,
+        cache_problem,
+        saga_notes,
+    ):
+        degraded.extend(saga_notes)
         if cache_problem is not None:
             degraded.append(_degraded(adapter, _primary_row(adapter), cache_problem))
             return []
@@ -878,27 +895,132 @@ def _rules_for(adapter: Adapter, profile: Mapping[str, Any]) -> tuple[RulePin, .
     )
 
 
+def _shared_update_names(review: object) -> tuple[str, ...] | None:
+    """Identifier-shaped shared-update names, or None when the key is unusable.
+
+    A missing key, a non-mapping, a non-list language entry, and a name that is
+    not identifier-shaped all take the degraded path. Setup stores extension
+    answers unvalidated, so nothing here may crash or be trusted.
+    """
+    if not isinstance(review, Mapping):
+        return None
+    paths = review.get("shared_update_paths")
+    if not isinstance(paths, Mapping):
+        return None
+    names: list[str] = []
+    for value in paths.values():
+        if not isinstance(value, list):
+            return None
+        for name in value:
+            if not isinstance(name, str) or _SHARED_UPDATE_NAME.match(name) is None:
+                return None
+            names.append(name)
+    return tuple(sorted(set(names))) or None
+
+
+def _shared_update_slots(rule: dict[str, Any]) -> list[dict[str, Any]]:
+    """The shared-update rule's name slots: exactly one in a well-formed rule."""
+    found: list[dict[str, Any]] = []
+
+    def visit(node: object) -> None:
+        if isinstance(node, dict):
+            slot = node.get("metavariable-regex")
+            if isinstance(slot, dict):
+                found.append(slot)
+            for value in node.values():
+                visit(value)
+        elif isinstance(node, list):
+            for value in node:
+                visit(value)
+
+    visit(rule.get("patterns"))
+    return found
+
+
+def _render_saga_rules(
+    adapter: Adapter, shipped: Path, review: object, target: Path
+) -> tuple[dict[str, str], ...]:
+    """Copy the shipped saga rules to ``target``, filling the shared-update slot.
+
+    Only rule files are copied, never the rule-test targets beside them. Without
+    the shared-update file or a usable key the slot renders the never-matching
+    pattern and the run records the degraded input; the scan still runs.
+    """
+    for path in sorted((*shipped.glob("*.yaml"), *shipped.glob("*.yml"))):
+        shutil.copy(path, target / path.name)
+    shared = target / _SHARED_UPDATE_FILE
+    if not shared.is_file():
+        return (_degraded(adapter, _SHARED_UPDATE_ROW, _SHARED_UPDATE_REASON),)
+    document = yaml.safe_load(shared.read_text(encoding="utf-8"))
+    entries = document.get("rules") if isinstance(document, dict) else None
+    if not isinstance(entries, list) or len(entries) != 1:
+        raise RunnerFailure(2, f"{_SHARED_UPDATE_FILE}: expected one rule")
+    rule = entries[0]
+    metadata = rule.get("metadata") if isinstance(rule, dict) else None
+    if not isinstance(metadata, dict) or metadata.get("row") != _SHARED_UPDATE_ROW:
+        raise RunnerFailure(2, f"{_SHARED_UPDATE_FILE}: expected row {_SHARED_UPDATE_ROW}")
+    slots = _shared_update_slots(rule)
+    if len(slots) != 1:
+        raise RunnerFailure(
+            2, f"{_SHARED_UPDATE_FILE}: expected one shared-update slot, found {len(slots)}"
+        )
+    names = _shared_update_names(review)
+    if names is None:
+        rule["patterns"] = [{"pattern-regex": _SHARED_UPDATE_NEVER}]
+        shared.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+        return (_degraded(adapter, _SHARED_UPDATE_ROW, _SHARED_UPDATE_REASON),)
+    slots[0]["regex"] = "(?:" + "|".join(re.escape(name) for name in names) + ")"
+    shared.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    return ()
+
+
+def _is_saga_render(adapter: Adapter, rules: Sequence[RulePin]) -> bool:
+    """The saga adapter reading the plugin's own rule directory, not an override."""
+    return (
+        adapter.id == "semgrep-saga"
+        and len(rules) > 0
+        and all(rule.path and _is_saga_rules(rule.path) for rule in rules)
+    )
+
+
 @contextmanager
 def _rule_config(
-    adapter: Adapter, rules: Sequence[RulePin], repo: Path, home: Path, base_sha: str
-) -> Iterator[tuple[tuple[Path, ...], str | None]]:
+    adapter: Adapter,
+    rules: Sequence[RulePin],
+    repo: Path,
+    home: Path,
+    base_sha: str,
+    review: object = None,
+) -> Iterator[tuple[tuple[Path, ...], str | None, tuple[dict[str, str], ...]]]:
     """Local pack directories only. A missing cache is not a download.
 
     A relative rule path other than saga's rules is a directory inside a base
-    worktree. That worktree stays open until the caller finishes its scans.
+    worktree. That worktree stays open until the caller finishes its scans. The
+    saga row renders the plugin's own rules into a fresh directory under the
+    runner home, which stays open the same way; the third yield holds the
+    degraded notes that render recorded, if any.
     """
+    if _is_saga_render(adapter, rules):
+        shipped = plugin_root() / "references" / "semgrep"
+        home.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="saga-rules-", dir=str(home)) as tmp:
+            notes = _render_saga_rules(adapter, shipped, review, Path(tmp))
+            yield (Path(tmp),), None, notes
+        return
     if not rules:
-        yield (), None
+        yield (), None, ()
         return
     needs_base = any(
         rule.path and not Path(rule.path).is_absolute() and not _is_saga_rules(rule.path)
         for rule in rules
     )
     if not needs_base:
-        yield _rule_paths(adapter, rules, home, None)
+        configs, problem = _rule_paths(adapter, rules, home, None)
+        yield configs, problem, ()
         return
     with _worktree(repo, base_sha) as base_root:
-        yield _rule_paths(adapter, rules, home, base_root)
+        configs, problem = _rule_paths(adapter, rules, home, base_root)
+        yield configs, problem, ()
 
 
 def _rule_paths(
@@ -932,7 +1054,7 @@ def _is_saga_rules(path: str) -> bool:
 
 def _rule_directory(path: str, base_root: Path | None) -> Path:
     if _is_saga_rules(path):
-        return plugin_root() / "references" / "semgrep-rules"
+        return plugin_root() / "references" / "semgrep"
     directory = Path(path)
     if directory.is_absolute():
         return directory
@@ -943,7 +1065,7 @@ def _rule_directory(path: str, base_root: Path | None) -> Path:
 
 def _gap_target(adapter: Adapter, head_root: Path) -> Path:
     if adapter.gap_path == _SAGA_RULES:
-        return plugin_root() / "references" / "semgrep-rules"
+        return plugin_root() / "references" / "semgrep"
     if adapter.gap_path is None:
         raise RunnerFailure(1, f"{adapter.id}: gap_path is missing")
     return head_root / adapter.gap_path
@@ -1005,6 +1127,7 @@ def _load_profile_text(text: str, label: str) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise RunnerFailure(2, f"{label}: profile must be an object")
     test_command = _functional_command(data)
+    review = data.get("review") or None
     block = data.get("review_tools")
     if block is None:
         return {
@@ -1012,6 +1135,7 @@ def _load_profile_text(text: str, label: str) -> dict[str, Any]:
             "languages_present": False,
             "pins": {},
             "test_command": test_command,
+            "review": review,
         }
     if not isinstance(block, dict):
         raise RunnerFailure(2, "review_tools must be an object")
@@ -1020,6 +1144,7 @@ def _load_profile_text(text: str, label: str) -> dict[str, Any]:
         "languages_present": "languages" in block,
         "pins": _pins(block.get("pins")),
         "test_command": test_command,
+        "review": review,
     }
 
 
@@ -1057,6 +1182,7 @@ def _configuring(profile: Mapping[str, Any]) -> dict[str, Any]:
         "pins": profile.get("pins") or {},
         "languages": profile.get("languages") or {},
         "test_command": profile.get("test_command"),
+        "review": profile.get("review"),
     }
 
 
@@ -1618,7 +1744,7 @@ def _finding_from_hit(hit: Hit) -> dict[str, Any]:
         "location": location,
         "language": hit.language or language_for(path),
         "statement": statement,
-        "consequence": None,
+        "consequence": hit.consequence,
         "trigger": None,
         "evidence": "tool-result",
         "proof": {"raw_output": hit.raw_output},

@@ -24,7 +24,7 @@ tools:
     lens: security
     purpose: Pinned Semgrep security pack, metrics off, local cache only.
     install: Install semgrep on the operator machine. This card does not install it.
-    default_version: "not-recorded"
+    default_version: "1.179.0"
     version_args: ["--version"]
     timeout_seconds: 120
     platforms: []
@@ -48,7 +48,7 @@ tools:
     lens: correctness
     purpose: Saga pattern rules. A missing or empty directory is a known gap per pattern row.
     install: Install semgrep on the operator machine. This card does not install it.
-    default_version: "not-recorded"
+    default_version: "1.179.0"
     version_args: ["--version"]
     timeout_seconds: 120
     platforms: []
@@ -62,8 +62,8 @@ tools:
       INFO: security.scanner-medium-low
     curated_block_rules: []
     rules:
-      - path: plugins/saga/references/semgrep-rules
-    gap_until_present: plugins/saga/references/semgrep-rules
+      - path: plugins/saga/references/semgrep
+    gap_until_present: plugins/saga/references/semgrep
     env_dirs: []
     lockfiles: []
   - id: gitleaks

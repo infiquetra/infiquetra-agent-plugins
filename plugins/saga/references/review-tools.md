@@ -98,7 +98,41 @@ Every finding and measurement passes `review_records.py` validation before the f
 
 The security row pins pack `p/security-audit` and the sha256 of the cached bytes. The committed hash is a placeholder, not the registry digest: the Semgrep Rules License v1.0 forbids shipping the pack in this repository. The cache directory is `~/.saga/semgrep-rules/p--security-audit` (a `/` in the pack name becomes `--`). The argument vector is `semgrep scan --metrics=off --json --config <cache> <root>`. `--config` is only that local directory. A missing cache or a hash mismatch is reason `rule-cache-missing` and does not download.
 
-The saga row reads `plugins/saga/references/semgrep-rules`. While that directory is missing or empty, the run records one `known-gap` per `correctness.pattern.*` row and does not invent a rule. When the directory is present, each result's `metadata.row` must be one of those rows.
+The saga row reads `plugins/saga/references/semgrep`. While that directory is missing or empty, the run records one `known-gap` per `correctness.pattern.*` row and does not invent a rule. When the directory is present, each result's `metadata.row` must be one of those rows.
+
+The saga row runs six pattern rules, one per defect the correctness lens table names. Each finding carries its rule identifier and harm and no severity, blocks unless the builder record gives a `pattern-check` reason, and drops to a note with one. A real scan prefixes the check id with the config path, so the parser recovers the trailing `saga.<stem>` segment for the rule id and anchor. The rule patterns are regex-shaped because Semgrep requires every syntactic branch to parse in every listed language; one rule spans Python and TypeScript. Plain JavaScript targets are a later widening: the rules list Semgrep `python` and `typescript`.
+
+```yaml
+saga_pattern_rules:
+  - file: release-shares-cleanup-block.yaml
+    harm: two-holders-of-one-exclusive-thing
+    outcome: blocks unless the builder records a reason
+    languages: [python, typescript]
+  - file: swallowed-error.yaml
+    harm: wrong-result-reported-as-success
+    outcome: blocks unless the builder records a reason
+    languages: [python, typescript]
+  - file: silent-skip.yaml
+    harm: wrong-result-reported-as-success
+    outcome: blocks unless the builder records a reason
+    languages: [python, typescript]
+  - file: write-skips-shared-update-path.yaml
+    harm: data-lost-or-corrupted
+    outcome: blocks unless the builder records a reason
+    languages: [python, typescript]
+  - file: naive-time-comparison.yaml
+    harm: wrong-result-reported-as-success
+    outcome: blocks unless the builder records a reason
+    languages: [python]
+  - file: money-as-floating-point.yaml
+    harm: money-or-resources-wrongly-moved
+    outcome: blocks unless the builder records a reason
+    languages: [python, typescript]
+```
+
+The rules stay narrow on purpose; corpus misses widen them later. A release shares a cleanup block when a `finally` holding a `release` or `unlock` call holds another statement too, whichever comes first; a sole-release `finally`, a `with` block, and a `using` declaration are clean. A swallowed error is a `pass` or `...` handler body, or an empty or comment-only `catch`; a logged, re-raised, or default-returning handler is clean. A silent skip is a line-start `continue` that is neither a sole-continue guard (`if`, `elif`, `else`, braced or not) nor traced on the previous line; `break` and bare-`return` variants are later. A write that skips the shared update path is a direct board-write signature outside the profile's named calls; without a usable key the rule renders a never-matching pattern and the run records reason `missing-shared-update-paths` on its row. A naive time comparison puts `datetime.utcnow()` or argument-less `datetime.now()` against another operand, except a naive-naive pair; `datetime` imported under another name is missed. Money as floating point is a money-named assignment, conversion, annotation, or literal holding a float; rate-like names, integer cents, `Decimal`, and computed values are clean.
+
+The six rule files are copied into a fresh directory under the runner home for the scan, with the shared-update slot filled from the base commit's `review.shared_update_paths` key. Rule-test targets beside the shipped rules are not copied. A head edit of the key is recorded as a head-profile-change note and never applied.
 
 ## osv-scanner
 
@@ -166,7 +200,7 @@ Issue 152 adds these adapters. A formatter (`ruff-format`, `shfmt`) is `mode: fi
 | `lychee` | base against head | `architecture-maintainability.tool-warning` | fix later |
 | `ruff-format`, `shfmt` | not scanned | none | no record |
 
-The family draft, the kind draft, and the curated Checkov ids are the second fence. The first fence stays the semgrep map.
+The family draft, the kind draft, and the curated Checkov ids are the last fence. The first fence stays the semgrep map.
 
 ## Scripted checks
 

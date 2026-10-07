@@ -50,6 +50,13 @@
   Settings come from the base commit and from this plugin. The build loop still does not call the
   runner.
 
+- Issue 154: six Semgrep pattern rules for the defects the correctness lens table names, in
+  `references/semgrep/`, each with rule tests per language. C4a's adapter runs them on changed
+  lines; a match becomes a correctness finding with its harm that blocks unless the builder
+  record gives a `pattern-check` reason. The shared-update-path rule renders from the base
+  profile's `review.shared_update_paths` key, `/saga:setup` asks for that key, and without it
+  the rule runs degraded. CI installs Semgrep 1.179.0, the version pinned in the tool list.
+
 - Issue 163: plan review in one pass. `scripts/plan_review.py` stores the reviewer's findings as
   C1 finding records in the run record (`record`), records the author's answer to each (`answer`:
   fixed with the plan section changed, rejected with a reason), and gates on every finding answered

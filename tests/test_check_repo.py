@@ -1293,6 +1293,18 @@ class ClaudeModuleSourceTests(unittest.TestCase):
             self.findings("plugins/example/scripts/tool.py", "plugins/example/README.md"), []
         )
 
+    def test_a_semgrep_rule_test_target_beside_its_rule_is_accepted(self) -> None:
+        self.assertEqual(
+            self.findings(
+                "plugins/saga/references/semgrep/example.yaml",
+                "plugins/saga/references/semgrep/example.ts",
+            ),
+            [],
+        )
+
+    def test_an_unpaired_typescript_file_in_the_rules_directory_is_refused(self) -> None:
+        self.assertTrue(self.findings("plugins/saga/references/semgrep/stray.ts"))
+
     def test_the_repository_itself_keeps_its_mods_in_the_adapters(self) -> None:
         self.assertEqual(check_repo.check_claude_module_sources(ROOT), [])
 

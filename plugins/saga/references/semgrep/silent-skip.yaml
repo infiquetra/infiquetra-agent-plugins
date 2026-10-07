@@ -1,0 +1,19 @@
+rules:
+  - id: saga.silent-skip
+    languages:
+      - python
+      - typescript
+    severity: ERROR
+    message: An item is skipped without a trace.
+    metadata:
+      lens: correctness
+      defect: A silent skip
+      harm: wrong-result-reported-as-success
+      outcome: blocks unless the builder records a reason
+      row: correctness.pattern.silent-skip
+    patterns:
+      - pattern-regex: (?m)^[ \t]*continue\b
+      - pattern-not-regex: (?m)^([ \t]*)(?:if|elif|else)\b[^\n]*:[ \t]*\n(?:[ \t]*(?:#[^\n]*)?\n)*([ \t]+)continue\b[^\n]*\n(?!\2[ \t]*\S)
+      - pattern-not-regex: (?:if\s*\([^)]*\)|else)\s*\{\s*(?://[^\n]*\s*|/\*[^*]*\*/\s*)?continue\s*;?\s*(?://[^\n]*)?\s*\}
+      - pattern-not-regex: (?:if\s*\([^)]*\)|else)\s*\n(?:[ \t]*//[^\n]*\n)*[ \t]*continue\b
+      - pattern-not-regex: (?m)^[ \t]*[^#/\n]*\b(?:log|logger|logging|print|warn|warning|error|info|debug|trace|console|emit|metrics?|record|audit)\b[^\n]*\n(?:[ \t]*(?:#[^\n]*|//[^\n]*)?\n)*[ \t]*continue\b
