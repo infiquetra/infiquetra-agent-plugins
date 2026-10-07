@@ -407,6 +407,26 @@ describe('the tool without a pane', () => {
     expect((await pending).result.status).toBe('error')
     expect(w.runs).toHaveLength(0)
   })
+
+  test('a tool repository that differs from the document is refused before the pane opens', async ($, on) => {
+    const w = world(on)
+    const pending = $.tool.call({ tool: TOOL, issue: 103, repo: 'elsewhere/other' })
+    const result = (await pending).result
+    expect(result.status).toBe('error')
+    expect(result.reason).toMatch(/does not match the review document/)
+    expect(w.opens).toBe(0)
+    expect(w.answerRuns()).toHaveLength(0)
+  })
+
+  test('a malformed tool repository is refused rather than silently ignored', async ($, on) => {
+    const w = world(on)
+    const pending = $.tool.call({ tool: TOOL, issue: 103, repo: 'not a repo' })
+    const result = (await pending).result
+    expect(result.status).toBe('error')
+    expect(result.reason).toMatch(/does not match the review document/)
+    expect(w.opens).toBe(0)
+    expect(w.answerRuns()).toHaveLength(0)
+  })
 })
 
 describe('the pure helpers', () => {

@@ -182,7 +182,7 @@ export function registerMergeConfirmation(on: On): void {
         type: 'object',
         properties: {
           issue: { type: 'integer', minimum: 1, description: 'The issue number to confirm the merge for.' },
-          repo: { type: 'string', description: "owner/name; defaults to the review document's repository." },
+          repo: { type: 'string', description: "owner/name; must match the review document's repository, else the call is refused." },
         },
         required: ['issue'],
       },
@@ -214,7 +214,20 @@ export function registerMergeConfirmation(on: On): void {
     if (data.pending_choices.length === 0) {
       return { result: { status: 'nothing-to-review' } }
     }
-    const repo = repoOf(e) ?? repoOf({ repo: data.repo })
+    // The document owns the repository: `answers` reads the intent envelope from
+    // `gh issue view --repo`, so a model-supplied repo would select the policy
+    // behind the operator's back. A present input that differs is refused.
+    const inputRepo = (e as { repo?: unknown }).repo
+    const documentRepo = repoOf({ repo: data.repo })
+    if (inputRepo !== undefined && inputRepo !== documentRepo) {
+      return {
+        result: {
+          status: 'error',
+          reason: `the tool repo ${JSON.stringify(inputRepo)} does not match the review document's repository ${JSON.stringify(data.repo)}`,
+        },
+      }
+    }
+    const repo = documentRepo
     if (repo === null) {
       return { result: { status: 'error', reason: 'could not determine the owner/name repository for the answers call' } }
     }
