@@ -72,6 +72,12 @@
   saga package. `--root` selects the base commit's profile and does not select that file. An
   unreadable profile exits 2. The fingerprint also names the Jev sweep's three paths.
 
+- Issue 152: markdownlint-cli2 findings parse with no severity word. A lychee link is compared
+  base against head, because the report has no line. cdk-nag keeps the logical resource or the
+  construct path, and a clean plugin report is not a gap. A missing cdk binary is reason
+  `missing` for checkov-cdk as well as cdk-nag. cosmic-ray's module-path is every changed
+  Python file.
+
 - Issue 189: `scripts/reviewer_answer.py` replaces known secret formats (GitHub, AWS, Slack, Stripe,
   Google, Anthropic and OpenAI-style keys, private-key blocks, JSON web tokens, bearer tokens,
   credentials in URLs, named secret assignments) and long high-entropy runs, including base64 runs

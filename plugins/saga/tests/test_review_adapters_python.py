@@ -8,6 +8,7 @@ import re
 import socket
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -714,6 +715,34 @@ def test_cosmic_ray_survivor_on_a_changed_line_blocks(tmp_path: Path) -> None:
     assert _severity(output, "surviving-mutant") == "blocks"
 
 
+def test_cosmic_ray_module_path_lists_every_changed_python_file(tmp_path: Path) -> None:
+    repo, base, head = _repo(
+        tmp_path,
+        {
+            "app.py": "x = 1\n",
+            "other.py": "y = 1\n",
+            "keep.py": "z = 1\n",
+            "pkg/nested.py": "n = 1\n",
+        },
+        {
+            "app.py": "x = 2\n",
+            "other.py": "y = 2\n",
+            "keep.py": "z = 1\n",
+            "pkg/nested.py": "n = 2\n",
+        },
+    )
+    payload = json.dumps({"unfinished": False, "survivors": []})
+    home = tmp_path / "home"
+    code = _run(
+        repo, base, head, _profile(tmp_path / "profile.json", "python -m pytest -q"),
+        tmp_path / "out", home, [_adapter("cosmic-ray")], _Calls(base, payload),
+    )
+    assert code == 0
+    toml = (home / "cosmic-ray.toml").read_text(encoding="utf-8")
+    assert 'module-path = ["app.py", "other.py", "pkg/nested.py"]' in toml
+    assert "keep.py" not in toml
+
+
 def test_cosmic_ray_unfinished_is_reason_cap(tmp_path: Path) -> None:
     repo, base, head = _changed(tmp_path)
     payload = json.dumps({"unfinished": True, "survivors": [{"path": "app.py", "line": 1}]})
@@ -835,3 +864,171 @@ def test_bandit_live_reports_eval_despite_a_decoy(tmp_path: Path) -> None:
     )
     assert code == 0
     assert any(item["rule"]["ref"] == "B307" for item in _read(output, "findings.json"))
+
+
+def _distribution(name: str) -> str | None:
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+    except ImportError:  # pragma: no cover
+        return None
+    try:
+        return version(name)
+    except PackageNotFoundError:
+        return None
+
+
+def _installed(adapter: Any) -> Any:
+    """Call the tool already on PATH. A live check must not ``uv run --with`` a download."""
+
+    def invoke(context: Any) -> list[str]:
+        argv = list(adapter.invoke(context))
+        if argv[:2] == ["uv", "run"] and "--with" in argv:
+            return argv[argv.index("--with") + 2:]
+        return argv
+
+    return replace(adapter, invoke=invoke)
+
+
+def _live(
+    repo: Path, base: str, head: str, tmp: Path, adapter: Any, command: str | None = None,
+) -> Path:
+    output = tmp / "out"
+    home = tmp / "home"
+    home.mkdir()
+    code = T.run(
+        repo, base, head, _profile(tmp / "profile.json", command), output,
+        home=home, adapters=[adapter], framework=False,
+    )
+    assert code == 0
+    return output
+
+
+@pytest.mark.skipif(_probed(["mypy", "--version"]) != "2.1.0", reason="mypy pin is not installed")
+def test_mypy_live_reports_a_type_error_despite_a_decoy(tmp_path: Path) -> None:
+    repo, base, head = _repo(
+        tmp_path,
+        {"app.py": "x = 1\n"},
+        {"app.py": "x: int = 'no'\n", "pyproject.toml": "[tool.mypy]\nignore_errors = true\n"},
+    )
+    output = _live(repo, base, head, tmp_path, _adapter("mypy"))
+    rows = {item["rule"]["row"] for item in _read(output, "findings.json")}
+    assert "correctness.type-error" in rows
+
+
+@pytest.mark.skipif(_probed(["ruff", "--version"]) != "0.15.18", reason="ruff pin is not installed")
+def test_ruff_live_reports_an_unused_import_despite_a_decoy(tmp_path: Path) -> None:
+    repo, base, head = _repo(
+        tmp_path,
+        {"app.py": "x = 1\n"},
+        {"app.py": "import os\n", "pyproject.toml": "[tool.ruff.lint]\nselect = []\n"},
+    )
+    output = _live(repo, base, head, tmp_path, _adapter("ruff-lint"))
+    assert "F401" in {item["rule"]["ref"] for item in _read(output, "findings.json")}
+
+
+@pytest.mark.skipif(
+    _probed(["vulture", "--version"]) != "2.16", reason="vulture pin is not installed"
+)
+def test_vulture_live_reports_dead_code_despite_a_decoy(tmp_path: Path) -> None:
+    repo, base, head = _repo(
+        tmp_path,
+        {"app.py": "x = 1\n"},
+        {
+            "app.py": "def unused():\n    return 1\n",
+            "pyproject.toml": "[tool.vulture]\nignore_names = ['unused']\n",
+        },
+    )
+    output = _live(repo, base, head, tmp_path, _adapter("vulture"))
+    assert "vulture" in {item["rule"]["ref"] for item in _read(output, "findings.json")}
+
+
+@pytest.mark.skipif(
+    _probed(["lint-imports", "--version"]) != "2.15",
+    reason="import-linter pin is not installed",
+)
+def test_import_linter_live_reports_a_broken_contract_despite_a_decoy(tmp_path: Path) -> None:
+    contract = (
+        "[importlinter]\nroot_packages =\n    pkg\n\n"
+        "[importlinter:contract:1]\nname = High stays above low\ntype = forbidden\n"
+        "source_modules =\n    pkg.high\nforbidden_modules =\n    pkg.low\n"
+    )
+    repo, base, head = _repo(
+        tmp_path,
+        {
+            ".importlinter": contract,
+            "pkg/__init__.py": "",
+            "pkg/high.py": "value = 1\n",
+            "pkg/low.py": "value = 1\n",
+        },
+        {
+            ".importlinter": "[importlinter]\nroot_packages =\n    pkg\n",
+            "pkg/__init__.py": "",
+            "pkg/high.py": "from pkg.low import value\n",
+            "pkg/low.py": "value = 1\n",
+        },
+    )
+    output = _live(repo, base, head, tmp_path, _adapter("import-linter"))
+    assert "High stays above low" in {
+        item["rule"]["ref"] for item in _read(output, "findings.json")
+    }
+
+
+@pytest.mark.skipif(
+    _probed(["cosmic-ray", "--version"]) != "8.7.0",
+    reason="cosmic-ray pin is not installed",
+)
+def test_cosmic_ray_live_records_a_survivor(tmp_path: Path) -> None:
+    repo, base, head = _repo(
+        tmp_path,
+        {"app.py": "def add(left, right):\n    return left\n"},
+        {
+            "app.py": "def add(left, right):\n    return left + right\n",
+            "test_app.py": "from app import add\n\ndef test_add():\n    assert True\n",
+        },
+    )
+    output = _live(
+        repo, base, head, tmp_path, _installed(_adapter("cosmic-ray")),
+        "python -m pytest -q",
+    )
+    assert "surviving-mutant" in {item["rule"]["ref"] for item in _read(output, "findings.json")}
+
+
+@pytest.mark.skipif(
+    _distribution("pytest-randomly") != "5.0.0",
+    reason="pytest-randomly pin is not installed",
+)
+def test_pytest_randomly_live_failure_is_fix_later(tmp_path: Path) -> None:
+    repo, base, head = _repo(
+        tmp_path,
+        {"app.py": "x = 1\n"},
+        {"app.py": "x = 1\n", "test_app.py": "def test_one():\n    assert False\n"},
+    )
+    output = _live(
+        repo, base, head, tmp_path, _installed(_adapter("pytest-randomly")),
+        "python -m pytest -q",
+    )
+    assert _severity(output, "test_app.py::test_one") == "fix-later"
+
+
+@pytest.mark.skipif(
+    _distribution("pytest-socket") != "0.8.1",
+    reason="pytest-socket pin is not installed",
+)
+def test_pytest_socket_live_failure_is_fix_later(tmp_path: Path) -> None:
+    repo, base, head = _repo(
+        tmp_path,
+        {"app.py": "x = 1\n"},
+        {
+            "app.py": "x = 1\n",
+            "test_app.py": (
+                "def test_net():\n"
+                "    import socket\n"
+                "    socket.create_connection(('example.invalid', 9))\n"
+            ),
+        },
+    )
+    output = _live(
+        repo, base, head, tmp_path, _installed(_adapter("pytest-socket")),
+        "python -m pytest -q",
+    )
+    assert _severity(output, "test_app.py::test_net") == "fix-later"

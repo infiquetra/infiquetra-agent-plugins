@@ -139,12 +139,19 @@ def _version_text(argv: list[str]) -> str | None:
 
 class _Calls:
     def __init__(
-        self, base: str, payload: str, *, choose: Any = None, exit_code: int = 0
+        self,
+        base: str,
+        payload: str,
+        *,
+        choose: Any = None,
+        exit_code: int = 0,
+        base_payload: str | None = None,
     ) -> None:
         self.base = base
         self.payload = payload
         self.choose = choose
         self.exit_code = exit_code
+        self.base_payload = base_payload
         self.calls: list[list[str]] = []
         self.envs: list[dict[str, str]] = []
 
@@ -161,7 +168,14 @@ class _Calls:
             chosen = self.choose(argv, Path(cwd))
             if chosen is not None:
                 return chosen
-        return T.ProcessResult(self.exit_code, self.payload)
+        body = self.payload
+        if self.base_payload is not None:
+            try:
+                head = _git(Path(cwd), "rev-parse", "HEAD")
+            except subprocess.CalledProcessError:
+                head = ""
+            body = self.base_payload if head == self.base else self.payload
+        return T.ProcessResult(self.exit_code, body)
 
 
 def _run(
@@ -381,7 +395,10 @@ def test_zizmor_high_blocks_and_medium_is_fix_later(
     ])
 
     def choose(argv: list[str], _cwd: Path) -> Any:
-        if "--offline" not in argv or any("gh-token" in part for part in argv):
+        source = argv[2] if argv[:2] == ["python3", "-c"] else ""
+        if "--offline" not in source or "--format=json" not in source:
+            return T.ProcessResult(0, "[]")
+        if any("gh-token" in part for part in argv):
             return T.ProcessResult(0, "[]")
         return None
 
@@ -405,7 +422,12 @@ def test_zizmor_high_blocks_and_medium_is_fix_later(
     )
     assert "certain" in statement
     assert _TOKEN not in statement
-    scan = next(argv for argv in runner.calls if "--offline" in argv)
+    scan = next(
+        argv for argv in runner.calls
+        if argv[:2] == ["python3", "-c"] and "--offline" in argv[2]
+    )
+    assert "--offline" not in scan[3:]
+    assert "--format=json" not in scan[3:]
     assert "--gh-token" not in scan
     assert "GH_TOKEN" not in runner.envs[runner.calls.index(scan)]
     version = next(argv for argv in runner.calls if "--version" in argv)
@@ -427,20 +449,23 @@ def test_markdownlint_and_cspell_are_notes_and_lychee_is_fix_later(tmp_path: Pat
         },
         {
             "notes.md": "# title\nthis line changed\n",
-            "same.md": "# same\n",
+            "same.md": "# same changed\n",
             "changed.md": "# changed\n",
             "cspell.json": '{"version": "0.2", "words": ["alpha", "beta"]}\n',
             ".markdownlint.yaml": "MD013: false\n",
         },
     )
     markdown = (
-        "notes.md:2:1 error MD013/line-length too long\n"
-        "notes.md:1:1 error MD013/line-length title\n"
+        "notes.md:2:1 MD013/line-length too long\n"
+        "notes.md:1:1 MD013/line-length title\n"
     )
     cspell = "notes.md:2:1 - Unknown word (beta)\nnotes.md:1:1 - Unknown word (alpha)\n"
+    old_url = "https://example.invalid/same"
+    new_url = "https://example.invalid/new-on-an-unchanged-first-line"
+    base_lychee = json.dumps({"fail_map": {"same.md": [{"url": old_url}]}})
     lychee = json.dumps({"fail_map": {
-        "changed.md": [{"url": "https://example.invalid/changed"}],
-        "same.md": [{"url": "https://example.invalid/same"}],
+        "notes.md": [{"url": new_url}],
+        "same.md": [{"url": old_url}],
     }})
 
     def choose_markdown(argv: list[str], cwd: Path) -> Any:
@@ -481,14 +506,13 @@ def test_markdownlint_and_cspell_are_notes_and_lychee_is_fix_later(tmp_path: Pat
     code = _run(
         repo, base, head, _profile(tmp_path / "link-profile.json"), link_out,
         tmp_path / "link-home",
-        [_adapter("lychee")], _Calls(base, lychee, exit_code=2),
+        [_adapter("lychee")],
+        _Calls(base, lychee, exit_code=2, base_payload=base_lychee),
     )
     assert code == 0
-    assert _row(link_out, "https://example.invalid/changed") == (
-        "architecture-maintainability.tool-warning"
-    )
-    assert _severity(link_out, "https://example.invalid/changed") == "fix-later"
-    assert "https://example.invalid/same" not in _refs(link_out)
+    assert _row(link_out, new_url) == "architecture-maintainability.tool-warning"
+    assert _severity(link_out, new_url) == "fix-later"
+    assert old_url not in _refs(link_out)
     _valid(output)
     _valid(spell_out)
     _valid(link_out)
@@ -525,6 +549,11 @@ def test_default_versions() -> None:
         assert version != "not-recorded"
     assert rows["import-linter"]["default_version"] == "2.15"
     assert rows["import-linter"]["default_version"] != "2.15.0"
+    source = (REPO_ROOT / "plugins/saga/scripts/review_adapters_python.py").read_text(
+        encoding="utf-8"
+    )
+    for package in ("cosmic-ray", "pytest-randomly", "pytest-socket"):
+        assert f"{package}=={rows[package]['default_version']}" in source
     assert rows["ruff-lint"]["default_version"] == rows["ruff-format"]["default_version"]
     assert rows["checkov-cdk"]["default_version"] == rows["checkov-cfn"]["default_version"]
     assert rows["relocated-test"]["default_version"] == "not-recorded"

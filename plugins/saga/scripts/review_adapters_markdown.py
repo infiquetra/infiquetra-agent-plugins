@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Markdown review adapters (issue 152).
 
-markdownlint-cli2 and cspell are notes. A lychee broken link is fix later.
-cspell's dictionary, when the base commit has one, is that file. lychee is
-recorded output only.
+markdownlint-cli2 and cspell are notes. markdownlint-cli2 prints
+``path:line:col MDxxx/name message`` with no severity word. A lychee broken
+link is fix later and is compared base against head, because the report names
+the file and the URL and not a line. cspell's dictionary, when the base commit
+has one, is that file. lychee is recorded output only.
 """
 
 from __future__ import annotations
@@ -26,7 +28,8 @@ _ROWS = {
     "cspell": ("architecture-maintainability.tool-style",),
 }
 _MARKDOWN = re.compile(
-    r"^(?P<path>.+?):(?P<line>\d+):(?P<col>\d+) \S+ (?P<code>MD\d+)\b(?P<message>.*)$"
+    r"^(?P<path>.+?):(?P<line>\d+):(?P<col>\d+) "
+    r"(?P<code>MD\d+)(?:/\S+)?(?P<message>.*)$"
 )
 _CSPELL = re.compile(
     r"^(?P<path>.+?):(?P<line>\d+):(?P<col>\d+) - Unknown word \((?P<word>[^)]+)\)\s*$"
@@ -130,8 +133,7 @@ def _parse_lychee(text: str) -> ParseResult:
                 statement=f"Broken link {url}.",
                 anchor=str(url),
                 level="warning",
-                start=1,
-                end=1,
+                whole_project=True,
                 language="markdown",
             ))
     return ParseResult(tuple(hits))

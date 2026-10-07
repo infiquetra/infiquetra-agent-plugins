@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import shutil
 import socket
@@ -317,6 +318,183 @@ def test_cdk_nag_synth_missing_is_reason_missing(tmp_path: Path) -> None:
     )
     assert code == 0
     assert _reasons(output).count("missing") == 1
+
+
+def test_cdk_nag_clean_report_is_not_a_gap(tmp_path: Path) -> None:
+    repo, base, head = _repo(
+        tmp_path, {"cdk.json": "{}\n"}, {"cdk.json": "{}\n", "app.py": "x = 1\n"}
+    )
+    payload = json.dumps({
+        "report_present": True, "synth_missing": False, "findings": [],
+    })
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output, tmp_path / "home",
+        [_adapter("cdk-nag")], _Calls(base, payload, base_payload=payload),
+    )
+    assert code == 0
+    assert _read(output, "findings.json") == []
+    assert "known-gap" not in _reasons(output)
+    assert "missing" not in _reasons(output)
+
+
+def test_cdk_nag_same_rule_on_a_new_resource_is_kept(tmp_path: Path) -> None:
+    repo, base, head = _repo(
+        tmp_path, {"cdk.json": "{}\n"}, {"cdk.json": "{}\n", "app.py": "x = 1\n"}
+    )
+    base_payload = _nag([_nag_hit("AwsSolutions-S1", "error", "Bucket")])
+    payload = _nag([
+        _nag_hit("AwsSolutions-S1", "error", "Bucket"),
+        _nag_hit("AwsSolutions-S1", "error", "Logs"),
+    ])
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output, tmp_path / "home",
+        [_adapter("cdk-nag")], _Calls(base, payload, base_payload=base_payload),
+    )
+    assert code == 0
+    findings = _read(output, "findings.json")
+    assert len(findings) == 1
+    assert findings[0]["rule"]["ref"] == "AwsSolutions-S1"
+    assert "Logs" in findings[0]["location"]["anchor"]
+    assert "known-gap" not in _reasons(output)
+
+
+def test_checkov_cdk_synth_missing_is_reason_missing(tmp_path: Path) -> None:
+    repo, base, head = _repo(
+        tmp_path, {"cdk.json": "{}\n"}, {"cdk.json": "{}\n", "app.py": "x = 1\n"}
+    )
+    payload = json.dumps({"synth_missing": True})
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output, tmp_path / "home",
+        [_adapter("checkov-cdk")], _Calls(base, payload, base_payload=payload),
+    )
+    assert code == 0
+    assert _reasons(output).count("missing") == 1
+    assert _read(output, "findings.json") == []
+
+
+def _install_python3(bin_dir: Path) -> None:
+    bin_dir.mkdir(exist_ok=True)
+    shim = bin_dir / "python3"
+    shim.write_text(
+        f"#!{sys.executable}\n"
+        "import os\n"
+        "import sys\n"
+        "os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+
+
+def _install_fake_cdk(bin_dir: Path) -> None:
+    """A cdk stand-in. CDK_FAKE=clean writes an empty plugin report and no findings."""
+    bin_dir.mkdir(exist_ok=True)
+    script = bin_dir / "cdk"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        "args = sys.argv[1:]\n"
+        "flag = '@aws-cdk/core:validationReportJson=true'\n"
+        "if flag not in args:\n"
+        "    raise SystemExit(2)\n"
+        "out = Path(args[args.index('--output') + 1])\n"
+        "out.mkdir(parents=True, exist_ok=True)\n"
+        "if os.environ.get('CDK_FAKE') == 'clean':\n"
+        "    body = {'Resources': {'Bucket': {'Type': 'AWS::S3::Bucket'}}}\n"
+        "    (out / 'stack.template.json').write_text(json.dumps(body), encoding='utf-8')\n"
+        "    report = {'title': 'Validation Report', 'pluginReports': []}\n"
+        "    name = 'policy-validation-report.json'\n"
+        "    (out / name).write_text(json.dumps(report), encoding='utf-8')\n"
+        "    print('Policy Validation Successful!')\n"
+        "    raise SystemExit(0)\n"
+        "def resource(name, kind):\n"
+        "    rule = {'id': 'AwsSolutions-S1', 'level': 'error', 'info': name}\n"
+        "    return {'Type': kind, 'Metadata': {'cdk_nag': {'rules': [rule]}}}\n"
+        "body = {'Resources': {\n"
+        "    'Bucket': resource('Bucket', 'AWS::S3::Bucket'),\n"
+        "    'Logs': resource('Logs', 'AWS::Logs::LogGroup'),\n"
+        "}}\n"
+        "(out / 'stack.template.json').write_text(json.dumps(body), encoding='utf-8')\n"
+        "def hit(name):\n"
+        "    return {\n"
+        "        'constructPath': 'Stack/' + name,\n"
+        "        'resourceLogicalId': name,\n"
+        "        'templatePath': 'stack.template.json',\n"
+        "    }\n"
+        "report = {'pluginReports': [{'violations': [{\n"
+        "    'ruleName': 'AwsSolutions-S1',\n"
+        "    'severity': 'error',\n"
+        "    'description': 'from report',\n"
+        "    'violatingConstructs': [hit('Bucket'), hit('Logs')],\n"
+        "}]}]}\n"
+        "name = 'policy-validation-report.json'\n"
+        "(out / name).write_text(json.dumps(report), encoding='utf-8')\n"
+        "print('[Error at /Stack/Bucket] AwsSolutions-S1: from log')\n"
+        "print('[Error at /Stack/Logs] AwsSolutions-S1: from log')\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+
+
+def _wrapper(
+    source: str, args: list[str], root: Path, path: str, extra: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["PATH"] = path
+    env.update(extra or {})
+    return subprocess.run(
+        [sys.executable, "-c", source, *args],
+        cwd=root, env=env, capture_output=True, text=True, check=False,
+    )
+
+
+def test_cdk_nag_wrapper_keeps_each_resource(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    _install_fake_cdk(bin_dir)
+    root = tmp_path / "app"
+    root.mkdir()
+    proc = _wrapper(
+        I._CDK_NAG_WRAPPER, [str(root), str(tmp_path / "synth")], root, str(bin_dir),
+    )
+    assert proc.returncode == 0, proc.stderr
+    data = json.loads(proc.stdout)
+    resources = {item["resource"] for item in data["findings"]}
+    assert "Bucket" in resources
+    assert "Logs" in resources
+    assert "Resources" not in resources
+    assert data["report_present"] is True
+    assert data["synth_missing"] is False
+
+
+def test_cdk_nag_wrapper_clean_report_is_present(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    _install_fake_cdk(bin_dir)
+    root = tmp_path / "app"
+    root.mkdir()
+    proc = _wrapper(
+        I._CDK_NAG_WRAPPER, [str(root), str(tmp_path / "synth")], root, str(bin_dir),
+        {"CDK_FAKE": "clean"},
+    )
+    assert proc.returncode == 0, proc.stderr
+    data = json.loads(proc.stdout)
+    assert data["report_present"] is True
+    assert data["synth_missing"] is False
+    assert data["findings"] == []
+
+
+def test_checkov_cdk_wrapper_marks_a_missing_cdk_binary(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    _install_python3(bin_dir)
+    root = tmp_path / "app"
+    root.mkdir()
+    proc = _wrapper(
+        I._CHECKOV_WRAPPER, ["cdk", str(root), str(tmp_path / "synth")], root, str(bin_dir),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == {"synth_missing": True}
 
 
 def test_checkov_curated_rule_blocks_and_an_uncurated_rule_is_fix_later(tmp_path: Path) -> None:

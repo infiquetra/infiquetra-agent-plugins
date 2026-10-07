@@ -169,8 +169,30 @@ def _py_rels(root: Path) -> list[str]:
     return sorted(found)
 
 
+def _changed_python(context: ScanContext) -> list[str]:
+    """Python files this review changed. cosmic-ray 8.7 reads one module-path string as one file."""
+    if not context.base:
+        return _py_rels(context.root)
+    result = subprocess.run(
+        ["git", "diff", "--name-only", "--diff-filter=ACMR", context.base, "HEAD"],
+        cwd=context.root, capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        return _py_rels(context.root)
+    found = []
+    for line in result.stdout.splitlines():
+        rel = line.strip().replace("\\", "/")
+        if rel.endswith(".py") and (context.root / rel).is_file():
+            found.append(rel)
+    return sorted(set(found))
+
+
 def _toml(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _toml_list(values: list[str]) -> str:
+    return "[" + ", ".join(_toml(item) for item in values) + "]"
 
 
 def _strip_randomly(argv: list[str]) -> list[str]:
@@ -463,13 +485,14 @@ def _invoke_cosmic(context: ScanContext) -> list[str]:
     if not command:
         raise ToolGap("known-gap", "testing.surviving-mutant")
     parts = [*_strip_randomly(shlex.split(command)), "-p", "no:randomly"]
-    modules = _py_rels(context.root)
-    module = modules[0] if modules else "."
+    modules = _changed_python(context)
+    if not modules:
+        return []
     toml = context.home / "cosmic-ray.toml"
     toml.write_text(
         "\n".join([
             "[cosmic-ray]",
-            f"module-path = {_toml(module)}",
+            f"module-path = {_toml_list(modules)}",
             "timeout = 10.0",
             "excluded-modules = []",
             f"test-command = {_toml(shlex.join(parts))}",

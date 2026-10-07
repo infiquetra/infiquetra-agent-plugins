@@ -143,7 +143,7 @@ The optional `review_tools` block is documented in `plugins/saga/references/repo
 
 ## Python, CDK, shell, workflows and Markdown
 
-Issue 152 adds these adapters. A formatter (`ruff-format`, `shfmt`) is `mode: fix` and the runner does not start it, so it writes no record. Settings come from the base commit or from a file the adapter writes under the runner home. A settings file in the reviewed tree is not an input. actionlint still reads `.github/actionlint.yaml` beside the workflows when `-config-file` points elsewhere, so it scans a copy of the workflows and that file is left out of the copy. ruff lint uses `--isolated`, `--ignore-noqa`, and `--select ALL`. mypy passes `--config-file` for the base commit's config and does not pass `--strict`. An error is `correctness.type-error` (blocks). A mypy note is level `style` (note). cdk-nag raises a known gap when a project has `cdk.json` and the synth has no nag report, and reason `missing` when `cdk` itself is absent. A tree with no `cdk.json` does not degrade. Checkov blocks only the curated ids below. zizmor is started with `--offline` and receives no GitHub token.
+Issue 152 adds these adapters. A formatter (`ruff-format`, `shfmt`) is `mode: fix` and the runner does not start it, so it writes no record. Settings come from the base commit or from a file the adapter writes under the runner home. A settings file in the reviewed tree is not an input. actionlint still reads `.github/actionlint.yaml` beside the workflows when `-config-file` points elsewhere, so it scans a copy of the workflows and that file is left out of the copy. ruff lint uses `--isolated`, `--ignore-noqa`, and `--select ALL`. mypy passes `--config-file` for the base commit's config and does not pass `--strict`. An error is `correctness.type-error` (blocks). A mypy note is level `style` (note). cdk-nag raises a known gap when a project has `cdk.json` and synthesis ran no validation plugin. A clean plugin report is not a gap. Reason `missing` is recorded when `cdk` itself is absent, for cdk-nag and for the checkov-cdk synth. The anchor keeps the logical resource id or the construct path, so the same rule on two resources stays two findings. A tree with no `cdk.json` does not degrade. Checkov blocks only the curated ids below. zizmor's copy command runs `--offline` and receives no GitHub token. lychee has no line number, so a broken link is a whole-project hit compared base against head. markdownlint-cli2 prints `path:line:col MDxxx/name message` with no severity word. cosmic-ray's module-path is the list of changed Python files.
 
 | Adapter id | Comparison | Row the record cites | Computed severity |
 |---|---|---|---|
@@ -163,7 +163,7 @@ Issue 152 adds these adapters. A formatter (`ruff-format`, `shfmt`) is `mode: fi
 | `cfn-lint`, `shellcheck` | lines | the same three correctness rows, from the tool's level | blocks; fix later; note |
 | `markdownlint-cli2` | lines | `correctness.tool-style` | note |
 | `cspell` | lines | `architecture-maintainability.tool-style` | note |
-| `lychee` | lines | `architecture-maintainability.tool-warning` | fix later |
+| `lychee` | base against head | `architecture-maintainability.tool-warning` | fix later |
 | `ruff-format`, `shfmt` | not scanned | none | no record |
 
 The family draft, the kind draft, and the curated Checkov ids are the second fence. The first fence stays the semgrep map.

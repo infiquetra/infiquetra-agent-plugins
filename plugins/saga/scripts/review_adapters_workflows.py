@@ -79,10 +79,7 @@ def _rel(path: str) -> str:
 def _invoke_zizmor(context: ScanContext) -> list[str]:
     dest = context.home / "zizmor-src"
     dest.mkdir(parents=True, exist_ok=True)
-    return [
-        "python3", "-c", _ZIZMOR_WRAPPER, str(context.root), str(dest),
-        "--offline", "--format=json",
-    ]
+    return ["python3", "-c", _ZIZMOR_WRAPPER, str(context.root), str(dest)]
 
 
 def _zizmor_location(item: dict) -> tuple[str, int | None]:

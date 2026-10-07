@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """CloudFormation and CDK review adapters (issue 152).
 
-cdk-nag and checkov-cdk set narrow_env. A missing nag report is a degraded input.
-The adapter does not look for a cdk_nag import. Checkov scans a copy or a synth
-directory, so a settings file in the reviewed tree is not an input.
+cdk-nag and checkov-cdk set narrow_env. A synth that ran no validation plugin
+is a degraded input. A clean plugin report is not. The adapter does not look
+for a cdk_nag import. A missing cdk binary is reason missing for both synths.
+Checkov scans a copy or a synth directory, so a settings file in the reviewed
+tree is not an input. The anchor keeps the logical resource or the construct
+path, so one rule on two resources stays two findings.
 """
 
 from __future__ import annotations
@@ -38,13 +41,26 @@ root = Path(sys.argv[1])
 out = Path(sys.argv[2])
 try:
     proc = subprocess.run(
-        ["cdk", "synth", "--output", str(out)],
+        [
+            "cdk", "synth", "--output", str(out),
+            "--context", "@aws-cdk/core:validationReportJson=true",
+        ],
         cwd=root, capture_output=True, text=True,
     )
 except FileNotFoundError:
     print(json.dumps({"report_present": False, "synth_missing": True, "findings": []}))
     raise SystemExit(0)
 findings = []
+applied = False
+
+def add(rule_id, level, resource, path, summary):
+    findings.append({
+        "rule_id": str(rule_id or "cdk-nag"),
+        "level": level,
+        "resource": str(resource or "Stack"),
+        "path": path or "template.json",
+        "summary": " ".join(str(summary or "").split()),
+    })
 
 def walk(node, logical):
     if not isinstance(node, dict):
@@ -57,56 +73,95 @@ def walk(node, logical):
             if not isinstance(rule, dict):
                 continue
             level = str(rule.get("level") or "warning").lower()
-            findings.append({
-                "rule_id": str(rule.get("id") or "cdk-nag"),
-                "level": "error" if level in {"error", "critical", "high"} else "warning",
-                "resource": logical or "Stack",
-                "path": "template.json",
-                "summary": " ".join(str(rule.get("info") or rule.get("explanation") or "").split()),
-            })
+            mapped = "error" if level in {"error", "critical", "high"} else "warning"
+            add(
+                rule.get("id"), mapped, logical or "Stack", "template.json",
+                rule.get("info") or rule.get("explanation") or "",
+            )
     for key, child in node.items():
-        if key == "Metadata":
+        if key == "Metadata" or not isinstance(child, dict):
             continue
-        if isinstance(child, dict):
-            walk(child, key if logical == "" else logical)
-if proc.returncode == 0:
-    for path in out.rglob("*"):
-        if path.suffix not in {".json", ".yaml", ".yml"} or not path.is_file():
+        # The key under Resources is the logical id. Later keys are properties.
+        if logical in {"", "Resources"}:
+            walk(child, key)
+        else:
+            walk(child, logical)
+
+report = None
+for path in out.rglob("policy-validation-report.json"):
+    if path.is_file():
+        report = path
+        break
+if report is not None:
+    applied = True
+    try:
+        loaded_report = json.loads(report.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        loaded_report = {}
+    plugins = loaded_report.get("pluginReports") if isinstance(loaded_report, dict) else []
+    for plugin in plugins or []:
+        if not isinstance(plugin, dict):
             continue
-        try:
-            loaded = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        before = len(findings)
-        walk(loaded, "")
-        if len(findings) != before:
-            relative = path.name
-            for item in findings[before:]:
-                item["path"] = relative
+        for violation in plugin.get("violations") or []:
+            if not isinstance(violation, dict):
+                continue
+            severity = str(violation.get("severity") or "warning").lower()
+            level = "error" if severity in {"error", "critical", "high"} else "warning"
+            resources = (
+                violation.get("violatingConstructs")
+                or violation.get("violatingResources")
+                or [{}]
+            )
+            if not isinstance(resources, list) or not resources:
+                resources = [{}]
+            for resource in resources:
+                if not isinstance(resource, dict):
+                    resource = {}
+                name = (
+                    resource.get("constructPath")
+                    or resource.get("resourceLogicalId")
+                    or "Stack"
+                )
+                template = str(resource.get("templatePath") or "template.json")
+                add(
+                    violation.get("ruleName"), level, name, Path(template).name,
+                    violation.get("description") or "",
+                )
+for path in out.rglob("*"):
+    if not path.is_file() or path.name == "policy-validation-report.json":
+        continue
+    if path.suffix not in {".json", ".yaml", ".yml"}:
+        continue
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        continue
+    before = len(findings)
+    walk(loaded, "")
+    if len(findings) != before:
+        for item in findings[before:]:
+            item["path"] = path.name
 text = (proc.stdout or "") + "\n" + (proc.stderr or "")
+if "Policy Validation Successful!" in text:
+    applied = True
 for line in text.splitlines():
-    if " at /" not in line or "]" not in line:
+    marker = " at /"
+    start = line.find(marker)
+    end = line.find("]", start) if start >= 0 else -1
+    if start < 0 or end < 0:
         continue
     if line.startswith("[Error"):
         kind = "error"
     elif line.startswith("[Warning"):
         kind = "warning"
     else:
-        kind = ""
-    if not kind:
         continue
-    body = line.split("]", 1)[-1].strip()
-    rule_id = body.split(":", 1)[0].strip() or "cdk-nag"
-    summary = body.split(":", 1)[-1].strip()
-    findings.append({
-        "rule_id": rule_id,
-        "level": kind,
-        "resource": "Stack",
-        "path": "template.json",
-        "summary": " ".join(summary.split()),
-    })
+    construct = line[start + len(" at "):end].strip() or "Stack"
+    body = line[end + 1:].strip()
+    rule_id, _, summary = body.partition(":")
+    add(rule_id.strip() or "cdk-nag", kind, construct, "template.json", summary)
 print(json.dumps({
-    "report_present": bool(findings),
+    "report_present": applied or bool(findings),
     "synth_missing": False,
     "findings": findings,
 }))
@@ -125,7 +180,7 @@ if mode == "cdk":
             cwd=root, capture_output=True, text=True,
         )
     except FileNotFoundError:
-        print("[]")
+        print(json.dumps({"synth_missing": True}))
         raise SystemExit(0)
     if synth.returncode != 0:
         sys.stdout.write(synth.stdout or "")
@@ -218,11 +273,6 @@ def _document() -> dict[str, object]:
 
 def _rel(path: str) -> str:
     text = path.replace("\\", "/")
-    marker = "/.github/"
-    if text.startswith("./"):
-        text = text[2:]
-    if marker in f"/{text}":
-        return text
     return text[2:] if text.startswith("./") else text
 
 
@@ -285,6 +335,8 @@ def _parse_checkov(text: str) -> ParseResult:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise ValueError("checkov output is not json") from exc
+    if isinstance(data, dict) and data.get("synth_missing"):
+        raise ToolGap("missing", "security.tool-curated")
     if isinstance(data, dict):
         documents = [data]
     elif isinstance(data, list):

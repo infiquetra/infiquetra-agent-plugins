@@ -511,12 +511,12 @@ tools:
     tool: lychee
     languages: [markdown]
     lens: architecture-maintainability
-    purpose: A broken link is fix later. Recorded output only, because lychee uses the network.
+    purpose: A broken link is fix later. Recorded output only, because lychee uses the network. The report has no line, so the link set is compared base against head.
     install: Install lychee on the operator machine. This card does not install it.
     default_version: "0.24.2"
     version_args: ["--version"]
     timeout_seconds: 120
-    comparison: lines
+    comparison: base-head
     mode: report
     curated_block_rules: []
   - id: cspell
