@@ -39,6 +39,8 @@
 
 ### Fixed
 
+- Issue 151: an unknown tool level or lens is exit 2. A base tree the adapter declines to scan is an empty baseline, so head is still compared. A relocated command that is refused removes the work directories already created. A head payload that does not parse is reason `unparseable`.
+
 - Issue 144: `/work` §5.3 no longer tells the worker to re-run `/code-review` while "capturing a
   fresh `REVIEWED_SHA`". A stale branch goes back through the Phase 3.3 combined-branch loop, and
   the new `REVIEWED_SHA` comes from `build_loop.py --handoff` exactly as §5.1 does, so no path into

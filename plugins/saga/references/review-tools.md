@@ -57,7 +57,7 @@ A hit carries the rule id, path, statement, anchor, optional level, line range, 
 
 **Changed-line filter.** A line hit is kept only when one of its lines was added or modified. A hit on any other line is dropped. A whole-project hit is not line-filtered.
 
-**Base against head.** A whole-project result, and every type checker, is compared by finding identity (lens, row, rule reference, file, function, anchor). The same identity at base and head is dropped. An identity that exists only at head is kept. A type error the change causes in a file the diff did not touch is kept, and its row is `correctness.type-error`.
+**Base against head.** A whole-project result, and every type checker, is compared by finding identity (lens, row, rule reference, file, function, anchor). The same identity at base and head is dropped. An identity that exists only at head is kept. A tool that declines at base is an empty baseline, and head is still scanned. A type error the change causes in a file the diff did not touch is kept, and its row is `correctness.type-error`.
 
 Coverage is not a second tool run and not a base-against-head coverage comparison. One head report is matched to the one `Change`.
 
@@ -88,7 +88,7 @@ An unknown level or lens is a refusal. A dependency advisory with no score is `s
 | `coverage` | lines, one `Change` | `testing.uncovered-branch` | blocks; a line fallback is degraded and so fix later |
 | `relocated-test` | one extra run, not a line filter | `architecture-maintainability.relocated-run-fails` | blocks |
 
-Every finding and measurement passes `review_records.py` validation before the four files are written. A missing tool, a timeout, an unsupported platform, a version other than the pin, the mutation cap and a known gap are degraded inputs. Each one names the tool, the row and the reason. Exit 0 still writes the files. Exit 2 is a refusal (a bad profile, a bad commit, a validator rejection, two coverage reports that disagree, a saga metadata row that is not a pattern row). Exit 1 is an unexpected error.
+Every finding and measurement passes `review_records.py` validation before the four files are written. A missing tool, a timeout, an unsupported platform, a version other than the pin, the mutation cap and a known gap are degraded inputs. Each one names the tool, the row and the reason. Exit 0 still writes the files. Exit 2 is a refusal (a bad profile, a bad commit, a validator rejection, two coverage reports that disagree, a saga metadata row that is not a pattern row, an unknown tool level or lens). Exit 1 is an unexpected error.
 
 ## Semgrep
 
@@ -98,7 +98,7 @@ The saga row reads `plugins/saga/references/semgrep-rules`. While that directory
 
 ## osv-scanner
 
-`osv-scanner scan source --format json` with an explicit `--lockfile` for each supported lockfile the tree contains. The supported names are `pnpm-lock.yaml`, `yarn.lock`, `pubspec.lock`, `mix.lock`, `go.mod`, `composer.lock`, `Pipfile.lock`, `poetry.lock`, `pdm.lock`, `requirements.txt`, `renv.lock`, `Gemfile.lock`, `Cargo.lock`, `conan.lock`, `gradle.lockfile` and `buildscript-gradle.lockfile`. `package-lock.json` and `npm-shrinkwrap.json` are not scanned. A tree whose only JavaScript lockfile is one of those two, and which has nothing else to scan, is reason `known-gap` on `security.dependency-high`.
+`osv-scanner scan source --format json` with an explicit `--lockfile` for each supported lockfile the tree contains. The supported names are `pnpm-lock.yaml`, `yarn.lock`, `pubspec.lock`, `mix.lock`, `go.mod`, `composer.lock`, `Pipfile.lock`, `poetry.lock`, `pdm.lock`, `requirements.txt`, `renv.lock`, `Gemfile.lock`, `Cargo.lock`, `conan.lock`, `gradle.lockfile` and `buildscript-gradle.lockfile`. `package-lock.json` and `npm-shrinkwrap.json` are not scanned. A tree whose only JavaScript lockfile is one of those two, and which has nothing else to scan, is reason `known-gap` on `security.dependency-high`. When that is true of base and head has a supported lockfile, base contributes no findings and head is scanned.
 
 A numeric CVSS score is used as the number, including the string `"9.0"`. A vector is not calculated: the word in `database_specific.severity` stands in (`CRITICAL` 9.0, `HIGH` 7.0, `MEDIUM` 4.0, `LOW` 0.1). No score at all is `security.dependency-high`.
 

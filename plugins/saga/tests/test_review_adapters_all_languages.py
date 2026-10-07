@@ -386,6 +386,33 @@ def test_an_npm_only_tree_is_a_known_gap(tmp_path: Path) -> None:
     assert _read(output, "findings.json") == []
 
 
+def test_a_base_npm_gap_still_scans_a_lockfile_added_at_head(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "package-lock.json").write_text("{}\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "poetry.lock").write_text("lock\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    profile = _profile(tmp_path / "profile.json", {"osv-scanner": {"version": "1.0.0"}})
+    payload = (FIXTURES / "osv-scanner.json").read_text(encoding="utf-8")
+    runner = _Calls(base, payload)
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, profile, output, tmp_path / "home", [_adapter("osv-scanner")], runner,
+    )
+    assert code == 0
+    scans = [argv for argv in runner.calls if "scan" in argv]
+    assert len(scans) == 1
+    text = " ".join(scans[0])
+    assert "poetry.lock" in text
+    assert "package-lock.json" not in text
+    refs = {item["rule"]["ref"] for item in _read(output, "findings.json")}
+    assert "CVE-2026-0001" in refs
+    assert _severity(output, "CVE-2026-0001") == "blocks"
+    assert all(item["reason"] != "known-gap" for item in _read(output, "degraded.json"))
+    _valid(output)
+
+
 def test_an_unscored_advisory_blocks_unless_the_builder_excuses_it(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init(repo)

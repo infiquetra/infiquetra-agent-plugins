@@ -522,6 +522,54 @@ def test_no_test_command_and_no_coverage_report_are_known_gaps(tmp_path: Path) -
     assert ("coverage", "testing.uncovered-branch", "no-report") in reasons
 
 
+def test_an_unknown_tool_level_or_lens_is_a_refusal(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    profile = _bare_profile(tmp_path)
+    runner = _Calls(_ok())
+
+    def critical(_text: str) -> Any:
+        return T.ParseResult((_hit(level="critical", row=None),))
+
+    def unscoped(_text: str) -> Any:
+        return T.ParseResult((_hit(row=None),))
+
+    cases = (
+        ("base-head", _stub(comparison="base-head", parse=critical)),
+        ("lines", _stub(parse=critical)),
+        ("lens", _stub(lens="not-a-lens", parse=unscoped)),
+    )
+    for name, adapter in cases:
+        output = tmp_path / name
+        code = _run(
+            repo, base, head, profile, output, tmp_path / "home",
+            adapters=[adapter], runner=runner,
+        )
+        assert code == 2
+        for filename in _FOUR:
+            assert not (output / filename).exists()
+
+
+def test_a_malformed_head_payload_is_unparseable(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+
+    def parse(_text: str) -> Any:
+        raise ValueError("not a scan")
+
+    def handler(argv: list[str], _cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        return T.ProcessResult(0, "{not json\n")
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[_stub(parse=parse)], runner=_Calls(handler),
+    )
+    assert code == 0
+    assert _read(output, "findings.json") == []
+    assert ("stub", "security.scanner-medium-low", "unparseable") in _reasons(output)
+
+
 def test_a_base_run_with_no_parseable_findings_is_not_a_type_error(tmp_path: Path) -> None:
     repo, base, head = _pair(tmp_path)
     seen: list[str] = []
@@ -694,6 +742,37 @@ def test_two_language_commands_each_run_once(tmp_path: Path) -> None:
     assert sorted(calls) == ["probe_py.py", "probe_sh.py"]
     rows = [item["rule"]["row"] for item in _read(output, "findings.json")]
     assert rows.count(_RELOCATED) == 2
+
+
+def test_a_refused_later_language_command_removes_the_work_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, base, head = _pair(tmp_path)
+    (repo / "probe.py").write_text("raise SystemExit(0)\n", encoding="utf-8")
+    profile = _profile(tmp_path / "profile.json", {"review_tools": {"languages": {
+        "python": {"test_command": shlex.join([sys.executable, "probe.py"])},
+        "shell": {"test_command": "echo 'unterminated"},
+    }}})
+    created: list[Path] = []
+    real_mkdtemp = T.tempfile.mkdtemp
+
+    def tracking(*args: Any, **kwargs: Any) -> str:
+        path = real_mkdtemp(*args, **kwargs)
+        if str(kwargs.get("prefix", "")).startswith("saga-relocated-"):
+            created.append(Path(path))
+        return path
+
+    monkeypatch.setattr(T.tempfile, "mkdtemp", tracking)
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, profile, output, tmp_path / "home",
+        adapters=[], runner=_Calls(_ok()), framework=True,
+    )
+    assert code == 2
+    assert len(created) == 2
+    assert all(not path.exists() for path in created)
+    for filename in _FOUR:
+        assert not (output / filename).exists()
 
 
 def test_an_absent_languages_block_runs_the_functional_test_command_once(tmp_path: Path) -> None:

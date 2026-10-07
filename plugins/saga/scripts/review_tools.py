@@ -406,7 +406,10 @@ def _run_adapter(
             hit = replace(hit, whole_project=True)
         elif comparison != "base-head" and not filter_to_change((hit,), change):
             continue
-        row = _row_for(adapter, hit)
+        try:
+            row = _row_for(adapter, hit)
+        except review_formula.FormulaError as exc:
+            raise RunnerFailure(2, str(exc)) from exc
         _require_pattern_row(adapter, row)
         kept.append(replace(
             hit,
@@ -477,9 +480,10 @@ def _base_and_head(
                     adapter, replace(context, root=base_root), process, env, timeout, "base",
                     degraded,
                 )
-        except ToolGap as exc:
-            degraded.append(_degraded(adapter, exc.row, exc.reason))
-            return (), {}
+        except ToolGap:
+            # The base tree declined. Head is still compared against no earlier findings.
+            base_hits = ()
+            base_problem = None
         if base_problem is not None:
             degraded.append(_degraded(adapter, _primary_row(adapter), base_problem))
             return (), {}
@@ -730,7 +734,10 @@ def _require_pattern_row(adapter: Adapter, row: str) -> None:
 
 def _identity(adapter: Adapter, hit: Hit) -> str:
     """The same identity ``review_records`` stores, resolved before base and head are compared."""
-    row = hit.row or _row_for(adapter, hit)
+    try:
+        row = hit.row or _row_for(adapter, hit)
+    except review_formula.FormulaError as exc:
+        raise RunnerFailure(2, str(exc)) from exc
     lens = row.split(".", 1)[0]
     rule = {"row": row, "ref": hit.rule_id}
     location = {
@@ -868,12 +875,18 @@ def _relocated(
         return [], []
     hits: list[Hit] = []
     directories: list[Path] = []
-    for language, command in commands:
-        work = Path(tempfile.mkdtemp(prefix="saga-relocated-"))
-        directories.append(work)
-        hit = _one_relocated(repo, language, command, process, work, home, degraded)
-        if hit is not None:
-            hits.append(hit)
+    try:
+        for language, command in commands:
+            work = Path(tempfile.mkdtemp(prefix="saga-relocated-"))
+            directories.append(work)
+            hit = _one_relocated(repo, language, command, process, work, home, degraded)
+            if hit is not None:
+                hits.append(hit)
+    except Exception:
+        # A later command can refuse after earlier directories exist.
+        for path in directories:
+            shutil.rmtree(path, ignore_errors=True)
+        raise
     return hits, directories
 
 
