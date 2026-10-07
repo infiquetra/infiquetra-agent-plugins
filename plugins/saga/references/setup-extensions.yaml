@@ -2,4 +2,7 @@
 # A later card appends a step or a question. It does not edit saga_setup.py.
 schema: setup_extensions.v1
 steps: []
-questions: []
+questions:
+  - key: review
+    prompt: 'Which functions, methods, or module paths are this repository''s shared update paths, per language? Answer with an object like {"shared_update_paths": {"python": [...]}}; omit languages with none.'
+    profile_key: review

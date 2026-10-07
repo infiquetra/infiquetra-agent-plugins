@@ -29,9 +29,11 @@ FIXTURES = REPO_ROOT / "plugins" / "saga" / "tests" / "fixtures" / "review_tools
 sys.path.insert(0, str(SCRIPTS))
 
 import review_adapters_all_languages  # noqa: E402
+import review_calibration  # noqa: E402
 import review_formula  # noqa: E402
 import review_records  # noqa: E402
 import review_tools  # noqa: E402
+import saga_setup  # noqa: E402
 
 #: The six defects, in the card-table order: file stem, C1 row, harm, languages.
 RULE_TABLE: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
@@ -702,3 +704,94 @@ def test_rendered_config_scans_cleanly_live(tmp_path: Path) -> None:
     assert [(hit.rule_id, hit.start) for hit in parsed.hits] == [
         ("saga.swallowed-error", 5),
     ]
+
+
+_SETTLED_PROFILE = {
+    "schema": "repository_profile.v1",
+    "functional_test_environment": {
+        "kind": "local",
+        "test_command": "python3 -m pytest tests -q",
+        "scope": "private",
+    },
+    "qa": {
+        "schema": "qa_profile.v1",
+        "strategies": {"example": {"required": True}},
+        "ceiling": {"max_duration_seconds": 60, "max_direct_cost": 0},
+    },
+    "visibility": "private",
+    "other_key": "kept",
+}
+_REVIEW_PROMPT = (
+    "Which functions, methods, or module paths are this repository's shared "
+    'update paths, per language? Answer with an object like {"shared_update_paths": '
+    '{"python": [...]}}; omit languages with none.'
+)
+
+
+def test_shared_update_question_is_registered() -> None:
+    """U4: the setup registry asks for the shared update paths under review."""
+    extensions = saga_setup.load_extensions()
+    questions = [item for item in extensions["questions"] if item.get("key") == "review"]
+    assert len(questions) == 1
+    assert questions[0]["profile_key"] == "review"
+    assert questions[0]["prompt"] == _REVIEW_PROMPT
+
+
+def test_setup_asks_and_stores_the_shared_update_paths(tmp_path: Path) -> None:
+    """U4: setup asks without the key, stays quiet with it, and keeps other keys."""
+    extensions = saga_setup.load_extensions()
+    asked = saga_setup.questions_for({}, dict(_SETTLED_PROFILE), extensions)
+    assert [item for item in asked if item["key"] == "review"] == [
+        {"key": "review", "prompt": _REVIEW_PROMPT}
+    ]
+    settled = dict(_SETTLED_PROFILE)
+    settled["review"] = {"shared_update_paths": {"python": ["board.write"]}}
+    assert all(item["key"] != "review" for item in saga_setup.questions_for({}, settled, extensions))
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("value = 1\n", encoding="utf-8")
+    (repo / ".saga-profile.json").write_text(json.dumps(_SETTLED_PROFILE), encoding="utf-8")
+
+    def runner(argv: object, **kwargs: object) -> Any:
+        del argv, kwargs
+        raise FileNotFoundError("no tools in this fixture")
+
+    answer = {"shared_update_paths": {"python": ["board.write"], "typescript": []}}
+    saga_setup.write_profile(repo, {"review": answer}, runner=runner, env={})
+    profile = json.loads((repo / ".saga-profile.json").read_text(encoding="utf-8"))
+    assert profile["review"] == answer
+    assert profile["other_key"] == "kept"
+
+
+def _rules_fence() -> list[dict[str, Any]]:
+    guide = (REFERENCES / "review-tools.md").read_text(encoding="utf-8")
+    fences = [chunk.split("```", 1)[0] for chunk in guide.split("```yaml")[1:]]
+    matching = [yaml.safe_load(fence) for fence in fences if "saga_pattern_rules" in fence]
+    assert len(matching) == 1
+    return matching[0]["saga_pattern_rules"]
+
+
+def test_review_tools_lists_the_six_rules() -> None:
+    """U4: the doc's rule fence matches every rule file's harm, outcome, languages."""
+    entries = {entry["file"]: entry for entry in _rules_fence()}
+    assert sorted(entries) == sorted(f"{stem}.yaml" for stem, _, _, _ in RULE_TABLE)
+    for stem, _, harm, languages in RULE_TABLE:
+        rule = _load_rule(stem)
+        entry = entries[f"{stem}.yaml"]
+        assert entry["harm"] == rule["metadata"]["harm"] == harm
+        assert entry["outcome"] == rule["metadata"]["outcome"] == OUTCOME
+        assert entry["languages"] == rule["languages"] == list(languages)
+
+
+def test_repository_profile_documents_the_key() -> None:
+    """U4: the profile doc names the shared-update-path key and its shape."""
+    profile = (REFERENCES / "repository-profile.md").read_text(encoding="utf-8")
+    assert "shared_update_paths" in profile
+    assert "identifier-shaped" in profile
+
+
+def test_rule_files_join_the_fingerprint() -> None:
+    """U4: all six rule files are fingerprinted calibration components."""
+    for stem, _, _, _ in RULE_TABLE:
+        assert f"plugins/saga/references/semgrep/{stem}.yaml" in review_calibration.COMPONENTS

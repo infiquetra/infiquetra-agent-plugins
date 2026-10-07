@@ -48,6 +48,12 @@ COMPONENTS: tuple[str, ...] = (
     "plugins/saga/scripts/sweep_pieces.py",
     "plugins/saga/references/model-prices.yaml",
     "plugins/saga/scripts/review_checks.py",
+    "plugins/saga/references/semgrep/release-shares-cleanup-block.yaml",
+    "plugins/saga/references/semgrep/swallowed-error.yaml",
+    "plugins/saga/references/semgrep/silent-skip.yaml",
+    "plugins/saga/references/semgrep/write-skips-shared-update-path.yaml",
+    "plugins/saga/references/semgrep/naive-time-comparison.yaml",
+    "plugins/saga/references/semgrep/money-as-floating-point.yaml",
 )
 
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
