@@ -7,8 +7,8 @@ and a merge answer. It was added by issue 148, card C1 of the review redesign (p
 
 The machine-readable contract is [`review-records.schema.json`](review-records.schema.json). The
 validator, the identity function and the writers are in `scripts/review_records.py`; the formula
-is in `scripts/review_formula.py`. Nothing calls them until the review command (card C10a). The
-older `review_result.v2` shapes stay in place until card C10b deletes them.
+is in `scripts/review_formula.py`. `scripts/review_command.py` (card C10a, issue 160) calls the
+writers. The older `review_result.v2` shapes stay in place until card C10b deletes them.
 
 ## The six kinds
 
@@ -20,7 +20,7 @@ Every record names its `kind` and carries `schema: "review_records.v1"`.
 | `measurement` | number a tool produced | lens, row, tool and version, metric, value, threshold, direction; `met` or `missed` once computed |
 | `where_to_look` | classifier hit | lens, location, the questions that fired with their probabilities, classifier and model, and the LLM's answer: a finding, or cleared with a reason |
 | `lens_grade` | lens per review | counts of blocking, fix-later and note items, the A–F grade, degraded inputs, and per language whether the lens may block |
-| `review_run` | review | all of the above, plus card, repository, base and head commits, saga version, round, tool versions, usage (tokens, cost, seconds), builder-record snapshots, the may-block answers, raw-output fingerprints and the merge answer |
+| `review_run` | review | all of the above, plus card, repository, base and head commits, saga version, round, tool versions, usage (tokens, cost, seconds), an optional reviewers array (vendor, model, role, prompt and configuration fingerprints, and a note when the configuration differs), builder-record snapshots, the may-block answers, raw-output fingerprints and the merge answer |
 | `builder_record` | unit | acceptance criteria and their checks, a declaration per policy question (applies or not, and the proving test), and every reason the builder gives |
 
 Validate any of them with:

@@ -18,6 +18,11 @@
   review, so they get the review-tools runner's allow-listed environment with a fresh `HOME` and
   temporary directory, never the operator's. Only saga's own `gh` call keeps the full environment.
 
+- Issue 160: `scripts/review_command.py` prepares one review packet from a change and finishes
+  one or two answers into a review run. It does not start a reviewer session. A reproduced
+  finding counts only when this command's own sandboxed re-run fails with the recorded line.
+  With an issue number, usage is written once per reviewer session.
+
 - Issue 158: the calibration tests prove that the targeted reviewer's prompt, answer schema and
   launch settings are fingerprinted, so a one-byte change to any of them makes a recorded run
   stale, and that a changed `CLAUDE.md`, `AGENTS.md` or plugin manifest fails no check.
@@ -109,6 +114,12 @@
   stays.
 
 ### Fixed
+
+- Issue 160: a reproduced finding is confirmed only when the re-run, on a tree of the head
+  commit plus the reviewer's test files, fails with the recorded line. A generic traceback
+  header does not count. The seatbelt does not allow mach-lookup, does not read all of
+  `/private`, and allows the device writes pytest needs. A symlink is not copied into the
+  re-run. A failed `prepare` leaves `--out` uncreated.
 
 - Issue 149: `may-block` reads the calibration file and the component bytes from the installed
   saga package. `--root` selects the base commit's profile and does not select that file. An

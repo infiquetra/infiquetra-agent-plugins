@@ -55,9 +55,10 @@ The kinds on the list today:
 - The Python, CDK, shell, workflow, and Markdown adapters (C4b).
 - Our checks: the six saga pattern rules, listed as files (C5).
 - The TypeScript, Dart, Rust, and Swift adapters (C4c).
-- The scripted checks (issue 155): `scripts/review_checks.py`.
+- The review command (C10a): `plugins/saga/scripts/review_command.py`.
+- The scripted checks (issue 155): `scripts/review_checks.py`. The scripted-checks test requires this path to stay last.
 
-Not on the list yet: question banks and the policy questions, and the review command. The scripted checks in `review_checks.py` are on the list. A card that adds a review component adds its paths in the same change.
+Not on the list yet: question banks and the policy questions. A card that adds a review component adds its paths in the same change.
 
 Instruction files are recorded in `reviewer_configuration` and are not fingerprinted. `may-block` does not read that field. `review_records.py` is not a component. The record schema is the contract; the validator is held to that schema by its own drift test. `reviewer_answer.py` is not a component either. It refuses an answer and caps an open-search finding; the prompt, the answer schema and the launch settings are the fingerprinted parts, and the module is held by its own tests.
 
@@ -90,6 +91,7 @@ plugins/saga/references/semgrep/silent-skip.yaml
 plugins/saga/references/semgrep/write-skips-shared-update-path.yaml
 plugins/saga/references/semgrep/naive-time-comparison.yaml
 plugins/saga/references/semgrep/money-as-floating-point.yaml
+plugins/saga/scripts/review_command.py
 plugins/saga/scripts/review_checks.py
 ```
 

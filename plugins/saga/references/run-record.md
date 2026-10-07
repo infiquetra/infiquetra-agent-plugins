@@ -420,6 +420,12 @@ and `cost_report.py` read only `review_result.v2` entries, `release_step.py` onl
 own builder-record snapshots and per-lens "may block" answers, so it can be validated, its
 severities recomputed, without the rest of the record.
 
+`review_command.py finish` appends that review run and writes usage in the same locked update.
+It calls `add_usage` only after it has checked the session id. A session the usage-capture mod
+already recorded (the entry's `session_id` equals the id, equals `session/agent`, or starts with
+`session/`) is skipped, so a repeat finish does not add the tokens again. Without an issue number
+the run record is not opened.
+
 ### Plan reviews (issue 163)
 
 A plan review is appended to `review_cycles` with `loop: "plan_review"` by
