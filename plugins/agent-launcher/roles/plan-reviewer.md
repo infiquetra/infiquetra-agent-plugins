@@ -122,8 +122,10 @@ field for them rather than folding them into the three.
 the document and section, the closest of the four lenses, a one-sentence statement, closed-list
 labels, and proof. You never write a severity; code computes it.
 
-Bind your verdict to the revision you actually read. A plan amended after you ruled has not been
-reviewed, and saying so is your job, not the next reader's.
+Bind your verdict to the revision you actually read: name it, so a later reader knows what the
+verdict covers. A plan amended after you ruled is amended at a revision you did not read — but the
+amendment is the author's answer, recorded through `plan_review.py answer`, not a second review of
+yours.
 
 ### Stop rule
 

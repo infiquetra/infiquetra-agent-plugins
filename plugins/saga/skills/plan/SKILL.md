@@ -834,8 +834,8 @@ to type `/work` is the transport between two steps that already agree with each 
 - **`pr`, `merge`, `nonprod-deploy`** — run `/work` against the plan path in this same turn, and
   say in one line that you are doing so and which destination authorized it.
 
-When §5.4 exited on exhausted allowances rather than a pass, **stop and report** — that exit never
-passes, so it never continues either.
+When §5.4's check does not exit 0, **stop and report** — a check that never passes never
+continues either.
 
 **Continuation changes what happens automatically; it changes nothing about what is confirmed.**
 `/work`'s pull-request open, review-request, and merge stay explicitly operator-confirmed exactly

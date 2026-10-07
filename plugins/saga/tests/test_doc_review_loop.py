@@ -143,6 +143,14 @@ def test_the_board_move_to_ready_for_active_follows_the_review() -> None:
     assert "§5.4's check exits 0 with every finding answered" in text
 
 
+def test_continuation_stops_on_the_check_not_on_allowances() -> None:
+    """§5.6 continues on the check, not on a loop exit §5.4 no longer has."""
+    text = PLAN_SKILL.read_text(encoding="utf-8")
+    body = _section(text, "### 5.6 Continue into `/work`")
+    assert "check does not exit 0" in body
+    assert "exhausted allowances" not in text
+
+
 # --------------------------------------------------------------------------- U3
 
 

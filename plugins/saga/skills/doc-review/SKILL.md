@@ -225,9 +225,10 @@ every finding through `plan_review.py answer` — fixed with the section changed
 reason — and the pass is complete when `plan_review.py check` exits 0. There is no second pass, no
 cycle allowance, and no override.
 
-**Bind the verdict to the revision you read.** A document amended after this review ruled has not
-been reviewed at the revision that will be built, and saying so is this review's job, not the next
-reader's.
+**Bind the verdict to the revision you read.** A document amended after this review ruled is
+amended at a revision this review did not read — name the revision you read, so a later reader can
+tell. For a plan, the amendment is an answer the author records through `plan_review.py answer`,
+fixed with the section changed, not a second review.
 
 If any finding is unanswered, or the acceptance-criteria mapping fails, `/work` blocks on the
 check. `/work` reads the result from the run record's `review_cycles` first, then same-session
