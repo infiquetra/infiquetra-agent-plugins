@@ -47,6 +47,7 @@ COMPONENTS: tuple[str, ...] = (
     "plugins/fleet-core/scripts/fleet_commons/jev_sweep.py",
     "plugins/saga/scripts/sweep_pieces.py",
     "plugins/saga/references/model-prices.yaml",
+    "plugins/saga/scripts/review_checks.py",
 )
 
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")

@@ -1,0 +1,7 @@
+{
+  "nodes": [
+    {"id": "work", "kind": "step"},
+    {"id": "done", "kind": "terminal"}
+  ],
+  "transitions": []
+}

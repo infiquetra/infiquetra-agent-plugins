@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuite name="example" tests="2">
+  <testcase name="tests/test_sample.py::test_reason" classname="test_sample">
+    <skipped message="waiting on an example fixture"/>
+  </testcase>
+  <testcase name="tests/test_sample.py::test_silent" classname="test_sample">
+    <skipped/>
+  </testcase>
+</testsuite>

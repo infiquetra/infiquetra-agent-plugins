@@ -1,0 +1,3 @@
+tests/test_sample.py::test_reason SKIPPED waiting on an example fixture
+tests/test_sample.py::test_silent SKIPPED
+tests/test_sample.py::test_ran PASSED

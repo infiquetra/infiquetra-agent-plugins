@@ -282,6 +282,7 @@ def test_components_match_the_landed_cards() -> None:
         "plugins/saga/references/targeted-reviewer-answer.schema.json",
         "plugins/saga/references/targeted-reviewer-launch.json",
         *sweep_pieces.SWEEP_COMPONENTS,
+        "plugins/saga/scripts/review_checks.py",
     )
 
 

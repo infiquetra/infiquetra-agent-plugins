@@ -135,6 +135,7 @@ class ScanContext:
     report_dir: Path | None = None
     base: str = ""
     test_command: str = ""
+    commands: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -165,6 +166,8 @@ class ParseResult:
     hits: tuple[Hit, ...] = ()
     unfinished: bool = False
     problems: tuple[str, ...] = ()
+    items: tuple[Mapping[str, Any], ...] = ()
+    gaps: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -220,6 +223,7 @@ def default_adapters() -> list[Adapter]:
     import review_adapters_python as python_adapters
     import review_adapters_shell as shell
     import review_adapters_workflows as workflows
+    import review_checks
 
     return [
         *every.ADAPTERS,
@@ -228,6 +232,7 @@ def default_adapters() -> list[Adapter]:
         *shell.ADAPTERS,
         *workflows.ADAPTERS,
         *markdown.ADAPTERS,
+        *review_checks.ADAPTERS,
     ]
 
 
@@ -336,7 +341,10 @@ def run(
     *,
     framework: bool = True,
 ) -> int:
-    """Write the four record files. Exit 0 when they are written, including all-degraded."""
+    """Write the record files, including where-to-look items.
+
+    Exit 0 when they are written, including all-degraded. The command does not take a run record.
+    """
     try:
         return _run(
             Path(repo), base, head, Path(profile), Path(output),
@@ -373,6 +381,7 @@ def _run(
         raise RunnerFailure(2, str(exc)) from exc
     output.mkdir(parents=True, exist_ok=True)
     pending: list[Hit] = []
+    items: list[Mapping[str, Any]] = []
     degraded: list[dict[str, str]] = list(profile_notes)
     deadline = time.monotonic() + MUTATION_CAP_SECONDS
     base_env = dict(os.environ)
@@ -388,7 +397,7 @@ def _run(
                     continue
                 pending.extend(_run_adapter(
                     adapter, repo, base_sha, head_sha, head_root, change, home, profile,
-                    process, base_env, deadline, degraded,
+                    process, base_env, deadline, degraded, items,
                 ))
             measurements: list[dict[str, Any]] = []
             cov_findings: list[dict[str, Any]] = []
@@ -401,7 +410,7 @@ def _run(
                     change, profile, home, degraded, extra
                 )
             findings = _findings_from(pending) + cov_findings
-            _emit(output, findings, measurements, degraded, builder_record)
+            _emit(output, findings, measurements, degraded, builder_record, items)
             return 0
     finally:
         for _language, path in extra:
@@ -421,6 +430,7 @@ def _run_adapter(
     env: dict[str, str],
     deadline: float,
     degraded: list[dict[str, str]],
+    items: list[Mapping[str, Any]],
 ) -> list[Hit]:
     if adapter.platforms and sys.platform not in adapter.platforms:
         degraded.append(_degraded(adapter, _primary_row(adapter), "unsupported-platform"))
@@ -456,15 +466,18 @@ def _run_adapter(
             configs,
             base=base_sha,
             test_command=_python_test_command(profile),
+            commands=_scan_commands(profile),
         )
         comparison = "base-head" if adapter.type_checker else adapter.comparison
         if comparison == "base-head":
             hits, digests = _base_and_head(
                 adapter, repo, base_sha, head_sha, head_root, context, process, env, timeout,
-                ran, degraded, _rules_digest(rules),
+                ran, degraded, _rules_digest(rules), items,
             )
         else:
-            hits, digests = _once(adapter, context, process, env, timeout, "head", degraded)
+            hits, digests = _once(
+                adapter, context, process, env, timeout, "head", degraded, items
+            )
         if not hits and not digests:
             return []
         digest = digests.get("head") or digests.get("base") or store_raw(b"", home)
@@ -500,6 +513,7 @@ def _once(
     timeout: int,
     label: str,
     degraded: list[dict[str, str]],
+    items: list[Mapping[str, Any]],
 ) -> tuple[tuple[Hit, ...], dict[str, str]]:
     try:
         result, problem, ran = _capture(adapter, context, process, env, timeout)
@@ -529,7 +543,10 @@ def _once(
             tuple(replace(hit, degraded=True) for hit in parsed.hits),
             unfinished=True,
             problems=parsed.problems,
+            items=parsed.items,
+            gaps=parsed.gaps,
         )
+    _absorb(adapter, parsed, label, degraded, items)
     digest = store_raw((result.stdout or "").encode(), context.home)
     return parsed.hits, {label: digest}
 
@@ -547,6 +564,7 @@ def _base_and_head(
     version: str,
     degraded: list[dict[str, str]],
     rules_digest: str,
+    items: list[Mapping[str, Any]],
 ) -> tuple[tuple[Hit, ...], dict[str, str]]:
     settings = _settings_digest(adapter, rules_digest)
     key = {"base": base_sha, "adapter": adapter.id, "version": version, "settings": settings}
@@ -557,7 +575,7 @@ def _base_and_head(
                 _link_env(adapter, repo, base_root, base_sha, head_sha)
                 base_hits, _base_digest, base_problem = _scan_root(
                     adapter, replace(context, repo=base_root, root=base_root), process, env,
-                    timeout, "base", degraded,
+                    timeout, "base", degraded, items,
                 )
         except ToolGap:
             # The base tree declined. Head is still compared against no earlier findings.
@@ -578,7 +596,7 @@ def _base_and_head(
     try:
         head_hits, head_digest, head_problem = _scan_root(
             adapter, replace(context, repo=head_root, root=head_root), process, env, timeout,
-            "head", degraded,
+            "head", degraded, items,
         )
     except ToolGap as exc:
         degraded.append(_degraded(adapter, exc.row, exc.reason))
@@ -599,6 +617,7 @@ def _scan_root(
     timeout: int,
     label: str,
     degraded: list[dict[str, str]],
+    items: list[Mapping[str, Any]],
 ) -> tuple[tuple[Hit, ...], str, str | None]:
     result, problem, ran = _capture(adapter, context, process, env, timeout)
     if not ran:
@@ -617,6 +636,7 @@ def _scan_root(
     if parsed.unfinished:
         degraded.append(_degraded(adapter, "testing.surviving-mutant", "cap"))
         hits = tuple(replace(hit, degraded=True) for hit in hits)
+    _absorb(adapter, parsed, label, degraded, items)
     return hits, digest, None
 
 
@@ -773,6 +793,20 @@ def _note_problems(
             "tool": adapter.tool or adapter.id,
             "reason": "semgrep-error",
         })
+
+
+def _absorb(
+    adapter: Adapter,
+    parsed: ParseResult,
+    label: str,
+    degraded: list[dict[str, str]],
+    items: list[Mapping[str, Any]],
+) -> None:
+    """Record gaps without dropping hits. Where-to-look items come from the head scan only."""
+    for reason, row in parsed.gaps:
+        degraded.append(_degraded(adapter, row, reason))
+    if label == "head":
+        items.extend(parsed.items)
 
 
 def _degraded(adapter: Adapter, row: str, reason: str) -> dict[str, str]:
@@ -1265,6 +1299,20 @@ def _relocated(
     return hits, directories
 
 
+def _scan_commands(profile: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
+    """Language commands, plus the functional command when it is not already listed.
+
+    The pairs come from the profile object the runner already loaded. That profile is the base
+    commit's, or the external ``--profile`` when the base commit has no profile blob.
+    """
+    pairs = list(_relocated_commands(profile))
+    functional = profile.get("test_command")
+    if isinstance(functional, str) and functional.strip():
+        if not any(command == functional for _language, command in pairs):
+            pairs.append(("none", functional))
+    return tuple(pairs)
+
+
 def _relocated_commands(profile: Mapping[str, Any]) -> list[tuple[str, str]]:
     if profile.get("languages_present"):
         commands = []
@@ -1588,6 +1636,7 @@ def _emit(
     measurements: Sequence[Mapping[str, Any]],
     degraded: Sequence[Mapping[str, str]],
     builder: Mapping[str, Any] | None,
+    items: Sequence[Mapping[str, Any]] = (),
 ) -> None:
     for record in (*findings, *measurements):
         problems = review_records.validate(record)
@@ -1610,6 +1659,7 @@ def _emit(
     _write_json(output / "measurements.json", list(measurements))
     _write_json(output / "degraded.json", list(degraded))
     _write_json(output / "outcomes.json", outcomes)
+    _write_json(output / "where-to-look.json", list(items))
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -1755,7 +1805,9 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    run_parser = sub.add_parser("run", help="Write the four record files.")
+    run_parser = sub.add_parser(
+        "run", help="Write the record files, including where-to-look items."
+    )
     run_parser.add_argument("--repo", required=True, type=Path)
     run_parser.add_argument("--base", required=True)
     run_parser.add_argument("--head", required=True)

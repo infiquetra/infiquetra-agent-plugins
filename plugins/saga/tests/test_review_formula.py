@@ -52,8 +52,8 @@ def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
 EXPECTED_ROWS: dict[str, tuple[str, str | None, bool]] = {
     "testing.uncovered-branch": ("blocks", "coverage-gap", False),
     "testing.surviving-mutant": ("blocks", "surviving-mutant", False),
-    "testing.test-passes-before-change": ("blocks", None, False),
-    "testing.test-skipped-in-ci": ("blocks", None, False),
+    "testing.test-passes-before-change": ("blocks", "test-passes-before-change", False),
+    "testing.test-skipped-in-ci": ("blocks", "test-skipped-in-ci", False),
     "testing.flaky-order-or-network": ("fix-later", None, False),
     "testing.fakes-code-under-test": ("fix-later", None, False),
     "testing.writes-live-system": ("fix-later", None, True),
@@ -197,6 +197,33 @@ def test_row_with_the_builder_reason_it_allows_is_a_note(row: str) -> None:
     result = F.outcome(tool_finding(row), builder_records=[reason("rf:1", str(kind))])
     assert result["severity"] == "note"
     assert "excused" in result["severity_basis"]["modifiers"]
+
+
+def test_reason_excuses_only_its_own_testing_row() -> None:
+    """Each new testing kind clears its own row, and neither kind clears the other."""
+    pre = "testing.test-passes-before-change"
+    skipped = "testing.test-skipped-in-ci"
+    assert severity(tool_finding(pre)) == "blocks"
+    excused = F.outcome(
+        tool_finding(pre), builder_records=[reason("rf:1", "test-passes-before-change")]
+    )
+    assert excused["severity"] == "note"
+    assert "excused" in excused["severity_basis"]["modifiers"]
+    assert severity(
+        tool_finding(pre), builder_records=[reason("rf:1", "test-skipped-in-ci")]
+    ) == "blocks"
+    assert severity(tool_finding(skipped)) == "blocks"
+    cleared = F.outcome(
+        tool_finding(skipped), builder_records=[reason("rf:1", "test-skipped-in-ci")]
+    )
+    assert cleared["severity"] == "note"
+    assert "excused" in cleared["severity_basis"]["modifiers"]
+    assert severity(
+        tool_finding(skipped), builder_records=[reason("rf:1", "test-passes-before-change")]
+    ) == "blocks"
+    assert severity(
+        tool_finding(pre), builder_records=[reason("rf:other", "test-passes-before-change")]
+    ) == "blocks"
 
 
 @pytest.mark.parametrize("row", FIXED_ROWS)
