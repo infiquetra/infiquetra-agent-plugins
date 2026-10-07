@@ -4,6 +4,10 @@
 
 ### Added
 
+- Issue 158: the calibration tests prove that the targeted reviewer's prompt, answer schema and
+  launch settings are fingerprinted, so a one-byte change to any of them makes a recorded run
+  stale, and that a changed `CLAUDE.md`, `AGENTS.md` or plugin manifest fails no check.
+
 - Issue 149: `references/review-calibration.json` records that no corpus run exists yet, so every
   lens reports only. `scripts/review_calibration.py may-block` prints whether a lens may block in
   a language, from the stored verdicts. `scripts/check_repo.py` calls that module's fingerprint

@@ -379,6 +379,60 @@ def test_stale_fingerprint_ignores_claude_md(tmp_path: Path) -> None:
     assert "CLAUDE.md" not in calibration.COMPONENTS
 
 
+TARGETED_REVIEWER_COMPONENTS = (
+    "plugins/saga/references/targeted-reviewer-prompt.md",
+    "plugins/saga/references/targeted-reviewer-answer.schema.json",
+    "plugins/saga/references/targeted-reviewer-launch.json",
+)
+INSTRUCTION_FILES = ("CLAUDE.md", "AGENTS.md", "GEMINI.md")
+PLUGIN_MANIFESTS = (
+    "plugins/saga/plugin.json",
+    "plugins/saga/fleet-bundle.json",
+    "plugins/saga/.claude-plugin/plugin.json",
+    "plugins/saga/.codex-plugin/plugin.json",
+    "plugins/saga/com.infiquetra.claude/plugin.json",
+)
+
+
+def test_calibration_fingerprints_targeted_reviewer_components(tmp_path: Path) -> None:
+    """Issue 158 U6: the prompt, schema and launch settings are part of the review."""
+    for relative in TARGETED_REVIEWER_COMPONENTS:
+        assert relative in calibration.COMPONENTS
+    root = tmp_path / "targeted"
+    _recorded(root)
+    assert calibration.check(root) == []
+    for relative in TARGETED_REVIEWER_COMPONENTS:
+        component = root / relative
+        original = component.read_bytes()
+        component.write_bytes(original + b" ")
+        assert calibration.check(root) == [f"changed component: {relative}"]
+        assert _answer(root) == f"report-only stale-fingerprint {relative}"
+        component.write_bytes(original)
+        assert calibration.check(root) == []
+
+
+def test_calibration_ignores_instruction_file_changes(tmp_path: Path) -> None:
+    """Issue 158 U6: the configuration fingerprint stays off the component list."""
+    for relative in calibration.COMPONENTS:
+        assert Path(relative).name not in INSTRUCTION_FILES
+        assert relative not in PLUGIN_MANIFESTS
+        assert not relative.startswith("plugins/agent-launcher/")
+    root = tmp_path / "instructions"
+    _recorded(root)
+    changed = [*INSTRUCTION_FILES[:2], *PLUGIN_MANIFESTS]
+    for relative in changed:
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((REPO / relative).read_bytes())
+    assert calibration.check(root) == []
+    assert _answer(root) == "yes cleared"
+    for relative in changed:
+        target = root / relative
+        target.write_bytes(target.read_bytes() + b"\nchanged\n")
+    assert calibration.check(root) == []
+    assert _answer(root) == "yes cleared"
+
+
 def _profile(root: Path, pins: dict[str, Any]) -> None:
     _write(root / ".saga-profile.json", {"review_tools": {"pins": pins}})
 
