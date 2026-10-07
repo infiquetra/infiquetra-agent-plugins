@@ -734,6 +734,28 @@ def test_scrub_keeps_fake_tokens_out_of_the_record() -> None:
     assert all(R.validate(record) == [] for record in out["findings"] + out["where_to_look"])
 
 
+def test_scrub_keeps_fake_tokens_out_of_every_free_text_record_field() -> None:
+    poisoned = answer()
+    charge = finding(poisoned, "double-charge")
+    charge["location"]["anchor"] += " # " + SAMPLES["github-token"][0]
+    charge["location"]["function"] += "_" + SAMPLES["aws-access-key-id"][0]
+    readme = finding(poisoned, "stale-readme")
+    readme["location"]["file"] = "docs/" + SAMPLES["slack-token"][0] + ".md"
+    readme["row"] = "correctness.dispute"
+    readme["disputes"] = "correctness.q-docs-updated " + SAMPLES["stripe-key"][0]
+    poisoned["items"][1]["answer"]["reason"] += " It printed " + SAMPLES["jwt"][0] + "."
+    out = A.to_records(poisoned, ITEMS, RESULT, use_jev=False)
+    _no_sample_in(out)
+    charge, readme = out["findings"][0], out["findings"][2]
+    assert "[scrubbed:github-token]" in charge["location"]["anchor"]
+    assert "[scrubbed:aws-access-key-id]" in charge["location"]["function"]
+    assert readme["location"]["file"] == "docs/[scrubbed:slack-token].md"
+    assert "[scrubbed:stripe-key]" in readme["rule"]["ref"]
+    assert "[scrubbed:jwt]" in out["where_to_look"][1]["answer"]["reason"]
+    assert charge["location"]["scope"] == "lines"
+    assert all(R.validate(record) == [] for record in out["findings"] + out["where_to_look"])
+
+
 def test_scrub_keeps_fake_tokens_out_of_the_jev_state() -> None:
     ask = jev_says("money-or-resources-wrongly-moved")
     A.to_records(_poisoned_answer(), ITEMS, RESULT, ask=ask)

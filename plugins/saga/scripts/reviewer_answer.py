@@ -14,7 +14,8 @@ This module does three things with an answer, and the review command (card C10a)
   output, any severity, too many open-search findings, or a scratch copy changed outside the
   reproduction tests.
 * ``records`` turns an accepted answer into review_records.v1 findings and answered where-to-look
-  records. It first replaces known secret formats in each finding's statement and proof with a
+  records. It first replaces known secret formats in every free-text string a record stores (each
+  finding's statement, dispute text, location and proof, and each cleared item's reason) with a
   marker naming their kind (``[scrubbed:github-token]``), so neither the record nor Jev's state
   carries what a test printed. For each reproduced finding it asks Jev (TypeSafe's classifier,
   through fleet-core's ``consequence`` verb) for the consequence. The lower of the two picks
@@ -194,9 +195,11 @@ def scrub_text(text: str) -> tuple[str, list[str]]:
 
 
 def scrub_finding(finding: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """A copy of *finding* with its statement and every proof string scrubbed, and the kinds.
+    """A copy of *finding* with every free-text string the record stores scrubbed, and the kinds.
 
-    ``trigger`` is left alone: the check holds it to a closed list, so it cannot carry a secret.
+    That is the statement, the dispute text, every location string (anchor, file, function and a
+    plan's document and section) and every proof string. ``trigger`` and the location's ``scope``
+    are left alone: the check holds each to a closed list, so neither can carry a secret.
     """
     scrubbed = copy.deepcopy(dict(finding))
     kinds: list[str] = []
@@ -209,6 +212,13 @@ def scrub_finding(finding: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]
         return text
 
     scrubbed["statement"] = clean(scrubbed.get("statement"))
+    if "disputes" in scrubbed:
+        scrubbed["disputes"] = clean(scrubbed["disputes"])
+    location = scrubbed.get("location")
+    if isinstance(location, dict):
+        for key in location:
+            if key != "scope":
+                location[key] = clean(location[key])
     proof = scrubbed.get("proof")
     if isinstance(proof, dict):
         for key in ("test", "command", "output"):
@@ -663,7 +673,7 @@ def to_records(
         record["answer"] = (
             {"kind": "finding", "finding_id": identities[given["finding"]]}
             if given["kind"] == "finding"
-            else {"kind": "cleared", "reason": given["reason"]}
+            else {"kind": "cleared", "reason": scrub_text(given["reason"])[0]}
         )
         answered.append(record)
 
