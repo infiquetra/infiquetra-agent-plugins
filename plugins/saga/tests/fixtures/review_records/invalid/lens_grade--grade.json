@@ -1,0 +1,13 @@
+{
+  "kind": "lens_grade",
+  "schema": "review_records.v1",
+  "lens": "correctness",
+  "blocks": 1,
+  "fix_later": 0,
+  "notes": 0,
+  "grade": "E",
+  "degraded_inputs": [],
+  "may_block": {
+    "python": false
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "kind": "measurement",
+  "schema": "review_records.v1",
+  "lens": "testing",
+  "row": "testing.uncovered-branch",
+  "tool": {
+    "name": "coverage.py",
+    "version": "7.6.1"
+  },
+  "language": "python",
+  "metric": "changed-line branch coverage",
+  "value": 0.92,
+  "threshold": 0.9,
+  "direction": "at-least",
+  "condition": "met"
+}

@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- Issue 148: one schema for the review records (finding, measurement, where-to-look item, lens
+  grade, review run) and the per-unit builder record, in `references/review-records.schema.json`
+  and `references/review-records.md`. `scripts/review_records.py validate <file>` refuses a
+  malformed record, one `<field>: <why>` line per bad field, including a finding handed in with a
+  severity. `scripts/review_formula.py` computes each input's outcome (blocks, fix later or note)
+  from a row table with an identifier per row, each lens's A-F grade and the merge answer; with no
+  calibration answer every lens reports only, except a reproduced "data lost or corrupted" or "a
+  security boundary crossed" finding. `record-run` and `record-builder` store runs and builder
+  records in the run record under its lock. Nothing calls them until the review command (C10a);
+  the `review_result.v2` shapes stay until C10b.
+
 ### Fixed
 
 - Issue 144: `/work` §5.3 no longer tells the worker to re-run `/code-review` while "capturing a

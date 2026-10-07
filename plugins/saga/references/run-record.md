@@ -98,7 +98,7 @@ Twelve, in this write order. Anything else is an unknown field, handled as above
 | `approval_scope` | object | the seven approval boundaries, each with the scope granted or `none` |
 | `roster` | array | one entry per staffed role: the role, its pane identifier, its session state |
 | `units` | array | one entry per work unit: unit id, worktree, branch, merge-turn state, last mechanical-check result |
-| `review_cycles` | array | one entry per cycle: cycle number, result, findings reference |
+| `review_cycles` | array | one entry per cycle: cycle number, result, findings reference; and, from issue 148, one entry per stored review run (see "Review runs and builder records") |
 | `next_step` | string | the step the run is at |
 
 <!-- END TOP-LEVEL KEYS -->
@@ -393,6 +393,32 @@ U-ID it builds, and `/work` runs the write again before its first build-loop ite
 when those rows first exist. A row `expand` creates is fresh and carries nothing forward, so the
 checks are written after it, never before.
 
+### Review runs and builder records (issue 148)
+
+The review records of the saga review redesign are defined in
+`plugins/saga/references/review-records.md` and stored by `review_records.py`. A unit's builder
+record (its acceptance criteria and their checks, its per-question declarations, and every reason
+it gives) is a row key of its own:
+
+<!-- BEGIN UNIT ROW KEYS -->
+
+| Key | Holds |
+|---|---|
+| `builder_record` | the unit's builder record, a `review_records.v1` record of kind `builder_record`. `review_records.py record-builder` replaces it whole, so a repair implementer's update is the new version |
+
+<!-- END UNIT ROW KEYS -->
+
+`record-builder` adds a `{"id": "U<N>"}` row for a unit no row names, except in a record that
+carries the `orchestrate` key, where it refuses with exit 5 for the reason `functional_checks.py
+write` gives above: orchestrate owns which rows exist there.
+
+A computed review run is appended to `review_cycles` with `kind: "review_run"` and
+`loop: "review_run"`. Today's readers of that array skip it: `review_result.py`, `run_status.py`
+and `cost_report.py` read only `review_result.v2` entries, `release_step.py` only entries whose
+`loop` is `code_review`, and `saga_spore.py` leaves it out of its cycle count. The run carries its
+own builder-record snapshots and per-lens "may block" answers, so it can be validated, its
+severities recomputed, without the rest of the record.
+
 ### `tier_judgments` — `/plan`'s per-unit tier judgments
 
 The tier judgment in `/plan` (issue #96) does **not** write unit rows. `/plan` defines its units
@@ -503,6 +529,8 @@ or git merges would stall every unit session's `usage add`.
 | `build_loop.py` | one unit row's `build_loop` | checks run unlocked; the iteration lands on a row re-read under `file_lock` |
 | `build_loop.py --combined` | the top-level `combined_branch` block | the pass runs unlocked; it lands on a record re-read under `file_lock` |
 | `review_result.py --issue` | `review_cycles` | `update` |
+| `review_records.py record-run` | one `review_run` entry in `review_cycles` | the formula runs inside the change, on the fresh read, through `update` |
+| `review_records.py record-builder` | one unit row's `builder_record` | `update` |
 | `admission.py` | `repo`, `admission`, `run_configuration`, `approval_scope` | admission runs unlocked; those fields land on a fresh read through `update` |
 | `qa_strategies.py` | the top-level `qa` block | `update` |
 | `merge_turn.py status`, `take` | unit rows' merge keys | wholly under `update` |

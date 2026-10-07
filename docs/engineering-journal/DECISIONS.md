@@ -2,6 +2,16 @@
 
 ## 2026-10-06
 
+### Saga's review records: computed severity, a line-free identity, and storage in existing keys
+
+**Decision.** Issue #148 (card C1 of the saga review redesign, parent #147). Three load-bearing choices. First, a severity is never handed in: a finding arrives without one, `review_formula.py` computes it with the row and modifiers that produced it, and validating a stored review run recomputes every severity from the inputs the run embeds and refuses a difference. Second, a finding's identity is a SHA-256 of lens, row, rule reference, file, function and the stored anchor text, with no line number. Third, review runs are appended to the run record's `review_cycles` with `loop: "review_run"`, and builder records are a unit-row key, `builder_record`; no new top-level key.
+
+**Rationale.** A reviewer-written severity is what the redesign replaces, and a stored severity a hand edit could change would reintroduce it. Today's identity (path, line and category, `review_result.py:183`) changes whenever lines move, so a repair round could not tell an unchanged blocking item from a new one. `run_record.TOP_LEVEL_KEYS` is frozen on purpose and mirrored by the Claude mod contract test and orchestrate's fixture copy; using existing keys costs one constant in orchestrate (`DOCUMENTED_FOREIGN_ROW_KEYS`) and one count in `saga_spore.py`.
+
+**Rejected alternatives.** Trusting a stored severity. Storing none and making every reader rerun the formula. An ordinal within the function as the identity (it shifts when a finding is inserted above). A new `reviews` top-level key. A vendored JSON Schema library; the validator is standard-library Python held to the schema file by a test.
+
+**Revisit when.** Card C10b deletes the `review_result.v2` entries; then review runs could move out of `review_cycles`.
+
 ### This catalog's saga profile declares a local functional-test environment and no deploy destination
 
 **Decision.** `.saga-profile.json` at the repository root declares `functional_test_environment` with kind `local`, scope `private`, and test command `python3 -m pytest plugins/*/tests -q --import-mode=importlib`. `nonproduction_destination` is `none`. `main_consumed_directly` is true. `concurrency_allocation` is 10. The mechanical baseline is `python3 scripts/check_repo.py`, `python3 -m unittest discover -s tests -v`, that same pytest command, and `git diff --check`. The `qa` block requires `cli-smoke` of `python3 scripts/check_repo.py`, with a ceiling of 180 seconds and no direct cost.

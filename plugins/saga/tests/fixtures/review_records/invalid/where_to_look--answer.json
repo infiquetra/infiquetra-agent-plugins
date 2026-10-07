@@ -1,0 +1,27 @@
+{
+  "kind": "where_to_look",
+  "schema": "review_records.v1",
+  "lens": "correctness",
+  "location": {
+    "scope": "lines",
+    "file": "src/billing/charge.py",
+    "lines": {
+      "start": 40,
+      "end": 52
+    },
+    "function": "charge_with_retry",
+    "anchor": "for attempt in range(3):"
+  },
+  "language": "python",
+  "questions": [
+    {
+      "id": "correctness.q-retry-safe",
+      "probability": 0.83
+    }
+  ],
+  "classifier": {
+    "name": "jev",
+    "model": "example-classifier-1"
+  },
+  "degraded": false
+}

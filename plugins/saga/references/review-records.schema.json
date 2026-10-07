@@ -1,0 +1,1028 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/infiquetra/infiquetra-agent-plugins/plugins/saga/references/review-records.schema.json",
+  "title": "Saga review records (review_records.v1)",
+  "description": "The five review records and the builder record. scripts/review_records.py validates them; references/review-records.md explains them. Cross-field rules (location scope, merge outcome, unconfirmed, identity, recomputed severity) are enforced by the validator.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/finding"
+    },
+    {
+      "$ref": "#/$defs/measurement"
+    },
+    {
+      "$ref": "#/$defs/where_to_look"
+    },
+    {
+      "$ref": "#/$defs/lens_grade"
+    },
+    {
+      "$ref": "#/$defs/review_run"
+    },
+    {
+      "$ref": "#/$defs/builder_record"
+    }
+  ],
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "required": [
+        "kind",
+        "schema",
+        "id",
+        "subject",
+        "lens",
+        "rule",
+        "source",
+        "location",
+        "language",
+        "statement",
+        "consequence",
+        "trigger",
+        "evidence",
+        "proof",
+        "introduced",
+        "degraded",
+        "consequence_jev",
+        "unconfirmed",
+        "merge_outcome"
+      ],
+      "description": "Input form. A finding handed in carries none of severity, severity_basis, flags, enforced; inside a stored review_run it carries all four, equal to a recomputation.",
+      "properties": {
+        "kind": {
+          "const": "finding"
+        },
+        "schema": {
+          "const": "review_records.v1"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^rf:[0-9a-f]{32}$"
+        },
+        "subject": {
+          "enum": [
+            "code",
+            "plan"
+          ]
+        },
+        "lens": {
+          "enum": [
+            "correctness",
+            "security",
+            "testing",
+            "architecture-maintainability"
+          ]
+        },
+        "rule": {
+          "type": "object",
+          "required": [
+            "row",
+            "ref"
+          ],
+          "properties": {
+            "row": {
+              "enum": [
+                "judged",
+                "testing.uncovered-branch",
+                "testing.surviving-mutant",
+                "testing.test-passes-before-change",
+                "testing.test-skipped-in-ci",
+                "testing.flaky-order-or-network",
+                "testing.fakes-code-under-test",
+                "testing.writes-live-system",
+                "testing.dispute",
+                "security.scanner-high",
+                "security.scanner-medium-low",
+                "security.secret-in-diff",
+                "security.dependency-high",
+                "security.workflow-infra-high",
+                "security.required-test-missing",
+                "security.dispute",
+                "architecture-maintainability.structural-check-fails",
+                "architecture-maintainability.prose-rule-broken",
+                "architecture-maintainability.relocated-run-fails",
+                "architecture-maintainability.machine-specific-value",
+                "architecture-maintainability.undocumented-departure",
+                "architecture-maintainability.duplicate",
+                "architecture-maintainability.complexity-dead-code-naming",
+                "architecture-maintainability.dispute",
+                "correctness.criterion-without-check",
+                "correctness.type-error",
+                "correctness.pattern.release-shares-cleanup",
+                "correctness.pattern.swallowed-error",
+                "correctness.pattern.silent-skip",
+                "correctness.pattern.naive-time-comparison",
+                "correctness.pattern.write-skips-shared-update",
+                "correctness.pattern.money-as-float",
+                "correctness.declared-question-untested",
+                "correctness.unupdated-mention",
+                "correctness.unupdated-mention-in-document",
+                "correctness.workflow-dead-end",
+                "correctness.ci-matrix-fails",
+                "correctness.dispute"
+              ]
+            },
+            "ref": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "source": {
+          "type": "object",
+          "required": [
+            "kind",
+            "name"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "tool",
+                "classifier",
+                "llm"
+              ]
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        },
+        "language": {
+          "enum": [
+            "python",
+            "typescript",
+            "dart",
+            "rust",
+            "swift",
+            "markdown",
+            "shell",
+            "github-workflows",
+            "cloudformation",
+            "none"
+          ]
+        },
+        "statement": {
+          "type": "string",
+          "minLength": 1
+        },
+        "consequence": {
+          "enum": [
+            "data-lost-or-corrupted",
+            "money-or-resources-wrongly-moved",
+            "security-boundary-crossed",
+            "two-holders-of-one-exclusive-thing",
+            "wrong-result-reported-as-success",
+            "required-behaviour-missing",
+            "break-in-supported-use",
+            "fails-loudly-and-recoverably",
+            "misleads-a-person",
+            "costs-future-work",
+            "style",
+            null
+          ]
+        },
+        "consequence_jev": {
+          "enum": [
+            "data-lost-or-corrupted",
+            "money-or-resources-wrongly-moved",
+            "security-boundary-crossed",
+            "two-holders-of-one-exclusive-thing",
+            "wrong-result-reported-as-success",
+            "required-behaviour-missing",
+            "break-in-supported-use",
+            "fails-loudly-and-recoverably",
+            "misleads-a-person",
+            "costs-future-work",
+            "style",
+            null
+          ]
+        },
+        "trigger": {
+          "enum": [
+            "normal-use",
+            "retry",
+            "interrupt",
+            "concurrency",
+            "old-data",
+            "other-caller",
+            "misuse-only",
+            null
+          ]
+        },
+        "evidence": {
+          "enum": [
+            "reproduced",
+            "traced",
+            "suspected",
+            "tool-result"
+          ]
+        },
+        "proof": {
+          "type": "object",
+          "properties": {
+            "test": {
+              "type": "string",
+              "minLength": 1
+            },
+            "output": {
+              "type": "string",
+              "minLength": 1
+            },
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "raw_output": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "introduced": {
+          "type": "boolean"
+        },
+        "degraded": {
+          "type": "boolean"
+        },
+        "unconfirmed": {
+          "type": "boolean"
+        },
+        "merge_outcome": {
+          "$ref": "#/$defs/merge_outcome"
+        },
+        "severity": {
+          "enum": [
+            "blocks",
+            "fix-later",
+            "note"
+          ]
+        },
+        "severity_basis": {
+          "type": "object",
+          "required": [
+            "row",
+            "modifiers"
+          ],
+          "properties": {
+            "row": {
+              "enum": [
+                "testing.uncovered-branch",
+                "testing.surviving-mutant",
+                "testing.test-passes-before-change",
+                "testing.test-skipped-in-ci",
+                "testing.flaky-order-or-network",
+                "testing.fakes-code-under-test",
+                "testing.writes-live-system",
+                "testing.dispute",
+                "security.scanner-high",
+                "security.scanner-medium-low",
+                "security.secret-in-diff",
+                "security.dependency-high",
+                "security.workflow-infra-high",
+                "security.required-test-missing",
+                "security.dispute",
+                "architecture-maintainability.structural-check-fails",
+                "architecture-maintainability.prose-rule-broken",
+                "architecture-maintainability.relocated-run-fails",
+                "architecture-maintainability.machine-specific-value",
+                "architecture-maintainability.undocumented-departure",
+                "architecture-maintainability.duplicate",
+                "architecture-maintainability.complexity-dead-code-naming",
+                "architecture-maintainability.dispute",
+                "correctness.criterion-without-check",
+                "correctness.type-error",
+                "correctness.pattern.release-shares-cleanup",
+                "correctness.pattern.swallowed-error",
+                "correctness.pattern.silent-skip",
+                "correctness.pattern.naive-time-comparison",
+                "correctness.pattern.write-skips-shared-update",
+                "correctness.pattern.money-as-float",
+                "correctness.declared-question-untested",
+                "correctness.unupdated-mention",
+                "correctness.unupdated-mention-in-document",
+                "correctness.workflow-dead-end",
+                "correctness.ci-matrix-fails",
+                "correctness.dispute",
+                "judged.harm-reproduced",
+                "judged.harm-traced",
+                "judged.harm-misuse",
+                "judged.visible",
+                "judged.upkeep"
+              ]
+            },
+            "modifiers": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "enforced": {
+          "type": "boolean"
+        }
+      }
+    },
+    "measurement": {
+      "type": "object",
+      "required": [
+        "kind",
+        "schema",
+        "lens",
+        "row",
+        "tool",
+        "language",
+        "metric",
+        "value",
+        "threshold",
+        "direction"
+      ],
+      "properties": {
+        "kind": {
+          "const": "measurement"
+        },
+        "schema": {
+          "const": "review_records.v1"
+        },
+        "lens": {
+          "enum": [
+            "correctness",
+            "security",
+            "testing",
+            "architecture-maintainability"
+          ]
+        },
+        "row": {
+          "enum": [
+            "testing.uncovered-branch",
+            "testing.surviving-mutant",
+            "testing.test-passes-before-change",
+            "testing.test-skipped-in-ci",
+            "testing.flaky-order-or-network",
+            "testing.fakes-code-under-test",
+            "testing.writes-live-system",
+            "testing.dispute",
+            "security.scanner-high",
+            "security.scanner-medium-low",
+            "security.secret-in-diff",
+            "security.dependency-high",
+            "security.workflow-infra-high",
+            "security.required-test-missing",
+            "security.dispute",
+            "architecture-maintainability.structural-check-fails",
+            "architecture-maintainability.prose-rule-broken",
+            "architecture-maintainability.relocated-run-fails",
+            "architecture-maintainability.machine-specific-value",
+            "architecture-maintainability.undocumented-departure",
+            "architecture-maintainability.duplicate",
+            "architecture-maintainability.complexity-dead-code-naming",
+            "architecture-maintainability.dispute",
+            "correctness.criterion-without-check",
+            "correctness.type-error",
+            "correctness.pattern.release-shares-cleanup",
+            "correctness.pattern.swallowed-error",
+            "correctness.pattern.silent-skip",
+            "correctness.pattern.naive-time-comparison",
+            "correctness.pattern.write-skips-shared-update",
+            "correctness.pattern.money-as-float",
+            "correctness.declared-question-untested",
+            "correctness.unupdated-mention",
+            "correctness.unupdated-mention-in-document",
+            "correctness.workflow-dead-end",
+            "correctness.ci-matrix-fails",
+            "correctness.dispute",
+            "judged.harm-reproduced",
+            "judged.harm-traced",
+            "judged.harm-misuse",
+            "judged.visible",
+            "judged.upkeep"
+          ]
+        },
+        "tool": {
+          "type": "object",
+          "required": [
+            "name",
+            "version"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "language": {
+          "enum": [
+            "python",
+            "typescript",
+            "dart",
+            "rust",
+            "swift",
+            "markdown",
+            "shell",
+            "github-workflows",
+            "cloudformation",
+            "none"
+          ]
+        },
+        "metric": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "type": "number"
+        },
+        "threshold": {
+          "type": "number"
+        },
+        "direction": {
+          "enum": [
+            "at-least",
+            "at-most"
+          ]
+        },
+        "condition": {
+          "enum": [
+            "met",
+            "missed"
+          ]
+        }
+      }
+    },
+    "where_to_look": {
+      "type": "object",
+      "required": [
+        "kind",
+        "schema",
+        "lens",
+        "location",
+        "language",
+        "questions",
+        "classifier",
+        "degraded",
+        "answer"
+      ],
+      "properties": {
+        "kind": {
+          "const": "where_to_look"
+        },
+        "schema": {
+          "const": "review_records.v1"
+        },
+        "lens": {
+          "enum": [
+            "correctness",
+            "security",
+            "testing",
+            "architecture-maintainability"
+          ]
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        },
+        "language": {
+          "enum": [
+            "python",
+            "typescript",
+            "dart",
+            "rust",
+            "swift",
+            "markdown",
+            "shell",
+            "github-workflows",
+            "cloudformation",
+            "none"
+          ]
+        },
+        "questions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "probability"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "probability": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          }
+        },
+        "classifier": {
+          "type": "object",
+          "required": [
+            "name",
+            "model"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "degraded": {
+          "type": "boolean"
+        },
+        "answer": {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "finding",
+                "cleared"
+              ]
+            },
+            "finding_id": {
+              "type": "string",
+              "pattern": "^rf:[0-9a-f]{32}$"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "lens_grade": {
+      "type": "object",
+      "required": [
+        "kind",
+        "schema",
+        "lens",
+        "blocks",
+        "fix_later",
+        "notes",
+        "grade",
+        "degraded_inputs",
+        "may_block"
+      ],
+      "properties": {
+        "kind": {
+          "const": "lens_grade"
+        },
+        "schema": {
+          "const": "review_records.v1"
+        },
+        "lens": {
+          "enum": [
+            "correctness",
+            "security",
+            "testing",
+            "architecture-maintainability"
+          ]
+        },
+        "blocks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fix_later": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "notes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "grade": {
+          "enum": [
+            "A",
+            "B",
+            "C",
+            "D",
+            "F"
+          ]
+        },
+        "degraded_inputs": {
+          "type": "array"
+        },
+        "may_block": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "review_run": {
+      "type": "object",
+      "required": [
+        "kind",
+        "schema",
+        "card",
+        "repo",
+        "base",
+        "head",
+        "saga_version",
+        "round",
+        "tool_versions",
+        "usage",
+        "findings",
+        "measurements",
+        "where_to_look",
+        "lens_grades",
+        "builder_records",
+        "may_block",
+        "degraded_inputs",
+        "merge",
+        "raw_outputs"
+      ],
+      "properties": {
+        "kind": {
+          "const": "review_run"
+        },
+        "schema": {
+          "const": "review_records.v1"
+        },
+        "loop": {
+          "const": "review_run"
+        },
+        "card": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "repo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "head": {
+          "type": "string",
+          "minLength": 1
+        },
+        "saga_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "round": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tool_versions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "usage": {
+          "type": "object",
+          "required": [
+            "tokens_in",
+            "tokens_out",
+            "cost_usd",
+            "seconds"
+          ],
+          "properties": {
+            "tokens_in": {
+              "type": "number",
+              "minimum": 0
+            },
+            "tokens_out": {
+              "type": "number",
+              "minimum": 0
+            },
+            "cost_usd": {
+              "type": "number",
+              "minimum": 0
+            },
+            "seconds": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        },
+        "measurements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/measurement"
+          }
+        },
+        "where_to_look": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/where_to_look"
+          }
+        },
+        "lens_grades": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/lens_grade"
+          }
+        },
+        "builder_records": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/builder_record"
+          }
+        },
+        "may_block": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "boolean"
+            }
+          }
+        },
+        "degraded_inputs": {
+          "type": "array"
+        },
+        "merge": {
+          "type": "object",
+          "required": [
+            "allowed",
+            "blocking",
+            "report_only_blocks"
+          ],
+          "properties": {
+            "allowed": {
+              "type": "boolean"
+            },
+            "blocking": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^rf:[0-9a-f]{32}$"
+              }
+            },
+            "report_only_blocks": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^rf:[0-9a-f]{32}$"
+              }
+            }
+          }
+        },
+        "raw_outputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "tool",
+              "sha256",
+              "path"
+            ],
+            "properties": {
+              "tool": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "builder_record": {
+      "type": "object",
+      "required": [
+        "kind",
+        "schema",
+        "unit",
+        "acceptance_criteria",
+        "declarations",
+        "reasons"
+      ],
+      "properties": {
+        "kind": {
+          "const": "builder_record"
+        },
+        "schema": {
+          "const": "review_records.v1"
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "acceptance_criteria": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "text",
+              "checks"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "checks": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        },
+        "declarations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "question",
+              "applies"
+            ],
+            "properties": {
+              "question": {
+                "type": "string",
+                "minLength": 1
+              },
+              "applies": {
+                "type": "boolean"
+              },
+              "proving_test": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "finding_id",
+              "text"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "coverage-gap",
+                  "surviving-mutant",
+                  "scanner-false-positive",
+                  "unaffected",
+                  "pattern-check",
+                  "where-to-look-explanation"
+                ]
+              },
+              "finding_id": {
+                "type": "string",
+                "pattern": "^rf:[0-9a-f]{32}$"
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "location": {
+      "type": "object",
+      "required": [
+        "scope",
+        "anchor"
+      ],
+      "properties": {
+        "scope": {
+          "enum": [
+            "lines",
+            "whole-project",
+            "section"
+          ]
+        },
+        "anchor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "function": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lines": {
+          "type": "object",
+          "required": [
+            "start",
+            "end"
+          ],
+          "properties": {
+            "start": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "document": {
+          "type": "string",
+          "minLength": 1
+        },
+        "section": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "description": "lines: file, lines and function required. whole-project: file, no lines. section: document and section, plan findings only."
+    },
+    "merge_outcome": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "outcome"
+      ],
+      "properties": {
+        "outcome": {
+          "enum": [
+            "fixed",
+            "dismissed",
+            "fixed-now",
+            "filed",
+            "left"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "issue": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "description": "dismissed requires reason; filed requires issue."
+    }
+  }
+}
