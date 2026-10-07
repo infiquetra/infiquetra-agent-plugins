@@ -1,0 +1,923 @@
+{
+  "schema": "run_record.v1",
+  "issue": 164,
+  "repo": "infiquetra/infiquetra-agent-plugins",
+  "created_at": "2026-10-06T00:00:00Z",
+  "updated_at": "2026-10-06T00:00:00Z",
+  "admission": {
+    "setup_notice": {
+      "text": "test notice: muter is missing; run /saga:setup",
+      "missing_tools": [
+        "muter"
+      ],
+      "sandbox_unavailable": false
+    }
+  },
+  "run_configuration": {},
+  "approval_scope": {},
+  "roster": [],
+  "units": [],
+  "review_cycles": [
+    {
+      "kind": "review_run",
+      "schema": "review_records.v1",
+      "card": 164,
+      "repo": "infiquetra/infiquetra-agent-plugins",
+      "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "saga_version": "0.0.0-fixture",
+      "round": 1,
+      "tool_versions": {
+        "semgrep": "1.0.0",
+        "mypy": "1.0",
+        "pytest": "8.0"
+      },
+      "usage": {
+        "tokens_in": 1000,
+        "tokens_out": 500,
+        "cost_usd": 0.01,
+        "seconds": 30
+      },
+      "where_to_look": [],
+      "raw_outputs": [],
+      "findings": [
+        {
+          "kind": "finding",
+          "schema": "review_records.v1",
+          "subject": "code",
+          "lens": "security",
+          "rule": {
+            "row": "security.scanner-high",
+            "ref": "semgrep:python.flask.security.audit"
+          },
+          "source": {
+            "kind": "tool",
+            "name": "semgrep",
+            "version": "1.0.0"
+          },
+          "location": {
+            "scope": "lines",
+            "file": "src/pay/charge.py",
+            "lines": {
+              "start": 10,
+              "end": 12
+            },
+            "function": "charge",
+            "anchor": "charge(card, amount)"
+          },
+          "language": "python",
+          "statement": "Unsanitized card value reaches the charge call.",
+          "consequence": null,
+          "trigger": null,
+          "evidence": "tool-result",
+          "proof": {
+            "raw_output": "abababababababababababababababababababababababababababababababab"
+          },
+          "introduced": true,
+          "degraded": false,
+          "consequence_jev": null,
+          "unconfirmed": false,
+          "merge_outcome": null,
+          "id": "rf:f5ce12fba687ceb3a85461afb87158e9",
+          "severity": "blocks",
+          "severity_basis": {
+            "row": "security.scanner-high",
+            "modifiers": []
+          },
+          "flags": [],
+          "enforced": true
+        },
+        {
+          "kind": "finding",
+          "schema": "review_records.v1",
+          "subject": "code",
+          "lens": "correctness",
+          "rule": {
+            "row": "correctness.type-error",
+            "ref": "mypy:assignment"
+          },
+          "source": {
+            "kind": "tool",
+            "name": "mypy",
+            "version": "1.0"
+          },
+          "location": {
+            "scope": "lines",
+            "file": "src/pay/refund.py",
+            "lines": {
+              "start": 20,
+              "end": 22
+            },
+            "function": "refund",
+            "anchor": "total = refund(order)"
+          },
+          "language": "python",
+          "statement": "Refund total assigned a string where a number is required.",
+          "consequence": null,
+          "trigger": null,
+          "evidence": "tool-result",
+          "proof": {
+            "raw_output": "abababababababababababababababababababababababababababababababab"
+          },
+          "introduced": true,
+          "degraded": false,
+          "consequence_jev": null,
+          "unconfirmed": false,
+          "merge_outcome": null,
+          "id": "rf:f828176a42738970f4fb80005bbcb675",
+          "severity": "blocks",
+          "severity_basis": {
+            "row": "correctness.type-error",
+            "modifiers": []
+          },
+          "flags": [],
+          "enforced": true
+        }
+      ],
+      "measurements": [],
+      "lens_grades": [
+        {
+          "kind": "lens_grade",
+          "schema": "review_records.v1",
+          "lens": "correctness",
+          "blocks": 1,
+          "fix_later": 0,
+          "notes": 0,
+          "grade": "D",
+          "degraded_inputs": [],
+          "may_block": {
+            "python": true
+          }
+        },
+        {
+          "kind": "lens_grade",
+          "schema": "review_records.v1",
+          "lens": "security",
+          "blocks": 1,
+          "fix_later": 0,
+          "notes": 0,
+          "grade": "D",
+          "degraded_inputs": [],
+          "may_block": {
+            "python": true
+          }
+        },
+        {
+          "kind": "lens_grade",
+          "schema": "review_records.v1",
+          "lens": "testing",
+          "blocks": 0,
+          "fix_later": 0,
+          "notes": 0,
+          "grade": "A",
+          "degraded_inputs": [],
+          "may_block": {
+            "python": true
+          }
+        },
+        {
+          "kind": "lens_grade",
+          "schema": "review_records.v1",
+          "lens": "architecture-maintainability",
+          "blocks": 0,
+          "fix_later": 0,
+          "notes": 0,
+          "grade": "A",
+          "degraded_inputs": [],
+          "may_block": {
+            "python": true
+          }
+        }
+      ],
+      "builder_records": [],
+      "may_block": {
+        "correctness": {
+          "python": true
+        },
+        "security": {
+          "python": true
+        },
+        "testing": {
+          "python": true
+        },
+        "architecture-maintainability": {
+          "python": true
+        }
+      },
+      "degraded_inputs": [],
+      "merge": {
+        "allowed": false,
+        "blocking": [
+          "rf:f5ce12fba687ceb3a85461afb87158e9",
+          "rf:f828176a42738970f4fb80005bbcb675"
+        ],
+        "report_only_blocks": []
+      },
+      "loop": "review_run"
+    },
+    {
+      "kind": "review_run",
+      "schema": "review_records.v1",
+      "card": 164,
+      "repo": "infiquetra/infiquetra-agent-plugins",
+      "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "saga_version": "0.0.0-fixture",
+      "round": 2,
+      "tool_versions": {
+        "semgrep": "1.0.0",
+        "mypy": "1.0",
+        "pytest": "8.0"
+      },
+      "usage": {
+        "tokens_in": 2000,
+        "tokens_out": 1000,
+        "cost_usd": 0.02,
+        "seconds": 60
+      },
+      "where_to_look": [],
+      "raw_outputs": [],
+      "findings": [
+        {
+          "kind": "finding",
+          "schema": "review_records.v1",
+          "subject": "code",
+          "lens": "security",
+          "rule": {
+            "row": "security.scanner-high",
+            "ref": "semgrep:python.requests.best-practice"
+          },
+          "source": {
+            "kind": "tool",
+            "name": "semgrep",
+            "version": "1.0.0"
+          },
+          "location": {
+            "scope": "lines",
+            "file": "src/pay/payout.py",
+            "lines": {
+              "start": 30,
+              "end": 32
+            },
+            "function": "payout",
+            "anchor": "payout(account, amount)"
+          },
+          "language": "python",
+          "statement": "Payout request skips certificate verification.",
+          "consequence": null,
+          "trigger": null,
+          "evidence": "tool-result",
+          "proof": {
+            "raw_output": "abababababababababababababababababababababababababababababababab"
+          },
+          "introduced": true,
+          "degraded": false,
+          "consequence_jev": null,
+          "unconfirmed": false,
+          "merge_outcome": null,
+          "id": "rf:a5a65f408a03533a6dbb9fc063f494ea",
+          "severity": "blocks",
+          "severity_basis": {
+            "row": "security.scanner-high",
+            "modifiers": []
+          },
+          "flags": [],
+          "enforced": true
+        },
+        {
+          "kind": "finding",
+          "schema": "review_records.v1",
+          "subject": "code",
+          "lens": "correctness",
+          "rule": {
+            "row": "correctness.type-error",
+            "ref": "mypy:assignment"
+          },
+          "source": {
+            "kind": "tool",
+            "name": "mypy",
+            "version": "1.0"
+          },
+          "location": {
+            "scope": "lines",
+            "file": "src/pay/refund.py",
+            "lines": {
+              "start": 20,
+              "end": 22
+            },
+            "function": "refund",
+            "anchor": "total = refund(order)"
+          },
+          "language": "python",
+          "statement": "Refund total assigned a string where a number is required.",
+          "consequence": null,
+          "trigger": null,
+          "evidence": "tool-result",
+          "proof": {
+            "raw_output": "abababababababababababababababababababababababababababababababab"
+          },
+          "introduced": true,
+          "degraded": false,
+          "consequence_jev": null,
+          "unconfirmed": false,
+          "merge_outcome": null,
+          "id": "rf:f828176a42738970f4fb80005bbcb675",
+          "severity": "blocks",
+          "severity_basis": {
+            "row": "correctness.type-error",
+            "modifiers": []
+          },
+          "flags": [],
+          "enforced": true
+        }
+      ],
+      "measurements": [],
+      "lens_grades": [
+        {
+          "kind": "lens_grade",
+          "schema": "review_records.v1",
+          "lens": "correctness",
+          "blocks": 1,
+          "fix_later": 0,
+          "notes": 0,
+          "grade": "D",
+          "degraded_inputs": [],
+          "may_block": {
+            "python": true
+          }
+        },
+        {
+          "kind": "lens_grade",
+          "schema": "review_records.v1",
+          "lens": "security",
+          "blocks": 1,
+          "fix_later": 0,
+          "notes": 0,
+          "grade": "D",
+          "degraded_inputs": [],
+          "may_block": {
+            "python": true
+          }
+        },
+        {
+          "kind": "lens_grade",
+          "schema": "review_records.v1",
+          "lens": "testing",
+          "blocks": 0,
+          "fix_later": 0,
+          "notes": 0,
+          "grade": "A",
+          "degraded_inputs": [],
+          "may_block": {
+            "python": true
+          }
+        },
+        {
+          "kind": "lens_grade",
+          "schema": "review_records.v1",
+          "lens": "architecture-maintainability",
+          "blocks": 0,
+          "fix_later": 0,
+          "notes": 0,
+          "grade": "A",
+          "degraded_inputs": [],
+          "may_block": {
+            "python": true
+          }
+        }
+      ],
+      "builder_records": [],
+      "may_block": {
+        "correctness": {
+          "python": true
+        },
+        "security": {
+          "python": true
+        },
+        "testing": {
+          "python": true
+        },
+        "architecture-maintainability": {
+          "python": true
+        }
+      },
+      "degraded_inputs": [],
+      "merge": {
+        "allowed": false,
+        "blocking": [
+          "rf:a5a65f408a03533a6dbb9fc063f494ea",
+          "rf:f828176a42738970f4fb80005bbcb675"
+        ],
+        "report_only_blocks": []
+      },
+      "loop": "review_run"
+    },
+    {
+      "kind": "review_run",
+      "schema": "review_records.v1",
+      "card": 164,
+      "repo": "infiquetra/infiquetra-agent-plugins",
+      "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "saga_version": "0.0.0-fixture",
+      "round": 3,
+      "tool_versions": {
+        "semgrep": "1.0.0",
+        "mypy": "1.0",
+        "pytest": "8.0"
+      },
+      "usage": {
+        "tokens_in": 3000,
+        "tokens_out": 1500,
+        "cost_usd": 0.03,
+        "seconds": 90
+      },
+      "where_to_look": [
+        {
+          "kind": "where_to_look",
+          "schema": "review_records.v1",
+          "lens": "security",
+          "location": {
+            "scope": "lines",
+            "file": "src/reports/filter.py",
+            "lines": {
+              "start": 5,
+              "end": 9
+            },
+            "function": null,
+            "anchor": "src/reports/filter.py:5"
+          },
+          "language": "python",
+          "questions": [
+            {
+              "id": "security-q3",
+              "probability": 0.9
+            }
+          ],
+          "classifier": {
+            "name": "jev",
+            "model": "test-jevi"
+          },
+          "degraded": false,
+          "answer": {
+            "kind": "finding",
+            "finding_id": "rf:e4720f9987af89f4f311f18ec2b66be1"
+          }
+        },
+        {
+          "kind": "where_to_look",
+          "schema": "review_records.v1",
+          "lens": "correctness",
+          "location": {
+            "scope": "lines",
+            "file": "src/sync/lease.py",
+            "lines": {
+              "start": 50,
+              "end": 55
+            },
+            "function": null,
+            "anchor": "src/sync/lease.py:50"
+          },
+          "language": "python",
+          "questions": [
+            {
+              "id": "correctness-q7",
+              "probability": 0.7
+            }
+          ],
+          "classifier": {
+            "name": "jev",
+            "model": "test-jevi"
+          },
+          "degraded": false,
+          "answer": {
+            "kind": "cleared",
+            "reason": "retries carry backoff after all"
+          }
+        }
+      ],
+      "raw_outputs": [],
+      "findings": [
+        {
+          "kind": "finding",
+          "schema": "review_records.v1",
+          "subject": "code",
+          "lens": "correctness",
+          "rule": {
+            "row": "judged",
+            "ref": "correctness-q2"
+          },
+          "source": {
+            "kind": "llm",
+            "name": "targeted-reviewer",
+            "model": "test-model"
+          },
+          "location": {
+            "scope": "lines",
+            "file": "src/billing/totals.py",
+            "lines": {
+              "start": 70,
+              "end": 75
+            },
+            "function": "total",
+            "anchor": "return total(items)"
+          },
+          "language": "python",
+          "statement": "Rounding drops cents on multi-currency totals.",
+          "consequence": "wrong-result-reported-as-success",
+          "trigger": "normal-use",
+          "evidence": "reproduced",
+          "proof": {
+            "test": "tests/test_totals.py::test_rounding",
+            "command": "pytest tests/test_totals.py -q",
+            "output": "FAILED"
+          },
+          "introduced": true,
+          "degraded": false,
+          "consequence_jev": "misleads-a-person",
+          "unconfirmed": false,
+          "merge_outcome": null,
+          "id": "rf:19f2994089ba6a92ab4829b410769197",
+          "severity": "fix-later",
+          "severity_basis": {
+            "row": "judged.visible",
+            "modifiers": []
+          },
+          "flags": [
+            "consequence-disagreement"
+          ],
+          "enforced": false
+        },
+        {
+          "kind": "finding",
+          "schema": "review_records.v1",
+          "subject": "code",
+          "lens": "correctness",
+          "rule": {
+            "row": "correctness.type-error",
+            "ref": "mypy:arg-type"
+          },
+          "source": {
+            "kind": "tool",
+            "name": "mypy",
+            "version": "1.0"
+          },
+          "location": {
+            "scope": "lines",
+            "file": "src/pay/ledger.py",
+            "lines": {
+              "start": 40,
+              "end": 42
+            },
+            "function": "post",
+            "anchor": "post(entry)"
+          },
+          "language": "python",
+          "statement": "Ledger post passes a mapping where a sequence is required.",
+          "consequence": null,
+          "trigger": null,
+          "evidence": "tool-result",
+          "proof": {
+            "raw_output": "abababababababababababababababababababababababababababababababab"
+          },
+          "introduced": true,
+          "degraded": false,
+          "consequence_jev": null,
+          "unconfirmed": false,
+          "merge_outcome": null,
+          "id": "rf:31acc19d7f61c1bcd963da6b3dfb62d2",
+          "severity": "blocks",
+          "severity_basis": {
+            "row": "correctness.type-error",
+            "modifiers": []
+          },
+          "flags": [],
+          "enforced": true
+        },
+        {
+          "kind": "finding",
+          "schema": "review_records.v1",
+          "subject": "code",
+          "lens": "security",
+          "rule": {
+            "row": "judged",
+            "ref": "security-q5"
+          },
+          "source": {
+            "kind": "llm",
+            "name": "targeted-reviewer",
+            "model": "test-model"
+          },
+          "location": {
+            "scope": "lines",
+            "file": "src/auth/session.py",
+            "lines": {
+              "start": 80,
+              "end": 85
+            },
+            "function": "refresh",
+            "anchor": "token = refresh(old)"
+          },
+          "language": "python",
+          "statement": "A stale token may be accepted after rotation.",
+          "consequence": "fails-loudly-and-recoverably",
+          "trigger": "normal-use",
+          "evidence": "reproduced",
+          "proof": {
+            "test": "tests/test_session.py::test_rotation",
+            "command": "pytest tests/test_session.py -q",
+            "output": "FAILED"
+          },
+          "introduced": true,
+          "degraded": false,
+          "consequence_jev": null,
+          "unconfirmed": true,
+          "merge_outcome": null,
+          "id": "rf:3811fa566934cbee55001e8d5c300386",
+          "severity": "fix-later",
+          "severity_basis": {
+            "row": "judged.visible",
+            "modifiers": []
+          },
+          "flags": [
+            "unconfirmed"
+          ],
+          "enforced": false
+        },
+        {
+          "kind": "finding",
+          "schema": "review_records.v1",
+          "subject": "code",
+          "lens": "correctness",
+          "rule": {
+            "row": "correctness.dispute",
+            "ref": "builder-declaration:correctness-q7"
+          },
+          "source": {
+            "kind": "llm",
+            "name": "targeted-reviewer",
+            "model": "test-model"
+          },
+          "location": {
+            "scope": "lines",
+            "file": "src/sync/lease.py",
+            "lines": {
+              "start": 50,
+              "end": 55
+            },
+            "function": "acquire",
+            "anchor": "lease = acquire(name)"
+          },
+          "language": "python",
+          "statement": "The builder says retries do not apply but acquire retries without backoff.",
+          "consequence": "misleads-a-person",
+          "trigger": "normal-use",
+          "evidence": "traced",
+          "proof": {
+            "steps": [
+              "src/sync/lease.py:50 retries",
+              "src/sync/lease.py:55 no backoff"
+            ]
+          },
+          "introduced": true,
+          "degraded": false,
+          "consequence_jev": null,
+          "unconfirmed": false,
+          "merge_outcome": null,
+          "id": "rf:a290736713657d91dc6ff70a8e848250",
+          "severity": "fix-later",
+          "severity_basis": {
+            "row": "correctness.dispute",
+            "modifiers": []
+          },
+          "flags": [
+            "merge-confirmation"
+          ],
+          "enforced": false
+        },
+        {
+          "kind": "finding",
+          "schema": "review_records.v1",
+          "subject": "code",
+          "lens": "security",
+          "rule": {
+            "row": "security.scanner-high",
+            "ref": "semgrep:python.requests.best-practice"
+          },
+          "source": {
+            "kind": "tool",
+            "name": "semgrep",
+            "version": "1.0.0"
+          },
+          "location": {
+            "scope": "lines",
+            "file": "src/pay/payout.py",
+            "lines": {
+              "start": 30,
+              "end": 32
+            },
+            "function": "payout",
+            "anchor": "payout(account, amount)"
+          },
+          "language": "python",
+          "statement": "Payout request skips certificate verification.",
+          "consequence": null,
+          "trigger": null,
+          "evidence": "tool-result",
+          "proof": {
+            "raw_output": "abababababababababababababababababababababababababababababababab"
+          },
+          "introduced": true,
+          "degraded": false,
+          "consequence_jev": null,
+          "unconfirmed": false,
+          "merge_outcome": null,
+          "id": "rf:a5a65f408a03533a6dbb9fc063f494ea",
+          "severity": "blocks",
+          "severity_basis": {
+            "row": "security.scanner-high",
+            "modifiers": []
+          },
+          "flags": [],
+          "enforced": true
+        },
+        {
+          "kind": "finding",
+          "schema": "review_records.v1",
+          "subject": "code",
+          "lens": "security",
+          "rule": {
+            "row": "security.scanner-medium-low",
+            "ref": "semgrep:python.lang.security"
+          },
+          "source": {
+            "kind": "tool",
+            "name": "semgrep",
+            "version": "1.0.0"
+          },
+          "location": {
+            "scope": "lines",
+            "file": "src/util/hash.py",
+            "lines": {
+              "start": 90,
+              "end": 92
+            },
+            "function": "digest",
+            "anchor": "digest(data)"
+          },
+          "language": "python",
+          "statement": "Fast hash used where a password hash belongs.",
+          "consequence": null,
+          "trigger": null,
+          "evidence": "tool-result",
+          "proof": {
+            "raw_output": "abababababababababababababababababababababababababababababababab"
+          },
+          "introduced": true,
+          "degraded": false,
+          "consequence_jev": null,
+          "unconfirmed": false,
+          "merge_outcome": null,
+          "id": "rf:c03fefba03f5eb25b54a014653d9cec0",
+          "severity": "fix-later",
+          "severity_basis": {
+            "row": "security.scanner-medium-low",
+            "modifiers": []
+          },
+          "flags": [],
+          "enforced": false
+        },
+        {
+          "kind": "finding",
+          "schema": "review_records.v1",
+          "subject": "code",
+          "lens": "security",
+          "rule": {
+            "row": "judged",
+            "ref": "security-q3"
+          },
+          "source": {
+            "kind": "llm",
+            "name": "targeted-reviewer",
+            "model": "test-model"
+          },
+          "location": {
+            "scope": "lines",
+            "file": "src/reports/filter.py",
+            "lines": {
+              "start": 5,
+              "end": 9
+            },
+            "function": "filter_rows",
+            "anchor": "rows = query(filter)"
+          },
+          "language": "python",
+          "statement": "An empty filter may return other tenants rows.",
+          "consequence": "data-lost-or-corrupted",
+          "trigger": "normal-use",
+          "evidence": "traced",
+          "proof": {
+            "steps": [
+              "src/reports/filter.py:5 builds the query",
+              "src/reports/filter.py:9 returns rows unfiltered"
+            ]
+          },
+          "introduced": true,
+          "degraded": false,
+          "consequence_jev": null,
+          "unconfirmed": false,
+          "merge_outcome": null,
+          "id": "rf:e4720f9987af89f4f311f18ec2b66be1",
+          "severity": "fix-later",
+          "severity_basis": {
+            "row": "judged.harm-traced",
+            "modifiers": []
+          },
+          "flags": [],
+          "enforced": false
+        }
+      ],
+      "measurements": [],
+      "lens_grades": [
+        {
+          "kind": "lens_grade",
+          "schema": "review_records.v1",
+          "lens": "correctness",
+          "blocks": 1,
+          "fix_later": 2,
+          "notes": 0,
+          "grade": "D",
+          "degraded_inputs": [],
+          "may_block": {
+            "python": true
+          }
+        },
+        {
+          "kind": "lens_grade",
+          "schema": "review_records.v1",
+          "lens": "security",
+          "blocks": 1,
+          "fix_later": 3,
+          "notes": 0,
+          "grade": "D",
+          "degraded_inputs": [],
+          "may_block": {
+            "python": true
+          }
+        },
+        {
+          "kind": "lens_grade",
+          "schema": "review_records.v1",
+          "lens": "testing",
+          "blocks": 0,
+          "fix_later": 0,
+          "notes": 0,
+          "grade": "A",
+          "degraded_inputs": [],
+          "may_block": {
+            "python": true
+          }
+        },
+        {
+          "kind": "lens_grade",
+          "schema": "review_records.v1",
+          "lens": "architecture-maintainability",
+          "blocks": 0,
+          "fix_later": 0,
+          "notes": 0,
+          "grade": "A",
+          "degraded_inputs": [],
+          "may_block": {
+            "python": true
+          }
+        }
+      ],
+      "builder_records": [],
+      "may_block": {
+        "correctness": {
+          "python": true
+        },
+        "security": {
+          "python": true
+        },
+        "testing": {
+          "python": true
+        },
+        "architecture-maintainability": {
+          "python": true
+        }
+      },
+      "degraded_inputs": [],
+      "merge": {
+        "allowed": false,
+        "blocking": [
+          "rf:31acc19d7f61c1bcd963da6b3dfb62d2",
+          "rf:a5a65f408a03533a6dbb9fc063f494ea"
+        ],
+        "report_only_blocks": []
+      },
+      "loop": "review_run"
+    }
+  ],
+  "next_step": "code_review"
+}

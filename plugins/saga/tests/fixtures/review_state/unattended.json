@@ -1,0 +1,1 @@
+{"authored_at": "2026-10-06T00:00:00Z", "authored_by": "fixture", "ceremony_gates": {"deploy_nonprod": "gate", "merge": "auto", "reviews_required": "auto"}, "run_mode": "unattended", "schema_version": 1, "source": "fixture"}

@@ -431,6 +431,42 @@ def test_review_text_form_is_a_fixed_width_table(
     ]
 
 
+STATE_FIXTURES = ROOT / "plugins" / "saga" / "tests" / "fixtures" / "review_state"
+
+
+def _record_with_runs(store: Path) -> None:
+    raw = json.loads((STATE_FIXTURES / "record.json").read_text(encoding="utf-8"))
+    raw["issue"] = 108
+    (store / "issue-108.json").write_text(json.dumps(raw), encoding="utf-8")
+
+
+def test_review_prints_from_the_review_state_document(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _record_with_runs(store)
+    review = _review(repo, store, capsys=capsys)["review"]
+    assert review["state_schema"] == "review_state.v1"
+    assert (review["round"], review["outcome"]) == (3, "blocked")
+    assert [lens["lens"] for lens in review["lenses"]] == [
+        "correctness",
+        "security",
+        "testing",
+        "architecture-maintainability",
+    ]
+    assert review["pending_choices"][0] == "merge-blocking"
+    assert review["merge"]["waiting"] is True
+
+
+def test_review_state_text_prints_numbered_questions(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _record_with_runs(store)
+    code, out, _ = _run(repo, store, "review", "--issue", "108", capsys=capsys)
+    assert code == 0
+    assert "Q1. merge-blocking" in out.splitlines()
+    assert any(line.startswith("correctness") and " D " in f" {line} " for line in out.splitlines())
+
+
 def test_review_an_unknown_record_version_exits_3(
     repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

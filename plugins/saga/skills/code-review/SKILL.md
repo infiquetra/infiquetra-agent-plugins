@@ -347,15 +347,17 @@ summary, the scope-check result, the suppressed count, and coverage — residual
 gaps. `references/findings-schema.md` carries the full output contract.
 
 The written result can be read back lens by lens on any harness: `scripts/run_status.py review`
-prints each selected lens as met, not met, not run or unscored, with its findings, from the verdict's
-own per-lens rule. In Claude Code, `/review-view` shows the same view in a pane.
+prints each lens's grade with its blocking and fix-later counts, with the pending questions, from the
+review-state document. In Claude Code, `/review-view` shows the same view in a pane.
 
 ### 5.2 One comment
 
 Exactly one pull-request comment, naming the reviewed revision as a full forty-character commit
-identifier. **No pull-request review, in any of its forms.** Publication commits nothing, pushes
-nothing, and does not advance `HEAD`, so a caller's freshness check stays valid. The evidence lands
-in the run record — not in a review document, and not through the evidence ledger.
+identifier. The final round's comment opens with the `<!-- saga:fix-later-checklist -->` marker line
+and lists every fix-later item as a `- [ ]` checkbox; earlier rounds carry neither. **No pull-request
+review, in any of its forms.** Publication commits nothing, pushes nothing, and does not advance
+`HEAD`, so a caller's freshness check stays valid. The evidence lands in the run record — not in a
+review document, and not through the evidence ledger.
 
 One confirmation before publishing, and no further consent machinery.
 

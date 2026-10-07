@@ -4,6 +4,13 @@
 
 ### Added
 
+- Issue 164: `scripts/review_state.py` renders a review's state and pending choices as one
+  `review_state.v1` document — JSON for panes, Markdown with numbered questions for every other
+  harness — records every answer through `--answers -`, files fix-later items through
+  mission-control, and publishes one pull-request comment per round with the fix-later checklist
+  on the final one. `run_status.py review` prints from the document, and
+  `fix_later_unattended_default` sets the profile's unattended default to `leave` or `file`.
+
 - Issue 155: `scripts/review_checks.py` adds five scripted checks on the review-tools runner:
   two test runs, tests the continuous-integration run skipped, machine-specific values,
   changed names, and a workflow graph. The two testing rows are excused by

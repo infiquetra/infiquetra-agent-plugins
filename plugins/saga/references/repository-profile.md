@@ -227,6 +227,25 @@ key from the base commit. A head change to it is recorded as `head-profile-chang
 is not applied. Later review settings take their own top-level profile keys instead of
 sharing `review`.
 
+### `fix_later_unattended_default`
+
+Optional. An absent key is valid and means `leave`. `review_state.py answers`
+reads it for the follow-up bundle:
+
+```json
+"fix_later_unattended_default": "leave"
+```
+
+| Value | Meaning |
+|---|---|
+| `leave` | fix-later items left unanswered stay on the pull request checklist; C16's job files boxes ticked later |
+| `file` | an attended merge confirmation files one follow-up issue per pull request listing every fix-later item still unanswered or `left`; an unattended run never files the bundle |
+
+Any other value is refused naming the key. The default is `leave` because
+unattended filing is the exception: only the security guard files without an
+operator. The runner reads the key from the base commit. A head change to it
+is noted and is not applied.
+
 ## Languages and visibility
 
 `languages` is the top-level list of formula languages setup detected, in formula order. It can be empty. It is not the `review_tools.languages` map of test commands.

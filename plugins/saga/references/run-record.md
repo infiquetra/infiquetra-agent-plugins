@@ -440,6 +440,16 @@ these entries the same way: the four typed readers filter on `code_review`
 loops and schemas, and `saga_spore.py` leaves `plan_review` entries out of its
 cycle count.
 
+### Merge confirmation entries (issue 164)
+
+A merge confirmation is appended to `review_cycles` with
+`loop: "merge_confirmation"` by `review_state.py answers`, never by hand. The
+entry carries `decision` (`merge-with-reason` with a `reason`, or
+`stop-card`), the `blocking` finding identities it covers, and `answered_at`.
+C10b reads the newest entry to carry out or hold the merge. The readers above
+skip these entries the same way, and `saga_spore.py` leaves them out of its
+cycle count.
+
 ### `tier_judgments` — `/plan`'s per-unit tier judgments
 
 The tier judgment in `/plan` (issue #96) does **not** write unit rows. `/plan` defines its units
