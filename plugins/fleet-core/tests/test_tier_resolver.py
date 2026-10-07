@@ -153,7 +153,7 @@ def test_role_tier_alias_resolves_through_registry() -> None:
     assert (reviewer.model, reviewer.effort) == ("opus", "high")
 
     tester = resolve(None, "contract-test")
-    assert (tester.model, tester.effort) == ("sonnet", "medium")
+    assert (tester.model, tester.effort) == ("haiku", "medium")
 
     scanner = resolve(None, "mechanical-scan")
     assert (scanner.model, scanner.effort) == ("haiku", "low")
@@ -303,27 +303,30 @@ def _registry_with_worker_vendor(
     monkeypatch.setattr(staffing, "STAFFING_PATH", copy)
 
 
-def test_implementation_resolves_opus_medium_in_the_policy_layer() -> None:
+def test_implementation_resolves_sonnet_high_in_the_policy_layer() -> None:
     result = resolve(None, "implementation")
-    assert (result.model, result.effort) == ("opus", "medium")
+    assert (result.model, result.effort) == ("sonnet", "high")
     assert result.needs_confirm is False
 
 
-def test_only_implementation_is_declared_claude_only(registry: dict[str, dict[str, str]]) -> None:
+def test_only_the_implementation_shapes_are_declared_claude_only(
+    registry: dict[str, dict[str, str]],
+) -> None:
     flagged = {shape for shape, row in registry.items() if "claude_only" in row}
-    assert flagged == {"implementation"}
+    assert flagged == {"implementation", "implementation-test-gated"}
     assert registry["implementation"]["claude_only"] is True
+    assert registry["implementation-test-gated"]["claude_only"] is True
 
 
-def test_resolve_shape_implementation_is_opus_medium_from_policy(no_overlay: pathlib.Path) -> None:
+def test_resolve_shape_implementation_is_sonnet_high_from_policy(no_overlay: pathlib.Path) -> None:
     decision = staffing.resolve_shape("implementation")
-    assert (decision.vendor, decision.model, decision.effort) == ("claude", "opus", "medium")
+    assert (decision.vendor, decision.model, decision.effort) == ("claude", "sonnet", "high")
     assert decision.source == "policy"
 
 
-def test_worker_role_resolves_claude_opus_medium(no_overlay: pathlib.Path) -> None:
+def test_worker_role_resolves_claude_sonnet_high(no_overlay: pathlib.Path) -> None:
     decision = staffing.resolve_role("worker")
-    assert (decision.vendor, decision.model, decision.effort) == ("claude", "opus", "medium")
+    assert (decision.vendor, decision.model, decision.effort) == ("claude", "sonnet", "high")
     assert decision.work_shape == "implementation"
 
 
@@ -332,9 +335,9 @@ def test_merging_and_release_workers_stay_on_mechanical(
     no_overlay: pathlib.Path, role: str
 ) -> None:
     decision = staffing.resolve_role(role)
-    assert (decision.vendor, decision.model, decision.effort) == ("claude", "sonnet", "medium")
+    assert (decision.vendor, decision.model, decision.effort) == ("claude", "haiku", "medium")
     assert decision.work_shape == "mechanical"
-    assert staffing.resolve_shape("mechanical").tier == "sonnet/medium"
+    assert staffing.resolve_shape("mechanical").tier == "haiku/medium"
 
 
 def test_claude_only_shape_refuses_another_vendor(no_overlay: pathlib.Path) -> None:
@@ -419,14 +422,14 @@ def test_a_recorded_raise_wins_over_the_policy_default(no_overlay: pathlib.Path)
 
 def test_a_one_model_rung_raise_is_accepted(no_overlay: pathlib.Path) -> None:
     decision = staffing.resolve_shape(
-        "mechanical", root=no_overlay, jev_raise={"model": "opus", "effort": "medium"}
+        "mechanical", root=no_overlay, jev_raise={"model": "sonnet", "effort": "medium"}
     )
-    assert (decision.tier, decision.source) == ("opus/medium", "jev-raise")
+    assert (decision.tier, decision.source) == ("sonnet/medium", "jev-raise")
 
 
 def test_no_layer_present_falls_to_policy(no_overlay: pathlib.Path) -> None:
     decision = staffing.resolve_shape("implementation", root=no_overlay)
-    assert (decision.tier, decision.source) == ("opus/medium", "policy")
+    assert (decision.tier, decision.source) == ("sonnet/high", "policy")
 
 
 @pytest.mark.parametrize(
@@ -500,10 +503,11 @@ def test_implementation_keeps_its_tier_on_an_unattended_run() -> None:
 @pytest.mark.parametrize(
     ("argv", "expected"),
     [
-        (["resolve", "--shape", "implementation"], "opus/medium"),
-        (["resolve", "--role", "worker"], "claude opus/medium"),
-        (["resolve", "--role", "merging-worker"], "claude sonnet/medium"),
-        (["resolve", "--role", "release-worker"], "claude sonnet/medium"),
+        (["resolve", "--shape", "implementation"], "sonnet/high"),
+        (["resolve", "--shape", "implementation-test-gated"], "haiku/xhigh"),
+        (["resolve", "--role", "worker"], "claude sonnet/high"),
+        (["resolve", "--role", "merging-worker"], "claude haiku/medium"),
+        (["resolve", "--role", "release-worker"], "claude haiku/medium"),
     ],
 )
 def test_staffing_cli_short_forms(
@@ -527,5 +531,5 @@ def test_skill_registry_sync() -> None:
 
 def test_skill_registry_sync_catches_seeded_divergence() -> None:
     policy = json.loads(json.dumps(tier_resolver.load_policy()))
-    policy["implementation"]["default_model"] = "sonnet"
+    policy["implementation"]["default_model"] = "opus"
     assert render_tier_table.render_block(policy) != _skill_tier_block()

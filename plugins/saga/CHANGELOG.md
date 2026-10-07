@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `model-prices.yaml` re-verified 2026-10-07: Sonnet 5.5 cache reads are $0.10 per million, and a
+  Haiku 5.5 row (rates for prompts up to 100,000 tokens) takes the `haiku` alias. The `/plan` tier
+  table is regenerated from the new staffing defaults, and the ideate external-engine lane runs at
+  sonnet/high.
+
 ### Added
 
 - Issue 165: the saga mods draw C13's review-state document and C3's setup survey. `/review-view`

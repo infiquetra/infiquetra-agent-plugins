@@ -26,7 +26,7 @@ SCRIPTS = REPO_ROOT / "plugins" / "saga" / "scripts"
 SCRIPT = SCRIPTS / "cost_report.py"
 SHIPPED_PRICES = REPO_ROOT / "plugins" / "saga" / "references" / "model-prices.yaml"
 #: The date the shipped table was verified. Only the shipped-table pinning test reads it.
-SHIPPED_VERIFIED = date(2026, 10, 3)
+SHIPPED_VERIFIED = date(2026, 10, 7)
 #: The fixture table's date, deliberately not the shipped one.
 VERIFIED = date(2026, 9, 1)
 SHA = "a" * 40
@@ -611,10 +611,19 @@ def test_the_shipped_table_carries_the_verified_rates(cr: ModuleType) -> None:
     }
     assert {k: str(v) for k, v in sonnet.rates.items()} == {
         "uncached_input": "2.0",
-        "cache_read": "0.2",
+        "cache_read": "0.1",
         "cache_write_5m": "2.5",
         "cache_write_1h": "4.0",
         "output": "10.0",
+    }
+    haiku = cr.resolve_price(table, "claude", "haiku")
+    assert haiku is not None and haiku.model == "claude-haiku-5-5"
+    assert {k: str(v) for k, v in haiku.rates.items()} == {
+        "uncached_input": "0.1",
+        "cache_read": "0.01",
+        "cache_write_5m": "0.125",
+        "cache_write_1h": "0.2",
+        "output": "0.5",
     }
     assert cr.resolve_price(table, "codex", "opus") is None, "a vendor never borrows Claude's rates"
 

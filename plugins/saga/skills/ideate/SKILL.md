@@ -540,7 +540,7 @@ run is tactical scope):**
 
 **External-engine generator lane (additive, blind, best-effort).** In addition to the N Claude frame
 agents, attempt one chaperoned external-engine generator lane. Use the existing chaperone-dispatch
-posture `offload` with `sonnet/medium`; do not route this generator lane through the stage-offer
+posture `offload` with `sonnet/high`; do not route this generator lane through the stage-offer
 `second-opinion` default. Assign the lane an ordinary Phase 2 frame value: use the next unused frame
 from the ordered frame pool when one exists, otherwise reuse the frame whose lens best fits the focus.
 

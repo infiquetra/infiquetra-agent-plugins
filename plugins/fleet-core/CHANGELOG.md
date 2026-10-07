@@ -11,6 +11,14 @@ The catalog requires `python>=3.12`.
 
 ## [Unreleased]
 
+### Changed
+
+- Re-tier the staffing defaults for Haiku 5.5 and the 2026-10-07 Sonnet 5.5 cache-read cut:
+  `implementation` sonnet/high, new `implementation-test-gated` haiku/xhigh, `mechanical`
+  haiku/medium, `read-only-survey` haiku/xhigh, `offload` sonnet/high. Haiku's effort ceiling is
+  xhigh, and a per-model `raise_ceiling` (sonnet: high) sends a raise from sonnet/high to opus/high.
+  The bundled copies in mission-control and saga are regenerated.
+
 ### Added
 
 - Issue 156: `jev sweep` classifies pieces into a where-to-look list of at most 30 items and stops

@@ -980,10 +980,10 @@ def tiering_enabled(getenv: Callable[[str], str | None] | None = None) -> bool:
 def one_step_raise(model: str, effort: str) -> dict[str, str] | None:
     """The tier one step above ``model/effort``, or ``None`` when no automatic raise exists.
 
-    Effort first: one effort rung, while the model's ceiling allows it. At the ceiling, one model
-    rung with the effort unchanged, unless that rung is the strongest model, which an automatic
-    raise never reaches, or the new model cannot run the effort. The palette has no ``max`` effort,
-    so a raise can never land on it. Every result is one that :func:`resolve_shape` accepts as a
+    Effort first: one effort rung, while the model's raise ceiling allows it. At the raise ceiling,
+    one model rung with the effort unchanged, unless that rung is the strongest model, which an
+    automatic raise never reaches, or the effort is above the new model's raise ceiling. The
+    palette has no ``max`` effort, so a raise can never land on it. Every result is one that :func:`resolve_shape` accepts as a
     ``jev_raise`` over the same default.
     """
     if (
@@ -995,11 +995,13 @@ def one_step_raise(model: str, effort: str) -> dict[str, str] | None:
     if model == MODELS[0]:
         # The strongest model is never reached by an automatic raise, and never raised within.
         return None
-    ceiling = _tier_palette.effort_ceiling(model)
+    ceiling = _tier_palette.raise_ceiling(model)
     if _tier_palette.effort_rank(effort) < _tier_palette.effort_rank(ceiling):
         return {"model": model, "effort": _tier_palette.escalate("effort", effort, 1)}
     stronger = _tier_palette.escalate("model", model, 1)
-    if stronger == MODELS[0] or not _tier_palette.supports_effort(stronger, effort):
+    if stronger == MODELS[0] or _tier_palette.effort_rank(effort) > _tier_palette.effort_rank(
+        _tier_palette.raise_ceiling(stronger)
+    ):
         return None
     return {"model": stronger, "effort": effort}
 

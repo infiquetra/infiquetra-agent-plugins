@@ -78,10 +78,9 @@ def test_registry_rejects_missing_effort_ceiling() -> None:
         tier_palette._derive_effort_ceilings(scratch, ("low",))
 
 
-def test_effort_ceiling_values_anchor_on_haiku() -> None:
-    """haiku's ceiling is 'high' (the issue's canonical unsupported combo is haiku/xhigh)."""
-    assert tier_palette.effort_ceiling("haiku") == "high"
-    for model in ("fable", "opus", "sonnet"):
+def test_effort_ceiling_values() -> None:
+    """Every model runs xhigh since Haiku 5.5 (2026-10-07); haiku/xhigh was unrunnable before."""
+    for model in ("fable", "opus", "sonnet", "haiku"):
         assert tier_palette.effort_ceiling(model) == "xhigh"
     with pytest.raises(ValueError, match="unknown model"):
         tier_palette.effort_ceiling("gpt-9")
@@ -138,8 +137,12 @@ def test_ladder_ops_reject_unknown_kind_and_value() -> None:
         tier_palette.clamp("effort", "ludicrous")
 
 
-def test_effort_ceiling_clamp_surfaces_a_note() -> None:
-    """AC5: escalating a haiku unit toward xhigh resolves to haiku's ceiling with a note."""
+def test_effort_ceiling_clamp_surfaces_a_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AC5: escalating past a model's ceiling resolves to that ceiling with a note.
+
+    No model in the live palette sits below xhigh, so the clamp is exercised on a seeded ceiling.
+    """
+    monkeypatch.setitem(tier_palette._EFFORT_CEILINGS, "haiku", "high")
     clamped, note = tier_palette.clamp_effort_to_model("haiku", "xhigh")
     assert clamped == "high"
     assert note is not None and "haiku" in note and "clamped" in note
@@ -156,7 +159,24 @@ def test_effort_ceiling_clamp_surfaces_a_note() -> None:
 def test_supports_effort_matrix() -> None:
     assert tier_palette.supports_effort("opus", "xhigh") is True
     assert tier_palette.supports_effort("haiku", "high") is True
-    assert tier_palette.supports_effort("haiku", "xhigh") is False
+    assert tier_palette.supports_effort("haiku", "xhigh") is True
+
+
+def test_raise_ceiling_values() -> None:
+    """sonnet's raise stops at high so a raise from sonnet/high moves to opus (2026-10-07)."""
+    assert tier_palette.raise_ceiling("sonnet") == "high"
+    for model in ("fable", "opus", "haiku"):
+        assert tier_palette.raise_ceiling(model) == tier_palette.effort_ceiling(model)
+    with pytest.raises(ValueError, match="unknown model"):
+        tier_palette.raise_ceiling("gpt-9")
+
+
+def test_raise_ceiling_above_effort_ceiling_is_rejected() -> None:
+    scratch = {"models": {"haiku": {"rank": 0, "effort_ceiling": "medium", "raise_ceiling": "high"}}}
+    with pytest.raises(TierPaletteError, match="above its effort_ceiling"):
+        tier_palette._derive_raise_ceilings(
+            scratch, ("low", "medium", "high"), {"haiku": "medium"}
+        )
 
 
 @pytest.mark.parametrize(

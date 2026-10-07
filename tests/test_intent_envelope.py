@@ -148,7 +148,7 @@ class RecommendTierThroughStaffingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             for run_mode in ("attended", "unattended"):
                 rec = mod.recommend_tier("implementation", run_mode, root=Path(tmp))
-                self.assertEqual((rec.model, rec.effort), ("opus", "medium"), run_mode)
+                self.assertEqual((rec.model, rec.effort), ("sonnet", "high"), run_mode)
 
     def test_other_shapes_still_step_one_rung_cheaper_unattended(self) -> None:
         mod = envelope_module()

@@ -74,6 +74,10 @@ _ROW_SPECS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("implementation",),
     ),
     (
+        "A short building unit whose existing tests prove the result",
+        ("implementation-test-gated",),
+    ),
+    (
         "Mechanical, deterministic, scripted transforms, scaffolding",
         ("mechanical", "purely-mechanical"),
     ),
