@@ -58,6 +58,7 @@ COMPONENTS: tuple[str, ...] = (
     "plugins/saga/references/semgrep/naive-time-comparison.yaml",
     "plugins/saga/references/semgrep/money-as-floating-point.yaml",
     "plugins/saga/scripts/review_checks.py",
+    "plugins/saga/scripts/review_command.py",
 )
 
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")

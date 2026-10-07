@@ -436,7 +436,7 @@ def test_validate_cli_exits_2_on_an_unknown_kind_or_bad_json(tmp_path: Path) -> 
 
 
 def _inputs_from(run: dict[str, Any]) -> dict[str, Any]:
-    inputs = {name: copy.deepcopy(run[name]) for name in R.RUN_FIELDS}
+    inputs = {name: copy.deepcopy(run[name]) for name in R.RUN_FIELDS if name in run}
     inputs.update(R._formula_inputs(run))
     return inputs
 

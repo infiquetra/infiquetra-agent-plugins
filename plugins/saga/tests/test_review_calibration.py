@@ -293,6 +293,7 @@ def test_components_match_the_landed_cards() -> None:
         "plugins/saga/references/semgrep/naive-time-comparison.yaml",
         "plugins/saga/references/semgrep/money-as-floating-point.yaml",
         "plugins/saga/scripts/review_checks.py",
+        "plugins/saga/scripts/review_command.py",
     )
 
 

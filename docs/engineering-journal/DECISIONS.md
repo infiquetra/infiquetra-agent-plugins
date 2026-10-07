@@ -2,6 +2,36 @@
 
 ## 2026-10-07
 
+### The reproduction re-run is this command's sandbox, not a reviewer session
+
+**Decision.** Issue #160 (card C10a), KTD8. `plugins/saga/scripts/review_command.py` re-runs a reproduced finding in this process. The child environment copies `PATH`, `LANG`, `LC_ALL`, `LC_CTYPE` and `TZ` when they are set, and sets `HOME` and `TMPDIR` to the scratch directory. Credential variables are not copied. On macOS the helper is `/usr/bin/sandbox-exec` with a seatbelt that denies the network, denies reads and writes of the real home, and allows the scratch plus the toolchain prefixes. dyld is allowed to read the root directory. The Xcode and Command Line Tools trees are included when they exist, because `/usr/bin/python3` is a shim into one of them. On Linux the helper is `bwrap --unshare-net` with a write bind only for the scratch. The command is an argument vector. A basename of `sh`, `bash`, `zsh`, `dash` or `env` is not run. The scratch source is `result.scratch.path`, and it must not be the real home or the reviewed repository.
+
+**Rationale.** The acceptance criteria say this command never starts a reviewer session, and a finding counts as reproduced only after the command's own re-run fails. An environment allow-list does not stop a write outside the scratch or a network call. The sandbox is that control. Banning only the bare names `sh` and `bash` would let `/bin/sh` through.
+
+**Rejected alternatives.** Starting Claude to re-run the test. An environment allow-list with no sandbox. Banning only the bare shell names.
+
+**Revisit when.** The platform helper is missing on a machine the corpus harness uses, or card C10b changes who passes the answers.
+
+### A reproduced finding matches the recorded failure, and the last round is a flag
+
+**Decision.** Issue #160 (card C10a), KTD9. The re-run counts as reproduced only when the exit code is non-zero and the first non-empty line of `proof.output` is a substring of the captured output. Any other result, including a timeout at 120 seconds, stores the finding as traced with `unconfirmed` false. `consequence_jev` stays as Jev returned it. `--final` re-runs every blocking finding that still has a command, on a detached worktree of the packet's head, and the formula runs again. The command does not infer the last round by counting `review_cycles`.
+
+**Rationale.** A missing interpreter exits non-zero and is not the reviewer's failure. The validator allows `unconfirmed` only on a reproduced LLM finding that Jev could not answer, so leaving the flag set after a downgrade makes `build_run` refuse the run. The round limit belongs to card C10b, which passes `--final`.
+
+**Rejected alternatives.** Treating every non-zero exit as reproduced. Leaving `unconfirmed` true after the downgrade. Inferring the final round from `review_cycles`.
+
+**Revisit when.** Card C10b sets the round limit, or a reproduction needs more than the recorded line to count as the same failure.
+
+### Usage is added once per session, under the run-record lock
+
+**Decision.** Issue #160 (card C10a), KTD10. With `--issue`, one `run_record.update` appends the review run and then the usage entries. An entry whose `session_id` equals the session id, equals `session/agent`, or starts with `session/` is skipped. A new identity is passed to `add_usage`, so the vendor, model and effort patterns are the ones that function already enforces. An absent or invalid vendor, model or effort writes no usage entry, adds a degraded input with reason `usage-unreadable`, and the review still exits 0. Without an issue number the run record is not opened.
+
+**Rationale.** `add_usage` sums a repeated identity. The usage-capture mod already records a subagent as `session/agent`, and a second finish of the same session would count those tokens twice. Writing the usage object by hand would let a forged vendor into the cost report.
+
+**Rejected alternatives.** Calling `usage add` and relying on its sum. Appending a usage object without `add_usage`. Refusing the whole review when the vendor is unreadable.
+
+**Revisit when.** Card C9 starts the reviewer session and puts `session_id` on the launcher result, or the mod's session id shape changes.
+
 ### Setup keeps the machine record out of the repository, and a run does not ask setup questions
 
 **Decision.** Issue #150 (card C3). The machine record is `<home>/.saga/machine.json`, schema `machine_record.v1`, directory mode 0700, file mode 0600. It is not under `.claude/saga/runs`. `survey` sets `ran` and does not clear `offered`. `record_offer` sets `offered` and does not set `ran`. Admission and card C14 both call `record_offer`.

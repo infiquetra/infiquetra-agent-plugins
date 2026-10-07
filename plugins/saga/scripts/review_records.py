@@ -681,9 +681,36 @@ def _check_review_run(check: _Check, record: Any) -> None:
                 check.text(entry.get("path"), f"{path}.path")
                 if not isinstance(entry.get("sha256"), str) or not _SHA256.match(entry["sha256"]):
                     check.add(f"{path}.sha256", "must be 64 lowercase hex characters")
+    if "reviewers" in record:
+        _check_reviewers(check, record["reviewers"])
     if len(check.problems) != before or not all(name in record for name in REQUIRED["review_run"]):
         return  # recompute only a run whose parts are each well formed
     _check_recomputation(check, record)
+
+
+def _check_reviewers(check: _Check, value: Any) -> None:
+    """Optional reviewer fingerprints. Absent stays valid for records written before this field."""
+    if not check.array(value, "reviewers"):
+        return
+    for index, item in enumerate(value):
+        path = f"reviewers.{index}"
+        if not check.mapping(item, path) or not isinstance(item, Mapping):
+            continue
+        for name in ("vendor", "model"):
+            text = item.get(name)
+            if not isinstance(text, str) or run_record.IDENTIFIER_PATTERN.fullmatch(text) is None:
+                check.add(f"{path}.{name}", "must be a usage identifier")
+        role = item.get("role")
+        if not isinstance(role, str) or run_record.ROLE_PATTERN.fullmatch(role) is None:
+            check.add(f"{path}.role", "must be a staffing role name")
+        for name in ("prompt_sha256", "configuration_sha256"):
+            fingerprint = item.get(name)
+            if fingerprint is None:
+                continue
+            if not isinstance(fingerprint, str) or _SHA256.fullmatch(fingerprint) is None:
+                check.add(f"{path}.{name}", "must be 64 lowercase hex characters or null")
+        if "note" in item and item["note"] is not None:
+            check.text(item["note"], f"{path}.note")
 
 
 def _check_recomputation(check: _Check, run: Mapping[str, Any]) -> None:
@@ -757,6 +784,7 @@ RUN_FIELDS: tuple[str, ...] = (
     "usage",
     "where_to_look",
     "raw_outputs",
+    "reviewers",
 )
 
 

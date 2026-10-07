@@ -2,6 +2,14 @@
 
 ## 2026-10-07
 
+### A non-zero exit is not the recorded failure
+
+**Evidence.** Issue #160. `plugins/saga/scripts/review_command.py` (`_matches`, `_downgrade`, `_rerun_one`).
+
+**Mechanism.** The reviewer's proof names the command and the first line of the failure. The re-run can exit non-zero because the interpreter is missing, the timeout fired, or a different assertion failed. Those are not the finding the reviewer recorded. The command keeps `evidence: reproduced` only when the exit is non-zero and that recorded line appears in the captured output. Every other result is stored as traced, with `unconfirmed` false, because the validator allows that flag only while the finding is still reproduced and Jev gave no consequence.
+
+**Generalizable rule.** A check that claims to have reproduced a recorded failure has to match the recorded output, not only the exit code.
+
 ### A shared binary is not a catalogue claim, and admission does not touch the home directory unless asked
 
 **Evidence.** Issue #150. `plugins/saga/scripts/build_loop.py` (`_baseline_rows`, `catalogue_check_for`, `check_map`). `plugins/saga/scripts/admission.py` (`admit`, `home`, `runner`).
