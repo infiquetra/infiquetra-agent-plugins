@@ -38,7 +38,9 @@ The commit under review does not choose the calibration file or the profile that
 
 `finish` writes `<packet>/review-run.json` only after the answer check and, when `--issue` is set, only after the locked update that appends the review run and the usage entries together. A refused answer does not create that file, does not append a review cycle, and does not write usage.
 
-A reproduced finding stays reproduced only when this command's own re-run exits non-zero and the recorded output line appears in the captured output. The re-run is this process, confined. It is not a reviewer session. `--final` runs that check again for blocking findings that still have a command, on a detached worktree of the packet's head.
+A reproduced finding stays reproduced only when this command's own re-run exits non-zero and the last specific line of the recorded output appears in the captured output. A generic traceback header is not that line. When the proof names a test id, that id has to appear too. The re-run tree is the packet's head commit with the reviewer's test files laid over it. The re-run is this process, confined. It is not a reviewer session. `--final` runs that check again for blocking findings that still have a command, on a detached worktree of the packet's head, with the same test files.
+
+`prepare` publishes `--out` only after every step has succeeded. A failure leaves that directory uncreated.
 
 ## Exit codes
 

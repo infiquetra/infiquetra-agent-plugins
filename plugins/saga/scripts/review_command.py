@@ -6,7 +6,7 @@ writes the review run. This command does not start a reviewer session. ``/code-r
 card C10b) and the corpus harness are the callers. Orchestrate and agent-launcher start sessions.
 
 The reproduction re-run is this process, confined, not a model. A non-zero exit is not enough:
-the re-run has to fail with the recorded output line.
+the re-run has to fail with the recorded failure, on a tree of the change's head.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ import shlex
 import shutil
 import subprocess  # nosec B404
 import sys
+import tarfile
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -40,12 +41,22 @@ import saga_setup  # noqa: E402
 RERUN_TIMEOUT = 120
 _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "env"})
 _ENV_COPIED = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
-_READ_PREFIXES = ("/usr", "/bin", "/opt", "/opt/homebrew", "/Library", "/System", "/private", "/dev")
+_READ_PREFIXES = ("/usr", "/bin", "/opt", "/opt/homebrew", "/Library", "/System", "/dev")
+# /etc and the zoneinfo tree. Not /private/tmp and not the per-user temporary folder.
+_NARROW_READS = ("/etc", "/private/etc", "/private/var/db/timezone")
+# pytest and the dynamic linker write these. Other device nodes stay read-only.
+_DEVICE_WRITES = ("/dev/null", "/dev/zero", "/dev/dtracehelper")
 # /usr/bin/python3 is a shim into one of these. They are read-only toolchain trees.
 _TOOLCHAIN_PREFIXES = (
     "/Applications/Xcode.app",
     "/Library/Developer/CommandLineTools",
 )
+# A recorded line that is only one of these matches every Python or pytest failure.
+_GENERIC_LINES = frozenset({
+    "Traceback (most recent call last):",
+    "During handling of the above exception, another exception occurred:",
+    "The above exception was the direct cause of the following exception:",
+})
 _PACKET_FILES = (
     "change.json",
     "diff.patch",
@@ -217,22 +228,26 @@ def _prepare(
     given_profile = Path(args.profile)
     profile = _may_block_profile(runner, repo, base, given_profile)
     temporary = profile.resolve() != given_profile.resolve()
+    staging = Path(tempfile.mkdtemp(prefix="saga-review-packet-"))
     try:
         _probe_calibration(calibration, profile)
         code = review_tools.run(
-            repo, base, head, given_profile, out, home, builder_path,
+            repo, base, head, given_profile, staging, home, builder_path,
             adapters=list(adapters) if adapters is not None else None,
             runner=runner,
             framework=False,
         )
         if code != 0:
             raise CommandFailure(code, "")
-        findings = _read_json(out / "findings.json", "findings")
-        measurements = _read_json(out / "measurements.json", "measurements")
-        degraded = list(_read_json(out / "degraded.json", "degraded"))
+        findings = _read_json(staging / "findings.json", "findings")
+        measurements = _read_json(staging / "measurements.json", "measurements")
+        degraded = list(_read_json(staging / "degraded.json", "degraded"))
         if not isinstance(findings, list) or not isinstance(measurements, list):
             raise CommandFailure(2, "the tool runner wrote records that are not lists")
-        change = review_diff.read(repo, base, head)
+        try:
+            change = review_diff.read(repo, base, head)
+        except review_diff.ReviewDiffError as exc:
+            raise CommandFailure(2, str(exc)) from exc
         patch = _git(runner, repo, ["diff", "--find-renames", base, head])
         if patch.code != 0:
             detail = (patch.stderr or patch.stdout or "git diff failed").strip()
@@ -255,42 +270,43 @@ def _prepare(
         except review_formula.FormulaError as exc:
             raise CommandFailure(2, str(exc)) from exc
         files = [{"path": item.path, "status": item.status} for item in change.files]
-        _write_json(out / "change.json", {
+        _write_json(staging / "change.json", {
             "repo": str(repo.resolve()), "base": base, "head": head, "files": files,
         })
-        (out / "diff.patch").write_text(patch.stdout, encoding="utf-8")
-        _write_json(out / "builder-record.json", builder)
-        _write_json(out / "degraded.json", degraded)
-        _write_json(out / "where-to-look.json", where)
-        _write_json(out / "missing-tools.json", [_gap_question(entry) for entry in gaps])
-        _write_json(out / "may-block.json", reasons)
-        _write_json(out / "open-search-cap.json", {"cap": reviewer_answer.OPEN_SEARCH_CAP})
-        _write_json(out / "grades.json", grades)
-        if store is None:
-            return
-        try:
-            review_records.record_run(store, int(args.issue), {
-                "card": _card(args),
-                "repo": str(repo.resolve()),
-                "base": base,
-                "head": head,
-                "saga_version": _saga_version(),
-                "round": args.round,
-                "tool_versions": _tool_versions(findings),
-                "usage": dict(_ZERO_USAGE),
-                "where_to_look": [],
-                "raw_outputs": [],
-                "findings": findings,
-                "measurements": measurements,
-                "builder_records": [builder],
-                "may_block": may_block,
-                "degraded_inputs": degraded,
-            })
-        except review_records.ReviewRecordError as exc:
-            raise CommandFailure(2, "\n".join(exc.problems)) from exc
-        except (run_record.RunRecordError, review_formula.FormulaError) as exc:
-            raise CommandFailure(2, str(exc)) from exc
+        (staging / "diff.patch").write_text(patch.stdout, encoding="utf-8")
+        _write_json(staging / "builder-record.json", builder)
+        _write_json(staging / "degraded.json", degraded)
+        _write_json(staging / "where-to-look.json", where)
+        _write_json(staging / "missing-tools.json", [_gap_question(entry) for entry in gaps])
+        _write_json(staging / "may-block.json", reasons)
+        _write_json(staging / "open-search-cap.json", {"cap": reviewer_answer.OPEN_SEARCH_CAP})
+        _write_json(staging / "grades.json", grades)
+        if store is not None:
+            try:
+                review_records.record_run(store, int(args.issue), {
+                    "card": _card(args),
+                    "repo": str(repo.resolve()),
+                    "base": base,
+                    "head": head,
+                    "saga_version": _saga_version(),
+                    "round": args.round,
+                    "tool_versions": _tool_versions(findings),
+                    "usage": dict(_ZERO_USAGE),
+                    "where_to_look": [],
+                    "raw_outputs": [],
+                    "findings": findings,
+                    "measurements": measurements,
+                    "builder_records": [builder],
+                    "may_block": may_block,
+                    "degraded_inputs": degraded,
+                })
+            except review_records.ReviewRecordError as exc:
+                raise CommandFailure(2, "\n".join(exc.problems)) from exc
+            except (run_record.RunRecordError, review_formula.FormulaError) as exc:
+                raise CommandFailure(2, str(exc)) from exc
+        _publish(staging, out)
     finally:
+        shutil.rmtree(staging, ignore_errors=True)
         if temporary:
             profile.unlink(missing_ok=True)
 
@@ -551,7 +567,8 @@ def _finish(
     available = reproduction_available(home, confine)
     for produced, result in zip(converted, results, strict=True):
         degraded.extend(_rerun_findings(
-            produced["findings"], result, repo, home, runner, confine, available,
+            produced["findings"], result, repo, str(change.get("head") or ""),
+            home, runner, confine, available,
         ))
     findings, owners = _merge_findings(converted, _read_json(packet / "findings.json", "findings"))
     where = _merge_where([produced["where_to_look"] for produced in converted])
@@ -621,6 +638,7 @@ def _rerun_findings(
     findings: list[dict[str, Any]],
     result: Mapping[str, Any],
     repo: Path,
+    head: str,
     home: Path,
     runner: Process,
     confine: Confine | None,
@@ -646,10 +664,15 @@ def _rerun_findings(
         )]
     scratch = Path(tempfile.mkdtemp(prefix="saga-review-rerun-"))
     scratch.chmod(0o700)
-    (scratch / "tmp").mkdir()
-    (scratch / "tmp").chmod(0o700)
     degraded: list[dict[str, str]] = []
     try:
+        if not _export_head(runner, repo, head, scratch):
+            for finding in reproduced:
+                _downgrade(finding)
+            return [_degraded(
+                reproduced[0].get("lens") or "correctness", "none", "head", "review-command",
+                "head-export",
+            )]
         _copy_shared_tests(source, scratch, result)
         for finding in reproduced:
             degraded.extend(_rerun_one(
@@ -679,6 +702,12 @@ def _rerun_one(
             relative or "test",
             "review-command",
             "missing-test-file",
+        )]
+    if not _make_tmp(scratch):
+        _downgrade(finding)
+        return [_degraded(
+            str(finding.get("lens") or "correctness"), "none", "tmp", "review-command",
+            "re-run-could-not-start",
         )]
     command = proof.get("command") if isinstance(proof, Mapping) else None
     argv = _argv(command)
@@ -710,7 +739,12 @@ def _rerun_one(
             "re-run-could-not-start",
         )]
     recorded = proof.get("output") if isinstance(proof, Mapping) else ""
-    if _matches(ran, recorded if isinstance(recorded, str) else ""):
+    test = proof.get("test") if isinstance(proof, Mapping) else ""
+    if _matches(
+        ran,
+        recorded if isinstance(recorded, str) else "",
+        test if isinstance(test, str) else "",
+    ):
         return []
     _downgrade(finding)
     return []
@@ -765,6 +799,7 @@ def _final_round(
                     "correctness", "none", "scratch", "review-command", "bad-scratch",
                 ))
                 continue
+            _copy_shared_tests(source, path, result)
             degraded.extend(_rerun_one(finding, source, path, home, runner, confine))
     finally:
         _remove_worktree(runner, repo, path, hooks)
@@ -1087,18 +1122,100 @@ def _copy_shared_tests(source: Path, dest: Path, result: Mapping[str, Any]) -> N
 
 
 def _copy_one(source: Path, dest: Path, relative: str) -> bool:
+    """Copy one regular file. A symlink is refused, including one whose target is inside."""
     if not relative:
         return False
     path = Path(relative)
     if path.is_absolute() or ".." in path.parts:
         return False
     origin = source / path
-    if not origin.is_file():
+    if origin.is_symlink() or not origin.is_file():
+        return False
+    try:
+        resolved = origin.resolve(strict=True)
+    except OSError:
+        return False
+    root = source.resolve()
+    if resolved.is_symlink() or not _inside(root, resolved):
         return False
     target = dest / path
+    cursor = dest.resolve()
+    for part in path.parts[:-1]:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            return False
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(origin, target)
+    shutil.copyfile(resolved, target)
     return True
+
+
+def _export_head(runner: Process, repo: Path, head: str, dest: Path) -> bool:
+    """Extract the head tree into ``dest``. Links and paths that escape are skipped."""
+    if not head or not repo.is_dir():
+        return False
+    handle = tempfile.NamedTemporaryFile(prefix="saga-review-head-", suffix=".tar", delete=False)
+    handle.close()
+    archive = Path(handle.name)
+    try:
+        result = _git(runner, repo, ["archive", "--format=tar", "-o", str(archive), head])
+        if result.code != 0 or not archive.is_file():
+            return False
+        with tarfile.open(archive, "r:") as bundle:
+            _extract_tree(bundle, dest)
+        return True
+    except (tarfile.TarError, OSError, ValueError):
+        return False
+    finally:
+        archive.unlink(missing_ok=True)
+
+
+def _extract_tree(bundle: tarfile.TarFile, dest: Path) -> None:
+    root = dest.resolve()
+    for member in bundle.getmembers():
+        if not (member.isdir() or member.isfile()) or member.issym() or member.islnk():
+            continue
+        name = member.name[2:] if member.name.startswith("./") else member.name
+        relative = Path(name)
+        if not name or relative.is_absolute() or ".." in relative.parts:
+            continue
+        target = root.joinpath(*relative.parts)
+        if target.is_symlink() or not _inside(root, target) and target != root:
+            continue
+        if member.isdir():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        parent = target.parent
+        if parent.is_symlink() or not (_inside(root, parent) or parent == root):
+            continue
+        parent.mkdir(parents=True, exist_ok=True)
+        source = bundle.extractfile(member)
+        if source is None:
+            continue
+        with source, target.open("wb") as handle:
+            shutil.copyfileobj(source, handle)
+        mode = member.mode & 0o777
+        target.chmod(0o755 if mode & 0o111 else 0o644)
+
+
+def _make_tmp(scratch: Path) -> bool:
+    temporary = scratch / "tmp"
+    try:
+        temporary.mkdir(parents=True, exist_ok=True)
+        temporary.chmod(0o700)
+    except OSError:
+        return False
+    return temporary.is_dir() and not temporary.is_symlink()
+
+
+def _publish(staging: Path, out: Path) -> None:
+    """Move a finished packet into place. A failure before this leaves ``out`` uncreated."""
+    if out.exists():
+        raise CommandFailure(2, f"packet directory already exists: {out}")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        staging.rename(out)
+    except OSError:
+        shutil.copytree(staging, out)
 
 
 def _argv(command: Any) -> list[str] | None:
@@ -1117,18 +1234,45 @@ def _argv(command: Any) -> list[str] | None:
     return parts
 
 
-def _matches(result: review_tools.ProcessResult, output: str) -> bool:
+def _matches(result: review_tools.ProcessResult, output: str, test: str = "") -> bool:
+    """True when the re-run failed with the recorded failure, not with a generic header."""
     if result.code == 0:
         return False
-    line = ""
-    for raw in output.splitlines():
-        if raw.strip():
-            line = raw.strip()[:200]
-            break
-    if not line:
-        return False
     captured = f"{result.stdout}{result.stderr}"[:8000]
-    return line in captured
+    line = _specific_line(output, test)
+    if line is None or line not in captured:
+        return False
+    if "::" in test and test not in captured:
+        return False
+    return True
+
+
+def _specific_line(output: str, test: str) -> str | None:
+    """The last recorded line that names this failure.
+
+    A traceback header matches every Python crash. The test id matches every failure of that
+    test. Neither is the failure.
+    """
+    file = test.split("::", 1)[0] if test else ""
+    chosen = ""
+    for raw in output.splitlines():
+        line = raw.strip()[:200]
+        if not line or _generic_line(line):
+            continue
+        if test and line == test:
+            continue
+        if file and line == file:
+            continue
+        chosen = line
+    return chosen or None
+
+
+def _generic_line(line: str) -> bool:
+    if line in _GENERIC_LINES or line.startswith("INTERNALERROR"):
+        return True
+    if line.startswith(("====", "----", "++++")):
+        return True
+    return line.strip("=+- ") == ""
 
 
 def _downgrade(finding: dict[str, Any]) -> None:
@@ -1259,13 +1403,12 @@ def _seatbelt(scratch: Path, argv: Sequence[str]) -> str:
         "(allow process-fork)",
         "(allow signal)",
         "(allow sysctl-read)",
-        "(allow mach-lookup)",
         "(allow file-ioctl)",
         "(allow file-read-metadata)",
         # dyld reads the root directory before it maps a toolchain binary.
         '(allow file-read-data (literal "/"))',
     ]
-    for prefix in (*_READ_PREFIXES, *_TOOLCHAIN_PREFIXES):
+    for prefix in (*_READ_PREFIXES, *_NARROW_READS, *_TOOLCHAIN_PREFIXES):
         if Path(prefix).exists():
             lines.append(f'(allow file-read* (subpath "{prefix}"))')
             lines.append(f'(allow file-map-executable (subpath "{prefix}"))')
@@ -1274,10 +1417,16 @@ def _seatbelt(scratch: Path, argv: Sequence[str]) -> str:
         parent = str(interpreter.resolve().parent)
         lines.append(f'(allow file-read* (subpath "{parent}"))')
         lines.append(f'(allow file-map-executable (subpath "{parent}"))')
+    for node in _DEVICE_WRITES:
+        if Path(node).exists():
+            lines.append(f'(allow file-read* (literal "{node}"))')
+            lines.append(f'(allow file-write* (literal "{node}"))')
     lines.append(f'(deny file-read* (subpath "{home}"))')
     lines.append(f'(deny file-write* (subpath "{home}"))')
     lines.append(f'(allow file-read* (subpath "{root}"))')
     lines.append(f'(allow file-write* (subpath "{root}"))')
+    # No mach-lookup allow. The pasteboard and other named services stay unreachable.
+    lines.append("(deny mach-lookup)")
     lines.append("(deny network*)")
     return "\n".join(lines) + "\n"
 
@@ -1288,7 +1437,8 @@ def _bwrap(scratch: Path, argv: Sequence[str]) -> list[str]:
         if Path(prefix).exists():
             command.extend(["--ro-bind", prefix, prefix])
     root = str(scratch.resolve())
-    command.extend(["--bind", root, root, "--chdir", root, "--", *list(argv)])
+    # A fresh dev mount has null, zero and urandom, and not the host disks.
+    command.extend(["--dev", "/dev", "--bind", root, root, "--chdir", root, "--", *list(argv)])
     return command
 
 

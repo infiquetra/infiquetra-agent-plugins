@@ -22,6 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = REPO_ROOT / "plugins" / "saga" / "scripts"
 REFERENCES = REPO_ROOT / "plugins" / "saga" / "references"
 _ALLOWED = frozenset({"git", "stub", "sandbox-exec", "bwrap", "python3"})
+_CAPTURED = "AssertionError: returned 2\ntests/test_changed.py::test_changed\n"
 _ZERO = {"tokens_in": 0, "tokens_out": 0, "cost_usd": 0, "seconds": 0}
 _HEX_A = "ab" * 32
 _HEX_B = "cd" * 32
@@ -150,6 +151,21 @@ class _Runner:
         if "--version" in argv:
             return T.ProcessResult(0, "1.0.0\n")
         return T.ProcessResult(0, "scan\n")
+
+
+def _exec_runner() -> Any:
+    """Runs the argument vector. The real-helper reproduction test uses this."""
+
+    def run(
+        argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        assert shell is False
+        proc = subprocess.run(
+            argv, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout, check=False,
+        )
+        return T.ProcessResult(proc.returncode, proc.stdout, proc.stderr)
+
+    return run
 
 
 def _adapter(*, start: int, gap: bool = False, hit: bool = True) -> Any:
@@ -727,7 +743,7 @@ def test_merge_answers_keeps_one_finding_and_its_reproduction(tmp_path: Path) ->
     reproduced_dir, reproduced_changes = _scratch(tmp_path / "repro", with_test=True)
     first = _answer([_finding("The first answer only traced the return.", evidence="traced", key="traced")])
     second = _answer([_finding("The second answer reproduced the wrong return.", key="reproduced")])
-    confine = _Confine(1, "AssertionError: returned 2\n")
+    confine = _Confine(1, _CAPTURED)
     code, err = _finish(
         packet,
         [
@@ -757,7 +773,7 @@ def test_reproduced_rerun_keeps_a_failing_match(tmp_path: Path) -> None:
     home = tmp_path / "home"
     _machine(home, "available")
     scratch, changes = _scratch(tmp_path, with_test=True)
-    confine = _Confine(1, "AssertionError: returned 2\n")
+    confine = _Confine(1, _CAPTURED)
     code, err = _finish(
         packet, [(_answer([_finding("A retry returns the new number.")]), _result(scratch, changes))],
         home, runner, ask=_ask(consequence_status="error"), confine=confine,
@@ -849,27 +865,44 @@ def test_reproduced_rerun_final_round_reruns_blocking_commands(tmp_path: Path) -
     _repo_path, packet, runner = _repro_packet(tmp_path)
     home = tmp_path / "home"
     scratch, changes = _scratch(tmp_path, with_test=True)
+    (scratch / "tests" / "conftest.py").write_text("VALUE = 1\n", encoding="utf-8")
+    changes["modified"].append("tests/conftest.py")
+    helper = _finding("The helper is part of the re-run.", key="helper")
+    helper["consequence"] = "style"
+    helper["location"] = {**_location(), "anchor": "helper", "function": "helper"}
+    helper["proof"] = {
+        "test": "tests/conftest.py",
+        "command": "python3 -c 'import tests.conftest'",
+        "output": "helper loaded",
+    }
 
     class _Two:
         def __init__(self) -> None:
             self.calls: list[list[str]] = []
 
-        def __call__(self, argv: list[str], _cwd: Path, _env: dict[str, str], _scratch: Path) -> Any:
+        def __call__(self, argv: list[str], cwd: Path, _env: dict[str, str], _scratch: Path) -> Any:
             self.calls.append(list(argv))
+            assert (cwd / "src" / "app.py").is_file()
+            assert (cwd / "tests" / "conftest.py").is_file()
+            assert (cwd / "tests" / "test_changed.py").is_file()
+            assert (cwd / "tmp").is_dir()
             if len(self.calls) == 1:
-                return T.ProcessResult(1, "AssertionError: returned 2\n")
+                return T.ProcessResult(1, _CAPTURED)
             return T.ProcessResult(0, "passed\n")
 
     confine = _Two()
+    harm = _finding("A retry returns the new number.")
     code, err = _finish(
-        packet, [(_answer([_finding("A retry returns the new number.")]), _result(scratch, changes))],
+        packet, [(_answer([harm, helper]), _result(scratch, changes))],
         home, runner, ask=_ask(), confine=confine, final=True,
     )
     assert code == 0, err
-    assert len(confine.calls) == 2
+    assert len(confine.calls) == 3
     assert all(Path(call[0]).name == "python3" for call in confine.calls)
     run = _read(packet / "review-run.json")
-    found = next(item for item in run["findings"] if item["source"]["kind"] == "llm")
+    found = next(
+        item for item in run["findings"] if item["statement"] == "A retry returns the new number."
+    )
     assert found["evidence"] == "traced"
     assert found["unconfirmed"] is False
     tool = next(item for item in run["findings"] if item["source"]["kind"] == "tool")
@@ -903,9 +936,11 @@ def test_reproduced_rerun_real_helper_denies_home_network_and_credentials(
     listener.listen(1)
     listener.settimeout(0.3)
     port = listener.getsockname()[1]
+    outside_tmp = Path("/tmp") / f"saga-review-outside-{os.getpid()}"
+    outside_tmp.write_text("outside-sentinel\n", encoding="utf-8")
     script.write_text(
-        "import os, pathlib, socket, sys\n"
-        "outside, canary, port = sys.argv[1], sys.argv[2], int(sys.argv[3])\n"
+        "import os, pathlib, socket, subprocess, sys\n"
+        "outside, canary, port, private = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]\n"
         "print('HOME=' + os.environ.get('HOME', ''))\n"
         "for name in ('AWS_SECRET_ACCESS_KEY', 'GITHUB_TOKEN', 'TYPESAFE_API_KEY'):\n"
         "    print(name + '=' + ('set' if os.environ.get(name) else 'absent'))\n"
@@ -918,6 +953,20 @@ def test_reproduced_rerun_real_helper_denies_home_network_and_credentials(
         "    print('canary=' + pathlib.Path(canary).read_text(encoding='utf-8').strip())\n"
         "except OSError:\n"
         "    print('canary=blocked')\n"
+        "try:\n"
+        "    print('privatetmp=' + pathlib.Path(private).read_text(encoding='utf-8').strip())\n"
+        "except OSError:\n"
+        "    print('privatetmp=blocked')\n"
+        "try:\n"
+        "    pasted = subprocess.run(['/usr/bin/pbpaste'], capture_output=True, text=True, timeout=3)\n"
+        "    print('clipboard=code:%s:bytes:%s' % (pasted.returncode, len(pasted.stdout or '')))\n"
+        "except Exception:\n"
+        "    print('clipboard=blocked')\n"
+        "try:\n"
+        "    pathlib.Path('/dev/null').write_text('')\n"
+        "    print('devnull=ok')\n"
+        "except OSError:\n"
+        "    print('devnull=blocked')\n"
         "try:\n"
         "    sock = socket.create_connection(('127.0.0.1', port), timeout=2)\n"
         "    sock.close()\n"
@@ -934,7 +983,7 @@ def test_reproduced_rerun_real_helper_denies_home_network_and_credentials(
         assert name not in env
     try:
         result = C.run_confined(
-            [python, str(script), str(outside), str(canary), str(port)],
+            [python, str(script), str(outside), str(canary), str(port), str(outside_tmp)],
             scratch, env, scratch, runner=T.subprocess_runner, timeout=30,
         )
         accepted = False
@@ -947,10 +996,18 @@ def test_reproduced_rerun_real_helper_denies_home_network_and_credentials(
     finally:
         listener.close()
         canary.unlink(missing_ok=True)
+        outside_tmp.unlink(missing_ok=True)
     assert result.code == 0, result.stderr
     text = result.stdout
     assert "outside=blocked" in text
     assert "canary=blocked" in text
+    assert "privatetmp=blocked" in text
+    assert "devnull=ok" in text
+    clipboard = next(line for line in text.splitlines() if line.startswith("clipboard="))
+    if clipboard != "clipboard=blocked":
+        code_text, byte_text = clipboard.removeprefix("clipboard=code:").split(":bytes:")
+        assert code_text != "0"
+        assert byte_text == "0"
     assert "connect=blocked" in text
     assert accepted is False
     assert not outside.exists()
@@ -961,7 +1018,166 @@ def test_reproduced_rerun_real_helper_denies_home_network_and_credentials(
         assert f"{name}=absent" in text
 
 
-def test_no_reviewer_session_covers_every_argument_vector(tmp_path: Path) -> None:
+def test_reproduced_rerun_generic_header_is_traced(tmp_path: Path) -> None:
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    home = tmp_path / "home"
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    found = _finding("A generic header is not the failure.")
+    found["proof"] = {
+        "test": "tests/test_changed.py::test_changed",
+        "command": "python3 -m pytest tests/test_changed.py -q",
+        "output": "Traceback (most recent call last):",
+    }
+    confine = _Confine(
+        1, "Traceback (most recent call last):\nModuleNotFoundError: No module named 'app'\n",
+    )
+    code, err = _finish(
+        packet, [(_answer([found]), _result(scratch, changes))],
+        home, runner, ask=_ask(consequence_status="error"), confine=confine,
+    )
+    assert code == 0, err
+    run = _read(packet / "review-run.json")
+    stored = next(item for item in run["findings"] if item["source"]["kind"] == "llm")
+    assert stored["evidence"] == "traced"
+    assert stored["unconfirmed"] is False
+    assert confine.calls
+
+
+def test_reproduced_rerun_refuses_a_symlink(tmp_path: Path) -> None:
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    home = tmp_path / "home"
+    scratch = tmp_path / "scratch"
+    (scratch / "tests").mkdir(parents=True)
+    secret = tmp_path / "secret-test.py"
+    secret.write_text("def test_changed():\n    raise AssertionError('returned 2')\n", encoding="utf-8")
+    (scratch / "tests" / "test_changed.py").symlink_to(secret)
+    changes = {"added": ["tests/test_changed.py"], "modified": [], "deleted": []}
+    confine = _Confine(1, _CAPTURED)
+    code, err = _finish(
+        packet, [(_answer([_finding("A link is not the test file.")]), _result(scratch, changes))],
+        home, runner, ask=_ask(consequence_status="error"), confine=confine,
+    )
+    assert code == 0, err
+    run = _read(packet / "review-run.json")
+    stored = next(item for item in run["findings"] if item["source"]["kind"] == "llm")
+    assert stored["evidence"] == "traced"
+    assert any(entry["reason"] == "missing-test-file" for entry in run["degraded_inputs"])
+    assert confine.calls == []
+
+
+@pytest.mark.skipif(C.platform_helper() is None, reason="no reproduction helper on this platform")
+def test_reproduced_rerun_real_helper_confirms_an_imported_failure(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("def add(a, b):\n    return 0\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    profile = _profile(tmp_path / "outside")
+    builder = _builder(tmp_path / "builder.json")
+    home = tmp_path / "home"
+    home.mkdir()
+    _machine(home, "available")
+    packet = tmp_path / "packet"
+    code, err = _prepare(
+        repo, base, head, profile, builder, packet, home, _Runner(), start=2, ask=_ask(),
+    )
+    assert code == 0, err
+    scratch = tmp_path / "scratch"
+    (scratch / "tests").mkdir(parents=True)
+    (scratch / "tests" / "test_app.py").write_text(
+        "import sys\n"
+        "from pathlib import Path\n"
+        "sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))\n"
+        "import app\n"
+        "\n"
+        "def test_add():\n"
+        "    got = app.add(1, 1)\n"
+        "    assert got == 2, f'add returned {got}'\n",
+        encoding="utf-8",
+    )
+    changes = {"added": ["tests/test_app.py"], "modified": [], "deleted": []}
+    confirmed = _finding("The add function returns 0.", key="confirmed")
+    confirmed["location"] = {**_location(), "anchor": "add returned 0", "function": "add"}
+    confirmed["proof"] = {
+        "test": "tests/test_app.py::test_add",
+        "command": "python3 -m pytest tests/test_app.py::test_add -q --tb=line",
+        "output": "AssertionError: add returned 0",
+    }
+    unrelated = _finding("A missing module is not that failure.", key="unrelated")
+    unrelated["location"] = {**_location(), "anchor": "missing module", "function": "missing"}
+    unrelated["proof"] = {
+        "test": "tests/test_app.py::test_add",
+        "command": "python3 -c \"import missing_module_for_review\"",
+        "output": "AssertionError: add returned 0\nTraceback (most recent call last):",
+    }
+    code, err = _finish(
+        packet,
+        [(_answer([confirmed, unrelated]), _result(scratch, changes))],
+        home, _exec_runner(), ask=_ask(consequence_status="error"),
+    )
+    assert code == 0, err
+    run = _read(packet / "review-run.json")
+    stored = {
+        item["statement"]: item
+        for item in run["findings"]
+        if item["source"]["kind"] == "llm"
+    }
+    assert stored["The add function returns 0."]["evidence"] == "reproduced"
+    assert stored["A missing module is not that failure."]["evidence"] == "traced"
+
+
+def test_prepare_diff_error_writes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo, base, head = _repo(tmp_path, function=False)
+    profile = _profile(tmp_path / "outside")
+    builder = _builder(tmp_path / "builder.json")
+    home = tmp_path / "home"
+    home.mkdir()
+    out = tmp_path / "packet"
+    real = C.review_diff.read
+    calls = {"n": 0}
+
+    def flaky(*args: Any, **kwargs: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            raise C.review_diff.ReviewDiffError("diff failed")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(C.review_diff, "read", flaky)
+    code, err = _prepare(repo, base, head, profile, builder, out, home, _Runner(), start=4)
+    assert code == 2
+    assert "diff failed" in err
+    assert not out.exists()
+    assert calls["n"] >= 2
+
+
+def test_no_reviewer_session_covers_every_argument_vector(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawned: list[list[str]] = []
+    real_popen = subprocess.Popen
+
+    def recording_popen(args: Any, *rest: Any, **kwargs: Any) -> Any:
+        argv = list(args) if isinstance(args, (list, tuple)) else [str(args)]
+        spawned.append([str(part) for part in argv])
+        return real_popen(args, *rest, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", recording_popen)
+
+    def wrap_exec(name: str) -> None:
+        original = getattr(os, name, None)
+        if not callable(original):
+            return
+
+        def wrapped(file: Any, *rest: Any, **kwargs: Any) -> Any:
+            spawned.append([str(file)])
+            return original(file, *rest, **kwargs)
+
+        monkeypatch.setattr(os, name, wrapped)
+
+    for name in ("execv", "execve", "execvp", "execvpe", "posix_spawn", "posix_spawnp"):
+        wrap_exec(name)
     repo, base, head = _repo(tmp_path, function=False)
     profile = _profile(tmp_path / "outside")
     builder = _builder(tmp_path / "builder.json")
@@ -973,19 +1189,23 @@ def test_no_reviewer_session_covers_every_argument_vector(tmp_path: Path) -> Non
     assert code == 0, err
     scratch, changes = _scratch(tmp_path, with_test=True)
     pair = (_answer([_finding("A retry returns the new number.")]), _result(scratch, changes))
-    code, err = _finish(out, [pair], home, runner, ask=_ask(), confine=_Confine(1, "AssertionError: returned 2\n"))
+    matched = _Confine(1, _CAPTURED)
+    passed = _Confine(0, "passed\n")
+    code, err = _finish(out, [pair], home, runner, ask=_ask(), confine=matched)
     assert code == 0, err
     other = tmp_path / "final-packet"
     code, err = _prepare(repo, base, head, profile, builder, other, home, runner, start=4)
     assert code == 0, err
     code, err = _finish(
         other, [pair], home, runner, ask=_ask(),
-        confine=_Confine(0, "passed\n"), final=True, directory=tmp_path / "final-answers",
+        confine=passed, final=True, directory=tmp_path / "final-answers",
     )
     assert code == 0, err
     names = {Path(call[0]).name for call in runner.calls}
     assert names <= _ALLOWED
-    for call in runner.calls:
+    assert spawned
+    for call in [*runner.calls, *spawned, *matched.calls, *passed.calls]:
+        assert Path(call[0]).name in _ALLOWED
         assert Path(call[0]).name not in {"claude", "codex", "launcher.py"}
         assert not str(call[0]).endswith("launcher.py")
 

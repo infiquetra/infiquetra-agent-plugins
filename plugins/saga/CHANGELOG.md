@@ -115,6 +115,12 @@
 
 ### Fixed
 
+- Issue 160: a reproduced finding is confirmed only when the re-run, on a tree of the head
+  commit plus the reviewer's test files, fails with the recorded line. A generic traceback
+  header does not count. The seatbelt does not allow mach-lookup, does not read all of
+  `/private`, and allows the device writes pytest needs. A symlink is not copied into the
+  re-run. A failed `prepare` leaves `--out` uncreated.
+
 - Issue 149: `may-block` reads the calibration file and the component bytes from the installed
   saga package. `--root` selects the base commit's profile and does not select that file. An
   unreadable profile exits 2. The fingerprint also names the Jev sweep's three paths.

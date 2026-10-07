@@ -6,9 +6,17 @@
 
 **Evidence.** Issue #160. `plugins/saga/scripts/review_command.py` (`_matches`, `_downgrade`, `_rerun_one`).
 
-**Mechanism.** The reviewer's proof names the command and the first line of the failure. The re-run can exit non-zero because the interpreter is missing, the timeout fired, or a different assertion failed. Those are not the finding the reviewer recorded. The command keeps `evidence: reproduced` only when the exit is non-zero and that recorded line appears in the captured output. Every other result is stored as traced, with `unconfirmed` false, because the validator allows that flag only while the finding is still reproduced and Jev gave no consequence.
+**Mechanism.** The reviewer's proof names the command and a line of the failure. The re-run can exit non-zero because the interpreter is missing, the timeout fired, or a different assertion failed. Those are not the finding the reviewer recorded. The command keeps `evidence: reproduced` only when the exit is non-zero and the last specific line of the recorded output appears in the captured output. A generic traceback header is not that line. Every other result is stored as traced, with `unconfirmed` false, because the validator allows that flag only while the finding is still reproduced and Jev gave no consequence.
 
 **Generalizable rule.** A check that claims to have reproduced a recorded failure has to match the recorded output, not only the exit code.
+
+### An empty re-run tree makes every import look like the recorded failure
+
+**Evidence.** Issue #160 repair, after the code review of `07dd234`. `plugins/saga/scripts/review_command.py` (`_export_head`, `_specific_line`, `_seatbelt`). The proof is `test_reproduced_rerun_real_helper_confirms_an_imported_failure`.
+
+**Mechanism.** The re-run copied only the reviewer's test file into an empty directory, so a test that imports the change failed with `ModuleNotFoundError`. The match used the first line of the recorded output, and for a Python failure that line is `Traceback (most recent call last):`, which the unrelated crash also prints. The finding stayed reproduced. The re-run now exports the head commit and lays the reviewer's test files over that tree. The matched line is the last recorded line that is not a generic header, and a recorded test id has to appear in the captured output as well.
+
+**Generalizable rule.** A reproduction check has to run against the code under test, and the line it matches has to be specific to that failure.
 
 ### A shared binary is not a catalogue claim, and admission does not touch the home directory unless asked
 
