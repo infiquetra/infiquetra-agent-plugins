@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-07
+
 ### Changed
 
 - `model-prices.yaml` re-verified 2026-10-07: Sonnet 5.5 cache reads are $0.10 per million, and a

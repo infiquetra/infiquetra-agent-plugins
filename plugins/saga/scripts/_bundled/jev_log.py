@@ -1,6 +1,6 @@
 # --- generated bundle stamp: do not edit ---
 # generated-by: scripts/bundle_fleet_module.py
-# source-version: 0.33.0
+# source-version: 0.33.1
 # source-commit: authored
 # source-path: scripts/fleet_commons/jev_log.py
 # source-sha256: cde66301d2025183fa550d2382c054c10e08ed0c98d1a4b50df4056570d6ab97

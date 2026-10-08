@@ -11,6 +11,8 @@ The catalog requires `python>=3.12`.
 
 ## [Unreleased]
 
+## [0.33.1] - 2026-10-07
+
 ### Changed
 
 - Re-tier the staffing defaults for Haiku 5.5 and the 2026-10-07 Sonnet 5.5 cache-read cut:

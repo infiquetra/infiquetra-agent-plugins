@@ -1,6 +1,6 @@
 # --- generated bundle stamp: do not edit ---
 # generated-by: scripts/bundle_fleet_module.py
-# source-version: 0.33.0
+# source-version: 0.33.1
 # source-commit: authored
 # source-path: scripts/fleet_commons/merge_guard.py
 # source-sha256: de69ceee48497b61ae1714e4c268a3dabb8c8f4c0d7ce63087a7bf09554d022d

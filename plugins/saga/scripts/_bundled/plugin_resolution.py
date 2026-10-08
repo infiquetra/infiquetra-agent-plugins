@@ -1,6 +1,6 @@
 # --- generated bundle stamp: do not edit ---
 # generated-by: scripts/bundle_fleet_module.py
-# source-version: 0.33.0
+# source-version: 0.33.1
 # source-commit: authored
 # source-path: scripts/fleet_commons/plugin_resolution.py
 # source-sha256: fb5d33676ac76697ad1bd3988f39625429968b64329095bfbfc916d08525c934

@@ -1,4 +1,6 @@
-<!-- matrix-status: current -->
+<!-- matrix-status: superseded -->
+<!-- superseded-by: 2026-10-07-agy-compatibility-notice.md -->
+<!-- superseded-reason: The package version moved from 0.6.2 to 0.6.3 for the 2026-10-07 release that re-tiers the fleet staffing defaults; no client assessment has been run against 0.6.3 yet. -->
 
 # Ten-client compatibility matrix — portable agy package (0.6.2)
 

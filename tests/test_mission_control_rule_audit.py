@@ -851,7 +851,7 @@ class ManifestVersionDerivationTests(unittest.TestCase):
         adapter = json.loads(
             (PACKAGE / "com.infiquetra.claude" / "plugin.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(manifest["version"], "2.21.2")
+        self.assertEqual(manifest["version"], "2.21.3")
         self.assertEqual(claude["version"], manifest["version"])
         self.assertEqual(adapter["version"], manifest["version"])
         changelog = (PACKAGE / "CHANGELOG.md").read_text(encoding="utf-8")
@@ -873,7 +873,7 @@ class RootReadmePinTests(unittest.TestCase):
         self.assertIn("acc99fe7", changelog)
         self.assertIn("upstream 2.21.0", changelog)
         manifest = json.loads((PACKAGE / "plugin.json").read_text(encoding="utf-8"))
-        self.assertEqual(manifest["version"], "2.21.2")
+        self.assertEqual(manifest["version"], "2.21.3")
         self.assertFalse((PACKAGE / "PROVENANCE.json").is_file())
 
 

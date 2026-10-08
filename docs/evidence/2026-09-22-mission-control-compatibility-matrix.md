@@ -1,5 +1,5 @@
 <!-- matrix-status: superseded -->
-<!-- superseded-by: 2026-10-04-mission-control-compatibility-matrix.md -->
+<!-- superseded-by: 2026-10-07-mission-control-compatibility-notice.md -->
 <!-- superseded-reason: The package version moved from 2.21.1 to 2.21.2 for the 2026-10-04 release, so the assessment was re-run and the record re-bound. The fresh run covers nine clients, because Agy replaced Gemini CLI on the operator's machine. -->
 
 # Ten-client compatibility matrix — portable mission-control package (2.21.1)

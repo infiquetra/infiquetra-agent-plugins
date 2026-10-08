@@ -1,6 +1,6 @@
 # --- generated bundle stamp: do not edit ---
 # generated-by: scripts/bundle_fleet_module.py
-# source-version: 0.33.0
+# source-version: 0.33.1
 # source-commit: authored
 # source-path: scripts/fleet_commons/tier_palette.py
 # source-sha256: cb17b48c7b4f075458d74bbc15031b9f41a060b3c6ac7cdc28b4330a1b641a10

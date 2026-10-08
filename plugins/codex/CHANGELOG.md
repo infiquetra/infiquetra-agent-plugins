@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.6] - 2026-10-07
+
+### Changed
+
+- `codex-coder` runs at `sonnet/high` instead of `sonnet/medium`, and `codex-reviewer` pins
+  `effort: high` rather than taking the session's effort, following the 2026-10-07 fleet tier
+  defaults. Bundled Fleet Core stamps name fleet-core 0.33.1.
+
 ## [0.1.5] - 2026-09-22
 
 0.1.5 — imported from infiquetra-claude-plugins@acc99fe7 (upstream 0.1.4); authored here from this commit; no provenance manifest from now on.
