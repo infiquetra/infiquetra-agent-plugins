@@ -1,5 +1,8 @@
 {
-  "schema": "question_bank.v1",
+  "approval": {
+    "date": "2026-10-07",
+    "fingerprint": "8ec3341be1132201774e48c2fd13b1e4f3869de2a2ec3b6e4864fc6e0fe58764"
+  },
   "lens": "architecture-maintainability",
   "policy": [
     {
@@ -13,25 +16,26 @@
   ],
   "questions": [
     {
-      "id": "architecture-maintainability.deployment-infrastructure.rollout-breaks-dependents",
-      "lens": "architecture-maintainability",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "a rollout, migration, or rollback step can break dependents or land half-applied"
-        },
-        {
-          "id": "no",
-          "definition": "rollout order, rollback, and migration checks are explicit and tested"
-        }
-      ],
       "examples": [
         "a migration giving a column a new name while the old code still reads it"
       ],
+      "id": "architecture-maintainability.deployment-infrastructure.rollout-breaks-dependents",
+      "kind": "yes-no",
+      "lens": "architecture-maintainability",
       "not_for": [
         "single-file configuration edits with no ordering"
       ],
+      "options": [
+        {
+          "definition": "a rollout, migration, or rollback step can break dependents or land half-applied",
+          "id": "yes"
+        },
+        {
+          "definition": "rollout order, rollback, and migration checks are explicit and tested",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
       "when": {
         "paths": [
           ".github/workflows/**",
@@ -43,29 +47,29 @@
           "**/migrations/**",
           "**/migrate/**"
         ]
-      },
-      "piece": "function"
+      }
     },
     {
-      "id": "architecture-maintainability.documentation-clarity.docs-must-change-too",
-      "lens": "architecture-maintainability",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "the change needs a document, example, or help text updated beside it"
-        },
-        {
-          "id": "no",
-          "definition": "every document, example, and help text the change touches is updated"
-        }
-      ],
       "examples": [
         "a renamed command whose reference page still shows the old words"
       ],
+      "id": "architecture-maintainability.documentation-clarity.docs-must-change-too",
+      "kind": "yes-no",
+      "lens": "architecture-maintainability",
       "not_for": [
         "internal notes nobody reads to use the change"
       ],
+      "options": [
+        {
+          "definition": "the change needs a document, example, or help text updated beside it",
+          "id": "yes"
+        },
+        {
+          "definition": "every document, example, and help text the change touches is updated",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
       "when": {
         "languages": [
           "python",
@@ -76,29 +80,29 @@
           "shell",
           "markdown"
         ]
-      },
-      "piece": "function"
+      }
     },
     {
-      "id": "architecture-maintainability.agent-usability.capability-hidden-from-agents",
-      "lens": "architecture-maintainability",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "a capability an agent must use is undiscoverable, undescribed, or misdescribed"
-        },
-        {
-          "id": "no",
-          "definition": "each capability ships its description, schema, and an example that works"
-        }
-      ],
       "examples": [
         "a new command with no entry in the command list agents read"
       ],
+      "id": "architecture-maintainability.agent-usability.capability-hidden-from-agents",
+      "kind": "yes-no",
+      "lens": "architecture-maintainability",
       "not_for": [
         "human-only surfaces, which agents never operate"
       ],
+      "options": [
+        {
+          "definition": "a capability an agent must use is undiscoverable, undescribed, or misdescribed",
+          "id": "yes"
+        },
+        {
+          "definition": "each capability ships its description, schema, and an example that works",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
       "when": {
         "languages": [
           "python",
@@ -109,73 +113,73 @@
           "shell",
           "markdown"
         ]
-      },
-      "piece": "function"
+      }
     },
     {
-      "id": "architecture-maintainability.prose-rule-breach",
-      "lens": "architecture-maintainability",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "the change breaks a rule written only in prose: instructions, decisions, or conventions"
-        },
-        {
-          "id": "no",
-          "definition": "the change fits the written rules, or carries its exception record"
-        }
-      ],
       "examples": [
         "a new script ignoring the repository's ban on network calls in hooks"
       ],
+      "id": "architecture-maintainability.prose-rule-breach",
+      "kind": "yes-no",
+      "lens": "architecture-maintainability",
       "not_for": [
         "rules that exist as checks; those block on their own"
       ],
+      "options": [
+        {
+          "definition": "the change breaks a rule written only in prose: instructions, decisions, or conventions",
+          "id": "yes"
+        },
+        {
+          "definition": "the change fits the written rules, or carries its exception record",
+          "id": "no"
+        }
+      ],
       "piece": "function"
     },
     {
-      "id": "architecture-maintainability.pattern-departure-unrecorded",
-      "lens": "architecture-maintainability",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "the change departs from an established pattern with no decision record"
-        },
-        {
-          "id": "no",
-          "definition": "the change follows the pattern, or records why it does not"
-        }
-      ],
       "examples": [
         "a second way to load configuration beside the established loader"
       ],
+      "id": "architecture-maintainability.pattern-departure-unrecorded",
+      "kind": "yes-no",
+      "lens": "architecture-maintainability",
       "not_for": [
         "brand-new ground with no pattern to follow"
       ],
+      "options": [
+        {
+          "definition": "the change departs from an established pattern with no decision record",
+          "id": "yes"
+        },
+        {
+          "definition": "the change follows the pattern, or records why it does not",
+          "id": "no"
+        }
+      ],
       "piece": "function"
     },
     {
-      "id": "architecture-maintainability.public-surface-grows",
-      "lens": "architecture-maintainability",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "the change widens what others must support: new public names with no need shown"
-        },
-        {
-          "id": "no",
-          "definition": "each new public name is needed and minimal"
-        }
-      ],
       "examples": [
         "three new exported helpers where one private function would do"
       ],
+      "id": "architecture-maintainability.public-surface-grows",
+      "kind": "yes-no",
+      "lens": "architecture-maintainability",
       "not_for": [
         "surfaces the card explicitly asks to grow"
       ],
+      "options": [
+        {
+          "definition": "the change widens what others must support: new public names with no need shown",
+          "id": "yes"
+        },
+        {
+          "definition": "each new public name is needed and minimal",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
       "when": {
         "languages": [
           "python",
@@ -185,54 +189,61 @@
           "swift",
           "shell"
         ]
-      },
-      "piece": "function"
+      }
     },
     {
-      "id": "architecture-maintainability.single-user-abstraction",
-      "lens": "architecture-maintainability",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "a new helper, layer, or option serves exactly one caller, adding indirection for nothing"
-        },
-        {
-          "id": "no",
-          "definition": "each abstraction has the callers that justify it, or stays inline"
-        }
-      ],
       "examples": [
         "a new loader module imported by one test helper"
       ],
+      "id": "architecture-maintainability.single-user-abstraction",
+      "kind": "yes-no",
+      "lens": "architecture-maintainability",
       "not_for": [
         "a second caller arriving in the same change"
       ],
-      "when": {
-        "languages": ["python", "typescript", "dart", "rust", "swift", "shell"]
-      },
-      "piece": "function"
-    },
-    {
-      "id": "architecture-maintainability.test-only-production-path",
-      "lens": "architecture-maintainability",
-      "kind": "yes-no",
       "options": [
         {
-          "id": "yes",
-          "definition": "production code exists only to serve tests: hooks, backdoors, or test-only branches"
+          "definition": "a new helper, layer, or option serves exactly one caller, adding indirection for nothing",
+          "id": "yes"
         },
         {
-          "id": "no",
-          "definition": "tests reach production through its real surface"
+          "definition": "each abstraction has the callers that justify it, or stays inline",
+          "id": "no"
         }
       ],
+      "piece": "function",
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      }
+    },
+    {
       "examples": [
         "a public setter added so a test can place state"
       ],
+      "id": "architecture-maintainability.test-only-production-path",
+      "kind": "yes-no",
+      "lens": "architecture-maintainability",
       "not_for": [
         "seams the design documents for extension"
       ],
+      "options": [
+        {
+          "definition": "production code exists only to serve tests: hooks, backdoors, or test-only branches",
+          "id": "yes"
+        },
+        {
+          "definition": "tests reach production through its real surface",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
       "when": {
         "languages": [
           "python",
@@ -242,29 +253,29 @@
           "swift",
           "shell"
         ]
-      },
-      "piece": "function"
+      }
     },
     {
-      "id": "architecture-maintainability.error-handling-scattered",
-      "lens": "architecture-maintainability",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "each call site handles errors its own way instead of the shared one"
-        },
-        {
-          "id": "no",
-          "definition": "errors flow through the one shared result or handler"
-        }
-      ],
       "examples": [
         "three callers of one function returning three different fallbacks"
       ],
+      "id": "architecture-maintainability.error-handling-scattered",
+      "kind": "yes-no",
+      "lens": "architecture-maintainability",
       "not_for": [
         "sites the shared handler cannot reach"
       ],
+      "options": [
+        {
+          "definition": "each call site handles errors its own way instead of the shared one",
+          "id": "yes"
+        },
+        {
+          "definition": "errors flow through the one shared result or handler",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
       "when": {
         "languages": [
           "python",
@@ -274,29 +285,29 @@
           "swift",
           "shell"
         ]
-      },
-      "piece": "function"
+      }
     },
     {
-      "id": "architecture-maintainability.layer-called-up-at-runtime",
-      "lens": "architecture-maintainability",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "a lower layer calls into an upper one at runtime"
-        },
-        {
-          "id": "no",
-          "definition": "runtime calls point down the layers like the imports do"
-        }
-      ],
       "examples": [
         "a storage helper invoking a handler through a callback the handler passed down"
       ],
+      "id": "architecture-maintainability.layer-called-up-at-runtime",
+      "kind": "yes-no",
+      "lens": "architecture-maintainability",
       "not_for": [
         "helpers both layers share by design"
       ],
+      "options": [
+        {
+          "definition": "a lower layer calls into an upper one at runtime",
+          "id": "yes"
+        },
+        {
+          "definition": "runtime calls point down the layers like the imports do",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
       "when": {
         "languages": [
           "python",
@@ -306,29 +317,29 @@
           "swift",
           "shell"
         ]
-      },
-      "piece": "function"
+      }
     },
     {
-      "id": "architecture-maintainability.option-nothing-can-set",
-      "lens": "architecture-maintainability",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "a flag, option, or setting exists that no caller can set or reach"
-        },
-        {
-          "id": "no",
-          "definition": "each flag is set somewhere the tests cover"
-        }
-      ],
       "examples": [
         "a workers count read from an option that no command defines"
       ],
+      "id": "architecture-maintainability.option-nothing-can-set",
+      "kind": "yes-no",
+      "lens": "architecture-maintainability",
       "not_for": [
         "reserved flags held for a planned use"
       ],
+      "options": [
+        {
+          "definition": "a flag, option, or setting exists that no caller can set or reach",
+          "id": "yes"
+        },
+        {
+          "definition": "each flag is set somewhere the tests cover",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
       "when": {
         "languages": [
           "python",
@@ -338,29 +349,29 @@
           "swift",
           "shell"
         ]
-      },
-      "piece": "function"
+      }
     },
     {
-      "id": "architecture-maintainability.comment-lies-about-code",
-      "lens": "architecture-maintainability",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "a comment, docstring, or message describes behavior the code beside it does not have"
-        },
-        {
-          "id": "no",
-          "definition": "each comment matches the code it stands beside"
-        }
-      ],
       "examples": [
         "a comment promising retries above code that tries once"
       ],
+      "id": "architecture-maintainability.comment-lies-about-code",
+      "kind": "yes-no",
+      "lens": "architecture-maintainability",
       "not_for": [
         "aspirational roadmap notes, marked as such"
       ],
+      "options": [
+        {
+          "definition": "a comment, docstring, or message describes behavior the code beside it does not have",
+          "id": "yes"
+        },
+        {
+          "definition": "each comment matches the code it stands beside",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
       "when": {
         "languages": [
           "python",
@@ -370,8 +381,8 @@
           "swift",
           "shell"
         ]
-      },
-      "piece": "function"
+      }
     }
-  ]
+  ],
+  "schema": "question_bank.v1"
 }

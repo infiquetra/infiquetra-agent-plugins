@@ -1,5 +1,8 @@
 {
-  "schema": "question_bank.v1",
+  "approval": {
+    "date": "2026-10-07",
+    "fingerprint": "07071cacb058394e64437f71afdceb3d90f61a561eabf38eee4ac9409a761931"
+  },
   "lens": "testing",
   "policy": [
     {
@@ -25,268 +28,269 @@
   ],
   "questions": [
     {
-      "id": "testing.test-fakes-code-under-test",
-      "lens": "testing",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "a test replaces the code under test with a double, so it passes while the code is wrong"
-        },
-        {
-          "id": "no",
-          "definition": "doubles stand only at the boundary; the unit under test runs for real"
-        }
-      ],
       "examples": [
         "a test that stubs the function it claims to verify, then asserts the stub ran"
       ],
+      "id": "testing.test-fakes-code-under-test",
+      "kind": "yes-no",
+      "lens": "testing",
       "not_for": [
         "doubles at the system boundary, such as a fake clock"
       ],
+      "options": [
+        {
+          "definition": "a test replaces the code under test with a double, so it passes while the code is wrong",
+          "id": "yes"
+        },
+        {
+          "definition": "doubles stand only at the boundary; the unit under test runs for real",
+          "id": "no"
+        }
+      ],
       "piece": "function"
     },
     {
-      "id": "testing.test-writes-live-system",
-      "lens": "testing",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "a test writes to a live or shared system"
-        },
-        {
-          "id": "no",
-          "definition": "tests run against sandbox doubles with no outside connection"
-        }
-      ],
       "examples": [
         "a test creating rows in the shared development database"
       ],
+      "id": "testing.test-writes-live-system",
+      "kind": "yes-no",
+      "lens": "testing",
       "not_for": [
         "read-only fixtures committed with the repository"
       ],
+      "options": [
+        {
+          "definition": "a test writes to a live or shared system",
+          "id": "yes"
+        },
+        {
+          "definition": "tests run against sandbox doubles with no outside connection",
+          "id": "no"
+        }
+      ],
       "piece": "function"
     },
     {
-      "id": "testing.asserts-nothing",
-      "lens": "testing",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "a test can pass without checking anything: no assertion, or one that cannot fail"
-        },
-        {
-          "id": "no",
-          "definition": "each test asserts an outcome that the pre-fix code fails"
-        }
-      ],
       "examples": [
         "a test that calls the function and asserts true"
       ],
+      "id": "testing.asserts-nothing",
+      "kind": "yes-no",
+      "lens": "testing",
       "not_for": [
         "smoke tests that fail loudly on exceptions"
       ],
+      "options": [
+        {
+          "definition": "a test can pass without checking anything: no assertion, or one that cannot fail",
+          "id": "yes"
+        },
+        {
+          "definition": "each test asserts an outcome that the pre-fix code fails",
+          "id": "no"
+        }
+      ],
       "piece": "function"
     },
     {
-      "id": "testing.only-tests-the-mock",
-      "lens": "testing",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "a test asserts its doubles were called instead of asserting an outcome"
-        },
-        {
-          "id": "no",
-          "definition": "assertions read outcomes; doubles are setup, not the subject"
-        }
-      ],
       "examples": [
         "asserting the sender mock received exactly one call, with no check on what was sent"
       ],
+      "id": "testing.only-tests-the-mock",
+      "kind": "yes-no",
+      "lens": "testing",
       "not_for": [
         "contract tests whose subject is the call itself"
       ],
+      "options": [
+        {
+          "definition": "a test asserts its doubles were called instead of asserting an outcome",
+          "id": "yes"
+        },
+        {
+          "definition": "assertions read outcomes; doubles are setup, not the subject",
+          "id": "no"
+        }
+      ],
       "piece": "function"
     },
     {
-      "id": "testing.sleep-waits-for-timing",
-      "lens": "testing",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "a test waits on real time: sleeping, polling a clock, or racing a timeout"
-        },
-        {
-          "id": "no",
-          "definition": "timing comes from a fake clock or an explicit signal"
-        }
-      ],
       "examples": [
         "sleeping two seconds then hoping the worker finished"
       ],
+      "id": "testing.sleep-waits-for-timing",
+      "kind": "yes-no",
+      "lens": "testing",
       "not_for": [
         "performance tests measuring real elapsed time"
       ],
+      "options": [
+        {
+          "definition": "a test waits on real time: sleeping, polling a clock, or racing a timeout",
+          "id": "yes"
+        },
+        {
+          "definition": "timing comes from a fake clock or an explicit signal",
+          "id": "no"
+        }
+      ],
       "piece": "function"
     },
     {
-      "id": "testing.branches-on-environment",
-      "lens": "testing",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "a test's result depends on the machine: environment, locale, or files outside the repo"
-        },
-        {
-          "id": "no",
-          "definition": "the test sets its world up itself and passes on any machine"
-        }
-      ],
       "examples": [
         "skipping unless an environment variable names a real account"
       ],
+      "id": "testing.branches-on-environment",
+      "kind": "yes-no",
+      "lens": "testing",
       "not_for": [
         "platform-specific tests guarded by platform"
       ],
+      "options": [
+        {
+          "definition": "a test's result depends on the machine: environment, locale, or files outside the repo",
+          "id": "yes"
+        },
+        {
+          "definition": "the test sets its world up itself and passes on any machine",
+          "id": "no"
+        }
+      ],
       "piece": "function"
     },
     {
-      "id": "testing.shared-state-between-tests",
-      "lens": "testing",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "tests share writable state: files, rows, or globals one test leaves for the next"
-        },
-        {
-          "id": "no",
-          "definition": "each test builds and tears down its own state"
-        }
-      ],
       "examples": [
         "two tests writing the same fixture file in the repository"
       ],
+      "id": "testing.shared-state-between-tests",
+      "kind": "yes-no",
+      "lens": "testing",
       "not_for": [
         "read-only fixtures"
       ],
+      "options": [
+        {
+          "definition": "tests share writable state: files, rows, or globals one test leaves for the next",
+          "id": "yes"
+        },
+        {
+          "definition": "each test builds and tears down its own state",
+          "id": "no"
+        }
+      ],
       "piece": "function"
     },
     {
-      "id": "testing.catches-too-much",
-      "lens": "testing",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "a test hides errors it should surface: broad catches that pass anyway"
-        },
-        {
-          "id": "no",
-          "definition": "errors fail the test unless the test names the exact error it expects"
-        }
-      ],
       "examples": [
         "wrapping the call in a bare except that records nothing"
       ],
+      "id": "testing.catches-too-much",
+      "kind": "yes-no",
+      "lens": "testing",
       "not_for": [
         "tests of the error path itself"
       ],
+      "options": [
+        {
+          "definition": "a test hides errors it should surface: broad catches that pass anyway",
+          "id": "yes"
+        },
+        {
+          "definition": "errors fail the test unless the test names the exact error it expects",
+          "id": "no"
+        }
+      ],
       "piece": "function"
     },
     {
-      "id": "testing.knows-implementation-details",
-      "lens": "testing",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "a test pins implementation details: privates, call counts, or internal order"
-        },
-        {
-          "id": "no",
-          "definition": "assertions read public behavior only"
-        }
-      ],
       "examples": [
         "asserting a private helper ran three times"
       ],
+      "id": "testing.knows-implementation-details",
+      "kind": "yes-no",
+      "lens": "testing",
       "not_for": [
         "white-box tests whose subject is the internals"
       ],
+      "options": [
+        {
+          "definition": "a test pins implementation details: privates, call counts, or internal order",
+          "id": "yes"
+        },
+        {
+          "definition": "assertions read public behavior only",
+          "id": "no"
+        }
+      ],
       "piece": "function"
     },
     {
-      "id": "testing.same-assertion-twice",
-      "lens": "testing",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "two tests assert the same behavior, so one can rot while the other guards it"
-        },
-        {
-          "id": "no",
-          "definition": "each behavior has one test that guards it"
-        }
-      ],
       "examples": [
         "a new test repeating the assertions of the test beside it"
       ],
+      "id": "testing.same-assertion-twice",
+      "kind": "yes-no",
+      "lens": "testing",
       "not_for": [
         "intentional overlap across test levels"
       ],
+      "options": [
+        {
+          "definition": "two tests assert the same behavior, so one can rot while the other guards it",
+          "id": "yes"
+        },
+        {
+          "definition": "each behavior has one test that guards it",
+          "id": "no"
+        }
+      ],
       "piece": "function"
     },
     {
-      "id": "testing.bakes-in-today",
-      "lens": "testing",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "a test bakes in the current date, time, or data that will rot"
-        },
-        {
-          "id": "no",
-          "definition": "dates and data come from fixed fixtures or a fake clock"
-        }
-      ],
       "examples": [
         "asserting an expiry computed from the real current year"
       ],
+      "id": "testing.bakes-in-today",
+      "kind": "yes-no",
+      "lens": "testing",
       "not_for": [
         "tests of time handling with a fake clock"
+      ],
+      "options": [
+        {
+          "definition": "a test bakes in the current date, time, or data that will rot",
+          "id": "yes"
+        },
+        {
+          "definition": "dates and data come from fixed fixtures or a fake clock",
+          "id": "no"
+        }
       ],
       "piece": "function"
     },
     {
-      "id": "testing.unseeded-randomness",
-      "lens": "testing",
-      "kind": "yes-no",
-      "options": [
-        {
-          "id": "yes",
-          "definition": "a test uses randomness no seed fixes, so failures cannot repeat"
-        },
-        {
-          "id": "no",
-          "definition": "each random choice takes a fixed seed"
-        }
-      ],
       "examples": [
         "generating ids with no seed, then asserting on their order"
       ],
+      "id": "testing.unseeded-randomness",
+      "kind": "yes-no",
+      "lens": "testing",
       "not_for": [
         "fuzzing harnesses, which log their seeds"
       ],
+      "options": [
+        {
+          "definition": "a test uses randomness no seed fixes, so failures cannot repeat",
+          "id": "yes"
+        },
+        {
+          "definition": "each random choice takes a fixed seed",
+          "id": "no"
+        }
+      ],
       "piece": "function"
     }
-  ]
+  ],
+  "schema": "question_bank.v1"
 }
