@@ -903,6 +903,50 @@ def test_prompt_names_every_required_contract_field(path: pathlib.Path) -> None:
     )
 
 
+_POLICY_PATH = "plugins/saga/references/question-banks/policy-questions.json"
+_IMPLEMENTER_PROMPTS = (
+    "implementer.md",
+    "standard-repair-implementer.md",
+    "expert-repair-implementer.md",
+)
+
+
+def _policy_input_section(path: pathlib.Path) -> str:
+    """The input that names the policy, with fenced examples removed.
+
+    ``implementer.md`` carries the duty in the paragraph under the review-expectations lead-in.
+    The repair prompts have no such heading, so the bound is the input before the output contract.
+    """
+    body = strip_fenced_blocks(path.read_text(encoding="utf-8"))
+    if path.name == "implementer.md":
+        opened = body.index("**The review expectations**")
+        closed = body.index("**The mechanical check baseline**")
+        return body[opened:closed]
+    closed = re.search(r"^## Output contract\s*$", body, re.MULTILINE)
+    assert closed is not None, f"{path.name}: cannot bound the input section"
+    return body[: closed.start()]
+
+
+def test_policy_questions_are_named_in_each_implementer_prompt() -> None:
+    """The three builders are told where the questions live, in the input, not only the output."""
+    for name in _IMPLEMENTER_PROMPTS:
+        path = ROLES_DIR / name
+        section = _policy_input_section(path)
+        assert _POLICY_PATH in section, name
+        assert "applies" in section, name
+        assert "builder_record" in path.read_text(encoding="utf-8"), name
+    committed = subprocess.check_output(
+        [
+            "git",
+            "-C",
+            str(CATALOG),
+            "show",
+            "HEAD:plugins/agent-launcher/roles/lifecycle-snapshot.json",
+        ],
+    )
+    assert SNAPSHOT_PATH.read_bytes() == committed
+
+
 @pytest.mark.parametrize("path", PROMPT_FILES, ids=[p.name for p in PROMPT_FILES])
 def test_prompt_role_name_matches_the_lifecycle(path: pathlib.Path) -> None:
     """The ``role`` value is the lifecycle's readable name, compared without regard to case.

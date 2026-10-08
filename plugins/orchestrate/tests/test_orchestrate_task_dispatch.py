@@ -279,6 +279,25 @@ class TestTheBuilderDoesNotReviewItself:
         assert "Skip the Phase 5 code-review gate" not in sent
 
 
+class TestPolicyQuestionsReachTheWorkTask:
+    """A /saga:work task, including a replacement worker, is told where the questions live."""
+
+    def test_policy_questions_are_on_the_saga_work_task(self, orchestrate: ModuleType) -> None:
+        path = "plugins/saga/references/question-banks/policy-questions.json"
+        sent = orchestrate.normalize_task("claude", "/saga:work docs/plans/x.md")
+        assert path in sent
+        template = orchestrate.Unit(name="u", vendor="claude", task="/saga:work docs/plans/x.md")
+        request = {"fix_id": "f1", "owner": "implementer", "touched_paths": ["a.py"]}
+        worker = orchestrate._replacement_worker(template, request, None, set())
+        assert worker.task.startswith("/saga:work ")
+        resent = orchestrate.normalize_task("claude", worker.task)
+        assert path in resent
+
+    def test_policy_questions_are_not_on_the_saga_plan_task(self, orchestrate: ModuleType) -> None:
+        sent = orchestrate.normalize_task("claude", "/saga:plan docs/plans/x.md")
+        assert "policy-questions.json" not in sent
+
+
 class TestRunSeesItsOwnReviewPhase:
     def test_true_when_a_unit_reviews_code(self, orchestrate: ModuleType) -> None:
         run = _run(orchestrate, "/saga:work docs/plans/x.md", "/saga:code-review the build")

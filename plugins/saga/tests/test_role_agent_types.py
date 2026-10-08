@@ -163,6 +163,9 @@ def test_the_prompt_is_the_library_file_body_behind_the_hosting_preamble(repo: P
     stripped = body[body.index("\n---\n", 4) + len("\n---\n") :].lstrip("\n")
 
     assert worker["prompt"] == role_agent_types.HOSTING_PREAMBLE + stripped
+    assert (
+        "plugins/saga/references/question-banks/policy-questions.json" in worker["prompt"]
+    )
     assert not worker["prompt"].startswith("---")
     assert "role_id: implementer" not in worker["prompt"]
     assert "Do not post comments on the issue" in worker["prompt"]
