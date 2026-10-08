@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- Issue #162: `scripts/builder_record.py` checks each unit's policy-question declarations and
+  proving tests, and stores a merged builder record on the run record. The build loop's unit
+  iteration refuses to hand off until that check passes, and the combined pass's review gate
+  refuses `--handoff` on an enforced block or a secret in the diff.
+
+### Fixed
+
+- Issue #162: a scan that does not run keeps its reason on the review and the iteration and
+  combined-pass printouts name that reason with the review status. A proving-test node id that is
+  absolute or contains a `..` segment is refused before pytest runs. A question id outside the
+  policy is reported as an unknown question.
+
 ## [1.3.2] - 2026-10-07
 
 ### Changed
@@ -12,21 +26,10 @@
 
 ### Added
 
-- Issue #162: `scripts/builder_record.py` checks each unit's policy-question declarations and
-  proving tests, and stores a merged builder record on the run record. The build loop's unit
-  iteration refuses to hand off until that check passes, and the combined pass's review gate
-  refuses `--handoff` on an enforced block or a secret in the diff.
 - Issue 157: the policy's 30 questions and four Jev question banks (10 to 20 questions each) in
   `references/question-banks/`, with `scripts/question_banks.py` loading approved sets, writing
   approvals, and rendering sitting material. The loader refuses any set whose content differs from
   its approval. The operator approved all four banks at their sittings on 2026-10-07.
-
-### Fixed
-
-- Issue #162: a scan that does not run keeps its reason on the review and the iteration and
-  combined-pass printouts name that reason with the review status. A proving-test node id that is
-  absolute or contains a `..` segment is refused before pytest runs. A question id outside the
-  policy is reported as an unknown question.
 
 ## [1.3.1] - 2026-10-07
 
