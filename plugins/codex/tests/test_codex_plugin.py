@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.1.6"
+VERSION = "0.1.7"
 REPOSITORY = "https://github.com/infiquetra/infiquetra-agent-plugins"
 
 

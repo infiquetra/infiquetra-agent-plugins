@@ -29,6 +29,12 @@ The `tests/test_agy_*` modules moved under `plugins/agy/tests/` with their `test
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-10-07
+
+### Changed
+
+- Bundled Fleet Core stamps name fleet-core 0.33.2 (Haiku effort shift).
+
 ## [0.6.1] - 2026-08-08
 
 ### Added - house-style presentation contract on the delegation bridge agents (#704)

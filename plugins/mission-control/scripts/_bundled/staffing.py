@@ -1,10 +1,10 @@
 # --- generated bundle stamp: do not edit ---
 # generated-by: scripts/bundle_fleet_module.py
-# source-version: 0.33.1
+# source-version: 0.33.2
 # source-commit: authored
 # source-path: scripts/fleet_commons/staffing.py
-# source-sha256: c7dfcdb667a66ef80d537a4b407ea4783b1ae65a67db541fa5ef14fca94e9806
-# output-sha256: c7dfcdb667a66ef80d537a4b407ea4783b1ae65a67db541fa5ef14fca94e9806
+# source-sha256: bac21fb4edd74024e0c54cf55d1df06469229d32f99fde58dad819b1e13b44a7
+# output-sha256: bac21fb4edd74024e0c54cf55d1df06469229d32f99fde58dad819b1e13b44a7
 # --- end generated bundle stamp ---
 #!/usr/bin/env python3
 """The one staffing resolver — "role or work shape, and for review the lens, to a tier" (#1021).
@@ -481,8 +481,9 @@ def _validate_jev_raise(
     """Validate a recorded Jev raise against the work shape's default it raises.
 
     A raise is exactly one step above its base: one model rung with the effort unchanged, or one
-    effort rung with the model unchanged. It never names the strongest model, and an effort off
-    the Claude palette (``max``) fails the palette check. Anything else is refused rather than
+    effort rung with the model unchanged. It never names the strongest model, and never lands
+    above the target model's raise ceiling (``sonnet/xhigh``, ``haiku/max``), the same bound
+    :func:`one_step_raise` keeps. Anything else is refused rather than
     applied, so a recorded lowering, a two-step jump, or a hand-edited record cannot reach a
     spawn through this layer. The recorded ``confidence``, ``reason`` and ``decision_id`` ride
     along in the run record; the resolver reads only the tier.
@@ -500,6 +501,12 @@ def _validate_jev_raise(
         raise StaffingError(
             f"{where}: {tier['model']}/{tier['effort']} is not exactly one step above the "
             f"default {base['model']}/{base['effort']} (one model rung or one effort rung)"
+        )
+    ceiling = _tier_palette.raise_ceiling(tier["model"])
+    if _tier_palette.effort_rank(tier["effort"]) > _tier_palette.effort_rank(ceiling):
+        raise StaffingError(
+            f"{where}: {tier['model']}/{tier['effort']} is above {tier['model']!r}'s raise "
+            f"ceiling {ceiling!r}"
         )
     return tier
 

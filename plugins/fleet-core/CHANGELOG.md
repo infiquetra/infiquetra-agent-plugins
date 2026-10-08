@@ -11,6 +11,18 @@ The catalog requires `python>=3.12`.
 
 ## [Unreleased]
 
+## [0.33.2] - 2026-10-07
+
+### Changed
+
+- Haiku efforts move up one rung (operator decision, 2026-10-07): `purely-mechanical` and
+  `offload-test-gated` haiku/medium, `mechanical` haiku/xhigh, `read-only-survey` haiku/max;
+  `implementation-test-gated` stays haiku/xhigh. `max` joins the Claude effort palette for haiku
+  only, with haiku's raise ceiling at xhigh so no raise lands on haiku/max. The expensive-effort
+  confirmation gate is the top effort of a model that is not cheap (xhigh), so no haiku tier asks
+  for confirmation. A recorded Jev raise above the target model's raise ceiling is now refused,
+  the same bound `one_step_raise` keeps. The effort rider gains a `max` line.
+
 ## [0.33.1] - 2026-10-07
 
 ### Changed

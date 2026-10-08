@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-10-07
+
+### Changed
+
+- The `/plan` tier table and the bundled Fleet Core staffing data are regenerated for the
+  Haiku effort shift (fleet-core 0.33.2): survey runs at haiku/max, mechanical at haiku/xhigh,
+  purely mechanical at haiku/medium.
+
 ### Added
 
 - Issue 157: the policy's 30 questions and four Jev question banks (10 to 20 questions each) in

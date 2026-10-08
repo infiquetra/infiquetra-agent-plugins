@@ -1,10 +1,10 @@
 # --- generated bundle stamp: do not edit ---
 # generated-by: scripts/bundle_fleet_module.py
-# source-version: 0.33.1
+# source-version: 0.33.2
 # source-commit: authored
 # source-path: scripts/fleet_commons/tier_palette.py
-# source-sha256: cb17b48c7b4f075458d74bbc15031b9f41a060b3c6ac7cdc28b4330a1b641a10
-# output-sha256: cb17b48c7b4f075458d74bbc15031b9f41a060b3c6ac7cdc28b4330a1b641a10
+# source-sha256: 783df5751618858f3cd73e989d4f6b0dd35a9324b256ad538a3ed1cf455af363
+# output-sha256: 783df5751618858f3cd73e989d4f6b0dd35a9324b256ad538a3ed1cf455af363
 # --- end generated bundle stamp ---
 #!/usr/bin/env python3
 """Canonical fleet tier palette — the model/effort vocabulary shared across plugins.
@@ -118,16 +118,19 @@ MODELS = _derive_ordered(_REGISTRY["models"], "rank", "model")
 EFFORTS = _derive_ordered(_REGISTRY["efforts"], "rung", "effort")
 
 # Portable scalar ladder from the version-2 subset. Includes ``max``; does not
-# include Codex ``ultra``. Existing ``EFFORTS`` stays the four-rung Claude set.
+# include Codex ``ultra``. ``EFFORTS`` is the Claude set, which gained ``max`` on
+# 2026-10-07 for haiku only.
 SCALAR_EFFORTS = _derive_ordered(_REGISTRY["scalar_efforts"], "rung", "scalar effort")
 
-# Per-model effort ceiling: the strongest effort the model actually runs. haiku
-# clamps below xhigh; the ladder ops and Tier.validate() consult this (#370).
+# Per-model effort ceiling: the strongest effort the model actually runs. Only haiku
+# reaches max; the ladder ops and Tier.validate() consult this (#370).
 _EFFORT_CEILINGS = _derive_effort_ceilings(_REGISTRY, EFFORTS)
 
 # Per-model raise ceiling: the strongest effort an automatic raise lands on within the model.
 # sonnet stops at high because sonnet/xhigh costs more per task than opus/high and scores lower
-# (Artificial Analysis snapshot, 2026-10-07), so a raise from sonnet/high moves to opus.
+# (Artificial Analysis snapshot, 2026-10-07), so a raise from sonnet/high moves to opus. haiku
+# stops at xhigh because haiku/max scores lower than xhigh on the Coding Agent Index; max is a
+# survey default, never a raise.
 _RAISE_CEILINGS = _derive_raise_ceilings(_REGISTRY, EFFORTS, _EFFORT_CEILINGS)
 
 # Models cheap enough that budget-discipline lessons (brevity, mandatory final
@@ -266,7 +269,7 @@ def supports_effort(model: str, effort: str) -> bool:
 def clamp_effort_to_model(model: str, effort: str) -> tuple[str, str | None]:
     """Return ``(effort_or_ceiling, note_or_None)`` — clamp ``effort`` to the model's ceiling.
 
-    AC5: escalating a haiku unit toward xhigh resolves to haiku's real ceiling with the
+    AC5: escalating a unit past its model's ceiling resolves to that real ceiling with the
     clamp surfaced as a note, rather than silently producing an un-runnable tier.
     """
     ceiling = effort_ceiling(model)

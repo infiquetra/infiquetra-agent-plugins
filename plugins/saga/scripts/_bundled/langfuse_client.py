@@ -1,6 +1,6 @@
 # --- generated bundle stamp: do not edit ---
 # generated-by: scripts/bundle_fleet_module.py
-# source-version: 0.33.0
+# source-version: 0.33.2
 # source-commit: authored
 # source-path: scripts/fleet_commons/langfuse_client.py
 # source-sha256: b8601bfacd7b5dfa30402718f5d3a247c68accc598020817d2b11b25e6bde863

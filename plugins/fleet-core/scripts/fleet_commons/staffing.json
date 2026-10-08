@@ -17,7 +17,8 @@
     },
     "haiku": {
       "rank": 3,
-      "effort_ceiling": "xhigh"
+      "effort_ceiling": "max",
+      "raise_ceiling": "xhigh"
     }
   },
   "efforts": {
@@ -32,6 +33,9 @@
     },
     "xhigh": {
       "rung": 3
+    },
+    "max": {
+      "rung": 4
     }
   },
   "scalar_efforts": {
@@ -73,22 +77,22 @@
     },
     "mechanical": {
       "default_model": "haiku",
-      "default_effort": "medium",
-      "rationale": "Mechanical, deterministic, scripted transforms, scaffolding, where a test or read-back proves each result \u2014 bounded output, predictable steps. Haiku 5.5 medium since 2026-10-07."
+      "default_effort": "xhigh",
+      "rationale": "Mechanical, deterministic, scripted transforms, scaffolding, where a test or read-back proves each result \u2014 bounded output, predictable steps. Haiku 5.5 xhigh since 2026-10-07 (was medium): the cost difference per task is cents, and xhigh is Haiku's best setting on the Coding Agent Index."
     },
     "purely-mechanical": {
       "default_model": "haiku",
-      "default_effort": "low",
-      "rationale": "Purely mechanical work within the mechanical work-shape \u2014 cheapest tier still safe for bounded, predictable steps."
+      "default_effort": "medium",
+      "rationale": "Purely mechanical work within the mechanical work-shape \u2014 fixed transforms, scaffolding, formatting. Haiku 5.5 medium since 2026-10-07 (was low): one rung costs a fraction of a cent per task and buys margin."
     },
     "read-only-survey": {
       "default_model": "haiku",
-      "default_effort": "xhigh",
-      "rationale": "Read-only survey, search, grep, sampling, census \u2014 no write risk, but a missed finding becomes a confident negative, so cross-check any negative before acting on it. Haiku 5.5 xhigh since 2026-10-07 (trial): it scores 0.41 on the Coding Agent Index against high's 0.35 for about half again the cost."
+      "default_effort": "max",
+      "rationale": "Read-only survey, search, grep, sampling, census \u2014 no write risk, but a missed finding becomes a confident negative, so cross-check any negative before acting on it. Haiku 5.5 max since 2026-10-07 (trial): max scores highest of Haiku's settings on the Intelligence Index (43.4 against xhigh's 41.2) and the operator found it effective for breadth work; it writes about 1.8x xhigh's output tokens, so keep the survey short."
     },
     "offload-test-gated": {
       "default_model": "haiku",
-      "default_effort": "low",
+      "default_effort": "medium",
       "rationale": "External-engine delegation, intent=offload, verifiability=test-gated \u2014 chaperone ratifies the declared test oracle and provenance; keep the chaperone cheap unless evidence size escalates."
     },
     "offload": {

@@ -25,11 +25,11 @@ from typing import Any
 # both directions when a shape is missing here, named here and not there, or tiered differently.
 TIER_POLICY = (
     "Staffing defaults by work shape: judgment -> opus/high; implementation -> sonnet/high; "
-    "implementation-test-gated -> haiku/xhigh; mechanical -> haiku/medium; purely-mechanical -> "
-    "haiku/low; read-only-survey -> haiku/xhigh; offload-test-gated -> haiku/low; offload -> "
+    "implementation-test-gated -> haiku/xhigh; mechanical -> haiku/xhigh; purely-mechanical -> "
+    "haiku/medium; read-only-survey -> haiku/max; offload-test-gated -> haiku/medium; offload -> "
     "sonnet/high; second-opinion -> opus/high; divergence -> opus/high. Models from weakest to "
     "strongest: haiku, sonnet, opus, "
-    "fable. Efforts from lowest to highest: low, medium, high, xhigh. Judge a task against its "
+"fable. Efforts from lowest to highest: low, medium, high, xhigh, max (haiku only). Judge a task against its "
     "own default_tier. Answer 'above' only when the issue or the unit carries risk or reasoning "
     "the default does not cover: security, an API contract other code depends on, "
     "infrastructure, personal data, or a design decision with lasting consequences. Answer "
@@ -147,6 +147,7 @@ VERBS: dict[str, Verb] = {
                     "medium": "some judgment",
                     "high": "substantial ambiguity or many interacting constraints",
                     "xhigh": "consequential architectural or strategic decision",
+                    "max": "haiku only; the widest read-only survey",
                 },
             ),
         },

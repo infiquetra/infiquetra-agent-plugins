@@ -110,16 +110,19 @@ MODELS = _derive_ordered(_REGISTRY["models"], "rank", "model")
 EFFORTS = _derive_ordered(_REGISTRY["efforts"], "rung", "effort")
 
 # Portable scalar ladder from the version-2 subset. Includes ``max``; does not
-# include Codex ``ultra``. Existing ``EFFORTS`` stays the four-rung Claude set.
+# include Codex ``ultra``. ``EFFORTS`` is the Claude set, which gained ``max`` on
+# 2026-10-07 for haiku only.
 SCALAR_EFFORTS = _derive_ordered(_REGISTRY["scalar_efforts"], "rung", "scalar effort")
 
-# Per-model effort ceiling: the strongest effort the model actually runs. haiku
-# clamps below xhigh; the ladder ops and Tier.validate() consult this (#370).
+# Per-model effort ceiling: the strongest effort the model actually runs. Only haiku
+# reaches max; the ladder ops and Tier.validate() consult this (#370).
 _EFFORT_CEILINGS = _derive_effort_ceilings(_REGISTRY, EFFORTS)
 
 # Per-model raise ceiling: the strongest effort an automatic raise lands on within the model.
 # sonnet stops at high because sonnet/xhigh costs more per task than opus/high and scores lower
-# (Artificial Analysis snapshot, 2026-10-07), so a raise from sonnet/high moves to opus.
+# (Artificial Analysis snapshot, 2026-10-07), so a raise from sonnet/high moves to opus. haiku
+# stops at xhigh because haiku/max scores lower than xhigh on the Coding Agent Index; max is a
+# survey default, never a raise.
 _RAISE_CEILINGS = _derive_raise_ceilings(_REGISTRY, EFFORTS, _EFFORT_CEILINGS)
 
 # Models cheap enough that budget-discipline lessons (brevity, mandatory final
@@ -258,7 +261,7 @@ def supports_effort(model: str, effort: str) -> bool:
 def clamp_effort_to_model(model: str, effort: str) -> tuple[str, str | None]:
     """Return ``(effort_or_ceiling, note_or_None)`` — clamp ``effort`` to the model's ceiling.
 
-    AC5: escalating a haiku unit toward xhigh resolves to haiku's real ceiling with the
+    AC5: escalating a unit past its model's ceiling resolves to that real ceiling with the
     clamp surfaced as a note, rather than silently producing an un-runnable tier.
     """
     ceiling = effort_ceiling(model)
