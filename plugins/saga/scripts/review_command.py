@@ -127,6 +127,7 @@ def main(
     runner: Process | None = None,
     ask: Ask | None = None,
     confine: Confine | None = None,
+    trace_opener: Callable[..., Any] | None = None,
 ) -> int:
     """Run one subcommand. The keyword arguments are the test seams. The CLI does not expose them."""
     args = build_parser().parse_args(list(argv) if argv is not None else None)
@@ -135,7 +136,7 @@ def main(
         if args.command == "prepare":
             _prepare(args, adapters=adapters, runner=process, ask=ask)
         else:
-            _finish(args, runner=process, ask=ask, confine=confine)
+            _finish(args, runner=process, ask=ask, confine=confine, trace_opener=trace_opener)
     except CommandFailure as exc:
         if exc.message:
             print(exc.message, file=sys.stderr)
@@ -528,6 +529,7 @@ def _finish(
     runner: Process,
     ask: Ask | None,
     confine: Confine | None,
+    trace_opener: Callable[..., Any] | None = None,
 ) -> None:
     packet = Path(args.packet)
     cap = _open_search_cap(packet)
@@ -611,6 +613,38 @@ def _finish(
     if store is not None and unit is not None:
         _store_run(store, int(args.issue), unit, run, usage_specs["add"])
     _write_json(packet / "review-run.json", run)
+    _post_trace(run, results, repo, store, args.issue, home, trace_opener)
+
+
+def _post_trace(
+    run: Mapping[str, Any],
+    results: Sequence[Mapping[str, Any]],
+    repo: Path,
+    store: Path | None,
+    issue: int | None,
+    home: Path,
+    opener: Callable[..., Any] | None,
+) -> None:
+    """Post the run's Langfuse trace (issue 166). The records are already written.
+
+    Nothing here changes a record or the exit status: any failure, including a bug in the
+    posting code, prints one line and the review carries on. What could not go waits in the
+    owner-only queue under ``home`` and is sent by a later post.
+    """
+    try:
+        import review_trace  # noqa: PLC0415 - loaded late so a broken bundle cannot stop finish
+
+        record = None
+        if store is not None and issue is not None:
+            loaded = run_record.load(store, int(issue), warn=None)
+            record = run_record.to_dict(loaded) if loaded is not None else None
+        summary = review_trace.post_review_run(
+            run, results, repo=repo if repo.is_dir() else None, record=record, home=home,
+            urlopen=opener,
+        )
+        print(review_trace.summary_line(summary), file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 - a Langfuse problem never fails a review
+        print(f"langfuse: not posted ({exc.__class__.__name__})", file=sys.stderr)
 
 
 def _open_search_cap(packet: Path) -> int:

@@ -29,6 +29,16 @@
   on the final one. `run_status.py review` prints from the document, and
   `fix_later_unattended_default` sets the profile's unattended default to `leave` or `file`.
 
+- Issue 166: review traces in Langfuse. `scripts/review_trace.py` posts each review run as one
+  trace in the "Saga Reviews" project (an entry per tool, the Jev sweep, each LLM step, the formula
+  and each finding, with excerpts and raw output only as fingerprints), and round scores for the
+  rounds view. `review_command.py finish` posts after it writes the records, `release_step.py
+  release` posts each finding's merge outcome once it sees the merge, and `plan_review.py` posts
+  plan reviews and their answers. A post that cannot go waits in `~/.saga/langfuse-queue/` with its
+  reason, is sent later, and never changes a record or an exit status; `/saga:setup` shows how many
+  wait. `scripts/review_dataset.py` posts the corpus as the dataset `saga-review-corpus` and its
+  code evaluators' totals as scores. Visibility is read at the base commit, never the head.
+
 - Issue 155: `scripts/review_checks.py` adds five scripted checks on the review-tools runner:
   two test runs, tests the continuous-integration run skipped, machine-specific values,
   changed names, and a workflow graph. The two testing rows are excused by

@@ -52,6 +52,17 @@ def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(socket, "create_connection", refuse)
 
 
+@pytest.fixture(autouse=True)
+def _no_operator_langfuse(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> None:
+    """No test sees the operator's Langfuse keys, or writes the operator's queue."""
+    import os
+
+    for name in list(os.environ):
+        if name.startswith(("SAGA_LANGFUSE_", "LANGFUSE_")):
+            monkeypatch.delenv(name)
+    monkeypatch.setenv("HOME", str(tmp_path_factory.mktemp("operator-home")))
+
+
 @pytest.fixture()
 def staged(tmp_path: Path) -> dict[str, Path]:
     """The fixtures copied to a writable tmp directory."""
@@ -352,3 +363,150 @@ def test_spore_freeze_leaves_plan_review_out_of_the_count(
         json.loads(staged["findings.json"].read_text(encoding="utf-8")),
     )
     assert saga_spore.freeze_run_record(tmp_path, box)["review_cycles"] == 0
+
+
+# --- posting to Langfuse (issue 166) ------------------------------------------------------------
+
+_LF = {
+    "SAGA_LANGFUSE_PUBLIC_KEY": "pk-lf-SENTINEL-public",
+    "SAGA_LANGFUSE_SECRET_KEY": "sk-lf-SENTINEL-secret",
+    "SAGA_LANGFUSE_HOST": "https://langfuse.example.test",
+}
+
+
+class _LfResponse:
+    status = 200
+
+    def read(self) -> bytes:
+        return b"{}"
+
+    def getcode(self) -> int:
+        return 200
+
+    def __enter__(self) -> Any:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+
+class _LfOpener:
+    def __init__(self, error: BaseException | None = None) -> None:
+        self.error = error
+        self.requests: list[Any] = []
+
+    def __call__(self, request: Any, timeout: float | None = None) -> Any:
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        return _LfResponse()
+
+
+def _lf_env(monkeypatch: pytest.MonkeyPatch, **over: str) -> None:
+    for name, value in {**_LF, **over}.items():
+        monkeypatch.setenv(name, value)
+
+
+def _queued(home: Path) -> list[dict[str, Any]]:
+    return [json.loads(path.read_text()) for path in sorted((home / ".saga" / "langfuse-queue").glob("*.json"))]
+
+
+def test_plan_record_posts_trace(staged: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    _lf_env(monkeypatch)
+    opener = _LfOpener()
+    assert plan_review.main(record_argv(staged), trace_opener=opener) == 0
+    [request] = opener.requests
+    assert request.full_url.endswith("/api/public/otel/v1/traces")
+    body = json.loads(request.data.decode())
+    spans = body["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    trace = spans[0]["traceId"]
+    ids = finding_ids(staged)
+    review_trace = sys.modules["review_trace"]
+    assert {span["spanId"] for span in spans if span["name"] == "finding"} == {
+        review_trace.span_id(trace, f"finding:{identity}") for identity in ids}
+    assert str(staged["plan.md"].parent) not in request.data.decode()
+
+
+def test_plan_answer_posts_score(staged: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    _lf_env(monkeypatch)
+    assert plan_review.main(record_argv(staged), trace_opener=_LfOpener()) == 0
+    first = finding_ids(staged)[0]
+    opener = _LfOpener()
+    argv = ["answer", "--record", str(staged["record.json"]), "--finding", first, "--rejected", "out of scope"]
+    assert plan_review.main(argv, trace_opener=opener) == 0
+    [request] = opener.requests
+    score = json.loads(request.data.decode())
+    assert (score["name"], score["value"], score["dataType"], score["comment"]) == (
+        "plan-answer", "rejected", "CATEGORICAL", "out of scope")
+    review_trace = sys.modules["review_trace"]
+    assert score["observationId"] == review_trace.span_id(score["traceId"], f"finding:{first}")
+
+
+def _git(repo: Path, *args: str) -> str:
+    import subprocess
+
+    return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+
+
+def _plan_repo(tmp: Path, *, main_profile: dict[str, Any], branch_profile: dict[str, Any]) -> Path:
+    repo = tmp / "plan-repo"
+    repo.mkdir(parents=True)
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.email", "plan@example.com")
+    _git(repo, "config", "user.name", "plan")
+    (repo / ".saga-profile.json").write_text(json.dumps(main_profile), encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "main")
+    _git(repo, "checkout", "-q", "-b", "plan")
+    (repo / ".saga-profile.json").write_text(json.dumps(branch_profile), encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "plan branch marks itself public")
+    return repo
+
+
+def test_plan_review_visibility_from_merge_base(
+    staged: dict[str, Path], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo = _plan_repo(tmp_path, main_profile={"schema": "repository_profile.v1"},
+                      branch_profile={"visibility": "public"})
+    review_trace = sys.modules.get("review_trace") or _load("review_trace")
+    assert review_trace.plan_visibility(repo) is None
+    plan = repo / "plan.md"
+    shutil.copy(staged["plan.md"], plan)
+    _lf_env(monkeypatch, SAGA_LANGFUSE_HOST="http://langfuse.example.test")
+    opener = _LfOpener()
+    argv = ["record", "--record", str(staged["record.json"]), "--plan", str(plan),
+            "--findings", str(staged["findings.json"])]
+    assert plan_review.main(argv, trace_opener=opener) == 0
+    assert opener.requests == []
+    import os
+
+    [queued] = _queued(Path(os.environ["HOME"]))
+    assert queued["reason"] == "plain-http-private"
+    public = _plan_repo(tmp_path / "second", main_profile={"visibility": "public"},
+                        branch_profile={"visibility": "private"})
+    assert review_trace.plan_visibility(public) == "public"
+
+
+def test_plan_review_langfuse_failure_keeps_record(
+    staged: dict[str, Path], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import urllib.error
+
+    good = tmp_path / "good"
+    good.mkdir()
+    for name, path in staged.items():
+        shutil.copy(path, good / name)
+    good_argv = ["record", "--record", str(good / "record.json"), "--plan", str(good / "plan.md"),
+                 "--findings", str(good / "findings.json")]
+    _lf_env(monkeypatch)
+    assert plan_review.main(good_argv, trace_opener=_LfOpener()) == 0
+    code = plan_review.main(record_argv(staged), trace_opener=_LfOpener(urllib.error.URLError("down")))
+    assert code == 0
+    stored = json.loads(staged["record.json"].read_text())["review_cycles"][-1]
+    expected = json.loads((good / "record.json").read_text())["review_cycles"][-1]
+    for key in ("loop", "plan_sha256", "findings", "answers"):
+        assert stored[key] == expected[key]
+    import os
+
+    assert len(_queued(Path(os.environ["HOME"]))) == 1

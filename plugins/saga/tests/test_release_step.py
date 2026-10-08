@@ -562,3 +562,122 @@ class TestCommandLine:
         assert captured.out == ""
         assert captured.err.startswith("release_step: ")
         assert len(captured.err.strip().splitlines()) == 1
+
+
+# --- merge outcomes to Langfuse (issue 166) ------------------------------------------------------
+
+
+@pytest.fixture
+def lf_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Fake saga keys, a temporary home, and no operator Langfuse variables."""
+    import os
+
+    for name in list(os.environ):
+        if name.startswith(("SAGA_LANGFUSE_", "LANGFUSE_")):
+            monkeypatch.delenv(name)
+    monkeypatch.setenv("SAGA_LANGFUSE_PUBLIC_KEY", "pk-lf-SENTINEL-public")
+    monkeypatch.setenv("SAGA_LANGFUSE_SECRET_KEY", "sk-lf-SENTINEL-secret")
+    monkeypatch.setenv("SAGA_LANGFUSE_HOST", "https://langfuse.example.test")
+    home = tmp_path / "operator-home"
+    monkeypatch.setenv("HOME", str(home))
+    return home
+
+
+class _LfOpener:
+    def __init__(self) -> None:
+        self.requests: list[Any] = []
+
+    def __call__(self, request: Any, timeout: float | None = None) -> Any:
+        self.requests.append(request)
+        return _LfResponse()
+
+
+class _LfResponse:
+    status = 200
+
+    def read(self) -> bytes:
+        return b"{}"
+
+    def getcode(self) -> int:
+        return 200
+
+    def __enter__(self) -> Any:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+
+def _outcome_record(tmp_path: Path) -> Path:
+    fixture = REPO_ROOT / "plugins/saga/tests/fixtures/review_records/valid/review_run.json"
+    run = json.loads(fixture.read_text(encoding="utf-8"))
+    run["loop"] = "review_run"
+    run["findings"][0]["merge_outcome"] = {"outcome": "dismissed", "reason": "false positive"}
+    path = tmp_path / "record.json"
+    path.write_text(json.dumps({"issue": 7, "repo": "example/repo", "review_cycles": [run]}),
+                    encoding="utf-8")
+    return path
+
+
+def _merged_gh() -> FakeGh:
+    return FakeGh(view=_clean_view(), merged={"mergeCommit": {"oid": "b" * 40}, "url": "u"})
+
+
+def test_release_merged_posts_outcomes_once(
+    tmp_path: Path, lf_env: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    record = _outcome_record(tmp_path)
+    gh = _merged_gh()
+    opener = _LfOpener()
+    code = RS.main(["--record", str(record), "release", "--pull-request", "5",
+                    "--repo-path", str(tmp_path)], runner=gh, trace_opener=opener)
+    assert code == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "merged"
+    assert gh.calls and all(argv[0] == "gh" for argv in gh.calls)
+    scores = [json.loads(r.data.decode()) for r in opener.requests]
+    assert len(scores) == 1
+    assert (scores[0]["name"], scores[0]["value"], scores[0]["comment"]) == (
+        "merge-outcome", "dismissed", "false positive")
+
+
+def test_release_waiting_or_refused_posts_nothing(
+    tmp_path: Path, lf_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[Any] = []
+    trace = _load("review_trace")
+    monkeypatch.setattr(trace, "post_outcomes", lambda *a, **k: calls.append(a) or {})
+    record = _outcome_record(tmp_path)
+    blocked = FakeGh(view={**_clean_view(), "mergeStateStatus": "BLOCKED"})
+    assert RS.main(["--record", str(record), "release", "--pull-request", "5"], runner=blocked) == 0
+    refused = FakeGh(view=_clean_view(), merge_ok=False)
+    assert RS.main(["--record", str(record), "release", "--pull-request", "5"], runner=refused) == 0
+    assert calls == []
+
+
+def test_release_outcome_failure_keeps_output(
+    tmp_path: Path, lf_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    record = _outcome_record(tmp_path)
+    assert RS.main(["--record", str(record), "release", "--pull-request", "5"],
+                   runner=_merged_gh(), trace_opener=_LfOpener()) == 0
+    good = capsys.readouterr().out
+
+    def broken(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("posting bug")
+
+    trace = _load("review_trace")
+    monkeypatch.setattr(trace, "post_outcomes", broken)
+    assert RS.main(["--record", str(record), "release", "--pull-request", "5"],
+                   runner=_merged_gh()) == 0
+    out = capsys.readouterr()
+    assert out.out == good
+    assert "langfuse: outcomes not posted (RuntimeError)" in out.err
+
+
+def test_release_dry_run_posts_nothing(tmp_path: Path, lf_env: Path) -> None:
+    record = _outcome_record(tmp_path)
+    opener = _LfOpener()
+    gh = _merged_gh()
+    assert RS.main(["--record", str(record), "release", "--pull-request", "5", "--dry-run"],
+                   runner=gh, trace_opener=opener) == 0
+    assert opener.requests == [] and gh.calls == []
