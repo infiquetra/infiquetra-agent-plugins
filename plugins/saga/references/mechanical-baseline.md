@@ -337,7 +337,7 @@ file lock, after the pass ran with no lock held.
 | `environment_checks` | array | one result per environment-bound plan check and scenario smoke |
 | `teardown` | object | the teardown result, `not-declared`, or null when the deploy step was not reached |
 | `environment_problems` | array | one line per environment problem, for the operator |
-| `review` | object | the scan of the combined branch: `base`, `head`, `status`, `findings`, `degraded`, `where_to_look`, `declarations` (null on this pass) and `gate` (the lines that failed the gate) |
+| `review` | object | the scan of the combined branch: `base`, `head`, `status`, `findings`, `degraded`, `where_to_look`, `detail` (why the scan did not run, or empty), `declarations` (null on this pass) and `gate` (the lines that failed the gate) |
 
 <!-- END COMBINED PASS KEYS -->
 
@@ -401,7 +401,7 @@ same row is left alone.
 | `functional_checks` | array | one result per prescribed functional check |
 | `preview` | object | `declared`, `status`, `command`, `detail` |
 | `scenario_smoke` | array | one result per prescribed smoke scenario |
-| `review` | object | the scan and the declaration check: `base`, `head`, `status`, `findings`, `degraded`, `where_to_look`, `declarations` and `gate` (empty on a unit iteration) |
+| `review` | object | the scan and the declaration check: `base`, `head`, `status`, `findings`, `degraded`, `where_to_look`, `detail` (why the scan did not run, or empty), `declarations` and `gate` (empty on a unit iteration) |
 
 <!-- END ITERATION KEYS -->
 

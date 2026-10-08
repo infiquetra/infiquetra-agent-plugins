@@ -2205,7 +2205,9 @@ def test_an_undeclared_question_is_not_handed_off(
     assert "correctness-01" in capsys.readouterr().out
 
 
-def test_a_scan_that_does_not_run_is_not_green(tmp_path: Path) -> None:
+def test_a_scan_that_does_not_run_is_not_green(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     path = _write(tmp_path / "issue-1027.json", _record_dict())
     runner = FakeRunner()
 
@@ -2226,6 +2228,141 @@ def test_a_scan_that_does_not_run_is_not_green(tmp_path: Path) -> None:
     assert code == build_loop.EXIT_NOT_GREEN
     assert "handed_to_code_review" not in _block(path)
     assert _commands(runner) == ["uv run ruff check ."]
+    review = _block(path)["iterations"][0]["review"]
+    assert review["status"] == "could-not-execute"
+    assert review["detail"] == "no-base"
+    printed = capsys.readouterr().out
+    assert "[pass] declarations" in printed
+    assert "[could-not-execute] review" in printed
+    assert "no-base" in printed
+
+
+def test_a_combined_scan_that_does_not_run_names_the_reason() -> None:
+    record = run_record.RunRecord(issue=162, units=[{"id": "U1"}])
+    waived = {
+        "mode": "waived",
+        "level": "repository",
+        "reason": "docs only",
+        "source": "profile",
+    }
+
+    def scan(repo: Path, base: str | None, head: str) -> dict[str, Any]:
+        return {
+            "status": "could-not-execute",
+            "base": None,
+            "head": head,
+            "findings": [],
+            "degraded": [],
+            "where_to_look": [],
+            "detail": "no-base",
+        }
+
+    entry, green = build_loop.run_combined_pass(
+        record, waived, [], "d" * 40, runner=FakeRunner(), scan=scan
+    )
+    assert green is False
+    assert entry["review"]["detail"] == "no-base"
+    assert "could-not-execute: no-base" in entry["skipped_reason"]
+    printed = build_loop.format_combined_pass(entry)
+    assert "[could-not-execute] review" in printed
+    assert "no-base" in printed
+
+
+def test_resolve_base_uses_upstream_then_origin_and_never_head(tmp_path: Path) -> None:
+    head = "a" * 40
+    upstream = "b" * 40
+    origin = "c" * 40
+
+    def scripted(answers: dict[str, Any]) -> FakeRunner:
+        def reply(argv: Sequence[str], _timeout: int) -> tuple[int, str]:
+            ref = argv[-1]
+            verdict = answers[ref]
+            if isinstance(verdict, BaseException):
+                raise verdict
+            return verdict
+
+        return FakeRunner(verdicts={"merge-base": reply})
+
+    preferred = scripted({"@{upstream}": (0, upstream), "origin/HEAD": (0, origin)})
+    assert build_loop._resolve_base(tmp_path, head, preferred) == upstream
+    assert all("origin/HEAD" not in call for call in preferred.calls)
+
+    fell_through = scripted({"@{upstream}": (0, head), "origin/HEAD": (0, origin)})
+    assert build_loop._resolve_base(tmp_path, head, fell_through) == origin
+    assert any("origin/HEAD" in call for call in fell_through.calls)
+
+    refused = scripted(
+        {"@{upstream}": FileNotFoundError("git"), "origin/HEAD": (0, "not-a-sha")}
+    )
+    assert build_loop._resolve_base(tmp_path, head, refused) is None
+
+    both_head = scripted({"@{upstream}": (1, upstream), "origin/HEAD": (0, head)})
+    assert build_loop._resolve_base(tmp_path, head, both_head) is None
+
+
+def _git(repo: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(proc.stderr or proc.stdout)
+    return proc.stdout.strip()
+
+
+def test_production_block_map_copies_the_base_profile_and_unlinks_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import review_calibration
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "builder@example.com")
+    _git(repo, "config", "user.name", "Builder")
+    profile = {"schema": "repository_profile.v1", "name": "example"}
+    (repo / ".saga-profile.json").write_text(json.dumps(profile), encoding="utf-8")
+    _git(repo, "add", ".saga-profile.json")
+    _git(repo, "commit", "-m", "add the profile")
+    base = _git(repo, "rev-parse", "HEAD")
+    seen: list[tuple[str, str, Path, Path]] = []
+
+    def may_block(
+        lens: str, language: str, *, root: Path, calibration: Path, profile: Path
+    ) -> str:
+        seen.append((lens, language, root, profile))
+        assert json.loads(profile.read_text(encoding="utf-8")) == {
+            "schema": "repository_profile.v1",
+            "name": "example",
+        }
+        assert root == build_loop._plugin_dir()
+        assert calibration == review_calibration.default_calibration_path()
+        if lens == "security" and language == "python":
+            return "yes cleared"
+        return "report-only no-run"
+
+    monkeypatch.setattr(review_calibration, "may_block", may_block)
+    mapping = build_loop._production_block_map([{"language": "python"}], repo, base)
+    assert mapping["security"]["python"] is True
+    assert mapping["security"]["none"] is False
+    assert mapping["correctness"]["python"] is False
+    copied = {item[3] for item in seen}
+    assert len(copied) == 1
+    assert not next(iter(copied)).exists()
+
+    (repo / ".saga-profile.json").write_text("not json\n", encoding="utf-8")
+    _git(repo, "add", ".saga-profile.json")
+    _git(repo, "commit", "-m", "break the profile")
+    broken = _git(repo, "rev-parse", "HEAD")
+    before = len(seen)
+    with pytest.raises(review_calibration.CalibrationError, match="not JSON"):
+        build_loop._production_block_map([{"language": "python"}], repo, broken)
+    assert len(seen) == before
+
+    with pytest.raises(review_calibration.CalibrationError, match="no base"):
+        build_loop._production_block_map([{"language": "python"}], repo, None)
 
 
 def test_the_dry_run_lists_review_work(

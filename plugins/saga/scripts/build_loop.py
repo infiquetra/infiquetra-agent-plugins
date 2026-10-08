@@ -599,10 +599,13 @@ def _could_not_scan(head: str, *, base: str | None = None, detail: str = "") -> 
 
 
 def _copy_scan(scanned: Mapping[str, Any], head: str) -> dict[str, Any]:
-    """The scan fields the review object keeps. ``detail`` stays off the record."""
+    """The scan fields the review object keeps, including why a scan did not run."""
     status = scanned.get("status", STATUS_PASS)
     if status not in (STATUS_PASS, STATUS_FAIL, STATUS_COULD_NOT_EXECUTE):
         status = STATUS_COULD_NOT_EXECUTE
+    raw = scanned.get("detail", "")
+    text = raw.strip() if isinstance(raw, str) else ""
+    detail = text.splitlines()[0] if text else ""
     return {
         "base": scanned.get("base"),
         "head": scanned.get("head") or head,
@@ -610,6 +613,7 @@ def _copy_scan(scanned: Mapping[str, Any], head: str) -> dict[str, Any]:
         "findings": list(scanned.get("findings") or []),
         "degraded": list(scanned.get("degraded") or []),
         "where_to_look": list(scanned.get("where_to_look") or []),
+        "detail": detail,
     }
 
 
@@ -1023,6 +1027,7 @@ def _empty_review(head: str, *, declarations: dict[str, Any] | None) -> dict[str
         "findings": [],
         "degraded": [],
         "where_to_look": [],
+        "detail": "",
         "declarations": declarations,
         "gate": [],
     }
@@ -1071,7 +1076,12 @@ def _combined_review(
 
 def _gate_skip_reason(review: Mapping[str, Any]) -> str:
     lines = review.get("gate") or []
-    detail = "; ".join(str(line) for line in lines) if lines else str(review.get("status"))
+    if lines:
+        detail = "; ".join(str(line) for line in lines)
+    else:
+        status = str(review.get("status") or "")
+        cause = review.get("detail")
+        detail = f"{status}: {cause}" if isinstance(cause, str) and cause else status
     return f"the review gate is not pass, so nothing was deployed: {detail}"
 
 
@@ -1392,6 +1402,15 @@ def format_dry_run(
     return "\n".join(lines)
 
 
+def _review_status_lines(review: Mapping[str, Any]) -> list[str]:
+    """The review status, and the scan's one-line reason when it has one."""
+    lines = [f"  [{review.get('status')}] review"]
+    detail = review.get("detail")
+    if isinstance(detail, str) and detail:
+        lines.append(f"      {detail}")
+    return lines
+
+
 def format_iteration(iteration: dict[str, Any]) -> str:
     """One iteration's results, for a worker reading the terminal."""
     lines = [
@@ -1422,6 +1441,7 @@ def format_iteration(iteration: dict[str, Any]) -> str:
             for line in declarations.get("questions") or []:
                 lines.append(f"  {line}")
             lines.append(f"  [{declarations.get('status')}] declarations")
+        lines.extend(_review_status_lines(review))
     return "\n".join(lines)
 
 
@@ -2181,6 +2201,9 @@ def format_combined_pass(entry: dict[str, Any]) -> str:
         lines.append(f"  [{teardown['status']}] teardown: {teardown.get('command') or ''}".rstrip())
     if lease.get("required") and lease.get("release_status"):
         lines.append(f"  [{lease['release_status']}] lease release")
+    review = entry.get("review")
+    if isinstance(review, dict):
+        lines.extend(_review_status_lines(review))
     if entry.get("skipped_reason"):
         lines.append(f"  {entry['skipped_reason']}")
     for problem in entry.get("environment_problems", []):

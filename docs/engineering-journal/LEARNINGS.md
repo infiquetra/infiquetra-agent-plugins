@@ -1,5 +1,35 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-08
+
+### A pytest node id can name a file outside the checkout it runs in
+
+**Evidence.** Issue #162, code review of `62a8b57`. `plugins/saga/scripts/builder_record.py`
+(`NODE_ID`, `_escapes_worktree`). The proving test runs with its working directory set to a
+detached worktree of the revision.
+
+**Mechanism.** The node-id pattern allows `/` and `.`, so `/tmp/outside.py::test_ok` and
+`tests/../../outside.py::test_ok` match it. Pytest loads the path before `::` from that working
+directory, and an absolute path or a `..` segment leaves the worktree. The declaration check now
+refuses both before git or pytest runs.
+
+**Generalizable rule.** A charset check on a path does not confine it. Refuse an absolute path
+and a `..` segment, or resolve the path and require it to stay inside the directory you mean.
+
+### A status with no reason reads as a pass
+
+**Evidence.** Issue #162, code review of `62a8b57`. `plugins/saga/scripts/build_loop.py`
+(`_copy_scan`, `format_iteration`, `format_combined_pass`).
+
+**Mechanism.** A scan that cannot run records `could-not-execute` and a one-line cause such as
+`no-base`. The copy onto the review dropped that line, and the iteration printout showed only the
+declaration check. When the declarations passed, every visible line said pass while the iteration
+was not green. The review now keeps `detail`, and both printouts show the review status and that
+line.
+
+**Generalizable rule.** When a step can fail closed, store the cause beside the status and print
+both. A bare status word does not tell the worker what to fix.
+
 ## 2026-10-07
 
 ### Adding a rung to the top of a ladder moves every "last rung" reference

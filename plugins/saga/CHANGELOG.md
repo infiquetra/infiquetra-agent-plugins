@@ -21,6 +21,13 @@
   approvals, and rendering sitting material. The loader refuses any set whose content differs from
   its approval. The operator approved all four banks at their sittings on 2026-10-07.
 
+### Fixed
+
+- Issue #162: a scan that does not run keeps its reason on the review and the iteration and
+  combined-pass printouts name that reason with the review status. A proving-test node id that is
+  absolute or contains a `..` segment is refused before pytest runs. A question id outside the
+  policy is reported as an unknown question.
+
 ## [1.3.1] - 2026-10-07
 
 ### Changed

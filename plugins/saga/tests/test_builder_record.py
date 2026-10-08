@@ -183,6 +183,82 @@ def test_declaration_check_names_a_failing_test(
     assert f"question {question_id}: test failing" in err
 
 
+def test_declaration_check_rejects_a_repeated_question_before_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("git ran before the duplicate was refused")
+
+    monkeypatch.setattr(builder_record.subprocess, "run", fail)
+    question_id = POLICY_IDS[0]
+    record = _record(
+        extra=[{"question": question_id, "applies": False, "proving_test": None}]
+    )
+    code, lines = builder_record.evaluate(record, "HEAD", tmp_path)
+    assert code == 2
+    assert lines == [f"declarations: duplicate question {question_id}"]
+
+
+def test_declaration_check_names_an_unknown_question(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    sha = _commit_test(repo, "def test_ok():\n    assert True\n")
+    record = _write_record(
+        tmp_path / "record.json",
+        _record(
+            extra=[
+                {
+                    "question": "not-a-policy-question",
+                    "applies": False,
+                    "proving_test": None,
+                }
+            ]
+        ),
+    )
+    code = builder_record.main(
+        ["check", "--record", str(record), "--revision", sha, "--repo", str(repo)]
+    )
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "question not-a-policy-question: unknown question" in err
+    assert "missing declaration" not in err
+
+
+def test_declaration_check_refuses_a_proving_test_outside_the_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("git or pytest ran for a node outside the worktree")
+
+    monkeypatch.setattr(builder_record.subprocess, "run", fail)
+    ran: list[str] = []
+
+    def run_test(node: str, _revision: str, _repo: Path) -> str:
+        ran.append(node)
+        return "pass"
+
+    assert builder_record._escapes_worktree("test_ok.py::test_ok") is False
+    assert builder_record._escapes_worktree("./test_ok.py::test_ok") is False
+    assert builder_record._escapes_worktree("test_ok.py::test_ok[../param]") is False
+    question_id = POLICY_IDS[0]
+    for node in (
+        "../outside.py::test_ok",
+        "/tmp/outside.py::test_ok",
+        "tests/../../outside.py::test_ok",
+    ):
+        record = _record(applies=question_id, proving=node)
+        code, lines = builder_record.evaluate(
+            record, "HEAD", tmp_path, run_test=run_test
+        )
+        assert code == 2
+        assert lines == [
+            f"question {question_id}: proving_test escapes the revision worktree"
+        ]
+    assert ran == []
+
+
 def _store(tmp_path: Path) -> Path:
     root = tmp_path / "runs"
     run_record.save(root, run_record.RunRecord(issue=162, units=[{"id": "U1"}]))

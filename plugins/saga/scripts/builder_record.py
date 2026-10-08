@@ -6,9 +6,10 @@ merge through ``review_records.record_builder``. ``check`` judges one file again
 plugin's policy list and the named proving tests. It never opens a run record (issue #162).
 
 Exit codes for ``check``: 0 passed; 1 a declaration or a named test failed, one
-``question <id>: <missing declaration|test absent|test failing>`` line per question on standard
-error; 2 the file is unreadable, the record is not valid, the revision does not resolve, the
-policy fails to load, a proving test is not a node id, or a question id is repeated.
+``question <id>: <missing declaration|unknown question|test absent|test failing>`` line per
+question on standard error; 2 the file is unreadable, the record is not valid, the revision
+does not resolve, the policy fails to load, a proving test is not a node id, a proving test
+escapes the revision worktree, or a question id is repeated.
 
 Exit codes for ``write``: 0 stored; 1 the validator rejected the file or the merged record, and
 nothing was written; 2 no run record, or the file is unreadable; 5 the row is missing on a record
@@ -36,7 +37,9 @@ import question_banks  # noqa: E402  (after the sys.path shim, by design)
 import review_records  # noqa: E402
 import run_record  # noqa: E402
 
-#: A pytest node id. Anything else is refused before a test runs.
+#: A pytest node id. Anything else is refused before a test runs. The pattern still admits an
+#: absolute path and a ``..`` segment; ``_escapes_worktree`` refuses those, because pytest would
+#: load that file from outside the revision worktree.
 NODE_ID = re.compile(r"^[A-Za-z0-9_./:=\[\]-]+$")
 
 #: A full commit, the only revision a proving test is checked out at.
@@ -83,6 +86,23 @@ def _missing(question_id: str) -> str:
     return f"question {question_id}: missing declaration"
 
 
+def _unknown(question_id: str) -> str:
+    return f"question {question_id}: unknown question"
+
+
+def _escapes_worktree(node: str) -> bool:
+    """True when pytest would load a file outside the revision worktree.
+
+    The file is the node id before ``::``. An absolute path, or a ``..`` segment, names a
+    file outside the checkout the proving test runs in. A ``..`` inside a parameter, after
+    ``::``, is not a path segment.
+    """
+    path = node.split("::", 1)[0]
+    if path.startswith("/") or Path(path).is_absolute():
+        return True
+    return ".." in path.split("/")
+
+
 def _resolve_sha(repo: Path, revision: str) -> str | None:
     """The full commit *revision* names in *repo*, or ``None`` when git cannot say."""
     proc = subprocess.run(  # nosec B603  (shell=False, argv is git and the caller's revision)
@@ -107,6 +127,8 @@ def _child_env(home: Path, tmp: Path) -> dict[str, str]:
 
 def _run_proving_test(node: str, revision: str, repo: Path) -> TestVerdict:
     """Run *node* in a detached worktree of *revision*. The worktree is removed afterwards."""
+    if NODE_ID.fullmatch(node) is None or _escapes_worktree(node):
+        raise _Unrun("the proving test escapes the revision worktree")
     path = Path(tempfile.mkdtemp(prefix="saga-builder-worktree-"))
     hooks = Path(tempfile.mkdtemp(prefix="saga-builder-hooks-"))
     home = Path(tempfile.mkdtemp(prefix="saga-builder-home-"))
@@ -187,11 +209,13 @@ def _declaration_lines(
         if question_id in by_question:
             return 2, [f"declarations: duplicate question {question_id}"], {}
         proving = declaration.get("proving_test", None)
-        illegal = proving is not None and (
-            not isinstance(proving, str) or NODE_ID.fullmatch(proving) is None
-        )
-        if illegal:
-            return 2, [f"question {question_id}: proving_test is not a node id"], {}
+        if proving is not None:
+            if not isinstance(proving, str) or NODE_ID.fullmatch(proving) is None:
+                return 2, [f"question {question_id}: proving_test is not a node id"], {}
+            if _escapes_worktree(proving):
+                return 2, [
+                    f"question {question_id}: proving_test escapes the revision worktree"
+                ], {}
         by_question[question_id] = declaration
     return 0, [], by_question
 
@@ -249,7 +273,7 @@ def evaluate(
             lines.append(f"question {question_id}: {reason}")
         for question_id in by_question:
             if question_id not in policy:
-                lines.append(_missing(question_id))
+                lines.append(_unknown(question_id))
     except _Unrun as exc:
         return 2, [str(exc)]
     return (1, lines) if lines else (0, [])
