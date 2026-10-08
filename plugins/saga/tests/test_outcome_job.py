@@ -13,6 +13,7 @@ import io
 import plistlib
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -203,6 +204,14 @@ def _history(checkout: Path) -> dict[str, str]:
     shas["m208"] = _commit(checkout, {}, "Merge pull request #208 from o/pr208")
     _git(checkout, "branch", "-D", "pr208", "--quiet")
     _git(checkout, "push", "origin", "main", "--quiet")
+    _git(checkout, "checkout", "--quiet", "-b", "pr212")
+    _commit(checkout, {"only1.py": "ONE = 1\n"}, "add only file one")
+    _commit(checkout, {"only2.py": "TWO = 2\n"}, "add only file two")
+    _git(checkout, "checkout", "--quiet", "main")
+    _git(checkout, "merge", "--no-ff", "--no-commit", "--quiet", "pr212")
+    shas["m212"] = _commit(checkout, {}, "Merge pull request #212 from o/pr212")
+    _git(checkout, "branch", "-D", "pr212", "--quiet")
+    _git(checkout, "push", "origin", "main", "--quiet")
     return shas
 
 
@@ -238,7 +247,7 @@ class _Gh:
 
 
 def _closed_defects(*numbers: int, updated: str = "2026-10-08T11:00:00Z") -> str:
-    return json.dumps([{"number": number, "updatedAt": updated, "closedAt": updated}
+    return json.dumps([{"number": number, "updated_at": updated, "closed_at": updated}
                        for number in numbers])
 
 
@@ -247,8 +256,14 @@ def _closed_by(*numbers: int) -> str:
                        [{"number": number} for number in numbers]})
 
 
-def _is_issue_list(argv: list[str]) -> bool:
-    return argv[1:3] == ["issue", "list"] and "--label" in argv
+def _is_defect_list(argv: list[str], repo: str = "o/r") -> bool:
+    return (len(argv) > 2 and argv[1] == "api"
+            and argv[2].startswith(f"repos/{repo}/issues?"))
+
+
+def _defect_page_number(argv: list[str]) -> int:
+    match = re.search(r"[?&]page=(\d+)", argv[2])
+    return int(match.group(1)) if match else 1
 
 
 def _is_issue_view(argv: list[str], number: int) -> bool:
@@ -274,9 +289,13 @@ def _final_comment(head: str) -> str:
                              [], final=True)
 
 
-def _comments_body(*bodies: str) -> str:
-    return json.dumps([{"id": 1000 + position, "body": body}
+def _comments_body(*bodies: str, login: str = "reviewer") -> str:
+    return json.dumps([{"id": 1000 + position, "body": body, "user": {"login": login}}
                        for position, body in enumerate(bodies)])
+
+
+def _comment_as(comment_id: int, body: str, login: str) -> dict[str, Any]:
+    return {"id": comment_id, "body": body, "user": {"login": login}}
 
 
 class _LfResponse:
@@ -391,7 +410,7 @@ def _defect_routes(gh: _Gh, defect: int, closing: int, merge: str, introducer: i
                    issue_state: str = "MERGED",
                    updated: str = "2026-10-08T11:00:00Z") -> _Gh:
     """Wire the whole read path for one defect: listing, closing PR, and head sources."""
-    gh.when(_is_issue_list, 0, _closed_defects(defect, updated=updated))
+    gh.when(_is_defect_list, 0, _closed_defects(defect, updated=updated))
     gh.when(lambda argv: _is_issue_view(argv, defect), 0, _closed_by(closing))
     base = {"state": issue_state, "mergeCommit": {"oid": merge} if merge else None}
     gh.when(lambda argv: _is_pr_view(argv, closing, "state,mergeCommit"), 0, json.dumps(base))
@@ -457,7 +476,7 @@ def test_revert_links_posts_and_queues(tmp_path: Path, checkout: Path) -> None:
                                      _release(202, shas["h202"], shas["s202"]),
                                      shas["h202"], "trace-202")
     gh = _Gh()
-    gh.when(_is_issue_list, 0, _closed_defects())
+    gh.when(_is_defect_list, 0, _closed_defects())
     gh.when(lambda argv: _is_comments(argv, "o/r", 202), 0,
             _comments_body(_final_comment(shas["h202"])))
     code, summary = _run(home, queue, gh, opener)
@@ -492,14 +511,32 @@ def test_defect_merge_fix_links_when_commits_agree(tmp_path: Path, checkout: Pat
     assert "skipped 1 (no-reviewed-head)" in summary  # the revert scan, as in the defect test
 
 
-def test_defect_merge_fix_skips_on_veto(tmp_path: Path, checkout: Path) -> None:
-    """One add-only branch row vetoes the whole merge-commit fix."""
+def test_defect_merge_fix_links_past_add_only_commit(tmp_path: Path, checkout: Path) -> None:
+    """An add-only branch row casts no vote; the tracing rows still link the fix."""
+    shas = _history(checkout)
+    head = "f" * 40
+    home, queue, opener = _setup_run(tmp_path, checkout, 27,
+                                     _release(207, head, shas["m207"]), head, "trace-207")
+    gh = _defect_routes(_Gh(), 13, 208, shas["m208"], 207, head,
+                        search={shas["t207a"]: "207"})
+    code, summary = _run(home, queue, gh, opener)
+    assert code == 0, summary
+    assert "defects_linked=1" in summary
+    assert opener.posts[0]["traceId"] == "trace-207"
+    lines = _queue_lines(queue)
+    assert len(lines) == 1
+    assert lines[0] == {"source": "defect issue", "repository": "o/r",
+                        "review_run_id": "trace-207", "fixing_pr": 208}
+    assert "skipped 1 (no-reviewed-head)" in summary  # the revert scan
+
+
+def test_defect_merge_fix_skips_when_nothing_traced(tmp_path: Path, checkout: Path) -> None:
+    """A merge fix whose every commit only adds lines skips as add-only."""
     shas = _history(checkout)
     head = "b" * 40
     home, queue, opener = _setup_run(tmp_path, checkout, 20,
                                      _release(100, head, shas["s100"]), head, "trace-100")
-    gh = _defect_routes(_Gh(), 13, 208, shas["m208"], 100, head,
-                        search={shas["t207a"]: "207"})
+    gh = _defect_routes(_Gh(), 16, 212, shas["m212"], 100, head)
     code, summary = _run(home, queue, gh, opener)
     assert code == 0, summary
     assert "skipped 1 (add-only)" in summary
@@ -564,11 +601,13 @@ def test_linking_prefers_record_head_and_cross_checks_comment(
     assert code == 0, summary
     assert "defects_linked=1" in summary
     assert opener.posts[0]["traceId"] == "trace-101"
-    # No stored run: the marker comment alone still links.
+    # No stored run: the marker comment alone never links.
     (checkout / ".claude" / "saga" / "runs" / "issue-21.json").unlink()
     code, summary, opener, queue = attempt("comment-only")
     assert code == 0, summary
-    assert "defects_linked=1" in summary
+    assert "skipped 2 (no-reviewed-head)" in summary
+    assert opener.posts == []
+    assert _queue_lines(queue) == []
     # No marker: the stored head alone still links.
     _write_record(checkout, 21, _release(101, head, shas["s101"]))
     code, summary, opener, queue = attempt("record-only", no_marker=True)
@@ -587,6 +626,75 @@ def test_linking_prefers_record_head_and_cross_checks_comment(
     assert "skipped 1 (ambiguous-release)" in summary
     assert opener.posts == []
     assert _queue_lines(queue) == []
+
+
+def _defect_seven_routes(shas: dict[str, str], comments: str) -> _Gh:
+    """Defect 7's full read path with a caller-built comment list on pull request 101."""
+    gh = _Gh()
+    gh.when(_is_defect_list, 0, _closed_defects(7))
+    gh.when(lambda argv: _is_issue_view(argv, 7), 0, _closed_by(202))
+    gh.when(lambda argv: _is_pr_view(argv, 202, "state,mergeCommit"), 0,
+            json.dumps({"state": "MERGED", "mergeCommit": {"oid": shas["s202"]}}))
+    gh.when(lambda argv: _is_comments(argv, "o/r", 101), 0, comments)
+    gh.when(lambda argv: argv[1] == "api" and "/comments" in argv[2], 0, "[]")
+    return gh
+
+
+def test_linking_ignores_spoofed_marker_comment(tmp_path: Path, checkout: Path) -> None:
+    """A later marker comment from another author is ignored on the head path."""
+    shas = _history(checkout)
+    head = shas["h101"]
+    home, queue, opener = _setup_run(tmp_path, checkout, 21,
+                                     _release(101, head, shas["s101"]), head, "trace-101")
+    real = _final_comment(head)
+    spoof = _final_comment("e" * 40)
+    gh = _defect_seven_routes(shas, json.dumps([_comment_as(1000, real, "reviewer"),
+                                                _comment_as(1001, spoof, "mallory")]))
+    code, summary = _run(home, queue, gh, opener)
+    assert code == 0, summary
+    assert "defects_linked=1" in summary
+    assert opener.posts[0]["traceId"] == "trace-101"
+
+
+def test_linking_prefers_newest_review_account_checklist(tmp_path: Path, checkout: Path) -> None:
+    """Among the review account's marker comments, the newest one cross-checks."""
+    shas = _history(checkout)
+    head = shas["h101"]
+    home, queue, opener = _setup_run(tmp_path, checkout, 21,
+                                     _release(101, head, shas["s101"]), head, "trace-101")
+    stale = _final_comment("e" * 40)
+    current = _final_comment(head)
+    gh = _defect_seven_routes(shas, json.dumps([_comment_as(1000, stale, "reviewer"),
+                                                _comment_as(1001, current, "reviewer")]))
+    code, summary = _run(home, queue, gh, opener)
+    assert code == 0, summary
+    assert "defects_linked=1" in summary
+    assert opener.posts[0]["traceId"] == "trace-101"
+
+
+def test_state_save_survives_failed_replace(tmp_path: Path,
+                                             monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed state write leaves the previous journal byte-identical with no residue."""
+    home = tmp_path / "home"
+    directory = OJ.state_dir(home)
+    state = OJ.default_state()
+    state["last_pass"] = "2026-10-08T12:00:00Z"
+    OJ.save_state(directory, state)
+    before = (directory / "state.json").read_bytes()
+    seen: dict[str, str] = {}
+
+    def failing_replace(src: str, dst: str) -> None:
+        seen["tmp"] = src
+        raise OSError("disk on fire")
+
+    monkeypatch.setattr(os, "replace", failing_replace)
+    state["last_pass"] = "2026-10-09T12:00:00Z"
+    with pytest.raises(OSError, match="disk on fire"):
+        OJ.save_state(directory, state)
+    assert (directory / "state.json").read_bytes() == before
+    assert (directory / "state.json").stat().st_mode & 0o777 == 0o600
+    assert [path.name for path in directory.iterdir()] == ["state.json"]
+    assert Path(seen["tmp"]).parent == directory
 
 
 def test_queue_line_matches_reader_shape(tmp_path: Path) -> None:
@@ -688,7 +796,7 @@ def test_linking_blocks_window_on_listing_failure(tmp_path: Path, checkout: Path
     opener = _LfOpener()
     opener.trace_pages = [[_trace("trace-101", repo="o/r", head="a" * 40, card=21)]]
     opener.score_pages = [[]]
-    gh = _Gh().when(_is_issue_list, 1, "")
+    gh = _Gh().when(_is_defect_list, 1, "")
     gh.when(lambda argv: argv[1] == "api" and "/comments" in argv[2], 0, "[]")
     code, summary = _run(home, queue, gh, opener)
     assert code == 1, summary
@@ -780,7 +888,7 @@ def _waiting(pr: int, head: str) -> dict[str, Any]:
 
 
 def test_qa_miss_pending_until_repair_then_queued(tmp_path: Path, checkout: Path) -> None:
-    """A `/qa` miss pends until the record's merged release descends from the tested revision."""
+    """A `/qa` miss pends until the merged release descends from it, whatever /qa ran since."""
     shas = _history(checkout)
     revision = shas["t206b"]
     home = tmp_path / "home"
@@ -797,7 +905,7 @@ def test_qa_miss_pending_until_repair_then_queued(tmp_path: Path, checkout: Path
         opener.trace_pages = [[_trace("trace-206", repo="o/r", head=revision, card=26)]]
         opener.score_pages = [[_qa_score("trace-206", revision)]]
         gh = _Gh()
-        gh.when(_is_issue_list, 0, _closed_defects())
+        gh.when(_is_defect_list, 0, _closed_defects())
         gh.when(lambda argv: argv[1] == "api" and "/comments" in argv[2], 0, "[]")
         return *_run(tmp_path / name, queue, gh, opener), opener
 
@@ -812,16 +920,17 @@ def test_qa_miss_pending_until_repair_then_queued(tmp_path: Path, checkout: Path
     assert len(state["pending_qa"]) == 1
     assert state["pending_qa"][0]["trace"] == "trace-206"
     assert state["pending_qa"][0]["revision"] == revision
-    # The merge release lands the tested revision: the next pass queues the miss.
+    # The merge release lands the tested revision, and a follow-up /qa run rewrites the
+    # qa block to the release it just tested: the next pass queues the miss anyway.
     record_path.write_text(json.dumps(_qa_record(
-        26, revision, _release(206, revision, shas["m206"]))), encoding="utf-8")
+        26, shas["m206"], _release(206, revision, shas["m206"]))), encoding="utf-8")
     later = NOW + timedelta(hours=1)
     out = io.StringIO()
     opener2 = _LfOpener()
     opener2.trace_pages = [[_trace("trace-206", repo="o/r", head=revision, card=26)]]
     opener2.score_pages = [[_qa_score("trace-206", revision)]]
     gh2 = _Gh()
-    gh2.when(_is_issue_list, 0, _closed_defects())
+    gh2.when(_is_defect_list, 0, _closed_defects())
     gh2.when(lambda argv: argv[1] == "api" and "/comments" in argv[2], 0, "[]")
     code = OJ.main(["run", "--home", str(home1), "--queue", str(queue)],
                    git_runner=None, gh_runner=gh2, clock=lambda: later, out=out,
@@ -841,7 +950,7 @@ def test_qa_miss_pending_until_repair_then_queued(tmp_path: Path, checkout: Path
 def _second_pass_gh(defect: int) -> _Gh:
     """The relisting fake: the listing only, so any deeper read fails the test loudly."""
     gh = _Gh()
-    gh.when(_is_issue_list, 0, _closed_defects(defect))
+    gh.when(_is_defect_list, 0, _closed_defects(defect))
     gh.when(lambda argv: argv[1] == "api" and "/comments" in argv[2], 0, "[]")
     return gh
 
@@ -899,6 +1008,103 @@ def test_overlap_window_dedupes_relisted_defect(tmp_path: Path, checkout: Path) 
     assert state["last_pass"] == "2026-10-09T11:00:00Z"
 
 
+def _api_defects(numbers: list[int], updated: str = "2026-10-08T11:00:00Z") -> str:
+    return json.dumps([{"number": number, "updated_at": updated, "closed_at": updated}
+                       for number in numbers])
+
+
+def test_linking_pages_past_two_hundred_defects(tmp_path: Path, checkout: Path) -> None:
+    """Two hundred fifty closed defects across three pages all resolve without stalling."""
+    shas = _history(checkout)
+    head = shas["h101"]
+    home, queue, opener = _setup_run(tmp_path, checkout, 21,
+                                     _release(101, head, shas["s101"]), head, "trace-101")
+    numbers = [7] + [1000 + position for position in range(249)]
+    pages = {1: numbers[0:100], 2: numbers[100:200], 3: numbers[200:250]}
+
+    def serve(argv: list[str]) -> str:
+        items = json.loads(_api_defects(pages[_defect_page_number(argv)]))
+        if _defect_page_number(argv) == 1:
+            items.append({"number": 999, "updated_at": "2026-10-08T11:00:00Z",
+                          "closed_at": "2026-10-08T11:00:00Z", "pull_request": {}})
+        return json.dumps(items)
+
+    gh = _Gh()
+    gh.when(_is_defect_list, 0, serve)
+    gh.when(lambda argv: _is_issue_view(argv, 7), 0, _closed_by(202))
+    gh.when(lambda argv: argv[1:3] == ["issue", "view"], 0, _closed_by())
+    gh.when(lambda argv: _is_pr_view(argv, 202, "state,mergeCommit"), 0,
+            json.dumps({"state": "MERGED", "mergeCommit": {"oid": shas["s202"]}}))
+    gh.when(lambda argv: _is_comments(argv, "o/r", 101), 0,
+            _comments_body(_final_comment(head)))
+    gh.when(lambda argv: argv[1] == "api" and "/comments" in argv[2], 0, "[]")
+    code, summary = _run(home, queue, gh, opener)
+    assert code == 0, summary
+    assert "defects_linked=1" in summary
+    assert "skipped 249 (closed-without-pr)" in summary
+    fetched = sorted({_defect_page_number(call["argv"]) for call in gh.calls
+                       if _is_defect_list(call["argv"])})
+    assert fetched == [1, 2, 3]
+    assert not any("999" in call["argv"] for call in gh.calls)
+
+
+def test_linking_stops_paging_before_window(tmp_path: Path, checkout: Path) -> None:
+    """Paging stops at the first item older than the window without fetching more."""
+    shas = _history(checkout)
+    head = shas["h101"]
+    home, queue, opener = _setup_run(tmp_path, checkout, 21,
+                                     _release(101, head, shas["s101"]), head, "trace-101")
+    state = OJ.load_state(OJ.state_dir(home))
+    state["last_pass"] = "2026-10-08T12:00:00Z"
+    OJ.save_state(OJ.state_dir(home), state)
+
+    def serve(argv: list[str]) -> str:
+        assert _defect_page_number(argv) == 1, argv
+        return json.dumps([
+            {"number": 7, "updated_at": "2026-10-08T11:00:00Z",
+             "closed_at": "2026-10-08T11:00:00Z"},
+            {"number": 8, "updated_at": "2026-10-01T10:00:00Z",
+             "closed_at": "2026-10-01T10:00:00Z"},
+        ])
+
+    gh = _Gh()
+    gh.when(_is_defect_list, 0, serve)
+    gh.when(lambda argv: _is_issue_view(argv, 7), 0, _closed_by(202))
+    gh.when(lambda argv: _is_pr_view(argv, 202, "state,mergeCommit"), 0,
+            json.dumps({"state": "MERGED", "mergeCommit": {"oid": shas["s202"]}}))
+    gh.when(lambda argv: _is_comments(argv, "o/r", 101), 0,
+            _comments_body(_final_comment(head)))
+    gh.when(lambda argv: argv[1] == "api" and "/comments" in argv[2], 0, "[]")
+    code, summary = _run(home, queue, gh, opener)
+    assert code == 0, summary
+    assert "defects_linked=1" in summary
+    fetched = [_defect_page_number(call["argv"]) for call in gh.calls
+               if _is_defect_list(call["argv"])]
+    assert fetched == [1]
+
+
+def test_linking_blocks_window_on_defect_page_failure(tmp_path: Path, checkout: Path) -> None:
+    """A failed second page fails the listing and holds the window."""
+    _history(checkout)
+    home = tmp_path / "home"
+    queue = home / "queued-candidates.jsonl"
+    _write_repos(home, {"o/r": checkout})
+    opener = _LfOpener()
+    opener.trace_pages = [[_trace("trace-101", repo="o/r", head="a" * 40, card=21)]]
+    opener.score_pages = [[]]
+    gh = _Gh()
+    gh.when(lambda argv: _is_defect_list(argv) and _defect_page_number(argv) == 2, 1, "")
+    gh.when(lambda argv: _is_defect_list(argv) and _defect_page_number(argv) == 1, 0,
+            _api_defects(list(range(1, 101))))
+    gh.when(lambda argv: argv[1] == "api" and "/comments" in argv[2], 0, "[]")
+    code, summary = _run(home, queue, gh, opener)
+    assert code == 1, summary
+    assert "failed defects:o/r (defect-list-failed)" in summary
+    assert "window-advanced=no" in summary
+    state = OJ.load_state(OJ.state_dir(home))
+    assert state["last_pass"] is None
+
+
 def test_unlinked_defect_reasons(tmp_path: Path, checkout: Path) -> None:
     """Every routine attribution outcome skips with its reason and queues nothing."""
     shas = _history(checkout)
@@ -936,7 +1142,7 @@ def test_unlinked_defect_reasons(tmp_path: Path, checkout: Path) -> None:
     opener.trace_pages = [[_trace("trace-101", repo="o/r", head=head, card=21)]]
     opener.score_pages = [[]]
     gh = _Gh()
-    gh.when(_is_issue_list, 0, _closed_defects(30))
+    gh.when(_is_defect_list, 0, _closed_defects(30))
     gh.when(lambda argv: _is_issue_view(argv, 30), 0, _closed_by())
     gh.when(lambda argv: argv[1] == "api" and "/comments" in argv[2], 0, "[]")
     code, summary = _run(home, queue, gh, opener)
@@ -1135,7 +1341,7 @@ def _filing_setup(tmp_path: Path, checkout: Path, card: int, run: Mapping[str, A
 
 def _filing_gh(comment_body: str, pr: int = 101) -> _Gh:
     gh = _Gh()
-    gh.when(_is_issue_list, 0, _closed_defects())
+    gh.when(_is_defect_list, 0, _closed_defects())
     gh.when(lambda argv: _is_comments(argv, "o/r", pr), 0, _comments_body(comment_body))
     gh.when(lambda argv: (argv[1] == "api" and "/comments" in argv[2]
                           and "--method" not in argv), 0, "[]")
@@ -1315,6 +1521,30 @@ def test_filing_resumes_journalled_finding(tmp_path: Path, checkout: Path) -> No
     assert post["value"] == "filed" and post["metadata"] == {"issue": 412}
 
 
+def test_filing_ignores_spoofed_marker_comment(tmp_path: Path, checkout: Path) -> None:
+    """A spoofed ticked box from another author files nothing."""
+    run, ids = _filing_run()
+    target = ids[0]
+    _set_outcomes(run, {target: {"outcome": "left"}})
+    home, queue, opener, _ = _filing_setup(tmp_path, checkout, 21, run, 101, HEAD_F)
+    real = _render_final(run)
+    spoof = _tick(_render_final(run), target)
+    body = json.dumps([_comment_as(1000, real, "reviewer"),
+                       _comment_as(1001, spoof, "mallory")])
+    gh = _Gh()
+    gh.when(_is_defect_list, 0, _closed_defects())
+    gh.when(lambda argv: _is_comments(argv, "o/r", 101), 0, body)
+    gh.when(lambda argv: (argv[1] == "api" and "/comments" in argv[2]
+                          and "--method" not in argv), 0, "[]")
+    mc = _Mc()
+    code, summary = _run(home, queue, gh, opener, mc=FAKE_MC, mc_runner=mc)
+    assert code == 0, summary
+    assert "boxes_filed=0" in summary
+    assert mc.calls == []
+    findings = _read_findings(checkout, 21)
+    assert findings[target]["merge_outcome"] == {"outcome": "left"}
+
+
 def _is_claim_search(argv: list[str]) -> bool:
     return (argv[1:3] == ["issue", "list"] and "--search" in argv
             and "--label" not in argv)
@@ -1458,7 +1688,7 @@ def test_addressed_rate_posted_once(tmp_path: Path, checkout: Path) -> None:
     ]]
     opener.score_pages = [[]]
     gh = _Gh()
-    gh.when(_is_issue_list, 0, _closed_defects())
+    gh.when(_is_defect_list, 0, _closed_defects())
     gh.when(lambda argv: _is_comments(argv, "o/r", 101), 0,
             _comments_body(_render_final(complete_run)))
     gh.when(lambda argv: _is_comments(argv, "o/r", 102), 0,
@@ -1485,7 +1715,7 @@ def test_addressed_rate_posted_once(tmp_path: Path, checkout: Path) -> None:
     ]]
     opener2.score_pages = [[]]
     gh2 = _Gh()
-    gh2.when(_is_issue_list, 0, _closed_defects())
+    gh2.when(_is_defect_list, 0, _closed_defects())
     gh2.when(lambda argv: argv[1] == "api" and "/comments" in argv[2]
              and "--method" not in argv, 0, _comments_body("no marker here"))
     code, summary = _run(home, queue, gh2, opener2, mc=FAKE_MC, mc_runner=_Mc())

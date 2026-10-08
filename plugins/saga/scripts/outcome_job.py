@@ -22,6 +22,7 @@ import re
 import shutil
 import subprocess  # nosec B404 - runners only, fixed argument vectors
 import sys
+import tempfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -159,18 +160,29 @@ def default_queue_path() -> Path:
 
 
 def _write_0600_atomic(path: Path, content: str) -> None:
-    """Write *content* atomically, owner-only. The reader never sees a torn file."""
+    """Write *content* atomically, owner-only. The reader never sees a torn file.
+
+    The complete content is staged in a same-directory temporary file, flushed to storage,
+    and then moved over the target, so a crash leaves either the old file or the new one.
+    """
     path = Path(path)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
     try:
-        os.fchmod(fd, 0o600)
-        data = content.encode("utf-8")
-        while data:
-            written = os.write(fd, data)
-            data = data[written:]
-    finally:
-        os.close(fd)
+        try:
+            os.fchmod(fd, 0o600)
+            data = content.encode("utf-8")
+            while data:
+                written = os.write(fd, data)
+                data = data[written:]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def _read_json(path: Path, schema: str, kind: str) -> dict[str, Any]:
@@ -444,12 +456,20 @@ def trace_fix_commits(
     git_runner: Runner | None, gh_runner: Runner | None, checkout: Path,
     commits: Sequence[str],
 ) -> tuple[int | None, str | None]:
-    """The one introducing pull request every commit agrees on, or (None, reason)."""
+    """The one introducing pull request the tracing commits agree on, or (None, reason).
+
+    A commit with nothing to blame (empty or add-only) casts no vote. The fix skips as
+    add-only only when no commit traced anything at all.
+    """
     votes: dict[int, int] = {}
+    saw_add_only = False
     for commit in commits:
         by_pr, reason = trace_single(git_runner, gh_runner, checkout, commit)
         if reason is not None:
             if reason == "nothing-to-trace":
+                continue
+            if reason == "add-only":
+                saw_add_only = True
                 continue
             return None, reason
         assert by_pr is not None
@@ -458,7 +478,7 @@ def trace_fix_commits(
         (number,) = by_pr
         votes[number] = votes.get(number, 0) + 1
     if not votes:
-        return None, "nothing-to-trace"
+        return None, "add-only" if saw_add_only else "nothing-to-trace"
     if len(votes) > 1:
         return None, "spans-pull-requests"
     (number,) = votes
@@ -611,32 +631,45 @@ def _gh_json(gh_runner: Runner | None, *args: str, cwd: Path | None = None) -> A
         return None
 
 
+DEFECT_PAGE_SIZE = 100
+
+
 def list_closed_defects(
     gh_runner: Runner | None, repo: str, since: datetime | None,
 ) -> tuple[list[dict[str, Any]] | None, str | None]:
-    """Closed `defect` issues updated in the window, newest first: (issues, None) or (None, reason)."""
-    issues = _gh_json(
-        gh_runner, "issue", "list", "--repo", repo, "--state", "closed",
-        "--label", "defect", "--search", "sort:updated-desc", "--limit", "200",
-        "--json", "number,updatedAt,closedAt",
-    )
-    if not isinstance(issues, list):
-        return None, "defect-list-failed"
-    if len(issues) >= 200:
-        oldest = min((str(item.get("updatedAt") or "") for item in issues
-                      if isinstance(item, dict)), default="")
-        moment = _parse_zulu(oldest) if oldest else None
-        if since is None or (moment is not None and moment >= since):
-            return None, "defect-list-truncated"
-    kept = []
-    for item in issues:
-        if not isinstance(item, dict):
-            continue
-        moment = _parse_zulu(str(item.get("updatedAt") or ""))
-        if since is not None and (moment is None or moment < since):
-            continue
-        kept.append(item)
-    return kept, None
+    """Closed `defect` issues updated in the window, newest first: (issues, None) or (None, reason).
+
+    Pages until a page is short or older than the window; only a failed page fails the
+    listing. The raw endpoint also returns pull requests, which are not defect issues.
+    """
+    kept: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        body = _gh_json(
+            gh_runner, "api",
+            f"repos/{repo}/issues?state=closed&labels=defect&sort=updated"
+            f"&direction=desc&per_page={DEFECT_PAGE_SIZE}&page={page}",
+        )
+        if not isinstance(body, list):
+            return None, "defect-list-failed"
+        if not body:
+            return kept, None
+        stop = len(body) < DEFECT_PAGE_SIZE
+        for item in body:
+            if not isinstance(item, dict) or "pull_request" in item:
+                continue
+            moment = _parse_zulu(str(item.get("updated_at") or ""))
+            if moment is None:
+                continue
+            if since is not None and moment < since:
+                stop = True
+                break
+            kept.append({"number": item.get("number"),
+                         "updatedAt": item.get("updated_at"),
+                         "closedAt": item.get("closed_at")})
+        if stop:
+            return kept, None
+        page += 1
 
 
 def closing_pull_requests(
@@ -700,10 +733,22 @@ def default_branch(git_runner: Runner | None, checkout: Path) -> str | None:
     return None
 
 
+def _comment_author(comment: Mapping[str, Any]) -> str | None:
+    """The comment's author login, else None when the payload carries none."""
+    user = comment.get("user")
+    login = user.get("login") if isinstance(user, dict) else None
+    return str(login) if login is not None else None
+
+
 def marker_comment(
     gh_runner: Runner | None, repo: str, pr: int,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """The newest final-checklist comment on pull request *pr*: (comment, None) or (None, reason).
+    """The newest final-checklist comment from the review's own author, or (None, reason).
+
+    Trust on first use: the account that posted the earliest marker comment is the
+    review-posting account, and only its marker comments count. A later marker comment
+    from anyone else is ignored — anyone who can comment on a public pull request can
+    post the public marker.
 
     A comment needs C13's marker constant, so the review-state module loads here rather than
     at module scope.
@@ -720,7 +765,9 @@ def marker_comment(
                and str(comment.get("body") or "").startswith(marker)]
     if not matches:
         return None, "no-marker-comment"
-    return matches[-1], None
+    pinned = _comment_author(matches[0])
+    same = [comment for comment in matches if _comment_author(comment) == pinned]
+    return same[-1], None
 
 
 def marker_head(comment: Mapping[str, Any]) -> str | None:
@@ -782,28 +829,22 @@ def reviewed_head_for_pr(
 ) -> tuple[str | None, str | None]:
     """The introducing pull request's reviewed head: (head, None) or (None, reason).
 
-    The stored review run is the trusted source; the marker comment cross-checks it. A
-    comment-only head still links, because pruned checkouts are common and forging a head
-    needs write access plus intent.
+    The stored review run is the trusted source; the marker comment only cross-checks it.
+    With no stored release naming the pull request there is no trusted head, so the link
+    skips without fetching comments: a comment alone never attributes a miss.
     """
     record_head, record_reason, _ = record_head_for_pr(checkout, pr)
     if record_reason == "ambiguous-release":
         return None, "ambiguous-release"
     if record_reason in ("store-unresolvable", "store-unreadable"):
         return None, str(record_reason)
-    comment, comment_reason = marker_comment(gh_runner, repo, pr)
+    if record_head is None:
+        return None, "no-reviewed-head"
+    comment, _ = marker_comment(gh_runner, repo, pr)
     found = marker_head(comment) if comment is not None else None
-    if record_head is not None and found is not None:
-        if record_head != found:
-            return None, "head-mismatch"
-        return record_head, None
-    if record_head is not None:
-        return record_head, None
-    if found is not None:
-        return found, None
-    if comment_reason == "comments-unreadable":
-        return None, "comments-unreadable"
-    return None, "no-reviewed-head"
+    if found is not None and record_head != found:
+        return None, "head-mismatch"
+    return record_head, None
 
 
 # ---------------------------------------------------------------------------
@@ -922,7 +963,6 @@ def qa_miss_scores(
 #: drops it with `register --remove`, loudly (exit 1 every pass) rather than silently.
 INFRA_REASONS = frozenset({
     "defect-list-failed",
-    "defect-list-truncated",
     "closing-prs-unreadable",
     "pr-unreadable",
     "comments-unreadable",
@@ -1249,7 +1289,11 @@ class Pass:
         self.persist()
 
     def _resolve_one_qa_miss(self, pending: Mapping[str, Any]) -> bool:
-        """Queue one pending miss when its repair has landed. True when done."""
+        """Queue one pending miss when its repair has landed. True when done.
+
+        The pending entry already pins the tested revision; the record's current `qa`
+        block is rewritten by every later /qa run, so it cannot still name that revision.
+        """
         trace_id = str(pending.get("trace") or "")
         repo = str(pending.get("repo") or "")
         card = pending.get("card")
@@ -1259,10 +1303,6 @@ class Pass:
             return False
         record = self._record_for(repo, card)
         if record is None:
-            return False
-        qa = record.get("qa") if isinstance(record.get("qa"), dict) else {}
-        environment = qa.get("environment") if isinstance(qa.get("environment"), dict) else {}
-        if str(environment.get("revision") or "") != tested:
             return False
         release = record.get("release") if isinstance(record.get("release"), dict) else {}
         if release.get("status") != "merged":

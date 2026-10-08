@@ -2,6 +2,37 @@
 
 ## 2026-10-08
 
+### A public marker comment is forgeable, so pin the review-posting author
+
+**Evidence.** Issue #167 repair round. `plugins/saga/scripts/outcome_job.py`
+(`marker_comment`): anyone who can comment on a public pull request can post C13's public
+checklist marker, and newest-match selection let a later spoofed comment tick boxes the
+operator left unticked.
+
+**Mechanism.** The marker is a format, not a credential. The job pins the author of the
+earliest marker comment as the review-posting account and reads only that account's
+checklists; with no stored release there is no trusted head at all, so comment-only
+attribution is gone.
+
+**Generalizable rule.** Never select a privileged comment by newest match on a public
+marker. Pin the trusted author first, then take their newest.
+
+### Resolve journalled work against history, not a mutable singleton
+
+**Evidence.** Issue #167 repair round. `plugins/saga/scripts/outcome_job.py`
+(`_resolve_one_qa_miss`): a pending `/qa` miss queued only while the record's current
+`qa.environment.revision` still named the tested revision, but every later `/qa` run
+rewrites that block, stranding the miss after the repair's own functional test.
+
+**Mechanism.** The pending entry already pinned the tested revision; the resolve check
+re-read a field with newer-wins semantics. The fix drops the equality check and resolves
+purely on git ancestry: the stored revision is an ancestor of the record's later merged
+landed commit.
+
+**Generalizable rule.** When a journal entry pins a revision, resolve it against immutable
+history. Re-reading a mutable singleton for the same value breaks the moment anything else
+writes that field.
+
 ### A revert subject's first `(#N)` names the reverted pull request, not its own
 
 **Evidence.** Issue #167, unit U4. `plugins/saga/scripts/outcome_job.py`

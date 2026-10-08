@@ -11,8 +11,10 @@ environment at fire time, through `keychain-env emit`; the installed agent holds
 ## State and the checkout map
 
 `<home>/.saga/outcome-job/` holds `state.json` (`outcome_job_state.v1`), `repos.json`
-(`outcome_job_repos.v1`) and the launchd logs. Both files are owner-only with atomic writes,
-and the full in-memory state persists after each side effect as well as at pass end.
+(`outcome_job_repos.v1`) and the launchd logs. Both files are owner-only, written through a
+same-directory temporary file that is flushed and moved over the target, so a crash leaves
+the previous journal intact. The full in-memory state persists after each side effect as
+well as at pass end.
 
 `state.json`:
 
@@ -47,8 +49,9 @@ lock.
    `master`). A failure skips that repository and blocks the window.
 2. **Refresh the trace index** from the Langfuse trace listing, accumulated across passes.
    Only code-review traces (repo, head, card, round all present) ever receive scores.
-3. **Link defects**: closed `defect` issues updated in the window, through their closing
-   pull requests. Each link posts one `found-after-merge` miss and appends one queue record.
+3. **Link defects**: closed `defect` issues updated in the window, paged until a page
+   is short or older than the window, through their closing pull requests. Each link posts
+   one `found-after-merge` miss and appends one queue record.
 4. **Link reverts** from `git log --no-merges` on each default branch over the window,
    matching the revert subject rule case-insensitively, then following the defect path from
    tracing on. Each link posts one `reverted` miss and appends one queue record.
@@ -67,11 +70,15 @@ code: blame the fix's removed lines on the fix's parent and resolve each blamed 
 pull request by `(#N)` subject or `gh pr list --search`. A fix links only when every traced
 commit agrees on one introducing pull request that is not the closing pull request.
 
-- A merge-commit fix resolves to its non-merge branch range; any add-only commit vetoes it.
+- A merge-commit fix resolves to its non-merge branch range; a commit with nothing to
+  blame casts no vote, and the fix skips as add-only only when no commit traced at all.
 - A squash tip whose subject carries its own pull request number traces itself; anything
   else reads the pull request's commits from `gh` and needs every one resolvable locally.
 - The introducing pull request's reviewed head comes from the stored run, cross-checked
-  against the final review comment; either source alone still links.
+  against the final review comment. With no stored release there is no trusted head: a
+  comment alone never attributes a miss.
+- Only the review-posting account's checklist counts: the account that posted the earliest
+  marker comment is pinned, and later marker comments from anyone else are ignored.
 
 Routine skips, each named in the summary: `closed-without-pr`, `closing-pr-unmerged`,
 `add-only`, `spans-pull-requests`, `pr-unknown`, `in-pr-repair`, `fix-partially-visible`,
@@ -93,10 +100,11 @@ screening read, so an invalid record is refused loudly instead.
 ## Filing crash order
 
 For each mapped record with a release pull request, the job reads the newest stored run's
-fix-later findings still `left` and the pull request's final checklist comment. Each ticked,
-unlinked finding files through mission-control with C13's title, body and risk, then the
-finding flips to `filed` under the record lock, its `merge-outcome` score posts, and the
-comment gains `→ #<n>` on the box line.
+fix-later findings still `left` and the pull request's final checklist comment from the
+review-posting account (see above). Each ticked, unlinked finding files through
+mission-control with C13's title, body and risk, then the finding flips to `filed` under
+the record lock, its `merge-outcome` score posts, and the comment gains `→ #<n>` on the box
+line.
 
 The journal order is crash-proof: journal `claimed`, file, journal `done` with the issue
 number immediately. A refused filing records nothing and the run exits 1 at the end. Stale
