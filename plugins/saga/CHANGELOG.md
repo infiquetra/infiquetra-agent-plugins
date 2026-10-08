@@ -7,8 +7,7 @@
 - Issue 157: the policy's 30 questions and four Jev question banks (10 to 20 questions each) in
   `references/question-banks/`, with `scripts/question_banks.py` loading approved sets, writing
   approvals, and rendering sitting material. The loader refuses any set whose content differs from
-  its approval. The sittings are pending cards C4c, C5 and C5b and the operator, so the shipped
-  banks carry no approval yet.
+  its approval. The operator approved all four banks at their sittings on 2026-10-07.
 
 ## [1.3.1] - 2026-10-07
 
