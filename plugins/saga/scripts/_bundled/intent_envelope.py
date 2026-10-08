@@ -1,6 +1,6 @@
 # --- generated bundle stamp: do not edit ---
 # generated-by: scripts/bundle_fleet_module.py
-# source-version: 0.33.0
+# source-version: 0.33.1
 # source-commit: authored
 # source-path: scripts/fleet_commons/intent_envelope.py
 # source-sha256: 3ba2484a9556f929971c9735ef24c4b56131335e5d2ac71d578c270811a0bff1

@@ -13,8 +13,9 @@ in
 [2026-09-22-mission-control-compatibility-matrix.md, superseded 2026-10-04](2026-09-22-mission-control-compatibility-matrix.md).
 The package then moved to 2.21.2, and the nine-client run of 2026-10-04 is
 recorded in
-[2026-10-04-mission-control-compatibility-matrix.md](2026-10-04-mission-control-compatibility-matrix.md),
-which is the current matrix for the package that ships. This notice is still
+[2026-10-04-mission-control-compatibility-matrix.md, superseded 2026-10-07](2026-10-04-mission-control-compatibility-matrix.md).
+The package moved to 2.21.3 on 2026-10-07 with no client run yet; see
+[2026-10-07-mission-control-compatibility-notice.md](2026-10-07-mission-control-compatibility-notice.md). This notice is still
 the end of the supersession chain. It is not an assessment, and it does not
 invent stage results.
 
@@ -25,5 +26,5 @@ carries no supersession directives of its own and the records that name it as
 their successor still resolve through it.
 
 ```json
-{"notice": "the mission-control 2.15.2 client results were not renumbered onto 2.21.1", "current_matrix": "2026-10-04-mission-control-compatibility-matrix.md"}
+{"notice": "the mission-control 2.15.2 client results were not renumbered onto 2.21.1", "current_matrix": null, "latest_notice": "2026-10-07-mission-control-compatibility-notice.md"}
 ```

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.3] - 2026-10-07
+
+### Changed
+
+- `agy-coder` runs at `sonnet/high` instead of `sonnet/medium`, and `agy-reviewer` pins
+  `effort: high` rather than taking the session's effort, following the 2026-10-07 fleet tier
+  defaults. Bundled Fleet Core stamps name fleet-core 0.33.1.
+
 ## [0.6.2] - 2026-09-22
 
 0.6.2 — imported from infiquetra-claude-plugins@acc99fe7 (upstream 0.6.1); authored here from this commit; no provenance manifest from now on.

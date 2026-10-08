@@ -1,6 +1,6 @@
 # --- generated bundle stamp: do not edit ---
 # generated-by: scripts/bundle_fleet_module.py
-# source-version: 0.33.0
+# source-version: 0.33.1
 # source-commit: authored
 # source-path: scripts/fleet_commons/retry_backoff.py
 # source-sha256: c1e9d9c23cc0d356fa75c8da4c426e8849d8b96270283daff2acca62594e911f

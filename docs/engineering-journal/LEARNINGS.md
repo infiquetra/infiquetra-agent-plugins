@@ -2,6 +2,14 @@
 
 ## 2026-10-07
 
+### The superseded-link check only sees files git tracks
+
+**Evidence.** Pull request #210. `tests/test_check_compatibility_matrix.py` (`test_no_prose_outside_evidence_links_a_superseded_document`) lists markdown with `git ls-files`. The new 2026-10-07 compatibility notices linked their superseded matrices without marking the link historical. The local run passed while the notices were untracked, and CI failed once they were committed.
+
+**Mechanism.** An untracked file is not in `git ls-files`, so the check never read the new notices. The local pass proved nothing about them.
+
+**Generalizable rule.** Stage new documents before running a check that enumerates files through git.
+
 ### A later fingerprint path has to land before a test that pins the last entry
 
 **Evidence.** Issue #160, after rebasing onto main. `plugins/saga/tests/test_review_checks_runner.py` (`test_checks_fingerprint_names_the_script`) asserts `COMPONENTS[-1]` is `plugins/saga/scripts/review_checks.py`. Card C5 kept that path last the same way. The review command is the entry before it in `plugins/saga/scripts/review_calibration.py`.

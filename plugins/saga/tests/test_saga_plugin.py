@@ -56,7 +56,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     #
     # 1.2.1 is the authored-here cut: same upstream behavior, patch bumped so the
     # catalog's version is not the upstream pin.
-    assert plugin_json["version"] == "1.3.0"  # 1.2.0: the three advisory review
+    assert plugin_json["version"] == "1.3.1"  # 1.2.0: the three advisory review
     # judgments of issue #1034 — the conditional-lens proposal at declaration time
     # (review_roster.py --propose, additive only), finding dedupe groups and the severity
     # flag over results (review_result.py, grouped and attached, never applied). Bumped over

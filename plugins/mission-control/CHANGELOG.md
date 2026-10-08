@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [2.21.3] - 2026-10-07
+
+### Changed
+
+- The bundled Fleet Core staffing data is regenerated with the 2026-10-07 tier defaults
+  (Haiku 5.5 and the Sonnet 5.5 cache-read cut), and `sdlc-operator` pins `effort: high`.
+
 ### Changed
 
 - The bundled Fleet Core `staffing.json` and `jev_verbs.py` are regenerated for issue 158 (a

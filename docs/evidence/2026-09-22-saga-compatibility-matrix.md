@@ -1,5 +1,5 @@
 <!-- matrix-status: superseded -->
-<!-- superseded-by: 2026-10-04-saga-compatibility-matrix.md -->
+<!-- superseded-by: 2026-10-07-saga-compatibility-notice.md -->
 <!-- superseded-reason: The package version moved from 1.2.2 to 1.3.0 for the 2026-10-04 release, so the assessment was re-run and the record re-bound. The fresh run covers nine clients, because Agy replaced Gemini CLI on the operator's machine. -->
 
 # Ten-client compatibility matrix — portable saga package (1.2.2)

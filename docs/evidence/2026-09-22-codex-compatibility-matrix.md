@@ -1,4 +1,6 @@
-<!-- matrix-status: current -->
+<!-- matrix-status: superseded -->
+<!-- superseded-by: 2026-10-07-codex-compatibility-notice.md -->
+<!-- superseded-reason: The package version moved from 0.1.5 to 0.1.6 for the 2026-10-07 release that re-tiers the fleet staffing defaults; no client assessment has been run against 0.1.6 yet. -->
 
 # Ten-client compatibility matrix — portable codex package (0.1.5)
 

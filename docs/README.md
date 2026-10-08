@@ -55,6 +55,10 @@
   machine; the other eight 2026-09-22 records keep their ten rows until their
   own versions move. Each new record is at
   `evidence/2026-10-04-<package>-compatibility-matrix.md`.
+- The 2026-10-07 release moved saga, mission-control, agy and codex without a fresh
+  client run. Each has a notice at
+  `evidence/2026-10-07-<package>-compatibility-notice.md` in place of a current
+  matrix until its next assessment; the matrix is not a release gate.
 - [Agent Launcher nine-client compatibility matrix](evidence/2026-10-04-agent-launcher-compatibility-matrix.md)
   records what every installed coding-agent client did with the portable
   agent-launcher package across four stages with fingerprint-bound

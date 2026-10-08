@@ -2,6 +2,25 @@
 
 ## 2026-10-07
 
+### Release the 2026-10-07 tier change with compatibility notices, not a fresh client run
+
+**Decision.** saga 1.3.1, fleet-core 0.33.1, mission-control 2.21.3, agy 0.6.3 and codex 0.1.6
+ship the re-tiered staffing defaults from pull request 209. Each package's last compatibility
+matrix is marked superseded and points at a `notice` document stating that no client assessment
+has been run against the new version. unifi is not released: its only change is one agent
+`effort:` line, and its 2026-09-22 matrix stays current.
+
+**Rationale.** The installed plugins only pick up the new defaults when a version moves, and the
+operator asked for the release now. The compatibility matrix records say they are not a release
+gate, and the `notice` status exists for a version that moved without a fresh assessment.
+
+**Rejected alternatives.** A full nine-client run for five packages before releasing; it is the
+better record and remains the next step, but it would hold the cost fix for hours. Re-installing
+the same version numbers from a newer commit; the installed version would then name two
+different builds.
+
+**Revisit when.** The next assessment of each package replaces its notice.
+
 ### Re-tier the staffing defaults for Haiku 5.5 and the Sonnet 5.5 cache-read cut
 
 **Decision.** `staffing.json` work-shape defaults change: `implementation` from opus/medium to
