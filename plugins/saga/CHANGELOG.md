@@ -4,6 +4,11 @@
 
 ### Added
 
+- Issue #167: the release step records its merged state with the review run it tested, `/qa`
+  names that run and posts each failure as its miss, and a daily launchd job links later
+  defects and reverts to the runs that passed them, queues them where the corpus screening
+  reads, files fix-later boxes ticked after review, and posts each completed run's addressed
+  rate. Repositories register their checkouts, and `/saga:setup` offers the schedule step.
 - Issue #162: `scripts/builder_record.py` checks each unit's policy-question declarations and
   proving tests, and stores a merged builder record on the run record. The build loop's unit
   iteration refuses to hand off until that check passes, and the combined pass's review gate

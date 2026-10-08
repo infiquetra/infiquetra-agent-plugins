@@ -2,6 +2,36 @@
 
 ## 2026-10-08
 
+### A revert subject's first `(#N)` names the reverted pull request, not its own
+
+**Evidence.** Issue #167, unit U4. `plugins/saga/scripts/outcome_job.py`
+(`own_pr_from_subject`, `link_revert`). A direct revert reads `Revert "fix widget
+(#202)"`: the blamed lines resolve to pull request 202, and reading the same group as the
+revert's own number skips every such revert as an in-PR repair.
+
+**Mechanism.** GitHub appends the squash marker at the end of the subject, so only the
+trailing group names the commit's own pull request. The blame resolution keeps the
+first-group search (an introducer's mention names its pull request), while the own-number
+checks for fix tips and reverts read the trailing group only.
+
+**Generalizable rule.** A `(#N)` mention and a `(#N)` marker are different claims. Attribute
+blame by mention, but attribute ownership by the trailing marker GitHub appends.
+
+### A local git origin parses as a bogus owner/name slug
+
+**Evidence.** Issue #167, unit U6. `plugins/saga/scripts/outcome_job.py` (`checkout_slug`).
+The origin regex matches any path ending in two segments, so a fixture origin such as
+`/tmp/.../case-0/origin.git` resolved as slug `case-0/origin` and registered cleanly.
+
+**Mechanism.** The slug feeds `gh --repo` calls, so a fabricated slug does not fail at
+registration but blocks the window on every later pass until removed. Registration now
+requires a GitHub remote before parsing, and a local path refuses with
+`no GitHub owner/name origin`.
+
+**Generalizable rule.** Validate the remote's host before parsing its slug. A parser that
+accepts any path turns a misconfigured checkout into a poisoned mapping instead of a
+refusal.
+
 ### A pytest node id can name a file outside the checkout it runs in
 
 **Evidence.** Issue #162, code review of `62a8b57`. `plugins/saga/scripts/builder_record.py`

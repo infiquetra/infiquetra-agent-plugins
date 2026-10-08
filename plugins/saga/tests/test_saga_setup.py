@@ -7,6 +7,8 @@ home or the worktree's ``.saga-profile.json``.
 from __future__ import annotations
 
 import json
+import os
+import plistlib
 import socket
 import stat
 import subprocess
@@ -1423,3 +1425,148 @@ def test_survey_reports_langfuse_queue(tmp_path: Path, capsys: pytest.CaptureFix
     assert code == 0, err
     assert "Langfuse posts waiting: 2 (missing-keys 1, unreachable 1)" in text
     assert "sentinel-secret-value" not in raw + text + err
+
+
+SCHEDULE_LABEL = "com.infiquetra.saga.outcome-job"
+SCHEDULE_RUN = ["python3", "plugins/saga/scripts/outcome_job.py", "install-schedule"]
+SCHEDULE_DONE = ["launchctl", "list", SCHEDULE_LABEL]
+
+
+def test_schedule_step_quiet_without_approval(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The survey lists the schedule step as not done and never runs its installer."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    calls: list[list[str]] = []
+
+    def runner(
+        argv: list[str], *, cwd: Path | None = None, env: object = None, timeout: int = 30
+    ) -> Result:
+        calls.append(list(argv))
+        return Result(1, "")
+
+    code, raw, err = _run(
+        [
+            "survey",
+            "--repo",
+            str(repo),
+            "--home",
+            str(home),
+            "--tools",
+            str(_tools(tmp_path, "schema: review_tools.v1\ntools: []\n")),
+            "--format",
+            "json",
+        ],
+        capsys,
+        runner=runner,
+    )
+    assert code == 0, err
+    [step] = [entry for entry in json.loads(raw)["steps"]
+              if entry["name"] == "outcome-schedule"]
+    assert step["done"] is False
+    assert SCHEDULE_DONE in calls
+    assert SCHEDULE_RUN not in calls
+
+
+def test_schedule_step_installs_with_approval(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`step --name` runs the real installer, which unloads and bootstraps the label."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    home = tmp_path / "home"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "launchctl.log"
+    ctl = bin_dir / "launchctl"
+    ctl.write_text(f"#!/bin/sh\necho \"$@\" >> {log}\n", encoding="utf-8")
+    ctl.chmod(0o755)
+    kc = bin_dir / "keychain-env"
+    kc.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    kc.chmod(0o755)
+    installer = str(SCRIPTS / "outcome_job.py")
+    extensions = _extensions(
+        tmp_path,
+        "schema: setup_extensions.v1\n"
+        "steps:\n"
+        "  - name: outcome-schedule\n"
+        "    summary: Run the review-outcome job daily at 06:17.\n"
+        f"    done: {json.dumps(SCHEDULE_DONE)}\n"
+        f"    run: {json.dumps([sys.executable, installer, 'install-schedule', '--home', str(home)])}\n"
+        "questions: []\n",
+    )
+    code, out, err = _run(
+        ["step", "--name", "outcome-schedule", "--repo", str(repo),
+         "--extensions", str(extensions)],
+        capsys,
+        runner=setup.production_runner,
+        env={"PATH": str(bin_dir)},
+    )
+    assert code == 0, err
+    plist = home / "Library" / "LaunchAgents" / f"{SCHEDULE_LABEL}.plist"
+    text = plist.read_bytes()
+    agent = plistlib.loads(text)
+    assert agent["Label"] == SCHEDULE_LABEL
+    assert agent["StartCalendarInterval"] == {"Hour": 6, "Minute": 17}
+    assert agent["ProgramArguments"][2].count('"$1" emit --quiet') == 1
+    assert agent["ProgramArguments"][4] == str(kc.resolve())
+    assert agent["ProgramArguments"][7] == str(home.resolve())
+    assert all(os.path.isabs(part) for part in agent["ProgramArguments"][4:])
+    domain = f"gui/{os.getuid()}"
+    assert log.read_text(encoding="utf-8").splitlines() == [
+        f"bootout {domain}/{SCHEDULE_LABEL}",
+        f"bootstrap {domain} {plist}",
+    ]
+    assert "no repository registered" in out
+
+
+def test_schedule_registry_row_shape() -> None:
+    """The committed row names the step, its summary and both vectors exactly."""
+    extensions = setup.load_extensions()
+    [step] = [entry for entry in extensions["steps"]
+              if entry.get("name") == "outcome-schedule"]
+    assert step == {
+        "name": "outcome-schedule",
+        "summary": "Run the review-outcome job daily at 06:17.",
+        "done": SCHEDULE_DONE,
+        "run": SCHEDULE_RUN,
+    }
+
+
+def test_schedule_survey_persists_step_in_machine_record(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The survey stores the schedule step's done state in the machine record."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+
+    def runner(
+        argv: list[str], *, cwd: Path | None = None, env: object = None, timeout: int = 30
+    ) -> Result:
+        return Result(1, "")
+
+    code, _, err = _run(
+        [
+            "survey",
+            "--repo",
+            str(repo),
+            "--home",
+            str(home),
+            "--tools",
+            str(_tools(tmp_path, "schema: review_tools.v1\ntools: []\n")),
+            "--format",
+            "json",
+        ],
+        capsys,
+        runner=runner,
+    )
+    assert code == 0, err
+    record = json.loads((home / ".saga" / "machine.json").read_text(encoding="utf-8"))
+    [step] = [entry for entry in record["survey"]["steps"]
+              if entry["name"] == "outcome-schedule"]
+    assert step["done"] is False
