@@ -95,6 +95,11 @@ EFFORT_RIDER: dict[str, str] = {
         "adversarially stress-test your reasoning, enumerate and check edge cases, and verify "
         "every load-bearing claim before concluding."
     ),
+    "max": (
+        "EFFORT (max): cover the full breadth of the task. Search every place the answer could "
+        "be, read rather than skim, cross-check any negative finding before reporting it, and "
+        "do not stop at the first plausible answer."
+    ),
 }
 
 # Fail loudly at import time if the rider ever drifts out of sync with the canonical vocabulary.

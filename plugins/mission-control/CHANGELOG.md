@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [2.21.4] - 2026-10-07
+
+### Changed
+
+- The bundled Fleet Core staffing data is regenerated for the Haiku effort shift (fleet-core
+  0.33.2).
+
 ## [2.21.3] - 2026-10-07
 
 ### Changed

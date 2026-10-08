@@ -2,6 +2,38 @@
 
 ## 2026-10-07
 
+### Move Haiku's efforts up one rung, with max for survey only
+
+**Decision.** The operator moved every Haiku default up one effort rung: `purely-mechanical` and
+`offload-test-gated` to haiku/medium, `mechanical` to haiku/xhigh, `read-only-survey` to
+haiku/max. `implementation-test-gated` stays on haiku/xhigh. `max` joins the Claude effort
+palette at rung 4, and only haiku's `effort_ceiling` reaches it. haiku's `raise_ceiling` is
+xhigh, so no automatic or recorded raise lands on haiku/max. Released as saga 1.3.2, fleet-core
+0.33.2, mission-control 2.21.4, agy 0.6.4 and codex 0.1.7; the same-day compatibility notices
+now name both versions.
+
+**Rationale.** Each Haiku rung costs cents per task (Artificial Analysis, 2026-10-07: xhigh $0.12
+against max $0.21), and an operator session on haiku/max did its system work well. max scores
+highest of Haiku's settings on the Intelligence Index (43.4 against 41.2), which fits breadth
+work, but lower than xhigh on the Coding Agent Index (0.365 against 0.414), so building stays on
+xhigh and a raise never reaches max.
+
+**Consequences.** `mechanical` now sits at haiku's raise ceiling, so a Jev "above" on a
+mechanical unit reports `raise-at-ceiling` instead of auto-raising; `implementation-test-gated`
+has behaved this way since pull request 209. The expensive-effort confirmation gate in
+`tier_resolver` became the ceiling of each model that is not cheap (xhigh) rather than the last
+palette rung, so adding max neither gates every haiku survey nor ungates opus/xhigh. A recorded
+Jev raise above its target model's raise ceiling is now refused, the bound `one_step_raise`
+already kept.
+
+**Rejected alternatives.** max for test-gated building too (lower coding score for more cost).
+haiku `raise_ceiling: max` (a failed building unit would be raised onto the setting the coding
+benchmark ranks below xhigh). A raise from haiku/xhigh to sonnet/high (it moves on both axes, which
+the one-step rule forbids; a candidate follow-up).
+
+**Revisit when.** The transcript evaluation of Haiku sessions reports, or a mechanical unit needs a
+raise that `raise-at-ceiling` leaves to the operator.
+
 ### Release the 2026-10-07 tier change with compatibility notices, not a fresh client run
 
 **Decision.** saga 1.3.1, fleet-core 0.33.1, mission-control 2.21.3, agy 0.6.3 and codex 0.1.6

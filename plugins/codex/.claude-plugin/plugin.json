@@ -1,6 +1,6 @@
 {
   "name": "codex",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Guarded synchronous Codex delegation for Claude Code. The delegate command and the coder and reviewer agents all route through the portable wrapper.",
   "author": {
     "name": "Infiquetra",

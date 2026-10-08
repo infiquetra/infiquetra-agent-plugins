@@ -151,7 +151,7 @@ def test_plan_makes_one_request_and_records_each_unit_under_tier_judgments(
     assert tasks["U1"]["files"] == ["plugins/x/key.py"]
     assert tasks["U1"]["work_shape"] == "implementation"
     assert tasks["U1"]["default_tier"] == "sonnet/high"
-    assert tasks["U3"]["default_tier"] == "haiku/xhigh"
+    assert tasks["U3"]["default_tier"] == "haiku/max"
     assert calls[0]["state"]["issue"]["flags"]["has_security"] is True
 
     rows = {row["id"]: row for row in result["units"]}
@@ -233,7 +233,7 @@ def test_label_writes_planned_tier_and_logs_each_verdict_once(
     _seed(rr, store)
     _plan(tj, staffing, store, repo_root, {"U1": ("above", 0.85), "U2": ("above", 0.7)}, [])
     log_dir = tmp_path / "typesafe"
-    finals = {"U1": "opus/high", "U2": "sonnet/high", "U3": "haiku/xhigh"}
+    finals = {"U1": "opus/high", "U2": "sonnet/high", "U3": "haiku/max"}
 
     logged = tj.run_label(96, store_root=store, finals=finals, staffing=staffing, log_dir=log_dir)
     assert logged == {"U1": "above", "U2": "same", "U3": "same"}
@@ -348,7 +348,7 @@ def test_the_plan_command_runs_end_to_end_with_the_judgment_off(
     assert [row["tier"] for row in printed["units"]] == [
         {"model": "sonnet", "effort": "high"},
         {"model": "sonnet", "effort": "high"},
-        {"model": "haiku", "effort": "xhigh"},
+        {"model": "haiku", "effort": "max"},
     ]
     assert "tier_judgments" not in rr.load(store, 96, warn=None).extra
 

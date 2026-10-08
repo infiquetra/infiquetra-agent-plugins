@@ -96,9 +96,9 @@ the Codex plugin repository, so it needs no schema version change.
 
 **The translation has a hole, and it is the weakest rung.** The portable vocabulary has three names
 (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5`) and the Claude palette has four, so `haiku` has nothing
-to translate through. Two work shapes resolve to `haiku` — `purely-mechanical` and
-`offload-test-gated` — and a role pinning a non-Claude vendor on either of them fails loud rather
-than guessing. Giving the vendor palettes a fourth execution class is what closes it.
+to translate through. Five work shapes resolve to `haiku` — `purely-mechanical`, `mechanical`,
+`read-only-survey`, `implementation-test-gated` and `offload-test-gated` — and a role pinning a
+non-Claude vendor on any of them fails loud rather than guessing. Giving the vendor palettes a fourth execution class is what closes it.
 
 **Precedence — written here and in `staffing.py`, nowhere else.** For a work shape,
 `resolve_shape` takes the first of these that is present (`staffing.TIER_PRECEDENCE`):
@@ -113,8 +113,8 @@ than guessing. Giving the vendor palettes a fourth execution class is what close
 3. `jev-raise` — a raise the tier judgment applied, recorded in the run record and passed as
    `jev_raise=` (written by admission and `tier_judgment.py plan`, issue #96). The resolver refuses a
    recorded raise that is not exactly one step above the work shape's default — one model rung or
-   one effort rung, not both — or that names `fable`; `max` is off the Claude palette and fails
-   the palette check.
+   one effort rung, not both — that names `fable`, or that lands above the target model's raise
+   ceiling (`sonnet/xhigh`, `haiku/max`).
 4. `policy` — the shared `work_shapes` default.
 
 One modifier applies after this order, never inside it: on an unattended run,
@@ -187,7 +187,9 @@ being reachable.
    `effort_ceiling` (the strongest effort the model actually runs). Add a `raise_ceiling` only
    when an effort the model can run is not worth reaching by an automatic raise: sonnet carries
    `raise_ceiling: high` because sonnet/xhigh costs more per task than opus/high and scores lower
-   (Artificial Analysis snapshot, 2026-10-07), so a raise from sonnet/high moves to opus/high. A
+   (Artificial Analysis snapshot, 2026-10-07), so a raise from sonnet/high moves to opus/high.
+   haiku carries `raise_ceiling: xhigh` because haiku/max scores lower than haiku/xhigh on the
+   Coding Agent Index; `max` is haiku's read-only survey default, never a raise target. A
    raise never lands above the target model's raise ceiling. **Ranks must stay contiguous
    `0..n-1`** — inserting a new strongest model means renumbering the existing ranks, not squeezing
    in a duplicate or a gap. Import-time validation (`_derive_ordered`) rejects a duplicate, gapped

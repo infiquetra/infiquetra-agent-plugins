@@ -1,10 +1,10 @@
 # --- generated bundle stamp: do not edit ---
 # generated-by: scripts/bundle_fleet_module.py
-# source-version: 0.33.1
+# source-version: 0.33.2
 # source-commit: authored
 # source-path: scripts/fleet_commons/tier_resolver.py
-# source-sha256: 256041491e942609da976791eff79bfd7021d909bcc6755728b7dcf700bc4d82
-# output-sha256: 256041491e942609da976791eff79bfd7021d909bcc6755728b7dcf700bc4d82
+# source-sha256: 875875bc9d1e4f3f13061e727a4117c0d373d4be67f4b92926a65eb59a8c33f6
+# output-sha256: 875875bc9d1e4f3f13061e727a4117c0d373d4be67f4b92926a65eb59a8c33f6
 # --- end generated bundle stamp ---
 #!/usr/bin/env python3
 """Dispatch-time tier resolver — maps a work shape to a ``{model, effort}`` tier (#362).
@@ -39,7 +39,8 @@ weaken the model one ``MODELS`` rung first; once already at the weakest model, d
 the resolved tier — a no-op floor, not an error.
 
 The expensive-tier gate (KTD4, ``{#operator-choice-framework}``) sets ``needs_confirm`` when the
-resolved tier is the strongest model (``fable``) or the highest effort (``xhigh``); the gate
+resolved tier is the strongest model (``fable``) or the top effort of a model that is not cheap
+(``xhigh``; no haiku effort, ``max`` included, is gated); the gate
 itself is doc/CLI-driven and runtime-injected by the caller, not enforced here.
 """
 
@@ -98,8 +99,12 @@ STAFFING_PATH = Path(__file__).resolve().parent / "staffing.json"
 TIER_POLICY_PATH = STAFFING_PATH
 
 # The strongest model / highest effort rungs (KTD4): resolving to either gates on operator confirm.
+# The expensive effort is the ceiling of each model that is not cheap (xhigh), not the top of the
+# palette: max exists only for haiku, and no haiku effort is expensive.
 _EXPENSIVE_MODELS = frozenset({MODELS[0]})
-_EXPENSIVE_EFFORTS = frozenset({EFFORTS[-1]})
+_EXPENSIVE_EFFORTS = frozenset(
+    _tier_palette.effort_ceiling(name) for name in MODELS if name not in _tier_palette.CHEAP_MODELS
+)
 
 # KTD7: role-tier is a small agent-facing vocabulary mapping onto work-shape registry keys.
 # Migrating team-execution's 25 agents onto these preserves each agent's pre-migration model
@@ -271,7 +276,7 @@ def resolve(
     **Deprecated: ``envelope_ceiling`` and ``operator_override``** (issue #93). They predate the one
     staffing precedence and no caller in this repository passes them. ``operator_override`` checks
     only that each value is on the palette, not the per-model effort ceiling, so it can return a
-    tier no host runs (``haiku/xhigh``). An operator's answer belongs in
+    tier no host runs (``sonnet/max``). An operator's answer belongs in
     ``staffing.resolve_shape(..., answer=...)``, which validates it fully and reports its source.
     Pass neither argument in new code; they stay only until their removal can be checked against
     callers outside this repository.
@@ -316,7 +321,9 @@ def resolve(
             because = f"{because} (clamped to envelope_ceiling={envelope_ceiling})"
             model = envelope_ceiling
 
-    needs_confirm = model in _EXPENSIVE_MODELS or effort in _EXPENSIVE_EFFORTS
+    needs_confirm = model in _EXPENSIVE_MODELS or (
+        model not in _tier_palette.CHEAP_MODELS and effort in _EXPENSIVE_EFFORTS
+    )
 
     return Resolution(
         model=model,

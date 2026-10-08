@@ -124,7 +124,7 @@ def test_resolve_shapes_judgment() -> None:
 def test_resolve_shapes_purely_mechanical() -> None:
     result = resolve(None, "purely-mechanical")
     assert result.model == "haiku"
-    assert result.effort == "low"
+    assert result.effort == "medium"
     assert result.needs_confirm is False
 
 
@@ -153,10 +153,10 @@ def test_role_tier_alias_resolves_through_registry() -> None:
     assert (reviewer.model, reviewer.effort) == ("opus", "high")
 
     tester = resolve(None, "contract-test")
-    assert (tester.model, tester.effort) == ("haiku", "medium")
+    assert (tester.model, tester.effort) == ("haiku", "xhigh")
 
     scanner = resolve(None, "mechanical-scan")
-    assert (scanner.model, scanner.effort) == ("haiku", "low")
+    assert (scanner.model, scanner.effort) == ("haiku", "medium")
 
 
 def test_cheaper_fallback_one_rung_down() -> None:
@@ -166,11 +166,12 @@ def test_cheaper_fallback_one_rung_down() -> None:
 
 
 def test_cheaper_fallback_one_rung_with_floor_no_op() -> None:
-    # haiku/low is already the ladder floor (weakest model, lowest effort): the
-    # fallback is a no-op equal to the resolved tier, never an error (R3).
+    # haiku/low is the ladder floor (weakest model, lowest effort): the fallback is a
+    # no-op equal to the tier, never an error (R3). No policy row sits on the floor since
+    # 2026-10-07, so the floor is checked directly and one rung above it through policy.
+    assert tier_resolver.cheaper_fallback("haiku", "low") == ("haiku", "low")
     result = resolve(None, "purely-mechanical")
-    assert result.model == "haiku"
-    assert result.effort == "low"
+    assert (result.model, result.effort) == ("haiku", "medium")
     assert result.cheaper_fallback == ("haiku", "low")
 
 
@@ -261,7 +262,7 @@ def test_cli_resolve_purely_mechanical(capsys: pytest.CaptureFixture[str]) -> No
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["model"] == "haiku"
-    assert payload["effort"] == "low"
+    assert payload["effort"] == "medium"
 
 
 def test_cli_resolve_unknown_work_shape_errors(capsys: pytest.CaptureFixture[str]) -> None:
@@ -335,9 +336,9 @@ def test_merging_and_release_workers_stay_on_mechanical(
     no_overlay: pathlib.Path, role: str
 ) -> None:
     decision = staffing.resolve_role(role)
-    assert (decision.vendor, decision.model, decision.effort) == ("claude", "haiku", "medium")
+    assert (decision.vendor, decision.model, decision.effort) == ("claude", "haiku", "xhigh")
     assert decision.work_shape == "mechanical"
-    assert staffing.resolve_shape("mechanical").tier == "haiku/medium"
+    assert staffing.resolve_shape("mechanical").tier == "haiku/xhigh"
 
 
 def test_claude_only_shape_refuses_another_vendor(no_overlay: pathlib.Path) -> None:
@@ -422,9 +423,23 @@ def test_a_recorded_raise_wins_over_the_policy_default(no_overlay: pathlib.Path)
 
 def test_a_one_model_rung_raise_is_accepted(no_overlay: pathlib.Path) -> None:
     decision = staffing.resolve_shape(
-        "mechanical", root=no_overlay, jev_raise={"model": "sonnet", "effort": "medium"}
+        "purely-mechanical", root=no_overlay, jev_raise={"model": "sonnet", "effort": "medium"}
     )
     assert (decision.tier, decision.source) == ("sonnet/medium", "jev-raise")
+
+
+@pytest.mark.parametrize(
+    ("work_shape", "model", "effort"),
+    [("implementation", "sonnet", "xhigh"), ("mechanical", "haiku", "max")],
+)
+def test_a_raise_above_the_raise_ceiling_is_refused(
+    no_overlay: pathlib.Path, work_shape: str, model: str, effort: str
+) -> None:
+    """One effort rung, on the palette, and still refused: one_step_raise never proposes it."""
+    with pytest.raises(staffing.StaffingError, match="raise ceiling"):
+        staffing.resolve_shape(
+            work_shape, root=no_overlay, jev_raise={"model": model, "effort": effort}
+        )
 
 
 def test_no_layer_present_falls_to_policy(no_overlay: pathlib.Path) -> None:
@@ -506,8 +521,8 @@ def test_implementation_keeps_its_tier_on_an_unattended_run() -> None:
         (["resolve", "--shape", "implementation"], "sonnet/high"),
         (["resolve", "--shape", "implementation-test-gated"], "haiku/xhigh"),
         (["resolve", "--role", "worker"], "claude sonnet/high"),
-        (["resolve", "--role", "merging-worker"], "claude haiku/medium"),
-        (["resolve", "--role", "release-worker"], "claude haiku/medium"),
+        (["resolve", "--role", "merging-worker"], "claude haiku/xhigh"),
+        (["resolve", "--role", "release-worker"], "claude haiku/xhigh"),
     ],
 )
 def test_staffing_cli_short_forms(

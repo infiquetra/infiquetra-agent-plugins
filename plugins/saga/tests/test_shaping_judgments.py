@@ -460,7 +460,14 @@ def test_the_score_levels_do_not_re_declare_the_fleet_effort_vocabulary() -> Non
     back to low/medium/high is caught here with an explanation rather than
     only by a guard three directories away.
     """
-    efforts = {"low", "medium", "high", "xhigh", "max"}
+    spec = importlib.util.spec_from_file_location(
+        "tier_palette_for_shaping_test",
+        Path(__file__).resolve().parents[1] / "scripts" / "_bundled" / "tier_palette.py",
+    )
+    assert spec is not None and spec.loader is not None
+    palette = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(palette)
+    efforts = set(palette.EFFORTS) | set(palette.SCALAR_EFFORTS)
     assert not set(sj.RUBRIC_LEVELS) <= efforts
     assert len(sj.RUBRIC_LEVELS) >= 2
 

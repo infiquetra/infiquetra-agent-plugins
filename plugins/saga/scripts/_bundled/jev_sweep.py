@@ -1,6 +1,6 @@
 # --- generated bundle stamp: do not edit ---
 # generated-by: scripts/bundle_fleet_module.py
-# source-version: 0.33.1
+# source-version: 0.33.2
 # source-commit: authored
 # source-path: scripts/fleet_commons/jev_sweep.py
 # source-sha256: 8dfe6004b98ef0776d3d334fe0c157641ca91580b5db3f7d6280de043c2eb5a7

@@ -2,6 +2,21 @@
 
 ## 2026-10-07
 
+### Adding a rung to the top of a ladder moves every "last rung" reference
+
+**Evidence.** The Haiku effort shift. `plugins/fleet-core/scripts/fleet_commons/tier_resolver.py`
+defined the expensive effort as `EFFORTS[-1]`, and `effort_rider.py` asserts at import time that its
+rider keys equal `EFFORTS`.
+
+**Mechanism.** Appending `max` to the effort palette silently turned the expensive effort from xhigh
+into max: opus/xhigh would stop asking for confirmation and every haiku/max survey would start.
+The rider assertion failed loudly at import, which in an installed plugin is a load failure, not a
+test failure.
+
+**Generalizable rule.** Before growing an ordered vocabulary, search for `[-1]`, `[0]` and
+set-equality assertions over it; a positional reference means "today's last item", not the meaning
+it was written for.
+
 ### The superseded-link check only sees files git tracks
 
 **Evidence.** Pull request #210. `tests/test_check_compatibility_matrix.py` (`test_no_prose_outside_evidence_links_a_superseded_document`) lists markdown with `git ls-files`. The new 2026-10-07 compatibility notices linked their superseded matrices without marking the link historical. The local run passed while the notices were untracked, and CI failed once they were committed.

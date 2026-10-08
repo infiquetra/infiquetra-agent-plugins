@@ -570,10 +570,10 @@ def test_cli_suggest_prints_default_judgment_band_and_applies(
     monkeypatch.chdir(tmp_path)
     verdicts: list[dict[str, Any]] = []
     _cli_modules(
-        monkeypatch, result=_ok(_direction("mechanical", "above", 0.85)), verdicts=verdicts
+        monkeypatch, result=_ok(_direction("purely-mechanical", "above", 0.85)), verdicts=verdicts
     )
 
-    assert staffing.main(["resolve", "--shape", "mechanical", "--suggest"]) == 0
+    assert staffing.main(["resolve", "--shape", "purely-mechanical", "--suggest"]) == 0
     out = capsys.readouterr().out
     assert "default: haiku/medium (policy)" in out
     assert "judgment: above at confidence 0.85 (floor 0.60, auto 0.80)" in out
@@ -581,16 +581,16 @@ def test_cli_suggest_prints_default_judgment_band_and_applies(
     assert "applies: haiku/medium" in out
     assert len(verdicts) == 1
     assert verdicts[0]["label"] is None
-    assert verdicts[0]["decision_id"] == "staffing/tier-direction:cli:mechanical"
+    assert verdicts[0]["decision_id"] == "staffing/tier-direction:cli:purely-mechanical"
 
 
 def test_cli_suggest_json_carries_the_band_and_never_changes_the_decision(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    _cli_modules(monkeypatch, result=_ok(_direction("mechanical", "above", 0.85)))
+    _cli_modules(monkeypatch, result=_ok(_direction("purely-mechanical", "above", 0.85)))
 
-    assert staffing.main(["resolve", "--shape", "mechanical", "--suggest", "--json"]) == 0
+    assert staffing.main(["resolve", "--shape", "purely-mechanical", "--suggest", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["tier"] == "haiku/medium"
     assert payload["source"] == "policy"

@@ -36,7 +36,7 @@ def test_agy_metadata_is_marketplace_registered() -> None:
     marketplace_entry = next(plugin for plugin in marketplace["plugins"] if plugin["name"] == "agy")
 
     assert plugin_json["name"] == "agy"
-    assert plugin_json["version"] == "0.6.3"
+    assert plugin_json["version"] == "0.6.4"
     assert "Antigravity" in plugin_json["description"]
     assert {"agy", "antigravity", "delegation", "teammate", "evidence"} <= set(
         plugin_json["keywords"]

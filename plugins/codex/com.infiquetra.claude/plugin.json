@@ -1,6 +1,6 @@
 {
   "name": "codex",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Claude client extension for the Codex delegation package: the delegate command and the coder and reviewer agents.",
   "author": {
     "name": "Infiquetra",

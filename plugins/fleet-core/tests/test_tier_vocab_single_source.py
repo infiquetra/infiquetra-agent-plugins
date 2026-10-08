@@ -44,7 +44,8 @@ def test_registry_rank_order() -> None:
     assert efforts_by_rung == tier_palette.EFFORTS
     # The public vocabulary must not have drifted from the historical order either.
     assert tier_palette.MODELS == ("fable", "opus", "sonnet", "haiku")
-    assert tier_palette.EFFORTS == ("low", "medium", "high", "xhigh")
+    # max joined at the top on 2026-10-07 (haiku only); the existing rungs keep their order.
+    assert tier_palette.EFFORTS == ("low", "medium", "high", "xhigh", "max")
 
 
 def test_registry_rank_order_rejects_mis_ranked_row() -> None:
@@ -79,9 +80,10 @@ def test_registry_rejects_missing_effort_ceiling() -> None:
 
 
 def test_effort_ceiling_values() -> None:
-    """Every model runs xhigh since Haiku 5.5 (2026-10-07); haiku/xhigh was unrunnable before."""
-    for model in ("fable", "opus", "sonnet", "haiku"):
+    """Every model runs xhigh since Haiku 5.5 (2026-10-07), and only haiku runs max."""
+    for model in ("fable", "opus", "sonnet"):
         assert tier_palette.effort_ceiling(model) == "xhigh"
+    assert tier_palette.effort_ceiling("haiku") == "max"
     with pytest.raises(ValueError, match="unknown model"):
         tier_palette.effort_ceiling("gpt-9")
 
@@ -106,7 +108,7 @@ def test_ladder_ops_past_the_end_are_no_ops() -> None:
     """Escalate past the strongest / downgrade past the weakest is a no-op, not an error."""
     assert tier_palette.escalate("model", "fable", 5) == "fable"
     assert tier_palette.downgrade("model", "haiku", 5) == "haiku"
-    assert tier_palette.escalate("effort", "xhigh", 5) == "xhigh"
+    assert tier_palette.escalate("effort", "max", 5) == "max"
     assert tier_palette.downgrade("effort", "low", 5) == "low"
 
 
@@ -163,9 +165,11 @@ def test_supports_effort_matrix() -> None:
 
 
 def test_raise_ceiling_values() -> None:
-    """sonnet's raise stops at high so a raise from sonnet/high moves to opus (2026-10-07)."""
+    """sonnet's raise stops at high so a raise from sonnet/high moves to opus, and haiku's at xhigh
+    so no raise lands on haiku/max (2026-10-07)."""
     assert tier_palette.raise_ceiling("sonnet") == "high"
-    for model in ("fable", "opus", "haiku"):
+    assert tier_palette.raise_ceiling("haiku") == "xhigh"
+    for model in ("fable", "opus"):
         assert tier_palette.raise_ceiling(model) == tier_palette.effort_ceiling(model)
     with pytest.raises(ValueError, match="unknown model"):
         tier_palette.raise_ceiling("gpt-9")

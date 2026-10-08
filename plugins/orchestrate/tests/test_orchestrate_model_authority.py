@@ -331,7 +331,7 @@ class TestModelAuthorityBoundary:
 
         mechanical = tier_resolver.resolve(None, "purely-mechanical")
         assert mechanical.model == "haiku"
-        assert mechanical.effort == "low"
+        assert mechanical.effort == "medium"
 
     def test_mutation_proof_stale_authority_gate_fails_and_live_authority_passes(
         self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

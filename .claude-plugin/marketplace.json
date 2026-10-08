@@ -30,7 +30,7 @@
     {
       "name": "agy",
       "source": "./plugins/agy",
-      "version": "0.6.3",
+      "version": "0.6.4",
       "description": "Antigravity-backed coder reviewer bridge agents that run in a disposable clone and return a patch, with guarded evidence bundles, output-attested receipts, and clone-scoped verification.",
       "author": {
         "name": "Infiquetra",
@@ -48,7 +48,7 @@
     {
       "name": "codex",
       "source": "./plugins/codex",
-      "version": "0.1.6",
+      "version": "0.1.7",
       "description": "Guarded synchronous Codex delegation for Claude Code. The delegate command and the coder and reviewer agents all route through the portable wrapper.",
       "author": {
         "name": "Infiquetra",
@@ -144,7 +144,7 @@
     {
       "name": "mission-control",
       "source": "./plugins/mission-control",
-      "version": "2.21.3",
+      "version": "2.21.4",
       "description": "SDLC management for Operations, Asgard, and CAMPPS: prepared issue drafts, live schema sync, board schemas, labels, project fields, metrics, and card validation.",
       "author": {
         "name": "Infiquetra",
@@ -210,7 +210,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "1.3.1",
+      "version": "1.3.2",
       "description": "Infiquetra lifecycle plugin: one automatic run per issue — admission, plan, plan review, a build loop, a lensed code review, merge, release and retro capture.",
       "author": {
         "name": "Infiquetra",

@@ -1,6 +1,6 @@
 # --- generated bundle stamp: do not edit ---
 # generated-by: scripts/bundle_fleet_module.py
-# source-version: 0.33.1
+# source-version: 0.33.2
 # source-commit: authored
 # source-path: scripts/fleet_commons/jev_widen.py
 # source-sha256: 6919690d131dede34e1dce455e8802039acbe6343841e5fec5145418a0abc311
