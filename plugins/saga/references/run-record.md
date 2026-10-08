@@ -564,6 +564,7 @@ or git merges would stall every unit session's `usage add`.
 | `review_records.py record-builder` | one unit row's `builder_record` | `update` |
 | `admission.py` | `repo`, `admission`, `run_configuration`, `approval_scope` | admission runs unlocked; those fields land on a fresh read through `update` |
 | `qa_strategies.py` | the top-level `qa` block | `update` |
+| `release_step.py release` | the top-level `release` block | lands only its key on a fresh re-read under `file_lock` on the `--record` path |
 | `merge_turn.py status`, `take` | unit rows' merge keys | wholly under `update` |
 | `merge_turn.py merge` | unit rows' `merge_state`, `merge_worktree`, `merged_tip` | git work runs unlocked; through `update`, each merge key it changed lands on a fresh read only if that row still holds the value the turn started from (the merged unit's own keys always land), and the keys it kept from another writer are listed as `kept_from_another_writer` |
 | agent-launcher `roster.py` | `roster` | `update` |

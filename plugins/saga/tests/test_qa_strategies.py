@@ -1270,3 +1270,269 @@ class TestRunRecordLock:
         assert reread is not None
         assert reread.units[0]["usage"] == {"entries": [{"session_id": "landed-meanwhile"}]}
         assert reread.extra[QA.RECORD_KEY] == {"verdict": "pass"}
+
+
+# ---------------------------------------------------------------------------
+# Issue 167 — the block names the review run it tests, and each failure posts a miss.
+# ---------------------------------------------------------------------------
+
+
+class _LfResponse:
+    status = 200
+
+    def read(self) -> bytes:
+        return b"{}"
+
+    def getcode(self) -> int:
+        return 200
+
+    def __enter__(self) -> _LfResponse:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+
+class _LfOpener:
+    def __init__(self, *results: Any) -> None:
+        self.results = list(results) or [_LfResponse()]
+        self.requests: list[Any] = []
+
+    def __call__(self, request: Any, timeout: float | None = None) -> Any:
+        self.requests.append(request)
+        result = self.results[0] if len(self.results) == 1 else self.results.pop(0)
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    def bodies(self) -> list[Any]:
+        return [json.loads(request.data.decode()) for request in self.requests if request.data]
+
+
+def _lf_transport(opener: _LfOpener) -> dict[str, Any]:
+    values = {
+        "SAGA_LANGFUSE_PUBLIC_KEY": "pk-lf-qa-public",
+        "SAGA_LANGFUSE_SECRET_KEY": "sk-lf-qa-secret",
+        "SAGA_LANGFUSE_HOST": "https://langfuse.example.test",
+    }
+    return {"getenv": lambda name: values.get(name), "urlopen": opener}
+
+
+def _run_entry(head: str, *, round_no: int = 1) -> dict[str, Any]:
+    return {
+        "kind": "review_run",
+        "loop": "review_run",
+        "card": 21,
+        "base": "a" * 40,
+        "head": head,
+        "round": round_no,
+    }
+
+
+def _record_with_release(
+    tmp_path: Path, *, release: dict[str, Any], runs: list[dict[str, Any]],
+    repo: str | None = "example/repo",
+) -> None:
+    record = RUN_RECORD.RunRecord(issue=21, repo=repo or "")
+    RUN_RECORD.save(tmp_path, record)
+    path = RUN_RECORD.record_path(tmp_path, 21)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["release"] = release
+    raw["review_cycles"] = runs
+    if repo is None:
+        raw.pop("repo", None)
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+
+def _profile_file(tmp_path: Path) -> Path:
+    block = _profile(
+        **{"cli-smoke": {"required": True, "commands": [{"name": "help", "command": "echo ok"}]}}
+    )
+    profile: Path = tmp_path / QA.PROFILE_FILENAME
+    profile.write_text(json.dumps({"qa": block}), encoding="utf-8")
+    return profile
+
+
+class TestReviewRunLink:
+    def test_a_recorded_release_identifier_lands_in_the_block(
+        self, tmp_path: Path
+    ) -> None:
+        trace = _load("review_trace")
+        run = _run_entry("b" * 40)
+        recorded = trace.review_trace_id(run, "example/repo")
+        _record_with_release(
+            tmp_path,
+            release={"status": "merged", "reviewed_head": "b" * 40, "landed_commit": "c" * 40,
+                     "pull_request": 5, "review_run_id": recorded, "review_run_reason": None},
+            runs=[run],
+        )
+        block = QA.execute(
+            issue=21, repo_root=tmp_path, store_root=tmp_path,
+            profile_path=_profile_file(tmp_path), runner=_runner(0, "ok"), environ={},
+            widen=None, home=tmp_path / "home",
+        )
+        assert block["review_run_id"] == recorded
+        assert block["review_run_reason"] is None
+        raw = json.loads(RUN_RECORD.record_path(tmp_path, 21).read_text(encoding="utf-8"))
+        assert raw["qa"]["review_run_id"] == recorded
+
+    def test_each_failed_strategy_posts_one_miss_to_that_trace(self, tmp_path: Path) -> None:
+        trace = _load("review_trace")
+        run = _run_entry("b" * 40)
+        recorded = trace.review_trace_id(run, "example/repo")
+        _record_with_release(
+            tmp_path,
+            release={"status": "merged", "reviewed_head": "b" * 40, "landed_commit": "c" * 40,
+                     "pull_request": 5, "review_run_id": recorded, "review_run_reason": None},
+            runs=[run],
+        )
+        opener = _LfOpener()
+        block = QA.execute(
+            issue=21, repo_root=tmp_path, store_root=tmp_path,
+            profile_path=_profile_file(tmp_path), runner=_runner(1, "nope"), environ={},
+            widen=None, home=tmp_path / "home", trace_transport=_lf_transport(opener),
+        )
+        assert block["verdict"] == QA.VERDICT_FAIL
+        (body,) = opener.bodies()
+        assert body["traceId"] == recorded
+        assert (body["name"], body["value"]) == ("review-miss", "found-by-qa")
+        assert "observationId" not in body
+        assert body["metadata"]["source"] == "/qa"
+        assert body["metadata"]["strategy"] == "cli-smoke"
+
+    def test_qa_recomputes_the_identifier_by_head_match(self, tmp_path: Path) -> None:
+        trace = _load("review_trace")
+        run = _run_entry("b" * 40)
+        _record_with_release(
+            tmp_path,
+            release={"status": "merged", "reviewed_head": "b" * 40, "landed_commit": "c" * 40,
+                     "pull_request": 5},
+            runs=[_run_entry("e" * 40), run],
+        )
+        block = QA.execute(
+            issue=21, repo_root=tmp_path, store_root=tmp_path,
+            profile_path=_profile_file(tmp_path), runner=_runner(0, "ok"), environ={},
+            widen=None, home=tmp_path / "home",
+        )
+        assert block["review_run_id"] == trace.review_trace_id(run, "example/repo")
+        assert block["review_run_reason"] is None
+
+    def test_no_review_run_found_posts_nothing_and_says_why(self, tmp_path: Path) -> None:
+        _record_with_release(
+            tmp_path,
+            release={"status": "merged", "reviewed_head": "d" * 40, "landed_commit": "c" * 40,
+                     "pull_request": 5},
+            runs=[_run_entry("b" * 40)],
+        )
+        opener = _LfOpener()
+        block = QA.execute(
+            issue=21, repo_root=tmp_path, store_root=tmp_path,
+            profile_path=_profile_file(tmp_path), runner=_runner(1, "nope"), environ={},
+            widen=None, home=tmp_path / "home", trace_transport=_lf_transport(opener),
+        )
+        assert block["verdict"] == QA.VERDICT_FAIL
+        assert block["review_run_id"] is None
+        assert block["review_run_reason"] == "no-matching-run"
+        assert opener.requests == []
+
+    def test_a_run_without_a_release_names_no_run(self, tmp_path: Path) -> None:
+        RUN_RECORD.save(tmp_path, RUN_RECORD.RunRecord(issue=21, repo="o/r"))
+        block = QA.execute(
+            issue=21, repo_root=tmp_path, store_root=tmp_path,
+            profile_path=_profile_file(tmp_path), runner=_runner(0, "ok"), environ={},
+            widen=None, home=tmp_path / "home",
+        )
+        assert block["review_run_id"] is None
+        assert block["review_run_reason"] == "no-release-block"
+
+    def test_blocked_select_and_verdict_post_nothing(self, tmp_path: Path) -> None:
+        RUN_RECORD.save(tmp_path, RUN_RECORD.RunRecord(issue=21, repo="o/r"))
+        block = _profile(
+            **{"cli-smoke": {"required": True, "commands": [{"name": "x", "command": "true"}]}}
+        )
+        block["ceiling"] = {"max_duration_seconds": 1, "max_direct_cost": 0}
+        profile = tmp_path / QA.PROFILE_FILENAME
+        profile.write_text(json.dumps({"qa": block}), encoding="utf-8")
+        opener = _LfOpener()
+        refused = QA.execute(
+            issue=21, repo_root=tmp_path, store_root=tmp_path, profile_path=profile,
+            runner=_runner(), environ={}, widen=None, home=tmp_path / "home",
+            trace_transport=_lf_transport(opener),
+        )
+        assert refused["verdict"] == QA.VERDICT_BLOCKED
+        profile.write_text(json.dumps({"qa": _profile(
+            **{"cli-smoke": {"required": True, "commands": [{"name": "x", "command": "true"}]}}
+        )}), encoding="utf-8")
+        selected = QA.execute(
+            issue=21, repo_root=tmp_path, store_root=tmp_path, profile_path=profile,
+            runner=_runner(), environ={}, widen=None, dry_run=True, home=tmp_path / "home",
+            trace_transport=_lf_transport(opener),
+        )
+        assert selected["verdict"] == "not-run"
+        assert QA.main(["verdict", "--issue", "21", "--store-root", str(tmp_path)]) == (
+            QA.EXIT_OPERATOR_STOP)
+        assert opener.requests == []
+
+    def test_an_unreachable_langfuse_keeps_the_verdict_and_queues(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import urllib.error
+
+        trace = _load("review_trace")
+        run = _run_entry("b" * 40)
+        recorded = trace.review_trace_id(run, "example/repo")
+        _record_with_release(
+            tmp_path,
+            release={"status": "merged", "reviewed_head": "b" * 40, "landed_commit": "c" * 40,
+                     "pull_request": 5, "review_run_id": recorded, "review_run_reason": None},
+            runs=[run],
+        )
+        home = tmp_path / "home"
+        opener = _LfOpener(urllib.error.URLError("down"))
+        block = QA.execute(
+            issue=21, repo_root=tmp_path, store_root=tmp_path,
+            profile_path=_profile_file(tmp_path), runner=_runner(1, "nope"), environ={},
+            widen=None, home=home, trace_transport=_lf_transport(opener),
+        )
+        assert block["verdict"] == QA.VERDICT_FAIL
+        assert block["route"] == QA.ROUTE_BUILD_LOOP
+        assert len(block["envelopes"]) == 1
+        assert "langfuse" in capsys.readouterr().err
+        queued = list((home / ".saga" / "langfuse-queue").glob("*.json"))
+        assert len(queued) == 1
+
+    def test_qa_files_no_issue(self, tmp_path: Path) -> None:
+        trace = _load("review_trace")
+        run = _run_entry("b" * 40)
+        recorded = trace.review_trace_id(run, "example/repo")
+        _record_with_release(
+            tmp_path,
+            release={"status": "merged", "reviewed_head": "b" * 40, "landed_commit": "c" * 40,
+                     "pull_request": 5, "review_run_id": recorded, "review_run_reason": None},
+            runs=[run],
+        )
+        run_calls = _runner(1, "nope")
+        QA.execute(
+            issue=21, repo_root=tmp_path, store_root=tmp_path,
+            profile_path=_profile_file(tmp_path), runner=run_calls, environ={}, widen=None,
+            home=tmp_path / "home", trace_transport=_lf_transport(_LfOpener()),
+        )
+        assert run_calls.calls
+        for call in run_calls.calls:
+            argv = [str(part) for part in call["argv"]]
+            assert argv[:2] != ["gh", "issue"]
+            assert not any(part.endswith("sdlc_manager.py") for part in argv)
+
+    def test_resolve_review_run_reasons(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        assert QA.resolve_review_run({}, tmp_path)[:2] == (None, "no-release-block")
+        assert QA.resolve_review_run({"release": {}}, tmp_path)[:2] == (None, "no-release-block")
+        assert QA.resolve_review_run({"release": {"status": "waiting"}}, tmp_path)[:2] == (
+            None, "no-reviewed-head")
+        assert QA.resolve_review_run(
+            {"release": {"reviewed_head": "b" * 40}, "review_cycles": []}, tmp_path,
+        )[:2] == (None, "no-matching-run")
+        monkeypatch.setitem(sys.modules, "review_trace", None)
+        assert QA.resolve_review_run(
+            {"release": {"reviewed_head": "b" * 40},
+             "review_cycles": [_run_entry("b" * 40)]}, tmp_path,
+        )[:2] == (None, "review-trace-unavailable")

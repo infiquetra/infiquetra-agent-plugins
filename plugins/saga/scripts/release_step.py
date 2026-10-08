@@ -44,11 +44,14 @@ import argparse
 import json
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import run_record  # noqa: E402  (after the sys.path shim, by design)
 
 Runner = Callable[..., Any]
 
@@ -242,6 +245,81 @@ def release(
         "merge_method": merge_method,
         "merge_state": merge_state,
     }
+
+
+# ---------------------------------------------------------------------------
+# recording the release
+# ---------------------------------------------------------------------------
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def save_record_file(path: Path, record: dict[str, Any]) -> Path:
+    """Write *record* (re-read under the lock by the caller) through the atomic replace."""
+    payload = dict(record)
+    payload["updated_at"] = _utc_now()
+    return run_record.write_json_atomic(path, payload)
+
+
+def _round_no(run: Mapping[str, Any]) -> int:
+    try:
+        return int(str(run.get("round") or 0))
+    except ValueError:
+        return 0
+
+
+def review_run_id_for(
+    record: Mapping[str, Any], reviewed_head: str, *, repo_path: Path | None
+) -> tuple[str | None, str | None]:
+    """The trace identifier of the latest stored run at *reviewed_head*, or (None, reason).
+
+    Only an explicit *repo_path* feeds the slug's git fallback, so a wrong working directory
+    can never mint a wrong identifier: an unresolvable slug records null instead.
+    """
+    try:
+        import review_trace  # noqa: PLC0415 - lazy so a broken bundle cannot stop a release
+    except Exception:  # noqa: BLE001 - any import fault reads as unavailable
+        return None, "review-trace-unavailable"
+    runs = [
+        run
+        for run in review_trace.stored_runs(record) or []
+        if str(run.get("head") or "") == reviewed_head
+    ]
+    if not runs:
+        return None, "no-matching-run"
+    latest = max(range(len(runs)), key=lambda i: (_round_no(runs[i]), i))
+    run = runs[latest]
+    slug = review_trace.repository_slug(repo_path, recorded=record.get("repo"))
+    if slug == "unknown":
+        return None, "slug-unknown"
+    return review_trace.review_trace_id(run, slug), None
+
+
+def store_release_state(
+    path: Path, state: dict[str, Any], *, repo_path: Path | None = None
+) -> dict[str, Any]:
+    """Land *state* plus the review link on the record at *path* under its lock.
+
+    Only the top-level ``release`` key moves, onto a copy re-read under the lock, so every
+    key other writers own survives. Returns the stored block.
+    """
+    reviewed_head = str(state.get("reviewed_head") or "")
+    with run_record.file_lock(path):
+        try:
+            fresh = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ReleaseStepError(f"could not re-read the run record at {path}: {exc}") from exc
+        if not isinstance(fresh, dict):
+            raise ReleaseStepError(f"the run record at {path} does not hold an object")
+        if reviewed_head:
+            review_run_id, reason = review_run_id_for(fresh, reviewed_head, repo_path=repo_path)
+        else:
+            review_run_id, reason = None, "no-reviewed-head"
+        fresh["release"] = {**state, "review_run_id": review_run_id, "review_run_reason": reason}
+        save_record_file(path, fresh)
+        return dict(fresh["release"])
 
 
 # ---------------------------------------------------------------------------
@@ -701,6 +779,9 @@ def main(
                 number=args.pull_request,
                 merge_method=args.merge_method,
                 runner=runner,
+            )
+            store_release_state(
+                path, state, repo_path=Path(args.repo_path) if args.repo_path else None
             )
             print(json.dumps(state))
             if state.get("status") == "merged":

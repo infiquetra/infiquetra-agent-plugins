@@ -681,3 +681,150 @@ def test_release_dry_run_posts_nothing(tmp_path: Path, lf_env: Path) -> None:
     assert RS.main(["--record", str(record), "release", "--pull-request", "5", "--dry-run"],
                    runner=gh, trace_opener=opener) == 0
     assert opener.requests == [] and gh.calls == []
+
+
+def _stored_record(tmp_path: Path, *, repo: str | None = "example/repo",
+                   heads: tuple[str, ...] = ()) -> Path:
+    """A record whose review runs sit at *heads*, round 1 first. No ``repo`` when None."""
+    fixture = REPO_ROOT / "plugins/saga/tests/fixtures/review_records/valid/review_run.json"
+    runs = []
+    for position, head in enumerate(heads, start=1):
+        run = json.loads(fixture.read_text(encoding="utf-8"))
+        run["loop"] = "review_run"
+        run["round"] = position
+        run["head"] = head
+        runs.append(run)
+    record: dict[str, Any] = {"issue": 7, "review_cycles": runs}
+    if repo is not None:
+        record["repo"] = repo
+    path = tmp_path / "record.json"
+    path.write_text(json.dumps(record), encoding="utf-8")
+    return path
+
+
+def test_a_merged_release_writes_the_reviewed_head_landed_commit_pull_request_and_method(
+    tmp_path: Path, lf_env: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    head, landed = "b" * 40, "c" * 40
+    record = _stored_record(tmp_path, heads=(head,))
+    gh = FakeGh(view=_clean_view(head), merged={"mergeCommit": {"oid": landed}, "url": "u"})
+    code = RS.main(["--record", str(record), "release", "--pull-request", "5"],
+                   runner=gh, trace_opener=_LfOpener())
+    assert code == 0
+    printed = json.loads(capsys.readouterr().out)
+    stored = json.loads(record.read_text(encoding="utf-8"))["release"]
+    assert stored["reviewed_head"] == head
+    assert stored["landed_commit"] == landed
+    assert stored["pull_request"] == 5
+    assert stored["merge_method"] == "merge"
+    assert stored == {**printed, "review_run_id": stored["review_run_id"],
+                      "review_run_reason": stored["review_run_reason"]}
+    trace = _load("review_trace")
+    run = json.loads(record.read_text(encoding="utf-8"))["review_cycles"][0]
+    assert stored["review_run_id"] == trace.review_trace_id(run, "example/repo")
+    assert stored["review_run_reason"] is None
+
+
+def test_a_waiting_and_a_refused_release_write_no_landed_commit(tmp_path: Path) -> None:
+    record = _stored_record(tmp_path, heads=("b" * 40,))
+    blocked = FakeGh(view={**_clean_view(), "mergeStateStatus": "BLOCKED"})
+    assert RS.main(["--record", str(record), "release", "--pull-request", "5"],
+                   runner=blocked) == 0
+    waiting = json.loads(record.read_text(encoding="utf-8"))["release"]
+    assert waiting["status"] == "waiting" and "landed_commit" not in waiting
+    refused = FakeGh(view=_clean_view(), merge_ok=False)
+    assert RS.main(["--record", str(record), "release", "--pull-request", "5"],
+                   runner=refused) == 0
+    stored = json.loads(record.read_text(encoding="utf-8"))["release"]
+    assert stored["status"] == "refused" and "landed_commit" not in stored
+
+
+def test_a_dry_run_writes_nothing_to_the_record(tmp_path: Path) -> None:
+    record = _stored_record(tmp_path, heads=("b" * 40,))
+    before = record.read_bytes()
+    assert RS.main(["--record", str(record), "release", "--pull-request", "5", "--dry-run"],
+                   runner=_merged_gh()) == 0
+    assert record.read_bytes() == before
+
+
+def test_a_release_keeps_keys_other_writers_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    head, landed = "b" * 40, "c" * 40
+    record = _stored_record(tmp_path, heads=(head,))
+    raw = json.loads(record.read_text(encoding="utf-8"))
+    raw["qa"] = {"verdict": "pass"}
+    record.write_text(json.dumps(raw), encoding="utf-8")
+    real_release = RS.release
+
+    def release_then_usage(**kwargs: Any) -> dict[str, Any]:
+        state = real_release(**kwargs)
+        concurrent = json.loads(record.read_text(encoding="utf-8"))
+        concurrent["units"] = [{"usage": {"worker": {"output": 3}}}]
+        record.write_text(json.dumps(concurrent), encoding="utf-8")
+        return state
+
+    monkeypatch.setattr(RS, "release", release_then_usage)
+    gh = FakeGh(view=_clean_view(head), merged={"mergeCommit": {"oid": landed}, "url": "u"})
+    assert RS.main(["--record", str(record), "release", "--pull-request", "5"], runner=gh) == 0
+    stored = json.loads(record.read_text(encoding="utf-8"))
+    assert stored["release"]["landed_commit"] == landed
+    assert stored["qa"] == {"verdict": "pass"}
+    assert stored["units"] == [{"usage": {"worker": {"output": 3}}}]
+
+
+def test_the_review_link_matches_the_latest_round_at_the_reviewed_head(tmp_path: Path) -> None:
+    head = "b" * 40
+    record = _stored_record(tmp_path, heads=("a" * 40, head, head))
+    gh = FakeGh(view=_clean_view(head), merged={"mergeCommit": {"oid": "c" * 40}, "url": "u"})
+    assert RS.main(["--record", str(record), "release", "--pull-request", "5"], runner=gh) == 0
+    trace = _load("review_trace")
+    runs = json.loads(record.read_text(encoding="utf-8"))["review_cycles"]
+    stored = json.loads(record.read_text(encoding="utf-8"))["release"]
+    assert stored["review_run_id"] == trace.review_trace_id(runs[2], "example/repo")
+    assert runs[2]["round"] == 3
+
+
+def test_no_matching_run_records_null_with_a_reason(tmp_path: Path) -> None:
+    record = _stored_record(tmp_path, heads=("a" * 40,))
+    gh = FakeGh(view=_clean_view("b" * 40), merged={"mergeCommit": {"oid": "c" * 40}, "url": "u"})
+    assert RS.main(["--record", str(record), "release", "--pull-request", "5"], runner=gh) == 0
+    stored = json.loads(record.read_text(encoding="utf-8"))["release"]
+    assert stored["review_run_id"] is None
+    assert stored["review_run_reason"] == "no-matching-run"
+
+
+def test_an_unresolvable_slug_records_null_with_a_reason(tmp_path: Path) -> None:
+    record = _stored_record(tmp_path, repo=None, heads=("b" * 40,))
+    gh = FakeGh(view=_clean_view("b" * 40), merged={"mergeCommit": {"oid": "c" * 40}, "url": "u"})
+    assert RS.main(["--record", str(record), "release", "--pull-request", "5"], runner=gh) == 0
+    stored = json.loads(record.read_text(encoding="utf-8"))["release"]
+    assert stored["review_run_id"] is None
+    assert stored["review_run_reason"] == "slug-unknown"
+
+
+def test_a_broken_trace_module_still_merges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    record = _stored_record(tmp_path, heads=("b" * 40,))
+    monkeypatch.setitem(sys.modules, "review_trace", None)
+    gh = FakeGh(view=_clean_view("b" * 40), merged={"mergeCommit": {"oid": "c" * 40}, "url": "u"})
+    assert RS.main(["--record", str(record), "release", "--pull-request", "5"], runner=gh) == 0
+    stored = json.loads(record.read_text(encoding="utf-8"))["release"]
+    assert stored["review_run_id"] is None
+    assert stored["review_run_reason"] == "review-trace-unavailable"
+
+
+def test_deploy_and_close_read_the_written_block_back(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    head, landed = "b" * 40, "c" * 40
+    record = _stored_record(tmp_path, heads=(head,))
+    gh = FakeGh(view=_clean_view(head), merged={"mergeCommit": {"oid": landed}, "url": "u"})
+    assert RS.main(["--record", str(record), "release", "--pull-request", "5"], runner=gh) == 0
+    capsys.readouterr()
+    assert RS.main(["--record", str(record), "deploy", "--saga-id", "s7"]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "no-destination"
+    assert RS.main(["--record", str(record), "close", "--disposition", "delivered"]) == 0
+    comment = json.loads(capsys.readouterr().out)
+    assert comment["parts"]["delivered_revision"] == landed

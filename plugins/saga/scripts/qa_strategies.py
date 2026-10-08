@@ -1500,6 +1500,107 @@ def write_block(store_root: Path, issue: int, block: Mapping[str, Any]) -> Path:
     return run_record.update(store_root, issue, change)
 
 
+def _run_round(run: Mapping[str, Any]) -> int:
+    try:
+        return int(str(run.get("round") or 0))
+    except ValueError:
+        return 0
+
+
+def _base_at_head(record: Mapping[str, Any], reviewed_head: str) -> str:
+    """The newest stored run's base at *reviewed_head*, without importing the trace module."""
+    if not reviewed_head:
+        return ""
+    bases = [
+        str(run.get("base") or "")
+        for run in (record.get("review_cycles") or [])
+        if isinstance(run, Mapping) and run.get("kind") == "review_run"
+        and str(run.get("head") or "") == reviewed_head
+    ]
+    return bases[-1] if bases else ""
+
+
+def resolve_review_run(
+    record: Mapping[str, Any], repo_root: Path
+) -> tuple[str | None, str | None, str]:
+    """The review run that passed the tested code: (id, reason, base).
+
+    The release step's recorded identifier wins; otherwise the identifier is recomputed from
+    the latest stored run at the release's reviewed head, through the same stored-run match
+    the release step uses. The base belongs to the matched run and feeds the visibility rule;
+    it is empty when nothing matched. The trace module loads lazily so a broken bundle cannot
+    stop a functional test, and the slug's git fallback runs with the default runner: this
+    module's runner protocol returns tuples, not results.
+    """
+    release = record.get("release") if isinstance(record.get("release"), dict) else {}
+    recorded = release.get("review_run_id")
+    reviewed_head = str(release.get("reviewed_head") or "")
+    if isinstance(recorded, str) and recorded:
+        return recorded, None, _base_at_head(record, reviewed_head)
+    if not release:
+        return None, "no-release-block", ""
+    if not reviewed_head:
+        return None, "no-reviewed-head", ""
+    try:
+        import review_trace  # noqa: PLC0415 - lazy, as in the release step
+    except Exception:  # noqa: BLE001 - any import fault reads as unavailable
+        return None, "review-trace-unavailable", _base_at_head(record, reviewed_head)
+    runs = [
+        run
+        for run in review_trace.stored_runs(record) or []
+        if str(run.get("head") or "") == reviewed_head
+    ]
+    if not runs:
+        return None, "no-matching-run", ""
+    latest = max(range(len(runs)), key=lambda i: (_run_round(runs[i]), i))
+    base = str(runs[latest].get("base") or "")
+    slug = review_trace.repository_slug(repo_root, recorded=record.get("repo"))
+    if slug == "unknown":
+        return None, "slug-unknown", base
+    return review_trace.review_trace_id(runs[latest], slug), None, base
+
+
+def _post_misses(
+    *,
+    block: Mapping[str, Any],
+    repo_root: Path,
+    home: Path,
+    base: str,
+    transport: Mapping[str, Any] | None,
+) -> None:
+    """Post one miss per failed strategy to the tested run's trace. Never raises into the run."""
+    trace_id = block.get("review_run_id")
+    failed = [
+        envelope for envelope in block.get("envelopes", [])
+        if isinstance(envelope, Mapping) and envelope.get("result") == RESULT_FAILED
+    ]
+    if not isinstance(trace_id, str) or not trace_id or not failed:
+        return
+    try:
+        import review_trace  # noqa: PLC0415 - lazy, as in the release step
+
+        environment = block.get("environment") if isinstance(block.get("environment"), dict) else {}
+        revision = str(environment.get("revision") or "unversioned")
+        visible = review_trace.visibility(repo_root, base)
+        items = [
+            ("scores",
+             review_trace.miss_score(
+                 trace_id,
+                 f"miss:qa:{envelope.get('strategy_id')}:{revision}",
+                 "found-by-qa",
+                 comment=f"found-by-qa {envelope.get('strategy_id')} at {revision}",
+                 metadata={"source": "/qa", "strategy": str(envelope.get("strategy_id")),
+                           "tested_revision": revision},
+             ),
+             visible)
+            for envelope in failed
+        ]
+        summary = review_trace.post(items, home=home, **dict(transport or {}))
+        print(review_trace.summary_line(summary), file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 - a Langfuse problem never fails a functional test
+        print(f"langfuse: misses not posted ({exc.__class__.__name__})", file=sys.stderr)
+
+
 # ---------------------------------------------------------------------------
 # The whole procedure.
 # ---------------------------------------------------------------------------
@@ -1626,12 +1727,16 @@ def execute(
     widen: Callable[..., Any] | None = None,
     dry_run: bool = False,
     change_summary: str = "",
+    trace_transport: Mapping[str, Any] | None = None,
+    home: Path | None = None,
 ) -> dict[str, Any]:
     """Select, preflight, dispatch, count and record. Returns the block written to the record."""
     catalogue = load_catalogue(catalogue_path)
     profile = load_profile(repo_root, profile_path=profile_path, catalogue=catalogue)
     record = require_record(store_root, issue)
-    environment = environment_identity(run_record.to_dict(record))
+    raw_record = run_record.to_dict(record)
+    environment = environment_identity(raw_record)
+    review_run_id, review_run_reason, review_base = resolve_review_run(raw_record, repo_root)
     files = changed_files(repo_root, base_ref, runner=runner)
 
     selection = declared_selection(catalogue, profile, files, boundary=boundary)
@@ -1652,6 +1757,8 @@ def execute(
         "recorded_at": _utc_now(),
         "boundary": boundary,
         "environment": environment,
+        "review_run_id": review_run_id,
+        "review_run_reason": review_run_reason,
         "selection": selection.as_record(),
         "preflight": checks,
         "envelopes": [],
@@ -1700,6 +1807,13 @@ def execute(
     block["proof_debt"] = decision["proof_debt"]
     block["blocked_required"] = decision["blocked_required"]
     write_block(store_root, issue, block)
+    _post_misses(
+        block=block,
+        repo_root=repo_root,
+        home=home if home is not None else Path.home(),
+        base=review_base,
+        transport=trace_transport,
+    )
     return block
 
 

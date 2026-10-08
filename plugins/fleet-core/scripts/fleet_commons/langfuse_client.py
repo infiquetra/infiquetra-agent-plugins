@@ -87,6 +87,8 @@ ENDPOINTS: dict[str, tuple[str, str]] = {
     "dataset-items": ("POST", "/api/public/dataset-items"),
     "projects": ("GET", "/api/public/projects"),
     "metrics": ("GET", "/api/public/v2/metrics"),
+    "traces": ("GET", "/api/public/traces"),
+    "scores-list": ("GET", "/api/public/v2/scores"),
 }
 
 SENT = "sent"
@@ -322,7 +324,11 @@ def send(
 
 
 def get(kind: str, query: Mapping[str, Any] | None = None, **kwargs: Any) -> SendResult:
-    """The read path for ``projects`` and ``metrics``. The visibility rule still applies."""
+    """The read path for ``projects``, ``metrics``, ``traces`` and ``scores-list``.
+
+    The visibility rule still applies. The v3 reads live while the self-hosted server stays
+    on its v3 generation; the v4 replacements are a later migration, not a third kind here.
+    """
     if ENDPOINTS.get(kind, ("", ""))[0] != "GET":
         raise LangfuseClientError(f"{kind!r} is not a read endpoint")
     return send(prepare_payload(kind, dict(query or {})), **kwargs)
