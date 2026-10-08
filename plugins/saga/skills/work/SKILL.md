@@ -374,8 +374,13 @@ hook (#677/U5). Direct `Agent`/`Task` spawns carry no lease admission.
 - **Execution strategy** — inline / serial subagents / parallel subagents, chosen from task count and
   dependency structure, gated by the **Parallel Safety Check** (file-to-unit overlap → worktree
   isolation, or downgrade to serial when isolation is unavailable). Subagent dispatch passes each unit's
-  Goal / Files / Approach / Execution note / Patterns / Test scenarios / Verification and **preserves the
-  U-ID**.
+  Goal / Files / Approach / Execution note / Patterns / Test scenarios / Verification, the path
+  `plugins/saga/references/question-banks/policy-questions.json`, and the duty to write one declaration
+  per question, whether it applies and the proving test when it applies, then store it with
+  `python3 plugins/saga/scripts/builder_record.py write --issue <N> --unit <id> --record <file>`
+  before the build loop. `<N>` is the issue this task is building, `<id>` is the unit id, and `<file>`
+  is the JSON file just written. A later write keeps earlier declarations and reasons the new file
+  does not replace. Dispatch **preserves the U-ID**.
 - **Build-unit tier** — When directly launching a build unit, resolve its `{model, effort}` by
   running the resolver, not by reading it:
 
@@ -497,7 +502,8 @@ uv run python plugins/saga/scripts/build_loop.py --issue <N> --dry-run
 That prints the mechanical baseline with the lens-catalogue check each command answers, any
 catalogue check this repository's baseline does not cover and why, any named scanner it has not
 configured, the plan's functional checks, the plan's scenario smoke, and whether a branch preview
-is declared. It runs nothing and writes nothing.
+is declared. It also prints four headings for the review work an iteration needs: `Tools:`,
+`Checks:`, `Sweep:`, and `Declarations:`. It runs nothing and writes nothing.
 
 **Then run it, once per iteration:**
 
@@ -513,8 +519,9 @@ unit's `build_loop` block in the run record, and prints what passed and what did
 - **0 — green.** Every check passed and the preview is either green or undeclared. The block now
   carries `handed_to_code_review` with the full forty-character revision. When every unit is green,
   go to 3.2; a single-lane run goes straight to 3.3.
-- **4 — not green yet.** At least one entry is `fail` or `could-not-execute`. **This is a loop
-  iteration, not a refusal and not a gate.** Fix what the results name, commit, and run it again.
+- **4 — not green yet.** At least one entry is `fail` or `could-not-execute`, or the declaration
+  check named a question. **This is a loop iteration, not a refusal and not a gate.** Fix what the
+  results name, commit, and run it again.
   Do not ask the operator, do not record an override, and do not proceed to code review: there is
   nothing here to override, because nothing here is refusing.
 - **2 or 3 — a refusal.** The record could not be read, the unit was not named, or its version is
@@ -595,9 +602,11 @@ run record under `combined_branch.passes` with its deploy, test and teardown res
 
 - **0 — green.** The pass passed, or the repository's waiver applies. `combined_branch` now carries
   `handed_to_code_review` with the full forty-character revision. Go to Phase 5.
-- **4 — not green yet.** A test failed, or the environment could not execute fewer than three
-  passes in a row. A failing test is fixed on the combined branch as ordinary implementation work,
-  committed, and the pass run again; it is never a review finding. A pass consumes no review cycle.
+- **4 — not green yet.** A test failed, the review gate failed, or the environment could not
+  execute fewer than three passes in a row. The pass reruns the review tools on the whole branch.
+  A failed gate is exit 4. Phase 5.1's `--handoff` then refuses, and `/code-review` is not called.
+  A failing test is fixed on the combined branch as ordinary implementation work, committed, and
+  the pass run again; it is never a review finding. A pass consumes no review cycle.
 - **5 — environment stop.** Three passes in a row could not execute: a deploy that did not
   succeed, a timeout, a missing tool, or a shared environment another run held for the whole wait.
   The loop prints the environment problems. This is the environment, not the code: report them to

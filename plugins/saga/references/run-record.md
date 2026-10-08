@@ -405,7 +405,7 @@ it gives) is a row key of its own:
 
 | Key | Holds |
 |---|---|
-| `builder_record` | the unit's builder record, a `review_records.v1` record of kind `builder_record`. `review_records.py record-builder` replaces it whole, so a repair implementer's update is the new version |
+| `builder_record` | the unit's builder record, a `review_records.v1` record of kind `builder_record`. `builder_record.py write` merges the new file with the row's current record first, so a repair implementer's update keeps earlier declarations and reasons the new file does not replace. `review_records.py record-builder` still replaces the key whole with the object it is given |
 
 <!-- END UNIT ROW KEYS -->
 

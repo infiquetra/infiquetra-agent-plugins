@@ -147,6 +147,19 @@ REVIEW_ELSEWHERE_NOTE = (
     "Commit your work, say what you did, and stop."
 )
 
+# Sent only on a /saga:work task. /saga:plan does not get it. A replacement worker's task
+# starts with /saga:work, so normalize_task appends this there too (issue #162).
+POLICY_QUESTIONS_NOTE = (
+    " Before the build loop, read plugins/saga/references/question-banks/policy-questions.json"
+    " and write one declaration per question, whether it applies and the proving test when it"
+    " applies, into a JSON file of kind builder_record and schema review_records.v1. Store it"
+    " with python3 plugins/saga/scripts/builder_record.py write --issue <N> --unit <id>"
+    " --record <file>. <N> is the issue number on the run record, the issue this /saga:work"
+    " task is building. <id> is the unit id of the row being implemented, the same id the plan"
+    " heading uses. <file> is the JSON file just written. A later write for the same unit keeps"
+    " earlier declarations and reasons that the new file does not replace."
+)
+
 # Sent with every dispatched saga task, whatever the capability.
 #
 # `BACKEND_NOTES` pre-answers one question. Saga's `/plan` names the whole family in its own
@@ -3266,6 +3279,8 @@ def normalize_task(
         rewritten += note.format(backend=backend)
     if cap == "work" and review_elsewhere:
         rewritten += REVIEW_ELSEWHERE_NOTE
+    if cap == "work":
+        rewritten += POLICY_QUESTIONS_NOTE
     # Last, and for every capability: the specific notes above answer the questions this plugin
     # knows about, and this one covers the rest -- including whatever saga asks next.
     rewritten += UNATTENDED_NOTE

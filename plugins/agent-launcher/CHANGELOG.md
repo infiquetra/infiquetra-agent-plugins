@@ -11,6 +11,9 @@ for C8 to extend.
 
 ### Added
 
+- Issue #162: the implementer, standard-repair implementer, and expert-repair implementer prompts
+  tell the builder to read `plugins/saga/references/question-banks/policy-questions.json` and store
+  one declaration per question with `builder_record.py write` before the build loop.
 - **The targeted reviewer, started headless.** `launcher.py review` starts saga's targeted
   reviewer on its staffed vendor with that vendor's normal configuration (instruction files,
   plugins, hooks and the subscription sign-in), in a fresh export of the head commit with no `.git`.

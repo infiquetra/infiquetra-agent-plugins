@@ -77,9 +77,17 @@ unit tier that differs from the type's) use the generic `Explore` / `Task` agent
 the resolved model and the effort rider prepended. Judgment units use the generic agents. Do **not**
 reference named `ce-*` agents.  For each unit, give the subagent: the full plan path (overall context), the
 unit's Goal / Files / Approach / Execution note / Patterns / Test scenarios / Verification, any resolved
-deferred-implementation questions, and the instruction to check the unit's test scenarios against all
-four applicable categories (happy / edge / error / integration) and supplement gaps. **Preserve the
-U-ID** in the dispatch and in everything the subagent reports back.
+deferred-implementation questions, the path
+`plugins/saga/references/question-banks/policy-questions.json`, and the duty to write one declaration
+per question, whether it applies and the proving test when it applies, into a JSON file of kind
+`builder_record` and schema `review_records.v1`, then store it with
+`python3 plugins/saga/scripts/builder_record.py write --issue <N> --unit <id> --record <file>` before
+the build loop. `<N>` is the issue number on the run record. `<id>` is the unit id, the same id the
+plan heading uses. `<file>` is the JSON file just written. A later write for the same unit keeps
+earlier declarations and reasons that the new file does not replace. Also give the instruction to
+check the unit's test scenarios against all four applicable categories (happy / edge / error /
+integration) and supplement gaps. **Preserve the U-ID** in the dispatch and in everything the
+subagent reports back.
 
 **Mechanical units (census, file-exist checks, JSON validation, grep counts, link checks) run
 inline in this session.**  They were dispatched to a dedicated cheap-tier Bash-only agent until issue

@@ -33,6 +33,61 @@ the one-step rule forbids; a candidate follow-up).
 
 **Revisit when.** The transcript evaluation of Haiku sessions reports, or a mechanical unit needs a
 raise that `raise-at-ceiling` leaves to the operator.
+### Load the policy from the saga plugin directory, not the checkout
+
+**Decision.** `builder_record.py` and the build loop load the policy and the question banks
+through `question_banks.load_policy` and `load_bank` with the plugin directory
+`Path(__file__).resolve().parents[1]`. The checkout under test, including a head commit, is not
+the source of the question list.
+
+**Rationale.** A corpus checkout or a head commit could otherwise drop a question by shipping a
+shorter policy file. `question_banks._locate` strips the `plugins/saga/` prefix, so the plugin
+directory works in this catalog and in an installed copy. Issue #162.
+
+**Rejected alternatives.** Calling `load_policy()` with no root, which uses the working directory
+when `plugins/saga` exists there. Pasting the question text into the three implementer prompts,
+which would drift from the approved file.
+
+**Revisit when.** The loader stops stripping the `plugins/saga/` prefix, or the policy file moves
+out of the saga plugin.
+
+### Merge a builder record, then replace the row key
+
+**Decision.** `builder_record.py write` validates the new file, merges it with the row's current
+builder record, validates the merge, then calls `review_records.record_builder`. Declarations
+merge by question id: the new file wins, and an omitted id stays. Reasons merge by
+`(kind, finding_id)`: the new text wins, and an earlier pair stays. `acceptance_criteria` comes
+from the new file when that list is non-empty, otherwise from the stored record. `unit` is the
+`--unit` argument. A stored record that fails validation is not merged; the write exits 1 and
+stores nothing.
+
+**Rationale.** `record_builder` still replaces the key with one object. The merge stays in this
+script so a repair file does not have to repeat every earlier entry, and the record writer does
+not grow a second store. Issue #162.
+
+**Rejected alternatives.** Teaching `record_builder` to merge. Requiring every repair file to
+repeat the whole record.
+
+**Revisit when.** The review-record writer grows its own merge, or the builder record stops being
+one object per unit row.
+
+### A secret in the diff fails the build-loop gate even when the lens is report-only
+
+**Decision.** The combined-branch pass fails closed when a finding's rule row is
+`security.secret-in-diff`, or its source name is `gitleaks`, on any lens, including a lens
+`may_block` marks report-only. A blocking finding is enforced only when the may-block map says
+yes. A finding that already carries a computed severity key is not passed to `outcome`; the pass
+records `could-not-execute`.
+
+**Rationale.** The committed calibration is `corpus_run: no-run`, so `may_block` returns
+report-only for every lens until a real calibration run is recorded. A secret must still stop
+the handoff. Issue #162.
+
+**Rejected alternatives.** Treating every `blocks` severity as a gate failure before calibration
+says the lens may block. Letting a report-only lens hide a secret.
+
+**Revisit when.** The calibration file records a real run and `may_block` returns `yes` for the
+security lens.
 
 ### Release the 2026-10-07 tier change with compatibility notices, not a fresh client run
 

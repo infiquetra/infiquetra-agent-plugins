@@ -337,6 +337,7 @@ file lock, after the pass ran with no lock held.
 | `environment_checks` | array | one result per environment-bound plan check and scenario smoke |
 | `teardown` | object | the teardown result, `not-declared`, or null when the deploy step was not reached |
 | `environment_problems` | array | one line per environment problem, for the operator |
+| `review` | object | the scan of the combined branch: `base`, `head`, `status`, `findings`, `degraded`, `where_to_look`, `detail` (why the scan did not run, or empty), `declarations` (null on this pass) and `gate` (the lines that failed the gate) |
 
 <!-- END COMBINED PASS KEYS -->
 
@@ -395,11 +396,12 @@ same row is left alone.
 | `revision` | string | the full forty-character commit identifier the iteration ran at |
 | `started_at` | string | ISO-8601 timestamp in UTC |
 | `finished_at` | string | ISO-8601 timestamp in UTC |
-| `green` | boolean | every result is `pass`, and the preview is `pass` or `no-preview-declared` |
+| `green` | boolean | every result is `pass`, the preview is `pass` or `no-preview-declared`, declarations are `pass`, and the review is not `could-not-execute` |
 | `baseline` | array | one result per baseline command |
 | `functional_checks` | array | one result per prescribed functional check |
 | `preview` | object | `declared`, `status`, `command`, `detail` |
 | `scenario_smoke` | array | one result per prescribed smoke scenario |
+| `review` | object | the scan and the declaration check: `base`, `head`, `status`, `findings`, `degraded`, `where_to_look`, `detail` (why the scan did not run, or empty), `declarations` and `gate` (empty on a unit iteration) |
 
 <!-- END ITERATION KEYS -->
 
@@ -494,8 +496,8 @@ about the path it was handed is clearer than the loop silently dropping the argu
 checks, so `--repo-root` names it rather than the loop inheriting whatever directory the caller
 happened to be in. `--profile` is separate from it: a caller that wants a different profile is not
 thereby asking for a different repository, and conflating the two moved the revision lookup to a
-directory that was not a checkout. The review runner's relocated test is not one of these checks.
-This loop does not start it.
+directory that was not a checkout. The unit iteration starts the review runner's relocated
+test through `review_tools.run` with `framework=True`, and the combined pass reruns it.
 
 ## Related
 

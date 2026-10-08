@@ -2122,6 +2122,469 @@ def test_the_code_review_skill_reads_the_functional_evidence_and_stops_without_i
 
 
 # ---------------------------------------------------------------------------
+# Builder declarations and the review gate (issue #162).
+# ---------------------------------------------------------------------------
+
+
+def _tool_finding(row: str, **over: Any) -> dict[str, Any]:
+    finding = {
+        "id": "rf:1",
+        "lens": row.split(".")[0],
+        "rule": {"row": row, "ref": "example-rule"},
+        "source": {"kind": "tool", "name": "example-tool", "version": "1.0"},
+        "language": "python",
+        "consequence": None,
+        "trigger": None,
+        "evidence": "tool-result",
+        "degraded": False,
+        "consequence_jev": None,
+        "unconfirmed": False,
+    }
+    finding.update(over)
+    return finding
+
+
+def _passing_scan(findings: list[dict[str, Any]], where: list[dict[str, Any]] | None = None):
+    def scan(repo: Path, base: str | None, head: str) -> dict[str, Any]:
+        assert base is None
+        return {
+            "status": "pass",
+            "base": "b" * 40,
+            "head": head,
+            "findings": findings,
+            "degraded": [],
+            "where_to_look": where or [],
+        }
+
+    return scan
+
+
+def _policy_ids() -> list[str]:
+    import question_banks
+
+    policy = question_banks.load_policy(REPO_ROOT / "plugins" / "saga")
+    return [entry["id"] for entry in policy["questions"]]
+
+
+def test_a_passing_declaration_check_records_handed_to_code_review(tmp_path: Path) -> None:
+    path = _write(tmp_path / "issue-1027.json", _record_dict())
+    finding = _tool_finding("security.scanner-high")
+    where = {"id": "where-1", "lens": "security"}
+
+    def declare(record: Any, revision: str, repo: Path) -> tuple[str, list[str]]:
+        return "pass", []
+
+    code = build_loop.main(
+        ["--record", str(path), "--unit", "U1"],
+        runner=FakeRunner(),
+        declare=declare,
+        scan=_passing_scan([finding], [where]),
+    )
+    assert code == build_loop.EXIT_GREEN
+    block = _block(path)
+    iteration = block["iterations"][0]
+    assert iteration["green"] is True
+    assert iteration["review"]["findings"] == [finding]
+    assert iteration["review"]["where_to_look"] == [where]
+    assert block["handed_to_code_review"]["revision"] == iteration["revision"]
+
+
+def test_an_undeclared_question_is_not_handed_off(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _write(tmp_path / "issue-1027.json", _record_dict())
+
+    def declare(record: Any, revision: str, repo: Path) -> tuple[str, list[str]]:
+        return "fail", ["question correctness-01: missing declaration"]
+
+    code = build_loop.main(
+        ["--record", str(path), "--unit", "U1"], runner=FakeRunner(), declare=declare
+    )
+    assert code == build_loop.EXIT_NOT_GREEN
+    assert "handed_to_code_review" not in _block(path)
+    assert "correctness-01" in capsys.readouterr().out
+
+
+def test_a_scan_that_does_not_run_is_not_green(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _write(tmp_path / "issue-1027.json", _record_dict())
+    runner = FakeRunner()
+
+    def scan(repo: Path, base: str | None, head: str) -> dict[str, Any]:
+        return {
+            "status": "could-not-execute",
+            "base": None,
+            "head": head,
+            "findings": [],
+            "degraded": [],
+            "where_to_look": [],
+            "detail": "no-base",
+        }
+
+    code = build_loop.main(
+        ["--record", str(path), "--unit", "U1"], runner=runner, scan=scan
+    )
+    assert code == build_loop.EXIT_NOT_GREEN
+    assert "handed_to_code_review" not in _block(path)
+    assert _commands(runner) == ["uv run ruff check ."]
+    review = _block(path)["iterations"][0]["review"]
+    assert review["status"] == "could-not-execute"
+    assert review["detail"] == "no-base"
+    printed = capsys.readouterr().out
+    assert "[pass] declarations" in printed
+    assert "[could-not-execute] review" in printed
+    assert "no-base" in printed
+
+
+def test_a_combined_scan_that_does_not_run_names_the_reason() -> None:
+    record = run_record.RunRecord(issue=162, units=[{"id": "U1"}])
+    waived = {
+        "mode": "waived",
+        "level": "repository",
+        "reason": "docs only",
+        "source": "profile",
+    }
+
+    def scan(repo: Path, base: str | None, head: str) -> dict[str, Any]:
+        return {
+            "status": "could-not-execute",
+            "base": None,
+            "head": head,
+            "findings": [],
+            "degraded": [],
+            "where_to_look": [],
+            "detail": "no-base",
+        }
+
+    entry, green = build_loop.run_combined_pass(
+        record, waived, [], "d" * 40, runner=FakeRunner(), scan=scan
+    )
+    assert green is False
+    assert entry["review"]["detail"] == "no-base"
+    assert "could-not-execute: no-base" in entry["skipped_reason"]
+    printed = build_loop.format_combined_pass(entry)
+    assert "[could-not-execute] review" in printed
+    assert "no-base" in printed
+
+
+def test_resolve_base_uses_upstream_then_origin_and_never_head(tmp_path: Path) -> None:
+    head = "a" * 40
+    upstream = "b" * 40
+    origin = "c" * 40
+
+    def scripted(answers: dict[str, Any]) -> FakeRunner:
+        def reply(argv: Sequence[str], _timeout: int) -> tuple[int, str]:
+            ref = argv[-1]
+            verdict = answers[ref]
+            if isinstance(verdict, BaseException):
+                raise verdict
+            return verdict
+
+        return FakeRunner(verdicts={"merge-base": reply})
+
+    preferred = scripted({"@{upstream}": (0, upstream), "origin/HEAD": (0, origin)})
+    assert build_loop._resolve_base(tmp_path, head, preferred) == upstream
+    assert all("origin/HEAD" not in call for call in preferred.calls)
+
+    fell_through = scripted({"@{upstream}": (0, head), "origin/HEAD": (0, origin)})
+    assert build_loop._resolve_base(tmp_path, head, fell_through) == origin
+    assert any("origin/HEAD" in call for call in fell_through.calls)
+
+    refused = scripted(
+        {"@{upstream}": FileNotFoundError("git"), "origin/HEAD": (0, "not-a-sha")}
+    )
+    assert build_loop._resolve_base(tmp_path, head, refused) is None
+
+    both_head = scripted({"@{upstream}": (1, upstream), "origin/HEAD": (0, head)})
+    assert build_loop._resolve_base(tmp_path, head, both_head) is None
+
+
+def _git(repo: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(proc.stderr or proc.stdout)
+    return proc.stdout.strip()
+
+
+def test_production_block_map_copies_the_base_profile_and_unlinks_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import review_calibration
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "builder@example.com")
+    _git(repo, "config", "user.name", "Builder")
+    profile = {"schema": "repository_profile.v1", "name": "example"}
+    (repo / ".saga-profile.json").write_text(json.dumps(profile), encoding="utf-8")
+    _git(repo, "add", ".saga-profile.json")
+    _git(repo, "commit", "-m", "add the profile")
+    base = _git(repo, "rev-parse", "HEAD")
+    seen: list[tuple[str, str, Path, Path]] = []
+
+    def may_block(
+        lens: str, language: str, *, root: Path, calibration: Path, profile: Path
+    ) -> str:
+        seen.append((lens, language, root, profile))
+        assert json.loads(profile.read_text(encoding="utf-8")) == {
+            "schema": "repository_profile.v1",
+            "name": "example",
+        }
+        assert root == build_loop._plugin_dir()
+        assert calibration == review_calibration.default_calibration_path()
+        if lens == "security" and language == "python":
+            return "yes cleared"
+        return "report-only no-run"
+
+    monkeypatch.setattr(review_calibration, "may_block", may_block)
+    mapping = build_loop._production_block_map([{"language": "python"}], repo, base)
+    assert mapping["security"]["python"] is True
+    assert mapping["security"]["none"] is False
+    assert mapping["correctness"]["python"] is False
+    copied = {item[3] for item in seen}
+    assert len(copied) == 1
+    assert not next(iter(copied)).exists()
+
+    (repo / ".saga-profile.json").write_text("not json\n", encoding="utf-8")
+    _git(repo, "add", ".saga-profile.json")
+    _git(repo, "commit", "-m", "break the profile")
+    broken = _git(repo, "rev-parse", "HEAD")
+    before = len(seen)
+    with pytest.raises(review_calibration.CalibrationError, match="not JSON"):
+        build_loop._production_block_map([{"language": "python"}], repo, broken)
+    assert len(seen) == before
+
+    with pytest.raises(review_calibration.CalibrationError, match="no base"):
+        build_loop._production_block_map([{"language": "python"}], repo, None)
+
+
+def test_the_dry_run_lists_review_work(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _write(tmp_path / "issue-1027.json", _record_dict())
+    runner = FakeRunner()
+    assert build_loop.main(["--record", str(path), "--dry-run"], runner=runner) == 0
+    out = capsys.readouterr().out
+    for heading in ("Tools:", "Checks:", "Sweep:", "Declarations:"):
+        assert heading in out
+    assert "policy-questions.json" in out
+    assert runner.calls == []
+    uncovered = out.split("Review tools this baseline does not name:", 1)[1]
+    uncovered = uncovered.split("Child-scoped functional checks", 1)[0]
+    assert "\n  coverage " not in uncovered
+    assert "relocated-test" not in uncovered
+
+
+def test_production_declare_names_every_missing_question(tmp_path: Path) -> None:
+    def scan(repo: Path, base: str | None, head: str) -> dict[str, Any]:
+        return {
+            "status": "pass",
+            "base": "b" * 40,
+            "head": head,
+            "findings": [],
+            "degraded": [],
+            "where_to_look": [],
+        }
+
+    iteration, green = build_loop.run_iteration(
+        build_loop.Criterion(),
+        "c" * 40,
+        runner=build_loop.subprocess_runner,
+        repo=tmp_path,
+        builder_record=None,
+        scan=scan,
+    )
+    assert green is False
+    declarations = iteration["review"]["declarations"]
+    assert declarations["status"] == "fail"
+    expected = [f"question {question_id}: missing declaration" for question_id in _policy_ids()]
+    assert declarations["questions"] == expected
+    assert expected
+
+
+def test_production_declare_fails_closed_on_check_exit_2(tmp_path: Path) -> None:
+    rejected = {
+        "kind": "builder_record",
+        "schema": "review_records.v1",
+        "unit": "U1",
+        "acceptance_criteria": [],
+        "declarations": [],
+    }
+
+    def scan(repo: Path, base: str | None, head: str) -> dict[str, Any]:
+        return {
+            "status": "pass",
+            "base": "b" * 40,
+            "head": head,
+            "findings": [],
+            "degraded": [],
+            "where_to_look": [],
+        }
+
+    iteration, green = build_loop.run_iteration(
+        build_loop.Criterion(),
+        "c" * 40,
+        runner=build_loop.subprocess_runner,
+        repo=tmp_path,
+        builder_record=rejected,
+        scan=scan,
+    )
+    assert green is False
+    assert iteration["review"]["declarations"]["status"] == "could-not-execute"
+
+
+def _gate_argv(calls: list[list[str]]) -> None:
+    tokens = [token for call in calls for token in call]
+    assert "review_command.py" not in tokens
+    assert not any(token in {"claude", "codex", "grok"} for token in tokens)
+
+
+def test_combined_gate_handoff_admits_a_report_only_block(tmp_path: Path) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    runner, backend = FakeRunner(), FakeLeaseBackend()
+    code = build_loop.main(
+        ["--record", str(path), "--combined", "--lease-wait", "0"],
+        runner=runner,
+        lease_backend=backend,
+        sleep=lambda _: None,
+        scan=_passing_scan([_tool_finding("security.scanner-high")]),
+        block_map={"security": {"python": False}},
+    )
+    assert code == build_loop.EXIT_GREEN
+    entry = _combined_block(path)["passes"][-1]
+    assert entry["green"] is True and entry["review"]["status"] == "pass"
+    assert "deploy-stack --env nonprod" in _commands(runner)
+    handoff = build_loop.main(
+        ["--record", str(path), "--handoff", "--revision", "a" * 40],
+        runner=runner,
+        lease_backend=backend,
+        sleep=lambda _: None,
+    )
+    assert handoff == build_loop.EXIT_GREEN
+    _gate_argv(runner.calls)
+
+
+def test_combined_gate_handoff_refuses_an_enforced_block(tmp_path: Path) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    runner, backend = FakeRunner(), FakeLeaseBackend()
+    code = build_loop.main(
+        ["--record", str(path), "--combined", "--lease-wait", "0"],
+        runner=runner,
+        lease_backend=backend,
+        sleep=lambda _: None,
+        scan=_passing_scan([_tool_finding("security.scanner-high")]),
+        block_map={"security": {"python": True}},
+    )
+    assert code == build_loop.EXIT_NOT_GREEN
+    entry = _combined_block(path)["passes"][-1]
+    assert entry["status"] == "fail" and entry["green"] is False
+    assert entry["skipped_reason"]
+    assert entry["deploy"] is None
+    assert "deploy-stack --env nonprod" not in _commands(runner)
+    handoff = build_loop.main(
+        ["--record", str(path), "--handoff", "--revision", "a" * 40], runner=runner
+    )
+    assert handoff == build_loop.EXIT_REFUSED
+
+
+def test_combined_gate_handoff_refuses_a_secret_in_any_lens(tmp_path: Path) -> None:
+    finding = _tool_finding(
+        "security.secret-in-diff",
+        source={"kind": "tool", "name": "gitleaks", "version": "1.0"},
+    )
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    runner = FakeRunner()
+    code = build_loop.main(
+        ["--record", str(path), "--combined", "--lease-wait", "0"],
+        runner=runner,
+        lease_backend=FakeLeaseBackend(),
+        sleep=lambda _: None,
+        scan=_passing_scan([finding]),
+        block_map={"security": {"python": False, "none": False}},
+    )
+    assert code == build_loop.EXIT_NOT_GREEN
+    entry = _combined_block(path)["passes"][-1]
+    assert entry["green"] is False and entry["review"]["status"] == "fail"
+    handoff = build_loop.main(
+        ["--record", str(path), "--handoff", "--revision", "a" * 40], runner=runner
+    )
+    assert handoff == build_loop.EXIT_REFUSED
+
+
+def test_combined_gate_key_set_includes_review(tmp_path: Path) -> None:
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    assert _combined(path, FakeRunner(), FakeLeaseBackend()) == 0
+    assert "review" in _combined_block(path)["passes"][0]
+    documented = set(_marked_table(REFERENCE.read_text(encoding="utf-8"), "COMBINED PASS KEYS"))
+    assert "review" in documented
+
+
+def test_combined_gate_handoff_stops_on_a_preset_severity(tmp_path: Path) -> None:
+    finding = _tool_finding("security.scanner-high", severity="blocks")
+    path = _write(tmp_path / "issue-1027.json", _combined_record())
+    code = build_loop.main(
+        ["--record", str(path), "--combined", "--lease-wait", "0"],
+        runner=FakeRunner(),
+        lease_backend=FakeLeaseBackend(),
+        sleep=lambda _: None,
+        scan=_passing_scan([finding]),
+        block_map={"security": {"python": True}},
+    )
+    assert code == build_loop.EXIT_NOT_GREEN
+    review = _combined_block(path)["passes"][-1]["review"]
+    assert review["status"] == "could-not-execute"
+    assert any("rf:1" in line for line in review["gate"])
+
+
+def test_combined_gate_handoff_reads_a_may_block_line() -> None:
+    waived = {
+        "mode": "waived",
+        "level": "repository",
+        "reason": "docs only",
+        "source": "profile",
+    }
+    record = run_record.RunRecord(issue=162, units=[{"id": "U1"}])
+    finding = _tool_finding("security.scanner-high")
+
+    def yes_security(lens: str, language: str) -> str:
+        if lens == "security" and language == "python":
+            return "yes cleared"
+        return "report-only"
+
+    _entry, green = build_loop.run_combined_pass(
+        record,
+        waived,
+        [],
+        "d" * 40,
+        runner=FakeRunner(),
+        scan=_passing_scan([finding]),
+        may_block=yes_security,
+    )
+    assert green is False
+
+    def report_only(lens: str, language: str) -> str:
+        return "report-only"
+
+    _entry, green = build_loop.run_combined_pass(
+        record,
+        waived,
+        [],
+        "d" * 40,
+        runner=FakeRunner(),
+        scan=_passing_scan([finding]),
+        may_block=report_only,
+    )
+    assert green is True
+
+
+# ---------------------------------------------------------------------------
 # The combined-branch drift guards.
 # ---------------------------------------------------------------------------
 

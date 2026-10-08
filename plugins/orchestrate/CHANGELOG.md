@@ -4,6 +4,8 @@
 
 ### Added
 
+- Issue #162: `normalize_task` appends the policy-question sentence to a `/saga:work` task,
+  including a replacement worker's task, and does not append it to `/saga:plan`.
 - `orchestrate.py review-launch` starts one targeted reviewer, and on a high or very-high risk tier one external reviewer, through `launcher.py review`. Orchestrate does not read the answer. `go` does not open a pane for either seat (issue #159).
 
 ### Changed

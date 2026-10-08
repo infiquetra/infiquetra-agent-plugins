@@ -86,6 +86,15 @@ condition.
 Between them you have everything. If something is missing, say which field and stop; do not
 reconstruct it by inference.
 
+Read `plugins/saga/references/question-banks/policy-questions.json`. Before the build loop, write
+one declaration per question, whether it applies and the proving test when it applies, into a JSON
+file of kind `builder_record` and schema `review_records.v1`, and store it with
+`python3 plugins/saga/scripts/builder_record.py write --issue <N> --unit <id> --record <file>`.
+`<N>` is the issue number on the run record, the issue this `/saga:work` task is building. `<id>`
+is the unit id of the row being implemented, the same id the plan heading uses, such as U1 or U2.
+`<file>` is the JSON file just written. A later write for the same unit keeps earlier declarations
+and reasons that the new file does not replace.
+
 ## Output contract
 
 Post one handoff comment on the issue record:

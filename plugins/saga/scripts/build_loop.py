@@ -80,12 +80,14 @@ import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import subprocess  # nosec B404  (the checks ARE subprocesses; never through a shell)
 import sys
+import tempfile
 import threading
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -435,6 +437,15 @@ def check_map(baseline: Sequence[str]) -> dict[str, Any]:
 #: fake must do.
 Runner = Callable[[Sequence[str], int, "Path | None"], "tuple[int, str]"]
 
+#: ``(repo, base, head) ->`` the scan fields, without ``declarations`` or ``gate``.
+Scan = Callable[[Path, str | None, str], Mapping[str, Any]]
+
+#: ``(builder record or None, revision, repo) -> (status, lines)``.
+Declare = Callable[[Mapping[str, Any] | None, str, Path], tuple[str, list[str]]]
+
+#: ``(lens, language) ->`` one may-block line. True only when the line starts with ``yes``.
+MayBlock = Callable[[str, str], str]
+
 
 def subprocess_runner(
     argv: Sequence[str], timeout: int, cwd: Path | None = None
@@ -559,6 +570,543 @@ def run_preview(
 
 
 # ---------------------------------------------------------------------------
+# The review a unit iteration and a combined pass record (issue #162).
+# ---------------------------------------------------------------------------
+
+
+def _plugin_dir() -> Path:
+    """The saga plugin that contains this script. Policy and calibration are read from here."""
+    return Path(__file__).resolve().parents[1]
+
+
+def _one_line(exc: BaseException) -> str:
+    text = str(exc).splitlines()
+    return text[0] if text else type(exc).__name__
+
+
+def _could_not_scan(head: str, *, base: str | None = None, detail: str = "") -> dict[str, Any]:
+    scanned: dict[str, Any] = {
+        "status": STATUS_COULD_NOT_EXECUTE,
+        "base": base,
+        "head": head,
+        "findings": [],
+        "degraded": [],
+        "where_to_look": [],
+    }
+    if detail:
+        scanned["detail"] = detail
+    return scanned
+
+
+def _copy_scan(scanned: Mapping[str, Any], head: str) -> dict[str, Any]:
+    """The scan fields the review object keeps, including why a scan did not run."""
+    status = scanned.get("status", STATUS_PASS)
+    if status not in (STATUS_PASS, STATUS_FAIL, STATUS_COULD_NOT_EXECUTE):
+        status = STATUS_COULD_NOT_EXECUTE
+    raw = scanned.get("detail", "")
+    text = raw.strip() if isinstance(raw, str) else ""
+    detail = text.splitlines()[0] if text else ""
+    return {
+        "base": scanned.get("base"),
+        "head": scanned.get("head") or head,
+        "status": status,
+        "findings": list(scanned.get("findings") or []),
+        "degraded": list(scanned.get("degraded") or []),
+        "where_to_look": list(scanned.get("where_to_look") or []),
+        "detail": detail,
+    }
+
+
+def _resolve_base(repo: Path, head: str, runner: Runner) -> str | None:
+    """Merge-base of *head* with its upstream, else ``origin/HEAD``. Never *head* itself."""
+    for ref in ("@{upstream}", "origin/HEAD"):
+        try:
+            code, detail = runner(["git", "-C", str(repo), "merge-base", head, ref], 60, None)
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            continue
+        sha = detail.strip()
+        if code == 0 and FULL_REVISION.fullmatch(sha) and sha != head:
+            return sha
+    return None
+
+
+def _json_list(path: Path) -> list[Any]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        raise BuildLoopError(f"{path.name} is not a list")
+    return data
+
+
+def _degraded_input(lens: str, language: str, name: str, tool: str, reason: str) -> dict[str, str]:
+    import review_formula  # noqa: PLC0415
+
+    return {
+        "lens": lens if lens in review_formula.LENSES else "correctness",
+        "language": language if language in review_formula.LANGUAGES else "none",
+        "input": name or "sweep",
+        "tool": tool,
+        "reason": reason,
+    }
+
+
+def _jev_rate() -> dict[str, float] | None:
+    """The ``jev-latest`` prices, or ``None`` when the file cannot answer."""
+    import yaml  # noqa: PLC0415
+
+    path = _plugin_dir() / "references" / "model-prices.yaml"
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return None
+    models = data.get("models") if isinstance(data, Mapping) else None
+    if not isinstance(models, Mapping):
+        return None
+    for row in models.values():
+        if not isinstance(row, Mapping) or "jev-latest" not in (row.get("aliases") or []):
+            continue
+        rates = row.get("usd_per_million")
+        if not isinstance(rates, Mapping):
+            return None
+        parsed: dict[str, float] = {}
+        for key in ("uncached_input", "cache_read", "cache_write_5m", "cache_write_1h", "output"):
+            value = rates.get(key)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return None
+            parsed[key] = float(value)
+        return parsed
+    return None
+
+
+def _map_sweep(
+    entry: Mapping[str, Any], questions: Sequence[Any], pieces: Sequence[Any]
+) -> dict[str, str]:
+    import review_formula  # noqa: PLC0415
+
+    question_id = entry.get("question")
+    lens = "correctness"
+    if isinstance(question_id, str):
+        for question in questions:
+            if isinstance(question, Mapping) and question.get("id") == question_id:
+                named = question.get("lens")
+                if named in review_formula.LENSES:
+                    lens = str(named)
+                break
+    language = "none"
+    piece_id = entry.get("piece")
+    if isinstance(piece_id, str):
+        for piece in pieces:
+            if isinstance(piece, Mapping) and piece.get("id") == piece_id:
+                named = piece.get("language")
+                if named in review_formula.LANGUAGES:
+                    language = str(named)
+                break
+    reason = entry.get("reason")
+    name = question_id if isinstance(question_id, str) and question_id else "sweep"
+    return _degraded_input(lens, language, name, "jev", str(reason) if reason else "sweep")
+
+
+def _sweep_banks(
+    repo: Path,
+    base: str,
+    head: str,
+    *,
+    ask: Any,
+    sweep_home: Path | None,
+) -> tuple[list[Any], list[dict[str, str]]]:
+    """One sweep over the four approved banks. A refusal degrades the input and does not fail."""
+    import question_banks  # noqa: PLC0415
+
+    try:
+        questions: list[Any] = []
+        for lens in question_banks.LENSES:
+            bank = question_banks.load_bank(lens, _plugin_dir())
+            questions.extend(bank["questions"])
+        bank_payload: dict[str, Any] = {
+            "schema": question_banks.BANK_SCHEMA,
+            "questions": questions,
+        }
+    except question_banks.BankRefusal as exc:
+        return [], [_degraded_input("correctness", "none", "question-bank", "jev", _one_line(exc))]
+    rate = _jev_rate()
+    if rate is None:
+        return [], [_degraded_input("correctness", "none", "model-prices", "jev", "no-rate")]
+    try:
+        import review_calibration  # noqa: PLC0415
+        import sweep_pieces  # noqa: PLC0415
+
+        calibration = review_calibration.default_calibration_path()
+        cut = sweep_pieces.pieces(repo, base, head, bank_payload, calibration=calibration)
+    except Exception as exc:  # noqa: BLE001  (a failed sweep degrades; it does not fail the pass)
+        return [], [_degraded_input("correctness", "none", "sweep", "jev", _one_line(exc))]
+    pieces = cut.get("pieces") if isinstance(cut, Mapping) else []
+    if not isinstance(pieces, list):
+        pieces = []
+    home = sweep_home or Path.home()
+    cache = home / ".saga" / "review-sweep" / head
+    try:
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / "log").mkdir(parents=True, exist_ok=True)
+        import bundled_fleet  # noqa: PLC0415
+
+        result = bundled_fleet.load("jev_sweep").sweep(
+            bank_payload,
+            pieces,
+            cut.get("thresholds") or {},
+            rate,
+            repo=str(repo),
+            head=head,
+            cache_dir=cache,
+            log_dir=cache / "log",
+            ask=ask,
+        )
+    except Exception as exc:  # noqa: BLE001  (a failed sweep degrades; it does not fail the pass)
+        return [], [_degraded_input("correctness", "none", "sweep", "jev", _one_line(exc))]
+    raw_items = result.get("items") if isinstance(result, Mapping) else []
+    items: list[Any] = []
+    if isinstance(raw_items, list):
+        for item in raw_items:
+            if isinstance(item, Mapping):
+                copied = dict(item)
+                copied.pop("_piece", None)
+                items.append(copied)
+    raw_degraded: list[Any] = []
+    if isinstance(cut, Mapping):
+        raw_degraded.extend(cut.get("degraded") or [])
+    if isinstance(result, Mapping):
+        raw_degraded.extend(result.get("degraded") or [])
+    mapped = [
+        _map_sweep(entry, questions, pieces)
+        for entry in raw_degraded
+        if isinstance(entry, Mapping)
+    ]
+    return items, mapped
+
+
+def _run_production_scan(
+    repo: Path, base: str, head: str, *, ask: Any, sweep_home: Path | None
+) -> dict[str, Any]:
+    output = Path(tempfile.mkdtemp(prefix="saga-build-loop-review-"))
+    try:
+        code = review_tools.run(
+            repo, base, head, repo / PROFILE_FILENAME, output, framework=True
+        )
+        if code != 0:
+            return _could_not_scan(head, base=base, detail=f"review tools exited {code}")
+        findings = _json_list(output / "findings.json")
+        degraded = _json_list(output / "degraded.json")
+        where = _json_list(output / "where-to-look.json")
+        items, extra = _sweep_banks(repo, base, head, ask=ask, sweep_home=sweep_home)
+        degraded.extend(extra)
+        where.extend(items)
+        return {
+            "status": STATUS_PASS,
+            "base": base,
+            "head": head,
+            "findings": findings,
+            "degraded": degraded,
+            "where_to_look": where,
+        }
+    finally:
+        shutil.rmtree(output, ignore_errors=True)
+
+
+def _production_scan(
+    repo: Path, head: str, *, runner: Runner, ask: Any, sweep_home: Path | None
+) -> dict[str, Any]:
+    """Resolve the base, run the tools, then the sweep. A failure is recorded, not raised."""
+    try:
+        base = _resolve_base(repo, head, runner)
+        if base is None:
+            return _could_not_scan(head, detail="no-base")
+        return _run_production_scan(repo, base, head, ask=ask, sweep_home=sweep_home)
+    except Exception as exc:  # noqa: BLE001  (a scan that raises is recorded, not an interrupt)
+        return _could_not_scan(head, detail=_one_line(exc))
+
+
+def _perform_scan(
+    repo: Path,
+    revision: str,
+    *,
+    runner: Runner,
+    scan: Scan | None,
+    ask: Any,
+    sweep_home: Path | None,
+) -> dict[str, Any]:
+    """An injected scan replaces the production scan, base resolution included."""
+    if scan is not None:
+        return _copy_scan(scan(repo, None, revision), revision)
+    if runner is subprocess_runner:
+        produced = _production_scan(repo, revision, runner=runner, ask=ask, sweep_home=sweep_home)
+        return _copy_scan(produced, revision)
+    return _copy_scan(
+        {
+            "status": STATUS_PASS,
+            "base": None,
+            "head": revision,
+            "findings": [],
+            "degraded": [],
+            "where_to_look": [],
+        },
+        revision,
+    )
+
+
+def _perform_declare(
+    builder: Mapping[str, Any] | None,
+    revision: str,
+    repo: Path,
+    *,
+    runner: Runner,
+    declare: Declare | None,
+) -> dict[str, Any]:
+    if declare is not None:
+        status, lines = declare(builder, revision, repo)
+        return {"status": status, "questions": list(lines)}
+    if runner is subprocess_runner:
+        import builder_record as builder_records  # noqa: PLC0415
+
+        code, lines = builder_records.evaluate(builder, revision, repo)
+        if code == 0:
+            status = STATUS_PASS
+        elif code == 1:
+            status = STATUS_FAIL
+        else:
+            status = STATUS_COULD_NOT_EXECUTE
+        return {"status": status, "questions": lines}
+    return {"status": STATUS_PASS, "questions": []}
+
+
+def _row_builder_records(record: run_record.RunRecord) -> list[Mapping[str, Any]]:
+    found: list[Mapping[str, Any]] = []
+    for row in record.units:
+        if not isinstance(row, dict):
+            continue
+        value = row.get("builder_record")
+        if isinstance(value, Mapping):
+            found.append(value)
+    return found
+
+
+def _finding_label(finding: Mapping[str, Any]) -> str:
+    ident = finding.get("id")
+    return str(ident) if ident else "finding"
+
+
+def _judge_findings(
+    findings: Sequence[Any],
+    builder_records: Sequence[Mapping[str, Any]],
+    block_map: Mapping[str, Any] | None,
+) -> tuple[str, list[str]]:
+    """Gate lines. A preset key or a formula error fails closed. A secret fails the gate."""
+    import review_formula  # noqa: PLC0415
+    import review_records  # noqa: PLC0415
+
+    fail_lines: list[str] = []
+    closed_lines: list[str] = []
+    for finding in findings:
+        if not isinstance(finding, Mapping):
+            closed_lines.append("finding: not an object")
+            continue
+        preset = next(
+            (key for key in review_formula.COMPUTED_FINDING_KEYS if key in finding), None
+        )
+        if preset is not None:
+            closed_lines.append(f"{_finding_label(finding)}: preset {preset}")
+            continue
+        try:
+            computed = review_formula.outcome(finding, builder_records, may_block=block_map)
+        except review_formula.FormulaError as exc:
+            closed_lines.append(f"{_finding_label(finding)}: {exc}")
+            continue
+        if computed.get("severity") == "blocks" and computed.get("enforced") is True:
+            fail_lines.append(f"{_finding_label(finding)}: enforced block")
+        rule = finding.get("rule") if isinstance(finding.get("rule"), Mapping) else {}
+        source = finding.get("source") if isinstance(finding.get("source"), Mapping) else {}
+        secret = rule.get("row") == review_records.SECRET_ROW or source.get("name") == "gitleaks"
+        if secret:
+            fail_lines.append(f"{_finding_label(finding)}: secret in diff")
+    if fail_lines:
+        return STATUS_FAIL, [*fail_lines, *closed_lines]
+    if closed_lines:
+        return STATUS_COULD_NOT_EXECUTE, closed_lines
+    return STATUS_PASS, []
+
+
+def _languages_on(findings: Sequence[Any]) -> list[str]:
+    found = {"none"}
+    for finding in findings:
+        if isinstance(finding, Mapping) and isinstance(finding.get("language"), str):
+            found.add(str(finding["language"]))
+    return sorted(found)
+
+
+def _map_from_lines(findings: Sequence[Any], may_block: MayBlock) -> dict[str, dict[str, bool]]:
+    import review_formula  # noqa: PLC0415
+
+    mapping: dict[str, dict[str, bool]] = {}
+    for lens in review_formula.LENSES:
+        mapping[lens] = {}
+        for language in _languages_on(findings):
+            line = may_block(lens, language)
+            mapping[lens][language] = isinstance(line, str) and line.startswith("yes")
+    return mapping
+
+
+def _base_profile(repo: Path, base: str) -> Path | None:
+    """A temporary copy of ``.saga-profile.json`` at *base*. ``None`` when the blob is not JSON."""
+    shown = subprocess.run(  # nosec B603  (shell=False; git show of one tracked file)
+        ["git", "-C", str(repo), "show", f"{base}:.saga-profile.json"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    text = shown.stdout if shown.returncode == 0 else "{}\n"
+    try:
+        json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    handle = tempfile.NamedTemporaryFile(  # noqa: SIM115  (unlinked by the caller)
+        prefix="saga-base-profile-", suffix=".json", delete=False
+    )
+    handle.write(text.encode())
+    handle.close()
+    return Path(handle.name)
+
+
+def _production_block_map(
+    findings: Sequence[Any], repo: Path, base: str | None
+) -> dict[str, dict[str, bool]]:
+    import review_calibration  # noqa: PLC0415
+    import review_formula  # noqa: PLC0415
+
+    if base is None or FULL_REVISION.fullmatch(str(base)) is None:
+        raise review_calibration.CalibrationError("no base commit to read the profile from")
+    profile = _base_profile(repo, base)
+    try:
+        if profile is None:
+            raise review_calibration.CalibrationError("base profile is not JSON")
+        root = _plugin_dir()
+        calibration = review_calibration.default_calibration_path()
+        mapping: dict[str, dict[str, bool]] = {}
+        for lens in review_formula.LENSES:
+            mapping[lens] = {}
+            for language in _languages_on(findings):
+                line = review_calibration.may_block(
+                    lens, language, root=root, calibration=calibration, profile=profile
+                )
+                mapping[lens][language] = line.startswith("yes")
+        return mapping
+    finally:
+        if profile is not None:
+            profile.unlink(missing_ok=True)
+
+
+def _answers_for(
+    findings: Sequence[Any],
+    *,
+    runner: Runner,
+    may_block: MayBlock | None,
+    block_map: Mapping[str, Any] | None,
+    repo: Path,
+    base: str | None,
+) -> Mapping[str, Any]:
+    if block_map is not None:
+        return block_map
+    if may_block is not None:
+        return _map_from_lines(findings, may_block)
+    if runner is not subprocess_runner:
+        return {}
+    return _production_block_map(findings, repo, base)
+
+
+def _empty_review(head: str, *, declarations: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "base": None,
+        "head": head,
+        "status": STATUS_COULD_NOT_EXECUTE,
+        "findings": [],
+        "degraded": [],
+        "where_to_look": [],
+        "detail": "",
+        "declarations": declarations,
+        "gate": [],
+    }
+
+
+def _combined_review(
+    record: run_record.RunRecord,
+    revision: str,
+    *,
+    runner: Runner,
+    scan: Scan | None,
+    may_block: MayBlock | None,
+    block_map: Mapping[str, Any] | None,
+    ask: Any,
+    sweep_home: Path | None,
+    cwd: Path | None,
+) -> dict[str, Any]:
+    """The combined pass's review. ``declarations`` is null; ``gate`` holds the failing lines."""
+    import review_calibration  # noqa: PLC0415
+
+    repo = cwd or Path(".")
+    scanned = _perform_scan(
+        repo, revision, runner=runner, scan=scan, ask=ask, sweep_home=sweep_home
+    )
+    review = {**scanned, "declarations": None, "gate": []}
+    if review["status"] == STATUS_COULD_NOT_EXECUTE:
+        return review
+    try:
+        answers = _answers_for(
+            review["findings"],
+            runner=runner,
+            may_block=may_block,
+            block_map=block_map,
+            repo=repo,
+            base=review["base"] if isinstance(review["base"], str) else None,
+        )
+    except review_calibration.CalibrationError as exc:
+        review["status"] = STATUS_COULD_NOT_EXECUTE
+        review["gate"] = [_one_line(exc)]
+        return review
+    status, gate = _judge_findings(review["findings"], _row_builder_records(record), answers)
+    review["status"] = status
+    review["gate"] = gate
+    return review
+
+
+def _gate_skip_reason(review: Mapping[str, Any]) -> str:
+    lines = review.get("gate") or []
+    if lines:
+        detail = "; ".join(str(line) for line in lines)
+    else:
+        status = str(review.get("status") or "")
+        cause = review.get("detail")
+        detail = f"{status}: {cause}" if isinstance(cause, str) and cause else status
+    return f"the review gate is not pass, so nothing was deployed: {detail}"
+
+
+def _review_work_lines() -> list[str]:
+    """Tools, checks, sweep and declarations. Imported here so loading the loop starts nothing."""
+    import question_banks  # noqa: PLC0415
+
+    lines = ["", "Tools:"]
+    for adapter in review_tools.default_adapters():
+        if adapter.mode == "fix" or not adapter.tool:
+            continue
+        lines.append(f"  {adapter.id}")
+    lines.extend(
+        [
+            "Checks:",
+            "  those adapters include the pattern checks and the scripted checks",
+            "Sweep:",
+        ]
+    )
+    lines.extend(f"  {question_banks.bank_file(lens)}" for lens in question_banks.LENSES)
+    lines.extend(["Declarations:", "  builder_record.py check", f"  {question_banks.POLICY_FILE}"])
+    return lines
+
+
+# ---------------------------------------------------------------------------
 # One iteration.
 # ---------------------------------------------------------------------------
 
@@ -596,11 +1144,19 @@ def run_iteration(
     cwd: Path | None = None,
     clock: Callable[[], float] = time.monotonic,
     now: Callable[[], str] = _utc_now,
+    repo: Path | None = None,
+    builder_record: Mapping[str, Any] | None = None,
+    scan: Scan | None = None,
+    declare: Declare | None = None,
+    ask: Any = None,
+    sweep_home: Path | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Run the whole criterion once and return ``(iteration, green)``, writing nothing.
 
     The iteration carries no number: ``apply_iteration``, the only code that writes the
-    ``build_loop`` block, numbers it against the row it lands on.
+    ``build_loop`` block, numbers it against the row it lands on. ``review`` is always present.
+    A missing declaration, or a scan that did not run, keeps the iteration off green. Findings
+    do not.
     """
     mapping = check_map(criterion.baseline)
     by_command = {entry["command"]: entry["catalogue_check"] for entry in mapping["commands"]}
@@ -636,10 +1192,23 @@ def run_iteration(
         if runs_in_unit(entry)
     ]
 
-    green = all(
+    checks_green = all(
         result["status"] == STATUS_PASS
         for result in (*baseline_results, *functional_results, *smoke_results)
     ) and preview_result["status"] in (STATUS_PASS, STATUS_NO_PREVIEW)
+    repo_path = repo if repo is not None else (cwd or Path("."))
+    scanned = _perform_scan(
+        repo_path, revision, runner=runner, scan=scan, ask=ask, sweep_home=sweep_home
+    )
+    declarations = _perform_declare(
+        builder_record, revision, repo_path, runner=runner, declare=declare
+    )
+    review = {**scanned, "declarations": declarations, "gate": []}
+    green = (
+        checks_green
+        and declarations["status"] == STATUS_PASS
+        and review["status"] != STATUS_COULD_NOT_EXECUTE
+    )
 
     iteration: dict[str, Any] = {
         "revision": revision,
@@ -650,6 +1219,7 @@ def run_iteration(
         "functional_checks": functional_results,
         "preview": preview_result,
         "scenario_smoke": smoke_results,
+        "review": review,
     }
     functional_reason = _absence_reason(criterion.functional_checks)
     if functional_reason is not None:
@@ -828,7 +1398,17 @@ def format_dry_run(
     else:
         lines.append("branch preview: declared, but the profile names no command")
 
+    lines.extend(_review_work_lines())
     return "\n".join(lines)
+
+
+def _review_status_lines(review: Mapping[str, Any]) -> list[str]:
+    """The review status, and the scan's one-line reason when it has one."""
+    lines = [f"  [{review.get('status')}] review"]
+    detail = review.get("detail")
+    if isinstance(detail, str) and detail:
+        lines.append(f"      {detail}")
+    return lines
 
 
 def format_iteration(iteration: dict[str, Any]) -> str:
@@ -854,6 +1434,14 @@ def format_iteration(iteration: dict[str, Any]) -> str:
     if not iteration["scenario_smoke"]:
         reason = iteration.get("scenario_smoke_reason", REASON_NONE_PRESCRIBED)
         lines.append(f"  [{reason}] scenario smoke")
+    review = iteration.get("review")
+    if isinstance(review, dict):
+        declarations = review.get("declarations")
+        if isinstance(declarations, dict):
+            for line in declarations.get("questions") or []:
+                lines.append(f"  {line}")
+            lines.append(f"  [{declarations.get('status')}] declarations")
+        lines.extend(_review_status_lines(review))
     return "\n".join(lines)
 
 
@@ -1136,13 +1724,16 @@ def _pass_status(entry: dict[str, Any]) -> str:
         if isinstance(entry.get(step), dict):
             results.append(entry[step])
     statuses = {result["status"] for result in results}
-    if STATUS_FAIL in statuses:
+    review = entry.get("review")
+    review_status = review.get("status") if isinstance(review, Mapping) else None
+    if STATUS_FAIL in statuses or review_status == STATUS_FAIL:
         return STATUS_FAIL
     lease_status = entry["lease"].get("status")
     lease_ok = lease_status in (LEASE_NOT_REQUIRED, environment_lease.ACQUIRED)
     release_ok = entry["lease"].get("release_status") in (None, environment_lease.RELEASED)
     if (
         STATUS_COULD_NOT_EXECUTE in statuses
+        or review_status == STATUS_COULD_NOT_EXECUTE
         or entry.get("environment_problems")
         or not lease_ok
         or not release_ok
@@ -1173,6 +1764,12 @@ def run_combined_pass(
     host: str | None = None,
     invocation: str | None = None,
     next_pass: Callable[[], int] | None = None,
+    scan: Scan | None = None,
+    declare: Declare | None = None,
+    may_block: MayBlock | None = None,
+    block_map: Mapping[str, Any] | None = None,
+    ask: Any = None,
+    sweep_home: Path | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Run one combined-branch pass and return ``(entry, green)``, writing nothing.
 
@@ -1183,8 +1780,11 @@ def run_combined_pass(
 
     *invocation* names this invocation in the lease it takes (a fresh nonce when omitted).
     *next_pass* reads the pass number from the record when the lease is won; without it the pass
-    keeps *pass_number*.
+    keeps *pass_number*. The review gate runs after the baseline and before deploy, including on
+    a waived repository. ``declare`` is accepted so a caller can pass the unit seams; this pass
+    does not run the declaration check.
     """
+    del declare
     waived = environment.get("mode") == functional_environment.MODE_WAIVED
     lease = None if waived else functional_environment.lease_of(environment)
     if lease is not None and lease_backend is None:
@@ -1239,17 +1839,30 @@ def run_combined_pass(
             if result["status"] == STATUS_COULD_NOT_EXECUTE:
                 problems.append(f"baseline {command}: {result['detail']}")
 
+        entry["review"] = _combined_review(
+            record,
+            revision,
+            runner=runner,
+            scan=scan,
+            may_block=may_block,
+            block_map=block_map,
+            ask=ask,
+            sweep_home=sweep_home,
+            cwd=cwd,
+        )
         if waived:
             entry["waiver"] = {
                 "level": environment.get("level", functional_environment.WAIVER_LEVEL),
                 "reason": environment.get("reason"),
             }
-        elif any(result["status"] != STATUS_PASS for result in entry["baseline"]):
+        if any(result["status"] != STATUS_PASS for result in entry["baseline"]):
             entry["skipped_reason"] = (
                 "the mechanical baseline is not green on the combined branch, so nothing was "
                 "deployed"
             )
-        else:
+        elif entry["review"].get("status") != STATUS_PASS:
+            entry["skipped_reason"] = _gate_skip_reason(entry["review"])
+        elif not waived:
             _deploy_test_teardown(
                 entry,
                 environment,
@@ -1274,6 +1887,8 @@ def run_combined_pass(
     except BaseException as exc:
         entry["interrupted"] = True
         problems.append(f"the pass was interrupted: {type(exc).__name__}")
+        if not isinstance(entry.get("review"), dict):
+            entry["review"] = _empty_review(revision, declarations=None)
         entry["finished_at"] = now()
         entry["status"] = _pass_status(entry)
         raise CombinedPassInterrupted(entry) from exc
@@ -1586,6 +2201,9 @@ def format_combined_pass(entry: dict[str, Any]) -> str:
         lines.append(f"  [{teardown['status']}] teardown: {teardown.get('command') or ''}".rstrip())
     if lease.get("required") and lease.get("release_status"):
         lines.append(f"  [{lease['release_status']}] lease release")
+    review = entry.get("review")
+    if isinstance(review, dict):
+        lines.extend(_review_status_lines(review))
     if entry.get("skipped_reason"):
         lines.append(f"  {entry['skipped_reason']}")
     for problem in entry.get("environment_problems", []):
@@ -1663,6 +2281,12 @@ def run_combined(
     runner: Runner,
     lease_backend: environment_lease.LeaseBackend | None,
     sleep: Callable[[float], None],
+    scan: Scan | None = None,
+    declare: Declare | None = None,
+    may_block: MayBlock | None = None,
+    block_map: Mapping[str, Any] | None = None,
+    ask: Any = None,
+    sweep_home: Path | None = None,
 ) -> int:
     """The ``--combined`` command line: one pass, landed under the record's lock."""
     environment = require_answered(read_environment(record, profile))
@@ -1724,6 +2348,12 @@ def run_combined(
                 cwd=repo_root,
                 sleep=sleep,
                 report=lambda line: print(line, flush=True),
+                scan=scan,
+                declare=declare,
+                may_block=may_block,
+                block_map=block_map,
+                ask=ask,
+                sweep_home=sweep_home,
             )
     except CombinedPassInterrupted as stopped:
         landed, _ = land(stopped.entry, False)
@@ -1837,6 +2467,12 @@ def main(
     runner: Runner = subprocess_runner,
     lease_backend: environment_lease.LeaseBackend | None = None,
     sleep: Callable[[float], None] = time.sleep,
+    scan: Scan | None = None,
+    declare: Declare | None = None,
+    may_block: MayBlock | None = None,
+    block_map: Mapping[str, Any] | None = None,
+    ask: Any = None,
+    sweep_home: Path | None = None,
 ) -> int:
     """Run the command line. Every loader call sits inside this one catch, as ``run_record.py`` does."""
     args = build_parser().parse_args(argv)
@@ -1874,6 +2510,12 @@ def main(
                 runner=runner,
                 lease_backend=lease_backend,
                 sleep=sleep,
+                scan=scan,
+                declare=declare,
+                may_block=may_block,
+                block_map=block_map,
+                ask=ask,
+                sweep_home=sweep_home,
             )
         unit = find_unit(record, args.unit)
         criterion = read_criterion(record, unit, profile)
@@ -1901,12 +2543,20 @@ def main(
         # The checks run with no lock held: they can take minutes. The result lands on a row
         # re-read under the record's lock, so nothing another writer added meanwhile (a unit
         # session's usage entry, a review result) is lost (issue 95).
+        raw_builder = unit.get("builder_record") if isinstance(unit, dict) else None
+        recorded = raw_builder if isinstance(raw_builder, dict) else None
         iteration, green = run_iteration(
             criterion,
             revision,
             runner=runner,
             timeout=args.timeout,
             cwd=repo_root,
+            repo=repo_root,
+            builder_record=recorded,
+            scan=scan,
+            declare=declare,
+            ask=ask,
+            sweep_home=sweep_home,
         )
         with run_record.file_lock(path):
             fresh = load_record_file(path)
