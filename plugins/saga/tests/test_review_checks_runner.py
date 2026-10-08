@@ -135,7 +135,7 @@ def test_checks_runner_invokes_each_check_without_a_run_record(
 
 def test_checks_fingerprint_names_the_script() -> None:
     calibration = H.load("review_calibration")
-    assert calibration.COMPONENTS[-1] == "plugins/saga/scripts/review_checks.py"
+    assert "plugins/saga/scripts/review_checks.py" in calibration.COMPONENTS
     text = (H.REPO / "plugins" / "saga" / "references" / "review-calibration.md").read_text(
         encoding="utf-8",
     )

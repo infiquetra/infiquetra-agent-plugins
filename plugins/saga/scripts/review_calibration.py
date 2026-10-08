@@ -58,6 +58,12 @@ COMPONENTS: tuple[str, ...] = (
     "plugins/saga/references/semgrep/naive-time-comparison.yaml",
     "plugins/saga/references/semgrep/money-as-floating-point.yaml",
     "plugins/saga/scripts/review_command.py",
+    "plugins/saga/scripts/question_banks.py",
+    "plugins/saga/references/question-banks/policy-questions.json",
+    "plugins/saga/references/question-banks/architecture-maintainability.json",
+    "plugins/saga/references/question-banks/correctness.json",
+    "plugins/saga/references/question-banks/security.json",
+    "plugins/saga/references/question-banks/testing.json",
     "plugins/saga/scripts/review_checks.py",
 )
 

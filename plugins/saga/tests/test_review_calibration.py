@@ -275,6 +275,7 @@ def test_a_recorded_lens_may_omit_a_language(tmp_path: Path) -> None:
 
 
 def test_components_match_the_landed_cards() -> None:
+    import question_banks
     import review_tools
     import sweep_pieces
 
@@ -293,6 +294,7 @@ def test_components_match_the_landed_cards() -> None:
         "plugins/saga/references/semgrep/naive-time-comparison.yaml",
         "plugins/saga/references/semgrep/money-as-floating-point.yaml",
         "plugins/saga/scripts/review_command.py",
+        *question_banks.QUESTION_BANK_COMPONENTS,
         "plugins/saga/scripts/review_checks.py",
     )
 

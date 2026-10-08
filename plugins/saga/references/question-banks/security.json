@@ -1,0 +1,468 @@
+{
+  "approval": {
+    "date": "2026-10-07",
+    "fingerprint": "ee367696d75316aa814304065bc76c56c1b86b23f609e8eda3bee2fa9072c1a5"
+  },
+  "lens": "security",
+  "policy": [
+    {
+      "bank": "security.caller-owns-record",
+      "policy": "security-01"
+    },
+    {
+      "bank": "security.data-leaves-unredacted",
+      "policy": "security-05"
+    },
+    {
+      "bank": "security.default-allows-all",
+      "policy": "security-07"
+    },
+    {
+      "bank": "security.error-shows-too-much",
+      "policy": "security-05"
+    },
+    {
+      "bank": "security.file-permissions-open",
+      "policy": "security-03"
+    },
+    {
+      "bank": "security.grant-broader-than-used",
+      "policy": "security-07"
+    },
+    {
+      "bank": "security.logged-credential-at-runtime",
+      "policy": "security-04"
+    },
+    {
+      "bank": "security.outside-text-as-instruction",
+      "policy": "security-02"
+    },
+    {
+      "bank": "security.session-or-token-reused",
+      "policy": "security-01"
+    },
+    {
+      "bank": "security.trusts-client-claims",
+      "policy": "security-01"
+    }
+  ],
+  "questions": [
+    {
+      "examples": [
+        "a refund path that retries on timeout with no record of the first attempt"
+      ],
+      "id": "security.adversarial.abuse-pays-or-escalates",
+      "kind": "yes-no",
+      "lens": "security",
+      "not_for": [
+        "misuse that needs the operator's own credentials"
+      ],
+      "options": [
+        {
+          "definition": "an abuser can turn this change into money moved, access widened, or state corrupted",
+          "id": "yes"
+        },
+        {
+          "definition": "abuse paths need no more trust than the change already grants",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      }
+    },
+    {
+      "examples": [
+        "request logs storing full payloads that include contact details"
+      ],
+      "id": "security.privacy.personal-data-collected-or-kept",
+      "kind": "yes-no",
+      "lens": "security",
+      "not_for": [
+        "aggregates that identify nobody"
+      ],
+      "options": [
+        {
+          "definition": "personal or sensitive data is collected, kept, or shared beyond its need",
+          "id": "yes"
+        },
+        {
+          "definition": "personal data stays minimal, short-lived, and unshared",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      }
+    },
+    {
+      "examples": [
+        "a migration step with no query afterward that the rows moved"
+      ],
+      "id": "security.deployment-infrastructure.rollout-has-no-verified-state",
+      "kind": "yes-no",
+      "lens": "security",
+      "not_for": [
+        "single-file configuration edits with no ordering"
+      ],
+      "options": [
+        {
+          "definition": "a rollout can land half-applied with no check that the deployed state matches",
+          "id": "yes"
+        },
+        {
+          "definition": "the rollout verifies deployed state before it reports done",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
+      "when": {
+        "paths": [
+          ".github/workflows/**",
+          "**/Dockerfile",
+          "**/docker-compose.yml",
+          "**/*.tf",
+          "**/cdk.json",
+          "cdk.json"
+        ]
+      }
+    },
+    {
+      "examples": [
+        "a handler loading a row by id from the request, with no ownership check"
+      ],
+      "id": "security.caller-owns-record",
+      "kind": "yes-no",
+      "lens": "security",
+      "not_for": [
+        "truly public data"
+      ],
+      "options": [
+        {
+          "definition": "an actor can reach a record without proof they may act on it",
+          "id": "yes"
+        },
+        {
+          "definition": "each action checks the actor's grant on that object",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      }
+    },
+    {
+      "examples": [
+        "a search string interpolated into a database query"
+      ],
+      "id": "security.outside-text-as-instruction",
+      "kind": "yes-no",
+      "lens": "security",
+      "not_for": [
+        "text the operator typed into their own shell"
+      ],
+      "options": [
+        {
+          "definition": "outside text can reach an interpreter, query, or prompt unescaped",
+          "id": "yes"
+        },
+        {
+          "definition": "each sink treats outside text as data with escaping",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      }
+    },
+    {
+      "examples": [
+        "a token cache written with default permissions in a shared directory"
+      ],
+      "id": "security.file-permissions-open",
+      "kind": "yes-no",
+      "lens": "security",
+      "not_for": [
+        "files the platform creates and owns"
+      ],
+      "options": [
+        {
+          "definition": "a created file can be read beyond its need",
+          "id": "yes"
+        },
+        {
+          "definition": "created files carry least-privilege permissions",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      }
+    },
+    {
+      "examples": [
+        "an error message echoing the request headers with their bearer value"
+      ],
+      "id": "security.logged-credential-at-runtime",
+      "kind": "yes-no",
+      "lens": "security",
+      "not_for": [
+        "inert example values, which unlock nothing"
+      ],
+      "options": [
+        {
+          "definition": "a credential or secret can land in a log line, error, or output at runtime",
+          "id": "yes"
+        },
+        {
+          "definition": "runtime text carries redacted placeholders, never the value",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      }
+    },
+    {
+      "examples": [
+        "a new export including a national id column with no masking"
+      ],
+      "id": "security.data-leaves-unredacted",
+      "kind": "yes-no",
+      "lens": "security",
+      "not_for": [
+        "paths the change does not touch"
+      ],
+      "options": [
+        {
+          "definition": "personal or sensitive data can leave on a new path unredacted",
+          "id": "yes"
+        },
+        {
+          "definition": "each outbound path carries only its intended data, redacted",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      }
+    },
+    {
+      "examples": [
+        "a storage grant the code never reads through"
+      ],
+      "id": "security.grant-broader-than-used",
+      "kind": "yes-no",
+      "lens": "security",
+      "not_for": [
+        "permissions the platform grants by default"
+      ],
+      "options": [
+        {
+          "definition": "a grant reaches further than the code exercises",
+          "id": "yes"
+        },
+        {
+          "definition": "each grant names its need and the code exercises exactly it",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      }
+    },
+    {
+      "examples": [
+        "a cached permission surviving the logout that should clear it"
+      ],
+      "id": "security.session-or-token-reused",
+      "kind": "yes-no",
+      "lens": "security",
+      "not_for": [
+        "long-lived public keys, which rotate by schedule"
+      ],
+      "options": [
+        {
+          "definition": "a session, token, or grant can outlive its logout, expiry, or rotation",
+          "id": "yes"
+        },
+        {
+          "definition": "sessions and tokens die on logout, expiry, and rotation",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      }
+    },
+    {
+      "examples": [
+        "a login error that says 'no such user' for one name and 'wrong password' for another"
+      ],
+      "id": "security.error-shows-too-much",
+      "kind": "yes-no",
+      "lens": "security",
+      "not_for": [
+        "errors shown only to the operator's own console"
+      ],
+      "options": [
+        {
+          "definition": "an error can confirm what exists: which users, paths, or records are real",
+          "id": "yes"
+        },
+        {
+          "definition": "errors answer the same whether the target exists or not",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      }
+    },
+    {
+      "examples": [
+        "an allow-list that permits all when its file is missing"
+      ],
+      "id": "security.default-allows-all",
+      "kind": "yes-no",
+      "lens": "security",
+      "not_for": [
+        "deny-by-default frameworks, already closed"
+      ],
+      "options": [
+        {
+          "definition": "a default, fallback, or empty configuration leaves access open",
+          "id": "yes"
+        },
+        {
+          "definition": "defaults deny; each opening is an explicit choice",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      }
+    },
+    {
+      "examples": [
+        "a role taken from the request body instead of the session record"
+      ],
+      "id": "security.trusts-client-claims",
+      "kind": "yes-no",
+      "lens": "security",
+      "not_for": [
+        "signed claims the code verifies"
+      ],
+      "options": [
+        {
+          "definition": "a client claim about identity, role, price, or state is trusted without a check",
+          "id": "yes"
+        },
+        {
+          "definition": "each client claim is rechecked against server state",
+          "id": "no"
+        }
+      ],
+      "piece": "function",
+      "when": {
+        "languages": [
+          "python",
+          "typescript",
+          "dart",
+          "rust",
+          "swift",
+          "shell"
+        ]
+      }
+    }
+  ],
+  "schema": "question_bank.v1"
+}
