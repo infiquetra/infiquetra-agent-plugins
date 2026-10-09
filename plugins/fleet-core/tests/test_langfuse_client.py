@@ -340,6 +340,28 @@ def test_get_reads_json_with_query() -> None:
         lc.get("scores")
 
 
+def test_trace_and_score_list_kinds_are_get_on_fixed_paths() -> None:
+    assert lc.ENDPOINTS["traces"] == ("GET", "/api/public/traces")
+    assert lc.ENDPOINTS["scores-list"] == ("GET", "/api/public/v2/scores")
+    opener = _Opener(_Response(b'{"data": [], "meta": {"page": 1}}'))
+    result = lc.get("traces", {"fromTimestamp": "2026-10-01T00:00:00Z", "page": 1},
+                    visibility=None, getenv=_env(**SAGA_ENV), urlopen=opener)
+    assert result.outcome == "sent"
+    assert result.body == {"data": [], "meta": {"page": 1}}
+    [request] = opener.requests
+    assert request.get_method() == "GET"
+    assert request.full_url.startswith("https://langfuse.example.test/api/public/traces?")
+    assert "fromTimestamp=" in request.full_url
+    opener = _Opener(_Response(b'{"data": []}'))
+    result = lc.get("scores-list", {"name": "review-miss", "page": 1},
+                    visibility=None, getenv=_env(**SAGA_ENV), urlopen=opener)
+    assert result.outcome == "sent"
+    [request] = opener.requests
+    assert request.full_url.startswith("https://langfuse.example.test/api/public/v2/scores?")
+    with pytest.raises(lc.LangfuseClientError):
+        lc.get("traces/abc")
+
+
 def test_no_delete_method() -> None:
     assert {method for method, _ in lc.ENDPOINTS.values()} <= {"GET", "POST"}
     source = MODULE_PATH.read_text(encoding="utf-8")

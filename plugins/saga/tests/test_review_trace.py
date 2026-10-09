@@ -557,6 +557,119 @@ def test_outcome_score_ids_repeat(tmp_path: Path) -> None:
     assert [b["id"] for b in first.bodies()] == [b["id"] for b in second.bodies()]
 
 
+# --- issue 167: miss and addressed-rate builders ------------------------------------------------
+
+
+def test_miss_score_shape() -> None:
+    body = RT.miss_score(
+        "trace-1", "miss:qa:cli-smoke:abc", "found-by-qa",
+        comment="found-by-qa cli-smoke at abc",
+        metadata={"source": "/qa", "strategy": "cli-smoke", "tested_revision": "abc"},
+    )
+    assert (body["traceId"], body["name"], body["value"], body["dataType"]) == (
+        "trace-1", "review-miss", "found-by-qa", "CATEGORICAL")
+    assert "observationId" not in body
+    assert body["comment"] == "found-by-qa cli-smoke at abc"
+    assert body["metadata"]["source"] == "/qa"
+    assert body["id"] == RT.score_id("trace-1", "miss:qa:cli-smoke:abc", "review-miss")
+    again = RT.miss_score("trace-1", "miss:qa:cli-smoke:abc", "found-by-qa")
+    assert again["id"] == body["id"]
+
+
+def test_addressed_rate_score_shape() -> None:
+    body = RT.addressed_rate_score("trace-1", 2 / 3, {"fixed": 2, "filed": 0, "dismissed": 1,
+                                                     "left": 0, "total": 3})
+    assert (body["traceId"], body["name"], body["dataType"]) == (
+        "trace-1", "addressed-rate", "NUMERIC")
+    assert body["value"] == 0.6667
+    assert body["metadata"]["total"] == 3
+    assert "observationId" not in body
+    again = RT.addressed_rate_score("trace-1", 0.5, {"total": 2})
+    assert again["id"] == body["id"]
+
+
+# --- issue 167: trace and score reads ---------------------------------------------------------
+
+
+def _trace_page(*items: Any) -> _Response:
+    return _Response(json.dumps({"data": list(items), "meta": {"page": 1}}).encode())
+
+
+def _trace_item(trace_id: str, **metadata: Any) -> dict[str, Any]:
+    return {"id": trace_id, "timestamp": "2026-10-08T00:00:00Z", "metadata": dict(metadata)}
+
+
+def test_list_traces_pages_in_order() -> None:
+    opener = _Opener(
+        _trace_page(_trace_item("t1", repo="o/r"), _trace_item("t2", repo="o/r")),
+        _trace_page(_trace_item("t3", repo="o/r")),
+        _trace_page(),
+    )
+    traces, info = RT.list_traces("2026-10-01T00:00:00Z", getenv=_getenv(), urlopen=opener)
+    assert [trace["id"] for trace in traces] == ["t1", "t2", "t3"]
+    assert traces[0]["metadata"] == {"repo": "o/r"}
+    assert info["pages"] == 3 and info["listed"] == 3 and info["parsed"] == 3
+    assert info["error"] is None and info["capped"] is False
+    first = opener.requests[0]
+    assert first.get_method() == "GET"
+    assert first.full_url.startswith(HOST + "/api/public/traces?")
+    assert "fromTimestamp=" in first.full_url
+
+
+def test_trace_scores_filter_by_name_and_value() -> None:
+    opener = _Opener(_Response(json.dumps({"data": [
+        {"id": "s1", "traceId": "t1", "name": "review-miss", "value": "found-by-qa",
+         "comment": "c", "metadata": {"source": "/qa"}},
+        {"id": "s2", "traceId": "t1", "name": "review-miss", "value": "reverted"},
+        {"id": "s3", "traceId": "t9", "name": "review-miss", "value": "found-by-qa"},
+        {"id": "s4", "traceId": "t1", "name": "merge-outcome", "value": "fixed"},
+    ]}).encode()), _trace_page())
+    scores, info = RT.trace_scores("t1", "review-miss", "found-by-qa",
+                                   getenv=_getenv(), urlopen=opener)
+    assert [score["id"] for score in scores] == ["s1"]
+    assert scores[0]["metadata"] == {"source": "/qa"}
+    assert info["parsed"] == 1 and info["error"] is None
+    assert opener.requests[0].full_url.startswith(HOST + "/api/public/v2/scores?")
+    assert "name=review-miss" in opener.requests[0].full_url
+
+
+def test_list_traces_skips_unknown_shapes() -> None:
+    opener = _Opener(_trace_page(
+        "not-a-mapping", {"id": 7, "metadata": {}}, {"id": "t1", "metadata": ["x"]},
+        _trace_item("t2", repo="o/r"),
+    ), _trace_page())
+    traces, info = RT.list_traces(getenv=_getenv(), urlopen=opener)
+    assert [trace["id"] for trace in traces] == ["t2"]
+    assert info["skipped"] == 3 and info["parsed"] == 1
+
+
+def test_list_traces_pages_capped() -> None:
+    opener = _Opener(*[_trace_page(_trace_item(f"t{i}")) for i in range(4)])
+    traces, info = RT.list_traces(getenv=_getenv(), urlopen=opener, max_pages=2)
+    assert info["capped"] is True and info["pages"] == 2
+    assert len(traces) == 2
+
+
+def test_list_reads_apply_the_visibility_rule() -> None:
+    def public(*_args: Any, **_kwargs: Any) -> list[Any]:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 80))]
+
+    opener = _Opener()
+    env = {"SAGA_LANGFUSE_PUBLIC_KEY": PUBLIC, "SAGA_LANGFUSE_SECRET_KEY": SECRET,
+           "SAGA_LANGFUSE_HOST": "http://langfuse.example.test"}
+    traces, info = RT.list_traces(getenv=_getenv(env), urlopen=opener, resolve=public)
+    assert traces == [] and opener.requests == []
+    assert info["error"] not in (None, "")
+
+
+def test_list_reads_never_show_keys_or_hosts(capsys: pytest.CaptureFixture[str]) -> None:
+    opener = _Opener(urllib.error.URLError("down"))
+    traces, info = RT.list_traces(getenv=_getenv(), urlopen=opener)
+    assert traces == [] and info["error"] == "unreachable"
+    assert PUBLIC not in capsys.readouterr().err
+    assert HOST not in json.dumps(info)
+
+
 # --- the tree --------------------------------------------------------------------------------
 
 

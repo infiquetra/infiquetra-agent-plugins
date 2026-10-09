@@ -11,6 +11,13 @@ The catalog requires `python>=3.12`.
 
 ## [Unreleased]
 
+### Added
+
+- The Langfuse client reads two more lists over `GET` only: `traces`
+  (`/api/public/traces`) and `scores-list` (`/api/public/v2/scores`), for saga's
+  review-outcome job (infiquetra-agent-plugins #167). The method set stays `GET`
+  and `POST` only, on fixed paths.
+
 ## [0.33.2] - 2026-10-07
 
 ### Changed

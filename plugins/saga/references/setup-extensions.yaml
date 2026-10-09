@@ -1,7 +1,11 @@
 # Optional machine steps and repository questions. schema setup_extensions.v1.
 # A later card appends a step or a question. It does not edit saga_setup.py.
 schema: setup_extensions.v1
-steps: []
+steps:
+  - name: outcome-schedule
+    summary: Run the review-outcome job daily at 06:17.
+    done: ["launchctl", "list", "com.infiquetra.saga.outcome-job"]
+    run: ["python3", "plugins/saga/scripts/outcome_job.py", "install-schedule"]
 questions:
   - key: review
     prompt: 'Which functions, methods, or module paths are this repository''s shared update paths, per language? Answer with an object like {"shared_update_paths": {"python": [...]}}; omit languages with none.'

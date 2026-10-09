@@ -3,8 +3,8 @@
 # source-version: 0.33.2
 # source-commit: authored
 # source-path: scripts/fleet_commons/langfuse_client.py
-# source-sha256: b8601bfacd7b5dfa30402718f5d3a247c68accc598020817d2b11b25e6bde863
-# output-sha256: b8601bfacd7b5dfa30402718f5d3a247c68accc598020817d2b11b25e6bde863
+# source-sha256: 473a108a5ad1aec3834f11e04eeffdc2888f58ce6f442a1d1eb894dfdb9e0981
+# output-sha256: 473a108a5ad1aec3834f11e04eeffdc2888f58ce6f442a1d1eb894dfdb9e0981
 # --- end generated bundle stamp ---
 """Client for saga's own Langfuse project (issue 166, card C15).
 
@@ -95,6 +95,8 @@ ENDPOINTS: dict[str, tuple[str, str]] = {
     "dataset-items": ("POST", "/api/public/dataset-items"),
     "projects": ("GET", "/api/public/projects"),
     "metrics": ("GET", "/api/public/v2/metrics"),
+    "traces": ("GET", "/api/public/traces"),
+    "scores-list": ("GET", "/api/public/v2/scores"),
 }
 
 SENT = "sent"
@@ -330,7 +332,11 @@ def send(
 
 
 def get(kind: str, query: Mapping[str, Any] | None = None, **kwargs: Any) -> SendResult:
-    """The read path for ``projects`` and ``metrics``. The visibility rule still applies."""
+    """The read path for ``projects``, ``metrics``, ``traces`` and ``scores-list``.
+
+    The visibility rule still applies. The v3 reads live while the self-hosted server stays
+    on its v3 generation; the v4 replacements are a later migration, not a third kind here.
+    """
     if ENDPOINTS.get(kind, ("", ""))[0] != "GET":
         raise LangfuseClientError(f"{kind!r} is not a read endpoint")
     return send(prepare_payload(kind, dict(query or {})), **kwargs)

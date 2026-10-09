@@ -50,3 +50,5 @@ python3 plugins/saga/scripts/saga_setup.py step --name <name> --repo <repository
 ```
 
 A row with no install command is not installed by this skill. Say the install sentence and stop.
+
+Offer the `outcome-schedule` step only on macOS where `launchctl` exists. Run it from the saga checkout without `--repo`, because step vectors resolve against the working directory. After setting up a repository, register it with `python3 plugins/saga/scripts/outcome_job.py register --repo-root <repository>`.

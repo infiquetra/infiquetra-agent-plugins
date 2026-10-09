@@ -92,7 +92,12 @@ reports by name. A unit row would be the wrong home: a functional test is a prop
 after the merge, not of one unit's working state.
 
 The block carries the selection with a reason per entry, the out-of-boundary list, the preflight
-result, every envelope, the verdict, the route, and any proof debt.
+result, every envelope, the verdict, the route, and any proof debt. It also carries `review_run_id`
+with `review_run_reason`: the review run that passed the tested code, or why none was found.
+
+After the block is written, each failed strategy posts one `review-miss` score to that run's
+trace. The verdict is final before the first post, so posting can neither change it nor fail the
+run. The outcome job reads these misses later; `/qa` itself files nothing.
 
 ## The verdict
 

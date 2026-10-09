@@ -128,7 +128,13 @@ can repair. A block is an environment, a credential or a permission, and no buil
 5. **Each selected strategy's driver runs** and appends exactly one evidence envelope. Secrets are
    redacted inside the driver, before the envelope exists.
 6. **Code counts the verdict and writes it** to the run record under the top-level `qa` key.
-7. **Publish one comment** carrying the selection, the per-strategy statuses and the artifact
+   The block records `review_run_id`: the review run whose head is the release block's reviewed
+   head, preferred from the identifier the release step recorded. When no run matches, the reason
+   is recorded instead and nothing is posted.
+7. **Each failed strategy is posted** to that run's trace as a miss found by `/qa`. The verdict is
+   final before the first post, so an unreachable Langfuse leaves it unchanged. `/qa` still files
+   nothing; the outcome job reads these misses later.
+8. **Publish one comment** carrying the selection, the per-strategy statuses and the artifact
    pointers, so the operator can see which checks ran and which did not:
 
    ```bash
@@ -136,7 +142,7 @@ can repair. A block is an environment, a credential or a permission, and no buil
    gh issue comment <N> --repo <owner/repo> --body-file /tmp/qa-<N>.md
    ```
 
-8. **Route by the exit code**, per the table above.
+9. **Route by the exit code**, per the table above.
 
 ## The status card
 

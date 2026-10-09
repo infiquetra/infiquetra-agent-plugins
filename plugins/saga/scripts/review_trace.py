@@ -660,6 +660,36 @@ def plan_answer_scores(record: Mapping[str, Any], finding_id: str, slug: str) ->
     return scores
 
 
+MISS_SCORE_NAME = "review-miss"
+
+ADDRESSED_RATE_SCORE_NAME = "addressed-rate"
+
+
+def miss_score(
+    trace: str, key: str, value: str, comment: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """A CATEGORICAL ``review-miss`` score on the trace itself (issue 167).
+
+    A miss has no finding to attach to, so the score carries no observation. Reposting the
+    same key replaces the same score, through the derived identifier.
+    """
+    return _score(trace, key, MISS_SCORE_NAME, value, "CATEGORICAL",
+                  comment=comment, metadata=metadata)
+
+
+def addressed_rate_score(
+    trace: str, value: float, counts: Mapping[str, int],
+) -> dict[str, Any]:
+    """The NUMERIC ``addressed-rate`` score on the trace (issue 167).
+
+    One score per trace under a fixed key, so a repost replaces it. No grade, pass mark or
+    calibration reader consumes this score; the outcome job's suite pins that statically.
+    """
+    return _score(trace, "addressed", ADDRESSED_RATE_SCORE_NAME, round(float(value), 4),
+                  "NUMERIC", metadata=dict(counts))
+
+
 # ---------------------------------------------------------------------------
 # The queue
 # ---------------------------------------------------------------------------
@@ -1010,6 +1040,126 @@ def rounds_lines(body: Any) -> list[str]:
         else:
             lines.append(f"round {number} found something new in {round(share * 100)}% of {count} runs")
     return lines
+
+
+#: The outcome job's listing budget. Traces are few; a hundred full pages means the server
+#: disagrees with us about paging, and stopping loudly beats paging forever.
+LIST_MAX_PAGES = 100
+
+
+def _list_pages(
+    kind: str, query: Mapping[str, Any], *, getenv: Any, urlopen: Any, resolve: Any,
+    page_size: int, max_pages: int,
+) -> tuple[list[Any], dict[str, Any]]:
+    """All `data` items across pages: (items, info). Never raises for Langfuse's sake.
+
+    `info` carries `listed`, `pages`, `capped` and `error` (None when the listing completed).
+    """
+    info: dict[str, Any] = {"listed": 0, "pages": 0, "capped": False, "error": None}
+    items: list[Any] = []
+    transport: dict[str, Any] = {"visibility": None, "getenv": getenv, "urlopen": urlopen}
+    if resolve is not None:
+        transport["resolve"] = resolve
+    page = 1
+    while True:
+        try:
+            result = lf.get(kind, {**dict(query), "page": page, "limit": page_size}, **transport)
+        except Exception as exc:  # noqa: BLE001 - a read problem is data, not a crash
+            info["error"] = f"{kind}-unreadable"
+            info["detail"] = exc.__class__.__name__
+            return items, info
+        if result.outcome != lf.SENT or not isinstance(result.body, Mapping):
+            info["error"] = result.reason or f"{kind}-unreadable"
+            return items, info
+        data = result.body.get("data")
+        if not isinstance(data, list):
+            info["error"] = f"{kind}-malformed"
+            return items, info
+        info["pages"] += 1
+        info["listed"] += len(data)
+        items.extend(data)
+        if not data:
+            return items, info
+        page += 1
+        if info["pages"] >= max_pages:
+            info["capped"] = True
+            return items, info
+
+
+def list_traces(
+    since: str | None = None, *, page_size: int = 50, max_pages: int = LIST_MAX_PAGES,
+    getenv: Any = os.environ.get, urlopen: Any = None, resolve: Any = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Traces since *since* (ISO 8601, None lists all): (traces, info).
+
+    Each trace carries `id`, `metadata` and `timestamp`. Items without a string id or a
+    mapping metadata are skipped and counted in `info["skipped"]` instead of raising: the
+    reader evolves separately from this writer.
+    """
+    query: dict[str, Any] = {}
+    if since:
+        query["fromTimestamp"] = since
+    items, info = _list_pages("traces", query, getenv=getenv, urlopen=urlopen, resolve=resolve,
+                              page_size=page_size, max_pages=max_pages)
+    traces: list[dict[str, Any]] = []
+    skipped = 0
+    for item in items:
+        if not isinstance(item, Mapping):
+            skipped += 1
+            continue
+        trace_id = item.get("id")
+        metadata = item.get("metadata")
+        if not isinstance(trace_id, str) or not trace_id or not isinstance(metadata, Mapping):
+            skipped += 1
+            continue
+        traces.append({"id": trace_id, "metadata": dict(metadata),
+                       "timestamp": str(item.get("timestamp") or "")})
+    info["skipped"] = skipped
+    info["parsed"] = len(traces)
+    return traces, info
+
+
+def trace_scores(
+    trace_id: str, name: str, value: str, *, since: str | None = None,
+    page_size: int = 50, max_pages: int = LIST_MAX_PAGES,
+    getenv: Any = os.environ.get, urlopen: Any = None, resolve: Any = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Scores on *trace_id* with *name* and *value*: (scores, info).
+
+    The v2 list filters by name server-side; the trace and the value filter here, because v2
+    has neither a trace filter nor a string-value filter. Each score carries `id`, `traceId`,
+    `name`, `value`, `comment`, `metadata` and `timestamp`.
+    """
+    query: dict[str, Any] = {"name": name}
+    if since:
+        query["fromTimestamp"] = since
+    items, info = _list_pages("scores-list", query, getenv=getenv, urlopen=urlopen,
+                              resolve=resolve, page_size=page_size, max_pages=max_pages)
+    scores: list[dict[str, Any]] = []
+    skipped = 0
+    for item in items:
+        if not isinstance(item, Mapping):
+            skipped += 1
+            continue
+        if str(item.get("traceId") or "") != trace_id or str(item.get("name") or "") != name:
+            skipped += 1
+            continue
+        if str(item.get("value") or "") != value:
+            skipped += 1
+            continue
+        metadata = item.get("metadata")
+        scores.append({
+            "id": str(item.get("id") or ""),
+            "traceId": trace_id,
+            "name": name,
+            "value": value,
+            "comment": str(item.get("comment") or ""),
+            "metadata": dict(metadata) if isinstance(metadata, Mapping) else {},
+            "timestamp": str(item.get("timestamp") or item.get("createdAt") or ""),
+        })
+    info["skipped"] = skipped
+    info["parsed"] = len(scores)
+    return scores, info
 
 
 # ---------------------------------------------------------------------------

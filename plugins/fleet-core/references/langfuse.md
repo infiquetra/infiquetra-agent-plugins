@@ -55,8 +55,12 @@ The client can reach only these. None deletes or replaces anything, and nothing 
 | `dataset-items` | `POST /api/public/dataset-items` | one item per corpus case |
 | `projects` | `GET /api/public/projects` | `review_trace.py probe` |
 | `metrics` | `GET /api/public/v2/metrics` | `review_trace.py rounds` |
+| `traces` | `GET /api/public/traces` (`page`, `limit`, `fromTimestamp`) | the outcome job's review-run listing |
+| `scores-list` | `GET /api/public/v2/scores` (`page`, `limit`, `name`, `fromTimestamp`) | the outcome job's miss reading |
 
 Traces use the OpenTelemetry endpoint because Langfuse's published API marks the batch ingestion endpoint deprecated; a server in version-4-only write mode refuses traces there.
+
+The two list kinds are the v3 read generation, confirmed live on the self-hosted server (8 October 2026, read-only probe plus the published reference): the trace list pages with `page`/`limit`/`fromTimestamp` and returns `data` with `meta`, and the v2 score list filters by `name` server-side while the trace and the string value filter client-side. When the server upgrades to the v4 generation these two endpoints go away in favour of the v2 observations list and the v3 score list; that migration is a later item, not a third kind here.
 
 ## 5. Outcomes and reasons
 
