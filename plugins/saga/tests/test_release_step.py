@@ -828,3 +828,19 @@ def test_deploy_and_close_read_the_written_block_back(
     assert RS.main(["--record", str(record), "close", "--disposition", "delivered"]) == 0
     comment = json.loads(capsys.readouterr().out)
     assert comment["parts"]["delivered_revision"] == landed
+
+
+def test_a_release_with_no_review_runs_still_writes_the_block_with_null_link(
+    tmp_path: Path,
+) -> None:
+    """Merging with empty review cycles writes the block; the link is null with a reason."""
+    record = _stored_record(tmp_path, heads=())
+    gh = FakeGh(view=_clean_view("a" * 40),
+                merged={"mergeCommit": {"oid": "b" * 40}, "url": "u"})
+    assert RS.main(["--record", str(record), "release", "--pull-request", "5"],
+                   runner=gh, trace_opener=None) == 0
+    stored = json.loads(record.read_text(encoding="utf-8"))["release"]
+    assert stored["landed_commit"] == "b" * 40
+    assert "review_run_id" in stored and "review_run_reason" in stored
+    assert stored["review_run_id"] is None
+    assert stored["review_run_reason"] == "no-matching-run"
