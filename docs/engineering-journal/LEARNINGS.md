@@ -1,5 +1,23 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-10
+
+### A parser written from a guessed output format drops findings without a sound
+
+**Evidence.** Issue #216. `plugins/saga/scripts/review_adapters_markdown.py` (`_MARKDOWN`) and
+the markdownlint-cli2 entry in `plugins/saga/references/review-tools.yaml`. Run against
+markdownlint-cli2 v0.23.3, the old pattern matched none of the real lines.
+
+**Mechanism.** Two faults hid each other. The pattern assumed `path:line:col MDxxx`, but the tool
+prints `path:line[:col] error|warning MDxxx/name`, with the column present only for some rules.
+Separately, the tool writes findings to stderr while the runner parses stdout unless the tool
+entry sets `stream`. The earlier test fed hand-written lines on stdout, so it passed against a
+format the tool never produced. A parser that finds nothing looks the same as a clean file.
+
+**Generalizable rule.** Write an adapter's parser and its tests from output captured from the
+pinned tool, on the stream the tool really uses, and add a test that a known-bad input yields a
+non-empty result.
+
 ## 2026-10-08
 
 ### A public marker comment is forgeable, so pin the review-posting author

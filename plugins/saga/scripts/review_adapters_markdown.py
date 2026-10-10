@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Markdown review adapters (issue 152).
 
-markdownlint-cli2 and cspell are notes. markdownlint-cli2 prints
-``path:line:col MDxxx/name message`` with no severity word. A lychee broken
+markdownlint-cli2 and cspell are notes. markdownlint-cli2 v0.23.3 prints
+``path:line[:col] error|warning MDxxx/name message`` on stderr; the column is present only for
+some rules, and the older ``path:line:col MDxxx/name message`` shape is still read. A lychee broken
 link is fix later and is compared base against head, because the report names
 the file and the URL and not a line. cspell's dictionary, when the base commit
 has one, is that file. lychee is recorded output only.
@@ -28,8 +29,8 @@ _ROWS = {
     "cspell": ("architecture-maintainability.tool-style",),
 }
 _MARKDOWN = re.compile(
-    r"^(?P<path>.+?):(?P<line>\d+):(?P<col>\d+) "
-    r"(?P<code>MD\d+)(?:/\S+)?(?P<message>.*)$"
+    r"^(?P<path>.+?):(?P<line>\d+)(?::(?P<col>\d+))? "
+    r"(?:(?:error|warning) )?(?P<code>MD\d+)(?:/\S+)?(?P<message>.*)$"
 )
 _CSPELL = re.compile(
     r"^(?P<path>.+?):(?P<line>\d+):(?P<col>\d+) - Unknown word \((?P<word>[^)]+)\)\s*$"
@@ -200,6 +201,7 @@ def _from_row(
         version_args=tuple(str(item) for item in (row.get("version_args") or ("--version",))),
         default_version=str(row.get("default_version") or "not-recorded"),
         narrow_env=bool(row.get("narrow_env")),
+        stream=str(row.get("stream") or "stdout"),
     )
 
 
