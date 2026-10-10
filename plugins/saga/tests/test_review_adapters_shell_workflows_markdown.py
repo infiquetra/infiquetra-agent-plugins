@@ -438,6 +438,72 @@ def test_zizmor_high_blocks_and_medium_is_fix_later(
     _valid(output)
 
 
+# Lines captured from markdownlint-cli2 v0.23.3 (markdownlint v0.41.1) on stderr.
+_REAL_MARKDOWNLINT = (
+    (
+        't.md:2 error MD022/blanks-around-headings Headings should be surrounded by blank '
+        'lines [Expected: 1; Actual: 0; Above] [Context: "## b"]'
+    ),
+    (
+        "t.md:5 error MD012/no-multiple-blanks Multiple consecutive blank lines "
+        "[Expected: 1; Actual: 2]"
+    ),
+    "t.md:6:3 error MD004/ul-style Unordered list style [Expected: dash; Actual: asterisk]",
+    (
+        "t.md:6:3 warning MD030/list-marker-space Spaces after list markers "
+        "[Expected: 1; Actual: 2]"
+    ),
+)
+
+
+def test_markdownlint_parses_real_lines_with_severity_and_optional_column() -> None:
+    hits = M._parse_markdownlint("\n".join(_REAL_MARKDOWNLINT)).hits
+    assert [(h.rule_id, h.path, h.start) for h in hits] == [
+        ("MD022", "t.md", 2), ("MD012", "t.md", 5), ("MD004", "t.md", 6), ("MD030", "t.md", 6),
+    ]
+    assert hits[0].statement.startswith("MD022 Headings should be surrounded by blank lines")
+    assert hits[3].statement.startswith("MD030 Spaces after list markers")
+
+
+def test_markdownlint_still_parses_the_older_column_shape_and_skips_banners() -> None:
+    text = (
+        "markdownlint-cli2 v0.23.3 (markdownlint v0.41.1)\n"
+        "Finding: t.md\nLinting: 1 file\n"
+        "notes.md:2:1 MD013/line-length too long\n"
+        "Summary: 1 issues in 1 file\n"
+    )
+    hits = M._parse_markdownlint(text).hits
+    assert [(h.rule_id, h.path, h.start) for h in hits] == [("MD013", "notes.md", 2)]
+
+
+def test_markdownlint_reads_stderr_and_no_other_markdown_tool_does() -> None:
+    assert _adapter("markdownlint-cli2").stream == "stderr"
+    assert _adapter("lychee").stream == "stdout"
+    assert _adapter("cspell").stream == "stdout"
+
+
+def test_markdownlint_findings_on_stderr_reach_the_review(tmp_path: Path) -> None:
+    repo, base, head = _repo(
+        tmp_path, {"README.md": "base\n"}, {"README.md": "base\n", "t.md": "# a\n## b\n"}
+    )
+    stderr = "\n".join(_REAL_MARKDOWNLINT[:1]) + "\n"
+
+    def on_stderr(argv: list[str], cwd: Path) -> Any:
+        if "--config" in argv:
+            return T.ProcessResult(1, "Linting: 2 files\n", stderr)
+        return None
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output, tmp_path / "home",
+        [_adapter("markdownlint-cli2")], _Calls(base, "", choose=on_stderr),
+    )
+    assert code == 0
+    findings = _read(output, "findings.json")
+    assert [item["statement"].split()[0] for item in findings] == ["MD022"]
+    assert _severity(output, "MD022") == "note"
+
+
 def test_markdownlint_and_cspell_are_notes_and_lychee_is_fix_later(tmp_path: Path) -> None:
     base_dictionary = '{"version": "0.2", "words": ["alpha"]}\n'
     repo, base, head = _repo(
@@ -476,11 +542,17 @@ def test_markdownlint_and_cspell_are_notes_and_lychee_is_fix_later(tmp_path: Pat
             return T.ProcessResult(0, "")
         return None
 
+    def markdown_on_stderr(argv: list[str], cwd: Path) -> Any:
+        # markdownlint-cli2 writes its findings to stderr and a banner to stdout.
+        if "--config" in argv:
+            return T.ProcessResult(1, "markdownlint-cli2 v0.23.3\nLinting: 1 file\n", markdown)
+        return None
+
     home = tmp_path / "home"
     output = tmp_path / "markdown"
     code = _run(
         repo, base, head, _profile(tmp_path / "profile.json"), output, home,
-        [_adapter("markdownlint-cli2")], _Calls(base, markdown, choose=choose_markdown),
+        [_adapter("markdownlint-cli2")], _Calls(base, "", choose=markdown_on_stderr),
     )
     assert code == 0
     assert _severity(output, "MD013") == "note"

@@ -506,6 +506,7 @@ tools:
     timeout_seconds: 120
     comparison: lines
     mode: report
+    stream: stderr
     curated_block_rules: []
   - id: lychee
     tool: lychee

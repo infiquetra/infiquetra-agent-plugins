@@ -16,6 +16,9 @@
 
 ### Fixed
 
+- Issue #216: the review command no longer drops every markdownlint-cli2 finding. The parser
+  accepts the `error` or `warning` word and a missing column that v0.23.3 prints, and the tool
+  entry reads stderr, where markdownlint-cli2 writes its findings.
 - Issue #162: a scan that does not run keeps its reason on the review and the iteration and
   combined-pass printouts name that reason with the review status. A proving-test node id that is
   absolute or contains a `..` segment is refused before pytest runs. A question id outside the
