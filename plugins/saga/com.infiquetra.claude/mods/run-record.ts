@@ -445,52 +445,29 @@ export function setupInstallArgv(pluginRoot: string, tool: string, repo: string)
 
 /**
  * The argv that runs one named optional step. No `--repo`: the step's vectors
- * resolve against the working directory, so the pane sets the process cwd to
- * the saga checkout instead (KTD3, issue #218).
+ * resolve against the saga plugin root, so the pane runs from `$.plugin.root`
+ * (issue #218).
  */
 export function setupStepArgv(pluginRoot: string, name: string): string[] {
   return sagaScriptArgv(pluginRoot, 'saga_setup.py', ['step', '--name', name])
 }
 
-/** The setup script's path from a saga checkout's root. */
-export const CHECKOUT_SCRIPT_SUFFIX = 'plugins/saga/scripts/saga_setup.py'
-
-/** How many directories the checkout walk climbs: the plugin root, then three parents. */
-export const CHECKOUT_WALK_DEPTH = 4
-
-/** The plugin root and its parents up to the walk depth, nearest first. Pure, so a test calls it directly. */
-export function checkoutCandidates(pluginRoot: string): string[] {
-  const cleaned = pluginRoot.replace(/\/+$/, '')
-  const candidates = [cleaned]
-  let parent = cleaned
-  for (let level = 1; level < CHECKOUT_WALK_DEPTH; level += 1) {
-    const cut = parent.lastIndexOf('/')
-    if (cut <= 0) break
-    parent = parent.slice(0, cut)
-    candidates.push(parent)
-  }
-  return candidates
-}
+/** The setup script's path under a plugin root, in source and installed layouts alike. */
+export const SETUP_SCRIPT_SUFFIX = 'scripts/saga_setup.py'
 
 /**
- * The saga checkout above the plugin root: the first candidate holding the
- * setup script, or null. Each probe failure reads as absent, so a build or
+ * Whether the plugin root holds the setup script. A failed probe reads as absent, so a build or
  * suite without `$.fs.exists` leaves the steps unrunnable instead of throwing.
  */
-export async function findSagaCheckoutWith(
+export async function setupScriptExistsWith(
   exists: (path: string) => Promise<boolean>,
   pluginRoot: string,
-): Promise<string | null> {
-  for (const candidate of checkoutCandidates(pluginRoot)) {
-    let found = false
-    try {
-      found = await exists(`${candidate}/${CHECKOUT_SCRIPT_SUFFIX}`)
-    } catch {
-      found = false
-    }
-    if (found) return candidate
+): Promise<boolean> {
+  try {
+    return await exists(`${pluginRoot}/${SETUP_SCRIPT_SUFFIX}`)
+  } catch {
+    return false
   }
-  return null
 }
 
 /** The argv that prints the machine record's `ran` and `offered` without writing. */

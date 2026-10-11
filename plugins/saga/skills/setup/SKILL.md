@@ -47,9 +47,9 @@ python3 plugins/saga/scripts/saga_setup.py install --tools <id,id> --repo <repos
 Run an optional step only when the operator names it:
 
 ```bash
-python3 plugins/saga/scripts/saga_setup.py step --name <name> --repo <repository>
+python3 plugins/saga/scripts/saga_setup.py step --name <name>
 ```
 
 A row with no install command is not installed by this skill. Say the install sentence and stop.
 
-Offer the `outcome-schedule` step only on macOS where `launchctl` exists. Run it from the saga checkout without `--repo`, because step vectors resolve against the working directory. After setting up a repository, register it with `python3 plugins/saga/scripts/outcome_job.py register --repo-root <repository>`.
+Offer the `outcome-schedule` step only on macOS where `launchctl` exists. Step vectors resolve against the saga plugin root, from a source checkout or an installed package alike. After setting up a repository, register it with `python3 plugins/saga/scripts/outcome_job.py register --repo-root <repository>`.

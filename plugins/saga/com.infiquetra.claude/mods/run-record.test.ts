@@ -1,7 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
 import {
-  checkoutCandidates,
-  findSagaCheckoutWith,
   isStateReview,
   KNOWN_REVIEW_STATE_SCHEMA,
   KNOWN_REVIEW_VIEW_SCHEMA,
@@ -30,6 +28,7 @@ import {
   setupInstallArgv,
   setupOfferStatusArgv,
   setupRecordOfferArgv,
+  setupScriptExistsWith,
   setupStepArgv,
   setupSurveyArgv,
 } from './run-record.ts'
@@ -436,23 +435,12 @@ describe('the setup survey and offer readers', () => {
     ])
   })
 
-  test('the checkout walk takes the first directory holding the setup script', async () => {
-    const exists = async (path: string) => path === '/repo/plugins/saga/scripts/saga_setup.py'
-    expect(await findSagaCheckoutWith(exists, '/repo/plugins/saga')).toBe('/repo')
-    expect(await findSagaCheckoutWith(exists, '/repo')).toBe('/repo')
-  })
-
-  test('the checkout walk returns null past three parents or when every probe fails', async () => {
-    expect(await findSagaCheckoutWith(async () => false, '/repo/plugins/saga')).toBeNull()
-    expect(await findSagaCheckoutWith(async () => { throw new Error('no fs') }, '/repo/plugins/saga')).toBeNull()
-    const deep = async (path: string) => path === '/far/plugins/saga/scripts/saga_setup.py'
-    expect(await findSagaCheckoutWith(deep, '/far/a/b/c/d')).toBeNull()
-  })
-
-  test('checkoutCandidates climbs three parents and stops at the root', async () => {
-    expect(checkoutCandidates('/repo/plugins/saga')).toEqual(['/repo/plugins/saga', '/repo/plugins', '/repo'])
-    expect(checkoutCandidates('/a/b/c/d/e')).toEqual(['/a/b/c/d/e', '/a/b/c/d', '/a/b/c', '/a/b'])
-    expect(checkoutCandidates('/repo/plugins/saga/')).toEqual(['/repo/plugins/saga', '/repo/plugins', '/repo'])
+  test('the setup script probe reads the marker under the plugin root', async () => {
+    const exists = async (path: string) => path === '/root/scripts/saga_setup.py'
+    expect(await setupScriptExistsWith(exists, '/root')).toBe(true)
+    expect(await setupScriptExistsWith(exists, '/elsewhere')).toBe(false)
+    expect(await setupScriptExistsWith(async () => false, '/root')).toBe(false)
+    expect(await setupScriptExistsWith(async () => { throw new Error('no fs') }, '/root')).toBe(false)
   })
 
   test('parses a survey and an offer status at exit 0', async () => {

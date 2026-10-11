@@ -9,7 +9,7 @@
 // has no checkbox and shows the script's install sentence instead. Install
 // runs one `install --tools <id>` call per ticked tool, in pane order,
 // showing each row's progress, and stops at the first failure; a step runs
-// one `step --name <name>` call in the saga checkout with its own progress.
+// one `step --name <name>` call from the saga plugin root with its own progress.
 // Done returns the installed and failed lists to the model. Dismissed,
 // timed-out and the error paths match the merge pane: closing records
 // nothing, and a timeout returns timed-out with whatever already installed
@@ -33,11 +33,11 @@ import type { EngineInterface, On } from 'claude-code'
 import type { SagaSetupOutcome, SagaSetupStep, SagaSetupSurvey, SagaSetupToolRow } from '../types/index.d.ts'
 import { paneResult } from './pane-result.ts'
 import {
-  findSagaCheckoutWith,
   readOfferStatusWith,
   readSetupSurveyWith,
   setupInstallArgv,
   setupRecordOfferArgv,
+  setupScriptExistsWith,
   setupStepArgv,
 } from './run-record.ts'
 
@@ -168,7 +168,8 @@ export function registerSetupPane(on: On): void {
     if (read.survey.tools.length === 0 && surveySteps(read.survey).length === 0) {
       return { result: paneResult({ status: 'nothing-to-review' }) }
     }
-    const checkout = await findSagaCheckoutWith((path) => $.fs.exists(path), $.plugin.root)
+    const runnable = await setupScriptExistsWith((path) => $.fs.exists(path), $.plugin.root)
+    const checkout = runnable ? $.plugin.root : null
 
     active = true
     outcome = undefined

@@ -277,10 +277,10 @@ describe('the setup steps', () => {
     return (survey?.argv[1] ?? '').slice(0, -'/scripts/saga_setup.py'.length)
   }
 
-  test('steps render with their done state and Run executes the step in the saga checkout', async ($, on) => {
+  test('steps render with their done state and Run executes the step from the saga plugin root', async ($, on) => {
     const w = world(on, {
       survey: { ...SURVEY, steps: STEPS },
-      exists: (path) => path.endsWith('/plugins/saga/scripts/saga_setup.py'),
+      exists: (path) => path.endsWith('/scripts/saga_setup.py'),
     })
     const { pending } = await startSetup($, w)
     const ui = await mountPane($, 'terminal')

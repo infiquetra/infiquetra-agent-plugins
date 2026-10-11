@@ -532,7 +532,7 @@ export type SagaSetupReview = {
   survey: SagaSetupSurvey
   ticked: Record<string, boolean>
   progress: Record<string, SagaSetupRowProgress> | null
-  /** The saga checkout steps run in, or null when the walk found none: steps then render unrunnable. */
+  /** The saga plugin root steps run in, or null when its setup script is missing: steps then render unrunnable. */
   checkout: string | null
   stepProgress: Record<string, SagaSetupStepProgress>
   error: string | null
