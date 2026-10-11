@@ -7,6 +7,8 @@ description: Check the tools on this machine and the repository before a saga ru
 
 `/saga:setup` checks the tools on this machine and the repository. It does not install a tool, and it does not run an optional step, unless the operator names that id.
 
+In Claude Code, the operator can open the setup pane directly with `/setup-view`: no agent turn is needed, and the pane runs the survey, the ticked installs, and the optional steps itself. The repository questions below stay here — the pane points the operator back at this skill for those.
+
 ## Survey
 
 **In Claude Code, when the tool `mcp__saga__setup` is listed and

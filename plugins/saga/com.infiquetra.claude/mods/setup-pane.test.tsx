@@ -9,7 +9,7 @@
 
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { initialTicks, OFFER_STORE_KEY, OFFER_TEXT, PANE, rowLabel, shownOutput, surveySteps, tickedIds, TOOL, WAIT_CAP_SECONDS } from './setup-pane.tsx'
+import { COMMAND, initialTicks, OFFER_STORE_KEY, OFFER_TEXT, PANE, rowLabel, shownOutput, surveySteps, tickedIds, TOOL, WAIT_CAP_SECONDS } from './setup-pane.tsx'
 
 const SURFACES = ['terminal', 'desktop'] as const
 const CWD = '/Users/operator/repo'
@@ -42,6 +42,10 @@ type World = {
   runs: Run[]
   toasts: string[]
   opens: number
+  /** The slash commands registered this session, in order. */
+  registered: { name: string; description?: string; immediate?: boolean }[]
+  /** The texts handed to the session prompt. */
+  fills: string[]
   store: Record<string, unknown>
   /** The `saga_setup.py install` calls, in order. */
   installs: () => Run[]
@@ -71,6 +75,8 @@ type Setup = {
   surfaces?: string[]
   /** How long one `sleep 1` takes here, in real milliseconds. */
   sleepMs?: number
+  /** When false the prompt refuses filled text, like a dialog or headless session. */
+  isFilled?: boolean
 }
 
 const ran = (exitCode: number, stdout: string, stderr = '') => ({
@@ -88,6 +94,8 @@ function world(on: On, initial: Setup = {}): World {
     runs: [],
     toasts: [],
     opens: 0,
+    registered: [],
+    fills: [],
     store: {},
     installs: () => w.runs.filter((run) => run.argv.includes('install')),
     stepRuns: () => w.runs.filter((run) => run.argv.includes('step')),
@@ -99,7 +107,10 @@ function world(on: On, initial: Setup = {}): World {
   hook('session.start', (_$: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   hook('session.surfaces', () => ({ value: w.setup.surfaces ?? ['terminal'] }))
   hook('session.cwd', () => ({ value: CWD }))
-  hook('command.register', (_$: unknown, e: { name: string }) => ({ value: { command: e.name } }))
+  hook('command.register', (_$: unknown, e: { name: string; description?: string; immediate?: boolean }) => {
+    w.registered.push({ name: e.name, description: e.description, immediate: e.immediate })
+    return { value: { command: e.name } }
+  })
   hook('tool.register', (_$: unknown, e: { name: string }) => ({ value: { tool: e.name } }))
   hook('fs.stat', () => ({ value: { mtimeMs: 1 } }))
   hook('fs.exists', (_$: unknown, e: { path: string }) => ({ value: w.setup.exists?.(e.path) ?? false }))
@@ -112,6 +123,11 @@ function world(on: On, initial: Setup = {}): World {
   hook('ui.toast', (_$: unknown, e: { text: string }) => {
     w.toasts.push(e.text)
     return { value: undefined }
+  })
+  hook('prompt.fill', (_$: unknown, e: { text: string }) => {
+    if (w.setup.isFilled === false) return { isFilled: false, refusal: 'dialog' }
+    w.fills.push(e.text)
+    return { isFilled: true }
   })
   hook('ui.status', () => ({ value: undefined }))
   hook('store.get', (_$: unknown, e: { key: string }) => {
@@ -179,6 +195,31 @@ async function mountPane($: any, surface: (typeof SURFACES)[number]): Promise<an
   await mounted?.unmount().catch(() => undefined)
   mounted = await $.ui.mount({ plugin: 'saga', surface, component: 'Pane', requestId: PANE, props: { bodyColumns: 100 } })
   return mounted
+}
+
+/** `/setup-view` as the operator types it at a wide fullscreen terminal. */
+function setupView($: any) {
+  return $.command.run({
+    command: COMMAND,
+    args: '',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: true, columns: 160 },
+  })
+}
+
+/**
+ * Record every tool call made after this registers; the command path must make
+ * none. Registered per test, never in `world`: it would swallow the tool-call
+ * drives that open the tool path.
+ */
+function recordToolCalls(on: On): string[] {
+  const calls: string[] = []
+  const hook = on as unknown as (event: string, hook: (...args: any[]) => unknown) => void
+  hook('tool.call', (_$: unknown, e: { tool: string }) => {
+    calls.push(e.tool)
+    return { value: {} }
+  })
+  return calls
 }
 
 describe('the setup pane', () => {
@@ -462,6 +503,310 @@ describe('the tool without a pane', () => {
     const w = world(on, { placed: false })
     const { pending } = await startSetup($, w)
     expect(parseResult((await pending).result).status).toBe('not-placed')
+  })
+})
+
+describe('the setup-view command', () => {
+  const STEPS = [
+    { name: 'outcome-schedule', summary: 'Run the review-outcome job daily at 06:17.', done: false },
+    { name: 'second-step', summary: 'Another optional step.', done: true },
+  ]
+
+  /** The kit's plugin root, read back from the survey argv the opener ran. */
+  const pluginRootOf = (w: World): string => {
+    const survey = w.runs.find((run) => run.argv.includes('survey'))
+    return (survey?.argv[1] ?? '').slice(0, -'/scripts/saga_setup.py'.length)
+  }
+
+  // Closing the pane as the person does, for the command path: an inline
+  // plugin's `$.ui.close` of the pane's id raises the same `ui.close` chain.
+  const closer = {
+    name: 'command-closer',
+    register: ((hookOn: On) => {
+      hookOn('command.run', { command: 'close-setup' } as never, async ($: any) => {
+        await $.ui.close({ id: 'saga-setup' })
+        return { text: 'closed' }
+      })
+    }) as never,
+  }
+
+  test('registers setup-view immediate at session start with a collision-free name', async ($, on) => {
+    const w = world(on)
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    const registration = w.registered.find((entry) => entry.name === COMMAND)
+    expect(registration?.name).toBe('setup-view')
+    expect(registration?.immediate).toBe(true)
+    // Every saga skill, every adapter command stem, and the sibling mod commands.
+    const sagaNames = [
+      'brainstorm', 'code-review', 'doc-review', 'founder-review', 'ideate', 'investigate', 'office-hours',
+      'plan', 'qa', 'retro', 'setup', 'spec', 'strategy', 'work', 'ceo-review', 'plan-view', 'review-view',
+    ]
+    expect(sagaNames).not.toContain(COMMAND)
+  })
+
+  test('opens the pane with no tool call and surveys the session checkout', async ($, on) => {
+    const w = world(on)
+    const toolCalls = recordToolCalls(on)
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    const ran = await setupView($)
+    expect(ran.text).toBe('setup-view: 3 tools, 0 steps.')
+    expect(w.opens).toBe(1)
+    const survey = w.runs.find((run) => run.argv.includes('survey'))
+    expect(survey?.argv).toEqual([
+      'python3', expect.stringMatching(/\/scripts\/saga_setup\.py$/), 'survey', '--repo', CWD, '--format', 'json',
+    ])
+    expect(toolCalls).toEqual([])
+    const ui = await mountPane($, 'terminal')
+    expect((await ui.find({ type: 'Button', key: 'tick:saga-ruff' }))?.props.label).toBe('[x] saga-ruff  missing  correctness')
+    await ui.press({ key: 'close' })
+    const again = await setupView($)
+    expect(again.text).toBe('setup-view: 3 tools, 0 steps.')
+    expect(w.opens).toBe(2)
+    const ui2 = await mountPane($, 'terminal')
+    await ui2.press({ key: 'close' })
+  })
+
+  test('renders every tool row and step done state, and runs steps from the plugin root', async ($, on) => {
+    const w = world(on, {
+      survey: { ...SURVEY, steps: STEPS },
+      exists: (path) => path.endsWith('/scripts/saga_setup.py'),
+    })
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    const ran = await setupView($)
+    expect(ran.text).toBe('setup-view: 3 tools, 2 steps.')
+    const ui = await mountPane($, 'terminal')
+    expect((await ui.find({ type: 'Button', key: 'tick:saga-ruff' }))?.props.label).toBe('[x] saga-ruff  missing  correctness')
+    expect((await ui.find({ type: 'Button', key: 'tick:saga-mypy' }))?.props.label).toBe('[ ] saga-mypy  installed  correctness')
+    expect(await ui.find({ type: 'Text', text: /Install it by hand\./ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /outcome-schedule: not done/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /second-step: done/ })).toBeDefined()
+    const root = pluginRootOf(w)
+    await ui.press({ key: 'run-step:outcome-schedule' })
+    const [call] = w.stepRuns()
+    expect(call?.argv).toEqual(['python3', `${root}/scripts/saga_setup.py`, 'step', '--name', 'outcome-schedule'])
+    expect(call?.cwd).toBe(root)
+    await ui.press({ key: 'close' })
+  })
+
+  test('both openers share one survey, install, and step implementation', async ($, on) => {
+    const w = world(on, {
+      survey: { ...SURVEY, steps: [STEPS[0]] },
+      exists: () => true,
+    })
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    const { pending } = await startSetup($, w)
+    const ui = await mountPane($, 'terminal')
+    await ui.press({ key: 'install' })
+    await ui.press({ key: 'run-step:outcome-schedule' })
+    const toolSurvey = w.runs.find((run) => run.argv.includes('survey'))?.argv
+    const toolInstalls = w.installs().map((run) => run.argv)
+    const toolSteps = w.stepRuns().map((run) => run.argv)
+    await ui.press({ key: 'done' })
+    expect(parseResult((await pending).result).status).toBe('submitted')
+    w.runs.length = 0
+    await setupView($)
+    const ui2 = await mountPane($, 'terminal')
+    await ui2.press({ key: 'install' })
+    await ui2.press({ key: 'run-step:outcome-schedule' })
+    expect(w.runs.find((run) => run.argv.includes('survey'))?.argv).toEqual(toolSurvey)
+    expect(w.installs().map((run) => run.argv)).toEqual(toolInstalls)
+    expect(w.stepRuns().map((run) => run.argv)).toEqual(toolSteps)
+    await ui2.press({ key: 'close' })
+  })
+
+  test('a survey failure opens the pane with the plain message, never a crash', async ($, on) => {
+    const w = world(on, { surveyExit: 2, surveyStderr: 'saga_setup: no such tool list' })
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    const ran = await setupView($)
+    expect(ran.text).toContain('setup-view: the survey failed')
+    expect(ran.text).toContain('no such tool list')
+    expect(w.opens).toBe(1)
+    const ui = await mountPane($, 'terminal')
+    expect(await ui.find({ type: 'Text', text: /The setup survey failed\./ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /no such tool list/ })).toBeDefined()
+    await ui.press({ key: 'close' })
+  })
+
+  test('closing the command-opened pane leaves nothing pending', async ($, on) => {
+    const w = world(on)
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    // The command answers at open, before any close: nothing waits on the pane.
+    const ran = await setupView($)
+    expect(ran.text).toBe('setup-view: 3 tools, 0 steps.')
+    const ui = await mountPane($, 'terminal')
+    await ui.press({ key: 'close' })
+    // A tool call now proceeds normally: no outcome was recorded, nothing waits.
+    const { pending } = await startSetup($, w)
+    const ui2 = await mountPane($, 'terminal')
+    await ui2.press({ key: 'dismiss' })
+    expect(parseResult((await pending).result)).toEqual({ status: 'dismissed' })
+  })
+
+  test('a second opener while a setup is open answers without opening', async ($, on) => {
+    const w = world(on)
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    const { pending } = await startSetup($, w)
+    expect(w.opens).toBe(1)
+    const busy = await setupView($)
+    expect(busy.text).toContain('already open')
+    expect(w.opens).toBe(1)
+    const ui = await mountPane($, 'terminal')
+    await ui.press({ key: 'dismiss' })
+    expect(parseResult((await pending).result)).toEqual({ status: 'dismissed' })
+    await setupView($)
+    expect(w.opens).toBe(2)
+    const refused = await $.tool.call({ tool: `mcp__saga__${TOOL}` })
+    expect(parseResult(refused.result)).toEqual({ status: 'error', reason: 'a setup pane is already open' })
+    expect(w.opens).toBe(2)
+    const ui2 = await mountPane($, 'terminal')
+    await ui2.press({ key: 'close' })
+  })
+
+  test('with no drawable surface or refused placement the command answers as text', async ($, on) => {
+    const w = world(on, { surfaces: ['mobile'] })
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    const unavailable = await setupView($)
+    expect(unavailable.text).toContain('no terminal or desktop surface')
+    expect(w.opens).toBe(0)
+    w.setup.surfaces = ['terminal']
+    w.setup.placed = false
+    const unplaced = await setupView($)
+    expect(unplaced.text).toContain('could not be placed')
+    expect(unplaced.text).toContain('narrow')
+    // The state was cleared with the refused open: a later command opens fresh.
+    w.setup.placed = true
+    const ran = await setupView($)
+    expect(ran.text).toBe('setup-view: 3 tools, 0 steps.')
+    const ui = await mountPane($, 'terminal')
+    await ui.press({ key: 'close' })
+  })
+
+  test('an empty survey answers nothing to set up and opens no pane', async ($, on) => {
+    const w = world(on, { survey: { ...SURVEY, tools: [], steps: [] } })
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    const ran = await setupView($)
+    expect(ran.text).toContain('nothing to set up')
+    expect(w.opens).toBe(0)
+  })
+
+  test('closing the command-opened pane as the person does clears it', { plugins: [closer] }, async ($, on) => {
+    const w = world(on)
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await setupView($)
+    expect(w.opens).toBe(1)
+    await ($ as any).command.run({ command: 'close-setup' })
+    // The close handler clears asynchronously; a busy answer is retried, never asserted.
+    let ran = await setupView($)
+    for (let i = 0; i < 40 && ran.text.includes('already open'); i++) {
+      await delay(5)
+      ran = await setupView($)
+    }
+    expect(ran.text).toBe('setup-view: 3 tools, 0 steps.')
+    expect(w.opens).toBe(2)
+    const ui = await mountPane($, 'terminal')
+    await ui.press({ key: 'close' })
+  })
+})
+
+describe('shared refresh and Ask Claude', () => {
+  test('an Install run re-surveys and renders the fresh states', async ($, on) => {
+    const w = world(on)
+    const { pending } = await startSetup($, w)
+    const ui = await mountPane($, 'terminal')
+    await ui.press({ key: 'tick:saga-mypy' })
+    // Both installs succeed; the re-survey reports ruff installed and drops mypy.
+    w.setup.survey = {
+      ...SURVEY,
+      tools: [{ ...SURVEY.tools[0]!, status: 'installed', version: '1.0' }, SURVEY.tools[2]!],
+    }
+    await ui.press({ key: 'install' })
+    expect((await ui.find({ type: 'Button', key: 'tick:saga-ruff' }))?.props.label).toBe('[x] saga-ruff  installed  correctness')
+    expect(await ui.find({ type: 'Button', key: 'tick:saga-mypy' })).toBeUndefined()
+    await ui.press({ key: 'done' })
+    expect(parseResult((await pending).result)).toEqual({ status: 'submitted', installed: ['saga-ruff', 'saga-mypy'], failed: [] })
+  })
+
+  test('a step run re-surveys and renders the fresh done state', async ($, on) => {
+    const FIRST = { ...SURVEY, steps: [{ name: 'outcome-schedule', summary: 'Run the review-outcome job daily at 06:17.', done: false }] }
+    const SECOND = { ...SURVEY, steps: [{ name: 'outcome-schedule', summary: 'Run the review-outcome job daily at 06:17.', done: true }] }
+    const w = world(on, { survey: FIRST, exists: () => true })
+    const { pending } = await startSetup($, w)
+    const ui = await mountPane($, 'terminal')
+    w.setup.survey = SECOND
+    await ui.press({ key: 'run-step:outcome-schedule' })
+    expect(await ui.find({ type: 'Text', text: /outcome-schedule: done/ })).toBeDefined()
+    await ui.press({ key: 'dismiss' })
+    expect(parseResult((await pending).result)).toEqual({ status: 'dismissed' })
+  })
+
+  test('a failed refresh toasts and keeps the shown survey', async ($, on) => {
+    const w = world(on)
+    const { pending } = await startSetup($, w)
+    const ui = await mountPane($, 'terminal')
+    w.setup.surveyExit = 2
+    w.setup.surveyStderr = 'saga_setup: the machine record cannot be read'
+    await ui.press({ key: 'install' })
+    expect(w.toasts).toEqual([expect.stringContaining('survey refresh failed')])
+    expect((await ui.find({ type: 'Button', key: 'tick:saga-ruff' }))?.props.label).toBe('[x] saga-ruff  missing  correctness')
+    await ui.press({ key: 'done' })
+    expect(parseResult((await pending).result)).toEqual({ status: 'submitted', installed: ['saga-ruff'], failed: [] })
+  })
+
+  test('a failed install offers Ask Claude with the row, the command, and the tail', async ($, on) => {
+    const w = world(on, { installs: { 'saga-ruff': { exit: 1, stdout: '', stderr: 'no network' } } })
+    const { pending } = await startSetup($, w)
+    const ui = await mountPane($, 'terminal')
+    expect(await ui.find({ type: 'Button', key: 'ask:saga-ruff' })).toBeUndefined()
+    await ui.press({ key: 'install' })
+    expect((await ui.find({ type: 'Button', key: 'ask:saga-ruff' }))?.props.label).toBe('Ask Claude')
+    await ui.press({ key: 'ask:saga-ruff' })
+    expect(w.fills).toHaveLength(1)
+    expect(w.fills[0]).toContain('saga-ruff')
+    expect(w.fills[0]).toContain('install --tools saga-ruff')
+    expect(w.fills[0]).toContain('no network')
+    await ui.press({ key: 'done' })
+    expect(parseResult((await pending).result)).toEqual({ status: 'submitted', installed: [], failed: ['saga-ruff'] })
+  })
+
+  test('Ask Claude toasts when the prompt cannot take text', async ($, on) => {
+    const w = world(on, { installs: { 'saga-ruff': { exit: 1, stdout: '', stderr: 'no network' } }, isFilled: false })
+    const { pending } = await startSetup($, w)
+    const ui = await mountPane($, 'terminal')
+    await ui.press({ key: 'install' })
+    await ui.press({ key: 'ask:saga-ruff' })
+    expect(w.fills).toHaveLength(0)
+    expect(w.toasts).toEqual(['setup-view: the prompt cannot take text right now'])
+    expect(await ui.find({ type: 'Text', text: /failed: no network/ })).toBeDefined()
+    await ui.press({ key: 'done' })
+    await pending
+  })
+
+  test('a failed step offers Ask Claude', async ($, on) => {
+    const w = world(on, {
+      survey: { ...SURVEY, steps: [{ name: 'outcome-schedule', summary: 'Run the review-outcome job daily at 06:17.', done: false }] },
+      exists: () => true,
+      steps: { 'outcome-schedule': { exit: 1, stdout: '', stderr: 'no launchctl' } },
+      offer: { ran: true, offered: false },
+    })
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await setupView($)
+    const ui = await mountPane($, 'terminal')
+    await ui.press({ key: 'run-step:outcome-schedule' })
+    await ui.press({ key: 'ask-step:outcome-schedule' })
+    expect(w.fills).toHaveLength(1)
+    expect(w.fills[0]).toContain('outcome-schedule')
+    expect(w.fills[0]).toContain('step --name outcome-schedule')
+    expect(w.fills[0]).toContain('no launchctl')
+    await ui.press({ key: 'close' })
+  })
+
+  test('the pane points at /saga:setup for the repository questions', async ($, on) => {
+    const w = world(on, { offer: { ran: true, offered: false } })
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await setupView($)
+    const ui = await mountPane($, 'terminal')
+    expect(await ui.find({ type: 'Text', text: /The repository questions live in \/saga:setup\./ })).toBeDefined()
+    await ui.press({ key: 'close' })
   })
 })
 

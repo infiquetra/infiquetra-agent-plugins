@@ -536,6 +536,10 @@ export type SagaSetupReview = {
   checkout: string | null
   stepProgress: Record<string, SagaSetupStepProgress>
   error: string | null
+  /** Which opener drew this pane: the tool call, or the setup-view command (issue #221). */
+  openedBy: 'tool' | 'command'
+  /** The survey failure the command path renders, or null when the survey read (issue #221). */
+  surveyError: string | null
 }
 
 /** What `mcp__saga__setup` returns to the model. */
