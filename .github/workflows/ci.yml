@@ -74,15 +74,17 @@ jobs:
     # A separate job because the Claude Code CLI is a dependency, and the
     # `validate` job above stays the hermetic, standard-library-only baseline.
     #
-    # The matrix is the floor and the pin. 2.1.286 is the minimum build that
-    # loads these plugins' mods, held by CLAUDE_CODE_FLOOR in
-    # tests/test_claude_plugin_packaging.py and recorded in DECISIONS.md; a
+    # The matrix is the floor, the pin, and the newest build. 2.1.286 is the
+    # minimum build that loads these plugins' mods, held by CLAUDE_CODE_FLOOR
+    # in tests/test_claude_plugin_packaging.py and recorded in DECISIONS.md; a
     # floor that is never exercised is not a floor. 2.1.289 is the build the
-    # mods were written against. Neither run needs a login or a secret.
+    # mods were written against. 2.1.296 is the newest build, which rejects
+    # object tool results, so it guards against result-check drift. No run
+    # needs a login or a secret.
     strategy:
       fail-fast: false
       matrix:
-        claude-code: ['2.1.286', '2.1.289']
+        claude-code: ['2.1.286', '2.1.289', '2.1.296']
     steps:
       - name: Check out repository
         uses: actions/checkout@v4

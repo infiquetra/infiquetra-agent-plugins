@@ -4,7 +4,9 @@
 ``survey`` is read-only apart from the machine record under the home directory.
 ``write`` updates ``.saga-profile.json``. ``install`` and ``step`` run only the
 command the operator named. A run calls the library and does not install, write,
-or start the live sandbox probe.
+or start the live sandbox probe. Step vectors resolve against the saga plugin
+root (the directory above ``scripts/``), in a source checkout or an installed
+package alike — never the repository under setup.
 
 The runner is injected. Tests pass it, the environment, and ``--home``. Nothing
 in this module prints an environment value.
@@ -43,7 +45,8 @@ QA_PROFILE_SCHEMA = "qa_profile.v1"
 NOT_RECORDED = "not-recorded"
 SUGGESTION = "Run /saga:setup to check the tools on this machine and the repository."
 
-REFERENCES = Path(__file__).resolve().parent.parent / "references"
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+REFERENCES = PLUGIN_ROOT / "references"
 EXTENSIONS_PATH = REFERENCES / "setup-extensions.yaml"
 LAUNCH_PATH = REFERENCES / "targeted-reviewer-launch.json"
 QA_SCHEMA_PATH = REFERENCES / "qa-profile.schema.json"
@@ -600,13 +603,12 @@ def _step_status(
     step: Mapping[str, Any],
     runner: Runner,
     env: Mapping[str, str] | None,
-    cwd: Path,
 ) -> dict[str, Any]:
     argv = step.get("done")
     done = False
     if isinstance(argv, list) and argv:
         try:
-            result = _call(runner, argv, cwd=cwd, env=env, timeout=30)
+            result = _call(runner, argv, cwd=PLUGIN_ROOT, env=env, timeout=30)
             done = int(getattr(result, "returncode", 1)) == 0
         except (FileNotFoundError, subprocess.TimeoutExpired):
             done = False
@@ -795,7 +797,7 @@ def collect(
             home=home,
         ),
         "steps": [
-            _step_status(step, runner, env, root)
+            _step_status(step, runner, env)
             for step in extensions["steps"]
             if isinstance(step, dict)
         ],
@@ -1117,7 +1119,6 @@ def run_named_step(
     *,
     runner: Runner,
     env: Mapping[str, str] | None,
-    cwd: Path,
     extensions_path: Path | None = None,
 ) -> int:
     extensions = load_extensions(extensions_path)
@@ -1134,7 +1135,7 @@ def run_named_step(
     argv = step.get("run")
     if not isinstance(argv, list) or not argv:
         raise SetupError(f"{name} has no run command")
-    result = _call(runner, argv, cwd=cwd, env=env, timeout=30)
+    result = _call(runner, argv, cwd=PLUGIN_ROOT, env=env, timeout=30)
     _stream(name, getattr(result, "stdout", ""), sys.stdout)
     _stream(name, getattr(result, "stderr", ""), sys.stderr)
     return 0 if int(getattr(result, "returncode", 1)) == 0 else 1
@@ -1177,7 +1178,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     step = subcommands.add_parser("step", help="Run one named optional step.")
     step.add_argument("--name", required=True)
-    step.add_argument("--repo", default=None)
     step.add_argument("--extensions", default=None)
 
     offer_status_parser = subcommands.add_parser(
@@ -1270,7 +1270,6 @@ def main(
                 args.name,
                 runner=active,
                 env=environment,
-                cwd=_repo(args.repo),
                 extensions_path=Path(args.extensions) if args.extensions else None,
             )
         if args.command == "offer-status":

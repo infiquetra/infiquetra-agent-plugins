@@ -1,5 +1,6 @@
 // The setup pane (issue #165): C3's survey rows with a checkbox each, an
-// Install button that runs the ticked tools, and the first-session offer.
+// Install button that runs the ticked tools, the survey's optional steps with
+// a Run button each, and the first-session offer.
 //
 // The model calls the tool `mcp__saga__setup` with the checkout. The tool runs
 // `saga_setup.py survey --format json` and draws the pane from that document
@@ -7,10 +8,13 @@
 // pre-ticked when the status is not installed. A row with no install command
 // has no checkbox and shows the script's install sentence instead. Install
 // runs one `install --tools <id>` call per ticked tool, in pane order,
-// showing each row's progress, and stops at the first failure; Done returns
-// the installed and failed lists to the model. Dismissed, timed-out and the
-// error paths match the merge pane: closing records nothing, and a timeout
-// returns timed-out with whatever already installed left installed.
+// showing each row's progress, and stops at the first failure; a step runs
+// one `step --name <name>` call from the saga plugin root with its own progress.
+// Done returns the installed and failed lists to the model. Dismissed,
+// timed-out and the error paths match the merge pane: closing records
+// nothing, and a timeout returns timed-out with whatever already installed
+// left installed. Every answer leaves as a JSON string (issue #218): the
+// session rejects an object result.
 //
 // The offer: when C3's machine record shows setup has never run — and neither
 // the machine record nor the mod's `$.store` remembers the offer — the first
@@ -26,12 +30,15 @@
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
-import type { SagaSetupOutcome, SagaSetupSurvey, SagaSetupToolRow } from '../types/index.d.ts'
+import type { SagaSetupOutcome, SagaSetupStep, SagaSetupSurvey, SagaSetupToolRow } from '../types/index.d.ts'
+import { paneResult } from './pane-result.ts'
 import {
   readOfferStatusWith,
   readSetupSurveyWith,
   setupInstallArgv,
   setupRecordOfferArgv,
+  setupScriptExistsWith,
+  setupStepArgv,
 } from './run-record.ts'
 
 /** The pane's id. */
@@ -45,6 +52,9 @@ export const WAIT_CAP_SECONDS = 1800
 
 /** How long one tool install may take. */
 const INSTALL_TIMEOUT_MS = 300_000
+
+/** How long one step run may take: past the script's own 30-second child timeout. */
+const STEP_TIMEOUT_MS = 60_000
 
 /** The `$.store` key remembering the setup offer. */
 export const OFFER_STORE_KEY = 'setup_offered'
@@ -70,6 +80,12 @@ let active = false
  */
 let installEpoch = 0
 
+/**
+ * The step runs' epoch, Install's for steps: bumped when the tool call ends,
+ * so a run outlived by its pane can never mark another setup's steps.
+ */
+let stepEpoch = 0
+
 // ---------------------------------------------------------------------------
 // Pure helpers: no `$`, so a test calls them directly
 // ---------------------------------------------------------------------------
@@ -91,6 +107,11 @@ export function tickedIds(survey: SagaSetupSurvey, ticked: Record<string, boolea
 /** One row's checkbox label: the tick box, id, status and lens. */
 export function rowLabel(row: SagaSetupToolRow, ticked: boolean): string {
   return `${ticked ? '[x]' : '[ ]'} ${row.id}  ${row.status}  ${row.lens}`
+}
+
+/** The survey's optional steps: a missing or non-array field reads as none. */
+export function surveySteps(survey: SagaSetupSurvey): SagaSetupStep[] {
+  return Array.isArray(survey.steps) ? survey.steps : []
 }
 
 /** The last lines of a row's install output that the pane shows. */
@@ -128,12 +149,12 @@ export function registerSetupPane(on: On): void {
 
   on('tool.call', { tool: 'mcp__saga__setup' }, async ($, e, next) => {
     if (active) {
-      return { result: { status: 'error', reason: 'a setup pane is already open' } }
+      return { result: paneResult({ status: 'error', reason: 'a setup pane is already open' }) }
     }
     const surfaces = await $.session.surfaces()
     if (!surfaces.some((surface) => surface === 'terminal' || surface === 'desktop')) {
       return {
-        result: { status: 'unavailable', reason: 'no terminal or desktop surface is attached to draw the pane' },
+        result: paneResult({ status: 'unavailable', reason: 'no terminal or desktop surface is attached to draw the pane' }),
       }
     }
     const cwd = await $.session.cwd()
@@ -142,11 +163,13 @@ export function registerSetupPane(on: On): void {
 
     const read = await readSetupSurveyWith((argv) => $.process.run(argv), $.plugin.root, repo)
     if (!read.ok) {
-      return { result: { status: 'error', reason: `saga_setup survey failed (${read.reason}): ${read.detail}` } }
+      return { result: paneResult({ status: 'error', reason: `saga_setup survey failed (${read.reason}): ${read.detail}` }) }
     }
-    if (read.survey.tools.length === 0) {
-      return { result: { status: 'nothing-to-review' } }
+    if (read.survey.tools.length === 0 && surveySteps(read.survey).length === 0) {
+      return { result: paneResult({ status: 'nothing-to-review' }) }
     }
+    const runnable = await setupScriptExistsWith((path) => $.fs.exists(path), $.plugin.root)
+    const checkout = runnable ? $.plugin.root : null
 
     active = true
     outcome = undefined
@@ -155,25 +178,28 @@ export function registerSetupPane(on: On): void {
       survey: read.survey,
       ticked: initialTicks(read.survey),
       progress: null,
+      checkout,
+      stepProgress: {},
       error: null,
     }))
     try {
       const opened = await $.ui.open({ id: PANE, title: 'Setup', focus: true })
       if (!opened.isPlaced) {
-        return { result: { status: 'not-placed', reason: opened.reason } }
+        return { result: paneResult({ status: 'not-placed', reason: opened.reason }) }
       }
       let waited = 0
       while (outcome === undefined && !next.signal.aborted && waited < WAIT_CAP_SECONDS) {
         await $.process.run(['sleep', '1'])
         waited += 1
       }
-      return { result: outcome ?? { status: next.signal.aborted ? 'dismissed' : 'timed-out' } }
+      return { result: paneResult(outcome ?? { status: next.signal.aborted ? 'dismissed' : 'timed-out' }) }
     } catch (err) {
-      return { result: { status: 'error', reason: `the setup pane failed: ${String(err)}` } }
+      return { result: paneResult({ status: 'error', reason: `the setup pane failed: ${String(err)}` }) }
     } finally {
       active = false
       outcome = undefined
       installEpoch += 1
+      stepEpoch += 1
       await $.ui.close({ id: PANE })
       await update($, setup, () => null)
     }
@@ -210,6 +236,11 @@ export function registerSetupPane(on: On): void {
         if (!current || current.progress === null) return current
         return { ...current, progress: { ...current.progress, [id]: progress } }
       })
+    const markStep = (name: string, progress: { state: 'running' | 'done' | 'failed'; output: string }) =>
+      update($, setup, (current) => {
+        if (!current) return current
+        return { ...current, stepProgress: { ...current.stepProgress, [name]: progress } }
+      })
 
     const install = async () => {
       const current = await read($, setup)
@@ -245,6 +276,30 @@ export function registerSetupPane(on: On): void {
         await markRow(id, { state: 'done', output })
       }
     }
+    const runStep = async (name: string) => {
+      const current = await read($, setup)
+      if (!current || current.repo !== repo || current.checkout === null) return
+      if (!surveySteps(current.survey).some((step) => step.name === name)) return
+      if (current.stepProgress[name]?.state === 'running') return
+      const epoch = stepEpoch
+      const cwd = current.checkout
+      await markStep(name, { state: 'running', output: '' })
+      let ran
+      try {
+        ran = await $.process.run(setupStepArgv($.plugin.root, name), { cwd, timeoutMs: STEP_TIMEOUT_MS })
+      } catch (err) {
+        if (epoch !== stepEpoch) return
+        await markStep(name, { state: 'failed', output: String(err) })
+        return
+      }
+      if (epoch !== stepEpoch) return
+      const output = `${ran.stdout}${ran.stderr}`.trim()
+      if (ran.exitCode !== 0) {
+        await markStep(name, { state: 'failed', output: output === '' ? `step exited ${ran.exitCode}` : output })
+        return
+      }
+      await markStep(name, { state: 'done', output })
+    }
     const done = async () => {
       const current = await read($, setup)
       if (!current) return
@@ -263,6 +318,7 @@ export function registerSetupPane(on: On): void {
     }
 
     const running = state.progress !== null && Object.values(state.progress).some((row) => row.state === 'installing' || row.state === 'queued')
+    const installable = survey.tools.some((row) => row.has_install)
     return (
       <Box flexDirection="column" width={e.props.bodyColumns}>
         <Text bold>Tools</Text>
@@ -288,6 +344,31 @@ export function registerSetupPane(on: On): void {
             )}
           </Box>
         ))}
+        {surveySteps(survey).length > 0 && (
+          <Box flexDirection="column" marginTop={1}>
+            <Text bold>Steps</Text>
+            {surveySteps(survey).map((step) => (
+              <Box key={`step:${step.name}`} flexDirection="column">
+                <Text>{`${step.name}: ${step.done ? 'done' : 'not done'} — ${step.summary}`}</Text>
+                {state.checkout !== null ? (
+                  <Button key={`run-step:${step.name}`} label={`Run ${step.name}`} plain onPress={() => runStep(step.name)} />
+                ) : (
+                  <Text dimColor>Steps run only from a saga checkout.</Text>
+                )}
+                {state.stepProgress[step.name] && (
+                  <Text key={`step-progress:${step.name}`} dimColor>
+                    {`  ${state.stepProgress[step.name]?.state}: ${shownOutput(state.stepProgress[step.name]?.output ?? '')}`}
+                  </Text>
+                )}
+              </Box>
+            ))}
+          </Box>
+        )}
+        {!installable && (
+          <Box key="no-install" marginTop={1}>
+            <Text wrap="wrap">Nothing here installs: no row has an install command.</Text>
+          </Box>
+        )}
         {state.error !== null && (
           <Box key="error" marginTop={1}>
             <Text color="red" wrap="wrap">
@@ -296,9 +377,11 @@ export function registerSetupPane(on: On): void {
           </Box>
         )}
         <Box key="actions" flexDirection="row" columnGap={2} marginTop={1}>
-          <Button key="install" label={running ? 'Installing…' : 'Install'} variant="primary" onPress={() => install()} />
+          {installable && (
+            <Button key="install" label={running ? 'Installing…' : 'Install'} variant="primary" onPress={() => install()} />
+          )}
           <Button key="done" label="Done" hotkey="d" onPress={() => done()} />
-          <Button key="dismiss" label="Dismiss" role="dismiss" onPress={() => dismiss()} />
+          {installable && <Button key="dismiss" label="Dismiss" role="dismiss" onPress={() => dismiss()} />}
         </Box>
       </Box>
     )

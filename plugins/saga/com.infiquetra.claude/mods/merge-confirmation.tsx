@@ -32,6 +32,7 @@ import type {
   SagaReviewState,
 } from '../types/index.d.ts'
 import { costLine, gradeLabel } from './review-findings.ts'
+import { paneResult } from './pane-result.ts'
 import { readStateReviewWith, sagaScriptArgv } from './run-record.ts'
 
 /** The pane's id. */
@@ -193,26 +194,26 @@ export function registerMergeConfirmation(on: On): void {
   on('tool.call', { tool: 'mcp__saga__review_merge' }, async ($, e, next) => {
     const issue = issueOf(e)
     if (issue === null) {
-      return { result: { status: 'error', reason: 'issue must be a positive whole number' } }
+      return { result: paneResult({ status: 'error', reason: 'issue must be a positive whole number' }) }
     }
     if (active !== null) {
-      return { result: { status: 'error', reason: `a merge confirmation is already open for issue ${active}` } }
+      return { result: paneResult({ status: 'error', reason: `a merge confirmation is already open for issue ${active}` }) }
     }
     const surfaces = await $.session.surfaces()
     if (!surfaces.some((surface) => surface === 'terminal' || surface === 'desktop')) {
       return {
-        result: { status: 'unavailable', reason: 'no terminal or desktop surface is attached to draw the pane' },
+        result: paneResult({ status: 'unavailable', reason: 'no terminal or desktop surface is attached to draw the pane' }),
       }
     }
 
     const cwd = await $.session.cwd()
     const read = await readStateReviewWith((argv) => $.process.run(argv), $.plugin.root, { repoRoot: cwd, issue })
     if (!read.ok) {
-      return { result: { status: 'error', reason: `run_status review failed (${read.reason}): ${read.detail}` } }
+      return { result: paneResult({ status: 'error', reason: `run_status review failed (${read.reason}): ${read.detail}` }) }
     }
     const data = read.review.state
     if (data.pending_choices.length === 0) {
-      return { result: { status: 'nothing-to-review' } }
+      return { result: paneResult({ status: 'nothing-to-review' }) }
     }
     // The document owns the repository: `answers` reads the intent envelope from
     // `gh issue view --repo`, so a model-supplied repo would select the policy
@@ -221,15 +222,15 @@ export function registerMergeConfirmation(on: On): void {
     const documentRepo = repoOf({ repo: data.repo })
     if (inputRepo !== undefined && inputRepo !== documentRepo) {
       return {
-        result: {
+        result: paneResult({
           status: 'error',
           reason: `the tool repo ${JSON.stringify(inputRepo)} does not match the review document's repository ${JSON.stringify(data.repo)}`,
-        },
+        }),
       }
     }
     const repo = documentRepo
     if (repo === null) {
-      return { result: { status: 'error', reason: 'could not determine the owner/name repository for the answers call' } }
+      return { result: paneResult({ status: 'error', reason: 'could not determine the owner/name repository for the answers call' }) }
     }
 
     active = issue
@@ -239,7 +240,7 @@ export function registerMergeConfirmation(on: On): void {
     try {
       const opened = await $.ui.open({ id: PANE, title: `Merge confirmation · #${issue}`, focus: true })
       if (!opened.isPlaced) {
-        return { result: { status: 'not-placed', reason: opened.reason } }
+        return { result: paneResult({ status: 'not-placed', reason: opened.reason }) }
       }
       let waited = 0
       while (!outcomes.has(issue) && !next.signal.aborted && waited < WAIT_CAP_SECONDS) {
@@ -250,9 +251,9 @@ export function registerMergeConfirmation(on: On): void {
       if (outcome === undefined && !next.signal.aborted) {
         outcome = await submitTimeout($, issue, repo)
       }
-      return { result: outcome ?? { status: next.signal.aborted ? 'dismissed' : 'timed-out' } }
+      return { result: paneResult(outcome ?? { status: next.signal.aborted ? 'dismissed' : 'timed-out' }) }
     } catch (err) {
-      return { result: { status: 'error', reason: `the merge confirmation failed: ${String(err)}` } }
+      return { result: paneResult({ status: 'error', reason: `the merge confirmation failed: ${String(err)}` }) }
     } finally {
       active = null
       outcomes.delete(issue)

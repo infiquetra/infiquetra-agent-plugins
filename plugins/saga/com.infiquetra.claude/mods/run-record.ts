@@ -443,6 +443,33 @@ export function setupInstallArgv(pluginRoot: string, tool: string, repo: string)
   return sagaScriptArgv(pluginRoot, 'saga_setup.py', ['install', '--tools', tool, '--repo', repo])
 }
 
+/**
+ * The argv that runs one named optional step. No `--repo`: the step's vectors
+ * resolve against the saga plugin root, so the pane runs from `$.plugin.root`
+ * (issue #218).
+ */
+export function setupStepArgv(pluginRoot: string, name: string): string[] {
+  return sagaScriptArgv(pluginRoot, 'saga_setup.py', ['step', '--name', name])
+}
+
+/** The setup script's path under a plugin root, in source and installed layouts alike. */
+export const SETUP_SCRIPT_SUFFIX = 'scripts/saga_setup.py'
+
+/**
+ * Whether the plugin root holds the setup script. A failed probe reads as absent, so a build or
+ * suite without `$.fs.exists` leaves the steps unrunnable instead of throwing.
+ */
+export async function setupScriptExistsWith(
+  exists: (path: string) => Promise<boolean>,
+  pluginRoot: string,
+): Promise<boolean> {
+  try {
+    return await exists(`${pluginRoot}/${SETUP_SCRIPT_SUFFIX}`)
+  } catch {
+    return false
+  }
+}
+
 /** The argv that prints the machine record's `ran` and `offered` without writing. */
 export function setupOfferStatusArgv(pluginRoot: string): string[] {
   return sagaScriptArgv(pluginRoot, 'saga_setup.py', ['offer-status'])

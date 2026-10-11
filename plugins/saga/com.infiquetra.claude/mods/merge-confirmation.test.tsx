@@ -24,6 +24,15 @@ const TOOL = 'mcp__saga__review_merge'
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
+/**
+ * The tool result as the session delivers it: a JSON string. The typeof line
+ * fails a bare-object regression the kit's own call would let through.
+ */
+const parseResult = (result: unknown): any => {
+  expect(typeof result).toBe('string')
+  return JSON.parse(result as string)
+}
+
 /** The review_view.v1 fixture with a review_state.v1 document embedded. */
 const VIEW = {
   schema: 'review_view.v1',
@@ -191,7 +200,7 @@ describe('the merge pane', () => {
       await ui.select({ key: 'merge:decision', value: 'merge-with-reason' })
       await ui.input({ key: 'merge:reason', text: 'the trace cannot reproduce' })
       await ui.press({ key: 'submit' })
-      const result = (await pending).result
+      const result = parseResult((await pending).result)
       expect(result.status).toBe('submitted')
       expect(w.answerRuns()).toHaveLength(1)
       const [call] = w.answerRuns()
@@ -224,7 +233,7 @@ describe('the merge pane', () => {
     const ui = await mountPane($, 'terminal')
     await ui.select({ key: 'fix:rf:aaa:choice', value: 'leave' })
     await ui.press({ key: 'submit' })
-    expect((await pending).result.status).toBe('submitted')
+    expect(parseResult((await pending).result).status).toBe('submitted')
     expect(w.answerRuns()).toHaveLength(1)
     expect(w.answerRuns()[0]?.argv).toEqual(expect.arrayContaining(['--repo', 'infiquetra/example']))
   })
@@ -250,7 +259,7 @@ describe('the merge pane', () => {
     expect(w.answerRuns()).toHaveLength(0)
     await ui.select({ key: 'merge:decision', value: 'stop-card' })
     await ui.press({ key: 'submit' })
-    expect((await pending).result.status).toBe('submitted')
+    expect(parseResult((await pending).result).status).toBe('submitted')
     expect(JSON.parse(w.answerRuns()[0]?.stdin ?? 'null')).toEqual({
       answers: { 'merge-blocking': { decision: 'stop-card' } },
       pane_timeout: false,
@@ -269,7 +278,7 @@ describe('the merge pane', () => {
     expect((await ui.find({ key: 'fix:rf:aaa:choice' }))?.props.value).toBe('fix-now')
     expect((await ui.find({ key: 'merge:reason' }))?.props.value).toBe('x')
     await ui.press({ key: 'dismiss' })
-    expect((await pending).result).toEqual({ status: 'dismissed' })
+    expect(parseResult((await pending).result)).toEqual({ status: 'dismissed' })
   })
 
   // Closing the pane as the person does: an inline plugin's `$.ui.close` of the
@@ -292,12 +301,12 @@ describe('the merge pane', () => {
       const byButton = await startConfirm($, w)
       const ui = await mountPane($, surface)
       await ui.press({ key: 'dismiss' })
-      expect((await byButton.pending).result).toEqual({ status: 'dismissed' })
+      expect(parseResult((await byButton.pending).result)).toEqual({ status: 'dismissed' })
 
       const byClose = await startConfirm($, w)
       await mountPane($, surface)
       await ($ as any).command.run({ command: 'close-merge' })
-      expect((await byClose.pending).result).toEqual({ status: 'dismissed' })
+      expect(parseResult((await byClose.pending).result)).toEqual({ status: 'dismissed' })
       expect(w.answerRuns()).toHaveLength(0)
     }
   })
@@ -308,7 +317,7 @@ describe('the merge pane', () => {
       w.runs.length = 0
       const { pending } = await startConfirm($, w)
       await mountPane($, surface)
-      expect((await pending).result).toEqual({ status: 'timed-out' })
+      expect(parseResult((await pending).result)).toEqual({ status: 'timed-out' })
       expect(w.sleeps()).toBe(WAIT_CAP_SECONDS)
       expect(w.answerRuns()).toHaveLength(1)
       const [call] = w.answerRuns()
@@ -321,7 +330,7 @@ describe('the merge pane', () => {
     const w = world(on, { sleepMs: 1, answersExit: 2, answersStderr: 'record is locked' })
     const { pending } = await startConfirm($, w)
     await mountPane($, 'terminal')
-    const result = (await pending).result
+    const result = parseResult((await pending).result)
     expect(result.status).toBe('error')
     expect(result.reason).toContain('record is locked')
   })
@@ -334,7 +343,7 @@ test('the tool outlasts the ten-second hook budget while the operator decides', 
   const ui = await mountPane($, 'terminal')
   await ui.select({ key: 'fix:rf:aaa:choice', value: 'leave' })
   await ui.press({ key: 'submit' })
-  expect((await pending).result.status).toBe('submitted')
+  expect(parseResult((await pending).result).status).toBe('submitted')
   expect(w.sleeps()).toBeLessThan(WAIT_CAP_SECONDS)
 })
 
@@ -342,7 +351,7 @@ describe('the tool without a pane', () => {
   test('a failing review read returns error with its detail and opens no pane', async ($, on) => {
     const w = world(on, { reviewExit: 2, reviewStderr: 'run_status: git failed' })
     const { pending } = await startConfirm($, w)
-    const result = (await pending).result
+    const result = parseResult((await pending).result)
     expect(result.status).toBe('error')
     expect(w.opens).toBe(0)
   })
@@ -353,7 +362,7 @@ describe('the tool without a pane', () => {
     newer.review.state.schema = 'review_state.v2'
     const w = world(on, { review: newer })
     const { pending } = await startConfirm($, w)
-    const result = (await pending).result
+    const result = parseResult((await pending).result)
     expect(result.status).toBe('error')
     expect(result.reason).toContain('review_state.v2')
     expect(w.opens).toBe(0)
@@ -370,7 +379,7 @@ describe('the tool without a pane', () => {
     }
     const w = world(on, { review: old })
     const { pending } = await startConfirm($, w)
-    const result = (await pending).result
+    const result = parseResult((await pending).result)
     expect(result.status).toBe('error')
     expect(result.reason).toContain('no state review')
     expect(w.opens).toBe(0)
@@ -382,14 +391,14 @@ describe('the tool without a pane', () => {
     clear.review.state.pending_choices = []
     const w = world(on, { review: clear })
     const { pending } = await startConfirm($, w)
-    expect((await pending).result).toEqual({ status: 'nothing-to-review' })
+    expect(parseResult((await pending).result)).toEqual({ status: 'nothing-to-review' })
     expect(w.opens).toBe(0)
   })
 
   test('with no terminal or desktop surface the tool is unavailable', async ($, on) => {
     const w = world(on, { surfaces: ['mobile'] })
     const { pending } = await startConfirm($, w)
-    const result = (await pending).result
+    const result = parseResult((await pending).result)
     expect(result.status).toBe('unavailable')
     expect(w.opens).toBe(0)
   })
@@ -397,21 +406,21 @@ describe('the tool without a pane', () => {
   test('a pane that cannot be placed returns not-placed', async ($, on) => {
     const w = world(on, { placed: false })
     const { pending } = await startConfirm($, w)
-    const result = (await pending).result
+    const result = parseResult((await pending).result)
     expect(result.status).toBe('not-placed')
   })
 
   test('an issue that is not one is refused without running the script', async ($, on) => {
     const w = world(on)
     const pending = $.tool.call({ tool: TOOL, issue: -2 })
-    expect((await pending).result.status).toBe('error')
+    expect(parseResult((await pending).result).status).toBe('error')
     expect(w.runs).toHaveLength(0)
   })
 
   test('a tool repository that differs from the document is refused before the pane opens', async ($, on) => {
     const w = world(on)
     const pending = $.tool.call({ tool: TOOL, issue: 103, repo: 'elsewhere/other' })
-    const result = (await pending).result
+    const result = parseResult((await pending).result)
     expect(result.status).toBe('error')
     expect(result.reason).toMatch(/does not match the review document/)
     expect(w.opens).toBe(0)
@@ -421,7 +430,7 @@ describe('the tool without a pane', () => {
   test('a malformed tool repository is refused rather than silently ignored', async ($, on) => {
     const w = world(on)
     const pending = $.tool.call({ tool: TOOL, issue: 103, repo: 'not a repo' })
-    const result = (await pending).result
+    const result = parseResult((await pending).result)
     expect(result.status).toBe('error')
     expect(result.reason).toMatch(/does not match the review document/)
     expect(w.opens).toBe(0)

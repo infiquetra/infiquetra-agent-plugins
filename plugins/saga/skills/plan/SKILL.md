@@ -118,7 +118,7 @@ admission logs it as the judgment's label when the answers are recorded.
    `staffing_overrides` or `lens_declaration` is outstanding, call it with `{"issue": <N>}`
    before the message** instead of printing the two tables. It opens a review pane with both
    tables and a control per row, and the operator's answers are recorded through admission itself,
-   which validates them. Read the `status` it returns:
+   which validates them. Parse the JSON string it returns to read its `status`:
 
    - `submitted`: both answers are already in the record, and its `answers` field shows them.
      Never retype or re-record them; put only the other printed questions in the one message.

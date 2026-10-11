@@ -1078,7 +1078,7 @@ pull request's status to the issue via the extended `issue_progress.py` CLI (`--
    **In Claude Code, when the tool `mcp__saga__review_merge` is listed and
    the operator has not disabled panes, call it with `{"issue": N, "repo": R}` —
    `R` the checkout's owner/name — before the message instead of printing the
-   numbered questions, and read the `status` it returns.** Submitted means the
+   numbered questions, and parse the JSON string it returns to read its `status`.** Submitted means the
    answers are recorded — never retype, re-ask or re-record them. Dismissed,
    not-placed, unavailable, nothing-to-review or error means nothing was
    recorded: run `review_state.py render --issue N --repo R --render markdown`,

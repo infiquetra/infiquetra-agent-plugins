@@ -28,6 +28,8 @@ import {
   setupInstallArgv,
   setupOfferStatusArgv,
   setupRecordOfferArgv,
+  setupScriptExistsWith,
+  setupStepArgv,
   setupSurveyArgv,
 } from './run-record.ts'
 
@@ -424,6 +426,21 @@ describe('the setup survey and offer readers', () => {
     ])
     expect(setupOfferStatusArgv('/root')).toEqual(['python3', '/root/scripts/saga_setup.py', 'offer-status'])
     expect(setupRecordOfferArgv('/root')).toEqual(['python3', '/root/scripts/saga_setup.py', 'record-offer'])
+    expect(setupStepArgv('/root', 'outcome-schedule')).toEqual([
+      'python3',
+      '/root/scripts/saga_setup.py',
+      'step',
+      '--name',
+      'outcome-schedule',
+    ])
+  })
+
+  test('the setup script probe reads the marker under the plugin root', async () => {
+    const exists = async (path: string) => path === '/root/scripts/saga_setup.py'
+    expect(await setupScriptExistsWith(exists, '/root')).toBe(true)
+    expect(await setupScriptExistsWith(exists, '/elsewhere')).toBe(false)
+    expect(await setupScriptExistsWith(async () => false, '/root')).toBe(false)
+    expect(await setupScriptExistsWith(async () => { throw new Error('no fs') }, '/root')).toBe(false)
   })
 
   test('parses a survey and an offer status at exit 0', async () => {

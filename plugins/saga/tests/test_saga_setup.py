@@ -850,7 +850,7 @@ def test_extension_step_runs_only_when_named(tmp_path: Path, capsys: pytest.Capt
         return Result(0, "done\n")
 
     code, out, err = _run(
-        ["step", "--name", "sample", "--repo", str(repo), "--extensions", str(extensions)],
+        ["step", "--name", "sample", "--extensions", str(extensions)],
         capsys,
         runner=runner,
     )
@@ -882,7 +882,7 @@ def test_extension_step_runs_only_when_named(tmp_path: Path, capsys: pytest.Capt
     assert ["run-step"] not in calls
     calls.clear()
     code, _out, err = _run(
-        ["step", "--name", "missing", "--repo", str(repo), "--extensions", str(extensions)],
+        ["step", "--name", "missing", "--extensions", str(extensions)],
         capsys,
         runner=runner,
     )
@@ -1428,7 +1428,7 @@ def test_survey_reports_langfuse_queue(tmp_path: Path, capsys: pytest.CaptureFix
 
 
 SCHEDULE_LABEL = "com.infiquetra.saga.outcome-job"
-SCHEDULE_RUN = ["python3", "plugins/saga/scripts/outcome_job.py", "install-schedule"]
+SCHEDULE_RUN = ["python3", "scripts/outcome_job.py", "install-schedule"]
 SCHEDULE_DONE = ["launchctl", "list", SCHEDULE_LABEL]
 
 
@@ -1475,8 +1475,6 @@ def test_schedule_step_installs_with_approval(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """`step --name` runs the real installer, which unloads and bootstraps the label."""
-    repo = tmp_path / "repo"
-    repo.mkdir()
     home = tmp_path / "home"
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -1499,8 +1497,7 @@ def test_schedule_step_installs_with_approval(
         "questions: []\n",
     )
     code, out, err = _run(
-        ["step", "--name", "outcome-schedule", "--repo", str(repo),
-         "--extensions", str(extensions)],
+        ["step", "--name", "outcome-schedule", "--extensions", str(extensions)],
         capsys,
         runner=setup.production_runner,
         env={"PATH": str(bin_dir)},
@@ -1521,6 +1518,55 @@ def test_schedule_step_installs_with_approval(
         f"bootstrap {domain} {plist}",
     ]
     assert "no repository registered" in out
+
+
+def _step_cwd_in_layout(tmp_path: Path, *parts: str) -> str:
+    """Run `step --name probe` from a script copy in a tmpdir plugin layout.
+
+    The copy's own location decides the plugin root, so the layout under
+    ``tmp_path`` stands in for an installed package or a source checkout. The
+    probe vector prints its working directory; the run starts in ``tmp_path``
+    itself to prove the invocation directory is never used.
+    """
+    root = tmp_path.joinpath(*parts)
+    scripts = root / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "saga_setup.py").write_bytes((SCRIPTS / "saga_setup.py").read_bytes())
+    extensions = root / "extensions.yaml"
+    extensions.write_text(
+        "schema: setup_extensions.v1\n"
+        "steps:\n"
+        "  - name: probe\n"
+        "    summary: Print the working directory.\n"
+        f"    run: {json.dumps([sys.executable, '-c', 'import os; print(os.getcwd())'])}\n"
+        "questions: []\n",
+        encoding="utf-8",
+    )
+    env = dict(os.environ, PYTHONPATH=str(SCRIPTS))
+    proc = subprocess.run(
+        [sys.executable, str(scripts / "saga_setup.py"), "step",
+         "--name", "probe", "--extensions", str(extensions)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
+    [line] = proc.stdout.strip().splitlines()
+    return line
+
+
+def test_step_runs_from_its_plugin_root_in_an_installed_layout(tmp_path: Path) -> None:
+    """`<tmp>/saga/9.9.9` stands in for the installed package cache."""
+    line = _step_cwd_in_layout(tmp_path, "saga", "9.9.9")
+    assert line == f"probe: {(tmp_path / 'saga' / '9.9.9').resolve()}"
+
+
+def test_step_runs_from_its_plugin_root_in_a_source_layout(tmp_path: Path) -> None:
+    """`<tmp>/plugins/saga` stands in for a source checkout."""
+    line = _step_cwd_in_layout(tmp_path, "plugins", "saga")
+    assert line == f"probe: {(tmp_path / 'plugins' / 'saga').resolve()}"
 
 
 def test_schedule_registry_row_shape() -> None:

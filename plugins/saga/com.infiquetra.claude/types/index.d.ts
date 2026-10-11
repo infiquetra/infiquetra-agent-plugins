@@ -490,10 +490,20 @@ export type SagaSetupToolRow = {
   [field: string]: unknown
 }
 
+/** One optional setup step as the survey reports it: its name, summary and done state. */
+export type SagaSetupStep = {
+  name: string
+  summary: string
+  done: boolean
+  [field: string]: unknown
+}
+
 /** What `saga_setup.py survey --format json` prints. */
 export type SagaSetupSurvey = {
   schema: SagaSetupSurveySchema
   tools: SagaSetupToolRow[]
+  /** The optional steps; absent on survey documents from before issue #214. */
+  steps?: SagaSetupStep[]
   [field: string]: unknown
 }
 
@@ -510,12 +520,21 @@ export type SagaSetupRowProgress = {
   output: string
 }
 
-/** The setup pane's session state: the survey it draws, the ticks, and the Install progress. */
+/** One step's run progress while its verb runs. Kept apart from Install's progress, which Done submits. */
+export type SagaSetupStepProgress = {
+  state: 'running' | 'done' | 'failed'
+  output: string
+}
+
+/** The setup pane's session state: the survey it draws, the ticks, the step checkout, and both progresses. */
 export type SagaSetupReview = {
   repo: string
   survey: SagaSetupSurvey
   ticked: Record<string, boolean>
   progress: Record<string, SagaSetupRowProgress> | null
+  /** The saga plugin root steps run in, or null when its setup script is missing: steps then render unrunnable. */
+  checkout: string | null
+  stepProgress: Record<string, SagaSetupStepProgress>
   error: string | null
 }
 
