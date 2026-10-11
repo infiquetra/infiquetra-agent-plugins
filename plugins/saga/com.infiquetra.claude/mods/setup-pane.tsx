@@ -91,6 +91,12 @@ let outcome: SagaSetupOutcome | undefined
 let active = false
 
 /**
+ * Which opener drew the active setup, set beside `active` so the close handler
+ * reads it with no await. The pane state carries the same answer for the render.
+ */
+let activeOpener: 'tool' | 'command' | null = null
+
+/**
  * The Install run's epoch. Each Install bumps it and orphans any older loop,
  * so a loop outlived by its pane can never mark another setup's rows.
  */
@@ -168,6 +174,7 @@ async function prepareSetup($: EngineInterface, repo: string): Promise<SetupOpen
  */
 async function clearCommandSetup($: EngineInterface): Promise<void> {
   active = false
+  activeOpener = null
   installEpoch += 1
   stepEpoch += 1
   await update($, setup, () => null)
@@ -229,6 +236,7 @@ export function registerSetupPane(on: On): void {
     }
 
     active = true
+    activeOpener = 'tool'
     outcome = undefined
     await update($, setup, () => ({
       repo,
@@ -256,6 +264,7 @@ export function registerSetupPane(on: On): void {
       return { result: paneResult({ status: 'error', reason: `the setup pane failed: ${String(err)}` }) }
     } finally {
       active = false
+      activeOpener = null
       outcome = undefined
       installEpoch += 1
       stepEpoch += 1
@@ -278,42 +287,51 @@ export function registerSetupPane(on: On): void {
       return { text: `setup-view: nothing to set up: ${prepared.reason}.` }
     }
     active = true
+    activeOpener = 'command'
     outcome = undefined
-    if (!prepared.ok) {
-      await update($, setup, () => ({
-        repo,
-        survey: EMPTY_SURVEY,
-        ticked: {},
-        progress: null,
-        checkout: null,
-        stepProgress: {},
-        error: null,
-        openedBy: 'command',
-        surveyError: prepared.reason,
-      }))
-    } else {
-      await update($, setup, () => ({
-        repo,
-        survey: prepared.survey,
-        ticked: initialTicks(prepared.survey),
-        progress: null,
-        checkout: prepared.checkout,
-        stepProgress: {},
-        error: null,
-        openedBy: 'command',
-        surveyError: null,
-      }))
-    }
-    const opened = await $.ui.open({ id: PANE, title: 'Setup', focus: true })
-    if (!opened.isPlaced) {
-      await clearCommandSetup($)
-      return { text: `setup-view: the pane could not be placed: ${opened.reason}` }
-    }
-    if (!prepared.ok) {
-      return { text: `setup-view: the survey failed: ${prepared.reason}` }
-    }
-    return {
-      text: `setup-view: ${prepared.survey.tools.length} tools, ${surveySteps(prepared.survey).length} steps.`,
+    let openedPane = false
+    try {
+      if (!prepared.ok) {
+        await update($, setup, () => ({
+          repo,
+          survey: EMPTY_SURVEY,
+          ticked: {},
+          progress: null,
+          checkout: null,
+          stepProgress: {},
+          error: null,
+          openedBy: 'command',
+          surveyError: prepared.reason,
+        }))
+      } else {
+        await update($, setup, () => ({
+          repo,
+          survey: prepared.survey,
+          ticked: initialTicks(prepared.survey),
+          progress: null,
+          checkout: prepared.checkout,
+          stepProgress: {},
+          error: null,
+          openedBy: 'command',
+          surveyError: null,
+        }))
+      }
+      const opened = await $.ui.open({ id: PANE, title: 'Setup', focus: true })
+      if (!opened.isPlaced) {
+        await $.ui.close({ id: PANE })
+        return { text: `setup-view: the pane could not be placed: ${opened.reason}` }
+      }
+      openedPane = true
+      if (!prepared.ok) {
+        return { text: `setup-view: the survey failed: ${prepared.reason}` }
+      }
+      return {
+        text: `setup-view: ${prepared.survey.tools.length} tools, ${surveySteps(prepared.survey).length} steps.`,
+      }
+    } catch (err) {
+      return { text: `setup-view: the setup pane failed: ${String(err)}` }
+    } finally {
+      if (!openedPane) await clearCommandSetup($)
     }
   })
 
@@ -321,10 +339,15 @@ export function registerSetupPane(on: On): void {
     // Every close but the tool's own after an outcome: the operator's close mark or Escape.
     // A tool-opened close answers the waiting call; a command-opened close clears the
     // state, since no call waits on it. The tool call's own `finally` clears first.
+    // The command branch clears synchronously, before the first await, so no later
+    // opener answers "already open" for a pane that is already gone.
     if (active && outcome === undefined) {
-      const current = await read($, setup)
-      if (current !== null && current.openedBy === 'command') {
-        await clearCommandSetup($)
+      if (activeOpener === 'command') {
+        active = false
+        activeOpener = null
+        installEpoch += 1
+        stepEpoch += 1
+        await update($, setup, () => null)
       } else {
         outcome = { status: 'dismissed' }
       }
@@ -363,11 +386,16 @@ export function registerSetupPane(on: On): void {
         return { ...current, stepProgress: { ...current.stepProgress, [name]: progress } }
       })
 
-    /** Re-read the survey after an action, keeping the operator's ticks for surviving rows. */
-    const refreshSurvey = async () => {
+    /**
+     * Re-read the survey after an action, keeping the operator's ticks for surviving rows.
+     * `stillCurrent` is the caller's epoch check, run again after the read: a close and a
+     * reopen of the same checkout landing mid-read must not write into the new pane.
+     */
+    const refreshSurvey = async (stillCurrent: () => boolean) => {
       const before = await read($, setup)
       if (!before || before.repo !== repo) return
       const reread = await readSetupSurveyWith((argv) => $.process.run(argv), $.plugin.root, before.repo)
+      if (!stillCurrent()) return
       const current = await read($, setup)
       if (!current || current.repo !== repo) return
       if (!reread.ok) {
@@ -419,19 +447,19 @@ export function registerSetupPane(on: On): void {
         } catch (err) {
           if (epoch !== installEpoch) return
           await markRow(id, { state: 'failed', output: String(err) })
-          if (epoch === installEpoch) await refreshSurvey()
+          if (epoch === installEpoch) await refreshSurvey(() => epoch === installEpoch)
           return
         }
         if (epoch !== installEpoch) return
         const output = `${ran.stdout}${ran.stderr}`.trim()
         if (ran.exitCode !== 0) {
           await markRow(id, { state: 'failed', output: output === '' ? `install exited ${ran.exitCode}` : output })
-          if (epoch === installEpoch) await refreshSurvey()
+          if (epoch === installEpoch) await refreshSurvey(() => epoch === installEpoch)
           return
         }
         await markRow(id, { state: 'done', output })
       }
-      if (epoch === installEpoch) await refreshSurvey()
+      if (epoch === installEpoch) await refreshSurvey(() => epoch === installEpoch)
     }
     const runStep = async (name: string) => {
       const current = await read($, setup)
@@ -447,18 +475,18 @@ export function registerSetupPane(on: On): void {
       } catch (err) {
         if (epoch !== stepEpoch) return
         await markStep(name, { state: 'failed', output: String(err) })
-        if (epoch === stepEpoch) await refreshSurvey()
+        if (epoch === stepEpoch) await refreshSurvey(() => epoch === stepEpoch)
         return
       }
       if (epoch !== stepEpoch) return
       const output = `${ran.stdout}${ran.stderr}`.trim()
       if (ran.exitCode !== 0) {
         await markStep(name, { state: 'failed', output: output === '' ? `step exited ${ran.exitCode}` : output })
-        if (epoch === stepEpoch) await refreshSurvey()
+        if (epoch === stepEpoch) await refreshSurvey(() => epoch === stepEpoch)
         return
       }
       await markStep(name, { state: 'done', output })
-      if (epoch === stepEpoch) await refreshSurvey()
+      if (epoch === stepEpoch) await refreshSurvey(() => epoch === stepEpoch)
     }
     const done = async () => {
       const current = await read($, setup)

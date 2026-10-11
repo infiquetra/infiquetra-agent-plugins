@@ -46,6 +46,8 @@ type World = {
   registered: { name: string; description?: string; immediate?: boolean }[]
   /** The texts handed to the session prompt. */
   fills: string[]
+  /** How many survey reads the world has answered. */
+  surveyCalls: number
   store: Record<string, unknown>
   /** The `saga_setup.py install` calls, in order. */
   installs: () => Run[]
@@ -77,6 +79,10 @@ type Setup = {
   sleepMs?: number
   /** When false the prompt refuses filled text, like a dialog or headless session. */
   isFilled?: boolean
+  /** Runs before the nth survey answers, so a test can close and reopen mid-read. */
+  onSurveyCall?: (count: number, $: any) => Promise<void>
+  /** When true `ui.open` throws, like a surface that cannot place the pane. */
+  openThrows?: boolean
 }
 
 const ran = (exitCode: number, stdout: string, stderr = '') => ({
@@ -96,6 +102,7 @@ function world(on: On, initial: Setup = {}): World {
     opens: 0,
     registered: [],
     fills: [],
+    surveyCalls: 0,
     store: {},
     installs: () => w.runs.filter((run) => run.argv.includes('install')),
     stepRuns: () => w.runs.filter((run) => run.argv.includes('step')),
@@ -115,6 +122,7 @@ function world(on: On, initial: Setup = {}): World {
   hook('fs.stat', () => ({ value: { mtimeMs: 1 } }))
   hook('fs.exists', (_$: unknown, e: { path: string }) => ({ value: w.setup.exists?.(e.path) ?? false }))
   hook('ui.open', () => {
+    if (w.setup.openThrows === true) throw new Error('the pane could not open')
     w.opens += 1
     return { value: w.setup.placed === false ? { isPlaced: false, reason: 'narrow' } : { isPlaced: true } }
   })
@@ -171,6 +179,14 @@ function world(on: On, initial: Setup = {}): World {
       const name = e.argv[e.argv.indexOf('--name') + 1] ?? ''
       const result = setup.steps?.[name] ?? { exit: 0, stdout: `ran ${name}\n` }
       return ran(result.exit, result.stdout ?? '', result.stderr ?? '')
+    }
+    if (e.argv.includes('survey')) {
+      w.surveyCalls += 1
+      // Snapshot the answer before the hook: like a real survey process, the
+      // read returns what was there when it ran, not a later reassignment.
+      const answer = ran(setup.surveyExit ?? 0, JSON.stringify(setup.survey ?? SURVEY), setup.surveyStderr ?? '')
+      await w.setup.onSurveyCall?.(w.surveyCalls, _$)
+      return answer
     }
     return ran(setup.surveyExit ?? 0, JSON.stringify(setup.survey ?? SURVEY), setup.surveyStderr ?? '')
   })
@@ -681,6 +697,19 @@ describe('the setup-view command', () => {
     await ui.press({ key: 'close' })
   })
 
+  test('a thrown open answers as text and leaves setup usable', async ($, on) => {
+    const w = world(on, { openThrows: true })
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    const failed = await setupView($)
+    expect(failed.text).toContain('the setup pane failed')
+    expect(w.opens).toBe(0)
+    w.setup.openThrows = false
+    const ran = await setupView($)
+    expect(ran.text).toBe('setup-view: 3 tools, 0 steps.')
+    const ui = await mountPane($, 'terminal')
+    await ui.press({ key: 'close' })
+  })
+
   test('an empty survey answers nothing to set up and opens no pane', async ($, on) => {
     const w = world(on, { survey: { ...SURVEY, tools: [], steps: [] } })
     await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
@@ -689,18 +718,53 @@ describe('the setup-view command', () => {
     expect(w.opens).toBe(0)
   })
 
+  test('a survey refresh that lands after a reopen keeps the new pane', { plugins: [closer] }, async ($, on) => {
+    const STALE = { ...SURVEY, tools: [{ ...SURVEY.tools[0]!, status: 'installed', version: '1.0' }, SURVEY.tools[1]!, SURVEY.tools[2]!] }
+    const FRESH = { ...SURVEY, tools: [SURVEY.tools[0]!, SURVEY.tools[2]!] }
+    // The refresh survey waits here; the test body closes and reopens first. The
+    // stub only waits — the host refuses nested engine calls from inside a hook.
+    let releaseRefresh!: () => void
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve
+    })
+    const w = world(on, {
+      onSurveyCall: async (count) => {
+        if (count === 2) await refreshGate
+      },
+    })
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+    await setupView($)
+    const ui = await mountPane($, 'terminal')
+    w.setup.survey = STALE
+    const installing = ui.press({ key: 'install' })
+    for (let i = 0; i < 400 && w.surveyCalls < 2; i++) await delay(5)
+    expect(w.surveyCalls).toBe(2)
+    await ($ as any).command.run({ command: 'close-setup' })
+    w.setup.survey = FRESH
+    let ran = await setupView($)
+    for (let i = 0; i < 40 && ran.text.includes('already open'); i++) {
+      await delay(5)
+      ran = await setupView($)
+    }
+    expect(ran.text).toBe('setup-view: 2 tools, 0 steps.')
+    expect(w.opens).toBe(2)
+    releaseRefresh()
+    await installing
+    // The stale refresh landed after the reopen: the pane shows the fresh survey.
+    const ui2 = await mountPane($, 'terminal')
+    expect((await ui2.find({ type: 'Button', key: 'tick:saga-ruff' }))?.props.label).toBe('[x] saga-ruff  missing  correctness')
+    expect(await ui2.find({ type: 'Button', key: 'tick:saga-mypy' })).toBeUndefined()
+    await ui2.press({ key: 'close' })
+  })
+
   test('closing the command-opened pane as the person does clears it', { plugins: [closer] }, async ($, on) => {
     const w = world(on)
     await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
     await setupView($)
     expect(w.opens).toBe(1)
     await ($ as any).command.run({ command: 'close-setup' })
-    // The close handler clears asynchronously; a busy answer is retried, never asserted.
-    let ran = await setupView($)
-    for (let i = 0; i < 40 && ran.text.includes('already open'); i++) {
-      await delay(5)
-      ran = await setupView($)
-    }
+    // The handler clears before its first await: the first answer opens fresh.
+    const ran = await setupView($)
     expect(ran.text).toBe('setup-view: 3 tools, 0 steps.')
     expect(w.opens).toBe(2)
     const ui = await mountPane($, 'terminal')
