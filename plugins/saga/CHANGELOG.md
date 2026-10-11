@@ -4,6 +4,12 @@
 
 ### Added
 
+- Issue #221: a `/setup-view` command, registered by saga's Claude Code mod, that opens the setup
+  pane at once with no agent turn: the pane runs the survey itself, installs the ticked tools, and
+  runs the optional steps from the saga plugin root. After each action the pane re-surveys so done
+  states are current, and a failed row offers Ask Claude, which hands the row, the command, and the
+  output tail to the session prompt. `/saga:setup` and `mcp__saga__setup` behave as after #218; the
+  setup skill and the README name the new command for Claude Code users.
 - Issue #167: the release step records its merged state with the review run it tested, `/qa`
   names that run and posts each failure as its miss, and a daily launchd job links later
   defects and reverts to the runs that passed them, queues them where the corpus screening

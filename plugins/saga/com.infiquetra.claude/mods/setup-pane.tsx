@@ -27,6 +27,16 @@
 //
 // Waiting for a person: the tool waits on `$.process.run(['sleep', '1'])`, one
 // second at a time, up to WAIT_CAP_SECONDS (LEARNINGS.md, 2026-10-04).
+//
+// The command path (issue #221): `/setup-view`, registered beside the tool,
+// opens this same pane with no tool call and no agent turn. One shared open
+// helper reads the survey and probes the checkout for both openers; the pane
+// state remembers which opener drew it (`openedBy`). The command hook answers
+// `{text}` at once and never waits; closing a command-opened pane clears the
+// state and leaves no pending tool call, while a tool-opened close still sets
+// `dismissed` for the waiting call. After an Install run or a step settles,
+// the shared runners re-survey so done states are current, and a failed row
+// offers Ask Claude through the session prompt.
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
@@ -46,6 +56,12 @@ export const PANE = 'saga-setup'
 
 /** The tool's short name; the model calls it as `mcp__saga__setup`. */
 export const TOOL = 'setup'
+
+/** The setup command's name; the operator runs it as `/setup-view` (issue #221). */
+export const COMMAND = 'setup-view'
+
+/** The survey a command-opened pane carries when the survey failed: drawn never, read never. */
+const EMPTY_SURVEY: SagaSetupSurvey = { schema: 'setup_survey.v1', tools: [], steps: [] }
 
 /** How long the tool waits for the operator before it returns timed-out: thirty minutes. */
 export const WAIT_CAP_SECONDS = 1800
@@ -73,6 +89,12 @@ let outcome: SagaSetupOutcome | undefined
 
 /** Whether a setup pane is open. One setup at a time. */
 let active = false
+
+/**
+ * Which opener drew the active setup, set beside `active` so the close handler
+ * reads it with no await. The pane state carries the same answer for the render.
+ */
+let activeOpener: 'tool' | 'command' | null = null
 
 /**
  * The Install run's epoch. Each Install bumps it and orphans any older loop,
@@ -120,6 +142,45 @@ export function shownOutput(output: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Shared open: one survey read and checkout probe for both openers (issue #221)
+// ---------------------------------------------------------------------------
+
+/** What the shared open read: the survey and the step checkout, or why there is no pane. */
+type SetupOpen =
+  | { ok: true; survey: SagaSetupSurvey; checkout: string | null }
+  | { ok: false; reason: string; empty: boolean }
+
+/**
+ * Read the survey and probe the step checkout for `repo`. Both the tool call
+ * and the setup-view command open through this alone, so the survey
+ * implementation is one function and its failure words are one string.
+ */
+async function prepareSetup($: EngineInterface, repo: string): Promise<SetupOpen> {
+  const read = await readSetupSurveyWith((argv) => $.process.run(argv), $.plugin.root, repo)
+  if (!read.ok) {
+    return { ok: false, reason: `saga_setup survey failed (${read.reason}): ${read.detail}`, empty: false }
+  }
+  if (read.survey.tools.length === 0 && surveySteps(read.survey).length === 0) {
+    return { ok: false, reason: 'the survey lists no tools and no steps', empty: true }
+  }
+  const runnable = await setupScriptExistsWith((path) => $.fs.exists(path), $.plugin.root)
+  return { ok: true, survey: read.survey, checkout: runnable ? $.plugin.root : null }
+}
+
+/**
+ * Clear a command-opened setup: no call waits on it, so `active`, the epochs
+ * and the state go now. The tool path never calls this; its `finally` owns
+ * that cleanup.
+ */
+async function clearCommandSetup($: EngineInterface): Promise<void> {
+  active = false
+  activeOpener = null
+  installEpoch += 1
+  stepEpoch += 1
+  await update($, setup, () => null)
+}
+
+// ---------------------------------------------------------------------------
 // The hooks
 // ---------------------------------------------------------------------------
 
@@ -142,6 +203,11 @@ export function registerSetupPane(on: On): void {
         },
       },
     })
+    await $.command.register({
+      name: COMMAND,
+      description: "Open the setup pane: survey this checkout's tools, install them, and run the optional steps",
+      immediate: true,
+    })
     const out = await next(e)
     await maybeOfferSetup($)
     return out
@@ -161,26 +227,27 @@ export function registerSetupPane(on: On): void {
     const input = (e as { repo?: unknown }).repo
     const repo = typeof input === 'string' && input !== '' ? input : cwd
 
-    const read = await readSetupSurveyWith((argv) => $.process.run(argv), $.plugin.root, repo)
-    if (!read.ok) {
-      return { result: paneResult({ status: 'error', reason: `saga_setup survey failed (${read.reason}): ${read.detail}` }) }
-    }
-    if (read.survey.tools.length === 0 && surveySteps(read.survey).length === 0) {
+    const prepared = await prepareSetup($, repo)
+    if (!prepared.ok && prepared.empty) {
       return { result: paneResult({ status: 'nothing-to-review' }) }
     }
-    const runnable = await setupScriptExistsWith((path) => $.fs.exists(path), $.plugin.root)
-    const checkout = runnable ? $.plugin.root : null
+    if (!prepared.ok) {
+      return { result: paneResult({ status: 'error', reason: prepared.reason }) }
+    }
 
     active = true
+    activeOpener = 'tool'
     outcome = undefined
     await update($, setup, () => ({
       repo,
-      survey: read.survey,
-      ticked: initialTicks(read.survey),
+      survey: prepared.survey,
+      ticked: initialTicks(prepared.survey),
       progress: null,
-      checkout,
+      checkout: prepared.checkout,
       stepProgress: {},
       error: null,
+      openedBy: 'tool',
+      surveyError: null,
     }))
     try {
       const opened = await $.ui.open({ id: PANE, title: 'Setup', focus: true })
@@ -197,6 +264,7 @@ export function registerSetupPane(on: On): void {
       return { result: paneResult({ status: 'error', reason: `the setup pane failed: ${String(err)}` }) }
     } finally {
       active = false
+      activeOpener = null
       outcome = undefined
       installEpoch += 1
       stepEpoch += 1
@@ -205,9 +273,85 @@ export function registerSetupPane(on: On): void {
     }
   })
 
-  on('ui.close', { id: PANE }, ($, e, next) => {
+  on('command.run', { command: 'setup-view' }, async ($, e) => {
+    if (active) {
+      return { text: 'setup-view: a setup pane is already open' }
+    }
+    const surfaces = await $.session.surfaces()
+    if (!surfaces.some((surface) => surface === 'terminal' || surface === 'desktop')) {
+      return { text: 'setup-view: no terminal or desktop surface is attached to draw the pane' }
+    }
+    const repo = await $.session.cwd()
+    const prepared = await prepareSetup($, repo)
+    if (!prepared.ok && prepared.empty) {
+      return { text: `setup-view: nothing to set up: ${prepared.reason}.` }
+    }
+    active = true
+    activeOpener = 'command'
+    outcome = undefined
+    let openedPane = false
+    try {
+      if (!prepared.ok) {
+        await update($, setup, () => ({
+          repo,
+          survey: EMPTY_SURVEY,
+          ticked: {},
+          progress: null,
+          checkout: null,
+          stepProgress: {},
+          error: null,
+          openedBy: 'command',
+          surveyError: prepared.reason,
+        }))
+      } else {
+        await update($, setup, () => ({
+          repo,
+          survey: prepared.survey,
+          ticked: initialTicks(prepared.survey),
+          progress: null,
+          checkout: prepared.checkout,
+          stepProgress: {},
+          error: null,
+          openedBy: 'command',
+          surveyError: null,
+        }))
+      }
+      const opened = await $.ui.open({ id: PANE, title: 'Setup', focus: true })
+      if (!opened.isPlaced) {
+        await $.ui.close({ id: PANE })
+        return { text: `setup-view: the pane could not be placed: ${opened.reason}` }
+      }
+      openedPane = true
+      if (!prepared.ok) {
+        return { text: `setup-view: the survey failed: ${prepared.reason}` }
+      }
+      return {
+        text: `setup-view: ${prepared.survey.tools.length} tools, ${surveySteps(prepared.survey).length} steps.`,
+      }
+    } catch (err) {
+      return { text: `setup-view: the setup pane failed: ${String(err)}` }
+    } finally {
+      if (!openedPane) await clearCommandSetup($)
+    }
+  })
+
+  on('ui.close', { id: PANE }, async ($, e, next) => {
     // Every close but the tool's own after an outcome: the operator's close mark or Escape.
-    if (active && outcome === undefined) outcome = { status: 'dismissed' }
+    // A tool-opened close answers the waiting call; a command-opened close clears the
+    // state, since no call waits on it. The tool call's own `finally` clears first.
+    // The command branch clears synchronously, before the first await, so no later
+    // opener answers "already open" for a pane that is already gone.
+    if (active && outcome === undefined) {
+      if (activeOpener === 'command') {
+        active = false
+        activeOpener = null
+        installEpoch += 1
+        stepEpoch += 1
+        await update($, setup, () => null)
+      } else {
+        outcome = { status: 'dismissed' }
+      }
+    }
     return next(e)
   })
 
@@ -242,6 +386,44 @@ export function registerSetupPane(on: On): void {
         return { ...current, stepProgress: { ...current.stepProgress, [name]: progress } }
       })
 
+    /**
+     * Re-read the survey after an action, keeping the operator's ticks for surviving rows.
+     * `stillCurrent` is the caller's epoch check, run again after the read: a close and a
+     * reopen of the same checkout landing mid-read must not write into the new pane.
+     */
+    const refreshSurvey = async (stillCurrent: () => boolean) => {
+      const before = await read($, setup)
+      if (!before || before.repo !== repo) return
+      const reread = await readSetupSurveyWith((argv) => $.process.run(argv), $.plugin.root, before.repo)
+      if (!stillCurrent()) return
+      const current = await read($, setup)
+      if (!current || current.repo !== repo) return
+      if (!reread.ok) {
+        $.ui.toast(`setup-view: the survey refresh failed (${reread.reason}): ${reread.detail}`)
+        return
+      }
+      await update($, setup, (shown) => {
+        if (!shown || shown.repo !== repo) return shown
+        const ticked: Record<string, boolean> = {}
+        for (const row of reread.survey.tools) {
+          ticked[row.id] = shown.ticked[row.id] ?? (row.has_install && row.status !== 'installed')
+        }
+        return { ...shown, survey: reread.survey, ticked }
+      })
+    }
+
+    /** Hand a failed row to the session prompt: the row, the command as run, and the output tail. */
+    const askClaude = async (id: string, command: string, output: string) => {
+      const filled = await $.prompt.fill({ text: `setup ${id} failed: ${command}\n${shownOutput(output)}`, mode: 'insert' })
+      if (!filled.isFilled) $.ui.toast('setup-view: the prompt cannot take text right now')
+    }
+
+    /** Close a command-opened pane: nothing waits on it, so the state goes with it. */
+    const closePane = async () => {
+      await clearCommandSetup($)
+      await $.ui.close({ id: PANE })
+    }
+
     const install = async () => {
       const current = await read($, setup)
       if (!current || current.repo !== repo || current.progress !== null) return
@@ -265,16 +447,19 @@ export function registerSetupPane(on: On): void {
         } catch (err) {
           if (epoch !== installEpoch) return
           await markRow(id, { state: 'failed', output: String(err) })
+          if (epoch === installEpoch) await refreshSurvey(() => epoch === installEpoch)
           return
         }
         if (epoch !== installEpoch) return
         const output = `${ran.stdout}${ran.stderr}`.trim()
         if (ran.exitCode !== 0) {
           await markRow(id, { state: 'failed', output: output === '' ? `install exited ${ran.exitCode}` : output })
+          if (epoch === installEpoch) await refreshSurvey(() => epoch === installEpoch)
           return
         }
         await markRow(id, { state: 'done', output })
       }
+      if (epoch === installEpoch) await refreshSurvey(() => epoch === installEpoch)
     }
     const runStep = async (name: string) => {
       const current = await read($, setup)
@@ -290,15 +475,18 @@ export function registerSetupPane(on: On): void {
       } catch (err) {
         if (epoch !== stepEpoch) return
         await markStep(name, { state: 'failed', output: String(err) })
+        if (epoch === stepEpoch) await refreshSurvey(() => epoch === stepEpoch)
         return
       }
       if (epoch !== stepEpoch) return
       const output = `${ran.stdout}${ran.stderr}`.trim()
       if (ran.exitCode !== 0) {
         await markStep(name, { state: 'failed', output: output === '' ? `step exited ${ran.exitCode}` : output })
+        if (epoch === stepEpoch) await refreshSurvey(() => epoch === stepEpoch)
         return
       }
       await markStep(name, { state: 'done', output })
+      if (epoch === stepEpoch) await refreshSurvey(() => epoch === stepEpoch)
     }
     const done = async () => {
       const current = await read($, setup)
@@ -315,6 +503,18 @@ export function registerSetupPane(on: On): void {
     const dismiss = async () => {
       outcome = { status: 'dismissed' }
       await $.ui.close({ id: PANE })
+    }
+
+    if (state.surveyError !== null) {
+      return (
+        <Box flexDirection="column" width={e.props.bodyColumns}>
+          <Text>The setup survey failed.</Text>
+          <Text dimColor>{shownOutput(state.surveyError)}</Text>
+          <Box key="actions" flexDirection="row" columnGap={2} marginTop={1}>
+            <Button key="close" label="Close" onPress={() => closePane()} />
+          </Box>
+        </Box>
+      )
     }
 
     const running = state.progress !== null && Object.values(state.progress).some((row) => row.state === 'installing' || row.state === 'queued')
@@ -342,6 +542,17 @@ export function registerSetupPane(on: On): void {
                 {`  ${state.progress[row.id]?.state}: ${shownOutput(state.progress[row.id]?.output ?? '')}`}
               </Text>
             )}
+            {state.progress?.[row.id]?.state === 'failed' && (
+              <Button
+                key={`ask:${row.id}`}
+                label="Ask Claude"
+                plain
+                onPress={async () => {
+                  const current = await read($, setup)
+                  await askClaude(row.id, setupInstallArgv($.plugin.root, row.id, repo).join(' '), current?.progress?.[row.id]?.output ?? '')
+                }}
+              />
+            )}
           </Box>
         ))}
         {surveySteps(survey).length > 0 && (
@@ -360,10 +571,24 @@ export function registerSetupPane(on: On): void {
                     {`  ${state.stepProgress[step.name]?.state}: ${shownOutput(state.stepProgress[step.name]?.output ?? '')}`}
                   </Text>
                 )}
+                {state.stepProgress[step.name]?.state === 'failed' && (
+                  <Button
+                    key={`ask-step:${step.name}`}
+                    label="Ask Claude"
+                    plain
+                    onPress={async () => {
+                      const current = await read($, setup)
+                      await askClaude(step.name, setupStepArgv($.plugin.root, step.name).join(' '), current?.stepProgress[step.name]?.output ?? '')
+                    }}
+                  />
+                )}
               </Box>
             ))}
           </Box>
         )}
+        <Box key="questions" marginTop={1}>
+          <Text dimColor>The repository questions live in /saga:setup.</Text>
+        </Box>
         {!installable && (
           <Box key="no-install" marginTop={1}>
             <Text wrap="wrap">Nothing here installs: no row has an install command.</Text>
@@ -380,8 +605,12 @@ export function registerSetupPane(on: On): void {
           {installable && (
             <Button key="install" label={running ? 'Installing…' : 'Install'} variant="primary" onPress={() => install()} />
           )}
-          <Button key="done" label="Done" hotkey="d" onPress={() => done()} />
-          {installable && <Button key="dismiss" label="Dismiss" role="dismiss" onPress={() => dismiss()} />}
+          {state.openedBy === 'command' ? (
+            <Button key="close" label="Close" onPress={() => closePane()} />
+          ) : (
+            <Button key="done" label="Done" hotkey="d" onPress={() => done()} />
+          )}
+          {state.openedBy === 'tool' && installable && <Button key="dismiss" label="Dismiss" role="dismiss" onPress={() => dismiss()} />}
         </Box>
       </Box>
     )

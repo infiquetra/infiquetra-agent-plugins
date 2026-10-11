@@ -1,5 +1,26 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-10-11
+
+### The setup pane's direct opener lives in the Claude adapter
+
+**Decision.** `/setup-view`, the slash command that opens saga's setup pane with no agent
+turn, is registered by saga's Claude Code mod. Every other harness keeps `/saga:setup`:
+the agent calls `mcp__saga__setup`, which opens the same pane and waits. Issue #221.
+
+**Rationale.** Only Claude Code runs mods, so only it can register a command that opens a
+pane without a tool call. The tool path stays for harnesses without mods and for
+agent-led setup, and both openers share one survey, install, and step implementation, so
+the adapter holds the opener and no behaviour.
+
+**Rejected alternatives.** A portable direct opener (no other harness exposes command
+registration plus panes; there is nothing portable to aim at). Removing the skill and the
+tool once the command lands (agent-led setup and non-Claude harnesses would lose the
+pane).
+
+**Revisit when.** Another harness gains a command-plus-pane surface, or the repository
+questions move into the pane and the skill stops being the pane's fallback.
+
 ## 2026-10-07
 
 ### Move Haiku's efforts up one rung, with max for survey only

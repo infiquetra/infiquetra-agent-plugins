@@ -90,6 +90,10 @@ In Claude Code, `/plan-view` reads the run's plan one section at a time in a
 pane. Every other harness reads the plan file itself; `python3
 plugins/saga/scripts/run_status.py summary` prints its path.
 
+In Claude Code, `/setup-view` opens the setup pane directly — the survey, the
+installs, and the optional steps with no agent turn. Every other harness uses
+`/saga:setup`.
+
 ## Tests
 
 ```bash
