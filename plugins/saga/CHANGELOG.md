@@ -16,6 +16,11 @@
 
 ### Fixed
 
+- Issue #218: the three pane tools return their status as a JSON string the session accepts
+  instead of an object it rejects. The setup pane lists the survey's optional steps with
+  their done state and runs the picked step through `saga_setup.py step --name` in the saga
+  checkout; with no installable row it explains that nothing here installs and offers only
+  Done. The CI matrix runs the mods job on Claude Code 2.1.296 as well as 2.1.286 and 2.1.289.
 - Issue #216: the review command no longer drops every markdownlint-cli2 finding. The parser
   accepts the `error` or `warning` word and a missing column that v0.23.3 prints, and the tool
   entry reads stderr, where markdownlint-cli2 writes its findings.

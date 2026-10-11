@@ -30,6 +30,7 @@ import type {
   SagaAdmissionSelections,
   SagaAdmissionTier,
 } from '../types/index.d.ts'
+import { paneResult } from './pane-result.ts'
 import { sagaScriptArgv } from './run-record.ts'
 
 /** The pane's id. */
@@ -273,15 +274,15 @@ export function registerAdmissionReview(on: On): void {
     const issue = issueOf(e)
     const repo = repoOf(e)
     if (issue === null) {
-      return { result: { status: 'error', reason: 'issue must be a positive whole number' } }
+      return { result: paneResult({ status: 'error', reason: 'issue must be a positive whole number' }) }
     }
     if (active !== null) {
-      return { result: { status: 'error', reason: `the review pane is already open for issue ${active}` } }
+      return { result: paneResult({ status: 'error', reason: `the review pane is already open for issue ${active}` }) }
     }
     const surfaces = await $.session.surfaces()
     if (!surfaces.some((surface) => surface === 'terminal' || surface === 'desktop')) {
       return {
-        result: { status: 'unavailable', reason: 'no terminal or desktop surface is attached to draw the pane' },
+        result: paneResult({ status: 'unavailable', reason: 'no terminal or desktop surface is attached to draw the pane' }),
       }
     }
 
@@ -289,22 +290,22 @@ export function registerAdmissionReview(on: On): void {
     try {
       ran = await $.process.run(reviewArgv($.plugin.root, issue, repo), { timeoutMs: ADMISSION_TIMEOUT_MS })
     } catch (err) {
-      return { result: { status: 'error', reason: `admission.py did not run: ${String(err)}` } }
+      return { result: paneResult({ status: 'error', reason: `admission.py did not run: ${String(err)}` }) }
     }
     const parsed = parseReview(ran)
     if (!parsed.ok) {
       const { ok: _ok, ...failure } = parsed
-      return { result: { status: 'error', ...failure } }
+      return { result: paneResult({ status: 'error', ...failure }) }
     }
     const data = parsed.data
     if (!REVIEWED_QUESTIONS.some((question) => data.pending_questions.includes(question))) {
-      return { result: { status: 'nothing-to-review' } }
+      return { result: paneResult({ status: 'nothing-to-review' }) }
     }
     if (data.palette === null) {
-      return { result: { status: 'error', reason: 'admission could not load the tier palette' } }
+      return { result: paneResult({ status: 'error', reason: 'admission could not load the tier palette' }) }
     }
     if (data.staffing.rows.length === 0) {
-      return { result: { status: 'error', reason: 'admission could not reach the staffing component' } }
+      return { result: paneResult({ status: 'error', reason: 'admission could not reach the staffing component' }) }
     }
 
     active = issue
@@ -314,7 +315,7 @@ export function registerAdmissionReview(on: On): void {
     try {
       const opened = await $.ui.open({ id: PANE, title: `Admission #${issue}: staffing and lenses`, focus: true })
       if (!opened.isPlaced) {
-        return { result: { status: 'not-placed', reason: opened.reason } }
+        return { result: paneResult({ status: 'not-placed', reason: opened.reason }) }
       }
       let waited = 0
       while (!outcomes.has(issue) && !next.signal.aborted && waited < WAIT_CAP_SECONDS) {
@@ -322,9 +323,9 @@ export function registerAdmissionReview(on: On): void {
         waited += 1
       }
       outcome = outcomes.get(issue)
-      return { result: outcome ?? { status: next.signal.aborted ? 'dismissed' : 'timed-out' } }
+      return { result: paneResult(outcome ?? { status: next.signal.aborted ? 'dismissed' : 'timed-out' }) }
     } catch (err) {
-      return { result: { status: 'error', reason: `the review pane failed: ${String(err)}` } }
+      return { result: paneResult({ status: 'error', reason: `the review pane failed: ${String(err)}` }) }
     } finally {
       active = null
       outcomes.delete(issue)

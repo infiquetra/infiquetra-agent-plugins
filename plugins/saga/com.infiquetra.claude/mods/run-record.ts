@@ -443,6 +443,56 @@ export function setupInstallArgv(pluginRoot: string, tool: string, repo: string)
   return sagaScriptArgv(pluginRoot, 'saga_setup.py', ['install', '--tools', tool, '--repo', repo])
 }
 
+/**
+ * The argv that runs one named optional step. No `--repo`: the step's vectors
+ * resolve against the working directory, so the pane sets the process cwd to
+ * the saga checkout instead (KTD3, issue #218).
+ */
+export function setupStepArgv(pluginRoot: string, name: string): string[] {
+  return sagaScriptArgv(pluginRoot, 'saga_setup.py', ['step', '--name', name])
+}
+
+/** The setup script's path from a saga checkout's root. */
+export const CHECKOUT_SCRIPT_SUFFIX = 'plugins/saga/scripts/saga_setup.py'
+
+/** How many directories the checkout walk climbs: the plugin root, then three parents. */
+export const CHECKOUT_WALK_DEPTH = 4
+
+/** The plugin root and its parents up to the walk depth, nearest first. Pure, so a test calls it directly. */
+export function checkoutCandidates(pluginRoot: string): string[] {
+  const cleaned = pluginRoot.replace(/\/+$/, '')
+  const candidates = [cleaned]
+  let parent = cleaned
+  for (let level = 1; level < CHECKOUT_WALK_DEPTH; level += 1) {
+    const cut = parent.lastIndexOf('/')
+    if (cut <= 0) break
+    parent = parent.slice(0, cut)
+    candidates.push(parent)
+  }
+  return candidates
+}
+
+/**
+ * The saga checkout above the plugin root: the first candidate holding the
+ * setup script, or null. Each probe failure reads as absent, so a build or
+ * suite without `$.fs.exists` leaves the steps unrunnable instead of throwing.
+ */
+export async function findSagaCheckoutWith(
+  exists: (path: string) => Promise<boolean>,
+  pluginRoot: string,
+): Promise<string | null> {
+  for (const candidate of checkoutCandidates(pluginRoot)) {
+    let found = false
+    try {
+      found = await exists(`${candidate}/${CHECKOUT_SCRIPT_SUFFIX}`)
+    } catch {
+      found = false
+    }
+    if (found) return candidate
+  }
+  return null
+}
+
 /** The argv that prints the machine record's `ran` and `offered` without writing. */
 export function setupOfferStatusArgv(pluginRoot: string): string[] {
   return sagaScriptArgv(pluginRoot, 'saga_setup.py', ['offer-status'])

@@ -16,6 +16,15 @@ const TOOL = 'mcp__saga__review_admission'
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
+/**
+ * The tool result as the session delivers it: a JSON string. The typeof line
+ * fails a bare-object regression the kit's own call would let through.
+ */
+const parseResult = (result: unknown): any => {
+  expect(typeof result).toBe('string')
+  return JSON.parse(result as string)
+}
+
 type Run = { argv: string[]; stdin: string | undefined }
 type World = {
   /** What the world answers; a test may change it between reviews. */
@@ -151,7 +160,7 @@ describe('the review pane', () => {
       expect(call?.argv[1]).toEndWith('/scripts/admission.py')
       expect(call?.argv.slice(2)).toEqual(['--issue', '103', '--answers', '-'])
       expect(JSON.parse(call?.stdin ?? 'null')).toEqual(GOLDEN_ANSWERS)
-      expect(result.result).toEqual({
+      expect(parseResult(result.result)).toEqual({
         status: 'submitted',
         issue: 103,
         answers: GOLDEN_ANSWERS,
@@ -187,7 +196,7 @@ describe('the review pane', () => {
           conditional_does_not_apply: { privacy: 'no personal data' },
         },
       })
-      expect(result.result.status).toBe('submitted')
+      expect(parseResult(result.result).status).toBe('submitted')
     }
   })
 
@@ -201,7 +210,7 @@ describe('the review pane', () => {
       expect((await ui.find({ key: 'error' }))?.text).toContain('privacy')
       expect(w.answerRuns()).toHaveLength(0)
       await ui.press({ key: 'dismiss' })
-      expect((await pending).result).toEqual({ status: 'dismissed' })
+      expect(parseResult((await pending).result)).toEqual({ status: 'dismissed' })
     }
   })
 
@@ -271,12 +280,12 @@ describe('the review pane', () => {
       const byButton = await startReview($, w)
       const ui = await mountPane($, surface)
       await ui.press({ key: 'dismiss' })
-      expect((await byButton.pending).result).toEqual({ status: 'dismissed' })
+      expect(parseResult((await byButton.pending).result)).toEqual({ status: 'dismissed' })
 
       const byClose = await startReview($, w)
       await mountPane($, surface)
       await ($ as any).command.run({ command: 'close-review' })
-      expect((await byClose.pending).result).toEqual({ status: 'dismissed' })
+      expect(parseResult((await byClose.pending).result)).toEqual({ status: 'dismissed' })
       expect(w.answerRuns()).toHaveLength(0)
     }
   })
@@ -308,6 +317,15 @@ describe('the review pane', () => {
     }
   })
 
+  test('the thirty-minute wait returns timed-out and records nothing', { timeoutMs: 120000 }, async ($, on) => {
+    const w = world(on, { sleepMs: 1 })
+    const { pending } = await startReview($, w)
+    await mountPane($, 'terminal')
+    expect(parseResult((await pending).result)).toEqual({ status: 'timed-out' })
+    expect(w.sleeps()).toBe(WAIT_CAP_SECONDS)
+    expect(w.answerRuns()).toHaveLength(0)
+  })
+
   test('a refusal from admission.py is shown in the pane, which stays open until dismissed', async ($, on) => {
     const refusal = "admission: staffing_overrides['worker']: haiku does not take effort xhigh"
     const w = world(on, { answersExit: 2, answersStderr: `${refusal}\n` })
@@ -325,7 +343,7 @@ describe('the review pane', () => {
       expect((await ui.find({ key: 'error' }))?.text).toBe(refusal)
       expect(settled).toBe(false)
       await ui.press({ key: 'dismiss' })
-      expect((await pending).result).toEqual({ status: 'dismissed' })
+      expect(parseResult((await pending).result)).toEqual({ status: 'dismissed' })
     }
   })
 })
@@ -334,7 +352,7 @@ describe('the tool without a pane', () => {
   test('a pane the surface would not place returns not-placed at once, without waiting', async ($, on) => {
     const w = world(on, { placed: false })
     const result = await ($ as any).tool.call({ tool: TOOL, issue: 103 })
-    expect(result.result).toEqual({ status: 'not-placed', reason: 'narrow' })
+    expect(parseResult(result.result)).toEqual({ status: 'not-placed', reason: 'narrow' })
     expect(w.sleeps()).toBe(0)
   })
 
@@ -342,35 +360,35 @@ describe('the tool without a pane', () => {
     const stderr = 'admission: the card is not ready and admission writes nothing: Missing Risk'
     const w = world(on, { reviewExit: 2, reviewStderr: `${stderr}\n` })
     const result = await ($ as any).tool.call({ tool: TOOL, issue: 103 })
-    expect(result.result).toEqual({ status: 'error', reason: 'admission.py exited 2', exitCode: 2, stderr })
+    expect(parseResult(result.result)).toEqual({ status: 'error', reason: 'admission.py exited 2', exitCode: 2, stderr })
     expect(w.opens).toBe(0)
   })
 
   test('a review document of another version is refused', async ($, on) => {
     const w = world(on, { review: { ...REVIEW_JSON, schema: 'admission_review.v2' } })
     const result = await ($ as any).tool.call({ tool: TOOL, issue: 103 })
-    expect(result.result.status).toBe('error')
-    expect(result.result.reason).toContain('admission_review.v2')
+    expect(parseResult(result.result).status).toBe('error')
+    expect(parseResult(result.result).reason).toContain('admission_review.v2')
     expect(w.opens).toBe(0)
   })
 
   test('with neither question outstanding there is nothing to review', async ($, on) => {
     const w = world(on, { review: { ...REVIEW_JSON, pending_questions: ['risk_tier'] } })
-    expect((await ($ as any).tool.call({ tool: TOOL, issue: 103 })).result).toEqual({ status: 'nothing-to-review' })
+    expect(parseResult((await ($ as any).tool.call({ tool: TOOL, issue: 103 })).result)).toEqual({ status: 'nothing-to-review' })
     expect(w.opens).toBe(0)
   })
 
   test('with no terminal or desktop attached the tool is unavailable', async ($, on) => {
     const w = world(on, { surfaces: ['mobile'] })
     const result = await ($ as any).tool.call({ tool: TOOL, issue: 103 })
-    expect(result.result.status).toBe('unavailable')
+    expect(parseResult(result.result).status).toBe('unavailable')
     expect(w.runs).toHaveLength(0)
   })
 
   test('an issue that is not a positive whole number is an error', async ($, on) => {
     const w = world(on)
     const result = await ($ as any).tool.call({ tool: TOOL, issue: 0 })
-    expect(result.result.status).toBe('error')
+    expect(parseResult(result.result).status).toBe('error')
     expect(w.runs).toHaveLength(0)
   })
 })
@@ -386,7 +404,7 @@ test('the tool outlasts the ten-second hook budget while the operator decides', 
   const ui = await mountPane($, 'terminal')
   await ui.input({ key: 'lens:privacy:reason', text: PRIVACY_REASON })
   await ui.press({ key: 'submit' })
-  expect((await pending).result.status).toBe('submitted')
+  expect(parseResult((await pending).result).status).toBe('submitted')
   expect(w.sleeps()).toBeLessThan(WAIT_CAP_SECONDS)
 })
 

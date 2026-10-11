@@ -1,5 +1,27 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-11
+
+### A pane tool that answers with an object is rejected, and the mod suite cannot see it
+
+**Evidence.** Issue #218. On Claude Code 2.1.296, `mcp__saga__setup` failed with "tool.call
+step resolved mcp__saga__setup with a result that does not match its output shape … expected
+string, received object". A minimal probe mod confirmed both directions on 2.1.296: an object
+result is refused with `invalid_union` (a string, an array, or nothing expected), while the same
+object as a JSON string reaches the model, which reads the status back out. `claude plugin test
+plugins/saga` passed 227 tests on 2.1.296 with the object results still in place.
+
+**Mechanism.** The session validates a `tool.call` hook's answer against the tool's output
+schema (`outputSchema?.safeParse` in the 2.1.296 build; `ToolCallResult` in its
+`types/claude-code.d.ts` says core validates a hook's answer when the tool has a schema), and a
+registered tool's schema admits a string, content blocks, or nothing. The test kit resolves
+`$.tool.call` without running that check, so a suite that only compares parsed objects stays
+green on a shape the session refuses.
+
+**Generalizable rule.** Assert `typeof result === 'string'` before parsing back every tool
+result in mod tests, and prove a new result shape with a live `claude -p --plugin-dir` probe
+before trusting the suite.
+
 ## 2026-10-10
 
 ### A parser written from a guessed output format drops findings without a sound
