@@ -20,6 +20,11 @@ The catalog requires `python>=3.12`.
   review-outcome job (infiquetra-agent-plugins #167). The method set stays `GET`
   and `POST` only, on fixed paths.
 
+### Changed
+
+- The Muse model in `staffing.json` is now `muse-wonder-full-1.0` for every model it maps
+  (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5`), replacing `muse-spark-1.3-contributor`.
+
 ## [0.33.2] - 2026-10-07
 
 ### Changed

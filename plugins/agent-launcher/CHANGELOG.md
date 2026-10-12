@@ -56,6 +56,9 @@ for C8 to extend.
 
 ### Changed
 
+- The Muse reviewer candidate's probe model is now `muse-wonder-full-1.0`, and its probe record
+  was re-recorded live against it. The verdicts are unchanged: the same six checks fail, so Muse
+  stays refused as a reviewer.
 - **A Claude reviewer launch requires `--max-budget-usd` (issue #223).** `launcher.py review`
   passes the ceiling to `claude -p` and records it as `ceiling_usd` in `result.json`. A Claude
   launch without one, or with an amount that is not a positive figure with at most two decimal
