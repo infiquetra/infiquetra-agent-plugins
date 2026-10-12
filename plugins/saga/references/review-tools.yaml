@@ -259,6 +259,7 @@ tools:
     curated_block_rules: []
   - id: ruff-lint
     tool: ruff
+    runtime_loaded: true
     languages: [python]
     lens: correctness
     purpose: All ruff rules, isolated, with noqa ignored. The family map sets the level.
@@ -283,6 +284,7 @@ tools:
     curated_block_rules: []
   - id: ruff-format
     tool: ruff
+    runtime_loaded: true
     languages: [python]
     lens: correctness
     purpose: Formatter. The review runner does not start it.
@@ -333,6 +335,7 @@ tools:
     curated_block_rules: []
   - id: pytest-randomly
     tool: pytest-randomly
+    runtime_loaded: true
     languages: [python]
     lens: testing
     purpose: A failure under random order is fix later. The run uses the allow-list.
@@ -346,6 +349,7 @@ tools:
     curated_block_rules: []
   - id: pytest-socket
     tool: pytest-socket
+    runtime_loaded: true
     languages: [python]
     lens: testing
     purpose: A failure with sockets disabled is fix later. The run uses the allow-list.

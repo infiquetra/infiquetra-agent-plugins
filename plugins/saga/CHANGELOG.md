@@ -22,6 +22,14 @@
 
 ### Fixed
 
+- Issue #226: the setup survey no longer reports run-time-loaded tools as missing. The
+  pytest-randomly, pytest-socket, ruff-lint, and ruff-format rows probe the uv loader
+  instead of PATH executables (installed at the pin on a clean versioned answer,
+  missing when uv is absent, failing, or versionless), a bare-integer `--version`
+  such as muter's `16` parses against the pin, and the Python review adapter runs
+  ruff through `uv run --with ruff==0.15.18` with its version probe on the same
+  pinned runner, so the operator's own ruff no longer changes the findings. No
+  version bump; that belongs to #147's saga release step.
 - Issue #218: the three pane tools return their status as a JSON string the session accepts
   instead of an object it rejects. The setup pane lists the survey's optional steps with
   their done state and runs the picked step through `saga_setup.py step --name` from the saga

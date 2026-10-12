@@ -81,7 +81,6 @@ RESERVED_PROFILE_KEYS = frozenset(
     }
 )
 _SHEBANG = re.compile(r"^#!.*\b(?:sh|bash|zsh)\b")
-_VERSION = review_tools._VERSION
 Runner = Callable[..., Any]
 
 
@@ -397,6 +396,48 @@ def _call(
     return runner(list(argv), cwd=cwd, env=env, timeout=timeout)
 
 
+def _probe_runtime_loaded(
+    row: Mapping[str, Any],
+    base: dict[str, Any],
+    *,
+    runner: Runner,
+    env: Mapping[str, str] | None,
+    cwd: Path,
+    profile: Mapping[str, Any],
+) -> dict[str, Any]:
+    """A row the review loads per run through uv (issue 226).
+
+    The probe asks only whether the loader answers with exit 0 and a version.
+    The reported version is the row default the adapter loads, compared through
+    :func:`_classify`, so a profile pin the adapter cannot honor reads
+    wrong-version instead of installed. A failed or versionless uv is never
+    installed.
+    """
+    timeout = int(row.get("timeout_seconds") or 30)
+    try:
+        result = _call(runner, ["uv", "--version"], cwd=cwd, env=env, timeout=timeout)
+    except FileNotFoundError:
+        base["status"] = "missing"
+        return base
+    except subprocess.TimeoutExpired:
+        base["status"] = "missing"
+        return base
+    if int(getattr(result, "returncode", 1)) != 0:
+        base["status"] = "missing"
+        return base
+    text = f"{getattr(result, 'stdout', '') or ''}\n{getattr(result, 'stderr', '') or ''}"
+    if review_tools._found_version(text) is None:
+        base["status"] = "missing"
+        return base
+    version = _real_version(row.get("default_version"))
+    if version is None:
+        base["status"] = "missing"
+        return base
+    base["version"] = version
+    base["status"] = _classify(row, version, profile)
+    return base
+
+
 def _probe_row(
     row: Mapping[str, Any],
     *,
@@ -422,6 +463,10 @@ def _probe_row(
     }
     if not tool:
         return base
+    if row.get("runtime_loaded") is True:
+        return _probe_runtime_loaded(
+            row, base, runner=runner, env=env, cwd=cwd, profile=profile
+        )
     argv = [tool, *[str(part) for part in (row.get("version_args") or ["--version"])]]
     timeout = int(row.get("timeout_seconds") or 30)
     try:
@@ -433,11 +478,10 @@ def _probe_row(
         base["status"] = "missing"
         return base
     text = f"{getattr(result, 'stdout', '') or ''}\n{getattr(result, 'stderr', '') or ''}"
-    found = _VERSION.search(text)
-    if found is None:
+    version = review_tools._found_version(text)
+    if version is None:
         base["status"] = "missing"
         return base
-    version = found.group(0)
     status = _classify(row, version, profile)
     base["version"] = version
     base["status"] = status

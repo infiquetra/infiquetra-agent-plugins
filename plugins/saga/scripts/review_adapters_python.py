@@ -379,12 +379,18 @@ def _parse_mypy(text: str) -> ParseResult:
     return ParseResult(tuple(hits))
 
 
-def _invoke_ruff(context: ScanContext) -> list[str]:
-    return [
-        "python3", "-c", _RUFF_WRAPPER, "--",
-        "ruff", "check", "--isolated", "--ignore-noqa", "--select", "ALL",
-        "--output-format", "json", str(context.root),
-    ]
+def _invoke_ruff(pin: str) -> Callable[[ScanContext], list[str]]:
+    """Ruff at the row pin through uv, whatever PATH holds (issue 226)."""
+
+    def invoke(context: ScanContext) -> list[str]:
+        return [
+            "python3", "-c", _RUFF_WRAPPER, "--",
+            "uv", "run", "--with", f"ruff=={pin}",
+            "ruff", "check", "--isolated", "--ignore-noqa", "--select", "ALL",
+            "--output-format", "json", str(context.root),
+        ]
+
+    return invoke
 
 
 def _parse_ruff(mapping: Mapping[str, str]) -> Callable[[str], ParseResult]:
@@ -631,11 +637,16 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
         {str(key): str(value) for key, value in family.items()}
         if isinstance(family, dict) else {}
     )
+    ruff_pin = str(ruff_row.get("default_version") or "not-recorded")
+    version_argvs = dict(_VERSION_ARGV)
+    version_argvs["ruff-lint"] = (
+        "uv", "run", "--with", f"ruff=={ruff_pin}", "ruff", "--version",
+    )
     invoke = {
         "bandit": _invoke_bandit,
         "pip-audit": _invoke_pip_audit,
         "mypy": _invoke_mypy,
-        "ruff-lint": _invoke_ruff,
+        "ruff-lint": _invoke_ruff(ruff_pin),
         "ruff-format": _invoke_nothing,
         "vulture": _invoke_vulture,
         "import-linter": _invoke_import_linter,
@@ -660,7 +671,7 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
             by_id[tool_id],
             invoke[tool_id],
             parse[tool_id],
-            version_argv=_VERSION_ARGV.get(tool_id, ()),
+            version_argv=version_argvs.get(tool_id, ()),
         )
         for tool_id in _OWNED
         if tool_id in by_id

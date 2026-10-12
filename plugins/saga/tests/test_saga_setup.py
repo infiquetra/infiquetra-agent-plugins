@@ -18,6 +18,7 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = REPO_ROOT / "plugins" / "saga" / "scripts"
@@ -1616,3 +1617,501 @@ def test_schedule_survey_persists_step_in_machine_record(
     [step] = [entry for entry in record["survey"]["steps"]
               if entry["name"] == "outcome-schedule"]
     assert step["done"] is False
+
+
+RUNTIME_LOADED_PYTEST_TOOLS = """
+schema: review_tools.v1
+tools:
+  - id: pytest-randomly
+    tool: pytest-randomly
+    runtime_loaded: true
+    languages: [python]
+    lens: testing
+    default_version: "5.0.0"
+    install: "The adapter loads pytest-randomly for one invocation."
+    install_argv: null
+  - id: pytest-socket
+    tool: pytest-socket
+    runtime_loaded: true
+    languages: [python]
+    lens: testing
+    default_version: "0.8.1"
+    install: "The adapter loads pytest-socket for one invocation."
+    install_argv: null
+"""
+
+RUNTIME_LOADED_RUFF_TOOLS = """
+schema: review_tools.v1
+tools:
+  - id: ruff-lint
+    tool: ruff
+    runtime_loaded: true
+    languages: [python]
+    lens: correctness
+    default_version: "0.15.18"
+    install: "The adapter loads ruff for one invocation."
+    install_argv: null
+  - id: ruff-format
+    tool: ruff
+    runtime_loaded: true
+    languages: [python]
+    lens: correctness
+    default_version: "0.15.18"
+    install: "The adapter loads ruff for one invocation."
+    install_argv: null
+"""
+
+BARE_INTEGER_TOOLS = """
+schema: review_tools.v1
+tools:
+  - id: muter
+    tool: muter
+    languages: [swift]
+    lens: testing
+    default_version: "16"
+    install: "Install Muter on the operator machine."
+    install_argv: null
+  - id: dotted
+    tool: dotted-bin
+    languages: [swift]
+    lens: testing
+    default_version: "1.2.3"
+    install: "Not installed by setup."
+    install_argv: null
+"""
+
+
+def _loader_runner(calls: list[list[str]], uv_answer: Any) -> Any:
+    """Answer `uv --version` with *uv_answer*; every other probe is missing."""
+
+    def runner(
+        argv: list[str], *, cwd: Path | None = None, env: object = None, timeout: int = 30
+    ) -> Result:
+        calls.append(list(argv))
+        if argv[:4] == ["gh", "repo", "view", "--json"]:
+            return Result(1, "")
+        if argv[:2] == ["uv", "--version"]:
+            if uv_answer is FileNotFoundError:
+                raise FileNotFoundError("uv")
+            if uv_answer is subprocess.TimeoutExpired:
+                raise subprocess.TimeoutExpired(argv, timeout)
+            return uv_answer
+        raise FileNotFoundError(argv[0] if argv else "tool")
+
+    return runner
+
+
+def _surveyed(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    tools_body: str,
+    runner: Any,
+    files: dict[str, str],
+    tag: str,
+    profile: dict[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
+    repo = tmp_path / f"repo-{tag}"
+    repo.mkdir(parents=True, exist_ok=True)
+    for name, text in files.items():
+        target = repo / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    if profile is not None:
+        (repo / ".saga-profile.json").write_text(json.dumps(profile), encoding="utf-8")
+    home = tmp_path / f"home-{tag}"
+    home.mkdir(parents=True, exist_ok=True)
+    code, raw, err = _run(
+        [
+            "survey",
+            "--repo",
+            str(repo),
+            "--home",
+            str(home),
+            "--tools",
+            str(_tools(tmp_path, tools_body)),
+            "--format",
+            "json",
+        ],
+        capsys,
+        runner=runner,
+    )
+    assert code == 0, err
+    return {row["id"]: row for row in json.loads(raw)["tools"]}
+
+
+def test_survey_runtime_loaded_plugins_read_installed_at_their_pins(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[list[str]] = []
+    rows = _surveyed(
+        tmp_path,
+        capsys,
+        RUNTIME_LOADED_PYTEST_TOOLS,
+        _loader_runner(calls, Result(0, "uv 0.9.0\n")),
+        {"a.py": "x = 1\n"},
+        "loaded",
+    )
+    assert rows["pytest-randomly"]["status"] == "installed"
+    assert rows["pytest-randomly"]["version"] == "5.0.0"
+    assert rows["pytest-socket"]["status"] == "installed"
+    assert rows["pytest-socket"]["version"] == "0.8.1"
+    assert not any(call[:1] == ["pytest-randomly"] for call in calls)
+    assert not any(call[:1] == ["pytest-socket"] for call in calls)
+    assert ["uv", "--version"] in calls
+
+
+def test_survey_runtime_loaded_absent_loader_reads_missing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for tag, answer in (("gone", FileNotFoundError), ("slow", subprocess.TimeoutExpired)):
+        calls: list[list[str]] = []
+        rows = _surveyed(
+            tmp_path,
+            capsys,
+            RUNTIME_LOADED_PYTEST_TOOLS,
+            _loader_runner(calls, answer),
+            {"a.py": "x = 1\n"},
+            tag,
+        )
+        assert rows["pytest-randomly"]["status"] == "missing"
+        assert rows["pytest-socket"]["status"] == "missing"
+
+
+def test_survey_runtime_loaded_failed_or_versionless_loader_reads_missing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    answers = [
+        Result(1, "uv 0.9.0\n"),
+        Result(0, ""),
+        Result(0, "no version here\n"),
+    ]
+    for index, answer in enumerate(answers):
+        calls: list[list[str]] = []
+        rows = _surveyed(
+            tmp_path,
+            capsys,
+            RUNTIME_LOADED_PYTEST_TOOLS,
+            _loader_runner(calls, answer),
+            {"a.py": "x = 1\n"},
+            f"bad-{index}",
+        )
+        assert rows["pytest-randomly"]["status"] == "missing", answer
+        assert rows["pytest-socket"]["status"] == "missing", answer
+
+
+def test_survey_runtime_loaded_marker_is_the_switch(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Without the marker the same rows still probe PATH and read missing."""
+    calls: list[list[str]] = []
+    rows = _surveyed(
+        tmp_path,
+        capsys,
+        RUNTIME_LOADED_PYTEST_TOOLS.replace("    runtime_loaded: true\n", ""),
+        _loader_runner(calls, Result(0, "uv 0.9.0\n")),
+        {"a.py": "x = 1\n"},
+        "unmarked",
+    )
+    assert rows["pytest-randomly"]["status"] == "missing"
+    assert rows["pytest-socket"]["status"] == "missing"
+    assert any(call[:1] == ["pytest-randomly"] for call in calls)
+    assert any(call[:1] == ["pytest-socket"] for call in calls)
+
+
+def test_survey_runtime_loaded_profile_pin_mismatch_reads_wrong_version(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[list[str]] = []
+    rows = _surveyed(
+        tmp_path,
+        capsys,
+        RUNTIME_LOADED_PYTEST_TOOLS,
+        _loader_runner(calls, Result(0, "uv 0.9.0\n")),
+        {"a.py": "x = 1\n"},
+        "pin-mismatch",
+        {"review_tools": {"pins": {"pytest-randomly": {"version": "5.1.0"}}}},
+    )
+    assert rows["pytest-randomly"]["status"] == "wrong-version"
+    assert rows["pytest-randomly"]["version"] == "5.0.0"
+    assert rows["pytest-randomly"]["pinned_version"] == "5.1.0"
+    assert rows["pytest-socket"]["status"] == "installed"
+
+    calls.clear()
+    rows = _surveyed(
+        tmp_path,
+        capsys,
+        RUNTIME_LOADED_PYTEST_TOOLS,
+        _loader_runner(calls, Result(0, "uv 0.9.0\n")),
+        {"a.py": "x = 1\n"},
+        "pin-match",
+        {"review_tools": {"pins": {"pytest-randomly": {"version": "5.0.0"}}}},
+    )
+    assert rows["pytest-randomly"]["status"] == "installed"
+
+
+def test_survey_runtime_loaded_pytest_rows_carry_the_marker() -> None:
+    shipped = yaml.safe_load((REFERENCES / "review-tools.yaml").read_text(encoding="utf-8"))
+    marked = {
+        row["id"] for row in shipped["tools"] if row.get("runtime_loaded") is True
+    }
+    assert {"pytest-randomly", "pytest-socket"} <= marked
+
+
+def test_survey_bare_integer_version_reads_installed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[list[str]] = []
+
+    def runner(
+        argv: list[str], *, cwd: Path | None = None, env: object = None, timeout: int = 30
+    ) -> Result:
+        calls.append(list(argv))
+        if argv[:4] == ["gh", "repo", "view", "--json"]:
+            return Result(1, "")
+        if argv == ["muter", "--version"]:
+            return Result(0, "16\n")
+        if argv == ["dotted-bin", "--version"]:
+            return Result(0, "dotted 1.2.3\n")
+        raise FileNotFoundError(argv[0] if argv else "tool")
+
+    rows = _surveyed(
+        tmp_path, capsys, BARE_INTEGER_TOOLS, runner, {"a.swift": "// swift\n"}, "bare"
+    )
+    assert rows["muter"]["status"] == "installed"
+    assert rows["muter"]["version"] == "16"
+    assert rows["dotted"]["status"] == "installed"
+    assert rows["dotted"]["version"] == "1.2.3"
+
+
+def test_survey_bare_integer_wrong_version(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def runner(
+        argv: list[str], *, cwd: Path | None = None, env: object = None, timeout: int = 30
+    ) -> Result:
+        if argv[:4] == ["gh", "repo", "view", "--json"]:
+            return Result(1, "")
+        if argv == ["muter", "--version"]:
+            return Result(0, "15\n")
+        raise FileNotFoundError(argv[0] if argv else "tool")
+
+    rows = _surveyed(
+        tmp_path, capsys, BARE_INTEGER_TOOLS, runner, {"a.swift": "// swift\n"}, "bare-old"
+    )
+    assert rows["muter"]["status"] == "wrong-version"
+    assert rows["muter"]["version"] == "15"
+
+
+def test_survey_bare_integer_guard_and_garbage_read_missing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    outputs = ["warnings: 3\nchecks passed\n", "", "no version here\n"]
+    for index, output in enumerate(outputs):
+
+        def runner(
+            argv: list[str],
+            *,
+            cwd: Path | None = None,
+            env: object = None,
+            timeout: int = 30,
+            text: str = output,
+        ) -> Result:
+            if argv[:4] == ["gh", "repo", "view", "--json"]:
+                return Result(1, "")
+            if argv == ["muter", "--version"]:
+                return Result(0, text)
+            raise FileNotFoundError(argv[0] if argv else "tool")
+
+        rows = _surveyed(
+            tmp_path,
+            capsys,
+            BARE_INTEGER_TOOLS,
+            runner,
+            {"a.swift": "// swift\n"},
+            f"bare-bad-{index}",
+        )
+        assert rows["muter"]["status"] == "missing", output
+
+
+def test_survey_runtime_loaded_ruff_rows_read_installed_at_the_pin(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[list[str]] = []
+    rows = _surveyed(
+        tmp_path,
+        capsys,
+        RUNTIME_LOADED_RUFF_TOOLS,
+        _loader_runner(calls, Result(0, "uv 0.9.0\n")),
+        {"a.py": "x = 1\n"},
+        "ruff-loaded",
+    )
+    assert rows["ruff-lint"]["status"] == "installed"
+    assert rows["ruff-lint"]["version"] == "0.15.18"
+    assert rows["ruff-format"]["status"] == "installed"
+    assert rows["ruff-format"]["version"] == "0.15.18"
+    assert not any(call[:1] == ["ruff"] for call in calls)
+
+
+def test_survey_runtime_loaded_ruff_loader_failure_reads_missing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    answers: list[Any] = [
+        FileNotFoundError,
+        subprocess.TimeoutExpired,
+        Result(1, "uv 0.9.0\n"),
+        Result(0, ""),
+    ]
+    for index, answer in enumerate(answers):
+        calls: list[list[str]] = []
+        rows = _surveyed(
+            tmp_path,
+            capsys,
+            RUNTIME_LOADED_RUFF_TOOLS,
+            _loader_runner(calls, answer),
+            {"a.py": "x = 1\n"},
+            f"ruff-bad-{index}",
+        )
+        assert rows["ruff-lint"]["status"] == "missing", answer
+        assert rows["ruff-format"]["status"] == "missing", answer
+
+
+def test_survey_runtime_loaded_ruff_full_set_pins_four_rows() -> None:
+    shipped = yaml.safe_load((REFERENCES / "review-tools.yaml").read_text(encoding="utf-8"))
+    marked = {
+        row["id"] for row in shipped["tools"] if row.get("runtime_loaded") is True
+    }
+    assert marked == {"pytest-randomly", "pytest-socket", "ruff-lint", "ruff-format"}
+
+
+def test_survey_status_golden_freezes_untouched_rows(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AC-3: every shipped row outside this card's five keeps its pre-change status.
+
+    The stub answers each tool's pin (crafted exceptions: semgrep answers
+    1.0.0, shellcheck is absent, python3 answers 3.11.0, gh refuses sign-in),
+    and EXPECTED was reviewed row by row against the pre-change probe logic.
+    Change it only when a later card intentionally changes a row.
+    """
+    shipped = yaml.safe_load((REFERENCES / "review-tools.yaml").read_text(encoding="utf-8"))
+    pins: dict[str, str] = {}
+    for row in shipped["tools"]:
+        tool = row.get("tool") or ""
+        if not tool:
+            continue
+        default = row.get("default_version")
+        pins.setdefault(tool, default if default and default != "not-recorded" else "9.9.9")
+
+    def runner(
+        argv: list[str], *, cwd: Path | None = None, env: object = None, timeout: int = 30
+    ) -> Result:
+        if argv[:4] == ["gh", "repo", "view", "--json"]:
+            return Result(1, "")
+        if argv[:3] == ["gh", "auth", "status"]:
+            return Result(1, "")
+        if argv == ["uv", "--version"]:
+            return Result(0, "uv 0.9.0\n")
+        if argv == ["semgrep", "--version"]:
+            return Result(0, "1.0.0\n")
+        if argv == ["muter", "--version"]:
+            return Result(0, "16\n")
+        if argv[0] == "shellcheck":
+            raise FileNotFoundError("shellcheck")
+        if argv == ["python3", "--version"]:
+            return Result(0, "Python 3.11.0\n")
+        if argv[:2] == ["python3", "-c"]:
+            return Result(0, "6.0.1\n")
+        if argv[0] in pins:
+            return Result(0, f"{argv[0]} {pins[argv[0]]}\n")
+        raise FileNotFoundError(argv[0])
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (repo / "a.ts").write_text("export {}\n", encoding="utf-8")
+    (repo / "a.dart").write_text("void main() {}\n", encoding="utf-8")
+    (repo / "a.rs").write_text("fn main() {}\n", encoding="utf-8")
+    (repo / "Cargo.toml").write_text("[package]\n", encoding="utf-8")
+    (repo / "a.swift").write_text("// swift\n", encoding="utf-8")
+    (repo / "a.md").write_text("# hi\n", encoding="utf-8")
+    (repo / "a.sh").write_text("#!/bin/sh\necho\n", encoding="utf-8")
+    workflows = repo / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text("on: [push]\n", encoding="utf-8")
+    home = tmp_path / "home"
+    home.mkdir()
+    code, raw, err = _run(
+        ["survey", "--repo", str(repo), "--home", str(home), "--format", "json"],
+        capsys,
+        runner=runner,
+    )
+    assert code == 0, err
+    found = {row["id"]: row["status"] for row in json.loads(raw)["tools"]}
+    touched = {"pytest-randomly", "pytest-socket", "ruff-lint", "ruff-format", "muter"}
+    assert set(found) - touched == set(EXPECTED_SURVEY_STATUSES)
+    assert {row: found[row] for row in EXPECTED_SURVEY_STATUSES} == EXPECTED_SURVEY_STATUSES
+
+
+EXPECTED_SURVEY_STATUSES = {
+    "semgrep-security": "wrong-version",
+    "semgrep-saga": "wrong-version",
+    "gitleaks": "installed",
+    "osv-scanner": "installed",
+    "jscpd": "installed",
+    "lizard": "installed",
+    "coverage": "installed",
+    "relocated-test": "installed",
+    "universal-ctags": "installed",
+    "bandit": "installed",
+    "pip-audit": "installed",
+    "mypy": "installed",
+    "vulture": "installed",
+    "import-linter": "installed",
+    "cosmic-ray": "installed",
+    "shellcheck": "missing",
+    "shfmt": "installed",
+    "zizmor": "installed",
+    "actionlint": "installed",
+    "markdownlint-cli2": "installed",
+    "lychee": "installed",
+    "cspell": "installed",
+    "saga-git": "installed",
+    "saga-gh": "needs-sign-in",
+    "saga-python": "wrong-version",
+    "saga-uv": "installed",
+    "saga-pyyaml": "installed",
+    "npm-audit": "installed",
+    "tsc": "installed",
+    "eslint": "installed",
+    "stryker": "installed",
+    "vitest-shuffle": "installed",
+    "jest-shuffle": "installed",
+    "knip": "installed",
+    "dependency-cruiser": "installed",
+    "prettier": "installed",
+    "typescript-no-network": "installed",
+    "vitest-coverage": "installed",
+    "jest-coverage": "installed",
+    "dart-analyze": "installed",
+    "mutate4dart": "installed",
+    "dart-shuffle": "installed",
+    "dart-format": "installed",
+    "dart-no-network": "installed",
+    "dart-coverage": "installed",
+    "cargo-deny": "installed",
+    "cargo-check": "installed",
+    "clippy": "installed",
+    "cargo-mutants": "installed",
+    "cargo-machete": "installed",
+    "rustfmt": "installed",
+    "rust-shuffle": "installed",
+    "rust-no-network": "installed",
+    "rust-coverage": "installed",
+    "swift-compiler": "installed",
+    "swiftlint": "installed",
+    "swift-format": "installed",
+    "swift-dependency-audit": "installed",
+    "swift-shuffle": "installed",
+    "swift-no-network": "installed",
+    "swift-coverage": "installed",
+}
