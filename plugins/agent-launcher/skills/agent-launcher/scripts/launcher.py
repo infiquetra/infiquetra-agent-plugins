@@ -3215,7 +3215,7 @@ REVIEWER_CANDIDATES: dict[str, ReviewerRecipe] = {
         credential_files=("~/.config/muse/auth.json",),
         vendor_home="~/.config/muse",
         vendor_writable="~/.config/muse",
-        probe_model="muse-spark-1.3-contributor",
+        probe_model="muse-wonder-full-1.0",
         executable=reviewer_muse_executable,
     ),
 }

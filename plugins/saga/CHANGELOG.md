@@ -28,6 +28,10 @@
   iteration refuses to hand off until that check passes, and the combined pass's review gate
   refuses `--handoff` on an enforced block or a secret in the diff.
 
+### Changed
+
+- The bundled `staffing.json` follows fleet-core: Muse now runs `muse-wonder-full-1.0`.
+
 ### Fixed
 
 - Issue #226: the setup survey no longer reports run-time-loaded tools as missing. The

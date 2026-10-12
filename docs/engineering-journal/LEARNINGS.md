@@ -2,6 +2,22 @@
 
 ## 2026-10-12
 
+### Moving Muse to muse-wonder-full-1.0 changed no probe verdict
+
+**Evidence.** On 2026-10-12, on macOS with Muse Code 1.4.6 (1.4.6-R6000.1), `launcher.py
+reviewer-probe --vendor muse --record` ran live against `muse-wonder-full-1.0`, the model the
+operator moved every Muse session to. The record
+`plugins/agent-launcher/tests/fixtures/reviewer-probe/muse-darwin.json` differs from the one
+written for `muse-spark-1.3-contributor` only in its `model` field. The same six checks failed
+(`read-credential`, `write-tmpdir`, `write-tmp`, `credential-variable`, `read-home`,
+`plain-variable`), and Muse stays out of `REVIEWER_RECIPES`.
+
+**Mechanism.** The failing checks come from what Muse's sandbox covers, not from the model. A probe
+record binds to the model it ran, so a model change needs a new record, but the verdicts carry over.
+
+**Generalizable rule.** Re-record a probe when the model changes, and expect the sandbox verdicts to
+hold steady; a change in them would point at the CLI or the recipe instead.
+
 ### A PATH-executable probe mis-models tools the run loads itself
 
 **Evidence.** Issue #226. The setup survey probed every tool row as a PATH executable,

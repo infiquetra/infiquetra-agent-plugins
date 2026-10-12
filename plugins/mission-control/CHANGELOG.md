@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The bundled `staffing.json` follows fleet-core: Muse now runs `muse-wonder-full-1.0`.
+
 ## [2.21.4] - 2026-10-07
 
 ### Changed
