@@ -6,10 +6,12 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
 import subprocess
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
@@ -1487,13 +1489,38 @@ def test_cosmic_ray_failing_baseline_marks_the_run_unfinished(tmp_path: Path) ->
     assert out["unfinished"] is True
     assert out["survivors"] == []
     assert not record.exists()
+    pid_file = tmp_path / "grandchild.pid"
+    grand = tmp_path / "grand.py"
+    grand.write_text(
+        "import os, time\n"
+        f"open({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    spawn = tmp_path / "spawn.py"
+    spawn.write_text(
+        "import subprocess, sys, time\n"
+        f"subprocess.Popen([{sys.executable!r}, {str(grand)!r}])\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
     slow = _wrapper_config(
-        tmp_path / "slow.toml", f"{sys.executable} -c 'import time; time.sleep(30)'"
+        tmp_path / "slow.toml", f"{sys.executable} {shlex.quote(str(spawn))}"
     )
     out = _run_wrapper(slow, tmp_path, env, "1")
     assert out["unfinished"] is True
     assert out["survivors"] == []
     assert not record.exists()
+    grand_pid = int(pid_file.read_text(encoding="utf-8").strip())
+    deadline = time.time() + 10
+    while True:
+        try:
+            os.kill(grand_pid, 0)
+        except ProcessLookupError:
+            break
+        if time.time() > deadline:
+            raise AssertionError("timed-out baseline left a grandchild running")
+        time.sleep(0.05)
 
 
 def test_cosmic_ray_passing_baseline_runs_the_stages_in_order(tmp_path: Path) -> None:

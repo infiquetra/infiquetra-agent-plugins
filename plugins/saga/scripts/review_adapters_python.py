@@ -116,7 +116,7 @@ _COSMIC_TIMEOUT_SECONDS = 300
 # unfinished. argv[2] overrides the baseline budget; tests use that, production
 # passes _COSMIC_TIMEOUT_SECONDS.
 _COSMIC_WRAPPER = r"""
-import json, shlex, subprocess, sys, tomllib
+import json, os, shlex, signal, subprocess, sys, tomllib
 config = sys.argv[1]
 try:
     budget = float(sys.argv[2])
@@ -135,12 +135,23 @@ except (OSError, ValueError, KeyError):
 if not isinstance(test_command, str):
     _done(True, [])
 try:
-    baseline = subprocess.run(
-        shlex.split(test_command), capture_output=True, text=True, timeout=budget
+    proc = subprocess.Popen(
+        shlex.split(test_command),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, start_new_session=True,
     )
-except (OSError, ValueError, subprocess.TimeoutExpired):
+except (OSError, ValueError):
     _done(True, [])
-if baseline.returncode != 0:
+try:
+    proc.communicate(timeout=budget)
+except subprocess.TimeoutExpired:
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (AttributeError, OSError):
+        proc.kill()
+    proc.communicate()
+    _done(True, [])
+if proc.returncode != 0:
     _done(True, [])
 session = config + ".sqlite"
 init = subprocess.run(["cosmic-ray", "init", config, session], capture_output=True, text=True)
