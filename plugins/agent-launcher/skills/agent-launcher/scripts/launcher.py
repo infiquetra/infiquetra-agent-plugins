@@ -19,6 +19,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -2357,6 +2358,69 @@ def reviewer_claude_argv(
     ]
 
 
+#: Issue #225: Claude runs every Bash command, hook and MCP server as ``<prefix> '<command>'``
+#: when ``CLAUDE_CODE_SHELL_PREFIX`` names a file, and only after the shell around it has read its
+#: start-up files. Measured on Claude Code 2.1.296: a variable a ``BASH_ENV`` file exports reaches a
+#: sandboxed command, because ``credentials.envVars`` denies only names the launch environment
+#: had. The reviewer's prefix rebuilds a sandboxed command's environment from the allow-list after
+#: start-up, in a bash that reads no start-up file. It lives beside the copy, never inside it.
+REVIEWER_SHELL_PREFIX = "CLAUDE_CODE_SHELL_PREFIX"
+
+
+def reviewer_claude_shell_paths(copy: Path) -> tuple[Path, Path]:
+    """The reviewer's shell prefix and its sentinel, both beside *copy* in the launch root.
+
+    Sandboxed commands may read the prefix's directory but not the sentinel; the prefix reads the
+    sentinel to tell a hook or an MCP server, which run outside the sandbox, from a command.
+    """
+    root = copy.resolve().parent
+    return root / "shell" / "reviewer-shell.sh", root / "unsandboxed"
+
+
+def reviewer_claude_shell_script(sentinel: Path, token: str) -> str:
+    """The prefix: outside the sandbox it runs the command as given; inside, on the allow-list.
+
+    The sentinel holds *token*. Only a process outside the sandbox can read it, so anything else,
+    a denied read or a missing file included, filters: the check fails closed.
+    """
+    names = [n for n in REVIEWER_ENVIRONMENT_ALLOWED if not REVIEWER_CREDENTIAL_NAME.search(n)]
+    for name in names:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            raise ValueError(f"{name!r} is not a variable name")
+    kept = " ".join(f'${{{n}+"{n}=${n}"}}' for n in names)
+    read = f"/bin/cat {shlex.quote(str(sentinel))} 2>/dev/null"
+    return (
+        "#!/bin/sh\n"
+        "# agent-launcher's reviewer shell (issue #225), written for one Claude reviewer launch.\n"
+        "# Claude runs each command as: <this file> '<command>'. Outside the sandbox (a hook\n"
+        "# or an MCP server) the sentinel is readable and the command runs as it would without\n"
+        "# this file. Inside it, the command runs with only the reviewer's allowed variables,\n"
+        "# in a bash that reads no start-up file, so nothing a start-up file exported reaches it.\n"
+        f'if [ "$({read})" = {shlex.quote(token)} ]; then\n'
+        '  exec /bin/sh -c "$1"\n'
+        "fi\n"
+        'case "${SHELL-}" in\n'
+        '  */bash) reviewer_bash=$SHELL ;;\n'
+        "  *) reviewer_bash=/bin/bash ;;\n"
+        "esac\n"
+        f'exec /usr/bin/env -i {kept} "$reviewer_bash" --noprofile --norc -c "$1"\n'
+    )
+
+
+def reviewer_claude_materialize(
+    settings: Mapping[str, Any], root: Path, copy: Path
+) -> tuple[Path, dict[str, str]]:
+    """Write the settings, the shell prefix and its sentinel beside the copy; name the prefix."""
+    path, _ = reviewer_settings_materialize(settings, root, copy)
+    prefix, sentinel = reviewer_claude_shell_paths(copy)
+    token = os.urandom(16).hex()
+    sentinel.write_text(token, "utf-8")
+    prefix.parent.mkdir(parents=True, exist_ok=True)
+    prefix.write_text(reviewer_claude_shell_script(sentinel, token), "utf-8")
+    prefix.chmod(0o755)
+    return path, {REVIEWER_SHELL_PREFIX: str(prefix)}
+
+
 def reviewer_claude_settings(
     copy: Path,
     packet: Path,
@@ -2376,12 +2440,18 @@ def reviewer_claude_settings(
     copy, the packet and the toolchain *toolchain* names (derived from *env* when not given). The
     settings set no ``apiKeyHelper``, plugins or hooks, so the user's own configuration is what
     loads.
+
+    Issue #225: commands run through the reviewer's shell prefix, whose directory is readable and
+    whose sentinel is denied by name, so the prefix filters even when the launch root is outside
+    the home directory. The prefix is named in ``env`` as well, which outranks the user's settings.
     """
     if toolchain is None:
         toolchain = reviewer_toolchain_paths(env)[0]
-    allow_read = [str(copy.resolve()), str(packet.resolve())]
+    prefix, sentinel = reviewer_claude_shell_paths(copy)
+    allow_read = [str(copy.resolve()), str(packet.resolve()), str(prefix.parent)]
     allow_read += [item["path"] for item in toolchain if item["path"] not in allow_read]
     return {
+        "env": {REVIEWER_SHELL_PREFIX: str(prefix)},
         "sandbox": {
             "enabled": True,
             "failIfUnavailable": True,
@@ -2389,7 +2459,7 @@ def reviewer_claude_settings(
             "allowUnsandboxedCommands": False,
             "filesystem": {
                 "denyWrite": list(reviewer_temp_roots(platform)),
-                "denyRead": ["~"] + list(extra_deny_read),
+                "denyRead": ["~"] + list(extra_deny_read) + [str(sentinel)],
                 "allowRead": allow_read,
             },
             "network": {"strictAllowlist": True, "allowedDomains": []},
@@ -2594,6 +2664,11 @@ def reviewer_claude_widening(env: Mapping[str, str]) -> list[str]:
             problems.append(f"{path.name} turns the sandbox off")
         if filesystem.get("disabled") is True:
             problems.append(f"{path.name} sets sandbox.filesystem.disabled")
+        # Issue #225: managed settings outrank ``--settings``, so a shell prefix set there would
+        # replace the one that keeps start-up exports out of sandboxed commands.
+        environment = loaded.get("env") if isinstance(loaded.get("env"), dict) else {}
+        if REVIEWER_SHELL_PREFIX in environment:
+            problems.append(f"{path.name} sets env.{REVIEWER_SHELL_PREFIX}")
     return problems
 
 
@@ -2692,14 +2767,23 @@ def _reviewer_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def reviewer_executable_identity(path: Path, env: Mapping[str, str]) -> dict[str, str]:
-    """The identity a probe record binds: the file's name, its SHA-256 and what it reports.
+def reviewer_executable_file(path: Path) -> dict[str, str]:
+    """The file's name and SHA-256, read as bytes; nothing runs it.
 
     The name is the file name only, never a path, because records are committed to a public
     repository.
     """
+    return {"name": path.name, "sha256": _reviewer_sha256(path)}
+
+
+def reviewer_executable_identity(path: Path, env: Mapping[str, str]) -> dict[str, str]:
+    """The identity a probe record binds: the file's name, its SHA-256 and what it reports.
+
+    It runs *path* with ``--version``, outside any sandbox, so a bound recipe calls it only on the
+    pinned copy whose bytes were already compared (issue #223's review, finding 2).
+    """
     version = _reviewer_vendor_version(str(path), env) or ""
-    return {"name": path.name, "sha256": _reviewer_sha256(path), "version": version}
+    return {**reviewer_executable_file(path), "version": version}
 
 
 def reviewer_grok_executable(env: Mapping[str, str]) -> Path:
@@ -3038,7 +3122,7 @@ class ReviewerRecipe:
     """How one vendor runs the targeted reviewer: argv, sandbox settings, result, configuration.
 
     Issue #223 moved what differs between vendors into fields, so the launch never branches on a
-    vendor's name. Every default is Claude's, so the Claude recipe behaves as before.
+    vendor's name. Every default but ``materialize`` is Claude's (issue #225 gave Claude its own).
     """
 
     binary: str
@@ -3073,10 +3157,6 @@ class ReviewerRecipe:
     materialize: Any = reviewer_settings_materialize
     #: Resolves the native executable a probe record binds; ``None`` runs ``binary`` from PATH.
     executable: Any = None
-    #: Whether the probe checks that a secret exported by shell start-up files stays out of
-    #: sandboxed commands. On for the candidates (issue #223's ruling for Grok's persistent
-    #: shell); off for Claude, whose probe outcome feeds saga's setup and is left as it was.
-    probe_startup_exports: bool = False
 
 
 REVIEWER_CLAUDE_RECIPE = ReviewerRecipe(
@@ -3090,6 +3170,8 @@ REVIEWER_CLAUDE_RECIPE = ReviewerRecipe(
     vendor_writable="~/.claude",
     takes_ceiling=True,
     widening=reviewer_claude_widening,
+    # Issue #225: commands run through the shell prefix that keeps start-up exports out.
+    materialize=reviewer_claude_materialize,
 )
 
 #: Recipes ``reviewer-probe`` may run but ``review`` never does (issue #223, plan KTD1). A
@@ -3113,7 +3195,6 @@ REVIEWER_CANDIDATES: dict[str, ReviewerRecipe] = {
         vendor_home="~/.grok",
         vendor_writable="~/.grok/sessions",
         probe_model="grok-4.7",
-        probe_startup_exports=True,
         widening=reviewer_grok_widening,
         materialize=reviewer_grok_materialize,
         executable=reviewer_grok_executable,
@@ -3135,7 +3216,6 @@ REVIEWER_CANDIDATES: dict[str, ReviewerRecipe] = {
         vendor_home="~/.config/muse",
         vendor_writable="~/.config/muse",
         probe_model="muse-spark-1.3-contributor",
-        probe_startup_exports=True,
         executable=reviewer_muse_executable,
     ),
 }
@@ -3567,15 +3647,23 @@ def reviewer_launch(
         )
     executable: Path | None = None
     identity: dict[str, str] | None = None
+    record: Mapping[str, Any] | None = None
     if recipe.executable is not None:
         record = REVIEWER_ADMISSIONS.get((request.vendor, platform))
         if record is None:
             raise ReviewerRefused(f"{request.vendor} has no admitted probe record on {platform}")
-        executable = recipe.executable(environ)
-        identity = reviewer_executable_identity(executable, environ)
-        admitted, why = reviewer_record_admits(record, request.vendor, platform, identity)
+        admitted, why = reviewer_record_admits(record, request.vendor, platform)
         if not admitted:
             raise ReviewerRefused(why)
+        executable = recipe.executable(environ)
+        # Issue #223's review, finding 2: the bytes are compared before anything runs them, so
+        # a replaced or redirected executable is refused without being run.
+        if reviewer_executable_file(executable)["sha256"] != record["executable"]["sha256"]:
+            raise ReviewerRefused(
+                f"the {request.vendor} executable is not the one the probe passed on (its SHA-256 "
+                f"differs from the record's); run reviewer-probe --vendor {request.vendor} "
+                "--record again and commit the record"
+            )
     try:
         prompt_bytes = request.prompt.read_bytes()
     except OSError as exc:
@@ -3624,8 +3712,17 @@ def reviewer_launch(
         request.open_search_cap, withheld,
     )
     prompt_path, stdin = reviewer_deliver_prompt(recipe, root, message)
-    if executable is not None and identity is not None:
-        executable = reviewer_pin_executable(executable, identity, root)
+    if executable is not None and record is not None:
+        try:
+            executable = reviewer_pin_executable(executable, record["executable"], root)
+            # The version comes only from the verified copy, without the API-key variables.
+            identity = reviewer_executable_identity(executable, session_env)
+            admitted, why = reviewer_record_admits(record, request.vendor, platform, identity)
+            if not admitted:
+                raise ReviewerRefused(why)
+        except ReviewerRefused:
+            shutil.rmtree(root, ignore_errors=True)
+            raise
     argv = recipe.argv(
         request.model, request.effort, settings_path, max_budget_usd=request.max_budget_usd,
         executable=executable, prompt_path=prompt_path,
@@ -3636,6 +3733,10 @@ def reviewer_launch(
     parsed = recipe.parse(proc.stdout)
     answer, missing = reviewer_extract_answer(parsed["final"])
 
+    shell_reads = [
+        {"path": str(Path(extra_env[REVIEWER_SHELL_PREFIX]).parent),
+         "reason": "the reviewer's shell prefix, which keeps start-up exports out (issue #225)"}
+    ] if REVIEWER_SHELL_PREFIX in extra_env else []
     request.out.mkdir(parents=True, exist_ok=True)
     answer_path = request.out / "answer.json"
     if answer is not None:
@@ -3670,7 +3771,7 @@ def reviewer_launch(
             "allowed": [
                 {"path": str(copy.resolve()), "reason": "the scratch copy the review works in"},
                 {"path": str(request.packet.resolve()), "reason": "the review packet"},
-            ] + list(toolchain),
+            ] + shell_reads + list(toolchain),
             "dropped": dropped,
         },
         "answer_path": str(answer_path) if answer is not None else None,
@@ -3685,8 +3786,9 @@ def reviewer_launch(
 REVIEWER_PROBE_URL = "https://example.com"
 #: curl exit statuses that mean the connection never left: 6, the name did not resolve; 7, the
 #: connection was refused. 56 counts only with a refused proxy tunnel (Claude's sandbox proxy
-#: answers CONNECT with 403). Timeouts (28), TLS and certificate failures (35, 51, 58, 60, 77,
-#: 83, 90, 91) and an unrunnable curl (126, 127) prove nothing, so they never count as denial.
+#: answers CONNECT with 403; since issue #225 its commands get no proxy variables and give 6).
+#: Timeouts (28), TLS and certificate failures (35, 51, 58, 60, 77, 83, 90, 91) and an unrunnable
+#: curl (126, 127) prove nothing, so they never count as denial.
 REVIEWER_NETWORK_DENIED = frozenset({"6", "7"})
 
 #: The fixed command the probe asks the session to run. Each line records its own exit status in
@@ -3710,7 +3812,7 @@ git --version > /dev/null 2>&1; echo "git=$?" >> "$r"
 cat "{vendor_canary}" > /dev/null 2>&1; echo "read_vendor_home=$?" >> "$r"
 touch "{vendor_write}" 2> /dev/null; echo "write_vendor_home=$?" >> "$r"
 """
-#: Appended for a recipe that checks shell start-up exports.
+#: Every recipe's probe checks shell start-up exports (issue #225 added Claude's).
 REVIEWER_PROBE_STARTUP_LINE = (
     '[ -n "${REVIEWER_PROBE_STARTUP+x}" ] && v=set || v=unset; '
     'echo "startup_variable=$v" >> "$r"\n'
@@ -3733,8 +3835,8 @@ REVIEWER_PROBE_MESSAGE = (
 
 REVIEWER_PROBE_RECORD_SCHEMA = "reviewer_probe_record.v1"
 
-#: Every check a candidate's probe makes, by name. A record admits a vendor only when it holds
-#: exactly these. Claude's probe makes all but ``startup-variable``.
+#: Every check a probe makes, by name, for every recipe. A record admits a vendor only when it
+#: holds exactly these.
 REVIEWER_PROBE_CHECKS = (
     "read-credential", "write-outside", "write-inside", "write-tmpdir", "write-tmp", "network",
     "credential-variable", "read-home", "read-packet", "python-test", "git-runs",
@@ -3789,7 +3891,6 @@ def reviewer_probe_verdicts(
     vendor_write: Path | None = None,
     credential_count: int = 0,
     credentials_absent: Sequence[str] = (),
-    startup_exports: bool = False,
 ) -> list[dict[str, Any]]:
     """Judge each denial from outside the session: the filesystem and the command's own results.
 
@@ -3856,11 +3957,7 @@ def reviewer_probe_verdicts(
          else f"no answer: {answer.get('error') or 'the session gave no final message'}"),
         ("session-exit", session_exit == 0, f"exit={session_exit}"),
     ]
-    return [
-        {"denial": name, "held": held, "detail": detail}
-        for name, held, detail in verdicts
-        if startup_exports or name != "startup-variable"
-    ]
+    return [{"denial": name, "held": held, "detail": detail} for name, held, detail in verdicts]
 
 
 def reviewer_probe(
@@ -3897,9 +3994,10 @@ def reviewer_probe(
     environ["REVIEWER_PROBE_TOKEN"] = canary_variable
     environ["REVIEWER_PROBE_PLAIN"] = canary_plain
     home = _reviewer_home(environ)
+    identity: dict[str, str] | None = None
     if recipe.executable is not None:
+        # Its version is read from the pinned copy below, never from the installed file.
         executable: Path | None = recipe.executable(environ)
-        identity: dict[str, str] | None = reviewer_executable_identity(executable, environ)
     else:
         executable = None
         found = shutil.which(recipe.binary, path=environ.get("PATH", ""))
@@ -3930,7 +4028,7 @@ def reviewer_probe(
     ) + "".join(
         f'cat "{path}" > /dev/null 2>&1; echo "read_vendor_credential_{n}=$?" >> "$r"\n'
         for n, path in enumerate(present)
-    ) + (REVIEWER_PROBE_STARTUP_LINE if recipe.probe_startup_exports else "")
+    ) + REVIEWER_PROBE_STARTUP_LINE
     (copy / "probe.sh").write_text(script, "utf-8")
     # Shell start-up files that export an inert secret; the session's shell must not hand it to
     # a sandboxed command. Set through the environment, so no operator file is edited.
@@ -3940,7 +4038,7 @@ def reviewer_probe(
     startup_env = {
         "ZDOTDIR": str(startup), "BASH_ENV": str(startup / "bash_env"),
         "ENV": str(startup / "sh_env"),
-    } if recipe.probe_startup_exports else {}
+    }
     planted: list[Path] = []
     try:
         home_canary.write_text(canary_home + "\n", "utf-8")
@@ -3954,8 +4052,11 @@ def reviewer_probe(
         settings = recipe.settings(copy, packet, session_env, extra_deny_read=[str(outside)])
         settings_path, extra_env = recipe.materialize(settings, root, copy)
         prompt_path, stdin = reviewer_deliver_prompt(recipe, root, REVIEWER_PROBE_MESSAGE)
-        if executable is not None and identity is not None:
-            executable = reviewer_pin_executable(executable, identity, root)
+        if executable is not None:
+            executable = reviewer_pin_executable(
+                executable, reviewer_executable_file(executable), root
+            )
+            identity = reviewer_executable_identity(executable, session_env)
         ceiling = (max_budget_usd or REVIEWER_PROBE_CEILING_USD) if recipe.takes_ceiling else None
         before = reachable(environ)
         proc = session(
@@ -3972,7 +4073,6 @@ def reviewer_probe(
             parsed=recipe.parse(proc.stdout or ""), session_exit=proc.returncode,
             reachability=(before, after), vendor_write=vendor_write,
             credential_count=len(present), credentials_absent=absent,
-            startup_exports=recipe.probe_startup_exports,
         )
     finally:
         for path in planted:

@@ -12,6 +12,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -258,7 +259,9 @@ def test_unchanged_claude_recipe_keeps_its_functions_names_and_sign_in_rules(
     assert claude.untrusted_dirs == (".claude",) and claude.untrusted_files == (".mcp.json",)
     assert claude.instruction_names == ("CLAUDE.md", "CLAUDE.local.md")
     assert claude.platforms is None and claude.executable is None
-    assert claude.probe_model == "haiku" and claude.probe_startup_exports is False
+    assert claude.probe_model == "haiku"
+    # Issue #225 is the one change: commands run through the start-up-export filter.
+    assert claude.materialize is launcher.reviewer_claude_materialize
 
 
 def test_unchanged_claude_session_environment_and_withholding(
@@ -277,6 +280,175 @@ def test_unchanged_claude_session_environment_and_withholding(
     withheld = launcher.reviewer_withhold_untrusted(copy)
     assert sorted(w.split(" ")[0] for w in withheld) == [".claude", ".mcp.json"]
     assert (copy / ".grok" / "sandbox.toml").exists() and (copy / ".muse" / "x").exists()
+
+
+# ------------------------------------------------------------- start-up exports (issue #225)
+
+PREFIX = "CLAUDE_CODE_SHELL_PREFIX"
+NOT_ROOT = pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root reads a file with no permissions"
+)
+
+
+def _run_like_claude(command: str, env: dict[str, str], cwd: Path) -> str:
+    """Run *command* as Claude Code 2.1.296 runs a Bash command (measured for issue #225).
+
+    A bash that reads its start-up files runs ``'<prefix>' '<command>'`` when
+    ``CLAUDE_CODE_SHELL_PREFIX`` is set, and the command itself when it is not.
+    """
+    prefix = env.get(PREFIX)
+    line = f"{shlex.quote(prefix)} {shlex.quote(command)}" if prefix else command
+    proc = subprocess.run(["bash", "-c", line], cwd=cwd, env=env, capture_output=True, text=True,
+                          check=False)
+    return proc.stdout
+
+
+def _sandbox_denies(sentinel: Path) -> None:
+    """Stand in for the sandbox's ``denyRead`` of the sentinel."""
+    sentinel.chmod(0)
+
+
+def _claude_shell(launcher: ModuleType, tmp_path: Path) -> tuple[Path, dict[str, Any], dict]:
+    copy = tmp_path / "launch" / "copy"
+    copy.mkdir(parents=True)
+    settings = launcher.reviewer_claude_settings(
+        copy, tmp_path / "packet", {"HOME": str(tmp_path / "home")}, toolchain=[]
+    )
+    _, extra = launcher.reviewer_claude_materialize(settings, copy.parent, copy)
+    return copy, settings, extra
+
+
+def _startup_env(tmp_path: Path, **extra: str) -> dict[str, str]:
+    startup = tmp_path / "startup"
+    startup.mkdir(exist_ok=True)
+    (startup / "bash_env").write_text("export REVIEWER_TEST_STARTUP=reviewer-test-startup-inert\n")
+    return {"PATH": os.environ.get("PATH", ""), "HOME": str(tmp_path / "home"),
+            "BASH_ENV": str(startup / "bash_env"), **extra}
+
+
+@NOT_ROOT
+def test_startup_an_export_reaches_a_command_without_the_prefix_and_not_with_it(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy, _, extra = _claude_shell(launcher, tmp_path)
+    show = 'echo "${REVIEWER_TEST_STARTUP-unset}"'
+    env = _startup_env(tmp_path)
+    assert _run_like_claude(show, env, copy).strip() == "reviewer-test-startup-inert"
+    _sandbox_denies(launcher.reviewer_claude_shell_paths(copy)[1])
+    assert _run_like_claude(show, {**env, **extra}, copy).strip() == "unset"
+
+
+@NOT_ROOT
+def test_startup_a_sandboxed_command_keeps_the_allow_list_and_the_toolchain_runs(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy, _, extra = _claude_shell(launcher, tmp_path)
+    _sandbox_denies(launcher.reviewer_claude_shell_paths(copy)[1])
+    env = _startup_env(tmp_path, LANG="C.UTF-8", TZ="UTC", GIT_CONFIG_GLOBAL=os.devnull,
+                       REVIEWER_TEST_PLAIN="inert", REVIEWER_TEST_TOKEN="inert", **extra)
+    out = _run_like_claude(
+        "env | cut -d= -f1 | sort; python3 -c 'print(1 + 2)'; git --version > /dev/null && "
+        "echo git-ok", env, copy,
+    ).split()
+    names = {n for n in out if n.isupper() or n == "_"} - {"PWD", "SHLVL", "OLDPWD", "_"}
+    # Only allow-list names reach it (bash may set SHELL and TERM itself), and each one set does.
+    assert names <= set(launcher.REVIEWER_ENVIRONMENT_ALLOWED)
+    assert {n for n in launcher.REVIEWER_ENVIRONMENT_ALLOWED if n in env} <= names
+    assert "3" in out and "git-ok" in out
+
+
+@NOT_ROOT
+def test_startup_a_missing_sentinel_still_filters(launcher: ModuleType, tmp_path: Path) -> None:
+    copy, _, extra = _claude_shell(launcher, tmp_path)
+    launcher.reviewer_claude_shell_paths(copy)[1].unlink()
+    env = _startup_env(tmp_path, REVIEWER_TEST_PLAIN="inert", **extra)
+    out = _run_like_claude('echo "${REVIEWER_TEST_STARTUP-unset} ${REVIEWER_TEST_PLAIN-unset}"',
+                           env, copy)
+    assert out.split() == ["unset", "unset"]
+
+
+def test_startup_outside_the_sandbox_a_hook_runs_with_its_environment_unchanged(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy, _, extra = _claude_shell(launcher, tmp_path)
+    env = _startup_env(tmp_path, REVIEWER_TEST_PLAIN="inert", **extra)
+    out = _run_like_claude('echo "${REVIEWER_TEST_PLAIN-unset}"', env, copy)
+    assert out.strip() == "inert"
+
+
+def test_startup_the_settings_name_the_prefix_and_deny_its_sentinel(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy, settings, extra = _claude_shell(launcher, tmp_path)
+    prefix, sentinel = launcher.reviewer_claude_shell_paths(copy)
+    assert settings["env"] == {PREFIX: str(prefix)} and extra == {PREFIX: str(prefix)}
+    filesystem = settings["sandbox"]["filesystem"]
+    assert str(prefix.parent) in filesystem["allowRead"] and str(sentinel) in filesystem["denyRead"]
+    for path in (prefix, sentinel):
+        assert path.is_file() and not path.is_relative_to(copy.resolve())
+        assert not any(path.is_relative_to(Path(a)) for a in filesystem["allowRead"]
+                       if path == sentinel)
+    assert os.access(prefix, os.X_OK)
+
+
+def test_startup_a_settings_file_that_sets_the_shell_prefix_refuses(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "settings.json").write_text(json.dumps({"env": {PREFIX: "/bin/echo"}}))
+    assert launcher.reviewer_claude_widening({"HOME": str(home)}) == [
+        f"settings.json sets env.{PREFIX}"
+    ]
+
+
+def test_startup_a_claude_launch_runs_its_commands_through_the_prefix(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    session = FakeSession(CLAUDE_ANSWER)
+    launcher.reviewer_launch(_request(launcher, repo, head, tmp_path, max_budget_usd="5"),
+                             env=_env(tmp_path), session=session)
+    call = session.calls[0]
+    prefix = Path(call["env"][PREFIX])
+    assert prefix == launcher.reviewer_claude_shell_paths(call["cwd"])[0] and prefix.is_file()
+    settings = Path(call["argv"][call["argv"].index("--settings") + 1])
+    assert json.loads(settings.read_text())["env"] == {PREFIX: str(prefix)}
+
+
+@NOT_ROOT
+@pytest.mark.parametrize("fixed", [True, False])
+def test_startup_the_claude_probe_fails_without_the_prefix_and_passes_with_it(
+    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fixed: bool
+) -> None:
+    if not fixed:
+        def unfixed_settings(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            settings = launcher.reviewer_claude_settings(*args, **kwargs)
+            settings.pop("env")
+            return settings
+
+        monkeypatch.setitem(launcher.REVIEWER_RECIPES, "claude", launcher.dataclasses.replace(
+            launcher.REVIEWER_CLAUDE_RECIPE, settings=unfixed_settings,
+            materialize=launcher.reviewer_settings_materialize,
+        ))
+
+    def session(argv: list[str], *, stdin: str, cwd: Path, env: Any, timeout: float) -> Any:
+        results = {k: v for k, v in HONEST.items() if k != "startup_variable"}
+        _write_results(cwd.parent, results)
+        if PREFIX in env:
+            _sandbox_denies(launcher.reviewer_claude_shell_paths(cwd)[1])
+        _run_like_claude('r=probe-results.txt\n' + launcher.REVIEWER_PROBE_STARTUP_LINE, dict(env),
+                         cwd)
+        return subprocess.CompletedProcess(argv, 0, CLAUDE_ANSWER, "")
+
+    verdicts, code = launcher.reviewer_probe(
+        "claude", "haiku", env={"HOME": str(tmp_path), "PATH": os.environ.get("PATH", "")},
+        session=session, work_root=tmp_path / "reviews", reachable=lambda env: 0,
+    )
+    held = {v["denial"]: v["held"] for v in verdicts}
+    assert set(held) == set(launcher.REVIEWER_PROBE_CHECKS)
+    assert held["startup-variable"] is fixed
+    assert (code == 0) is fixed and all(h for name, h in held.items() if name != "startup-variable")
 
 
 # --------------------------------------------------------------------------- candidates
@@ -393,7 +565,6 @@ def _verdicts(launcher: ModuleType, tmp_path: Path, results: dict[str, str], **o
     values: dict[str, Any] = {
         "parsed": {"final": "done", "is_error": False}, "session_exit": 0,
         "reachability": (0, 0), "vendor_write": tmp_path / "vendor" / "w", "credential_count": 2,
-        "startup_exports": True,
     }
     values.update(over)
     verdicts = launcher.reviewer_probe_verdicts(root, tmp_path / "outside", "t", ("reviewer-probe-canary-inert",), "",
@@ -455,7 +626,7 @@ def test_verdict_with_no_results_every_check_is_present_and_the_command_checks_f
     (root / "copy").mkdir(parents=True)
     verdicts = launcher.reviewer_probe_verdicts(
         root, tmp_path / "outside", "t", ("reviewer-probe-canary-inert",), "", parsed={}, session_exit=1,
-        reachability=(0, 0), startup_exports=True,
+        reachability=(0, 0),
     )
     assert [v["denial"] for v in verdicts] == list(launcher.REVIEWER_PROBE_CHECKS)
     assert not any(v["held"] for v in verdicts if v["denial"] not in ("credential-variable",
@@ -573,7 +744,13 @@ def test_admission_an_admitted_candidate_runs_its_pinned_copy_and_a_swap_is_refu
     """The admission path itself, with a synthetic vendor: no real vendor has passed yet."""
     repo, head = reviewed_repo
     binary = _fake_vendor(tmp_path)
-    monkeypatch.setattr(launcher, "_reviewer_vendor_version", lambda b, env: "vendor 1.0")
+    versions: list[str] = []
+
+    def version(path: str, env: Any) -> str:
+        versions.append(path)
+        return "vendor 1.0"
+
+    monkeypatch.setattr(launcher, "_reviewer_vendor_version", version)
     candidate = launcher.dataclasses.replace(
         launcher.REVIEWER_CANDIDATES["grok"], executable=lambda env: binary, widening=None,
     )
@@ -598,6 +775,7 @@ def test_admission_an_admitted_candidate_runs_its_pinned_copy_and_a_swap_is_refu
     ran = Path(session.calls[0]["argv"][0])
     assert ran.name == binary.name and ran != binary and ran.parent.name == "bin"
     assert session.calls[0]["stdin"] == ""
+    assert versions == [str(ran)]  # the version came from the verified copy only
 
     binary.write_bytes(MACH_O + b"\x01" * 60)  # an updater replaced it
     swapped = FakeSession(grok_output)
@@ -607,7 +785,42 @@ def test_admission_an_admitted_candidate_runs_its_pinned_copy_and_a_swap_is_refu
                      model="grok-4.7"),
             env=_env(tmp_path), session=swapped,
         )
-    assert swapped.calls == []
+    assert swapped.calls == [] and versions == [str(ran)]
+
+
+def test_admission_a_mismatched_executable_is_never_run(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #223's review, finding 2: the bytes are compared before anything runs the file."""
+    repo, head = reviewed_repo
+    marker = tmp_path / "it-ran"
+    selected = tmp_path / "vendor-bin"
+    selected.write_text(f"#!/bin/sh\ntouch {marker}\necho 'vendor 1.0'\n")
+    selected.chmod(0o755)
+    runs: list[list[str]] = []
+    real_run = subprocess.run
+
+    def spy(argv: Any, *args: Any, **kwargs: Any) -> Any:
+        runs.append([str(a) for a in argv])
+        return real_run(argv, *args, **kwargs)
+
+    candidate = launcher.dataclasses.replace(
+        launcher.REVIEWER_CANDIDATES["grok"], executable=lambda env: selected, widening=None,
+        platforms=(sys.platform,),
+    )
+    monkeypatch.setitem(launcher.REVIEWER_RECIPES, "mismatch", candidate)
+    monkeypatch.setitem(launcher.REVIEWER_ADMISSIONS, ("mismatch", sys.platform),
+                        _passing_record(launcher, "mismatch", sys.platform))
+    monkeypatch.setattr(launcher.subprocess, "run", spy)
+    session = FakeSession("")
+    with pytest.raises(launcher.ReviewerRefused, match="SHA-256 differs from the record"):
+        launcher.reviewer_launch(
+            _request(launcher, repo, head, tmp_path, vendor="mismatch", model="m"),
+            env=_env(tmp_path), session=session,
+        )
+    assert runs == [] and not marker.exists() and session.calls == []
+    assert not (tmp_path / "reviews").exists()
 
 
 def test_admission_a_candidate_with_no_record_on_this_platform_is_refused(

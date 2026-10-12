@@ -43,13 +43,15 @@ for C8 to extend.
   removes its own API-key variables (`XAI_API_KEY`, `GROK_DEPLOYMENT_KEY`; `META_API_KEY`) and
   withholds its own project files. A candidate reviews only when `REVIEWER_ADMISSIONS` holds a
   complete probe record for its platform and executable. The launcher runs the vendor's native
-  binary, never a wrapper script, hashed against the record and copied into the launch directory
-  first. Both candidates failed their probes on macOS on 2026-10-11 and stay refused; the journal
-  records each failing check.
+  binary, never a wrapper script. Its bytes are hashed and compared with the record before anything
+  runs it, then copied into the launch directory and checked again, and its version is read from
+  that verified copy. Both candidates failed their probes on macOS on 2026-10-11 and stay
+  refused; the journal records each failing check.
 - **`reviewer-probe` checks more, and can record what it saw (issue #223).** `--record <file>`
   writes the vendor, platform, executable identity, sign-in path and every verdict, with no path
   in it. New checks cover the vendor's own state directory (read and write), its sign-in files,
-  a secret exported by shell start-up files (candidates only), a parsed answer and a zero exit.
+  a secret exported by shell start-up files (every vendor, Claude included since issue #225), a
+  parsed answer and a zero exit.
   `--model` now defaults to the recipe's probe model.
 
 ### Changed
@@ -64,6 +66,18 @@ for C8 to extend.
   same address was reachable from outside the session before and after it, and the session's curl
   failed in a way that means the connection never left (6, 7, or 56 with a refused proxy tunnel).
   A timeout, a certificate failure or an offline machine no longer counts as denial.
+- **Claude's sandboxed commands no longer see variables exported by shell start-up files (issue
+  #225).** The shell around each command read its start-up files before the command ran, and the
+  sandbox denies only names the launch environment had, so an export from a start-up file reached
+  the code under review. `launcher.py review` now writes a per-launch `CLAUDE_CODE_SHELL_PREFIX`
+  beside the copy and names it in `--settings` and the session environment. Inside the sandbox it
+  runs each command with only the allow-listed variables, in a bash that reads no start-up file;
+  hooks and MCP servers, which run outside the sandbox, keep their environment. It tells the two
+  apart by reading a sentinel file the settings deny, so a failed read always filters. The sandbox's
+  proxy variables no longer reach commands either; the network stays denied (curl now exits 6). A
+  user, local or managed settings file that sets `env.CLAUDE_CODE_SHELL_PREFIX` refuses the launch,
+  because managed settings would replace the filter. The Claude probe now makes the start-up check
+  too, and the live probe holds all 19 checks.
 
 ### Fixed
 

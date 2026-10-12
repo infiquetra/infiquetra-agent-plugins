@@ -4592,7 +4592,11 @@ def test_reviewer_read_confinement_settings_are_pinned(
     env = {"HOME": "/home/example", "GH_TOKEN": "inert-example", "PATH": "/usr/bin"}
     settings = launcher.reviewer_claude_settings(copy, packet, env, toolchain=[], platform="darwin")
     credentials = list(launcher.REVIEWER_CREDENTIAL_PATHS)
+    # Issue #225: the shell prefix that keeps start-up exports out, and its denied sentinel.
+    root = copy.resolve().parent
+    prefix, sentinel = root / "shell" / "reviewer-shell.sh", root / "unsandboxed"
     assert settings == {
+        "env": {"CLAUDE_CODE_SHELL_PREFIX": str(prefix)},
         "sandbox": {
             "enabled": True,
             "failIfUnavailable": True,
@@ -4600,8 +4604,8 @@ def test_reviewer_read_confinement_settings_are_pinned(
             "allowUnsandboxedCommands": False,
             "filesystem": {
                 "denyWrite": ["/tmp", "/private/tmp", "/var/folders"],
-                "denyRead": ["~"],
-                "allowRead": [str(copy.resolve()), str(packet.resolve())],
+                "denyRead": ["~", str(sentinel)],
+                "allowRead": [str(copy.resolve()), str(packet.resolve()), str(prefix.parent)],
             },
             "network": {"strictAllowlist": True, "allowedDomains": []},
             "credentials": {"envVars": [{"name": "GH_TOKEN", "mode": "deny"}]},
@@ -4657,8 +4661,8 @@ def test_reviewer_read_confinement_allow_read_is_only_copy_packet_and_named_tool
     packet.mkdir()
     settings = launcher.reviewer_claude_settings(copy, packet, env)
     assert settings["sandbox"]["filesystem"]["allowRead"] == [
-        str(copy.resolve()), str(packet.resolve()), str(interpreter / "bin"),
-        str(interpreter / "lib"),
+        str(copy.resolve()), str(packet.resolve()), str(copy.resolve().parent / "shell"),
+        str(interpreter / "bin"), str(interpreter / "lib"),
     ]
 
 
@@ -4772,7 +4776,8 @@ def test_reviewer_read_confinement_the_launch_names_every_allowed_read(
     settings = json.loads(
         Path(session.calls[0]["argv"][session.calls[0]["argv"].index("--settings") + 1]).read_text()
     )
-    assert settings["sandbox"]["filesystem"]["denyRead"] == ["~"]
+    root = Path(result["scratch"]["path"]).resolve().parent
+    assert settings["sandbox"]["filesystem"]["denyRead"] == ["~", str(root / "unsandboxed")]
     assert settings["sandbox"]["filesystem"]["allowRead"] == [item["path"] for item in allowed]
 
 
@@ -5182,9 +5187,9 @@ def test_reviewer_read_confinement_probe_passes_when_every_check_held(
         "read-credential", "write-outside", "write-inside", "write-tmpdir", "write-tmp",
         "network", "credential-variable", "read-home", "read-packet", "python-test", "git-runs",
         "plain-variable", "no-canary-in-output",
-        # Issue #223. Claude's probe does not check shell start-up exports.
-        "read-vendor-home", "write-vendor-home", "read-vendor-credential", "answer-parsed",
-        "session-exit",
+        # Issue #223; issue #225 added the start-up-export check to Claude's probe.
+        "read-vendor-home", "write-vendor-home", "read-vendor-credential", "startup-variable",
+        "answer-parsed", "session-exit",
     }
     assert not (tmp_path / "reviews").exists() or not any((tmp_path / "reviews").iterdir())
     assert _home_canaries(tmp_path) == []
@@ -5294,7 +5299,7 @@ def test_reviewer_the_probe_fails_when_a_canary_value_is_seen_despite_a_denied_r
 
 def test_reviewer_the_probe_fails_with_no_results_file(launcher: ModuleType, tmp_path: Path) -> None:
     held, code = _probe(launcher, tmp_path, _probe_session(None))
-    assert code == 1 and set(held) == set(launcher.REVIEWER_PROBE_CHECKS) - {"startup-variable"}
+    assert code == 1 and set(held) == set(launcher.REVIEWER_PROBE_CHECKS)
     assert not held["network"] and not held["read-credential"] and not held["no-canary-in-output"]
 
 

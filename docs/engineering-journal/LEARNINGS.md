@@ -64,21 +64,32 @@ would then have called the network denied.
 **Generalizable rule.** Judge a denial against a control measured outside the sandbox at the same
 time. Count only the failures that mean the connection never left.
 
-### Claude's reviewer sandbox hands a secret exported by shell start-up files to its commands
+### Claude's reviewer sandbox handed a secret exported by shell start-up files to its commands
 
-**Evidence.** Issue #223, during the build. A live Claude probe on Claude Code 2.1.296 pointed
-`ZDOTDIR` at probe-owned start-up files that export an inert canary. A sandboxed command then saw
-the variable set. Every other check held. The `startup-variable` check runs only for Grok and
-Muse. Running it on Claude would fail Claude's probe, and saga's setup step then turns the
-reviewer's test reproduction off. That is a change to Claude's behaviour this card may not make,
-so it is reported for a decision rather than shipped.
+**Evidence.** Issues #223 and #225. On 2026-10-11, on Claude Code 2.1.296, the Claude probe
+pointed `BASH_ENV`, `ZDOTDIR` and `ENV` at probe-owned start-up files that export an inert canary.
+A sandboxed command saw the variable set; every other check held. Logging the command a shell
+prefix receives showed the order. A bash that has already read `BASH_ENV` runs
+`'<prefix>' '<command>'`, and the command starts with `source <snapshot> 2>/dev/null || true`.
+The snapshot (`~/.claude/shell-snapshots/`) holds functions, shell options, aliases and `PATH`, no
+other exports. So the earlier explanation in this entry, that the snapshot replays the exports,
+was wrong. With issue #225's fix, a live `reviewer-probe --vendor claude --model haiku` held all
+19 checks, `startup-variable` included. The same probe with the fix removed in memory failed
+`startup-variable` alone.
 
-**Mechanism.** `sandbox.credentials.envVars` denies variables by name, and the names come from the
-launch environment. Claude's shell snapshot replays exports from the start-up files, including
-names the launch environment never had, so no rule denies them.
+**Mechanism.** `sandbox.credentials.envVars` denies variables by name. The names come from the
+launch environment, and the shell around each command reads its start-up files before the
+command starts, so a name a start-up file adds is never denied. The fix is a launcher-owned
+`CLAUDE_CODE_SHELL_PREFIX` that rebuilds a sandboxed command's environment from the allow-list
+after start-up, in a bash that reads no start-up file. Claude runs hooks and MCP servers through
+the same prefix, outside the sandbox. The prefix tells them apart by reading a sentinel file that
+the settings deny by name: only an unsandboxed process can read it, and anything else filters.
+Dropping the sandbox's proxy variables changed the network check's evidence from curl 56 with
+CONNECT 403 to curl 6; both mean the connection never left.
 
 **Generalizable rule.** An environment deny list built from the launch environment does not cover
-what the shell adds. Test it with an export from a start-up file.
+what the shell adds. Filter by allow-list after the shell has started, and test it with an export
+from a start-up file.
 
 ### Claude's `--max-budget-usd` stops between turns, not within one
 
