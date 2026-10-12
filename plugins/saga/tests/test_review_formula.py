@@ -668,3 +668,10 @@ def test_two_unscored_advisories_merge_into_one_block() -> None:
     assert len(merged) == 1
     assert merged[0]["canonical_id"] == "CVE-2026-0000"
     assert severity(tool_finding(merged[0]["row"])) == "blocks"
+
+
+def test_corpus_language_ids_in_formula() -> None:
+    assert "cdk" in F.LANGUAGES
+    assert "cloudformation" in F.LANGUAGES
+    assert "github-workflow" in F.LANGUAGES
+    assert "github-workflows" not in F.LANGUAGES

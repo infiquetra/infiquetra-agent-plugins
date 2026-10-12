@@ -92,7 +92,7 @@ Every finding gives:
 - `location`: `scope` `lines` with `file`, `lines` (`start`, `end`), `function` (or null) and
   `anchor` (the flagged lines' text); or `scope` `whole-project` with `file` and `anchor`;
 - `language`: `python`, `typescript`, `dart`, `rust`, `swift`, `markdown`, `shell`,
-  `github-workflows`, `cloudformation` or `none`;
+  `github-workflow`, `cdk`, `cloudformation` or `none`;
 - `statement`: one sentence on one line;
 - `consequence`, `trigger` and `evidence`, from the closed lists below;
 - `proof`: for `reproduced`, `test`, `command` and `output`; for `traced`, `steps`, a list of

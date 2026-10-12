@@ -190,7 +190,8 @@
             "swift",
             "markdown",
             "shell",
-            "github-workflows",
+            "github-workflow",
+            "cdk",
             "cloudformation",
             "none"
           ]
@@ -467,7 +468,8 @@
             "swift",
             "markdown",
             "shell",
-            "github-workflows",
+            "github-workflow",
+            "cdk",
             "cloudformation",
             "none"
           ]
@@ -536,7 +538,8 @@
             "swift",
             "markdown",
             "shell",
-            "github-workflows",
+            "github-workflow",
+            "cdk",
             "cloudformation",
             "none"
           ]

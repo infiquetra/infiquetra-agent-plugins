@@ -143,7 +143,7 @@ def _parse_zizmor(text: str) -> ParseResult:
             start=line,
             end=line,
             row=row,
-            language="github-workflows",
+            language="github-workflow",
         ))
     return ParseResult(tuple(hits))
 
@@ -231,7 +231,7 @@ def _parse_actionlint(mapping: Mapping[str, str]) -> Callable[[str], ParseResult
                 level=level,
                 start=int(start) if isinstance(start, int) else None,
                 end=int(start) if isinstance(start, int) else None,
-                language="github-workflows",
+                language="github-workflow",
             ))
         return ParseResult(tuple(hits))
 
