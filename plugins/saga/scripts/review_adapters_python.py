@@ -11,6 +11,7 @@ import json
 import re
 import shlex
 import subprocess
+import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -105,34 +106,91 @@ sys.stdout.write(proc.stdout or "")
 raise SystemExit(proc.returncode)
 """
 
+# Shared per-run budget in seconds: the config's per-mutant timeout and the
+# wrapper's baseline bound are the same value (issue 227). A suite slower than
+# this fails the baseline instead of timing out per mutant into all-killed.
+_COSMIC_TIMEOUT_SECONDS = 300
+
+# Runs one cosmic-ray session: baseline first, then init, exec, dump. Reads the
+# 8.7.0 dump as [work_item, result] arrays. Anything it cannot prove clean is
+# unfinished. argv[2] overrides the baseline budget; tests use that, production
+# passes _COSMIC_TIMEOUT_SECONDS.
 _COSMIC_WRAPPER = r"""
-import json, subprocess, sys
+import json, shlex, subprocess, sys, tomllib
 config = sys.argv[1]
+try:
+    budget = float(sys.argv[2])
+except (IndexError, ValueError):
+    budget = 300.0
+if not budget > 0:
+    budget = 300.0
+def _done(unfinished, survivors):
+    print(json.dumps({"unfinished": unfinished, "survivors": survivors}))
+    raise SystemExit(0)
+try:
+    with open(config, "rb") as handle:
+        test_command = tomllib.load(handle)["cosmic-ray"]["test-command"]
+except (OSError, ValueError, KeyError):
+    _done(True, [])
+if not isinstance(test_command, str):
+    _done(True, [])
+try:
+    baseline = subprocess.run(
+        shlex.split(test_command), capture_output=True, text=True, timeout=budget
+    )
+except (OSError, ValueError, subprocess.TimeoutExpired):
+    _done(True, [])
+if baseline.returncode != 0:
+    _done(True, [])
 session = config + ".sqlite"
 init = subprocess.run(["cosmic-ray", "init", config, session], capture_output=True, text=True)
 if init.returncode != 0:
-    print(json.dumps({"unfinished": True, "survivors": []}))
-    raise SystemExit(0)
+    _done(True, [])
 ran = subprocess.run(["cosmic-ray", "exec", config, session], capture_output=True, text=True)
 dump = subprocess.run(
     ["cosmic-ray", "dump", session], capture_output=True, text=True
 )
+unfinished = ran.returncode != 0 or dump.returncode != 0
 survivors = []
 for line in (dump.stdout or "").splitlines():
     text = line.strip()
-    if not text.startswith("{"):
+    if not text:
         continue
     try:
-        item = json.loads(text)
+        row = json.loads(text)
     except json.JSONDecodeError:
+        unfinished = True
         continue
-    if item.get("test_outcome") not in {"SURVIVED", "survived"}:
+    if not isinstance(row, list) or len(row) != 2:
+        unfinished = True
         continue
-    survivors.append({
-        "path": str(item.get("module") or item.get("path") or "."),
-        "line": int(item.get("line") or item.get("start") or 1),
-    })
-print(json.dumps({"unfinished": ran.returncode != 0, "survivors": survivors}))
+    work, result = row
+    if not isinstance(work, dict) or (result is not None and not isinstance(result, dict)):
+        unfinished = True
+        continue
+    if result is None:
+        unfinished = True
+        continue
+    if result.get("worker_outcome") != "normal":
+        unfinished = True
+    outcome = result.get("test_outcome")
+    if outcome is None:
+        unfinished = True
+        continue
+    lowered = str(outcome).lower()
+    if lowered == "survived":
+        mutations = work.get("mutations") or []
+        first = mutations[0] if mutations else {}
+        path = first.get("module_path") if isinstance(first, dict) else None
+        start = first.get("start_pos") if isinstance(first, dict) else None
+        number = start[0] if isinstance(start, (list, tuple)) and start else None
+        if not path or not isinstance(number, int) or isinstance(number, bool):
+            unfinished = True
+            continue
+        survivors.append({"path": str(path), "line": number})
+    elif lowered != "killed":
+        unfinished = True
+_done(unfinished, survivors)
 """
 
 
@@ -210,6 +268,19 @@ def _strip_randomly(argv: list[str]) -> list[str]:
         cleaned.append(part)
         index += 1
     return cleaned
+
+
+def _resolve_python_head(parts: list[str]) -> list[str]:
+    """Rewrite a bare python head to this interpreter (issue 227).
+
+    A bare ``python`` resolves through PATH, which the temporary uv
+    environment shadows with an interpreter that has no pytest. Every other
+    head passes through: this adapter cannot know what ``make`` needs.
+    """
+
+    if parts and parts[0] in {"python", "python3"}:
+        return [sys.executable, *parts[1:]]
+    return parts
 
 
 def _family_level(code: str, mapping: Mapping[str, str]) -> str:
@@ -490,7 +561,7 @@ def _invoke_cosmic(context: ScanContext) -> list[str]:
     command = context.test_command.strip()
     if not command:
         raise ToolGap("known-gap", "testing.surviving-mutant")
-    parts = [*_strip_randomly(shlex.split(command)), "-p", "no:randomly"]
+    parts = _resolve_python_head([*_strip_randomly(shlex.split(command)), "-p", "no:randomly"])
     modules = _changed_python(context)
     if not modules:
         return []
@@ -499,9 +570,12 @@ def _invoke_cosmic(context: ScanContext) -> list[str]:
         "\n".join([
             "[cosmic-ray]",
             f"module-path = {_toml_list(modules)}",
-            "timeout = 10.0",
+            f"timeout = {float(_COSMIC_TIMEOUT_SECONDS)}",
             "excluded-modules = []",
             f"test-command = {_toml(shlex.join(parts))}",
+            "",
+            "[cosmic-ray.distributor]",
+            'name = "local"',
             "",
             "[cosmic-ray.filters.git-filter]",
             f"branch = {_toml(context.base)}",
@@ -511,7 +585,7 @@ def _invoke_cosmic(context: ScanContext) -> list[str]:
     )
     return [
         "uv", "run", "--with", "cosmic-ray==8.7.0",
-        "python", "-c", _COSMIC_WRAPPER, str(toml),
+        sys.executable, "-c", _COSMIC_WRAPPER, str(toml), str(_COSMIC_TIMEOUT_SECONDS),
     ]
 
 
@@ -545,7 +619,7 @@ def _pytest_argv(context: ScanContext, package: str, extra: list[str]) -> list[s
     command = context.test_command.strip()
     if not command:
         raise ToolGap("known-gap", "testing.flaky-order-or-network")
-    parts = _strip_randomly(shlex.split(command))
+    parts = _resolve_python_head(_strip_randomly(shlex.split(command)))
     return ["uv", "run", "--with", package, *parts, *extra]
 
 
