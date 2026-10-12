@@ -4,6 +4,14 @@
 
 ### Added
 
+- Issue #224: the calibration file accepts the corpus's language ids and records the
+  measured reviewer's configuration. The workflow id is `github-workflow` everywhere
+  saga uses it, `cdk` joins every language list, `reviewer_configuration` is null or
+  the `{vendor, model, effort, prompt_sha256, configuration_fingerprint, second,
+  cleared_components}` object validated field by field, and the review-time comparison
+  reads `configuration_fingerprint`. `review_calibration.fingerprint(root)` builds the
+  recorded component fingerprint, and `review_dataset.load_corpus` reads a case's `id`
+  when `case_id` is absent.
 - Issue #221: a `/setup-view` command, registered by saga's Claude Code mod, that opens the setup
   pane at once with no agent turn: the pane runs the survey itself, installs the ticked tools, and
   runs the optional steps from the saga plugin root. After each action the pane re-surveys so done

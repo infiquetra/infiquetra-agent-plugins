@@ -1368,7 +1368,10 @@ def _reviewer_configuration(path: Path) -> str | None:
         return None
     if not isinstance(data, Mapping):
         return None
-    return _hex_or_none(data.get("reviewer_configuration"))
+    configuration = data.get("reviewer_configuration")
+    if not isinstance(configuration, Mapping):
+        return None
+    return _hex_or_none(configuration.get("configuration_fingerprint"))
 
 
 def _hex_or_none(value: Any) -> str | None:

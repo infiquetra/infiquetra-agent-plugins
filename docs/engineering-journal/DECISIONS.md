@@ -1,5 +1,26 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-10-12
+
+### Saga's workflow language id is `github-workflow`, matching the corpus
+
+**Decision.** Saga renamed its `github-workflows` language id to `github-workflow`
+everywhere it is used (formula, question banks, sweep, both record schemas, tool
+list, detector, setup survey, workflow adapter, prose docs) and added `cdk` to the
+same lists, matching the corpus's ids. Issue #224.
+
+**Rationale.** The corpus harness must not map one language onto another, so saga
+owns the spelling. The drift tests already forced synchronized edits across the
+formula, schemas, banks, and sweep source; the rename's remaining sites were
+mechanical. Nothing stored migrated: the committed calibration file is `no-run`,
+no corpus run is recorded, and a pre-rename search found the old id only in inert
+display data (the machine record's survey list) that no reader validates.
+
+**Rejected alternatives.** Keeping the plural behind a documented alias table
+(two spellings in stored records permanently, every future reader normalizing).
+
+**Revisit when.** The corpus renames a language id.
+
 ## 2026-10-11
 
 ### The setup pane's direct opener lives in the Claude adapter

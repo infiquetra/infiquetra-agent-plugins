@@ -375,6 +375,8 @@ def test_schema_file_matches_the_validator() -> None:
     finding = defs["finding"]["properties"]
     assert finding["lens"]["enum"] == list(F.LENSES)
     assert finding["language"]["enum"] == list(F.LANGUAGES)
+    assert defs["measurement"]["properties"]["language"]["enum"] == list(F.LANGUAGES)
+    assert defs["where_to_look"]["properties"]["language"]["enum"] == list(F.LANGUAGES)
     assert finding["evidence"]["enum"] == list(F.EVIDENCE)
     assert finding["consequence"]["enum"] == [*F.CONSEQUENCES, None]
     assert finding["trigger"]["enum"] == [*F.TRIGGERS, None]

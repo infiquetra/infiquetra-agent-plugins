@@ -393,7 +393,7 @@ def language_for(path: str) -> str:
     """
     normalised = path.replace("\\", "/")
     if normalised.startswith(".github/workflows/") or "/.github/workflows/" in f"/{normalised}":
-        return "github-workflows"
+        return "github-workflow"
     return _SUFFIXES.get(Path(normalised).suffix.lower(), "none")
 
 

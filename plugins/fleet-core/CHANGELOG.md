@@ -13,6 +13,8 @@ The catalog requires `python>=3.12`.
 
 ### Added
 
+- The sweep's language list gains `cdk`, and the workflow id is `github-workflow`
+  (infiquetra-agent-plugins #224), matching saga's formula lists.
 - The Langfuse client reads two more lists over `GET` only: `traces`
   (`/api/public/traces`) and `scores-list` (`/api/public/v2/scores`), for saga's
   review-outcome job (infiquetra-agent-plugins #167). The method set stays `GET`

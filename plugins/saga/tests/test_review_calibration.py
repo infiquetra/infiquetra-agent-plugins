@@ -101,10 +101,7 @@ def _copy_components(root: Path) -> None:
 
 
 def _fingerprint(root: Path) -> dict[str, str]:
-    return {
-        relative: hashlib.sha256((root / relative).read_bytes()).hexdigest()
-        for relative in calibration.COMPONENTS
-    }
+    return calibration.fingerprint(root)
 
 
 def _recorded(
@@ -727,3 +724,186 @@ def test_reference_documents_fields_kinds_and_the_add_path_rule() -> None:
     block = section.split("### `review_tools`", 1)[1].split("\n## ", 1)[0]
     assert "may-block" in block
     assert "review_tools.pins" in block
+
+
+#: The language ids in ``corpus/case.py`` LANGUAGES on saga-review-corpus main.
+CORPUS_LANGUAGES = (
+    "cdk",
+    "cloudformation",
+    "dart",
+    "github-workflow",
+    "markdown",
+    "python",
+    "rust",
+    "shell",
+    "swift",
+    "typescript",
+)
+
+
+def test_corpus_language_ids_verdicts_validate(tmp_path: Path) -> None:
+    data = _committed()
+    data["corpus_run"] = "recorded"
+    for lens in data["lenses"].values():
+        lens["drift"] = "as-recorded"
+        lens["overall"] = _overall()
+        lens["languages"] = {
+            language: _language("cleared")
+            for language in ("cdk", "cloudformation", "github-workflow")
+        }
+    assert _problems(data, tmp_path) == []
+    data["lenses"]["security"]["languages"]["github-workflows"] = _language("cleared")
+    assert any(
+        "languages.github-workflows" in problem for problem in _problems(data, tmp_path)
+    )
+
+
+@pytest.mark.parametrize("language", CORPUS_LANGUAGES)
+def test_corpus_language_ids_may_block_answers(tmp_path: Path, language: str) -> None:
+    root = tmp_path / "root"
+    path = _recorded(root, languages={language: _language("cleared")})
+    for lens in review_formula.LENSES:
+        assert (
+            calibration.may_block(lens, language, root=root, calibration=path)
+            == "yes cleared"
+        )
+
+
+def _reviewer(**overrides: object) -> dict[str, object]:
+    configuration: dict[str, object] = {
+        "vendor": "example-vendor",
+        "model": "example-model",
+        "effort": "high",
+        "prompt_sha256": "b" * 64,
+        "configuration_fingerprint": "d" * 64,
+        "second": {"vendor": "other-vendor", "model": "other-model", "effort": "low"},
+        "cleared_components": ["example-component"],
+    }
+    configuration.update(overrides)
+    return configuration
+
+
+def _with_reviewer(data: dict[str, Any], configuration: object) -> dict[str, Any]:
+    data["reviewer_configuration"] = configuration
+    return data
+
+
+def test_reviewer_configuration_object_validates(tmp_path: Path) -> None:
+    assert _problems(_with_reviewer(_committed(), _reviewer()), tmp_path) == []
+    assert (
+        _problems(
+            _with_reviewer(_committed(), _reviewer(second=None, cleared_components=[])),
+            tmp_path,
+        )
+        == []
+    )
+
+
+def _reviewer_mutations() -> list[tuple[str, dict[str, Any], str]]:
+    base = _reviewer()
+    cases: list[tuple[str, dict[str, Any], str]] = []
+    for name in ("vendor", "model", "effort"):
+        bad = dict(base)
+        bad[name] = "not an identifier!"
+        cases.append((name, bad, f"reviewer_configuration.{name}"))
+    for name in ("prompt_sha256", "configuration_fingerprint"):
+        bad = dict(base)
+        bad[name] = "xyz"
+        cases.append((name, bad, f"reviewer_configuration.{name}"))
+    bad = dict(base)
+    bad["second"] = "other-vendor"
+    cases.append(("second-string", bad, "reviewer_configuration.second"))
+    bad = dict(base)
+    bad["second"] = {**base["second"], "extra": "no"}  # type: ignore[dict-item]
+    cases.append(("second-extra", bad, "reviewer_configuration.second.extra"))
+    bad = dict(base)
+    bad["second"] = {"vendor": "other-vendor", "model": "other-model"}
+    cases.append(("second-missing", bad, "reviewer_configuration.second.effort"))
+    bad = dict(base)
+    bad["cleared_components"] = ["ok", 7]
+    cases.append(("cleared-mixed", bad, "reviewer_configuration.cleared_components"))
+    bad = dict(base)
+    bad["cleared_components"] = ["same", "same"]
+    cases.append(("cleared-duplicate", bad, "reviewer_configuration.cleared_components"))
+    bad = dict(base)
+    bad["cleared_components"] = "example-component"
+    cases.append(("cleared-string", bad, "reviewer_configuration.cleared_components"))
+    bad = dict(base)
+    bad["launch"] = {"vendor": "example-vendor"}
+    cases.append(("unknown-key", bad, "reviewer_configuration.launch"))
+    return cases
+
+
+@pytest.mark.parametrize("name,configuration,field", _reviewer_mutations())
+def test_reviewer_configuration_malformed_field_is_refused_by_name(
+    tmp_path: Path, name: str, configuration: dict[str, Any], field: str
+) -> None:
+    del name
+    problems = _problems(_with_reviewer(_committed(), configuration), tmp_path)
+    assert any(field in problem for problem in problems), problems
+
+
+@pytest.mark.parametrize("name", list(calibration.REVIEWER_FIELDS))
+def test_reviewer_configuration_missing_key_is_refused_by_name(
+    tmp_path: Path, name: str
+) -> None:
+    configuration = _reviewer()
+    del configuration[name]
+    problems = _problems(_with_reviewer(_committed(), configuration), tmp_path)
+    assert any(f"reviewer_configuration.{name}" in problem for problem in problems)
+
+
+@pytest.mark.parametrize("name", list(calibration.SECOND_FIELDS))
+def test_reviewer_configuration_missing_second_key_is_refused_by_name(
+    tmp_path: Path, name: str
+) -> None:
+    second = {"vendor": "other-vendor", "model": "other-model", "effort": "low"}
+    del second[name]
+    problems = _problems(_with_reviewer(_committed(), _reviewer(second=second)), tmp_path)
+    assert any(f"reviewer_configuration.second.{name}" in problem for problem in problems)
+
+
+def test_reviewer_configuration_null_validates_and_string_is_refused(
+    tmp_path: Path,
+) -> None:
+    assert _problems(_with_reviewer(_committed(), None), tmp_path) == []
+    problems = _problems(_with_reviewer(_committed(), "a" * 64), tmp_path)
+    assert problems == ["not an identifier: reviewer_configuration"]
+
+
+def test_reviewer_configuration_recorded_fixtures_still_validate(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    path = _recorded(root)
+    assert calibration.problems_in(path) == []
+    assert calibration.problems_in(COMMITTED) == []
+
+
+def test_fingerprint_builder_hashes_every_component_through_locate(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    _copy_components(root)
+    expected = {
+        relative: hashlib.sha256(calibration.locate(root, relative).read_bytes()).hexdigest()
+        for relative in calibration.COMPONENTS
+    }
+    assert calibration.fingerprint(root) == expected
+    assert list(calibration.fingerprint(root)) == list(calibration.COMPONENTS)
+
+
+def test_fingerprint_builder_missing_component_raises_naming_the_path(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    _copy_components(root)
+    missing = calibration.COMPONENTS[0]
+    (root / missing).unlink()
+    with pytest.raises(OSError) as failed:
+        calibration.fingerprint(root)
+    assert missing in str(failed.value)
+
+
+def test_fingerprint_builder_helper_calls_fingerprint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentinel = {"plugins/saga/scripts/review_formula.py": "0" * 64}
+    monkeypatch.setattr(calibration, "fingerprint", lambda root: sentinel)
+    assert _fingerprint(tmp_path) == sentinel

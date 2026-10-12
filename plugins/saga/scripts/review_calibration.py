@@ -92,6 +92,16 @@ COUNT_FIELDS = (
     "repeat_flips",
     "repeat_cases",
 )
+REVIEWER_FIELDS = (
+    "vendor",
+    "model",
+    "effort",
+    "prompt_sha256",
+    "configuration_fingerprint",
+    "second",
+    "cleared_components",
+)
+SECOND_FIELDS = ("vendor", "model", "effort")
 LANGUAGE_FIELDS = ("verdict", *COUNT_FIELDS)
 THRESHOLD_FIELDS = ("question", "threshold", "piece_size")
 
@@ -230,6 +240,46 @@ def _lens_problems(data: Mapping[str, Any]) -> list[str]:
     return found
 
 
+def _reviewer_problems(value: object) -> list[str]:
+    """Format problems for ``reviewer_configuration``: null or the measured object."""
+    if value is None:
+        return []
+    if not isinstance(value, dict):
+        return [_ident("reviewer_configuration")]
+    found = _extra_keys(value, REVIEWER_FIELDS, "reviewer_configuration")
+    for name in SECOND_FIELDS:
+        field = value.get(name)
+        if not isinstance(field, str) or IDENTIFIER.fullmatch(field) is None:
+            found.append(_ident(f"reviewer_configuration.{name}"))
+    for name in ("prompt_sha256", "configuration_fingerprint"):
+        field = value.get(name)
+        if not isinstance(field, str) or SHA256.fullmatch(field) is None:
+            found.append(_ident(f"reviewer_configuration.{name}"))
+    if "second" not in value:
+        found.append(_ident("reviewer_configuration.second"))
+    else:
+        second = value.get("second")
+        if second is not None:
+            if not isinstance(second, dict):
+                found.append(_ident("reviewer_configuration.second"))
+            else:
+                found.extend(
+                    _extra_keys(second, SECOND_FIELDS, "reviewer_configuration.second")
+                )
+                for name in SECOND_FIELDS:
+                    field = second.get(name)
+                    if not isinstance(field, str) or IDENTIFIER.fullmatch(field) is None:
+                        found.append(_ident(f"reviewer_configuration.second.{name}"))
+    cleared = value.get("cleared_components")
+    if not isinstance(cleared, list):
+        found.append(_ident("reviewer_configuration.cleared_components"))
+    elif not all(isinstance(entry, str) and entry for entry in cleared) or len(
+        set(cleared)
+    ) != len(cleared):
+        found.append(_ident("reviewer_configuration.cleared_components"))
+    return found
+
+
 def _threshold_problems(value: object) -> list[str]:
     if not isinstance(value, list):
         return [_unknown("thresholds")]
@@ -268,11 +318,7 @@ def document_problems(data: object) -> list[str]:
     cost = data.get("cost_usd")
     if cost is not None and (not _is_number(cost) or cost < 0):
         found.append(_ident("cost_usd"))
-    configuration = data.get("reviewer_configuration")
-    if configuration is not None and (
-        not isinstance(configuration, str) or SHA256.fullmatch(configuration) is None
-    ):
-        found.append(_ident("reviewer_configuration"))
+    found.extend(_reviewer_problems(data.get("reviewer_configuration")))
     if data.get("marks") != MARKS:
         found.append(_ident("marks"))
     found.extend(_lens_problems(data))
@@ -356,6 +402,11 @@ def thresholds(path: Path | None = None) -> list[dict[str, Any]]:
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def fingerprint(root: Path) -> dict[str, str]:
+    """The sha256 of every ``COMPONENTS`` path, hashed through :func:`locate`."""
+    return {relative: _sha256(locate(Path(root), relative)) for relative in COMPONENTS}
 
 
 def fingerprint_drift(root: Path, recorded: Mapping[str, Any]) -> list[str]:

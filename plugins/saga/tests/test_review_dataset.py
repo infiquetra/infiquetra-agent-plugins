@@ -199,3 +199,37 @@ def test_dataset_posts_private(tmp_path: Path) -> None:
     assert opener.requests == []
     reasons = D.review_trace.queue_status(home)["reasons"]
     assert reasons == {"plain-http-private": 5}
+
+
+def _id_case(root: Path, name: str, case: dict[str, Any]) -> None:
+    folder = root / name
+    folder.mkdir(parents=True)
+    (folder / "case.json").write_text(json.dumps(case), encoding="utf-8")
+
+
+def test_load_corpus_reads_id_when_case_id_is_absent(tmp_path: Path) -> None:
+    root = tmp_path / "corpus"
+    _id_case(root, "tune-1", {"id": "tune-1", "split": "tuning"})
+    _id_case(root, "held-1", {"id": "held-1", "split": "held-out", "lens": "security"})
+    cases = D.load_corpus(root)
+    assert [case["case_id"] for case in cases] == ["held-1", "tune-1"]
+    items = D.dataset_items(cases)
+    assert [item["id"] for item in items] == [D.item_id("held-1"), D.item_id("tune-1")]
+    assert items[0]["input"] == {"case_id": "held-1"}
+
+
+def test_load_corpus_prefers_case_id(tmp_path: Path) -> None:
+    root = tmp_path / "corpus"
+    _id_case(root, "both", {"case_id": "staged", "id": "raw", "split": "tuning"})
+    _id_case(root, "blank", {"case_id": "  ", "id": "raw", "split": "tuning"})
+    cases = D.load_corpus(root)
+    assert [case["case_id"] for case in cases] == ["raw", "staged"]
+
+
+def test_load_corpus_refuses_a_case_with_no_id(tmp_path: Path) -> None:
+    root = tmp_path / "corpus"
+    _id_case(root, "good", {"id": "good", "split": "tuning"})
+    _id_case(root, "no-id", {"split": "tuning"})
+    with pytest.raises(D.DatasetError) as failed:
+        D.load_corpus(root)
+    assert failed.value.problems == ["no-id: no case_id"]
