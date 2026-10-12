@@ -24,6 +24,22 @@ already owned and the survey now shares.
 binary name that happens to match; and keep one version grammar shared between the
 survey and the run-time check so they can never disagree on what counts as
 a version.
+### A mutation run that cannot prove itself clean must report unfinished
+
+**Evidence.** Issue #227. Saga's cosmic-ray adapter skipped every dump line that did not start
+with `{`, while 8.7.0 writes `[work_item, result]` arrays, so eleven survivors read as zero.
+A missing test binary classified every mutant `incompetent` and a failing suite classified
+every mutant `killed`; both runs exited 0 and read as clean. The temporary `uv run --with`
+environment shadowed `python` with an interpreter that has no pytest, so production workers
+could never record a survivor.
+
+**Mechanism.** The adapter treated "no survivors parsed" as a clean run instead of
+distinguishing it from "no survivors exist". Every unknown outcome, every unparseable line,
+and every red baseline is now unfinished, and the test command resolves its interpreter
+absolutely instead of trusting PATH across the environment boundary.
+
+**Generalizable rule.** Fail a mutation run closed: an adapter reports clean only for kills it
+parsed, and resolves every interpreter it hands to a subprocess absolutely.
 
 ## 2026-10-11
 

@@ -38,6 +38,12 @@
   ruff through `uv run --with ruff==0.15.18` with its version probe on the same
   pinned runner, so the operator's own ruff no longer changes the findings. No
   version bump; that belongs to #147's saga release step.
+- Issue #227: saga's cosmic-ray adapter writes the `[cosmic-ray.distributor]` table the pinned
+  8.7.0 requires, parses its `[work_item, result]` dump lines, and reports any errored or
+  unrun mutant, or a failing or timed-out baseline, as unfinished instead of clean; a mutant
+  that hangs still classifies as killed. The wrapper and the test command resolve a bare
+  `python` head to the review interpreter, so mutant workers run with pytest available under
+  `uv run --with`; the pytest-randomly and pytest-socket adapters get the same rewrite.
 - Issue #218: the three pane tools return their status as a JSON string the session accepts
   instead of an object it rejects. The setup pane lists the survey's optional steps with
   their done state and runs the picked step through `saga_setup.py step --name` from the saga
