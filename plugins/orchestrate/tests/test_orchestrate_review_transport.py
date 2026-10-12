@@ -663,13 +663,14 @@ def _install_review_runner(
     code: int = 0,
     answer: str = CANARY,
     help_code: int = 0,
+    help_text: str = "usage: launcher.py review ... [--max-budget-usd MAX_BUDGET_USD]",
 ) -> list[list[str]]:
     calls: list[list[str]] = []
 
     def fake(argv: list[str]) -> subprocess.CompletedProcess[str]:
         calls.append(list(argv))
         if "--help" in argv and "--vendor" not in argv:
-            return subprocess.CompletedProcess(argv, help_code, "", "")
+            return subprocess.CompletedProcess(argv, help_code, help_text, "")
         if "--out" in argv:
             out = Path(argv[argv.index("--out") + 1])
             out.mkdir(parents=True, exist_ok=True)
@@ -698,9 +699,11 @@ def _flag_pairs(argv: list[str]) -> dict[str, str]:
 
 
 def _assert_nine_flags(argv: list[str]) -> dict[str, str]:
+    """The nine fixed flags, plus issue #223's ``--max-budget-usd`` on a Claude seat only."""
     script = next(part for part in argv if part.endswith("launcher.py"))
     assert argv[argv.index(script) + 1] == "review"
     flags = argv[argv.index("review") + 1 :]
+    ceiling = ["--max-budget-usd"] if flags[1] == "claude" else []
     assert flags[0::2] == [
         "--vendor",
         "--model",
@@ -711,6 +714,7 @@ def _assert_nine_flags(argv: list[str]) -> dict[str, str]:
         "--prompt",
         "--schema",
         "--out",
+        *ceiling,
     ]
     assert "--open-search-cap" not in argv
     assert "--timeout" not in argv
@@ -766,6 +770,85 @@ def test_review_launch_calls_the_reviewer_launch_and_leaves_the_answer_unread(
     assert note.startswith("review-launch out ")
     assert CANARY not in note
     assert flags["--out"] in note
+
+
+def test_review_launch_a_claude_seat_carries_a_ceiling_the_launcher_accepts(
+    orchestrate: ModuleType,
+    repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #223: the launcher refuses a Claude review without a ceiling; orchestrate's passes."""
+    _write_run(
+        repo,
+        [_controller_row(), _targeted_row()],
+        extra_top_level=_record_top(None, {"targeted-reviewer": TARGETED_STAFF}),
+    )
+    monkeypatch.chdir(repo)
+    packet = repo / "packet"
+    packet.mkdir()
+    calls = _install_review_runner(orchestrate, monkeypatch)
+    assert _launch(orchestrate, repo, packet, "targeted-reviewer") == 0
+    argv = _session_argv(calls)
+    flags = _assert_nine_flags(argv)
+    assert flags["--max-budget-usd"] == orchestrate.REVIEW_LAUNCH_CLAUDE_CEILING_USD
+
+    # The real launcher parses that argv and accepts it: the ceiling is not refused, and the
+    # session it would start carries it. Only the session itself is stood in for.
+    script = next(part for part in argv if part.endswith("launcher.py"))
+    plugins = Path(__file__).resolve().parents[2]
+    real = plugins / "agent-launcher" / "skills" / "agent-launcher" / "scripts" / "launcher.py"
+    spec = importlib.util.spec_from_file_location("_launcher_for_review_launch", real)
+    assert spec is not None and spec.loader is not None
+    launcher = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = launcher
+    spec.loader.exec_module(launcher)
+    args = launcher._build_parser().parse_args(argv[argv.index(script) + 1 :])
+    assert launcher.reviewer_ceiling_problem(args.max_budget_usd) is None
+    sessions: list[list[str]] = []
+
+    def session(argv: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        sessions.append(argv)
+        answer = json.dumps({"result": json.dumps({"findings": []}), "is_error": False})
+        return subprocess.CompletedProcess(argv, 0, answer, "")
+
+    home = tmp_path / "home"
+    home.mkdir()
+    _result, code = launcher.reviewer_launch(
+        launcher.ReviewerRequest(
+            vendor=args.vendor, model=args.model, effort=args.effort, repo=Path(args.repo),
+            head=_head(repo), packet=Path(args.packet),
+            prompt=plugins / "saga" / "references" / "targeted-reviewer-prompt.md",
+            schema=plugins / "saga" / "references" / "targeted-reviewer-answer.schema.json",
+            out=tmp_path / "out", work_root=tmp_path / "reviews",
+            max_budget_usd=args.max_budget_usd,
+        ),
+        env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
+        session=session,
+    )
+    assert code == 0
+    assert sessions[0][-2:] == ["--max-budget-usd", orchestrate.REVIEW_LAUNCH_CLAUDE_CEILING_USD]
+
+
+def test_review_launch_refuses_a_claude_seat_when_the_launcher_takes_no_ceiling(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Issue #223: an older launcher would reject the flag, so orchestrate refuses first."""
+    _write_run(
+        repo,
+        [_controller_row(), _targeted_row()],
+        extra_top_level=_record_top(None, {"targeted-reviewer": TARGETED_STAFF}),
+    )
+    monkeypatch.chdir(repo)
+    packet = repo / "packet"
+    packet.mkdir()
+    calls = _install_review_runner(orchestrate, monkeypatch, help_text="usage: review [--out]")
+    assert _launch(orchestrate, repo, packet, "targeted-reviewer") == 2
+    assert not any("--vendor" in argv for argv in calls)
+    assert "does not take --max-budget-usd" in capsys.readouterr().err
 
 
 def test_review_launch_returns_the_launcher_exit_when_the_answer_is_not_json(

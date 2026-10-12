@@ -211,6 +211,10 @@ REVIEWER_SEAT_ROLE = "external-reviewer"
 TARGETED_REVIEWER_ROLE = "targeted-reviewer"
 LENS_REVIEWER_ROLE = "lens-reviewer"
 REVIEWER_LAUNCH_ROLES = frozenset({TARGETED_REVIEWER_ROLE, REVIEWER_SEAT_ROLE})
+#: Issue #223: ``launcher.py review`` refuses a Claude reviewer launch without a dollar ceiling,
+#: and this is the one place ``review-launch`` takes it from. It bounds a runaway session; it is
+#: not a measured cost. Other vendors have no dollar ceiling, and the launcher refuses one for them.
+REVIEW_LAUNCH_CLAUDE_CEILING_USD = "25.00"
 HIGH_RISK_TIERS = frozenset({"high", "very-high"})
 REVIEW_RUN_SCHEMA = "review_records.v1"
 REVIEW_RUN_KIND = "review_run"
@@ -4014,6 +4018,13 @@ def cmd_review_launch(args: argparse.Namespace) -> int:
     if help_proc.returncode != 0:
         print(f"launcher.py review is unavailable. {_UPDATE_REMEDIATION}", file=sys.stderr)
         return 2
+    if trio[0] == "claude" and "--max-budget-usd" not in (help_proc.stdout or ""):
+        # Issue #223: an older launcher would refuse the flag, and a newer one refuses its absence.
+        print(
+            f"launcher.py review does not take --max-budget-usd. {_UPDATE_REMEDIATION}",
+            file=sys.stderr,
+        )
+        return 2
     answer_paths = _reviewer_answer_paths()
     if answer_paths is None:
         print(
@@ -4046,6 +4057,8 @@ def cmd_review_launch(args: argparse.Namespace) -> int:
         "--out",
         str(out),
     ]
+    if vendor == "claude":
+        argv += ["--max-budget-usd", REVIEW_LAUNCH_CLAUDE_CEILING_USD]
     proc = _reviewer_process(argv)
     print(out / "answer.json")
     print(out / "result.json")

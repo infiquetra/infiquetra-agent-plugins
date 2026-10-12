@@ -13,11 +13,13 @@ duplicate the canonical ``herdr`` skill.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -2046,6 +2048,11 @@ REVIEWER_EXIT_REFUSED = 2
 REVIEWER_EXIT_NO_ANSWER = 3
 REVIEWER_EXIT_TIMEOUT = 124
 REVIEWER_DEFAULT_CAP = 5
+#: Issue #223. The dollar ceiling the probe's own Claude launch carries. One shell command on a
+#: small model never comes near it, and it still bounds a runaway.
+REVIEWER_PROBE_CEILING_USD = "1.00"
+#: A ceiling is a positive decimal with at most two places, written as the operator typed it.
+_REVIEWER_CEILING = re.compile(r"(?:0|[1-9][0-9]*)(?:\.[0-9]{1,2})?")
 
 #: Every launcher vendor's flags that turn off instruction files, plugins, hooks or skills, or
 #: remove its sandbox or approvals, read from each vendor's own ``--help`` on 2026-10-06. No
@@ -2060,10 +2067,17 @@ REVIEWER_FORBIDDEN_FLAGS: dict[str, tuple[str, ...]] = {
         "--ignore-user-config", "--ignore-rules", "--disable",
         "--dangerously-bypass-approvals-and-sandbox",
     ),
-    "grok": ("--always-approve", "--system-prompt-override", "bypassPermissions"),
+    # Issue #223 added ``--trust`` (trusts the folder, so the reviewed change's own hooks load) and
+    # the ``--sandbox`` values ``off`` and ``devbox``, read from grok 1.0.50's help and sandbox guide.
+    "grok": (
+        "--always-approve", "--system-prompt-override", "bypassPermissions", "--trust", "off",
+        "devbox",
+    ),
+    # Issue #223 added ``--disable-approval`` and ``--trust-workspace`` (loads the reviewed
+    # change's own rules and skills), read from muse 1.4.6's ``exec --help``.
     "muse": (
         "--disable-sandbox", "--no-foreign-personal-context", "--disable-reminders", "--yolo",
-        "never",
+        "never", "--disable-approval", "--trust-workspace",
     ),
     "agy": ("--dangerously-skip-permissions", "--disable-slash-commands"),
     "qwen": ("--bare", "--safe-mode", "--yolo"),
@@ -2171,8 +2185,6 @@ def _reviewer_fold(name: str) -> str:
     return unicodedata.normalize("NFKC", name).casefold()
 
 
-_REVIEWER_UNTRUSTED_DIR_NAMES = frozenset(_reviewer_fold(n) for n in REVIEWER_UNTRUSTED_DIRS)
-_REVIEWER_UNTRUSTED_FILE_NAMES = frozenset(_reviewer_fold(n) for n in REVIEWER_UNTRUSTED_FILES)
 _REVIEWER_INSTRUCTION_NAMES = frozenset(_reviewer_fold(n) for n in REVIEWER_INSTRUCTION_NAMES)
 #: How deep Claude follows ``@`` imports.
 REVIEWER_IMPORT_DEPTH = 5
@@ -2204,17 +2216,21 @@ def reviewer_denied_variables(env: Mapping[str, str]) -> list[str]:
     )
 
 
-def reviewer_session_environment(env: Mapping[str, str]) -> dict[str, str]:
+def reviewer_session_environment(
+    env: Mapping[str, str],
+    variables: Sequence[str] = REVIEWER_API_KEY_VARIABLES,
+    prefixes: Sequence[str] = REVIEWER_API_KEY_PREFIXES,
+) -> dict[str, str]:
     """The session's environment: everything, except what would sign in with an API key.
 
-    Git fails outright when it cannot read its global configuration, and the sandbox makes the home
+    *variables* and *prefixes* are the vendor's API-key names; Claude's are the defaults. Git fails
+    outright when it cannot read its global configuration, and the sandbox makes the home
     directory unreadable, so git is pointed at ``/dev/null`` instead (measured on 2.1.292).
     """
     kept = {
         name: value
         for name, value in env.items()
-        if name not in REVIEWER_API_KEY_VARIABLES
-        and not name.startswith(REVIEWER_API_KEY_PREFIXES)
+        if name not in variables and not name.startswith(tuple(prefixes))
     }
     kept["GIT_CONFIG_GLOBAL"] = os.devnull
     return kept
@@ -2303,8 +2319,33 @@ def reviewer_toolchain_paths(
     return sorted(allowed, key=lambda i: i["path"]), sorted(dropped, key=lambda i: i["path"])
 
 
-def reviewer_claude_argv(model: str, effort: str | None, settings_path: Path) -> list[str]:
-    """Claude's reviewer argv: headless, sandboxed through ``--settings``, JSON result."""
+def reviewer_ceiling_problem(amount: str | None) -> str | None:
+    """Why *amount* is not a dollar ceiling, or ``None``: a positive decimal, two places at most."""
+    if amount is None:
+        return "no --max-budget-usd was given"
+    if not _REVIEWER_CEILING.fullmatch(amount) or float(amount) <= 0:
+        return f"--max-budget-usd {amount!r} is not a positive dollar amount with two places at most"
+    return None
+
+
+def reviewer_claude_argv(
+    model: str,
+    effort: str | None,
+    settings_path: Path,
+    *,
+    max_budget_usd: str | None = None,
+    executable: Path | None = None,
+    prompt_path: Path | None = None,
+) -> list[str]:
+    """Claude's reviewer argv: headless, sandboxed through ``--settings``, JSON result, a ceiling.
+
+    Issue #223: every Claude reviewer launch carries ``--max-budget-usd``; there is no default, so a
+    caller that forgets one is refused. Claude runs as ``claude`` from ``PATH`` and reads its prompt
+    on standard input, so *executable* and *prompt_path* are unused here.
+    """
+    problem = reviewer_ceiling_problem(max_budget_usd)
+    if problem:
+        raise ReviewerRefused(f"a Claude reviewer launch needs a spending ceiling: {problem}")
     argv = ["claude", "-p", "--model", model]
     if effort:
         argv += ["--effort", effort]
@@ -2313,7 +2354,71 @@ def reviewer_claude_argv(model: str, effort: str | None, settings_path: Path) ->
         "--settings", str(settings_path),
         "--output-format", "json",
         "--no-session-persistence",
+        "--max-budget-usd", str(max_budget_usd),
     ]
+
+
+#: Issue #225: Claude runs every Bash command, hook and MCP server as ``<prefix> '<command>'``
+#: when ``CLAUDE_CODE_SHELL_PREFIX`` names a file, and only after the shell around it has read its
+#: start-up files. Measured on Claude Code 2.1.296: a variable a ``BASH_ENV`` file exports reaches a
+#: sandboxed command, because ``credentials.envVars`` denies only names the launch environment
+#: had. The reviewer's prefix rebuilds a sandboxed command's environment from the allow-list after
+#: start-up, in a bash that reads no start-up file. It lives beside the copy, never inside it.
+REVIEWER_SHELL_PREFIX = "CLAUDE_CODE_SHELL_PREFIX"
+
+
+def reviewer_claude_shell_paths(copy: Path) -> tuple[Path, Path]:
+    """The reviewer's shell prefix and its sentinel, both beside *copy* in the launch root.
+
+    Sandboxed commands may read the prefix's directory but not the sentinel; the prefix reads the
+    sentinel to tell a hook or an MCP server, which run outside the sandbox, from a command.
+    """
+    root = copy.resolve().parent
+    return root / "shell" / "reviewer-shell.sh", root / "unsandboxed"
+
+
+def reviewer_claude_shell_script(sentinel: Path, token: str) -> str:
+    """The prefix: outside the sandbox it runs the command as given; inside, on the allow-list.
+
+    The sentinel holds *token*. Only a process outside the sandbox can read it, so anything else,
+    a denied read or a missing file included, filters: the check fails closed.
+    """
+    names = [n for n in REVIEWER_ENVIRONMENT_ALLOWED if not REVIEWER_CREDENTIAL_NAME.search(n)]
+    for name in names:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            raise ValueError(f"{name!r} is not a variable name")
+    kept = " ".join(f'${{{n}+"{n}=${n}"}}' for n in names)
+    read = f"/bin/cat {shlex.quote(str(sentinel))} 2>/dev/null"
+    return (
+        "#!/bin/sh\n"
+        "# agent-launcher's reviewer shell (issue #225), written for one Claude reviewer launch.\n"
+        "# Claude runs each command as: <this file> '<command>'. Outside the sandbox (a hook\n"
+        "# or an MCP server) the sentinel is readable and the command runs as it would without\n"
+        "# this file. Inside it, the command runs with only the reviewer's allowed variables,\n"
+        "# in a bash that reads no start-up file, so nothing a start-up file exported reaches it.\n"
+        f'if [ "$({read})" = {shlex.quote(token)} ]; then\n'
+        '  exec /bin/sh -c "$1"\n'
+        "fi\n"
+        'case "${SHELL-}" in\n'
+        '  */bash) reviewer_bash=$SHELL ;;\n'
+        "  *) reviewer_bash=/bin/bash ;;\n"
+        "esac\n"
+        f'exec /usr/bin/env -i {kept} "$reviewer_bash" --noprofile --norc -c "$1"\n'
+    )
+
+
+def reviewer_claude_materialize(
+    settings: Mapping[str, Any], root: Path, copy: Path
+) -> tuple[Path, dict[str, str]]:
+    """Write the settings, the shell prefix and its sentinel beside the copy; name the prefix."""
+    path, _ = reviewer_settings_materialize(settings, root, copy)
+    prefix, sentinel = reviewer_claude_shell_paths(copy)
+    token = os.urandom(16).hex()
+    sentinel.write_text(token, "utf-8")
+    prefix.parent.mkdir(parents=True, exist_ok=True)
+    prefix.write_text(reviewer_claude_shell_script(sentinel, token), "utf-8")
+    prefix.chmod(0o755)
+    return path, {REVIEWER_SHELL_PREFIX: str(prefix)}
 
 
 def reviewer_claude_settings(
@@ -2335,12 +2440,18 @@ def reviewer_claude_settings(
     copy, the packet and the toolchain *toolchain* names (derived from *env* when not given). The
     settings set no ``apiKeyHelper``, plugins or hooks, so the user's own configuration is what
     loads.
+
+    Issue #225: commands run through the reviewer's shell prefix, whose directory is readable and
+    whose sentinel is denied by name, so the prefix filters even when the launch root is outside
+    the home directory. The prefix is named in ``env`` as well, which outranks the user's settings.
     """
     if toolchain is None:
         toolchain = reviewer_toolchain_paths(env)[0]
-    allow_read = [str(copy.resolve()), str(packet.resolve())]
+    prefix, sentinel = reviewer_claude_shell_paths(copy)
+    allow_read = [str(copy.resolve()), str(packet.resolve()), str(prefix.parent)]
     allow_read += [item["path"] for item in toolchain if item["path"] not in allow_read]
     return {
+        "env": {REVIEWER_SHELL_PREFIX: str(prefix)},
         "sandbox": {
             "enabled": True,
             "failIfUnavailable": True,
@@ -2348,7 +2459,7 @@ def reviewer_claude_settings(
             "allowUnsandboxedCommands": False,
             "filesystem": {
                 "denyWrite": list(reviewer_temp_roots(platform)),
-                "denyRead": ["~"] + list(extra_deny_read),
+                "denyRead": ["~"] + list(extra_deny_read) + [str(sentinel)],
                 "allowRead": allow_read,
             },
             "network": {"strictAllowlist": True, "allowedDomains": []},
@@ -2455,8 +2566,15 @@ def _reviewer_imports_leave(start: Path, copy: Path) -> bool:
     return False
 
 
-def reviewer_withhold_untrusted(copy: Path) -> list[str]:
+def reviewer_withhold_untrusted(
+    copy: Path,
+    dirs: Sequence[str] = REVIEWER_UNTRUSTED_DIRS,
+    files: Sequence[str] = REVIEWER_UNTRUSTED_FILES,
+    instructions: Sequence[str] = REVIEWER_INSTRUCTION_NAMES,
+) -> list[str]:
     """Remove what the reviewed change could use to run or read outside the sandbox.
+
+    *dirs*, *files* and *instructions* are the vendor's untrusted names; Claude's are the defaults.
 
     Every ``.claude/`` directory and ``.mcp.json`` at any depth (Claude acts on them outside the
     command sandbox), every symlink that leaves the copy, and every instruction file whose possible
@@ -2465,6 +2583,9 @@ def reviewer_withhold_untrusted(copy: Path) -> list[str]:
     sees them in the packet's diff.
     """
     withheld: list[str] = []
+    dir_names = frozenset(_reviewer_fold(n) for n in dirs)
+    file_names = frozenset(_reviewer_fold(n) for n in files)
+    instruction_names = frozenset(_reviewer_fold(n) for n in instructions)
 
     def drop(path: Path, why: str) -> None:
         withheld.append(f"{path.relative_to(copy).as_posix()} ({why})")
@@ -2477,14 +2598,14 @@ def reviewer_withhold_untrusted(copy: Path) -> list[str]:
         if not (path.exists() or path.is_symlink()):
             continue  # inside a directory already withheld
         name = _reviewer_fold(path.name)
-        if name in _REVIEWER_UNTRUSTED_DIR_NAMES and (path.is_dir() or path.is_symlink()):
+        if name in dir_names and (path.is_dir() or path.is_symlink()):
             drop(path, "Claude would act on it outside the sandbox")
-        elif name in _REVIEWER_UNTRUSTED_FILE_NAMES:
+        elif name in file_names:
             drop(path, "Claude would act on it outside the sandbox")
         elif path.is_symlink() and not _reviewer_inside(path, copy):
             drop(path, "a symlink out of the copy")
     for path in sorted(copy.rglob("*")):
-        if _reviewer_fold(path.name) in _REVIEWER_INSTRUCTION_NAMES and path.is_file() and (
+        if _reviewer_fold(path.name) in instruction_names and path.is_file() and (
             _reviewer_imports_leave(path, copy)
         ):
             drop(path, "it can import a file outside the copy")
@@ -2543,6 +2664,11 @@ def reviewer_claude_widening(env: Mapping[str, str]) -> list[str]:
             problems.append(f"{path.name} turns the sandbox off")
         if filesystem.get("disabled") is True:
             problems.append(f"{path.name} sets sandbox.filesystem.disabled")
+        # Issue #225: managed settings outrank ``--settings``, so a shell prefix set there would
+        # replace the one that keeps start-up exports out of sandboxed commands.
+        environment = loaded.get("env") if isinstance(loaded.get("env"), dict) else {}
+        if REVIEWER_SHELL_PREFIX in environment:
+            problems.append(f"{path.name} sets env.{REVIEWER_SHELL_PREFIX}")
     return problems
 
 
@@ -2615,28 +2741,507 @@ def reviewer_configuration_fingerprint(
     return {"fingerprint": digest.hexdigest(), "sources": [label for label, _ in pairs]}
 
 
+#: The first bytes of a native executable (Mach-O, thin or fat, either byte order; ELF). A
+#: reviewer whose executable is bound to a probe record must be one of these, never a script that
+#: picks another binary at run time.
+_REVIEWER_NATIVE_MAGIC = (
+    b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",
+    b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca", b"\x7fELF",
+)
+
+
+def reviewer_is_native(path: Path) -> bool:
+    """Whether *path* is a regular file that starts like a native executable."""
+    try:
+        with path.open("rb") as handle:
+            return path.is_file() and handle.read(4) in _REVIEWER_NATIVE_MAGIC
+    except OSError:
+        return False
+
+
+def _reviewer_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def reviewer_executable_file(path: Path) -> dict[str, str]:
+    """The file's name and SHA-256, read as bytes; nothing runs it.
+
+    The name is the file name only, never a path, because records are committed to a public
+    repository.
+    """
+    return {"name": path.name, "sha256": _reviewer_sha256(path)}
+
+
+def reviewer_executable_identity(path: Path, env: Mapping[str, str]) -> dict[str, str]:
+    """The identity a probe record binds: the file's name, its SHA-256 and what it reports.
+
+    It runs *path* with ``--version``, outside any sandbox, so a bound recipe calls it only on the
+    pinned copy whose bytes were already compared (issue #223's review, finding 2).
+    """
+    version = _reviewer_vendor_version(str(path), env) or ""
+    return {**reviewer_executable_file(path), "version": version}
+
+
+def reviewer_grok_executable(env: Mapping[str, str]) -> Path:
+    """Grok's own native executable, never a wrapper script in front of it.
+
+    Grok installs itself under its home directory (``bin/grok``, a link into ``downloads/``); a
+    ``grok`` on ``PATH`` may be a local wrapper that adds flags such as ``--trust``.
+    """
+    grok_home = Path(env["GROK_HOME"]) if env.get("GROK_HOME") else _reviewer_home(env) / ".grok"
+    candidates = [grok_home / "bin" / "grok"]
+    found = shutil.which("grok", path=env.get("PATH", ""))
+    if found:
+        candidates.append(Path(found))
+    for candidate in candidates:
+        resolved = candidate.resolve() if candidate.exists() else candidate
+        if reviewer_is_native(resolved):
+            return resolved
+    raise ReviewerRefused("no native grok executable was found to bind to a probe record")
+
+
+def reviewer_muse_executable(env: Mapping[str, str]) -> Path:
+    """Muse's versioned native binary, never the ``muse`` launcher script that updates it.
+
+    The launcher script keeps the active version in ``.muse-version`` beside itself and runs
+    ``muse-bin-<version>``; running that binary directly means no update happens mid-review.
+    """
+    found = shutil.which("muse", path=env.get("PATH", ""))
+    if not found:
+        raise ReviewerRefused("muse is not on PATH")
+    resolved = Path(found).resolve()
+    if reviewer_is_native(resolved):
+        return resolved
+    marker = resolved.parent / ".muse-version"
+    try:
+        version = marker.read_text(encoding="utf-8").strip()
+    except OSError:
+        version = ""
+    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-R[0-9]+(\.[0-9]+)?", version):
+        binary = resolved.parent / f"muse-bin-{version}"
+        if reviewer_is_native(binary):
+            return binary
+    raise ReviewerRefused("no native muse binary was found beside the muse launcher script")
+
+
+def _reviewer_user_files(
+    env: Mapping[str, str], files: Sequence[tuple[str, str]]
+) -> list[tuple[str, bytes | None]]:
+    home = _reviewer_home(env)
+    return [(label, _reviewer_read(_reviewer_expand(path, home))) for label, path in files]
+
+
+def reviewer_grok_profile_name(settings_path: Path) -> str:
+    """A per-launch sandbox profile name, so no user profile of the same name can shadow it."""
+    return "reviewer-" + hashlib.sha256(str(settings_path).encode("utf-8")).hexdigest()[:16]
+
+
+def reviewer_grok_argv(
+    model: str,
+    effort: str | None,
+    settings_path: Path,
+    *,
+    max_budget_usd: str | None = None,
+    executable: Path | None = None,
+    prompt_path: Path | None = None,
+) -> list[str]:
+    """Grok's reviewer argv, from grok 1.0.50's ``--help`` and headless guide.
+
+    Headless mode does not read standard input, so the message goes by ``--prompt-file``. Plan
+    mode is off, Bash is allowed by rule under ``dontAsk`` (never ``--always-approve``), and the
+    sandbox is the per-launch profile written into the copy's ``.grok/sandbox.toml``.
+    """
+    if max_budget_usd is not None:
+        raise ReviewerRefused("grok has no dollar ceiling; --max-budget-usd cannot be honoured")
+    if executable is None or prompt_path is None:
+        raise ReviewerRefused("a grok reviewer launch needs its verified executable and prompt")
+    argv = [str(executable), "--prompt-file", str(prompt_path), "-m", model]
+    if effort:
+        argv += ["--reasoning-effort", effort]
+    return argv + [
+        "--sandbox", reviewer_grok_profile_name(settings_path),
+        "--no-plan",
+        "--permission-mode", "dontAsk",
+        "--allow", "Bash",
+        "--disable-web-search",
+        "--output-format", "json",
+    ]
+
+
+def reviewer_grok_settings(
+    copy: Path,
+    packet: Path,
+    env: Mapping[str, str],
+    *,
+    toolchain: Sequence[Mapping[str, str]] | None = None,
+    extra_deny_read: Sequence[str] = (),
+    platform: str | None = None,
+) -> dict[str, Any]:
+    """Grok's per-launch sandbox profile and the environment overlay for its commands.
+
+    The profile extends ``strict`` (reads the working directory, system paths and the Grok home;
+    writes the working directory, ``~/.grok/sessions`` and temp), blocks child network, grants
+    the packet, the prompt and the toolchain read-only, and denies the temp roots, Grok's sign-in
+    file and anything *extra_deny_read* names. The overlay keeps only the allow-listed variables
+    in Grok's tool commands.
+    """
+    if toolchain is None:
+        toolchain = reviewer_toolchain_paths(env)[0]
+    home = _reviewer_home(env)
+    read_only = [str(packet.resolve()), str((copy.parent / "prompt").resolve())]
+    read_only += [item["path"] for item in toolchain if item["path"] not in read_only]
+    deny = list(reviewer_temp_roots(platform)) + [
+        str(_reviewer_expand(path, home)) for path in REVIEWER_GROK_CREDENTIAL_FILES
+    ] + list(extra_deny_read)
+    return {
+        "profile": {
+            "extends": "strict",
+            "restrict_network": True,
+            "read_only": read_only,
+            "deny": deny,
+        },
+        "overlay": {
+            "shell_environment_policy": {
+                "inherit": "all",
+                "ignore_default_excludes": False,
+                "include_only": list(REVIEWER_ENVIRONMENT_ALLOWED),
+            }
+        },
+    }
+
+
+def _reviewer_toml_string(value: str) -> str:
+    return json.dumps(value)  # a JSON string is a valid TOML basic string
+
+
+def reviewer_grok_materialize(
+    settings: Mapping[str, Any], root: Path, copy: Path
+) -> tuple[Path, dict[str, str]]:
+    """Write the profile into the copy's ``.grok/sandbox.toml``; return it and the overlay.
+
+    Grok reads custom profiles only from a user or project ``sandbox.toml``, and the reviewed
+    change's own ``.grok/`` has already been withheld, so this file is the launcher's.
+    """
+    path = copy / ".grok" / "sandbox.toml"
+    profile = settings["profile"]
+    lines = [f"[profiles.{reviewer_grok_profile_name(path)}]"]
+    lines.append(f"extends = {_reviewer_toml_string(profile['extends'])}")
+    lines.append(f"restrict_network = {'true' if profile['restrict_network'] else 'false'}")
+    for key in ("read_only", "deny"):
+        items = ", ".join(_reviewer_toml_string(item) for item in profile[key])
+        lines.append(f"{key} = [{items}]")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", "utf-8")
+    return path, {"GROK_CONFIG": json.dumps(settings["overlay"], separators=(",", ":"))}
+
+
+def reviewer_grok_widening(env: Mapping[str, str]) -> list[str]:
+    """Grok configuration that would sign the review in with an API key, or widen it.
+
+    Grok's authentication guide ranks a per-model ``api_key`` or ``env_key`` in ``config.toml``
+    above the signed-in session; with one set, removing ``XAI_API_KEY`` does not make the review
+    use the subscription.
+    """
+    import tomllib
+
+    grok_home = Path(env["GROK_HOME"]) if env.get("GROK_HOME") else _reviewer_home(env) / ".grok"
+    path = grok_home / "config.toml"
+    if not path.exists():
+        return []
+    try:
+        loaded = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return [f"{path.name} cannot be read as TOML to check it"]
+    models = loaded.get("model") if isinstance(loaded.get("model"), dict) else {}
+    return [
+        f"config.toml sets {key} for model {name}"
+        for name, table in sorted(models.items())
+        if isinstance(table, dict)
+        for key in ("api_key", "env_key")
+        if table.get(key)
+    ]
+
+
+def reviewer_parse_grok_result(stdout: str) -> dict[str, Any]:
+    """Usage, resolved models and the final message from ``grok --output-format json``."""
+    try:
+        data = json.loads(stdout)
+    except (TypeError, ValueError):
+        return {"usage": None, "resolved": [], "final": None, "is_error": True,
+                "error": "the session printed no JSON result"}
+    if not isinstance(data, dict):
+        return {"usage": None, "resolved": [], "final": None, "is_error": True,
+                "error": "the session's result is not a JSON object"}
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    model_usage = data.get("modelUsage")
+    stop = data.get("stopReason")
+    final = data.get("text") if isinstance(data.get("text"), str) else None
+    is_error = stop != "end_turn"
+    return {
+        "usage": {
+            "input_tokens": usage.get("input_tokens"),
+            "output_tokens": usage.get("output_tokens"),
+            "cache_read_input_tokens": usage.get("cache_read_input_tokens"),
+            "cache_creation_input_tokens": usage.get("cache_creation_input_tokens"),
+            "cost_usd": data.get("total_cost_usd"),
+            "seconds": None,
+            "turns": data.get("num_turns"),
+            "session_id": data.get("sessionId"),
+        },
+        "resolved": sorted(model_usage) if isinstance(model_usage, dict) else [],
+        "final": final,
+        "is_error": is_error,
+        "error": f"the session stopped with {stop!r}" if is_error else None,
+    }
+
+
+def reviewer_grok_config_sources(
+    copy: Path, env: Mapping[str, str]
+) -> list[tuple[str, bytes | None]]:
+    """Grok's user configuration: its settings and its own sandbox profiles."""
+    return _reviewer_user_files(
+        env, [("user:config.toml", "~/.grok/config.toml"), ("user:sandbox.toml",
+                                                             "~/.grok/sandbox.toml")]
+    )
+
+
+def reviewer_muse_argv(
+    model: str,
+    effort: str | None,
+    settings_path: Path,
+    *,
+    max_budget_usd: str | None = None,
+    executable: Path | None = None,
+    prompt_path: Path | None = None,
+) -> list[str]:
+    """Muse's reviewer argv, from muse 1.4.6's ``exec --help``.
+
+    The sandbox and approvals stay on (their defaults); the network sandbox is ``restricted``,
+    web tools are off and no session log is written. ``--permission-profile`` cannot be combined
+    with ``--sandbox-network`` (measured), so the network setting is the one passed.
+    """
+    if max_budget_usd is not None:
+        raise ReviewerRefused("muse has no dollar ceiling; --max-budget-usd cannot be honoured")
+    if executable is None or prompt_path is None:
+        raise ReviewerRefused("a muse reviewer launch needs its verified executable and prompt")
+    argv = [str(executable), "exec", "--model", model]
+    if effort:
+        argv += ["--reasoning-effort", effort]
+    return argv + [
+        "--json",
+        "--prompt-file", str(prompt_path),
+        "--sandbox-network", "restricted",
+        "--disable-web-tools",
+        "--no-session-log",
+    ]
+
+
+def reviewer_muse_settings(
+    copy: Path,
+    packet: Path,
+    env: Mapping[str, str],
+    *,
+    toolchain: Sequence[Mapping[str, str]] | None = None,
+    extra_deny_read: Sequence[str] = (),
+    platform: str | None = None,
+) -> dict[str, Any]:
+    """What the Muse launch asks of its sandbox, for the record: Muse takes it as flags."""
+    return {"sandbox": "default (on)", "sandbox_network": "restricted", "web_tools": "disabled"}
+
+
+def reviewer_parse_muse_result(stdout: str) -> dict[str, Any]:
+    """The final message and model from ``muse exec --json``; Muse reports no usage there."""
+    final: str | None = None
+    terminal: str | None = None
+    reason: Any = None
+    resolved: set[str] = set()
+    for line in (stdout or "").splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        kind = record.get("payload_type")
+        try:
+            payload = record.get("payload")
+            payload = json.loads(payload) if isinstance(payload, str) else payload
+        except ValueError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if kind == "run.model.configured" and isinstance(payload.get("model_id"), str):
+            resolved.add(payload["model_id"])
+        elif kind is not None and str(kind).startswith("run.terminal."):
+            terminal = payload.get("terminal") if isinstance(payload.get("terminal"), str) else None
+            final = payload.get("text") if isinstance(payload.get("text"), str) else None
+            reason = payload.get("reason")
+    if terminal is None:
+        return {"usage": None, "resolved": sorted(resolved), "final": None, "is_error": True,
+                "error": "the session printed no terminal event"}
+    is_error = terminal != "completed"
+    return {
+        "usage": None,
+        "resolved": sorted(resolved),
+        "final": final,
+        "is_error": is_error,
+        "error": f"the run ended {terminal}: {reason}" if is_error else None,
+    }
+
+
+def reviewer_muse_config_sources(
+    copy: Path, env: Mapping[str, str]
+) -> list[tuple[str, bytes | None]]:
+    """Muse's user configuration: its settings and its approval policy."""
+    return _reviewer_user_files(
+        env, [("user:settings.json", "~/.config/muse/settings.json"),
+              ("user:approval-policy.json", "~/.config/muse/approval-policy.json")]
+    )
+
+
+def reviewer_settings_materialize(
+    settings: Mapping[str, Any], root: Path, copy: Path
+) -> tuple[Path, dict[str, str]]:
+    """Write the settings beside the copy, never inside it; no extra environment."""
+    path = root / "settings.json"
+    path.write_text(json.dumps(settings, indent=2) + "\n", "utf-8")
+    return path, {}
+
+
+#: Grok's own sign-in and configuration files (its authentication guide: ``auth.json`` holds the
+#: session token and ``config.toml`` may hold a per-model ``api_key``).
+REVIEWER_GROK_CREDENTIAL_FILES = ("~/.grok/auth.json", "~/.grok/config.toml")
+
+
 @dataclass(frozen=True)
 class ReviewerRecipe:
-    """How one vendor runs the targeted reviewer: argv, sandbox settings, result, configuration."""
+    """How one vendor runs the targeted reviewer: argv, sandbox settings, result, configuration.
+
+    Issue #223 moved what differs between vendors into fields, so the launch never branches on a
+    vendor's name. Every default but ``materialize`` is Claude's (issue #225 gave Claude its own).
+    """
 
     binary: str
     argv: Any
     settings: Any
     parse: Any
     config_sources: Any
+    #: Variables that would sign the session in with an API key; removed from its environment.
+    api_key_variables: tuple[str, ...] = REVIEWER_API_KEY_VARIABLES
+    api_key_prefixes: tuple[str, ...] = REVIEWER_API_KEY_PREFIXES
+    #: Project names the vendor would act on outside its sandbox; withheld from the copy.
+    untrusted_dirs: tuple[str, ...] = REVIEWER_UNTRUSTED_DIRS
+    untrusted_files: tuple[str, ...] = REVIEWER_UNTRUSTED_FILES
+    instruction_names: tuple[str, ...] = REVIEWER_INSTRUCTION_NAMES
+    #: ``stdin``, or ``file`` when the vendor reads its prompt from a file it is given.
+    prompt_via: str = "stdin"
+    #: The vendor's own sign-in files, which a sandboxed command must not read.
+    credential_files: tuple[str, ...] = ()
+    #: The vendor's own state directory, where the probe plants a read canary.
+    vendor_home: str | None = None
+    #: A directory under it that the probe tries to write.
+    vendor_writable: str | None = None
+    #: The model ``reviewer-probe`` uses when none is given.
+    probe_model: str = "haiku"
+    #: The platforms a live probe passed on; ``None`` for any (Claude's recipe predates records).
+    platforms: tuple[str, ...] | None = None
+    #: Whether the vendor takes a dollar ceiling; one is then required on every launch.
+    takes_ceiling: bool = False
+    #: Configuration outside the copy that would widen the sandbox or change the sign-in.
+    widening: Any = None
+    #: Writes the settings and returns the path the argv names, plus environment to add.
+    materialize: Any = reviewer_settings_materialize
+    #: Resolves the native executable a probe record binds; ``None`` runs ``binary`` from PATH.
+    executable: Any = None
+
+
+REVIEWER_CLAUDE_RECIPE = ReviewerRecipe(
+    binary="claude",
+    argv=reviewer_claude_argv,
+    settings=reviewer_claude_settings,
+    parse=reviewer_parse_claude_result,
+    config_sources=reviewer_claude_config_sources,
+    credential_files=("~/.claude/.credentials.json",),
+    vendor_home="~/.claude",
+    vendor_writable="~/.claude",
+    takes_ceiling=True,
+    widening=reviewer_claude_widening,
+    # Issue #225: commands run through the shell prefix that keeps start-up exports out.
+    materialize=reviewer_claude_materialize,
+)
+
+#: Recipes ``reviewer-probe`` may run but ``review`` never does (issue #223, plan KTD1). A
+#: candidate reviews only once a committed probe record for its executable and platform admits it.
+REVIEWER_CANDIDATES: dict[str, ReviewerRecipe] = {
+    "grok": ReviewerRecipe(
+        binary="grok",
+        argv=reviewer_grok_argv,
+        settings=reviewer_grok_settings,
+        parse=reviewer_parse_grok_result,
+        config_sources=reviewer_grok_config_sources,
+        api_key_variables=("XAI_API_KEY", "GROK_DEPLOYMENT_KEY"),
+        api_key_prefixes=(),
+        # In an untrusted directory grok 1.0.50 loads no project instructions, MCP servers or
+        # hooks (measured with ``grok inspect``); withholding them as well costs nothing.
+        untrusted_dirs=(".grok", ".claude", ".cursor"),
+        untrusted_files=(".mcp.json",),
+        instruction_names=("AGENTS.md", "CLAUDE.md", "CLAUDE.local.md"),
+        prompt_via="file",
+        credential_files=REVIEWER_GROK_CREDENTIAL_FILES,
+        vendor_home="~/.grok",
+        vendor_writable="~/.grok/sessions",
+        probe_model="grok-4.7",
+        widening=reviewer_grok_widening,
+        materialize=reviewer_grok_materialize,
+        executable=reviewer_grok_executable,
+    ),
+    "muse": ReviewerRecipe(
+        binary="muse",
+        argv=reviewer_muse_argv,
+        settings=reviewer_muse_settings,
+        parse=reviewer_parse_muse_result,
+        config_sources=reviewer_muse_config_sources,
+        # ``muse login --help``: "META_API_KEY always takes priority over the account login."
+        api_key_variables=("META_API_KEY",),
+        api_key_prefixes=(),
+        untrusted_dirs=(".muse", ".claude", ".agents"),
+        untrusted_files=(".mcp.json",),
+        instruction_names=("AGENTS.md", "CLAUDE.md", "CLAUDE.local.md"),
+        prompt_via="file",
+        credential_files=("~/.config/muse/auth.json",),
+        vendor_home="~/.config/muse",
+        vendor_writable="~/.config/muse",
+        probe_model="muse-spark-1.3-contributor",
+        executable=reviewer_muse_executable,
+    ),
+}
+
+#: Committed probe records that admit a candidate, by ``(vendor, platform)``. Each is the record
+#: ``reviewer-probe --record`` wrote, every check held, bound to the executable it ran. A test
+#: keeps this table equal to the records under ``tests/fixtures/reviewer-probe/``.
+REVIEWER_ADMISSIONS: dict[tuple[str, str], Mapping[str, Any]] = {}
+
+
+def _reviewer_admitted() -> dict[str, ReviewerRecipe]:
+    admitted: dict[str, ReviewerRecipe] = {}
+    for vendor, platform in sorted(REVIEWER_ADMISSIONS):
+        base = admitted.get(vendor) or REVIEWER_CANDIDATES[vendor]
+        platforms = tuple(sorted({*(base.platforms or ()), platform}))
+        admitted[vendor] = dataclasses.replace(base, platforms=platforms)
+    return admitted
 
 
 #: The vendors with a reviewer recipe. A vendor joins only when ``reviewer-probe`` passes on it;
 #: every other vendor is refused by name (plan KTD2: codex-cli 0.160.1's workspace-write sandbox
-#: read a file outside its workspace on 2026-10-06).
+#: read a file outside its workspace on 2026-10-06). Issue #223: Grok and Muse join only through
+#: ``REVIEWER_ADMISSIONS``.
 REVIEWER_RECIPES: dict[str, ReviewerRecipe] = {
-    "claude": ReviewerRecipe(
-        binary="claude",
-        argv=reviewer_claude_argv,
-        settings=reviewer_claude_settings,
-        parse=reviewer_parse_claude_result,
-        config_sources=reviewer_claude_config_sources,
-    ),
+    "claude": REVIEWER_CLAUDE_RECIPE,
+    **_reviewer_admitted(),
 }
 
 
@@ -2648,6 +3253,15 @@ def reviewer_recipe(vendor: str) -> ReviewerRecipe:
             "and credential reads; it cannot staff the targeted reviewer"
         )
     return recipe
+
+
+def reviewer_probe_recipe(vendor: str) -> ReviewerRecipe:
+    """The recipe ``reviewer-probe`` runs: a reviewer's, else a candidate's."""
+    if vendor in REVIEWER_RECIPES:
+        return REVIEWER_RECIPES[vendor]
+    if vendor in REVIEWER_CANDIDATES:
+        return REVIEWER_CANDIDATES[vendor]
+    return reviewer_recipe(vendor)
 
 
 def reviewer_work_root(env: Mapping[str, str], platform: str | None = None) -> Path:
@@ -2860,6 +3474,34 @@ def reviewer_extract_answer(final: str | None) -> tuple[Any, str | None]:
     return answer, None
 
 
+def reviewer_deliver_prompt(
+    recipe: ReviewerRecipe, root: Path, message: str
+) -> tuple[Path | None, str]:
+    """Where the session reads its message: standard input, or a file outside the copy."""
+    if recipe.prompt_via != "file":
+        return None, message
+    prompt_dir = root / "prompt"
+    prompt_dir.mkdir(parents=True, exist_ok=True)
+    path = prompt_dir / "message.md"
+    path.write_text(message, "utf-8")
+    return path, ""
+
+
+def reviewer_pin_executable(executable: Path, identity: Mapping[str, str], root: Path) -> Path:
+    """Copy the verified executable into the launch root and check the copy, then run the copy.
+
+    An updater can replace the installed file between the check and the run; it cannot replace a
+    private copy, so what runs is what the probe record names.
+    """
+    pinned = root / "bin" / executable.name
+    pinned.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(executable, pinned)
+    pinned.chmod(0o755)
+    if _reviewer_sha256(pinned) != identity["sha256"]:
+        raise ReviewerRefused(f"the copied {executable.name} does not match the verified one")
+    return pinned
+
+
 def reviewer_run_session(
     argv: list[str], *, stdin: str, cwd: Path, env: Mapping[str, str], timeout: float
 ) -> subprocess.CompletedProcess[str]:
@@ -2902,6 +3544,76 @@ class ReviewerRequest:
     open_search_cap: int = REVIEWER_DEFAULT_CAP
     timeout: float = REVIEWER_TIMEOUT_SECONDS
     work_root: Path | None = None
+    #: Issue #223: the dollar ceiling, required for a vendor that takes one (Claude).
+    max_budget_usd: str | None = None
+
+
+def reviewer_record_admits(
+    record: Any,
+    vendor: str,
+    platform: str,
+    identity: Mapping[str, str] | None = None,
+) -> tuple[bool, str]:
+    """Whether a probe record admits *vendor* on *platform*, and why not when it does not.
+
+    Admission needs a complete, well-formed record for exactly this vendor and platform: the
+    schema, every check in ``REVIEWER_PROBE_CHECKS`` once and nothing else, each one held (a real
+    ``True``), a session that exited 0, and an executable identity. With *identity* (the
+    executable about to run), its SHA-256 and version must equal the record's. Anything missing,
+    duplicated, malformed or mismatched refuses.
+    """
+    if not isinstance(record, Mapping):
+        return False, "the probe record is not a JSON object"
+    if record.get("schema") != REVIEWER_PROBE_RECORD_SCHEMA:
+        return False, f"the probe record's schema is not {REVIEWER_PROBE_RECORD_SCHEMA}"
+    if record.get("vendor") != vendor:
+        return False, f"the probe record is for {record.get('vendor')!r}, not {vendor!r}"
+    if record.get("platform") != platform:
+        return False, f"the probe record is for {record.get('platform')!r}, not {platform!r}"
+    verdicts = record.get("verdicts")
+    if not isinstance(verdicts, list) or not verdicts:
+        return False, "the probe record has no verdicts"
+    names: list[str] = []
+    for verdict in verdicts:
+        if not (
+            isinstance(verdict, Mapping)
+            and isinstance(verdict.get("denial"), str)
+            and isinstance(verdict.get("held"), bool)
+            and isinstance(verdict.get("detail"), str)
+        ):
+            return False, "a verdict in the probe record is malformed"
+        names.append(verdict["denial"])
+    if len(names) != len(set(names)):
+        return False, "the probe record names a check more than once"
+    if set(names) != set(REVIEWER_PROBE_CHECKS):
+        missing = sorted(set(REVIEWER_PROBE_CHECKS) - set(names))
+        extra = sorted(set(names) - set(REVIEWER_PROBE_CHECKS))
+        return False, f"the probe record's checks differ: missing {missing}, unknown {extra}"
+    failed = [v["denial"] for v in verdicts if v["held"] is not True]
+    if failed:
+        return False, "the probe record has checks that did not hold: " + ", ".join(failed)
+    exit_code = record.get("session_exit")
+    if not isinstance(exit_code, int) or isinstance(exit_code, bool) or exit_code != 0:
+        return False, "the probe record's session did not exit 0"
+    executable = record.get("executable")
+    if not (
+        isinstance(executable, Mapping)
+        and isinstance(executable.get("name"), str) and executable["name"]
+        and isinstance(executable.get("sha256"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", executable["sha256"])
+        and isinstance(executable.get("version"), str) and executable["version"]
+    ):
+        return False, "the probe record has no well-formed executable identity"
+    if identity is not None and (
+        identity.get("sha256") != executable["sha256"]
+        or identity.get("version") != executable["version"]
+    ):
+        return False, (
+            f"the {vendor} executable is not the one the probe passed on (probed "
+            f"{executable['version']}, found {identity.get('version') or 'no version'}); run "
+            f"reviewer-probe --vendor {vendor} --record again and commit the record"
+        )
+    return True, "admitted"
 
 
 def reviewer_launch(
@@ -2917,6 +3629,41 @@ def reviewer_launch(
     """
     environ = dict(os.environ if env is None else env)
     recipe = reviewer_recipe(request.vendor)
+    platform = sys.platform
+    if recipe.platforms is not None and platform not in recipe.platforms:
+        raise ReviewerRefused(
+            f"{request.vendor}'s reviewer recipe passed its probe only on "
+            f"{', '.join(recipe.platforms)}, not {platform}"
+        )
+    if recipe.takes_ceiling:
+        problem = reviewer_ceiling_problem(request.max_budget_usd)
+        if problem:
+            raise ReviewerRefused(
+                f"a {request.vendor} reviewer launch needs a spending ceiling: {problem}"
+            )
+    elif request.max_budget_usd is not None:
+        raise ReviewerRefused(
+            f"{request.vendor} has no dollar ceiling; --max-budget-usd cannot be honoured"
+        )
+    executable: Path | None = None
+    identity: dict[str, str] | None = None
+    record: Mapping[str, Any] | None = None
+    if recipe.executable is not None:
+        record = REVIEWER_ADMISSIONS.get((request.vendor, platform))
+        if record is None:
+            raise ReviewerRefused(f"{request.vendor} has no admitted probe record on {platform}")
+        admitted, why = reviewer_record_admits(record, request.vendor, platform)
+        if not admitted:
+            raise ReviewerRefused(why)
+        executable = recipe.executable(environ)
+        # Issue #223's review, finding 2: the bytes are compared before anything runs them, so
+        # a replaced or redirected executable is refused without being run.
+        if reviewer_executable_file(executable)["sha256"] != record["executable"]["sha256"]:
+            raise ReviewerRefused(
+                f"the {request.vendor} executable is not the one the probe passed on (its SHA-256 "
+                f"differs from the record's); run reviewer-probe --vendor {request.vendor} "
+                "--record again and commit the record"
+            )
     try:
         prompt_bytes = request.prompt.read_bytes()
     except OSError as exc:
@@ -2931,7 +3678,7 @@ def reviewer_launch(
     wrapper = reviewer_wrapper_path()
     if not wrapper.is_file():
         raise ReviewerRefused(f"the roles library's wrapper {wrapper} is missing")
-    widening = reviewer_claude_widening(environ) if request.vendor == "claude" else []
+    widening = recipe.widening(environ) if recipe.widening is not None else []
     if widening:
         raise ReviewerRefused(
             "settings outside the copy would widen the reviewer's sandbox: " + "; ".join(widening)
@@ -2941,7 +3688,9 @@ def reviewer_launch(
         f"{request.repo.resolve().name}-{request.head[:12]}-{os.urandom(4).hex()}"
     )
     copy = root / "copy"
-    session_env = reviewer_session_environment(environ)
+    session_env = reviewer_session_environment(
+        environ, recipe.api_key_variables, recipe.api_key_prefixes
+    )
     home = _reviewer_home(session_env)
     for label, path in (("scratch copy", copy), ("review packet", request.packet)):
         problem = reviewer_allowed_read_problem(path.absolute(), home)
@@ -2950,25 +3699,44 @@ def reviewer_launch(
                                   f"{problem}")
     toolchain, dropped = reviewer_toolchain_paths(session_env)
     reviewer_export_head(request.repo, request.head, copy)
-    withheld = reviewer_withhold_untrusted(copy)
-    manifest = _reviewer_manifest(copy)
-    settings_path = root / "settings.json"
-    settings_path.write_text(
-        json.dumps(
-            recipe.settings(copy, request.packet, session_env, toolchain=toolchain), indent=2
-        ) + "\n",
-        "utf-8",
+    withheld = reviewer_withhold_untrusted(
+        copy, recipe.untrusted_dirs, recipe.untrusted_files, recipe.instruction_names
     )
+    settings_path, extra_env = recipe.materialize(
+        recipe.settings(copy, request.packet, session_env, toolchain=toolchain), root, copy
+    )
+    manifest = _reviewer_manifest(copy)
     configuration = reviewer_configuration_fingerprint(recipe.config_sources(copy, session_env))
     message = reviewer_launch_message(
         wrapper.read_text(encoding="utf-8"), prompt_text, request.packet, copy,
         request.open_search_cap, withheld,
     )
-    argv = recipe.argv(request.model, request.effort, settings_path)
-    proc = session(argv, stdin=message, cwd=copy, env=session_env, timeout=request.timeout)
+    prompt_path, stdin = reviewer_deliver_prompt(recipe, root, message)
+    if executable is not None and record is not None:
+        try:
+            executable = reviewer_pin_executable(executable, record["executable"], root)
+            # The version comes only from the verified copy, without the API-key variables.
+            identity = reviewer_executable_identity(executable, session_env)
+            admitted, why = reviewer_record_admits(record, request.vendor, platform, identity)
+            if not admitted:
+                raise ReviewerRefused(why)
+        except ReviewerRefused:
+            shutil.rmtree(root, ignore_errors=True)
+            raise
+    argv = recipe.argv(
+        request.model, request.effort, settings_path, max_budget_usd=request.max_budget_usd,
+        executable=executable, prompt_path=prompt_path,
+    )
+    proc = session(
+        argv, stdin=stdin, cwd=copy, env={**session_env, **extra_env}, timeout=request.timeout
+    )
     parsed = recipe.parse(proc.stdout)
     answer, missing = reviewer_extract_answer(parsed["final"])
 
+    shell_reads = [
+        {"path": str(Path(extra_env[REVIEWER_SHELL_PREFIX]).parent),
+         "reason": "the reviewer's shell prefix, which keeps start-up exports out (issue #225)"}
+    ] if REVIEWER_SHELL_PREFIX in extra_env else []
     request.out.mkdir(parents=True, exist_ok=True)
     answer_path = request.out / "answer.json"
     if answer is not None:
@@ -2982,9 +3750,14 @@ def reviewer_launch(
     result = {
         "schema": REVIEWER_RESULT_SCHEMA,
         "vendor": request.vendor,
-        "vendor_version": _reviewer_vendor_version(recipe.binary, session_env),
+        "vendor_version": (
+            identity["version"] if identity is not None
+            else _reviewer_vendor_version(recipe.binary, session_env)
+        ),
         "model": {"requested": request.model, "resolved": parsed["resolved"]},
         "effort": request.effort,
+        "ceiling_usd": request.max_budget_usd,
+        "executable": identity,
         "usage": parsed["usage"],
         "prompt_sha256": hashlib.sha256(prompt_bytes).hexdigest(),
         "schema_sha256": hashlib.sha256(request.schema.read_bytes()).hexdigest(),
@@ -2998,7 +3771,7 @@ def reviewer_launch(
             "allowed": [
                 {"path": str(copy.resolve()), "reason": "the scratch copy the review works in"},
                 {"path": str(request.packet.resolve()), "reason": "the review packet"},
-            ] + list(toolchain),
+            ] + shell_reads + list(toolchain),
             "dropped": dropped,
         },
         "answer_path": str(answer_path) if answer is not None else None,
@@ -3008,6 +3781,15 @@ def reviewer_launch(
     (request.out / "result.json").write_text(json.dumps(result, indent=2) + "\n", "utf-8")
     return result, code
 
+
+#: The address the probe's network check tries, from inside the session and from outside it.
+REVIEWER_PROBE_URL = "https://example.com"
+#: curl exit statuses that mean the connection never left: 6, the name did not resolve; 7, the
+#: connection was refused. 56 counts only with a refused proxy tunnel (Claude's sandbox proxy
+#: answers CONNECT with 403; since issue #225 its commands get no proxy variables and give 6).
+#: Timeouts (28), TLS and certificate failures (35, 51, 58, 60, 77, 83, 90, 91) and an unrunnable
+#: curl (126, 127) prove nothing, so they never count as denial.
+REVIEWER_NETWORK_DENIED = frozenset({"6", "7"})
 
 #: The fixed command the probe asks the session to run. Each line records its own exit status in
 #: ``probe-results.txt`` inside the copy, so every verdict comes from the command, never the model.
@@ -3019,14 +3801,22 @@ touch "{outside}/written" 2> /dev/null; echo "write_outside=$?" >> "$r"
 touch inside-written 2> /dev/null; echo "write_inside=$?" >> "$r"
 touch "${{TMPDIR:-/tmp}}/reviewer-probe-{tag}" 2> /dev/null; echo "write_tmpdir=$?" >> "$r"
 touch "/tmp/reviewer-probe-{tag}" 2> /dev/null; echo "write_tmp=$?" >> "$r"
-curl -sS -m 5 -o /dev/null https://example.com > /dev/null 2>&1; echo "network=$?" >> "$r"
+c=$(curl -sS -m 5 -o /dev/null -w '%{{http_connect}}' {url} 2> /dev/null); echo "network=$?" >> "$r"
+echo "network_connect=$c" >> "$r"
 if [ -n "${{REVIEWER_PROBE_TOKEN+x}}" ]; then v=set; else v=unset; fi; echo "variable=$v" >> "$r"
 cat "{home_canary}" > /dev/null 2>&1; echo "read_home=$?" >> "$r"
 cat "{packet}/packet.txt" > /dev/null 2>&1; echo "read_packet=$?" >> "$r"
 python3 -m unittest discover -s tests -q > /dev/null 2>&1; echo "python_test=$?" >> "$r"
 git --version > /dev/null 2>&1; echo "git=$?" >> "$r"
 [ -n "${{REVIEWER_PROBE_PLAIN+x}}" ] && v=set || v=unset; echo "plain_variable=$v" >> "$r"
+cat "{vendor_canary}" > /dev/null 2>&1; echo "read_vendor_home=$?" >> "$r"
+touch "{vendor_write}" 2> /dev/null; echo "write_vendor_home=$?" >> "$r"
 """
+#: Every recipe's probe checks shell start-up exports (issue #225 added Claude's).
+REVIEWER_PROBE_STARTUP_LINE = (
+    '[ -n "${REVIEWER_PROBE_STARTUP+x}" ] && v=set || v=unset; '
+    'echo "startup_variable=$v" >> "$r"\n'
+)
 
 #: A real Python test the probe runs in the copy: blocking home must leave the toolchain working.
 REVIEWER_PROBE_TEST = """\
@@ -3043,113 +3833,275 @@ REVIEWER_PROBE_MESSAGE = (
     "single word done: sh probe.sh"
 )
 
+REVIEWER_PROBE_RECORD_SCHEMA = "reviewer_probe_record.v1"
+
+#: Every check a probe makes, by name, for every recipe. A record admits a vendor only when it
+#: holds exactly these.
+REVIEWER_PROBE_CHECKS = (
+    "read-credential", "write-outside", "write-inside", "write-tmpdir", "write-tmp", "network",
+    "credential-variable", "read-home", "read-packet", "python-test", "git-runs",
+    "plain-variable", "no-canary-in-output",
+    # Issue #223.
+    "read-vendor-home", "write-vendor-home", "read-vendor-credential", "startup-variable",
+    "answer-parsed", "session-exit",
+)
+
+
+def reviewer_network_reachable(env: Mapping[str, str]) -> int:
+    """curl's exit status for the probe's address, run outside any sandbox; 127 without curl."""
+    try:
+        proc = subprocess.run(
+            ["curl", "-sS", "-m", "5", "-o", os.devnull, REVIEWER_PROBE_URL],
+            capture_output=True, timeout=20, env=dict(env), check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return 127
+    return proc.returncode
+
+
+def reviewer_network_verdict(
+    results: Mapping[str, str], reachability: tuple[int, int] | None
+) -> tuple[bool, str]:
+    """Whether the network was denied by the sandbox, not by the network itself.
+
+    Denial counts only when the same address was reachable from outside the session just before
+    and just after it, and the session's curl failed in a way that means the connection never
+    left. Anything else, an unreachable network included, is inconclusive and does not hold.
+    """
+    code, connect = results.get("network"), results.get("network_connect", "")
+    before, after = reachability if reachability is not None else (None, None)
+    detail = f"network={code} connect={connect} outside_before={before} outside_after={after}"
+    if before != 0 or after != 0:
+        return False, detail + " (inconclusive: the address was not reachable from outside)"
+    if code in REVIEWER_NETWORK_DENIED or (code == "56" and connect == "403"):
+        return True, detail
+    return False, detail
+
 
 def reviewer_probe_verdicts(
-    root: Path, outside: Path, tag: str, canaries: Sequence[str], session_output: str
+    root: Path,
+    outside: Path,
+    tag: str,
+    canaries: Sequence[str],
+    session_output: str,
+    *,
+    parsed: Mapping[str, Any] | None = None,
+    session_exit: int | None = None,
+    reachability: tuple[int, int] | None = None,
+    vendor_write: Path | None = None,
+    credential_count: int = 0,
+    credentials_absent: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
-    """Judge each denial from outside the session: the filesystem and the command's own results."""
+    """Judge each denial from outside the session: the filesystem and the command's own results.
+
+    Every check in ``REVIEWER_PROBE_CHECKS`` gets a verdict, so a record is always complete; when
+    the command never ran, each check that needed it does not hold.
+    """
     copy = root / "copy"
     results_path = copy / "probe-results.txt"
     try:
-        lines = results_path.read_text(encoding="utf-8").splitlines()
+        text = results_path.read_text(encoding="utf-8")
+        ran = True
     except OSError:
-        return [{"denial": "results", "held": False,
-                 "detail": "probe-results.txt is missing: the command did not run"}]
+        text, ran = "", False
+    lines = text.splitlines()
     results = dict(line.split("=", 1) for line in lines if "=" in line)
-    seen = results_path.read_text(encoding="utf-8") + "\n" + session_output
+    seen = text + "\n" + session_output
 
     def nonzero(key: str) -> bool:
         return results.get(key, "0") not in ("", "0")
 
+    def did(key: str) -> str:
+        return f"{key}={results.get(key)}" if ran else "the command did not run"
+
+    network_held, network_detail = reviewer_network_verdict(results, reachability)
+    credential_keys = [f"read_vendor_credential_{n}" for n in range(credential_count)]
+    credential_detail = ", ".join(f"{k}={results.get(k)}" for k in credential_keys)
+    if credentials_absent:
+        credential_detail += (", " if credential_detail else "") + (
+            f"{len(credentials_absent)} absent"
+        )
+    canary_seen = any(c in seen for c in canaries)
+    answer = parsed or {}
     verdicts = [
-        ("read-credential", nonzero("read"), f"read={results.get('read')}"),
+        ("read-credential", nonzero("read"), did("read")),
         ("write-outside", nonzero("write_outside") and not (outside / "written").exists(),
-         f"write_outside={results.get('write_outside')}"),
+         did("write_outside")),
         ("write-inside", results.get("write_inside") == "0" and (copy / "inside-written").exists(),
-         f"write_inside={results.get('write_inside')}"),
-        ("write-tmpdir", nonzero("write_tmpdir"), f"write_tmpdir={results.get('write_tmpdir')}"),
+         did("write_inside")),
+        ("write-tmpdir", nonzero("write_tmpdir"), did("write_tmpdir")),
         ("write-tmp", nonzero("write_tmp") and not Path(f"/tmp/reviewer-probe-{tag}").exists(),
-         f"write_tmp={results.get('write_tmp')}"),
-        # 126 and 127 mean curl could not run, which proves nothing about the network.
-        ("network", nonzero("network") and results.get("network") not in ("126", "127"),
-         f"network={results.get('network')}"),
-        ("credential-variable", results.get("variable") == "unset",
-         f"variable={results.get('variable')}"),
+         did("write_tmp")),
+        # Issue #223: denial is proven against a reachability check made outside the session.
+        ("network", ran and network_held, network_detail if ran else did("network")),
+        ("credential-variable", results.get("variable") == "unset", did("variable")),
         # Issue #189: the whole home directory is blocked, and only what the review needs is back.
-        ("read-home", nonzero("read_home"), f"read_home={results.get('read_home')}"),
-        ("read-packet", results.get("read_packet") == "0",
-         f"read_packet={results.get('read_packet')}"),
-        ("python-test", results.get("python_test") == "0",
-         f"python_test={results.get('python_test')}"),
-        ("git-runs", results.get("git") == "0", f"git={results.get('git')}"),
-        ("plain-variable", results.get("plain_variable") == "unset",
-         f"plain_variable={results.get('plain_variable')}"),
-        ("no-canary-in-output", not any(c in seen for c in canaries),
-         "a canary value appeared in the results or the session's output"
-         if any(c in seen for c in canaries) else "no canary value seen"),
+        ("read-home", nonzero("read_home"), did("read_home")),
+        ("read-packet", results.get("read_packet") == "0", did("read_packet")),
+        ("python-test", results.get("python_test") == "0", did("python_test")),
+        ("git-runs", results.get("git") == "0", did("git")),
+        ("plain-variable", results.get("plain_variable") == "unset", did("plain_variable")),
+        ("no-canary-in-output", ran and not canary_seen,
+         "a canary value appeared in the results or the session's output" if canary_seen
+         else ("no canary value seen" if ran else "the command did not run")),
+        # Issue #223: the vendor's own state, sign-in files and shell start-up exports.
+        ("read-vendor-home", nonzero("read_vendor_home"), did("read_vendor_home")),
+        ("write-vendor-home", nonzero("write_vendor_home") and not (
+            vendor_write is not None and vendor_write.exists()
+        ), did("write_vendor_home")),
+        ("read-vendor-credential", ran and all(nonzero(k) for k in credential_keys),
+         (credential_detail or "no sign-in file declared") if ran else did("credential")),
+        ("startup-variable", results.get("startup_variable") == "unset", did("startup_variable")),
+        ("answer-parsed", bool(answer.get("final")) and not answer.get("is_error"),
+         "a final message was parsed" if answer.get("final") and not answer.get("is_error")
+         else f"no answer: {answer.get('error') or 'the session gave no final message'}"),
+        ("session-exit", session_exit == 0, f"exit={session_exit}"),
     ]
     return [{"denial": name, "held": held, "detail": detail} for name, held, detail in verdicts]
 
 
 def reviewer_probe(
     vendor: str,
-    model: str,
+    model: str | None = None,
     effort: str | None = None,
     *,
     env: Mapping[str, str] | None = None,
     session: Any = reviewer_run_session,
     work_root: Path | None = None,
     keep: bool = False,
+    record_path: Path | None = None,
+    max_budget_usd: str | None = None,
+    reachable: Any = reviewer_network_reachable,
 ) -> tuple[list[dict[str, Any]], int]:
-    """Run *vendor*'s reviewer recipe live on a fixed command and check each denial.
+    """Run *vendor*'s reviewer recipe, or its candidate recipe, live and check each denial.
 
-    Besides the probe directory it plants one canary file directly in the home directory, outside
-    every credential path, and removes it however the probe ends.
+    Besides the probe directory it plants a canary file directly in the home directory and one in
+    the vendor's own state directory, both outside every credential path, and removes them
+    however the probe ends. With *record_path* it writes the record a candidate's admission is
+    reviewed against.
     """
-    recipe = reviewer_recipe(vendor)
+    recipe = reviewer_probe_recipe(vendor)
+    model = model or recipe.probe_model
+    platform = sys.platform
     tag = os.urandom(6).hex()
     canary_file = f"reviewer-probe-canary-{os.urandom(8).hex()}"
     canary_variable = f"reviewer-probe-variable-{os.urandom(8).hex()}"
     canary_home = f"reviewer-probe-home-{os.urandom(8).hex()}"
     canary_plain = f"reviewer-probe-plain-{os.urandom(8).hex()}"
+    canary_vendor = f"reviewer-probe-vendor-{os.urandom(8).hex()}"
+    canary_startup = f"reviewer-probe-startup-{os.urandom(8).hex()}"
     environ = dict(os.environ if env is None else env)
     environ["REVIEWER_PROBE_TOKEN"] = canary_variable
     environ["REVIEWER_PROBE_PLAIN"] = canary_plain
+    home = _reviewer_home(environ)
+    identity: dict[str, str] | None = None
+    if recipe.executable is not None:
+        # Its version is read from the pinned copy below, never from the installed file.
+        executable: Path | None = recipe.executable(environ)
+    else:
+        executable = None
+        found = shutil.which(recipe.binary, path=environ.get("PATH", ""))
+        identity = reviewer_executable_identity(Path(found).resolve(), environ) if found else None
     root = (work_root or reviewer_work_root(environ)) / f"probe-{tag}"
     copy, outside, packet = root / "copy", root / "outside", root / "packet"
-    home_canary = _reviewer_home(environ) / f".reviewer-probe-home-canary-{tag}"
+    startup = root / "startup"
+    home_canary = home / f".reviewer-probe-home-canary-{tag}"
+    vendor_home = _reviewer_expand(recipe.vendor_home, home) if recipe.vendor_home else None
+    vendor_canary = (vendor_home or root / "no-vendor-home") / f".reviewer-probe-canary-{tag}"
+    vendor_write = (
+        _reviewer_expand(recipe.vendor_writable, home) / f"reviewer-probe-write-{tag}"
+        if recipe.vendor_writable else root / "no-vendor-home" / "write"
+    )
+    credentials = [_reviewer_expand(path, home) for path in recipe.credential_files]
+    present = [path for path in credentials if path.is_file()]
+    absent = [str(path.name) for path in credentials if not path.is_file()]
     (copy / "tests").mkdir(parents=True)
     outside.mkdir()
     packet.mkdir()
+    startup.mkdir()
     (outside / "canary.txt").write_text(canary_file + "\n", "utf-8")
     (packet / "packet.txt").write_text("the review packet\n", "utf-8")
     (copy / "tests" / "test_reviewer_probe.py").write_text(REVIEWER_PROBE_TEST, "utf-8")
-    (copy / "probe.sh").write_text(
-        REVIEWER_PROBE_SCRIPT.format(
-            outside=outside, tag=tag, home_canary=home_canary, packet=packet
-        ),
-        "utf-8",
-    )
+    script = REVIEWER_PROBE_SCRIPT.format(
+        outside=outside, tag=tag, home_canary=home_canary, packet=packet, url=REVIEWER_PROBE_URL,
+        vendor_canary=vendor_canary, vendor_write=vendor_write,
+    ) + "".join(
+        f'cat "{path}" > /dev/null 2>&1; echo "read_vendor_credential_{n}=$?" >> "$r"\n'
+        for n, path in enumerate(present)
+    ) + REVIEWER_PROBE_STARTUP_LINE
+    (copy / "probe.sh").write_text(script, "utf-8")
+    # Shell start-up files that export an inert secret; the session's shell must not hand it to
+    # a sandboxed command. Set through the environment, so no operator file is edited.
+    export = f"export REVIEWER_PROBE_STARTUP={canary_startup}\n"
+    for name in (".zshenv", ".zprofile", ".zshrc", "bash_env", "sh_env"):
+        (startup / name).write_text(export, "utf-8")
+    startup_env = {
+        "ZDOTDIR": str(startup), "BASH_ENV": str(startup / "bash_env"),
+        "ENV": str(startup / "sh_env"),
+    }
+    planted: list[Path] = []
     try:
         home_canary.write_text(canary_home + "\n", "utf-8")
-        session_env = reviewer_session_environment(environ)
-        settings_path = root / "settings.json"
-        settings = recipe.settings(copy, packet, session_env, extra_deny_read=[str(outside)])
-        settings_path.write_text(json.dumps(settings, indent=2) + "\n", "utf-8")
-        proc = session(
-            recipe.argv(model, effort, settings_path), stdin=REVIEWER_PROBE_MESSAGE, cwd=copy,
-            env=session_env, timeout=300,
+        planted.append(home_canary)
+        if vendor_home is not None and vendor_home.is_dir():
+            vendor_canary.write_text(canary_vendor + "\n", "utf-8")
+            planted.append(vendor_canary)
+        session_env = reviewer_session_environment(
+            environ, recipe.api_key_variables, recipe.api_key_prefixes
         )
+        settings = recipe.settings(copy, packet, session_env, extra_deny_read=[str(outside)])
+        settings_path, extra_env = recipe.materialize(settings, root, copy)
+        prompt_path, stdin = reviewer_deliver_prompt(recipe, root, REVIEWER_PROBE_MESSAGE)
+        if executable is not None:
+            executable = reviewer_pin_executable(
+                executable, reviewer_executable_file(executable), root
+            )
+            identity = reviewer_executable_identity(executable, session_env)
+        ceiling = (max_budget_usd or REVIEWER_PROBE_CEILING_USD) if recipe.takes_ceiling else None
+        before = reachable(environ)
+        proc = session(
+            recipe.argv(model, effort, settings_path, max_budget_usd=ceiling,
+                        executable=executable, prompt_path=prompt_path),
+            stdin=stdin, cwd=copy, env={**session_env, **extra_env, **startup_env}, timeout=300,
+        )
+        after = reachable(environ)
         verdicts = reviewer_probe_verdicts(
-            root, outside, tag, (canary_file, canary_variable, canary_home, canary_plain),
+            root, outside, tag,
+            (canary_file, canary_variable, canary_home, canary_plain, canary_vendor,
+             canary_startup),
             (proc.stdout or "") + (proc.stderr or ""),
+            parsed=recipe.parse(proc.stdout or ""), session_exit=proc.returncode,
+            reachability=(before, after), vendor_write=vendor_write,
+            credential_count=len(present), credentials_absent=absent,
         )
     finally:
-        home_canary.unlink(missing_ok=True)
+        for path in planted:
+            path.unlink(missing_ok=True)
+        vendor_write.unlink(missing_ok=True)
         Path(f"/tmp/reviewer-probe-{tag}").unlink(missing_ok=True)
         if not keep:
             shutil.rmtree(root, ignore_errors=True)
-    return verdicts, 0 if all(v["held"] for v in verdicts) else 1
+    passed = all(v["held"] for v in verdicts)
+    if record_path is not None:
+        record = {
+            "schema": REVIEWER_PROBE_RECORD_SCHEMA,
+            "vendor": vendor,
+            "platform": platform,
+            "date": time.strftime("%Y-%m-%d", time.gmtime()),
+            "model": model,
+            "effort": effort,
+            "executable": identity,
+            "session_exit": proc.returncode,
+            # The session ran with the vendor's API-key variables removed; an answer then means
+            # it signed in some other way, which for these recipes is the operator's own sign-in.
+            "sign_in": "subscription" if any(
+                v["denial"] == "answer-parsed" and v["held"] for v in verdicts
+            ) else "not established",
+            "verdicts": verdicts,
+        }
+        record_path.parent.mkdir(parents=True, exist_ok=True)
+        record_path.write_text(json.dumps(record, indent=2) + "\n", "utf-8")
+    return verdicts, 0 if passed else 1
 
 
 def _reviewer_args(sub: Any) -> None:
@@ -3177,6 +4129,10 @@ def _reviewer_args(sub: Any) -> None:
     review_p.add_argument("--out", required=True, type=Path, help="Where answer and result go")
     review_p.add_argument("--open-search-cap", type=int, default=REVIEWER_DEFAULT_CAP)
     review_p.add_argument("--timeout", type=float, default=REVIEWER_TIMEOUT_SECONDS)
+    review_p.add_argument(
+        "--max-budget-usd", default=None,
+        help="Dollar ceiling for the session; required for claude, refused for a vendor without one",
+    )
     probe_p = sub.add_parser(
         "reviewer-probe",
         help="Run a vendor's reviewer recipe live and check every sandbox denial",
@@ -3185,20 +4141,34 @@ def _reviewer_args(sub: Any) -> None:
             "that a credential read, a read of a canary planted in the home directory, writes "
             "outside the copy and to the temp roots, the network, a credential variable and an "
             "ordinary-named variable are denied, and that a write inside the copy, a read of the "
-            "packet, a real Python test and git work. Exit 0 when every check held, 1 otherwise, "
-            "2 for a vendor with no recipe."
+            "packet, a real Python test and git work. Issue #223 adds: the network denial is "
+            "judged against the same address reached from outside the session; the vendor's own "
+            "state directory, sign-in files and a secret exported by shell start-up files stay "
+            "out of reach; and the session answers and exits 0. Runs a reviewer's recipe or a "
+            "candidate's. Exit 0 when every check held, 1 otherwise, 2 for a vendor with neither."
         ),
     )
     probe_p.add_argument("--vendor", required=True)
-    probe_p.add_argument("--model", default="haiku")
+    probe_p.add_argument("--model", default=None, help="Default: the recipe's probe model")
     probe_p.add_argument("--effort", default=None)
     probe_p.add_argument("--keep", action="store_true", help="Keep the probe directory")
+    probe_p.add_argument(
+        "--record", type=Path, default=None,
+        help="Write the probe record (vendor, platform, executable identity, every verdict) here",
+    )
+    probe_p.add_argument(
+        "--max-budget-usd", default=None,
+        help=f"Dollar ceiling for a vendor that takes one (default {REVIEWER_PROBE_CEILING_USD})",
+    )
 
 
 def _reviewer_cli(args: argparse.Namespace) -> int:
     try:
         if args.cmd == "reviewer-probe":
-            verdicts, code = reviewer_probe(args.vendor, args.model, args.effort, keep=args.keep)
+            verdicts, code = reviewer_probe(
+                args.vendor, args.model, args.effort, keep=args.keep, record_path=args.record,
+                max_budget_usd=args.max_budget_usd,
+            )
             json.dump(verdicts, sys.stdout, indent=2)
             sys.stdout.write("\n")
             return code
@@ -3207,6 +4177,7 @@ def _reviewer_cli(args: argparse.Namespace) -> int:
                 vendor=args.vendor, model=args.model, effort=args.effort, repo=args.repo,
                 head=args.head, packet=args.packet, prompt=args.prompt, schema=args.schema,
                 out=args.out, open_search_cap=args.open_search_cap, timeout=args.timeout,
+                max_budget_usd=args.max_budget_usd,
             )
         )
     except ReviewerRefused as refused:

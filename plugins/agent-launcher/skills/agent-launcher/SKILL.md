@@ -123,6 +123,26 @@ floor. The pane-write rule is owned here: `PaneWriter` is the only door into a p
 own senders construct a `PaneWriter` rather than carrying a rule of their own
 (`docs/engineering-journal/DECISIONS.md` `{#907-pane-writer-owns-the-write-rule}`).
 
+## The headless reviewer
+
+`launcher.py review` starts saga's targeted reviewer without a pane, in a sandboxed copy of the
+head commit. Only a vendor with a reviewer recipe can staff it. Today that is Claude, on any
+platform. Every other vendor is refused by name.
+
+- **A Claude review needs a dollar ceiling.** Pass `--max-budget-usd <amount>`, a positive figure
+  with at most two decimal places. A Claude launch without one is refused (exit 2) before anything
+  is created. A vendor with no dollar ceiling refuses the flag rather than ignore it.
+- **A vendor joins only on a full live probe.** Grok and Muse have candidate recipes, which
+  `launcher.py reviewer-probe --vendor <v> --record <file>` runs live and `review` never runs. The
+  probe checks reads, writes and network separately, from outside the session. It also checks the
+  vendor's own sign-in files and state directory, a secret exported by shell start-up files, and
+  that the session answered and exited 0. A candidate reviews only when a committed record shows
+  every check held, for that platform and that exact executable (its SHA-256 and version). An
+  updated binary is refused until it is probed again.
+- **Both candidates failed their live probes and stay refused.** The failing checks are recorded in
+  `docs/engineering-journal/LEARNINGS.md`. The records are kept under
+  `plugins/agent-launcher/tests/fixtures/reviewer-probe/`.
+
 ## The binary is the authority
 
 Command syntax changes. Read it live rather than trusting this file or memory:
