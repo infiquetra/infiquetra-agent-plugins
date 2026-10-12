@@ -11,6 +11,10 @@
 ### Changed
 
 - A review run (`review_records.v1`, kind `review_run`) routes through the same outcome words as `review_result.v2`. The Claude adapter's agent-launcher floor is now `>=1.7.2`, and `review-launch` also requires the `review` subcommand (issue #159).
+- `review-launch` passes `--max-budget-usd` on a Claude seat, from the one named constant
+  `REVIEW_LAUNCH_CLAUDE_CEILING_USD` (25.00, a bound on a runaway session, not a measured cost).
+  agent-launcher now refuses a Claude reviewer launch without a ceiling, and orchestrate's must not
+  be refused (issue #223).
 
 ### Fixed
 

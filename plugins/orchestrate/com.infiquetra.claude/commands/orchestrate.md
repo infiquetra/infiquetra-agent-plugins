@@ -570,7 +570,9 @@ saga below its floor is refused before any submission, because an older saga sil
 `Stage` half and reports success. The mission-control floor is a declaration the installer reads.
 The agent-launcher floor is `>=1.7.2`. `review-launch` also needs `launcher.py review`. When that
 subcommand's `--help` fails, `review-launch` refuses and names
-`claude plugin update agent-launcher@infiquetra-plugins`. The other commands that write a pane,
+`claude plugin update agent-launcher@infiquetra-plugins`. On a Claude seat it passes the dollar
+ceiling `REVIEW_LAUNCH_CLAUDE_CEILING_USD`, and refuses the same way when that `--help` does not
+offer `--max-budget-usd` (issue #223). The other commands that write a pane,
 create a session or worktree, or close a tab warn and continue when the companion is below the
 numeric floor. A missing or unusable companion still refuses, and the refusal names the install
 remedy. `roster` and `saga` write nothing, so a companion below the floor still serves them.
