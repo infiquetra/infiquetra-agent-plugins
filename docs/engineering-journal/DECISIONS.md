@@ -23,6 +23,72 @@ display data (the machine record's survey list) that no reader validates.
 
 ## 2026-10-11
 
+### Claude's reviewer filters its commands' environment after shell start-up, through a prefix
+
+**Decision.** Issue #225, folded into #223. Every Claude reviewer launch writes a per-launch
+`CLAUDE_CODE_SHELL_PREFIX` script beside the scratch copy. It is named in `--settings` `env` and in
+the session environment. Inside the sandbox it runs each command with `env -i` and only the names
+in `REVIEWER_ENVIRONMENT_ALLOWED`, in `bash --noprofile --norc`. Outside the sandbox (hooks and MCP
+servers) it runs the command unchanged. It tells the two apart by reading a sentinel file that the
+settings deny by name. A failed read, for any reason, filters.
+
+**Rationale.** Measured on Claude Code 2.1.296: the shell around each command reads its start-up
+files before the command runs, and the sandbox's `credentials.envVars` denies only names the launch
+environment had. A filter has to run after start-up and inside the sandbox, and the prefix is the
+only hook the CLI offers there. The sentinel makes the check fail closed: only a process the
+sandbox does not confine can read it.
+
+**Rejected alternatives.**
+
+- Overriding `BASH_ENV`, `ZDOTDIR` and `ENV` in the session environment: it covers the start-up
+  files a variable points at, not system-wide ones, and it would pass the probe by removing the
+  probe's own setup rather than by filtering.
+- Telling hooks from commands by `SANDBOX_RUNTIME`: a start-up file runs before the prefix and can
+  unset it, which would turn the filter off.
+- Filtering hooks and MCP servers as well: they run outside the sandbox with the operator's
+  configuration, and the operator's hooks need their own variables.
+- Turning the reviewer's test reproduction off: the issue asks to keep it available.
+
+**Revisit when.** Claude Code filters the command environment itself after start-up, renames or
+drops `CLAUDE_CODE_SHELL_PREFIX`, or starts running hooks inside the sandbox. The live probe's
+`startup-variable` check fails in each of those cases.
+
+### A new reviewer vendor joins only through a committed probe record bound to its binary
+
+**Decision.** Issue #223. Grok and Muse have candidate recipes in `REVIEWER_CANDIDATES`.
+`launcher.py reviewer-probe` runs them; `launcher.py review` never does. A candidate reviews only
+when `REVIEWER_ADMISSIONS` holds a probe record for that vendor and platform. The record must be
+complete and well formed: every check in `REVIEWER_PROBE_CHECKS` once, each one held, the session
+exited 0, and an executable identity (file name, SHA-256 and version).
+
+Before every launch, the launcher hashes the vendor's native binary (never a wrapper script) and
+compares it with the record without running it. It then copies the binary into the launch
+directory, checks the copy, reads the version from the copy, and runs the copy. Nothing runs a
+file whose bytes have not been compared (the code review's finding 2). A test keeps the
+admissions equal to the records under `plugins/agent-launcher/tests/fixtures/reviewer-probe/`.
+Claude's recipe predates records. Its reviews now require `--max-budget-usd`, and orchestrate's
+`review-launch` passes `REVIEW_LAUNCH_CLAUDE_CEILING_USD`.
+
+**Rationale.** A sandbox recipe is only as good as the probe that ran against it, on that
+platform, with that binary. Muse's launcher script replaces its binary in the background. Grok's
+documentation says its network and deny rules behave differently on Linux and macOS. Admission
+from a stale probe would let unprobed code review untrusted changes. Running a private copy
+closes the gap between the check and the run.
+
+**Rejected alternatives.**
+
+- Adding a vendor to `REVIEWER_RECIPES` and probing afterwards: `review` could run an unproven
+  sandbox in the meantime.
+- Promotion at run time from a local probe result: one machine's probe would silently change
+  every machine's behaviour, and untracked state does not survive a worktree.
+- Accepting any failed curl as a network denial: an offline machine would pass.
+- Running the vendor's wrapper script: Grok's local wrapper adds `--trust`, and Muse's updates the
+  binary.
+
+**Revisit when.** Grok or Muse ships a sandbox that confines reads and temp writes and filters the
+environment on macOS. Also revisit when the reviewer runs on Linux, where each candidate needs its
+own probe record, or when vendor updates make re-probing too frequent to keep by hand.
+
 ### The setup pane's direct opener lives in the Claude adapter
 
 **Decision.** `/setup-view`, the slash command that opens saga's setup pane with no agent

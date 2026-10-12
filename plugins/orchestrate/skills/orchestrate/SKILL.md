@@ -118,7 +118,9 @@ or close a tab -- `start`, `expand`, `go`, `review-launch`, `review-result`, `me
 -- warn and continue when the companion is below the declared floor, and the
 warning names `claude plugin update agent-launcher@infiquetra-plugins`. `review-launch` also
 requires `launcher.py review`. When that subcommand's `--help` exits non-zero, `review-launch`
-refuses and names the same update remedy. A missing
+refuses and names the same update remedy. On a Claude seat it passes the dollar ceiling
+`REVIEW_LAUNCH_CLAUDE_CEILING_USD` as `--max-budget-usd`, and refuses with the same remedy when that
+`--help` does not offer the flag (issue #223). A missing
 or unusable companion still refuses, and the refusal names
 `claude plugin install agent-launcher@infiquetra-plugins`. `roster` and `saga` write nothing, so a
 companion below the floor still serves them; they refuse, with the install remedy, only when no
