@@ -427,7 +427,9 @@ def _grades_of(packet: Path) -> dict[str, Any]:
     })
 
 
-def _recorded_calibration(path: Path, *, configuration: str | None = None) -> Path:
+def _recorded_calibration(
+    path: Path, *, configuration: dict[str, Any] | None = None
+) -> Path:
     data = json.loads((REFERENCES / "review-calibration.json").read_text(encoding="utf-8"))
     counts = {name: 0 for name in CAL.COUNT_FIELDS}
     counts.update(held_out_defects=10, held_out_clean=10, repeat_cases=10)
@@ -1357,13 +1359,27 @@ def test_usage_once_missing_record_writes_nothing(tmp_path: Path) -> None:
     assert not (packet / "review-run.json").exists()
 
 
-def test_reviewer_noted_records_both_fingerprints(tmp_path: Path) -> None:
+def _reviewer_object(fingerprint: str) -> dict[str, Any]:
+    return {
+        "vendor": "claude",
+        "model": "opus",
+        "effort": "high",
+        "prompt_sha256": _HEX_A,
+        "configuration_fingerprint": fingerprint,
+        "second": None,
+        "cleared_components": [],
+    }
+
+
+def test_reviewer_configuration_comparison_reads_the_fingerprint(tmp_path: Path) -> None:
     _repo_path, packet, runner = _line_packet(tmp_path)
     home = tmp_path / "home"
-    calibration = _recorded_calibration(tmp_path / "calibration.json", configuration=_HEX_A)
-    # The committed file is no-run. This copy only changes the configuration fingerprint.
+    calibration = _recorded_calibration(
+        tmp_path / "calibration.json", configuration=_reviewer_object(_HEX_A)
+    )
+    # The committed file is no-run. This copy only changes the configuration object.
     data = json.loads((REFERENCES / "review-calibration.json").read_text(encoding="utf-8"))
-    data["reviewer_configuration"] = _HEX_A
+    data["reviewer_configuration"] = _reviewer_object(_HEX_A)
     calibration.write_text(json.dumps(data), encoding="utf-8")
     scratch, changes = _scratch(tmp_path, with_test=False)
     differing = _result(scratch, changes, fingerprint=_HEX_B, prompt=_HEX_B)
@@ -1392,6 +1408,23 @@ def test_reviewer_noted_records_both_fingerprints(tmp_path: Path) -> None:
     same = _read(other / "review-run.json")["reviewers"][0]
     assert same["configuration_sha256"] == _HEX_A
     assert same["note"] is None
+    _null_repo, null_packet, null_runner = _line_packet(tmp_path / "null")
+    null_calibration = tmp_path / "null-calibration.json"
+    null_data = json.loads((REFERENCES / "review-calibration.json").read_text(encoding="utf-8"))
+    null_data["reviewer_configuration"] = None
+    null_calibration.write_text(json.dumps(null_data), encoding="utf-8")
+    null_scratch, null_changes = _scratch(tmp_path / "null", with_test=False)
+    code, err = _finish(
+        null_packet,
+        [(_answer([]), _result(null_scratch, null_changes, fingerprint=_HEX_A))],
+        tmp_path / "null" / "home",
+        null_runner,
+        ask=_ask(),
+        extra=["--calibration", str(null_calibration)],
+    )
+    assert code == 0, err
+    unrecorded = _read(null_packet / "review-run.json")["reviewers"][0]
+    assert unrecorded["note"] == "reviewer-configuration"
 
 
 def test_report_only_allows_merge_and_may_block_refuses(tmp_path: Path) -> None:

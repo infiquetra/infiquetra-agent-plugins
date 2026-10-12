@@ -1,0 +1,1114 @@
+"""Issue #223: reviewer recipes for Grok and Muse, admitted only on a live probe, and a ceiling.
+
+Runs as ``python3 -m pytest plugins/agent-launcher/tests/test_launcher_reviewer.py`` with no
+extra options. The probe records under ``fixtures/reviewer-probe/`` were written by
+``launcher.py reviewer-probe --record`` against the real vendors; the tests here keep the recipe
+tables, the admissions and the journal in agreement with them.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+import pytest
+
+REPO = Path(__file__).resolve().parents[3]
+LAUNCHER = (
+    REPO / "plugins" / "agent-launcher" / "skills" / "agent-launcher" / "scripts" / "launcher.py"
+)
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "reviewer-probe"
+LEARNINGS = REPO / "docs" / "engineering-journal" / "LEARNINGS.md"
+SAGA_PROMPT = REPO / "plugins" / "saga" / "references" / "targeted-reviewer-prompt.md"
+SAGA_SCHEMA = REPO / "plugins" / "saga" / "references" / "targeted-reviewer-answer.schema.json"
+CLAUDE_ANSWER = json.dumps({"result": json.dumps({"findings": []}), "is_error": False})
+MACH_O = b"\xcf\xfa\xed\xfe"
+
+
+def _load() -> ModuleType:
+    name = "_agent_launcher_reviewer"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, LAUNCHER)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(scope="module")
+def launcher() -> ModuleType:
+    return _load()
+
+
+def _records() -> list[dict[str, Any]]:
+    found = []
+    for path in sorted(FIXTURES.glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and data.get("schema") == "reviewer_probe_record.v1":
+            found.append(data)
+    return found
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+@pytest.fixture
+def reviewed_repo(tmp_path: Path) -> tuple[Path, str]:
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "app.py").write_text("def add(a, b):\n    return a + b\n")
+    _git(repo.parent, "init", "-q", str(repo))
+    _git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "add", ".")
+    _git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "base")
+    return repo, _git(repo, "rev-parse", "HEAD")
+
+
+class FakeSession:
+    """Stands in for the vendor session and records what it was given."""
+
+    def __init__(self, stdout: str, code: int = 0) -> None:
+        self.stdout, self.code = stdout, code
+        self.calls: list[dict[str, Any]] = []
+
+    def __call__(self, argv: list[str], *, stdin: str, cwd: Path, env: Any, timeout: float) -> Any:
+        self.calls.append({"argv": argv, "stdin": stdin, "cwd": cwd, "env": dict(env)})
+        return subprocess.CompletedProcess(argv, self.code, self.stdout, "")
+
+
+def _request(launcher: ModuleType, repo: Path, head: str, tmp_path: Path, **over: Any) -> Any:
+    packet = tmp_path / "packet"
+    packet.mkdir(parents=True, exist_ok=True)
+    values: dict[str, Any] = {
+        "vendor": "claude", "model": "opus", "effort": "high", "repo": repo, "head": head,
+        "packet": packet, "prompt": SAGA_PROMPT, "schema": SAGA_SCHEMA, "out": tmp_path / "out",
+        "work_root": tmp_path / "reviews",
+    }
+    values.update(over)
+    return launcher.ReviewerRequest(**values)
+
+
+def _env(tmp_path: Path, **extra: str) -> dict[str, str]:
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    return {"HOME": str(home), "PATH": os.environ.get("PATH", ""), "LANG": "C.UTF-8", **extra}
+
+
+def _passing_record(launcher: ModuleType, vendor: str, platform: str, **over: Any) -> dict:
+    record: dict[str, Any] = {
+        "schema": launcher.REVIEWER_PROBE_RECORD_SCHEMA,
+        "vendor": vendor,
+        "platform": platform,
+        "date": "2026-10-11",
+        "model": "m",
+        "effort": None,
+        "executable": {"name": "vendor-bin", "sha256": "a" * 64, "version": "vendor 1.0"},
+        "session_exit": 0,
+        "sign_in": "subscription",
+        "verdicts": [
+            {"denial": name, "held": True, "detail": "x"}
+            for name in launcher.REVIEWER_PROBE_CHECKS
+        ],
+    }
+    record.update(over)
+    return record
+
+
+# --------------------------------------------------------------------------- Claude's ceiling
+
+
+def test_ceiling_a_claude_launch_passes_and_records_it(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    session = FakeSession(CLAUDE_ANSWER)
+    result, code = launcher.reviewer_launch(
+        _request(launcher, repo, head, tmp_path, max_budget_usd="5"),
+        env=_env(tmp_path), session=session,
+    )
+    assert code == 0 and result["ceiling_usd"] == "5"
+    assert session.calls[0]["argv"][-2:] == ["--max-budget-usd", "5"]
+    written = json.loads((tmp_path / "out" / "result.json").read_text())
+    assert written["ceiling_usd"] == "5" and written["executable"] is None
+
+
+def test_ceiling_a_claude_launch_without_one_is_refused_before_anything_exists(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    session = FakeSession(CLAUDE_ANSWER)
+    with pytest.raises(launcher.ReviewerRefused, match="--max-budget-usd"):
+        launcher.reviewer_launch(_request(launcher, repo, head, tmp_path), env=_env(tmp_path),
+                                 session=session)
+    assert session.calls == []
+    assert not (tmp_path / "reviews").exists() and not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("amount", ["0", "0.00", "-1", "abc", "1e3", "nan", "1.234", "", " 5"])
+def test_ceiling_an_amount_that_is_not_a_positive_dollar_figure_is_refused(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, amount: str
+) -> None:
+    repo, head = reviewed_repo
+    session = FakeSession(CLAUDE_ANSWER)
+    with pytest.raises(launcher.ReviewerRefused, match="--max-budget-usd"):
+        launcher.reviewer_launch(
+            _request(launcher, repo, head, tmp_path, max_budget_usd=amount),
+            env=_env(tmp_path), session=session,
+        )
+    assert session.calls == [] and not (tmp_path / "reviews").exists()
+
+
+@pytest.mark.parametrize("amount", ["5", "0.5", "12.25", "100"])
+def test_ceiling_a_positive_amount_is_accepted(launcher: ModuleType, amount: str) -> None:
+    assert launcher.reviewer_ceiling_problem(amount) is None
+
+
+def test_ceiling_the_review_command_refuses_a_claude_launch_without_one(
+    reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    packet = tmp_path / "packet"
+    packet.mkdir()
+    proc = subprocess.run(
+        [sys.executable, str(LAUNCHER), "review", "--vendor", "claude", "--model", "opus",
+         "--effort", "high", "--repo", str(repo), "--head", head, "--packet", str(packet),
+         "--prompt", str(SAGA_PROMPT), "--schema", str(SAGA_SCHEMA), "--out", str(tmp_path / "o")],
+        capture_output=True, text=True, check=False, env={**os.environ, "HOME": str(tmp_path)},
+    )
+    assert proc.returncode == 2
+    assert "needs a spending ceiling" in proc.stderr and "--max-budget-usd" in proc.stderr
+    assert not (tmp_path / "o").exists()
+
+
+def test_ceiling_a_vendor_without_one_refuses_the_flag(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, head = reviewed_repo
+    no_ceiling = launcher.dataclasses.replace(launcher.REVIEWER_CLAUDE_RECIPE, takes_ceiling=False)
+    monkeypatch.setitem(launcher.REVIEWER_RECIPES, "nobudget", no_ceiling)
+    session = FakeSession(CLAUDE_ANSWER)
+    with pytest.raises(launcher.ReviewerRefused, match="nobudget has no dollar ceiling"):
+        launcher.reviewer_launch(
+            _request(launcher, repo, head, tmp_path, vendor="nobudget", max_budget_usd="5"),
+            env=_env(tmp_path), session=session,
+        )
+    assert session.calls == []
+
+
+def test_ceiling_claude_argv_cannot_be_built_without_one(launcher: ModuleType) -> None:
+    with pytest.raises(launcher.ReviewerRefused, match="spending ceiling"):
+        launcher.reviewer_claude_argv("opus", "high", Path("settings.json"))
+
+
+def test_ceiling_the_probe_passes_its_fixed_ceiling_or_the_override(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    for override, expected in ((None, launcher.REVIEWER_PROBE_CEILING_USD), ("0.25", "0.25")):
+        session = FakeSession(CLAUDE_ANSWER)
+        launcher.reviewer_probe(
+            "claude", "haiku", env={"HOME": str(tmp_path)}, session=session,
+            work_root=tmp_path / "reviews", reachable=lambda env: 0, max_budget_usd=override,
+        )
+        argv = session.calls[0]["argv"]
+        assert argv[argv.index("--max-budget-usd") + 1] == expected
+    assert launcher.REVIEWER_PROBE_CEILING_USD == "1.00"
+
+
+# --------------------------------------------------------------------------- Claude unchanged
+
+
+@pytest.mark.parametrize("effort", ["high", None])
+def test_unchanged_claude_argv_minus_the_ceiling_is_the_argv_before_issue_223(
+    launcher: ModuleType, effort: str | None
+) -> None:
+    settings = Path("/work/settings.json")
+    argv = launcher.reviewer_claude_argv("opus", effort, settings, max_budget_usd="7.50")
+    assert argv[-2:] == ["--max-budget-usd", "7.50"]
+    before = ["claude", "-p", "--model", "opus"] + (["--effort", effort] if effort else []) + [
+        "--permission-mode", "dontAsk", "--settings", str(settings),
+        "--output-format", "json", "--no-session-persistence",
+    ]
+    assert argv[:-2] == before
+
+
+def test_unchanged_claude_recipe_keeps_its_functions_names_and_sign_in_rules(
+    launcher: ModuleType,
+) -> None:
+    claude = launcher.REVIEWER_RECIPES["claude"]
+    assert claude is launcher.REVIEWER_CLAUDE_RECIPE
+    assert claude.binary == "claude" and claude.prompt_via == "stdin"
+    assert claude.settings is launcher.reviewer_claude_settings
+    assert claude.parse is launcher.reviewer_parse_claude_result
+    assert claude.config_sources is launcher.reviewer_claude_config_sources
+    assert claude.widening is launcher.reviewer_claude_widening
+    assert claude.api_key_variables == launcher.REVIEWER_API_KEY_VARIABLES
+    assert claude.api_key_prefixes == launcher.REVIEWER_API_KEY_PREFIXES
+    assert claude.untrusted_dirs == (".claude",) and claude.untrusted_files == (".mcp.json",)
+    assert claude.instruction_names == ("CLAUDE.md", "CLAUDE.local.md")
+    assert claude.platforms is None and claude.executable is None
+    assert claude.probe_model == "haiku"
+    # Issue #225 is the one change: commands run through the start-up-export filter.
+    assert claude.materialize is launcher.reviewer_claude_materialize
+
+
+def test_unchanged_claude_session_environment_and_withholding(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    env = {"ANTHROPIC_API_KEY": "inert", "CLAUDE_CODE_USE_BEDROCK": "1", "XAI_API_KEY": "inert",
+           "META_API_KEY": "inert", "HOME": "/home/example"}
+    assert launcher.reviewer_session_environment(env) == {
+        "XAI_API_KEY": "inert", "META_API_KEY": "inert", "HOME": "/home/example",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+    }
+    copy = tmp_path / "copy"
+    for rel in (".claude/settings.json", ".mcp.json", ".grok/sandbox.toml", ".muse/x", "a.py"):
+        (copy / rel).parent.mkdir(parents=True, exist_ok=True)
+        (copy / rel).write_text("x")
+    withheld = launcher.reviewer_withhold_untrusted(copy)
+    assert sorted(w.split(" ")[0] for w in withheld) == [".claude", ".mcp.json"]
+    assert (copy / ".grok" / "sandbox.toml").exists() and (copy / ".muse" / "x").exists()
+
+
+# ------------------------------------------------------------- start-up exports (issue #225)
+
+PREFIX = "CLAUDE_CODE_SHELL_PREFIX"
+NOT_ROOT = pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root reads a file with no permissions"
+)
+
+
+def _run_like_claude(command: str, env: dict[str, str], cwd: Path) -> str:
+    """Run *command* as Claude Code 2.1.296 runs a Bash command (measured for issue #225).
+
+    A bash that reads its start-up files runs ``'<prefix>' '<command>'`` when
+    ``CLAUDE_CODE_SHELL_PREFIX`` is set, and the command itself when it is not.
+    """
+    prefix = env.get(PREFIX)
+    line = f"{shlex.quote(prefix)} {shlex.quote(command)}" if prefix else command
+    proc = subprocess.run(["bash", "-c", line], cwd=cwd, env=env, capture_output=True, text=True,
+                          check=False)
+    return proc.stdout
+
+
+def _sandbox_denies(sentinel: Path) -> None:
+    """Stand in for the sandbox's ``denyRead`` of the sentinel."""
+    sentinel.chmod(0)
+
+
+def _claude_shell(launcher: ModuleType, tmp_path: Path) -> tuple[Path, dict[str, Any], dict]:
+    copy = tmp_path / "launch" / "copy"
+    copy.mkdir(parents=True)
+    settings = launcher.reviewer_claude_settings(
+        copy, tmp_path / "packet", {"HOME": str(tmp_path / "home")}, toolchain=[]
+    )
+    _, extra = launcher.reviewer_claude_materialize(settings, copy.parent, copy)
+    return copy, settings, extra
+
+
+def _startup_env(tmp_path: Path, **extra: str) -> dict[str, str]:
+    startup = tmp_path / "startup"
+    startup.mkdir(exist_ok=True)
+    (startup / "bash_env").write_text("export REVIEWER_TEST_STARTUP=reviewer-test-startup-inert\n")
+    return {"PATH": os.environ.get("PATH", ""), "HOME": str(tmp_path / "home"),
+            "BASH_ENV": str(startup / "bash_env"), **extra}
+
+
+@NOT_ROOT
+def test_startup_an_export_reaches_a_command_without_the_prefix_and_not_with_it(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy, _, extra = _claude_shell(launcher, tmp_path)
+    show = 'echo "${REVIEWER_TEST_STARTUP-unset}"'
+    env = _startup_env(tmp_path)
+    assert _run_like_claude(show, env, copy).strip() == "reviewer-test-startup-inert"
+    _sandbox_denies(launcher.reviewer_claude_shell_paths(copy)[1])
+    assert _run_like_claude(show, {**env, **extra}, copy).strip() == "unset"
+
+
+@NOT_ROOT
+def test_startup_a_sandboxed_command_keeps_the_allow_list_and_the_toolchain_runs(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy, _, extra = _claude_shell(launcher, tmp_path)
+    _sandbox_denies(launcher.reviewer_claude_shell_paths(copy)[1])
+    env = _startup_env(tmp_path, LANG="C.UTF-8", TZ="UTC", GIT_CONFIG_GLOBAL=os.devnull,
+                       REVIEWER_TEST_PLAIN="inert", REVIEWER_TEST_TOKEN="inert", **extra)
+    out = _run_like_claude(
+        "env | cut -d= -f1 | sort; python3 -c 'print(1 + 2)'; git --version > /dev/null && "
+        "echo git-ok", env, copy,
+    ).split()
+    names = {n for n in out if n.isupper() or n == "_"} - {"PWD", "SHLVL", "OLDPWD", "_"}
+    # Only allow-list names reach it (bash may set SHELL and TERM itself), and each one set does.
+    assert names <= set(launcher.REVIEWER_ENVIRONMENT_ALLOWED)
+    assert {n for n in launcher.REVIEWER_ENVIRONMENT_ALLOWED if n in env} <= names
+    assert "3" in out and "git-ok" in out
+
+
+@NOT_ROOT
+def test_startup_a_missing_sentinel_still_filters(launcher: ModuleType, tmp_path: Path) -> None:
+    copy, _, extra = _claude_shell(launcher, tmp_path)
+    launcher.reviewer_claude_shell_paths(copy)[1].unlink()
+    env = _startup_env(tmp_path, REVIEWER_TEST_PLAIN="inert", **extra)
+    out = _run_like_claude('echo "${REVIEWER_TEST_STARTUP-unset} ${REVIEWER_TEST_PLAIN-unset}"',
+                           env, copy)
+    assert out.split() == ["unset", "unset"]
+
+
+def test_startup_outside_the_sandbox_a_hook_runs_with_its_environment_unchanged(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy, _, extra = _claude_shell(launcher, tmp_path)
+    env = _startup_env(tmp_path, REVIEWER_TEST_PLAIN="inert", **extra)
+    out = _run_like_claude('echo "${REVIEWER_TEST_PLAIN-unset}"', env, copy)
+    assert out.strip() == "inert"
+
+
+def test_startup_the_settings_name_the_prefix_and_deny_its_sentinel(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy, settings, extra = _claude_shell(launcher, tmp_path)
+    prefix, sentinel = launcher.reviewer_claude_shell_paths(copy)
+    assert settings["env"] == {PREFIX: str(prefix)} and extra == {PREFIX: str(prefix)}
+    filesystem = settings["sandbox"]["filesystem"]
+    assert str(prefix.parent) in filesystem["allowRead"] and str(sentinel) in filesystem["denyRead"]
+    for path in (prefix, sentinel):
+        assert path.is_file() and not path.is_relative_to(copy.resolve())
+        assert not any(path.is_relative_to(Path(a)) for a in filesystem["allowRead"]
+                       if path == sentinel)
+    assert os.access(prefix, os.X_OK)
+
+
+def test_startup_a_settings_file_that_sets_the_shell_prefix_refuses(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "settings.json").write_text(json.dumps({"env": {PREFIX: "/bin/echo"}}))
+    assert launcher.reviewer_claude_widening({"HOME": str(home)}) == [
+        f"settings.json sets env.{PREFIX}"
+    ]
+
+
+def test_startup_a_claude_launch_runs_its_commands_through_the_prefix(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    session = FakeSession(CLAUDE_ANSWER)
+    launcher.reviewer_launch(_request(launcher, repo, head, tmp_path, max_budget_usd="5"),
+                             env=_env(tmp_path), session=session)
+    call = session.calls[0]
+    prefix = Path(call["env"][PREFIX])
+    assert prefix == launcher.reviewer_claude_shell_paths(call["cwd"])[0] and prefix.is_file()
+    settings = Path(call["argv"][call["argv"].index("--settings") + 1])
+    assert json.loads(settings.read_text())["env"] == {PREFIX: str(prefix)}
+
+
+@NOT_ROOT
+@pytest.mark.parametrize("fixed", [True, False])
+def test_startup_the_claude_probe_fails_without_the_prefix_and_passes_with_it(
+    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fixed: bool
+) -> None:
+    if not fixed:
+        def unfixed_settings(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            settings = launcher.reviewer_claude_settings(*args, **kwargs)
+            settings.pop("env")
+            return settings
+
+        monkeypatch.setitem(launcher.REVIEWER_RECIPES, "claude", launcher.dataclasses.replace(
+            launcher.REVIEWER_CLAUDE_RECIPE, settings=unfixed_settings,
+            materialize=launcher.reviewer_settings_materialize,
+        ))
+
+    def session(argv: list[str], *, stdin: str, cwd: Path, env: Any, timeout: float) -> Any:
+        results = {k: v for k, v in HONEST.items() if k != "startup_variable"}
+        _write_results(cwd.parent, results)
+        if PREFIX in env:
+            _sandbox_denies(launcher.reviewer_claude_shell_paths(cwd)[1])
+        _run_like_claude('r=probe-results.txt\n' + launcher.REVIEWER_PROBE_STARTUP_LINE, dict(env),
+                         cwd)
+        return subprocess.CompletedProcess(argv, 0, CLAUDE_ANSWER, "")
+
+    verdicts, code = launcher.reviewer_probe(
+        "claude", "haiku", env={"HOME": str(tmp_path), "PATH": os.environ.get("PATH", "")},
+        session=session, work_root=tmp_path / "reviews", reachable=lambda env: 0,
+    )
+    held = {v["denial"]: v["held"] for v in verdicts}
+    assert set(held) == set(launcher.REVIEWER_PROBE_CHECKS)
+    assert held["startup-variable"] is fixed
+    assert (code == 0) is fixed and all(h for name, h in held.items() if name != "startup-variable")
+
+
+# --------------------------------------------------------------------------- candidates
+
+
+@pytest.mark.parametrize("vendor", ["grok", "muse"])
+def test_candidate_the_probe_may_run_it_but_review_refuses_it(
+    launcher: ModuleType, vendor: str
+) -> None:
+    assert launcher.reviewer_probe_recipe(vendor) is launcher.REVIEWER_CANDIDATES[vendor]
+    if vendor not in launcher.REVIEWER_RECIPES:
+        with pytest.raises(launcher.ReviewerRefused, match=f"^{vendor} has no reviewer sandbox"):
+            launcher.reviewer_recipe(vendor)
+
+
+@pytest.mark.parametrize("vendor", ["codex", "agy", "qwen", "opencode"])
+def test_candidate_a_vendor_with_neither_is_refused_by_the_probe(
+    launcher: ModuleType, vendor: str
+) -> None:
+    with pytest.raises(launcher.ReviewerRefused, match=f"^{vendor} has no reviewer sandbox"):
+        launcher.reviewer_probe_recipe(vendor)
+
+
+def test_candidate_a_recipe_is_refused_off_the_platforms_it_was_probed_on(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, head = reviewed_repo
+    elsewhere = launcher.dataclasses.replace(
+        launcher.REVIEWER_CLAUDE_RECIPE, platforms=("not-this-platform",)
+    )
+    monkeypatch.setitem(launcher.REVIEWER_RECIPES, "elsewhere", elsewhere)
+    session = FakeSession(CLAUDE_ANSWER)
+    with pytest.raises(launcher.ReviewerRefused, match="passed its probe only on not-this"):
+        launcher.reviewer_launch(
+            _request(launcher, repo, head, tmp_path, vendor="elsewhere", max_budget_usd="5"),
+            env=_env(tmp_path), session=session,
+        )
+    assert session.calls == [] and not (tmp_path / "reviews").exists()
+
+
+def test_forbidden_no_recipe_or_candidate_passes_a_flag_its_vendor_forbids(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    recipes = {**launcher.REVIEWER_CANDIDATES, **launcher.REVIEWER_RECIPES}
+    for vendor, recipe in recipes.items():
+        argv = recipe.argv(
+            "model", "high", tmp_path / "settings.json",
+            max_budget_usd="5" if recipe.takes_ceiling else None,
+            executable=tmp_path / "bin" / vendor, prompt_path=tmp_path / "prompt.md",
+        )
+        forbidden = set(launcher.REVIEWER_FORBIDDEN_FLAGS[vendor])
+        assert not forbidden & set(argv), (vendor, forbidden & set(argv))
+
+
+def test_forbidden_the_table_only_grew_for_grok_and_muse(launcher: ModuleType) -> None:
+    table = launcher.REVIEWER_FORBIDDEN_FLAGS
+    assert {"--always-approve", "--system-prompt-override", "bypassPermissions", "--trust",
+            "off", "devbox"} <= set(table["grok"])
+    assert {"--disable-sandbox", "--no-foreign-personal-context", "--disable-reminders",
+            "--yolo", "never", "--disable-approval", "--trust-workspace"} <= set(table["muse"])
+
+
+# --------------------------------------------------------------------------- probe verdicts
+
+
+@pytest.mark.parametrize(
+    ("results", "reach", "held"),
+    [
+        ({"network": "6"}, (0, 0), True),
+        ({"network": "7"}, (0, 0), True),
+        ({"network": "56", "network_connect": "403"}, (0, 0), True),
+        ({"network": "56", "network_connect": "000"}, (0, 0), False),
+        ({"network": "0"}, (0, 0), False),
+        ({"network": "28"}, (0, 0), False),
+        ({"network": "60"}, (0, 0), False),
+        ({"network": "35"}, (0, 0), False),
+        ({"network": "126"}, (0, 0), False),
+        ({"network": "127"}, (0, 0), False),
+        ({"network": "6"}, (6, 0), False),
+        ({"network": "7"}, (0, 28), False),
+        ({"network": "6"}, None, False),
+        ({}, (0, 0), False),
+    ],
+)
+def test_verdict_network_denial_needs_a_reachable_address_and_a_connection_that_never_left(
+    launcher: ModuleType, results: dict[str, str], reach: tuple[int, int] | None, held: bool
+) -> None:
+    ok, detail = launcher.reviewer_network_verdict(results, reach)
+    assert ok is held
+    if reach is not None and reach != (0, 0):
+        assert "inconclusive" in detail
+
+
+def _write_results(root: Path, results: dict[str, str]) -> None:
+    copy = root / "copy"
+    copy.mkdir(parents=True, exist_ok=True)
+    (copy / "inside-written").write_text("")
+    (copy / "probe-results.txt").write_text("".join(f"{k}={v}\n" for k, v in results.items()))
+
+
+HONEST = {
+    "read": "1", "write_outside": "1", "write_inside": "0", "write_tmpdir": "1", "write_tmp": "1",
+    "network": "7", "network_connect": "000", "variable": "unset", "read_home": "1",
+    "read_packet": "0", "python_test": "0", "git": "0", "plain_variable": "unset",
+    "read_vendor_home": "1", "write_vendor_home": "1", "startup_variable": "unset",
+    "read_vendor_credential_0": "1", "read_vendor_credential_1": "1",
+}
+
+
+def _verdicts(launcher: ModuleType, tmp_path: Path, results: dict[str, str], **over: Any) -> dict:
+    root = tmp_path / "probe"
+    _write_results(root, results)
+    values: dict[str, Any] = {
+        "parsed": {"final": "done", "is_error": False}, "session_exit": 0,
+        "reachability": (0, 0), "vendor_write": tmp_path / "vendor" / "w", "credential_count": 2,
+    }
+    values.update(over)
+    verdicts = launcher.reviewer_probe_verdicts(root, tmp_path / "outside", "t", ("reviewer-probe-canary-inert",), "",
+                                                **values)
+    return {v["denial"]: v["held"] for v in verdicts}
+
+
+def test_verdict_every_check_holds_on_an_honest_run(launcher: ModuleType, tmp_path: Path) -> None:
+    held = _verdicts(launcher, tmp_path, HONEST)
+    assert set(held) == set(launcher.REVIEWER_PROBE_CHECKS) and all(held.values())
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "check"),
+    [
+        ("read_vendor_home", "0", "read-vendor-home"),
+        ("write_vendor_home", "0", "write-vendor-home"),
+        ("read_vendor_credential_1", "0", "read-vendor-credential"),
+        ("startup_variable", "set", "startup-variable"),
+    ],
+)
+def test_verdict_the_vendor_checks_fail_when_the_sandbox_lets_it_through(
+    launcher: ModuleType, tmp_path: Path, key: str, value: str, check: str
+) -> None:
+    held = _verdicts(launcher, tmp_path, {**HONEST, key: value})
+    assert held[check] is False
+
+
+@pytest.mark.parametrize(
+    "parsed",
+    [{"final": None, "is_error": True, "error": "no JSON"}, {"final": "", "is_error": False},
+     {"final": "done", "is_error": True}],
+)
+def test_verdict_answer_parsed_needs_a_final_message_and_no_error(
+    launcher: ModuleType, tmp_path: Path, parsed: dict[str, Any]
+) -> None:
+    assert _verdicts(launcher, tmp_path, HONEST, parsed=parsed)["answer-parsed"] is False
+
+
+@pytest.mark.parametrize("exit_code", [1, 2, 124, None])
+def test_verdict_session_exit_needs_zero(
+    launcher: ModuleType, tmp_path: Path, exit_code: int | None
+) -> None:
+    assert _verdicts(launcher, tmp_path, HONEST, session_exit=exit_code)["session-exit"] is False
+
+
+def test_verdict_a_file_left_in_the_vendor_directory_fails_the_write_check(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    (tmp_path / "vendor").mkdir()
+    (tmp_path / "vendor" / "w").write_text("")
+    assert _verdicts(launcher, tmp_path, HONEST)["write-vendor-home"] is False
+
+
+def test_verdict_with_no_results_every_check_is_present_and_the_command_checks_fail(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    root = tmp_path / "probe"
+    (root / "copy").mkdir(parents=True)
+    verdicts = launcher.reviewer_probe_verdicts(
+        root, tmp_path / "outside", "t", ("reviewer-probe-canary-inert",), "", parsed={}, session_exit=1,
+        reachability=(0, 0),
+    )
+    assert [v["denial"] for v in verdicts] == list(launcher.REVIEWER_PROBE_CHECKS)
+    assert not any(v["held"] for v in verdicts if v["denial"] not in ("credential-variable",
+                                                                       "plain-variable",
+                                                                       "startup-variable"))
+
+
+def test_record_holds_identity_and_verdicts_and_no_path_or_canary(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    record_path = tmp_path / "record.json"
+    tool = tmp_path / "toolbin"
+    tool.mkdir()
+    claude = tool / "claude"
+    claude.write_text("#!/bin/sh\necho '9.9.9 (Claude Code)'\n")
+    claude.chmod(0o755)
+
+    def session(argv: list[str], *, stdin: str, cwd: Path, env: Any, timeout: float) -> Any:
+        results = {**HONEST, "network_connect": "403", "network": "56"}
+        results.pop("read_vendor_credential_1")
+        results.pop("read_vendor_credential_0")
+        _write_results(cwd.parent, results)
+        return subprocess.CompletedProcess(argv, 0, CLAUDE_ANSWER, "")
+
+    verdicts, code = launcher.reviewer_probe(
+        "claude", "haiku", env={"HOME": str(home), "PATH": str(tool)}, session=session,
+        work_root=tmp_path / "reviews", reachable=lambda env: 0, record_path=record_path,
+    )
+    assert code == 0, verdicts
+    record = json.loads(record_path.read_text())
+    assert record["schema"] == "reviewer_probe_record.v1" and record["vendor"] == "claude"
+    assert record["platform"] == sys.platform and record["session_exit"] == 0
+    assert record["sign_in"] == "subscription"
+    assert record["executable"]["name"] == "claude"
+    assert record["executable"]["version"] == "9.9.9 (Claude Code)"
+    assert re.fullmatch(r"[0-9a-f]{64}", record["executable"]["sha256"])
+    text = record_path.read_text()
+    assert str(tmp_path) not in text and "/Users/" not in text and "/home/" not in text
+    assert "reviewer-probe-canary-" not in text and "reviewer-probe-home-" not in text
+
+
+# --------------------------------------------------------------------------- admission
+
+
+def test_admission_a_complete_passing_record_admits(launcher: ModuleType) -> None:
+    record = _passing_record(launcher, "grok", "darwin")
+    assert launcher.reviewer_record_admits(record, "grok", "darwin") == (True, "admitted")
+    identity = {"name": "x", "sha256": "a" * 64, "version": "vendor 1.0"}
+    assert launcher.reviewer_record_admits(record, "grok", "darwin", identity)[0] is True
+
+
+def _mutations(launcher: ModuleType) -> list[tuple[str, Any]]:
+    checks = list(launcher.REVIEWER_PROBE_CHECKS)
+    ok = [{"denial": n, "held": True, "detail": "x"} for n in checks]
+    return [
+        ("not a mapping", []),
+        ("wrong schema", {"schema": "other"}),
+        ("wrong vendor", {"vendor": "muse"}),
+        ("wrong platform", {"platform": "linux"}),
+        ("no verdicts", {"verdicts": []}),
+        ("a missing check", {"verdicts": ok[:-1]}),
+        ("an unknown check", {"verdicts": ok + [{"denial": "x", "held": True, "detail": "x"}]}),
+        ("a duplicated check", {"verdicts": ok + [ok[0]]}),
+        ("a held that is a string", {"verdicts": [{**ok[0], "held": "true"}] + ok[1:]}),
+        ("a verdict without detail", {"verdicts": [{"denial": checks[0], "held": True}] + ok[1:]}),
+        ("a check that failed", {"verdicts": [{**ok[0], "held": False}] + ok[1:]}),
+        ("only the answer check", {"verdicts": [{"denial": "answer-parsed", "held": True,
+                                                 "detail": "x"}]}),
+        ("a failed session", {"session_exit": 1}),
+        ("a boolean exit", {"session_exit": True}),
+        ("no exit", {"session_exit": None}),
+        ("no executable", {"executable": None}),
+        ("a short hash", {"executable": {"name": "x", "sha256": "abc", "version": "1"}}),
+        ("no version", {"executable": {"name": "x", "sha256": "a" * 64, "version": ""}}),
+    ]
+
+
+@pytest.mark.parametrize("index", range(18))
+def test_admission_anything_missing_duplicated_malformed_or_mismatched_refuses(
+    launcher: ModuleType, index: int
+) -> None:
+    label, change = _mutations(launcher)[index]
+    record = change if not isinstance(change, dict) else {
+        **_passing_record(launcher, "grok", "darwin"), **change
+    }
+    admitted, why = launcher.reviewer_record_admits(record, "grok", "darwin")
+    assert admitted is False and why, label
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [{"sha256": "b" * 64, "version": "vendor 1.0"}, {"sha256": "a" * 64, "version": "vendor 1.1"}],
+)
+def test_admission_a_changed_executable_refuses(
+    launcher: ModuleType, identity: dict[str, str]
+) -> None:
+    record = _passing_record(launcher, "grok", "darwin")
+    admitted, why = launcher.reviewer_record_admits(record, "grok", "darwin", identity)
+    assert admitted is False and "not the one the probe passed on" in why
+
+
+def _fake_vendor(tmp_path: Path) -> Path:
+    binary = tmp_path / "vendor-bin"
+    binary.write_bytes(MACH_O + b"\x00" * 60)
+    binary.chmod(0o755)
+    return binary
+
+
+def test_admission_an_admitted_candidate_runs_its_pinned_copy_and_a_swap_is_refused(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The admission path itself, with a synthetic vendor: no real vendor has passed yet."""
+    repo, head = reviewed_repo
+    binary = _fake_vendor(tmp_path)
+    versions: list[str] = []
+
+    def version(path: str, env: Any) -> str:
+        versions.append(path)
+        return "vendor 1.0"
+
+    monkeypatch.setattr(launcher, "_reviewer_vendor_version", version)
+    candidate = launcher.dataclasses.replace(
+        launcher.REVIEWER_CANDIDATES["grok"], executable=lambda env: binary, widening=None,
+    )
+    monkeypatch.setitem(launcher.REVIEWER_CANDIDATES, "synthetic", candidate)
+    record = _passing_record(
+        launcher, "synthetic", sys.platform,
+        executable={"name": binary.name, "sha256": launcher._reviewer_sha256(binary),
+                    "version": "vendor 1.0"},
+    )
+    monkeypatch.setitem(launcher.REVIEWER_ADMISSIONS, ("synthetic", sys.platform), record)
+    admitted = launcher._reviewer_admitted()["synthetic"]
+    assert admitted.platforms == (sys.platform,)
+    monkeypatch.setitem(launcher.REVIEWER_RECIPES, "synthetic", admitted)
+
+    grok_output = (FIXTURES / "grok-session-output.json").read_text()
+    session = FakeSession(json.dumps({**json.loads(grok_output), "text": '{"findings": []}'}))
+    result, code = launcher.reviewer_launch(
+        _request(launcher, repo, head, tmp_path, vendor="synthetic", model="grok-4.7"),
+        env=_env(tmp_path), session=session,
+    )
+    assert code == 0 and result["executable"]["sha256"] == record["executable"]["sha256"]
+    ran = Path(session.calls[0]["argv"][0])
+    assert ran.name == binary.name and ran != binary and ran.parent.name == "bin"
+    assert session.calls[0]["stdin"] == ""
+    assert versions == [str(ran)]  # the version came from the verified copy only
+
+    binary.write_bytes(MACH_O + b"\x01" * 60)  # an updater replaced it
+    swapped = FakeSession(grok_output)
+    with pytest.raises(launcher.ReviewerRefused, match="not the one the probe passed on"):
+        launcher.reviewer_launch(
+            _request(launcher, repo, head, tmp_path / "again", vendor="synthetic",
+                     model="grok-4.7"),
+            env=_env(tmp_path), session=swapped,
+        )
+    assert swapped.calls == [] and versions == [str(ran)]
+
+
+def test_admission_a_mismatched_executable_is_never_run(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #223's review, finding 2: the bytes are compared before anything runs the file."""
+    repo, head = reviewed_repo
+    marker = tmp_path / "it-ran"
+    selected = tmp_path / "vendor-bin"
+    selected.write_text(f"#!/bin/sh\ntouch {marker}\necho 'vendor 1.0'\n")
+    selected.chmod(0o755)
+    runs: list[list[str]] = []
+    real_run = subprocess.run
+
+    def spy(argv: Any, *args: Any, **kwargs: Any) -> Any:
+        runs.append([str(a) for a in argv])
+        return real_run(argv, *args, **kwargs)
+
+    candidate = launcher.dataclasses.replace(
+        launcher.REVIEWER_CANDIDATES["grok"], executable=lambda env: selected, widening=None,
+        platforms=(sys.platform,),
+    )
+    monkeypatch.setitem(launcher.REVIEWER_RECIPES, "mismatch", candidate)
+    monkeypatch.setitem(launcher.REVIEWER_ADMISSIONS, ("mismatch", sys.platform),
+                        _passing_record(launcher, "mismatch", sys.platform))
+    monkeypatch.setattr(launcher.subprocess, "run", spy)
+    session = FakeSession("")
+    with pytest.raises(launcher.ReviewerRefused, match="SHA-256 differs from the record"):
+        launcher.reviewer_launch(
+            _request(launcher, repo, head, tmp_path, vendor="mismatch", model="m"),
+            env=_env(tmp_path), session=session,
+        )
+    assert runs == [] and not marker.exists() and session.calls == []
+    assert not (tmp_path / "reviews").exists()
+
+
+def test_admission_a_candidate_with_no_record_on_this_platform_is_refused(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, head = reviewed_repo
+    candidate = launcher.dataclasses.replace(
+        launcher.REVIEWER_CANDIDATES["muse"], executable=lambda env: _fake_vendor(tmp_path),
+    )
+    monkeypatch.setitem(launcher.REVIEWER_RECIPES, "unrecorded", candidate)
+    session = FakeSession("")
+    with pytest.raises(launcher.ReviewerRefused, match="no admitted probe record"):
+        launcher.reviewer_launch(
+            _request(launcher, repo, head, tmp_path, vendor="unrecorded", model="m"),
+            env=_env(tmp_path), session=session,
+        )
+    assert session.calls == [] and not (tmp_path / "reviews").exists()
+
+
+# --------------------------------------------------------------------------- the outcomes
+
+
+def test_outcome_there_is_one_record_per_candidate(launcher: ModuleType) -> None:
+    vendors = sorted(record["vendor"] for record in _records())
+    assert vendors == sorted(launcher.REVIEWER_CANDIDATES)
+
+
+@pytest.mark.parametrize("record", _records(), ids=lambda r: f"{r['vendor']}-{r['platform']}")
+def test_outcome_a_vendor_reviews_exactly_when_its_record_admits_it(
+    launcher: ModuleType, record: dict[str, Any], reviewed_repo: tuple[Path, str],
+    tmp_path: Path,
+) -> None:
+    vendor, platform = record["vendor"], record["platform"]
+    admitted, why = launcher.reviewer_record_admits(record, vendor, platform)
+    assert ((vendor, platform) in launcher.REVIEWER_ADMISSIONS) is admitted, why
+    if admitted:
+        assert launcher.REVIEWER_ADMISSIONS[(vendor, platform)] == record
+        assert platform in launcher.REVIEWER_RECIPES[vendor].platforms
+        return
+    assert vendor not in launcher.REVIEWER_RECIPES
+    repo, head = reviewed_repo
+    packet = tmp_path / "packet"
+    packet.mkdir()
+    proc = subprocess.run(
+        [sys.executable, str(LAUNCHER), "review", "--vendor", vendor, "--model", "m",
+         "--effort", "high", "--repo", str(repo), "--head", head, "--packet", str(packet),
+         "--prompt", str(SAGA_PROMPT), "--schema", str(SAGA_SCHEMA), "--out", str(tmp_path / "o")],
+        capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 2 and f"{vendor} has no reviewer sandbox recipe" in proc.stderr
+
+
+def test_live_probe_agrees_with_the_tables(launcher: ModuleType) -> None:
+    """Set REVIEWER_PROBE_LIVE_RECORD to a record a live probe just wrote."""
+    path = os.environ.get("REVIEWER_PROBE_LIVE_RECORD")
+    if not path:
+        pytest.skip("REVIEWER_PROBE_LIVE_RECORD is not set")
+    assert Path(path).is_file(), f"the live probe wrote no record at {path}"
+    record = json.loads(Path(path).read_text(encoding="utf-8"))
+    vendor, platform = record["vendor"], record["platform"]
+    admitted, why = launcher.reviewer_record_admits(record, vendor, platform)
+    assert (vendor in launcher.REVIEWER_RECIPES) is admitted, why
+
+
+# --------------------------------------------------------------------------- the journal
+
+
+def _journal_names_failures(text: str, record: dict[str, Any]) -> bool:
+    failing = [v["denial"] for v in record["verdicts"] if v["held"] is not True]
+    return f"reviewer-probe --vendor {record['vendor']}" in text and all(
+        f"`{name}`" in text for name in failing
+    )
+
+
+@pytest.mark.parametrize("record", _records(), ids=lambda r: f"{r['vendor']}-{r['platform']}")
+def test_learnings_names_every_failing_check_of_a_refused_vendor(
+    launcher: ModuleType, record: dict[str, Any]
+) -> None:
+    if launcher.reviewer_record_admits(record, record["vendor"], record["platform"])[0]:
+        return
+    text = LEARNINGS.read_text(encoding="utf-8")
+    assert _journal_names_failures(text, record)
+    failing = next(v["denial"] for v in record["verdicts"] if v["held"] is not True)
+    assert not _journal_names_failures(text.replace(f"`{failing}`", ""), record)
+
+
+# --------------------------------------------------------------------------- Grok
+
+
+def test_grok_argv_is_headless_sandboxed_and_never_auto_approves(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    grok = launcher.REVIEWER_CANDIDATES["grok"]
+    settings = tmp_path / "copy" / ".grok" / "sandbox.toml"
+    argv = grok.argv("grok-4.7", "xhigh", settings, executable=tmp_path / "grok",
+                     prompt_path=tmp_path / "message.md")
+    assert argv[0] == str(tmp_path / "grok")
+    assert argv[argv.index("--prompt-file") + 1] == str(tmp_path / "message.md")
+    assert argv[argv.index("--sandbox") + 1] == launcher.reviewer_grok_profile_name(settings)
+    assert argv[argv.index("--permission-mode") + 1] == "dontAsk"
+    assert argv[argv.index("--allow") + 1] == "Bash"
+    for flag in ("--no-plan", "--disable-web-search", "--output-format"):
+        assert flag in argv
+    assert not set(launcher.REVIEWER_FORBIDDEN_FLAGS["grok"]) & set(argv)
+    assert "--max-budget-usd" not in argv
+    with pytest.raises(launcher.ReviewerRefused, match="no dollar ceiling"):
+        grok.argv("grok-4.7", None, settings, max_budget_usd="5", executable=tmp_path / "g",
+                  prompt_path=tmp_path / "m")
+
+
+def test_grok_profile_extends_strict_and_denies_temp_and_its_sign_in_files(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    home = tmp_path / "home"
+    root = tmp_path / "root"
+    copy, packet = root / "copy", tmp_path / "packet"
+    copy.mkdir(parents=True)
+    packet.mkdir()
+    settings = launcher.reviewer_grok_settings(copy, packet, {"HOME": str(home)}, toolchain=[],
+                                               extra_deny_read=["/elsewhere"])
+    path, extra = launcher.reviewer_grok_materialize(settings, root, copy)
+    text = path.read_text()
+    assert path == copy / ".grok" / "sandbox.toml"
+    assert f"[profiles.{launcher.reviewer_grok_profile_name(path)}]" in text
+    assert 'extends = "strict"' in text and "restrict_network = true" in text
+    for denied in [*launcher.reviewer_temp_roots(), str(home / ".grok" / "auth.json"),
+                   str(home / ".grok" / "config.toml"), "/elsewhere"]:
+        assert json.dumps(denied) in text.split("deny = ")[1]
+    assert json.dumps(str(packet.resolve())) in text.split("read_only = ")[1]
+    overlay = json.loads(extra["GROK_CONFIG"])["shell_environment_policy"]
+    assert overlay["include_only"] == list(launcher.REVIEWER_ENVIRONMENT_ALLOWED)
+    assert overlay["ignore_default_excludes"] is False
+    other = launcher.reviewer_grok_profile_name(tmp_path / "another" / "sandbox.toml")
+    assert other != launcher.reviewer_grok_profile_name(path)
+
+
+def test_grok_api_key_variables_are_removed(launcher: ModuleType) -> None:
+    grok = launcher.REVIEWER_CANDIDATES["grok"]
+    kept = launcher.reviewer_session_environment(
+        {"XAI_API_KEY": "inert", "GROK_DEPLOYMENT_KEY": "inert", "HONCHO_WORKSPACE": "kept"},
+        grok.api_key_variables, grok.api_key_prefixes,
+    )
+    assert kept == {"HONCHO_WORKSPACE": "kept", "GIT_CONFIG_GLOBAL": os.devnull}
+
+
+def test_grok_withholds_the_changes_own_grok_directory(launcher: ModuleType, tmp_path: Path) -> None:
+    grok = launcher.REVIEWER_CANDIDATES["grok"]
+    copy = tmp_path / "copy"
+    for rel in (".grok/hooks/h.json", ".grok/sandbox.toml", ".mcp.json", "src.py"):
+        (copy / rel).parent.mkdir(parents=True, exist_ok=True)
+        (copy / rel).write_text("x")
+    launcher.reviewer_withhold_untrusted(
+        copy, grok.untrusted_dirs, grok.untrusted_files, grok.instruction_names
+    )
+    assert not (copy / ".grok").exists() and not (copy / ".mcp.json").exists()
+    assert (copy / "src.py").exists()
+
+
+def test_grok_parser_reads_the_captured_result(launcher: ModuleType) -> None:
+    parsed = launcher.reviewer_parse_grok_result(
+        (FIXTURES / "grok-session-output.json").read_text()
+    )
+    assert parsed["final"] == "ok" and parsed["is_error"] is False
+    assert parsed["resolved"] == ["grok-4.7-build-fast"]
+    assert parsed["usage"]["output_tokens"] is not None and parsed["usage"]["cost_usd"] > 0
+
+
+@pytest.mark.parametrize(
+    "stdout", ["", "not json", "[]", json.dumps({"text": "partial", "stopReason": "max_tokens"})]
+)
+def test_grok_parser_reports_an_error(launcher: ModuleType, stdout: str) -> None:
+    parsed = launcher.reviewer_parse_grok_result(stdout)
+    assert parsed["is_error"] is True and parsed["error"]
+
+
+def test_grok_widening_refuses_a_per_model_api_key(launcher: ModuleType, tmp_path: Path) -> None:
+    grok_home = tmp_path / ".grok"
+    grok_home.mkdir()
+    env = {"HOME": str(tmp_path)}
+    assert launcher.reviewer_grok_widening(env) == []
+    (grok_home / "config.toml").write_text('[model."grok-4.7"]\nmax_tokens = 5\n')
+    assert launcher.reviewer_grok_widening(env) == []
+    (grok_home / "config.toml").write_text('[model."grok-4.7"]\napi_key = "inert-example"\n')
+    assert launcher.reviewer_grok_widening(env) == ["config.toml sets api_key for model grok-4.7"]
+    (grok_home / "config.toml").write_text("not = [toml")
+    assert "cannot be read as TOML" in launcher.reviewer_grok_widening(env)[0]
+
+
+def test_grok_executable_is_the_native_binary_not_a_wrapper(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    path_dir = tmp_path / "pathbin"
+    path_dir.mkdir()
+    wrapper = path_dir / "grok"
+    wrapper.write_text("#!/bin/sh\nexec real-grok --trust \"$@\"\n")
+    wrapper.chmod(0o755)
+    env = {"HOME": str(tmp_path), "PATH": str(path_dir)}
+    with pytest.raises(launcher.ReviewerRefused, match="no native grok"):
+        launcher.reviewer_grok_executable(env)
+    (tmp_path / ".grok" / "bin").mkdir(parents=True)
+    native = tmp_path / ".grok" / "bin" / "grok"
+    native.write_bytes(MACH_O + b"\x00" * 8)
+    assert launcher.reviewer_grok_executable(env) == native.resolve()
+
+
+# --------------------------------------------------------------------------- Muse
+
+
+def test_muse_argv_keeps_the_sandbox_and_approvals_on(launcher: ModuleType, tmp_path: Path) -> None:
+    muse = launcher.REVIEWER_CANDIDATES["muse"]
+    argv = muse.argv("muse-spark-1.3-contributor", "max", tmp_path / "s.json",
+                     executable=tmp_path / "muse-bin", prompt_path=tmp_path / "message.md")
+    assert argv[:2] == [str(tmp_path / "muse-bin"), "exec"]
+    assert argv[argv.index("--sandbox-network") + 1] == "restricted"
+    assert argv[argv.index("--prompt-file") + 1] == str(tmp_path / "message.md")
+    for flag in ("--disable-web-tools", "--json", "--no-session-log"):
+        assert flag in argv
+    assert not set(launcher.REVIEWER_FORBIDDEN_FLAGS["muse"]) & set(argv)
+    for absent in ("--api-key-stdin", "--max-budget-usd", "--permission-profile"):
+        assert absent not in argv
+
+
+def test_muse_api_key_variable_is_removed(launcher: ModuleType) -> None:
+    muse = launcher.REVIEWER_CANDIDATES["muse"]
+    kept = launcher.reviewer_session_environment(
+        {"META_API_KEY": "inert", "PATH": "/usr/bin"}, muse.api_key_variables,
+        muse.api_key_prefixes,
+    )
+    assert kept == {"PATH": "/usr/bin", "GIT_CONFIG_GLOBAL": os.devnull}
+
+
+def test_muse_withholds_its_project_files(launcher: ModuleType, tmp_path: Path) -> None:
+    muse = launcher.REVIEWER_CANDIDATES["muse"]
+    copy = tmp_path / "copy"
+    for rel in (".muse/settings.json", ".agents/skills/x.md", ".mcp.json", "src.py"):
+        (copy / rel).parent.mkdir(parents=True, exist_ok=True)
+        (copy / rel).write_text("x")
+    (copy / "AGENTS.md").write_text("Rules.\n@~/.ssh/id_rsa\n")
+    launcher.reviewer_withhold_untrusted(
+        copy, muse.untrusted_dirs, muse.untrusted_files, muse.instruction_names
+    )
+    for gone in (".muse", ".agents", ".mcp.json", "AGENTS.md"):
+        assert not (copy / gone).exists(), gone
+    assert (copy / "src.py").exists()
+
+
+def test_muse_parser_reads_the_captured_stream(launcher: ModuleType) -> None:
+    parsed = launcher.reviewer_parse_muse_result(
+        (FIXTURES / "muse-session-output.jsonl").read_text()
+    )
+    assert parsed["final"] == "done" and parsed["is_error"] is False
+    assert parsed["resolved"] == ["muse-spark-1.3-contributor"] and parsed["usage"] is None
+
+
+def test_muse_parser_reports_an_error(launcher: ModuleType) -> None:
+    lines = (FIXTURES / "muse-session-output.jsonl").read_text().splitlines()
+    assert launcher.reviewer_parse_muse_result("")["is_error"] is True
+    no_terminal = "\n".join(line for line in lines if "run.terminal." not in line)
+    assert launcher.reviewer_parse_muse_result(no_terminal)["error"] == (
+        "the session printed no terminal event"
+    )
+    failed = [json.loads(line) for line in lines]
+    terminal = failed[-1]
+    payload = json.loads(terminal["payload"]) if isinstance(terminal["payload"], str) else dict(
+        terminal["payload"])
+    payload.update({"terminal": "failed", "reason": "provider_error"})
+    terminal["payload"] = json.dumps(payload)
+    stream = "\n".join(json.dumps(record) for record in failed)
+    parsed = launcher.reviewer_parse_muse_result(stream)
+    assert parsed["is_error"] is True and "failed" in parsed["error"]
+
+
+def test_muse_executable_is_the_versioned_binary_behind_the_launcher_script(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    script = bindir / "muse"
+    script.write_text("#!/usr/bin/env bash\nexec \"$binary\" \"$@\"\n")
+    script.chmod(0o755)
+    env = {"HOME": str(tmp_path), "PATH": str(bindir)}
+    with pytest.raises(launcher.ReviewerRefused, match="no native muse"):
+        launcher.reviewer_muse_executable(env)
+    (bindir / ".muse-version").write_text("1.4.6-R6000.1\n")
+    binary = bindir / "muse-bin-1.4.6-R6000.1"
+    binary.write_bytes(MACH_O + b"\x00" * 8)
+    assert launcher.reviewer_muse_executable(env) == binary.resolve()
+    (bindir / ".muse-version").write_text("../../etc/passwd\n")
+    with pytest.raises(launcher.ReviewerRefused, match="no native muse"):
+        launcher.reviewer_muse_executable(env)

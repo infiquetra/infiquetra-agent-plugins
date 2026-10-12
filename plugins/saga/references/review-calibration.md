@@ -12,12 +12,16 @@
 | `jev_model_version` | `null` | an identifier |
 | `cost_usd` | `null` | a number, zero or greater |
 | `langfuse_run_id` | `null` | an identifier |
-| `reviewer_configuration` | `null` | 64 hex characters, or it stays `null` |
+| `reviewer_configuration` | `null` | the measured reviewer's object, or it stays `null` |
 | `marks` | the fixed object below | the same object |
 | `lenses` | every lens, drift `report-only`, no languages | overall numbers and language verdicts |
 | `thresholds` | `[]` | question rows |
 
 An identifier matches `^[A-Za-z0-9][A-Za-z0-9._:/-]*$`. A sha256 is 64 lowercase hex characters. Counts are JSON numbers, not numeric strings. Free text is refused.
+
+## Reviewer configuration
+
+`reviewer_configuration` is null until a run is recorded, then the object the harness measured: `vendor`, `model`, and `effort` (identifiers); `prompt_sha256` and `configuration_fingerprint` (sha256); `second`, null or the second reviewer's `{vendor, model, effort}`; and `cleared_components`, the harness-config component names a no-change comparison cleared, possibly empty. Every field is required and unknown keys are refused. At review time saga compares the run's configuration fingerprint with `configuration_fingerprint`; a run under another configuration is noted, never blocked.
 
 ## Marks
 

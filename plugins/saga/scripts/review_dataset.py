@@ -48,6 +48,15 @@ class DatasetError(ValueError):
 # ---------------------------------------------------------------------------
 
 
+def _case_id(case: Mapping[str, Any]) -> str | None:
+    """The case id: ``case_id`` first, else the corpus's ``id``. None when neither."""
+    for name in ("case_id", "id"):
+        value = case.get(name)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
 def load_corpus(corpus: Path) -> list[dict[str, Any]]:
     """Every ``<case>/case.json`` under ``corpus``. A case without an ID or a split is refused."""
     cases: list[dict[str, Any]] = []
@@ -62,8 +71,11 @@ def load_corpus(corpus: Path) -> list[dict[str, Any]]:
         if not isinstance(case, dict):
             problems.append(f"{name}: case.json is not an object")
             continue
-        if not isinstance(case.get("case_id"), str) or not case["case_id"].strip():
+        resolved = _case_id(case)
+        if resolved is None:
             problems.append(f"{name}: no case_id")
+        else:
+            case["case_id"] = resolved
         if case.get("split") not in SPLITS:
             problems.append(f"{name}: split must be one of {', '.join(SPLITS)}")
         cases.append(case)

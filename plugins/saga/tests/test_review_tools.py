@@ -1914,3 +1914,8 @@ def test_untrusted_head_rule_is_documented() -> None:
     assert sentence in guide
     assert sentence in decisions
     assert "head-profile-change" in profile
+
+
+def test_corpus_language_ids_workflow_detector() -> None:
+    assert T.language_for(".github/workflows/ci.yaml") == "github-workflow"
+    assert T.language_for("docs/.github/workflows/ci.yml") == "github-workflow"

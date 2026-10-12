@@ -44,7 +44,7 @@ no known kind.
 | `rule` | `{row, ref}`: the row identifier (below), or `judged` for an LLM finding; `ref` is the question or tool rule |
 | `source` | `{kind: tool, name, version}`, `{kind: classifier, name, model}` or `{kind: llm, name, model}` |
 | `location` | see "Locations" |
-| `language` | `python`, `typescript`, `dart`, `rust`, `swift`, `markdown`, `shell`, `github-workflows`, `cloudformation`, `none` |
+| `language` | `python`, `typescript`, `dart`, `rust`, `swift`, `markdown`, `shell`, `github-workflow`, `cdk`, `cloudformation`, `none` |
 | `statement` | one sentence, on one line |
 | `consequence`, `consequence_jev` | the closed list below, or `null`; required on an LLM finding |
 | `trigger` | `normal-use`, `retry`, `interrupt`, `concurrency`, `old-data`, `other-caller`, `misuse-only`, or `null` |

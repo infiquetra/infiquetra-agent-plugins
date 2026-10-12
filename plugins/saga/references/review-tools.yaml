@@ -457,7 +457,7 @@ tools:
     curated_block_rules: []
   - id: zizmor
     tool: zizmor
-    languages: [github-workflows]
+    languages: [github-workflow]
     lens: security
     purpose: Offline workflow audit. No GitHub token. High blocks. Medium and low are fix later.
     install: Install zizmor on the operator machine. This card does not install it.
@@ -470,7 +470,7 @@ tools:
     curated_block_rules: []
   - id: actionlint
     tool: actionlint
-    languages: [github-workflows]
+    languages: [github-workflow]
     lens: correctness
     purpose: Workflow checks. The kind map sets the level. Integrations that download are off.
     install: Install actionlint on the operator machine. This card does not install it.

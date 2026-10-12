@@ -172,7 +172,7 @@ def detect_languages(root: Path) -> list[str]:
                 relative.startswith(".github/workflows/")
                 or "/.github/workflows/" in f"/{relative}"
             ):
-                found.add("github-workflows")
+                found.add("github-workflow")
     return [language for language in review_formula.LANGUAGES if language in found]
 
 

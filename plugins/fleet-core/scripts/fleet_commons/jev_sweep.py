@@ -74,7 +74,8 @@ LANGUAGES = (
     "swift",
     "markdown",
     "shell",
-    "github-workflows",
+    "github-workflow",
+    "cdk",
     "cloudformation",
     "none",
 )

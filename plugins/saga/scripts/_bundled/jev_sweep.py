@@ -3,8 +3,8 @@
 # source-version: 0.33.2
 # source-commit: authored
 # source-path: scripts/fleet_commons/jev_sweep.py
-# source-sha256: 8dfe6004b98ef0776d3d334fe0c157641ca91580b5db3f7d6280de043c2eb5a7
-# output-sha256: 8dfe6004b98ef0776d3d334fe0c157641ca91580b5db3f7d6280de043c2eb5a7
+# source-sha256: e6f9702527f860117846d7e052202cab1e04b49e5d0ef116276a74c387e8039c
+# output-sha256: e6f9702527f860117846d7e052202cab1e04b49e5d0ef116276a74c387e8039c
 # --- end generated bundle stamp ---
 """Classify pieces into a where-to-look list (issue 156).
 
@@ -82,7 +82,8 @@ LANGUAGES = (
     "swift",
     "markdown",
     "shell",
-    "github-workflows",
+    "github-workflow",
+    "cdk",
     "cloudformation",
     "none",
 )

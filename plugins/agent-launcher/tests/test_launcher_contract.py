@@ -42,6 +42,11 @@ def launcher() -> ModuleType:
     return _load(LAUNCHER, "_agent_launcher_contract")
 
 
+def _contract_launcher() -> ModuleType:
+    """The launcher module at collection time, for parametrising over its tables."""
+    return sys.modules.get("_agent_launcher_contract") or _load(LAUNCHER, "_agent_launcher_contract")
+
+
 @pytest.fixture
 def launcher_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     binary = tmp_path / "agents"
@@ -4549,7 +4554,7 @@ def _request(launcher: ModuleType, repo: Path, head: str, tmp_path: Path, **over
     values: dict[str, Any] = {
         "vendor": "claude", "model": "opus", "effort": "high", "repo": repo, "head": head,
         "packet": packet, "prompt": SAGA_PROMPT, "schema": SAGA_SCHEMA, "out": tmp_path / "out",
-        "work_root": tmp_path / "reviews",
+        "work_root": tmp_path / "reviews", "max_budget_usd": "5",
     }
     values.update(over)
     return launcher.ReviewerRequest(**values)
@@ -4571,10 +4576,10 @@ class FakeSession:
 
 def test_reviewer_claude_argv_is_pinned(launcher: ModuleType, tmp_path: Path) -> None:
     settings = tmp_path / "settings.json"
-    assert launcher.reviewer_claude_argv("opus", "high", settings) == [
+    assert launcher.reviewer_claude_argv("opus", "high", settings, max_budget_usd="5") == [
         "claude", "-p", "--model", "opus", "--effort", "high",
         "--permission-mode", "dontAsk", "--settings", str(settings),
-        "--output-format", "json", "--no-session-persistence",
+        "--output-format", "json", "--no-session-persistence", "--max-budget-usd", "5",
     ]
 
 
@@ -4587,7 +4592,11 @@ def test_reviewer_read_confinement_settings_are_pinned(
     env = {"HOME": "/home/example", "GH_TOKEN": "inert-example", "PATH": "/usr/bin"}
     settings = launcher.reviewer_claude_settings(copy, packet, env, toolchain=[], platform="darwin")
     credentials = list(launcher.REVIEWER_CREDENTIAL_PATHS)
+    # Issue #225: the shell prefix that keeps start-up exports out, and its denied sentinel.
+    root = copy.resolve().parent
+    prefix, sentinel = root / "shell" / "reviewer-shell.sh", root / "unsandboxed"
     assert settings == {
+        "env": {"CLAUDE_CODE_SHELL_PREFIX": str(prefix)},
         "sandbox": {
             "enabled": True,
             "failIfUnavailable": True,
@@ -4595,8 +4604,8 @@ def test_reviewer_read_confinement_settings_are_pinned(
             "allowUnsandboxedCommands": False,
             "filesystem": {
                 "denyWrite": ["/tmp", "/private/tmp", "/var/folders"],
-                "denyRead": ["~"],
-                "allowRead": [str(copy.resolve()), str(packet.resolve())],
+                "denyRead": ["~", str(sentinel)],
+                "allowRead": [str(copy.resolve()), str(packet.resolve()), str(prefix.parent)],
             },
             "network": {"strictAllowlist": True, "allowedDomains": []},
             "credentials": {"envVars": [{"name": "GH_TOKEN", "mode": "deny"}]},
@@ -4652,8 +4661,8 @@ def test_reviewer_read_confinement_allow_read_is_only_copy_packet_and_named_tool
     packet.mkdir()
     settings = launcher.reviewer_claude_settings(copy, packet, env)
     assert settings["sandbox"]["filesystem"]["allowRead"] == [
-        str(copy.resolve()), str(packet.resolve()), str(interpreter / "bin"),
-        str(interpreter / "lib"),
+        str(copy.resolve()), str(packet.resolve()), str(copy.resolve().parent / "shell"),
+        str(interpreter / "bin"), str(interpreter / "lib"),
     ]
 
 
@@ -4767,7 +4776,8 @@ def test_reviewer_read_confinement_the_launch_names_every_allowed_read(
     settings = json.loads(
         Path(session.calls[0]["argv"][session.calls[0]["argv"].index("--settings") + 1]).read_text()
     )
-    assert settings["sandbox"]["filesystem"]["denyRead"] == ["~"]
+    root = Path(result["scratch"]["path"]).resolve().parent
+    assert settings["sandbox"]["filesystem"]["denyRead"] == ["~", str(root / "unsandboxed")]
     assert settings["sandbox"]["filesystem"]["allowRead"] == [item["path"] for item in allowed]
 
 
@@ -4841,8 +4851,13 @@ def test_reviewer_no_reviewer_recipe_turns_off_configuration_or_its_sandbox(
     launcher: ModuleType, tmp_path: Path
 ) -> None:
     forbidden = {flag for flags in launcher.REVIEWER_FORBIDDEN_FLAGS.values() for flag in flags}
-    for vendor, recipe in launcher.REVIEWER_RECIPES.items():
-        argv = recipe.argv("model", "high", tmp_path / "settings.json")
+    recipes = {**launcher.REVIEWER_CANDIDATES, **launcher.REVIEWER_RECIPES}
+    for vendor, recipe in recipes.items():
+        argv = recipe.argv(
+            "model", "high", tmp_path / "settings.json",
+            max_budget_usd="5" if recipe.takes_ceiling else None,
+            executable=tmp_path / "bin" / vendor, prompt_path=tmp_path / "prompt.md",
+        )
         assert not forbidden & set(argv), (vendor, forbidden & set(argv))
         settings = recipe.settings(tmp_path, tmp_path, {}, toolchain=[])
         for key in ("apiKeyHelper", "enabledPlugins", "hooks", "disableAllHooks"):
@@ -4861,7 +4876,12 @@ def test_reviewer_the_session_never_signs_in_with_an_api_key(launcher: ModuleTyp
     }
 
 
-@pytest.mark.parametrize("vendor", ["codex", "grok", "muse", "agy", "qwen", "opencode"])
+@pytest.mark.parametrize(
+    "vendor",
+    # Issue #223: Grok and Muse stay refused unless a committed probe record admits them.
+    [v for v in ["codex", "grok", "muse", "agy", "qwen", "opencode"]
+     if v not in _contract_launcher().REVIEWER_RECIPES],
+)
 def test_reviewer_every_other_vendor_is_refused_by_name(
     launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, vendor: str
 ) -> None:
@@ -5113,7 +5133,12 @@ HONEST = {
     "read": "1", "write_outside": "1", "write_inside": "0", "write_tmpdir": "1",
     "write_tmp": "1", "network": "56", "variable": "unset", "read_home": "1", "read_packet": "0",
     "python_test": "0", "git": "0", "plain_variable": "unset",
+    # Issue #223.
+    "network_connect": "403", "read_vendor_home": "1", "write_vendor_home": "1",
+    "startup_variable": "unset",
 }
+#: What ``claude -p --output-format json`` prints when the session answered.
+ANSWERED = json.dumps({"result": "done", "is_error": False, "usage": {}})
 
 
 def _probe_session(results: dict[str, str] | None, *, outside_write: bool = False,
@@ -5124,7 +5149,7 @@ def _probe_session(results: dict[str, str] | None, *, outside_write: bool = Fals
         home_canary = Path(re.search(r'cat "([^"]+)" > /dev/null 2>&1; echo "read_home', script)
                            .group(1))
         assert home_canary.is_file()
-        output = "done"
+        output = ANSWERED
         if echo_home:
             output = home_canary.read_text()
         if results is not None:
@@ -5144,7 +5169,7 @@ def _probe_session(results: dict[str, str] | None, *, outside_write: bool = Fals
 def _probe(launcher: ModuleType, tmp_path: Path, session: Any) -> tuple[dict[str, bool], int]:
     verdicts, code = launcher.reviewer_probe(
         "claude", "haiku", env={"HOME": str(tmp_path)}, session=session,
-        work_root=tmp_path / "reviews",
+        work_root=tmp_path / "reviews", reachable=lambda env: 0,
     )
     return {v["denial"]: v["held"] for v in verdicts}, code
 
@@ -5162,6 +5187,9 @@ def test_reviewer_read_confinement_probe_passes_when_every_check_held(
         "read-credential", "write-outside", "write-inside", "write-tmpdir", "write-tmp",
         "network", "credential-variable", "read-home", "read-packet", "python-test", "git-runs",
         "plain-variable", "no-canary-in-output",
+        # Issue #223; issue #225 added the start-up-export check to Claude's probe.
+        "read-vendor-home", "write-vendor-home", "read-vendor-credential", "startup-variable",
+        "answer-parsed", "session-exit",
     }
     assert not (tmp_path / "reviews").exists() or not any((tmp_path / "reviews").iterdir())
     assert _home_canaries(tmp_path) == []
@@ -5271,7 +5299,8 @@ def test_reviewer_the_probe_fails_when_a_canary_value_is_seen_despite_a_denied_r
 
 def test_reviewer_the_probe_fails_with_no_results_file(launcher: ModuleType, tmp_path: Path) -> None:
     held, code = _probe(launcher, tmp_path, _probe_session(None))
-    assert code == 1 and held == {"results": False}
+    assert code == 1 and set(held) == set(launcher.REVIEWER_PROBE_CHECKS)
+    assert not held["network"] and not held["read-credential"] and not held["no-canary-in-output"]
 
 
 def test_reviewer_the_probe_hides_its_canary_variable_through_the_ordinary_rule(
