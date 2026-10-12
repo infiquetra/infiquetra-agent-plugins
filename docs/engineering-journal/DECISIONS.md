@@ -2,6 +2,41 @@
 
 ## 2026-10-11
 
+### A new reviewer vendor joins only through a committed probe record bound to its binary
+
+**Decision.** Issue #223. Grok and Muse have candidate recipes in `REVIEWER_CANDIDATES`.
+`launcher.py reviewer-probe` runs them; `launcher.py review` never does. A candidate reviews only
+when `REVIEWER_ADMISSIONS` holds a probe record for that vendor and platform. The record must be
+complete and well formed: every check in `REVIEWER_PROBE_CHECKS` once, each one held, the session
+exited 0, and an executable identity (file name, SHA-256 and version).
+
+Before every launch, the launcher hashes the vendor's native binary (never a wrapper script) and
+compares it with the record. It then copies the binary into the launch directory, checks the
+copy, and runs the copy. A test keeps the admissions equal to the records under
+`plugins/agent-launcher/tests/fixtures/reviewer-probe/`. Claude's recipe predates records and
+stays as it was. Its reviews now require `--max-budget-usd`, and orchestrate's `review-launch`
+passes `REVIEW_LAUNCH_CLAUDE_CEILING_USD`.
+
+**Rationale.** A sandbox recipe is only as good as the probe that ran against it, on that
+platform, with that binary. Muse's launcher script replaces its binary in the background. Grok's
+documentation says its network and deny rules behave differently on Linux and macOS. Admission
+from a stale probe would let unprobed code review untrusted changes. Running a private copy
+closes the gap between the check and the run.
+
+**Rejected alternatives.**
+
+- Adding a vendor to `REVIEWER_RECIPES` and probing afterwards: `review` could run an unproven
+  sandbox in the meantime.
+- Promotion at run time from a local probe result: one machine's probe would silently change
+  every machine's behaviour, and untracked state does not survive a worktree.
+- Accepting any failed curl as a network denial: an offline machine would pass.
+- Running the vendor's wrapper script: Grok's local wrapper adds `--trust`, and Muse's updates the
+  binary.
+
+**Revisit when.** Grok or Muse ships a sandbox that confines reads and temp writes and filters the
+environment on macOS. Also revisit when the reviewer runs on Linux, where each candidate needs its
+own probe record, or when vendor updates make re-probing too frequent to keep by hand.
+
 ### The setup pane's direct opener lives in the Claude adapter
 
 **Decision.** `/setup-view`, the slash command that opens saga's setup pane with no agent

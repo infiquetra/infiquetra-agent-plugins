@@ -36,6 +36,34 @@ for C8 to extend.
   not run fails rather than passing as a network denial.
 - **`roles/targeted-reviewer.md`**, a thin wrapper naming saga's prompt. The roster plans it one
   seat, never one per lens, and leaves it to `launcher.py review` rather than opening a pane.
+- **Candidate reviewer recipes for Grok and Muse, admitted only on a live probe (issue #223).**
+  `REVIEWER_CANDIDATES` holds recipes that `reviewer-probe` runs and `review` never does. Each
+  recipe was built from that CLI's own help: Grok runs headless under a per-launch `strict`-based
+  profile, and Muse runs `muse exec` with its sandbox on and `--sandbox-network restricted`. Each
+  removes its own API-key variables (`XAI_API_KEY`, `GROK_DEPLOYMENT_KEY`; `META_API_KEY`) and
+  withholds its own project files. A candidate reviews only when `REVIEWER_ADMISSIONS` holds a
+  complete probe record for its platform and executable. The launcher runs the vendor's native
+  binary, never a wrapper script, hashed against the record and copied into the launch directory
+  first. Both candidates failed their probes on macOS on 2026-10-11 and stay refused; the journal
+  records each failing check.
+- **`reviewer-probe` checks more, and can record what it saw (issue #223).** `--record <file>`
+  writes the vendor, platform, executable identity, sign-in path and every verdict, with no path
+  in it. New checks cover the vendor's own state directory (read and write), its sign-in files,
+  a secret exported by shell start-up files (candidates only), a parsed answer and a zero exit.
+  `--model` now defaults to the recipe's probe model.
+
+### Changed
+
+- **A Claude reviewer launch requires `--max-budget-usd` (issue #223).** `launcher.py review`
+  passes the ceiling to `claude -p` and records it as `ceiling_usd` in `result.json`. A Claude
+  launch without one, or with an amount that is not a positive figure with at most two decimal
+  places, is refused (exit 2) before anything is created. A vendor with no dollar ceiling refuses
+  the flag. The probe's own Claude launch carries `REVIEWER_PROBE_CEILING_USD` (1.00). Measured:
+  Claude stops at the first turn boundary past the ceiling, so one turn can overshoot it.
+- **The probe's network check proves sandbox denial (issue #223).** It now holds only when the
+  same address was reachable from outside the session before and after it, and the session's curl
+  failed in a way that means the connection never left (6, 7, or 56 with a refused proxy tunnel).
+  A timeout, a certificate failure or an offline machine no longer counts as denial.
 
 ### Fixed
 
