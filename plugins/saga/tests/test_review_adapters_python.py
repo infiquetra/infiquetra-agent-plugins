@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -771,6 +772,23 @@ def test_pinned_ruff_profile_pin_stays_check_only(tmp_path: Path) -> None:
     assert inner[:4] == ["uv", "run", "--with", "ruff==0.15.18"]
 
 
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv is not installed")
+def test_pinned_ruff_offline_wrapper_keeps_scan_and_probe_offline(tmp_path: Path) -> None:
+    plain = _adapter("ruff-lint")
+    offline = _offline_ruff(plain)
+    cache = _uv_cache_dir()
+    assert offline.version_argv == (
+        "uv", "run", "--offline", "--cache-dir", cache, *plain.version_argv[2:],
+    )
+    context = T.ScanContext(tmp_path, tmp_path, tmp_path)
+    argv = offline.invoke(context)
+    inner = argv[argv.index("--") + 1 :]
+    assert inner[:6] == ["uv", "run", "--offline", "--cache-dir", cache, "--with"]
+    plain_inner = plain.invoke(context)
+    plain_inner = plain_inner[plain_inner.index("--") + 1 :]
+    assert inner[6:] == plain_inner[3:]
+
+
 def test_vulture_dead_code_is_a_note(tmp_path: Path) -> None:
     repo, base, head = _changed(tmp_path)
     payload = "app.py:1: unused function 'dead'\n"
@@ -1021,6 +1039,40 @@ def _installed(adapter: Any) -> Any:
     return replace(adapter, invoke=invoke)
 
 
+def _uv_cache_dir() -> str:
+    """The operator uv cache. `uv cache dir` is local and never touches the network."""
+    proc = subprocess.run(
+        ["uv", "cache", "dir"], capture_output=True, text=True, timeout=20, check=False
+    )
+    assert proc.returncode == 0, "uv cache dir is unavailable"
+    return (proc.stdout or "").strip()
+
+
+def _offline_ruff(adapter: Any) -> Any:
+    """Run the pinned ruff adapter offline against the gate's cache.
+
+    The review runs tools under a fresh HOME whose uv cache is empty, so an
+    unmodified live run would fetch the pin exactly when the cache gate passes.
+    The wrapper adds `--offline` and the gate's `--cache-dir` to the scan and
+    the version probe; `--offline` forbids any fetch.
+    """
+    cache = _uv_cache_dir()
+
+    def invoke(context: Any) -> list[str]:
+        argv = list(adapter.invoke(context))
+        at = argv.index("uv")
+        assert argv[at + 1] == "run"
+        return [*argv[: at + 2], "--offline", "--cache-dir", cache, *argv[at + 2 :]]
+
+    probe = list(adapter.version_argv)
+    assert probe[:2] == ["uv", "run"]
+    return replace(
+        adapter,
+        invoke=invoke,
+        version_argv=tuple([*probe[:2], "--offline", "--cache-dir", cache, *probe[2:]]),
+    )
+
+
 def _live(
     repo: Path, base: str, head: str, tmp: Path, adapter: Any, command: str | None = None,
 ) -> Path:
@@ -1057,7 +1109,7 @@ def test_ruff_live_reports_an_unused_import_despite_a_decoy(tmp_path: Path) -> N
         {"app.py": "x = 1\n"},
         {"app.py": "import os\n", "pyproject.toml": "[tool.ruff.lint]\nselect = []\n"},
     )
-    output = _live(repo, base, head, tmp_path, _adapter("ruff-lint"))
+    output = _live(repo, base, head, tmp_path, _offline_ruff(_adapter("ruff-lint")))
     assert "F401" in {item["rule"]["ref"] for item in _read(output, "findings.json")}
 
 
