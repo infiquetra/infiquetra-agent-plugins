@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -108,6 +109,13 @@ def _version_text(argv: list[str]) -> str | None:
             if name in argv[2]:
                 return version
         return "0.0.0"
+    if (
+        len(argv) >= 4
+        and argv[:3] == ["uv", "run", "--with"]
+        and argv[3].startswith("ruff==")
+        and "--version" in argv
+    ):
+        return argv[3].split("==", 1)[1]
     if "--version" in argv or "-version" in argv:
         return _VERSIONS.get(argv[0], "0.0.0")
     return None
@@ -239,6 +247,22 @@ def _probed(argv: list[str]) -> str | None:
         return None
     match = _VERSION.search((proc.stdout or "") + (proc.stderr or ""))
     return match.group(0) if match else None
+
+
+def _pinned_ruff_cached() -> bool:
+    """The ruff pin is already in the uv cache. `--offline` forbids any fetch."""
+    pin = _adapter("ruff-lint").default_version
+    try:
+        proc = subprocess.run(
+            ["uv", "run", "--offline", "--with", f"ruff=={pin}", "ruff", "--version"],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if proc.returncode != 0:
+        return False
+    match = _VERSION.search((proc.stdout or "") + (proc.stderr or ""))
+    return bool(match and match.group(0) == pin)
 
 
 def test_bandit_high_on_a_changed_line_blocks(tmp_path: Path) -> None:
@@ -639,6 +663,132 @@ def test_ruff_isolated_selects_all_and_ignores_a_decoy(tmp_path: Path) -> None:
     assert _severity(output, "F401") == "blocks"
 
 
+class _PinnedRuffCalls(_Calls):
+    """PATH ruff answers 0.16.9; the pinned uv probe answers the row pin."""
+
+    def __init__(
+        self, base: str, payload: str, *, pin: str, uv_missing: bool = False, **kwargs: Any
+    ) -> None:
+        super().__init__(base, payload, **kwargs)
+        self.pin = pin
+        self.uv_missing = uv_missing
+
+    def __call__(
+        self, argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool
+    ) -> Any:
+        assert shell is False
+        assert isinstance(argv, list)
+        if argv[:2] == ["uv", "run"]:
+            self.calls.append(list(argv))
+            self.envs.append(dict(env))
+            if self.uv_missing:
+                raise FileNotFoundError("uv")
+            return T.ProcessResult(0, f"ruff {self.pin}\n")
+        if argv == ["ruff", "--version"]:
+            self.calls.append(list(argv))
+            self.envs.append(dict(env))
+            return T.ProcessResult(0, "ruff 0.16.9\n")
+        return super().__call__(argv, cwd=cwd, env=env, timeout=timeout, shell=shell)
+
+
+def _ruff_payload() -> str:
+    return json.dumps([
+        {
+            "code": "F401",
+            "message": "unused",
+            "filename": "app.py",
+            "location": {"row": 1},
+            "end_location": {"row": 1},
+        },
+    ])
+
+
+def _ruff_scan_inner(calls: list[list[str]]) -> list[str]:
+    scans = [argv for argv in calls if argv[:2] == ["python3", "-c"] and "--" in argv]
+    assert len(scans) == 1, calls
+    return scans[0][scans[0].index("--") + 1:]
+
+
+def test_pinned_ruff_runs_the_pin_despite_path_ruff(tmp_path: Path) -> None:
+    repo, base, head = _changed(tmp_path)
+    output = tmp_path / "out"
+    runner = _PinnedRuffCalls(base, _ruff_payload(), pin="0.15.18")
+    code = _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output, tmp_path / "home",
+        [_adapter("ruff-lint")], runner,
+    )
+    assert code == 0
+    assert _severity(output, "F401") == "blocks"
+    assert "version-mismatch" not in _reasons(output)
+    inner = _ruff_scan_inner(runner.calls)
+    assert inner[:4] == ["uv", "run", "--with", "ruff==0.15.18"]
+    assert inner[4:8] == ["ruff", "check", "--isolated", "--ignore-noqa"]
+    assert not any(argv[:1] == ["ruff"] for argv in runner.calls)
+    _valid(output)
+
+
+def test_pinned_ruff_spec_matches_the_row_pin(tmp_path: Path) -> None:
+    adapter = _adapter("ruff-lint")
+    assert adapter.default_version == "0.15.18"
+    assert adapter.version_argv == (
+        "uv", "run", "--with", "ruff==0.15.18", "ruff", "--version",
+    )
+    context = T.ScanContext(tmp_path, tmp_path, tmp_path)
+    argv = adapter.invoke(context)
+    inner = argv[argv.index("--") + 1:]
+    assert inner[:4] == ["uv", "run", "--with", f"ruff=={adapter.default_version}"]
+    assert inner[-1] == str(tmp_path)
+
+
+def test_pinned_ruff_missing_uv_degrades_without_path_fallback(tmp_path: Path) -> None:
+    repo, base, head = _changed(tmp_path)
+    output = tmp_path / "out"
+    runner = _PinnedRuffCalls(base, _ruff_payload(), pin="0.15.18", uv_missing=True)
+    code = _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output, tmp_path / "home",
+        [_adapter("ruff-lint")], runner,
+    )
+    assert code == 0
+    assert "missing" in _reasons(output)
+    assert not any(argv[:1] == ["ruff"] for argv in runner.calls)
+
+
+def test_pinned_ruff_profile_pin_stays_check_only(tmp_path: Path) -> None:
+    repo, base, head = _changed(tmp_path)
+    profile = tmp_path / "profile.json"
+    profile.write_text(
+        json.dumps({"review_tools": {"pins": {"ruff": {"version": "0.15.19"}}}}),
+        encoding="utf-8",
+    )
+    output = tmp_path / "out"
+    runner = _PinnedRuffCalls(base, _ruff_payload(), pin="0.15.18")
+    code = _run(
+        repo, base, head, profile, output, tmp_path / "home",
+        [_adapter("ruff-lint")], runner,
+    )
+    assert code == 0
+    assert "version-mismatch" in _reasons(output)
+    inner = _ruff_scan_inner(runner.calls)
+    assert inner[:4] == ["uv", "run", "--with", "ruff==0.15.18"]
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv is not installed")
+def test_pinned_ruff_offline_wrapper_keeps_scan_and_probe_offline(tmp_path: Path) -> None:
+    plain = _adapter("ruff-lint")
+    offline = _offline_ruff(plain)
+    cache = _uv_cache_dir()
+    assert offline.version_argv == (
+        "uv", "run", "--offline", "--cache-dir", cache, *plain.version_argv[2:],
+    )
+    context = T.ScanContext(tmp_path, tmp_path, tmp_path)
+    argv = offline.invoke(context)
+    inner = argv[argv.index("--") + 1 :]
+    assert inner[:6] == ["uv", "run", "--offline", "--cache-dir", cache, "--with"]
+    plain_inner = plain.invoke(context)
+    plain_inner = plain_inner[plain_inner.index("--") + 1 :]
+    assert inner[6:] == plain_inner[3:]
+
+
 def test_vulture_dead_code_is_a_note(tmp_path: Path) -> None:
     repo, base, head = _changed(tmp_path)
     payload = "app.py:1: unused function 'dead'\n"
@@ -889,6 +1039,40 @@ def _installed(adapter: Any) -> Any:
     return replace(adapter, invoke=invoke)
 
 
+def _uv_cache_dir() -> str:
+    """The operator uv cache. `uv cache dir` is local and never touches the network."""
+    proc = subprocess.run(
+        ["uv", "cache", "dir"], capture_output=True, text=True, timeout=20, check=False
+    )
+    assert proc.returncode == 0, "uv cache dir is unavailable"
+    return (proc.stdout or "").strip()
+
+
+def _offline_ruff(adapter: Any) -> Any:
+    """Run the pinned ruff adapter offline against the gate's cache.
+
+    The review runs tools under a fresh HOME whose uv cache is empty, so an
+    unmodified live run would fetch the pin exactly when the cache gate passes.
+    The wrapper adds `--offline` and the gate's `--cache-dir` to the scan and
+    the version probe; `--offline` forbids any fetch.
+    """
+    cache = _uv_cache_dir()
+
+    def invoke(context: Any) -> list[str]:
+        argv = list(adapter.invoke(context))
+        at = argv.index("uv")
+        assert argv[at + 1] == "run"
+        return [*argv[: at + 2], "--offline", "--cache-dir", cache, *argv[at + 2 :]]
+
+    probe = list(adapter.version_argv)
+    assert probe[:2] == ["uv", "run"]
+    return replace(
+        adapter,
+        invoke=invoke,
+        version_argv=tuple([*probe[:2], "--offline", "--cache-dir", cache, *probe[2:]]),
+    )
+
+
 def _live(
     repo: Path, base: str, head: str, tmp: Path, adapter: Any, command: str | None = None,
 ) -> Path:
@@ -915,14 +1099,17 @@ def test_mypy_live_reports_a_type_error_despite_a_decoy(tmp_path: Path) -> None:
     assert "correctness.type-error" in rows
 
 
-@pytest.mark.skipif(_probed(["ruff", "--version"]) != "0.15.18", reason="ruff pin is not installed")
+@pytest.mark.skipif(
+    not _pinned_ruff_cached(),
+    reason="ruff pin is not in the uv cache; offline run skipped",
+)
 def test_ruff_live_reports_an_unused_import_despite_a_decoy(tmp_path: Path) -> None:
     repo, base, head = _repo(
         tmp_path,
         {"app.py": "x = 1\n"},
         {"app.py": "import os\n", "pyproject.toml": "[tool.ruff.lint]\nselect = []\n"},
     )
-    output = _live(repo, base, head, tmp_path, _adapter("ruff-lint"))
+    output = _live(repo, base, head, tmp_path, _offline_ruff(_adapter("ruff-lint")))
     assert "F401" in {item["rule"]["ref"] for item in _read(output, "findings.json")}
 
 

@@ -1,5 +1,30 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-12
+
+### A PATH-executable probe mis-models tools the run loads itself
+
+**Evidence.** Issue #226. The setup survey probed every tool row as a PATH executable,
+so pytest-randomly and pytest-socket — pytest plugins with no console script — read
+`missing` forever even though the review loads both per run through
+`uv run --with`. A live survey on the operator machine confirmed the pytest-randomly
+row `missing` with no executable involved. Muter read `missing` for the adjacent
+reason: it prints a bare `16` for `--version`, and the survey's version pattern
+required two dotted parts.
+
+**Mechanism.** The probe answered the wrong question. "Is it on PATH?" is the wrong
+question for a tool the adapter loads pinned at run time; the only question that
+matters is "can the review load it pinned?", which is a probe of the loader (`uv`)
+plus the row pin, never of a binary name that happens to match. Bare versions need
+their own grammar — a bare number anywhere in longer output would read build counts
+as versions, so only a bare whole output counts, the rule the run-time check
+already owned and the survey now shares.
+
+**Generalizable rule.** Probe what the run consumes — the loader at its pin — not a
+binary name that happens to match; and keep one version grammar shared between the
+survey and the run-time check so they can never disagree on what counts as
+a version.
+
 ## 2026-10-11
 
 ### Neither Grok nor Muse can be a sandboxed reviewer yet: both fail the live probe on macOS
