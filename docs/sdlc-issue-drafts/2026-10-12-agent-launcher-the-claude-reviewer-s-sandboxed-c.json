@@ -1,0 +1,76 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-12T00:46:03.764064+00:00",
+  "created_at": "2026-10-12T00:46:07.402700+00:00",
+  "created_issue_number": 225,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/225",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-12-agent-launcher-the-claude-reviewer-s-sandboxed-c.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-12-claude-reviewer-startup-exports/defect.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-12-agent-launcher-the-claude-reviewer-s-sandboxed-c.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# agent-launcher: the Claude reviewer's sandboxed commands see variables exported by shell start-up files\n\n### Objective\n\nStop the targeted Claude reviewer's sandboxed commands from seeing environment variables that the operator's shell\nstart-up files export, and add that check to the Claude reviewer probe so the leak cannot return.\n\n### Intent\n\nWhile building #223, the builder added a start-up-export check to `launcher.py reviewer-probe`: an inert secret\nexported by a shell start-up file must not reach the reviewer's sandboxed commands. Run against the existing Claude\nrecipe, the secret reached them. The Claude reviewer runs over the code under review, including its tests, so any\ncredential an operator exports from a start-up file is readable by that code during a review. Network is denied in\nthe Claude sandbox (the corrected network check passed), which narrows the exfiltration paths but does not close\nthem: a review's findings, transcripts and traces leave the sandbox.\n\n#223 deliberately left the Claude recipe unchanged, because its card required that; this card changes it.\n\n### Out-of-scope / non-goals\n\n- The Grok and Muse recipes (#223 keeps both refused).\n- Interactive Claude",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-12-claude-reviewer-startup-exports/defect.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-12-claude-reviewer-startup-exports/defect.md",
+    "ref": "docs/brainstorms/2026-10-12-claude-reviewer-startup-exports/defect.md",
+    "title": "agent-launcher: the Claude reviewer's sandboxed commands see variables exported by shell start-up files",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "agent-launcher: the Claude reviewer's sandboxed commands see variables exported by shell start-up files",
+  "updated_at": "2026-10-12T00:46:25.118038+00:00"
+}

@@ -1,0 +1,77 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-11T13:51:56.701117+00:00",
+  "created_at": "2026-10-11T13:52:00.412617+00:00",
+  "created_issue_number": 218,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/218",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-11-saga-the-pane-tools-return-an-object-the-session.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created",
+      "Risk section must open with a tier token (low, medium, high, very-high, or UNKNOWN); \"medium \u2014 the merge-confirmation pane gates merges, and the change touches every pane's return path; tests\" is not one.",
+      "Missing author-visible risk metadata"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": null,
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-11-saga-the-pane-tools-return-an-object-the-session.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# saga: the pane tools return an object the session rejects, and the setup pane shows no steps\n\n### Objective\n\nMake saga's three pane tools (`mcp__saga__setup`, `mcp__saga__review_admission`, `mcp__saga__review_merge`)\nreturn a result the Claude Code session accepts, so the operator's choice in a pane reaches the agent. Make the\nsetup pane show the optional steps and stop dead-ending when nothing on screen can be installed.\n\n### Intent\n\nOn 2026-10-11, Claude Code 2.1.296 ran `/saga:setup`. The setup pane opened, but the agent's\n`mcp__saga__setup` call failed at once with \"tool.call step resolved mcp__saga__setup with a result that does\nnot match its output shape \u2026 expected string, received object\". Each `tool.call` hook in\n`plugins/saga/com.infiquetra.claude/mods/setup-pane.tsx` returns `{ result: { status, ... } }` with an object\nas the result. The admission-review and merge-confirmation panes do the same in every return path. The session\naccepts only a string or a list of content blocks, so none of the three panes can report back. The\nmerge-confirmation pane gates merges, so its failure blocks the review lifecycle.\n\nCI runs `claude plugin validate --strict` and `claude plugin tes",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-11-saga-pane-results/defect.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-11-saga-pane-results/defect.md",
+    "ref": "docs/brainstorms/2026-10-11-saga-pane-results/defect.md",
+    "title": "saga: the pane tools return an object the session rejects, and the setup pane shows no steps",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "saga: the pane tools return an object the session rejects, and the setup pane shows no steps",
+  "updated_at": "2026-10-11T13:52:22.026622+00:00"
+}

@@ -1,0 +1,78 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-11T23:37:33.593504+00:00",
+  "created_at": "2026-10-11T23:37:37.547792+00:00",
+  "created_issue_number": 223,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/223",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-11-agent-launcher-sandboxed-reviewer-recipes-for-gr.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-11-reviewer-recipes-grok-muse/enhancement.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created",
+      "Risk section is missing its justification: add a one-sentence rationale below the tier token.",
+      "Missing author-visible risk metadata"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": null,
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-11-agent-launcher-sandboxed-reviewer-recipes-for-gr.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# agent-launcher: sandboxed reviewer recipes for Grok and Muse, and a spending ceiling for Claude reviews\n\n### Objective\n\nLet `launcher.py review` start Grok and Muse as targeted reviewers when, and only when, each passes\n`launcher.py reviewer-probe`, and let every Claude reviewer launch carry a spending ceiling. Without these, K3's\nreviewer bake-off (saga-review-corpus#3, #147 decision D1) cannot run.\n\n### Intent\n\n`REVIEWER_RECIPES` in `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py` holds a recipe only for\n`claude`; every other vendor is refused by name until `reviewer-probe` passes on it (Codex failed on 2026-10-06 when\nits workspace-write sandbox read a file outside its workspace). D1 decided that a bake-off between Grok\n(`grok-4.7`, xhigh), Muse (`muse-spark-1.3-contributor`, max) and Claude Opus as the baseline picks the reviewer the\ncorpus harness measures. K3's plan found that neither contestant can be launched, and that the review command never\npasses a spending limit to `claude -p`, which K3's harness requires on every Claude launch.\n\n### Out-of-scope / non-goals\n\n- Recipes for Codex, Agy, Qwen or OpenCode.\n- Weakening the probe: a vendor that cannot pas",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-11-reviewer-recipes-grok-muse/enhancement.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-11-reviewer-recipes-grok-muse/enhancement.md",
+    "ref": "docs/brainstorms/2026-10-11-reviewer-recipes-grok-muse/enhancement.md",
+    "title": "agent-launcher: sandboxed reviewer recipes for Grok and Muse, and a spending ceiling for Claude reviews",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "agent-launcher: sandboxed reviewer recipes for Grok and Muse, and a spending ceiling for Claude reviews",
+  "updated_at": "2026-10-11T23:37:54.679094+00:00"
+}

@@ -1,0 +1,76 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-07T03:45:25.334204+00:00",
+  "created_at": "2026-10-07T03:45:52.294794+00:00",
+  "created_issue_number": 189,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/189",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-07-agent-launcher-the-targeted-reviewer-s-sandbox-r.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C8-follow-up-sandbox-reads.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-07-agent-launcher-the-targeted-reviewer-s-sandbox-r.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# agent-launcher: the targeted reviewer's sandbox reads only what the review needs\n\n### Objective\n\nConfine the targeted reviewer's sandboxed commands, merged in #187 for #158, to what the review\nneeds. Block reads of the whole home directory and allow back only the scratch copy, the packet and\nthe toolchain. Pass an allow-listed environment. Scrub secrets from proof output before it is\nrecorded or sent to Jev.\n\n### Intent\n\nThe targeted reviewer runs tests from the change it reviews, inside Claude's command sandbox, set\nthrough `--settings` by `reviewer_claude_settings`\n(`plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`). It is not called by any live\nreview yet: the single review command wires it in later. Three gaps, checked on `origin/main` at\n218d828:\n\n1. **Reads are blocked by a fixed list.** `denyRead` is `REVIEWER_CREDENTIAL_PATHS` (`launcher.py:2088`)\n   plus extras (`:2197`): eleven paths such as `~/.ssh`, `~/.aws` and `~/.config/gh`. Anything else\n   under the home directory stays readable.\n   - On the operator's Mac that includes an Ansible vault password file, an `.env` of model-provider\n     API keys and `~/.npmrc`.\n   - Other common credential files are",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C8-follow-up-sandbox-reads.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-05-saga-review-redesign/cards/C8-follow-up-sandbox-reads.md",
+    "ref": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C8-follow-up-sandbox-reads.md",
+    "title": "agent-launcher: the targeted reviewer's sandbox reads only what the review needs",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "agent-launcher: the targeted reviewer's sandbox reads only what the review needs",
+  "updated_at": "2026-10-07T03:46:08.703775+00:00"
+}

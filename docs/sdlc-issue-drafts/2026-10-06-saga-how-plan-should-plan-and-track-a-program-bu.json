@@ -1,0 +1,79 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-06T18:04:35.297637+00:00",
+  "created_at": "2026-10-06T18:04:58.590081+00:00",
+  "created_issue_number": 178,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/178",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-06-saga-how-plan-should-plan-and-track-a-program-bu.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "exploration",
+  "labels": [
+    "exploration",
+    "research"
+  ],
+  "mapping_pr_url": null,
+  "mode": "explore",
+  "mutation_summary": [
+    {
+      "action": "deploy-labels",
+      "detail": "Deploy missing labels: exploration, research"
+    },
+    {
+      "action": "issue",
+      "detail": "Create exploration in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "exploration",
+    "Lifecycle Origin": "requirements-ready"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-06-saga-how-plan-should-plan-and-track-a-program-bu.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# saga: how /plan should plan and track a program built across vendors, cards and repositories\n\n### Research Question\n\nHow should saga's `/plan`, and the run record admission writes for it, plan and track a program like\n#147: one parent issue with many child cards across several repositories, each built and reviewed by\nsessions from different vendors (Claude, Muse, Grok, Codex)? The aim is for such a program to run\nthrough saga instead of around it.\n\n### Context\n\nOn 6 October 2026 the program plan for #147\n(`docs/plans/2026-10-06-saga-review-redesign-program-plan.md`) was written with `/plan`, reviewed once by\nCodex, and repaired. To work, it had to step around saga and orchestrate in seven places. Evidence is\nfrom `main` at 113458c:\n\n1. **One plan per issue.** Saga has no parent or program plan. Run records, sagas and plans are keyed\n   per issue. The program plan's functional checks could map only to #147's own four acceptance\n   criteria, not to the children's.\n2. **Admission cannot record other vendors.** Staffing overrides must use the Claude tier palette and\n   the role's own vendor (`plugins/saga/scripts/admission.py:868-923`). So the plan records its Muse and\n   Grok builde",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-06-saga-plan-programs/plan-for-programs-exploration.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-06-saga-plan-programs/plan-for-programs-exploration.md",
+    "ref": "docs/brainstorms/2026-10-06-saga-plan-programs/plan-for-programs-exploration.md",
+    "title": "saga: how /plan should plan and track a program built across vendors, cards and repositories",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "saga: how /plan should plan and track a program built across vendors, cards and repositories",
+  "updated_at": "2026-10-06T18:05:16.613616+00:00"
+}

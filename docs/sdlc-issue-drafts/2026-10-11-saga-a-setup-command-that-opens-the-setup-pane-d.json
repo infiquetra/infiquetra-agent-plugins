@@ -1,0 +1,76 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-11T20:20:06.508968+00:00",
+  "created_at": "2026-10-11T20:20:10.213194+00:00",
+  "created_issue_number": 221,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/221",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-11-saga-a-setup-command-that-opens-the-setup-pane-d.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-11-saga-setup-pane-command/enhancement.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-11-saga-a-setup-command-that-opens-the-setup-pane-d.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# saga: a setup command that opens the setup pane directly\n\n### Objective\n\nGive the operator a slash command, registered by saga's Claude Code mod, that opens the setup pane at once and runs\nthe survey, the tool installs and the optional steps from the pane itself. The agent stays out of the loop unless the\noperator asks for it.\n\n### Intent\n\nToday `/saga:setup` loads a skill. The agent then calls the `mcp__saga__setup` tool, which opens the pane and waits\nfor the operator, and the result travels back through the agent. That round trip is slow, it depends on the tool\nresult surviving the session's output check (#218 fixed one break there), and nothing happens until the agent's turn\ncomes round. The review pane (`/review-view`) and the plan viewer already register their own commands and open their\npanes directly; setup should work the same way.\n\nThe operator asked for this on 11 October, for #147's saga release, so that the release ships a friendlier setup\ntogether with the `outcome-schedule` step the operator installs from it.\n\n### Out-of-scope / non-goals\n\n- Removing the `/saga:setup` skill or the `mcp__saga__setup` tool. Harnesses without Claude Code mods, and agent-led\n  setup, k",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-11-saga-setup-pane-command/enhancement.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-11-saga-setup-pane-command/enhancement.md",
+    "ref": "docs/brainstorms/2026-10-11-saga-setup-pane-command/enhancement.md",
+    "title": "saga: a setup command that opens the setup pane directly",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "saga: a setup command that opens the setup pane directly",
+  "updated_at": "2026-10-11T20:20:27.318165+00:00"
+}

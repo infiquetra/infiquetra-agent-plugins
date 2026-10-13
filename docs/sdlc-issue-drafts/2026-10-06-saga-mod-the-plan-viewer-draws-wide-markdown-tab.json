@@ -1,0 +1,75 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-06T15:17:41.356198+00:00",
+  "created_at": "2026-10-06T15:17:45.388996+00:00",
+  "created_issue_number": 175,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/175",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-06-saga-mod-the-plan-viewer-draws-wide-markdown-tab.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-06-saga-mod-the-plan-viewer-draws-wide-markdown-tab.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-10-06\ntopic: plan-viewer-markdown\nmaturity: requirements-ready\n---\n\n# saga mod: the plan viewer draws wide Markdown tables readably\n\n### Objective\n\nThe plan viewer pane draws every Markdown table in a plan so that the operator can read it at the\npane's width: no row overlaps another, and no cell's text is lost. The plan file itself stays as the\nauthor wrote it.\n\n### Intent\n\nThe plan viewer (`plugins/saga/com.infiquetra.claude/mods/plan-viewer.tsx`, issue #104) passes each\nsection's text straight to the engine's `Markdown` element. On 6 October 2026 the operator opened the\n#147 program plan (`docs/plans/2026-10-06-saga-review-redesign-program-plan.md`) through the run\nband's Plan button. Its decision table had four columns and cells up to about 330 characters, and in\nthe pane the table's rows overlapped each other and could not be read. The table was rewritten as\nheaded sections to work around it. That is the wrong fix: saga's own formatting contract\n(`plugins/saga/references/formatting-style.md`) tells plan authors to put comparative data in tables,\nso every plan with long table cells has the same problem.\n\nThe fix belongs in the mod, before the text reaches `Markdow",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-06-plan-viewer-markdown/plan-viewer-wide-tables.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-06-plan-viewer-markdown/plan-viewer-wide-tables.md",
+    "ref": "docs/brainstorms/2026-10-06-plan-viewer-markdown/plan-viewer-wide-tables.md",
+    "title": "saga mod: the plan viewer draws wide Markdown tables readably",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "saga mod: the plan viewer draws wide Markdown tables readably",
+  "updated_at": "2026-10-06T15:18:04.744258+00:00"
+}

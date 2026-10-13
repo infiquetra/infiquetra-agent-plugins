@@ -1,0 +1,75 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-06T18:05:25.798401+00:00",
+  "created_at": "2026-10-06T18:05:29.504931+00:00",
+  "created_issue_number": 179,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/179",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-06-saga-how-work-should-build-with-sessions-from-ot.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "exploration",
+  "labels": [
+    "exploration",
+    "research"
+  ],
+  "mapping_pr_url": null,
+  "mode": "explore",
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create exploration in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "exploration",
+    "Lifecycle Origin": "requirements-ready"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-06-saga-how-work-should-build-with-sessions-from-ot.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# saga: how /work should build with sessions from other vendors and accept their work\n\n### Research Question\n\nHow should saga's `/work` build a card when the builder is a session from another vendor (Muse, Grok,\nCodex) rather than a Claude subagent? And how should it accept that work, and hand repairs back to the\nsame builder, under the operator's one-pass lifecycle? The aim is for programs like #147 to build\nthrough `/work` instead of a coordinator procedure beside it.\n\n### Context\n\nThe #147 program plan (`docs/plans/2026-10-06-saga-review-redesign-program-plan.md`) does not use\n`/work` for any of its 29 child cards. Its coordinator protocol replaces `/work` because of these gaps.\nEvidence is from `main` at 113458c:\n\n1. **The builder can only be Claude.** The `implementation` work shape is `claude_only: true`\n   (`plugins/fleet-core/scripts/fleet_commons/staffing.json:62`), and `/work` dispatches each unit as a\n   Claude subagent, `saga:worker` or a generic agent with an effort rider\n   (`plugins/saga/skills/work/SKILL.md:410-422`). There is no way to give a unit to a Muse or Grok\n   session, which is how the program offloads Claude usage.\n2. **`/work`'s review gate cannot pass to",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-06-saga-plan-programs/work-for-programs-exploration.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-06-saga-plan-programs/work-for-programs-exploration.md",
+    "ref": "docs/brainstorms/2026-10-06-saga-plan-programs/work-for-programs-exploration.md",
+    "title": "saga: how /work should build with sessions from other vendors and accept their work",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "saga: how /work should build with sessions from other vendors and accept their work",
+  "updated_at": "2026-10-06T18:05:48.196376+00:00"
+}

@@ -1,0 +1,76 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-12T00:35:40.814498+00:00",
+  "created_at": "2026-10-12T00:35:44.372659+00:00",
+  "created_issue_number": 224,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/224",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-12-saga-the-calibration-file-accepts-the-corpus-s-l.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-11-saga-calibration-corpus-schema/enhancement.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-12-saga-the-calibration-file-accepts-the-corpus-s-l.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# saga: the calibration file accepts the corpus's languages and records the measured reviewer's configuration\n\n### Objective\n\nLet `plugins/saga/references/review-calibration.json` record what saga-review-corpus#3's harness measures: a verdict\nfor every language the corpus's cells cover, and the configuration of whichever reviewer the bake-off chose. Today\nsaga's schema rejects both, so the harness refuses to write the file.\n\n### Intent\n\nThe corpus harness (saga-review-corpus#3, card K3 of #147) found two refusals in saga's calibration schema:\n\n- **Languages.** `review_calibration._lens_problems` accepts only languages in `review_formula.LANGUAGES`, which has\n  `github-workflows` (plural) and no `cdk` or `cloudformation`. The corpus's cells use `cdk`, `cloudformation` and\n  `github-workflow`. The harness must not map one language onto another, so saga has to own the answer.\n- **Reviewer configuration.** `document_problems` requires `reviewer_configuration` to be a 64-hex string or null and\n  rejects other top-level keys. After the bake-off the measured reviewer may be Grok or Muse, which\n  `targeted-reviewer-launch.json` (Claude, Opus, high) does not describe, and the card requires ",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-11-saga-calibration-corpus-schema/enhancement.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-11-saga-calibration-corpus-schema/enhancement.md",
+    "ref": "docs/brainstorms/2026-10-11-saga-calibration-corpus-schema/enhancement.md",
+    "title": "saga: the calibration file accepts the corpus's languages and records the measured reviewer's configuration",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "saga: the calibration file accepts the corpus's languages and records the measured reviewer's configuration",
+  "updated_at": "2026-10-12T00:36:01.316063+00:00"
+}
