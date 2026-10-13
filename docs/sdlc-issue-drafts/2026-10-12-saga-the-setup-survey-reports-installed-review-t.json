@@ -1,0 +1,76 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-12T00:51:39.401230+00:00",
+  "created_at": "2026-10-12T00:51:43.334385+00:00",
+  "created_issue_number": 226,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/226",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-12-saga-the-setup-survey-reports-installed-review-t.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-12-saga-survey-false-missing/defect.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-12-saga-the-setup-survey-reports-installed-review-t.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# saga: the setup survey reports installed review tools as missing, and ruff runs at whatever version PATH holds\n\n### Objective\n\nMake saga's setup survey report pytest-randomly, pytest-socket and muter correctly, and run ruff at saga's pinned\nversion without requiring the operator's own ruff to match the pin.\n\n### Intent\n\nInstalling saga's review tools on the operator's Mac on 2026-10-12 (for saga-review-corpus#3, whose harness refuses\na full run while any default tool is not installed) left three tools reported wrong and one real conflict:\n\n- **pytest-randomly and pytest-socket** are pytest plugins with no console script. The survey looks for an executable\n  of that name on PATH, so it reports them missing forever. The review run already loads both per run with\n  `uv run --with pytest-randomly==5.0.0` and `uv run --with pytest-socket==0.8.1` (`review_adapters_python.py`), so\n  nothing needs installing; the survey row is wrong.\n- **muter** prints a bare `16` for `--version`. The survey's version pattern requires at least two dotted parts, so an\n  installed muter reads as missing.\n- **ruff** runs from PATH (`review_adapters_python.py`, `ruff check --isolated ...`), so a review's res",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-12-saga-survey-false-missing/defect.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-12-saga-survey-false-missing/defect.md",
+    "ref": "docs/brainstorms/2026-10-12-saga-survey-false-missing/defect.md",
+    "title": "saga: the setup survey reports installed review tools as missing, and ruff runs at whatever version PATH holds",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "saga: the setup survey reports installed review tools as missing, and ruff runs at whatever version PATH holds",
+  "updated_at": "2026-10-12T00:52:00.219843+00:00"
+}

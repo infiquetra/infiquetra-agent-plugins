@@ -1,0 +1,76 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-11T18:14:13.750320+00:00",
+  "created_at": "2026-10-11T18:14:17.549726+00:00",
+  "created_issue_number": 220,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/220",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-11-saga-the-outcome-job-s-schedule-keeps-running-th.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-11-saga-outcome-schedule-version/defect.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-11-saga-the-outcome-job-s-schedule-keeps-running-th.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# saga: the outcome job's schedule keeps running the plugin version that installed it\n\n### Objective\n\nMake the daily review-outcome job run the saga version currently installed, and make the setup survey report the\n`outcome-schedule` step as not done when the installed schedule points at another version's script.\n\n### Intent\n\n`outcome_job.py install-schedule` writes a launchd plist whose script argument is the absolute path of the\n`outcome_job.py` that ran the install (`script=str(Path(__file__).resolve())`). From an installed plugin that path\nsits inside a version folder of the plugin cache, for example\n`~/.claude/plugins/cache/<marketplace>/saga/<version>/scripts/outcome_job.py`. Claude Code keeps earlier version\nfolders after an upgrade (four saga versions sit side by side in one operator's cache today), so after a saga\nupgrade the daily job keeps running the old version's code.\n\nThe setup survey cannot see this. The step's `done` check is `launchctl list com.infiquetra.saga.outcome-job`,\nwhich succeeds whatever script the plist names, so `/saga:setup` and the setup pane report the step as done and\nnever offer to re-run it. A queue format change or a fix in a later release would",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-11-saga-outcome-schedule-version/defect.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-11-saga-outcome-schedule-version/defect.md",
+    "ref": "docs/brainstorms/2026-10-11-saga-outcome-schedule-version/defect.md",
+    "title": "saga: the outcome job's schedule keeps running the plugin version that installed it",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "saga: the outcome job's schedule keeps running the plugin version that installed it",
+  "updated_at": "2026-10-11T18:14:34.746765+00:00"
+}

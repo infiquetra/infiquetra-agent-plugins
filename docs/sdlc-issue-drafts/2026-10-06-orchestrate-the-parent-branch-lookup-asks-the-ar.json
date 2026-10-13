@@ -1,0 +1,75 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-06T18:46:18.560835+00:00",
+  "created_at": "2026-10-06T18:46:22.330292+00:00",
+  "created_issue_number": 180,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/180",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-06-orchestrate-the-parent-branch-lookup-asks-the-ar.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-06-orchestrate-the-parent-branch-lookup-asks-the-ar.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# orchestrate: the parent-branch lookup asks the archived plugin repository\n\n### Objective\n\n`orchestrate start` decides between a `parent/<N>` and an `issue/<N>` branch by asking GitHub about the\nissue in the repository the run is in, not in the archived `infiquetra/infiquetra-claude-plugins`.\n\n### Intent\n\n`parent_branch_name` (`plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:2875-2899` at\n02c9a61) builds its GraphQL query with a fixed `repository(owner:\"infiquetra\",name:\"infiquetra-claude-plugins\")`\n(`:2886`). Since the custody move, orchestrate runs in infiquetra-agent-plugins and other repositories,\nso it reads the sub-issue count of a different repository's issue with the same number. A run can then\nchoose the wrong branch name: `parent/<N>` for an issue with no children, or `issue/<N>` for a parent.\nFound on 6 October 2026 while planning #147.\n\n### Risk\n\nlow\nOne lookup in one function; the fallback to `issue/<N>` on a failed query stays as it is.\n\n### Out-of-scope / non-goals\n\n- Any other orchestrate behaviour, including the hand-off limits recorded in #178.\n\n### Files expected to change\n\n- `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`\n- `plugin",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-06-orchestrate-parent-branch/parent-branch-lookup-defect.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-06-orchestrate-parent-branch/parent-branch-lookup-defect.md",
+    "ref": "docs/brainstorms/2026-10-06-orchestrate-parent-branch/parent-branch-lookup-defect.md",
+    "title": "orchestrate: the parent-branch lookup asks the archived plugin repository",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "orchestrate: the parent-branch lookup asks the archived plugin repository",
+  "updated_at": "2026-10-06T18:46:43.099578+00:00"
+}

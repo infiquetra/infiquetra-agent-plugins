@@ -1,0 +1,76 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-07T03:45:24.831974+00:00",
+  "created_at": "2026-10-07T03:45:32.232290+00:00",
+  "created_issue_number": 188,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/188",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-07-saga-the-review-tools-runner-treats-the-change-u.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C4a-follow-up-untrusted-head.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-07-saga-the-review-tools-runner-treats-the-change-u.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# saga: the review-tools runner treats the change under review as untrusted\n\n### Objective\n\nMake saga's review-tools runner (`plugins/saga/scripts/review_tools.py`, merged in #186 for #151)\ntreat the commit under review as untrusted input, so that nothing the reviewed change contains can\nswitch off, narrow, forge or stale-cache its own scan. Do this before any card calls the runner.\n\n### Intent\n\nA security review of #186, checked against `origin/main` at 85bf82e, found that the runner trusts\nthe checkout it is reviewing in several places. Nothing calls the runner yet: it is inert until a\nlater card (C11's build loop, then the single review command) wires it in. But C4b (#152), C4c (#153)\nand C5 (#154) add adapters and checks on top of it in wave 3, and would copy each flaw.\n\nWhat the reviewed change can do today:\n\n1. **Scan the working tree instead of the head commit.** `ScanContext(repo, repo, ...)`\n   (`review_tools.py:390`) sends Semgrep, gitleaks and lizard to the working tree, while the diff comes\n   from commits (`review_diff.py:54`). Uncommitted edits that remove the flagged lines make the\n   scanners see clean files. The changed-line filter then keeps nothing, and the revie",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C4a-follow-up-untrusted-head.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-05-saga-review-redesign/cards/C4a-follow-up-untrusted-head.md",
+    "ref": "docs/brainstorms/2026-10-05-saga-review-redesign/cards/C4a-follow-up-untrusted-head.md",
+    "title": "saga: the review-tools runner treats the change under review as untrusted",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "saga: the review-tools runner treats the change under review as untrusted",
+  "updated_at": "2026-10-07T03:45:48.937683+00:00"
+}

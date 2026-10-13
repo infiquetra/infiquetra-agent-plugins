@@ -215,13 +215,22 @@ agents --no-focus --current --herdr --herdr-control-only --task <tab> --cwd <wor
 | 6 | C14 | #165 | infiquetra-agent-plugins | medium | Muse | Grok | Grok |
 | 6 | X1b | infiquetra-sdlc#178 | infiquetra-sdlc | medium | Muse | Grok | Grok |
 | 7 | K3 | saga-review-corpus#3 | saga-review-corpus | high | Claude (high) | Grok | Grok |
+| 7 | reviewer recipes | #223 | infiquetra-agent-plugins | high | Claude (high) | Codex | Codex |
+| 7 | calibration schema | #224 | infiquetra-agent-plugins | medium | Muse | Grok | Grok |
+| 7 | reviewer start-up exports | #225 (folded into #223) | infiquetra-agent-plugins | high | Claude (high) | Codex | Codex |
+| 7 | survey and ruff pin | #226 | infiquetra-agent-plugins | medium | Muse | Grok | Grok |
+| 7 | cosmic-ray adapter | #227 | infiquetra-agent-plugins | medium | Muse | Grok | Grok |
 | 7 | C16 | #167 | infiquetra-agent-plugins | medium | Muse | Grok | Grok |
+| 8 | pane results | #218 | infiquetra-agent-plugins | medium | Muse | Grok | Grok |
+| 8 | setup command | #221 | infiquetra-agent-plugins | medium | Muse | Grok | Grok |
 | 8 | C10b | #161 | infiquetra-agent-plugins | high | Claude (high) | Grok | Grok |
 
-Totals: Claude builds 8, Grok builds 12, Muse builds 11. Claude reviews the plan of 1 card and the code
-of 5; Muse and Grok do the other 56 reviews. The two follow-ups (#188, #189) were added on 6 October
+Totals: Claude builds 8, Grok builds 12, Muse builds 13. Claude reviews the plan of 1 card and the code
+of 5; Muse and Grok do the other 60 reviews. The two follow-ups (#188, #189) were added on 6 October
 after a security review of the merged #186 and #187 found the reviewed change could configure,
-silence or read past its own review; they run first in wave 3.
+silence or read past its own review; they run first in wave 3. #218 was added on 11 October, when `/saga:setup` showed that none of
+saga's three pane tools can return its result to the session; it merges before the saga release. #223 was added the same day, when K3's plan found that `launcher.py review` has no Grok or Muse recipe and passes no spending ceiling to Claude, so D1's bake-off could not run; Codex reviews it because it is not a contestant. #223's live probes then refused both Grok and Muse, and found that the existing Claude reviewer lets shell start-up exports reach its sandboxed commands; #225 fixes that; Codex's code review of #223 reproduced the leak, so #225 was folded into #223's repair and closes with it. #224 lets the calibration file accept the corpus's languages and the measured reviewer's configuration. #221 was added the same day at the operator's request: a mod command that opens
+the setup pane directly, so the release ships a setup the operator drives without an agent turn.
 
 Waves follow `cards-index.md`, "Order and dependencies". A card starts when the cards it depends on
 have merged, even if the rest of its wave has not; a unit's Dependencies line names those cards, not
@@ -504,7 +513,7 @@ The harness and its first full corpus run, then tying `/qa` and later defects ba
 
 **Requirements:** R1, R2, R9
 
-**Dependencies:** U8 (C2, C10a, C15, K1 and K2 for K3; C3, C13, C15 and K1 for C16)
+**Dependencies:** U8 (C2, C10a, C15, K1 and K2 for K3; C3, C13, C15 and K1 for C16). K3's live runs (its bake-off onward) also wait for #223, its calibration file for #224, and its first full run for #226 and #227
 
 **Files:** per card (K3 is in saga-review-corpus; C16's tests as its card lists)
 
@@ -525,23 +534,28 @@ The harness and its first full corpus run, then tying `/qa` and later defects ba
   runs: local
 ```
 
-### U10. Wave 8: C10b with X1b and X2
+### U10. Wave 8: #218 and #221, then C10b with X1b and X2
 
 The switch: `/code-review` runs the new review command and the old review is deleted.
 
-**Goal:** C10b merged in a saga release, with X1b and X2 landed in the same window.
+**Goal:** #218, #221 and C10b merged in a saga release, with X1b and X2 landed in the same window.
 
 **Requirements:** R1, R2
 
-**Dependencies:** U9, and C1, C2, C9, C10a and C13 merged
+**Dependencies:** U9, and C1, C2, C9, C10a and C13 merged. #218 depends on nothing in this program and can start
+any time; #221 builds on #218's merged setup pane. Only the release waits for them.
 
 **Files:** per card
 
-**Approach:** Claude builds; Grok reviews. C10b's squash commit carries `Closes #161` (the check matches it as `Closes .161`, because the check parser treats `#` as a comment). The coordinator merges X1b and X2 straight after C10b, then makes the saga release commit (`chore(release): saga ...`) that the second acceptance criterion names.
+**Approach:** #218 (the pane tools return an object the session rejects, and the setup pane shows no steps)
+is built by Muse and reviewed by Grok under the per-card protocol, and merges before the release commit, so
+the release ships working panes and C16's `outcome-schedule` step together. The operator installs the
+outcome job from that release. #221 (a mod command that opens the setup pane directly, without an agent turn) is built by Muse and reviewed by Grok the same way and also merges before the release commit. For C10b, Claude builds; Grok reviews. C10b's squash commit carries `Closes #161` (the check matches it as `Closes .161`, because the check parser treats `#` as a comment). The coordinator merges X1b and X2 straight after C10b, then makes the saga release commit (`chore(release): saga ...`) that the second acceptance criterion names.
 
 **Test scenarios:** C10b's Tests to add or update section; the old review's entry points are gone and nothing imports them.
 
-**Verification:** V1 to V5 pass; the saga release commit is on `main`; every child of #147 is closed.
+**Verification:** V1 to V5 pass; #218 and #221 merged before the saga release commit; the saga release commit is on
+`main`; every child of #147 is closed.
 
 ```functional-checks
 - name: every-child-closed
@@ -606,3 +620,6 @@ each, with its real worktree path; the preview creates nothing.
 ### Deferred to Follow-Up Work
 
 - Moving more cards to Muse or Grok, or back to Claude, after the pilot report (U2), on the operator's decision.
+- #220 (the outcome job's schedule keeps running the plugin version that installed it), found in #218's code
+  review on 11 October. It does not block the saga release: until it lands, the operator re-runs the
+  `outcome-schedule` step after each saga upgrade.

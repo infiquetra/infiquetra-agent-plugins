@@ -1,0 +1,76 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-10-12T01:42:18.420321+00:00",
+  "created_at": "2026-10-12T01:42:21.891648+00:00",
+  "created_issue_number": 227,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/227",
+  "draft_path": "docs/sdlc-issue-drafts/2026-10-12-saga-the-cosmic-ray-adapter-reports-no-surviving.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-10-12-saga-cosmic-ray-adapter/defect.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-10-12-saga-the-cosmic-ray-adapter-reports-no-surviving.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# saga: the cosmic-ray adapter reports no surviving mutants, because cosmic-ray 8.7.0 refuses saga's config and saga misreads its results\n\n### Objective\n\nMake saga's Python mutation adapter report cosmic-ray's surviving mutants correctly, and never report a run whose\nmutants errored or never ran as a clean run.\n\n### Intent\n\nOn 2026-10-12, cosmic-ray 8.7.0 (saga's pin) was installed on the operator's Mac, so\n`plugins/saga/tests/test_review_adapters_python.py::test_cosmic_ray_live_records_a_survivor` ran for the first time. It\nfails: for a repository whose only test asserts `True`, the adapter records no `surviving-mutant` finding. A diagnosis\nfound three faults in saga and one in the test:\n\n- **No distributor.** `_invoke_cosmic` writes a config without a `[cosmic-ray.distributor]` table, which 8.7.0\n  requires. `cosmic-ray exec` exits 78 with `ConfigKeyError('distributor')`, and the wrapper reports the run unfinished.\n- **Wrong dump format.** With `name = \"local\"` added by hand, init and exec succeed and the dump holds 11 survived\n  mutants at `app.py` line 2. 8.7.0 writes each dump line as a JSON array `[work_item, result]`, with the outcome at\n  `result.test_outcome` and the posit",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-10-12-saga-cosmic-ray-adapter/defect.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-10-12-saga-cosmic-ray-adapter/defect.md",
+    "ref": "docs/brainstorms/2026-10-12-saga-cosmic-ray-adapter/defect.md",
+    "title": "saga: the cosmic-ray adapter reports no surviving mutants, because cosmic-ray 8.7.0 refuses saga's config and saga misreads its results",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "",
+  "team": "asgard",
+  "title": "saga: the cosmic-ray adapter reports no surviving mutants, because cosmic-ray 8.7.0 refuses saga's config and saga misreads its results",
+  "updated_at": "2026-10-12T01:42:37.925072+00:00"
+}
