@@ -70,11 +70,12 @@ SPECIFICATION_REQUIRED_MANIFEST_FIELDS = ("name",)
 REPOSITORY_REQUIRED_MANIFEST_FIELDS = ("name", "version", "description")
 
 # Presentation metadata (who wrote the package, where it lives, how it is
-# licensed, what it is about) is authored once, in the portable manifest, and the
-# marketplace generator reads it from there. The Claude packaging manifest must
-# not repeat it: Muse's foreign-plugin loader reports each of these keys as
-# unsupported when it finds them in `.claude-plugin/plugin.json`.
-CLAUDE_PRESENTATION_FIELDS = ("author", "repository", "keywords", "homepage", "license")
+# licensed, what it is about) is authored in the portable manifest, and the
+# marketplace generator reads it from there. `claude plugin validate --strict`
+# requires `author` in `.claude-plugin/plugin.json` (`stage_muse_plugin` strips
+# it when staging for Muse), while `repository`, `keywords`, `homepage`, and
+# `license` are forbidden in `.claude-plugin/plugin.json`.
+CLAUDE_PRESENTATION_FIELDS = ("repository", "keywords", "homepage", "license")
 PORTABLE_PRESENTATION_FIELDS = ("author", "repository", "license", "keywords")
 CLAUDE_MANIFEST_RELATIVE = Path(".claude-plugin") / "plugin.json"
 

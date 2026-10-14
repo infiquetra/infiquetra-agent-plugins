@@ -272,21 +272,24 @@ class ClaudeManifestLocationTests(unittest.TestCase):
                 self.assertTrue((extension / "plugin.json").is_file())
 
 
-#: Presentation metadata, authored once in the portable manifest. Muse's
-#: foreign-plugin loader reports each of these as unsupported when the Claude
-#: manifest carries them, and the marketplace generator reads the portable copy.
-PRESENTATION_KEYS = ("author", "repository", "keywords", "homepage", "license")
+#: Presentation metadata forbidden in `.claude-plugin/plugin.json`. `author` stays
+#: in `.claude-plugin/plugin.json` because `claude plugin validate --strict`
+#: requires it; `stage_muse_plugin` strips `author` when staging for Muse.
+PRESENTATION_KEYS = ("repository", "keywords", "homepage", "license")
 
 #: The presentation keys every portable manifest must state.
 PORTABLE_PRESENTATION_KEYS = ("author", "repository", "license", "keywords")
 
 
 class PresentationMetadataTests(unittest.TestCase):
-    """Presentation metadata lives in the portable manifest, not Claude's."""
+    """Presentation metadata lives in the portable manifest, with `author` mirrored for Claude strict validation."""
 
     def test_the_claude_manifest_carries_no_presentation_metadata(self) -> None:
         for package in claude_packages():
             claude = _load(package / CLAUDE_MANIFEST_RELATIVE)
+            portable = _load(package / PORTABLE_MANIFEST_RELATIVE)
+            with self.subTest(package=package.name, key="author"):
+                self.assertEqual(claude.get("author"), portable.get("author"))
             for key in PRESENTATION_KEYS:
                 with self.subTest(package=package.name, key=key):
                     self.assertNotIn(key, claude)

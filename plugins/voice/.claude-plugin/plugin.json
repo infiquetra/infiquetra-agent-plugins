@@ -2,6 +2,10 @@
   "name": "voice",
   "version": "0.4.0",
   "description": "A spoken conversational loop and Auralis bridge adapter for one explicitly bound, Herdr-managed Claude Code session: the bound session receives voice context, submits authored spoken renderings, and speaks completed responses.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
   "hooks": "./com.infiquetra.claude/hooks/hooks.json",
   "mcpServers": "./com.infiquetra.claude/mcp/servers.json",
   "skills": "./skills/"

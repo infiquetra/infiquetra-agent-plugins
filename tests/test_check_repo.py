@@ -247,7 +247,6 @@ class RepositoryValidationTests(unittest.TestCase):
 
     def test_presentation_metadata_in_the_claude_manifest_is_rejected(self) -> None:
         values = {
-            "author": {"name": "Example"},
             "repository": "https://example.com/catalog",
             "keywords": ["example"],
             "homepage": "https://example.com",

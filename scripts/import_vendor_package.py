@@ -218,9 +218,9 @@ SKILLS_MANIFEST_FIELD = "skills"
 SKILLS_MANIFEST_VALUE = f"./{SKILLS_DIRECTORY}/"
 
 #: Identity the generated Claude manifest carries over from the upstream one.
-#: Presentation metadata is not here: it belongs in the portable manifest, and
-#: `scripts/check_repo.py` refuses it in Claude's.
-CARRIED_MANIFEST_FIELDS = ("name", "version", "description")
+#: `author` stays because `claude plugin validate --strict` requires it; other
+#: presentation metadata belongs only in the portable manifest.
+CARRIED_MANIFEST_FIELDS = ("name", "version", "description", "author")
 
 #: Presentation metadata the generated portable manifest carries over from the
 #: upstream one. `repository` is deliberately not among them: it is rewritten to

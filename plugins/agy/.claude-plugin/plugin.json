@@ -2,6 +2,10 @@
   "name": "agy",
   "version": "0.6.4",
   "description": "Antigravity-backed coder reviewer bridge agents that run in a disposable clone and return a patch, with guarded evidence bundles, output-attested receipts, and clone-scoped verification.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
   "commands": "./com.infiquetra.claude/commands/",
   "agents": [
     "./com.infiquetra.claude/agents/agy-coder.md",

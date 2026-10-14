@@ -178,13 +178,15 @@ def test_tell_contains_no_box_drawing_characters() -> None:
 
 
 def test_plugin_json_parses_and_has_required_fields() -> None:
-    data = json.loads(PLUGIN_JSON_PATH.read_text(encoding="utf-8"))
-    missing = REQUIRED_PLUGIN_JSON_FIELDS - data.keys()
+    claude_data = json.loads(PLUGIN_JSON_PATH.read_text(encoding="utf-8"))
+    portable_data = json.loads((PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8"))
+    missing = REQUIRED_PLUGIN_JSON_FIELDS - (claude_data.keys() | portable_data.keys())
     assert not missing, f"plugin.json is missing required fields: {sorted(missing)}"
+    assert {"name", "version", "description", "author"} <= claude_data.keys()
 
 
 def test_plugin_json_keywords_at_most_ten() -> None:
-    data = json.loads(PLUGIN_JSON_PATH.read_text(encoding="utf-8"))
+    data = json.loads((PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8"))
     keywords = data.get("keywords", [])
     assert len(keywords) <= MAX_KEYWORDS, (
         f"plugin.json declares {len(keywords)} keywords, over the {MAX_KEYWORDS} cap"

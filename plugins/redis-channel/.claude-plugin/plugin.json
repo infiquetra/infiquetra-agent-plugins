@@ -2,6 +2,10 @@
   "name": "redis-channel",
   "version": "0.5.3",
   "description": "Claude Code channel that bridges sessions to external systems over Redis Streams. Router-agnostic: pair with any router implementation that speaks the protocol.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
   "commands": "./com.infiquetra.claude/commands/",
   "agents": [
     "./com.infiquetra.claude/agents/redis-channel-coach.md"

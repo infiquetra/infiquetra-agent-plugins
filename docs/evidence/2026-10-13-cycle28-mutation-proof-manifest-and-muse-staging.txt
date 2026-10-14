@@ -120,7 +120,7 @@
 
 # carried from cycle 27, not re-graded in this cycle:
 plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
-scripts/check_repo.py sha256: 40eb67de020ad01b34341886252669384c0598bde114fe53d801ec14cc00a7a7
+scripts/check_repo.py sha256: c168109e13a5bb2f83b60efb82cecfefb05415e2766fc144eff7cb934c1f4ad0
 # carried from cycle 27, not re-graded in this cycle:
 scripts/check_compatibility_matrix.py sha256: c5c5752c038325c63a67c7c790ef88922c6c30e9a520ea77c7ad7d4fdc489808
 # carried from cycle 27, not re-graded in this cycle:

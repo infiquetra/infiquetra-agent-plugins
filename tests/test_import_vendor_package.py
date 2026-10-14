@@ -418,11 +418,12 @@ class ManifestGenerationTests(ImportCase):
         self.assertEqual(portable["license"], UPSTREAM_MANIFEST["license"])
 
     def test_the_claude_manifest_carries_no_presentation_metadata(self) -> None:
-        """`check_repo.py` refuses them there; Muse reports each as unsupported."""
+        """`check_repo.py` refuses them there; `author` is kept for `claude plugin validate --strict`."""
         self.upstream.build(minimal_files())
         self.assertEqual(self.run_import(), 0)
         manifest = self.load(ivp.CLAUDE_MANIFEST_PATH)
-        for field in ("author", "repository", "keywords", "homepage", "license"):
+        self.assertEqual(manifest["author"], UPSTREAM_MANIFEST["author"])
+        for field in ("repository", "keywords", "homepage", "license"):
             with self.subTest(field=field):
                 self.assertNotIn(field, manifest)
 

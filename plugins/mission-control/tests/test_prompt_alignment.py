@@ -39,6 +39,7 @@ def _read(path: Path) -> str:
 
 def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
     plugin_json = json.loads(_read(PLUGIN_ROOT / ".claude-plugin" / "plugin.json"))
+    portable_json = json.loads(_read(PLUGIN_ROOT / "plugin.json"))
     marketplace = json.loads(_read(ROOT / ".claude-plugin" / "marketplace.json"))
     entry = next(p for p in marketplace["plugins"] if p["name"] == "mission-control")
 
@@ -62,8 +63,8 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
     assert entry["source"] == "./plugins/mission-control"
     assert "CAMPPS" in plugin_json["description"]
     assert "Mount Olympus" not in plugin_json["description"]
-    assert "campps" in plugin_json["keywords"]
-    assert "mount-olympus" not in plugin_json["keywords"]
+    assert "campps" in portable_json["keywords"]
+    assert "mount-olympus" not in portable_json["keywords"]
     assert "Operations" in entry["description"]
     assert "Beads" not in entry["description"]
     assert "beads" not in entry["keywords"]

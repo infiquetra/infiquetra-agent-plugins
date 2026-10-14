@@ -2,6 +2,10 @@
   "name": "deploy",
   "version": "0.2.3",
   "description": "tag-promotion deployment operations for Infiquetra repositories.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
   "commands": "./com.infiquetra.claude/commands/",
   "agents": [
     "./com.infiquetra.claude/agents/release-orchestrator.md"

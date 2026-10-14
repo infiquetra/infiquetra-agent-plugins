@@ -32,6 +32,7 @@ def _frontmatter(path: Path) -> dict[str, str]:
 
 def test_agy_metadata_is_marketplace_registered() -> None:
     plugin_json = json.loads(_read(PLUGIN_ROOT / ".claude-plugin" / "plugin.json"))
+    portable_json = json.loads(_read(PLUGIN_ROOT / "plugin.json"))
     marketplace = json.loads(_read(REPO / ".claude-plugin" / "marketplace.json"))
     marketplace_entry = next(plugin for plugin in marketplace["plugins"] if plugin["name"] == "agy")
 
@@ -39,12 +40,12 @@ def test_agy_metadata_is_marketplace_registered() -> None:
     assert plugin_json["version"] == "0.6.4"
     assert "Antigravity" in plugin_json["description"]
     assert {"agy", "antigravity", "delegation", "teammate", "evidence"} <= set(
-        plugin_json["keywords"]
+        portable_json["keywords"]
     )
     assert marketplace_entry["source"] == "./plugins/agy"
     assert marketplace_entry["version"] == plugin_json["version"]
     # marketplace.json is generated from plugin.json (#429) — keyword order must match exactly.
-    assert marketplace_entry["keywords"] == plugin_json["keywords"]
+    assert marketplace_entry["keywords"] == portable_json["keywords"]
 
 
 def test_agy_commands_skills_references_and_agents_are_packaged() -> None:

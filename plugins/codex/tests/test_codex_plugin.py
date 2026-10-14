@@ -36,9 +36,9 @@ def test_codex_manifests_agree_on_version_and_repository() -> None:
     assert claude["description"]
     assert portable["description"]
     assert adapter["description"]
-    assert claude["author"] == {"name": "Infiquetra", "email": "hello@infiquetra.com"}
-    assert claude["repository"] == adapter["repository"] == REPOSITORY
-    assert {"codex", "delegation"} <= set(claude["keywords"])
+    assert claude["author"] == portable["author"] == {"name": "Infiquetra", "email": "hello@infiquetra.com"}
+    assert portable["repository"] == adapter["repository"] == REPOSITORY
+    assert {"codex", "delegation"} <= set(portable["keywords"])
     assert claude["commands"] == "./com.infiquetra.claude/commands/"
     assert claude["agents"] == [
         "./com.infiquetra.claude/agents/codex-coder.md",
