@@ -1,4 +1,6 @@
-<!-- matrix-status: current -->
+<!-- matrix-status: superseded -->
+<!-- superseded-by: 2026-10-14-redis-channel-compatibility-notice.md -->
+<!-- superseded-reason: The package version moved from 0.5.3 to 0.5.4 for the 2026-10-14 release (infiquetra-agent-plugins issue 234); no client assessment has been run against 0.5.4 yet. -->
 
 # Ten-client compatibility matrix — portable redis-channel package (0.5.3)
 

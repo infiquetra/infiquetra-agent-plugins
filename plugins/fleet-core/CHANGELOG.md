@@ -22,6 +22,9 @@ The catalog requires `python>=3.12`.
 
 ### Changed
 
+- Presentation metadata (author, repository, license, and keywords) now lives in the
+  portable `plugin.json`, and the generated Codex manifest follows it.
+
 - The Muse model in `staffing.json` is now `muse-wonder-full-1.0` for every model it maps
   (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5`), replacing `muse-spark-1.3-contributor`.
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.6] - 2026-10-14
+
+### Changed
+
+- Presentation metadata (author, repository, license, and keywords) now lives in the
+  portable `plugin.json`. The Claude manifest keeps `author` and its paths, and no longer
+  repeats `repository` or `keywords`.
+
+- The Python floor in `SKILL.md` frontmatter now sits under `metadata`, not as a top-level
+  `compatibility` key.
+
+- The Codex manifest, `.codex-plugin/plugin.json`, is generated from the portable
+  `plugin.json` (infiquetra-agent-plugins #77).
+
 ## [0.1.5] - 2026-09-22
 
 ### Changed

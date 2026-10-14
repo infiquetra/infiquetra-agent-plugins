@@ -2,6 +2,32 @@
 
 ## 2026-10-14
 
+### Release 234 holds unifi and fleet-core, and bumps the other twelve packages
+
+**Decision.** The 2026-10-14 release (issue 234) bumps twelve packages and holds two.
+unifi stays at 2.0.7, and fleet-core stays at 0.33.2. Each held package keeps its
+unreleased changes under an Unreleased heading in its changelog.
+
+**Rationale.** unifi's 2026-09-22 compatibility matrix is its only current matrix, and
+`test_unifi_has_a_current_matrix` asserts that it stays current, so a bump would leave
+unifi without one. The hold on fleet-core assumed that no Fleet Core code had changed
+since 0.33.2. Git shows that assumption is false: fleet-core's
+`jev_sweep.py`, `langfuse_client.py`, and `staffing.json` changed after commit b30b022,
+which released 0.33.2. Saga's bundled `jev_sweep.py`, and the bundled `staffing.json` in
+saga and mission-control, also changed content, and their stamps still read
+`source-version: 0.33.2`. A stamp that names a version its bytes do not match misleads
+anyone checking what is installed.
+
+**Rejected alternatives.** Bumping fleet-core to 0.33.3 in this release. That would
+change the stamp in every consumer bundle, and that change was outside this release's
+scope. The operator decides it.
+
+**Revisit when.** The operator sets the fleet-core version, or unifi's next assessment
+replaces its matrix.
+
+**Refs.** [Fleet Core Unreleased notes](../../plugins/fleet-core/CHANGELOG.md), [unifi
+changelog](../../plugins/unifi/CHANGELOG.md).
+
 ### Keep client selection explicit, refuse Muse project scope, and defer the stage engine refactor
 
 **Decision.** Issue #237 code-review repair, 2026-10-14. `--client` stays required;

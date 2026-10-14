@@ -1087,7 +1087,7 @@ def test_go_does_not_open_a_pane_for_the_targeted_reviewer(
 def test_the_agent_launcher_floor_is_1_7_2(orchestrate: ModuleType) -> None:
     assert orchestrate._declared_agent_launcher_floor() == (1, 7, 2)
     portable = json.loads((ROOT / "plugins" / "orchestrate" / "plugin.json").read_text())
-    assert portable["version"] == "6.1.0"
+    assert portable["version"] == "6.1.1"
 
 
 def _start_review(

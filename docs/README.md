@@ -59,7 +59,13 @@
   client run. Each has a notice at
   `evidence/2026-10-07-<package>-compatibility-notice.md` in place of a current
   matrix until its next assessment; the matrix is not a release gate.
-- [Agent Launcher nine-client compatibility matrix](evidence/2026-10-04-agent-launcher-compatibility-matrix.md)
+- The 2026-10-14 release bumped twelve packages. Seven moved from a current matrix to a
+  notice at `evidence/2026-10-14-<package>-compatibility-notice.md`: agent-launcher, deploy,
+  hermes-profile-evolution, home-lab-ops, orchestrate, redis-channel and voice. Saga,
+  mission-control, agy and codex moved again, and their 2026-10-07 notices now cover the new
+  versions. house-style has no matrix to retire. None of these moves has a fresh client run,
+  and the matrix is not a release gate.
+- [Agent Launcher nine-client compatibility matrix, superseded 2026-10-14](evidence/2026-10-04-agent-launcher-compatibility-matrix.md)
   records what every installed coding-agent client did with the portable
   agent-launcher package across four stages with fingerprint-bound
   verification, with post-activation readback in

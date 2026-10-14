@@ -1,4 +1,6 @@
-<!-- matrix-status: current -->
+<!-- matrix-status: superseded -->
+<!-- superseded-by: 2026-10-14-voice-compatibility-notice.md -->
+<!-- superseded-reason: The package version moved from 0.4.0 to 0.4.1 for the 2026-10-14 release (infiquetra-agent-plugins issue 234); no client assessment has been run against 0.4.1 yet. -->
 
 # Ten-client compatibility matrix — portable voice package (0.4.0)
 
