@@ -434,7 +434,8 @@ def test_calibration_ignores_instruction_file_changes(tmp_path: Path) -> None:
     for relative in changed:
         target = root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes((REPO / relative).read_bytes())
+        source = REPO / relative
+        target.write_bytes(source.read_bytes() if source.is_file() else b"# instructions\n")
     assert calibration.check(root) == []
     assert _answer(root) == "yes cleared"
     for relative in changed:
