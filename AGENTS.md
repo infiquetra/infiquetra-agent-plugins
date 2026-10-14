@@ -68,6 +68,10 @@ git diff --check
   package root; the client extension keeps the behaviour" in
   [`docs/engineering-journal/DECISIONS.md`](docs/engineering-journal/DECISIONS.md), and
   `tests/test_claude_plugin_packaging.py` enforces both halves.
+- Do not add a root `CLAUDE.md`; `scripts/check_repo.py` rejects it. `AGENTS.md` is the
+  single repository instruction file. The 2026-10-13 decision "Root CLAUDE.md is removed"
+  in [`docs/engineering-journal/DECISIONS.md`](docs/engineering-journal/DECISIONS.md)
+  records why.
 - Do not claim a vendor package is generated or portable until the relevant
   build and live compatibility checks prove it.
 - Treat existing vendor repositories as authoritative until a recorded custody

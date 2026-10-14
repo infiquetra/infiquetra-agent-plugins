@@ -160,48 +160,98 @@ def declaring_lines(text: str) -> list[tuple[int, str]]:
     return lines
 
 
-def read_frontmatter(text: str) -> dict[str, str | dict[str, str]] | None:
+#: A double-quoted or single-quoted scalar at the start of a value.
+QUOTED_SCALAR = re.compile(r"""^(?:"([^"]*)"|'([^']*)')""")
+
+
+def _frontmatter_scalar(raw: str | None) -> str:
+    """The scalar a value holds: quotes removed, and any trailing comment dropped."""
+    if raw is None:
+        return ""
+    value = raw.strip()
+    quoted = QUOTED_SCALAR.match(value)
+    if quoted:
+        return quoted.group(1) if quoted.group(1) is not None else quoted.group(2)
+    if value.startswith("#"):
+        return ""
+    return re.split(r"\s+#", value, maxsplit=1)[0].strip()
+
+
+def read_frontmatter(text: str) -> dict[str, object] | None:
     """Top-level keys of a YAML frontmatter block, or ``None``.
 
     Deliberately minimal, for the same reason as ``scripts/check_repo.py``: this suite
     stays standard-library-only and Python ships no YAML parser. It reads one level
-    further down than that reader does, because the floor lives under ``metadata``. A
-    top-level key with a scalar value maps to that string. A top-level key with no value
-    opens a block mapping, and the indented scalar keys beneath it map to a dict. Deeper
-    nesting and sequences are not read.
+    further down than that reader does, because the floor lives under ``metadata``.
+
+    A top-level key with a scalar value maps to that string. A top-level key with no
+    value, or with only a comment after it, opens a block. The first child line under a
+    block sets the indentation of its children, and only lines at exactly that
+    indentation are read as children. A block whose children are dash items maps to a
+    list. Lines indented deeper are never read as children, which covers the bodies of
+    literal and folded scalars. A flow mapping such as ``{compatibility: ...}`` stays a
+    string.
     """
     lines = text.splitlines()
     if not lines or lines[0].strip() != FRONTMATTER_DELIMITER:
         return None
-    fields: dict[str, str | dict[str, str]] = {}
-    block: dict[str, str] | None = None
+    fields: dict[str, object] = {}
+    owner: str | None = None
+    child_indent: int | None = None
     for line in lines[1:]:
         if line.strip() == FRONTMATTER_DELIMITER:
             return fields
-        if not line.strip() or line[0] == "#":
+        if not line.strip() or line.lstrip().startswith("#"):
             continue
-        if line[0] in " \t":
-            match = FRONTMATTER_KEY.match(line.strip())
-            if block is not None and match:
-                block[match.group(1)] = _frontmatter_scalar(match.group(2))
+        indent = len(line) - len(line.lstrip())
+        if indent == 0:
+            owner, child_indent = None, None
+            match = FRONTMATTER_KEY.match(line)
+            if match is None:
+                continue
+            raw = match.group(2)
+            if raw is None or not raw.strip() or raw.strip().startswith("#"):
+                owner = match.group(1)
+                fields[owner] = {}
+            else:
+                fields[match.group(1)] = _frontmatter_scalar(raw)
             continue
-        block = None
-        match = FRONTMATTER_KEY.match(line)
-        if not match:
+        if owner is None:
             continue
-        if (match.group(2) or "").strip():
-            fields[match.group(1)] = _frontmatter_scalar(match.group(2))
-        else:
-            block = {}
-            fields[match.group(1)] = block
+        if child_indent is None:
+            child_indent = indent
+        if indent != child_indent:
+            continue
+        child = line.strip()
+        block = fields[owner]
+        if child == "-" or child.startswith("- "):
+            if isinstance(block, dict) and not block:
+                block = fields[owner] = []
+            if isinstance(block, list):
+                block.append(_frontmatter_scalar(child[1:]))
+            continue
+        match = FRONTMATTER_KEY.match(child)
+        if match and isinstance(block, dict):
+            block[match.group(1)] = _frontmatter_scalar(match.group(2))
     return None
 
 
-def _frontmatter_scalar(raw: str | None) -> str:
-    value = (raw or "").strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-        value = value[1:-1]
-    return value
+def declared_floor_problem(text: str) -> str | None:
+    """What is wrong with a skill's declared floor, or ``None`` when it is right or absent.
+
+    A ``metadata`` that is present but is not a block mapping is refused, not read as
+    declaring nothing, so a flow mapping or a sequence cannot hide a wrong floor.
+    """
+    fields = read_frontmatter(text) or {}
+    if "metadata" not in fields:
+        return None
+    metadata = fields["metadata"]
+    if not isinstance(metadata, dict):
+        return "metadata is not a block mapping; write its keys as indented lines under it"
+    declared = metadata.get("compatibility")
+    if declared is not None and declared != PYTHON_FLOOR_SPECIFIER:
+        return f"declares metadata.compatibility {declared!r}"
+    return None
 
 
 def portable_skill_documents() -> list[Path]:
@@ -297,14 +347,9 @@ class PythonFloorTests(unittest.TestCase):
         """
         wrong: list[str] = []
         for document in portable_skill_documents():
-            fields = read_frontmatter(document.read_text(encoding="utf-8")) or {}
-            metadata = fields.get("metadata")
-            declared = metadata.get("compatibility") if isinstance(metadata, dict) else None
-            if declared is not None and declared != PYTHON_FLOOR_SPECIFIER:
-                wrong.append(
-                    f"{document.relative_to(ROOT).as_posix()} declares "
-                    f"metadata.compatibility {declared!r}"
-                )
+            problem = declared_floor_problem(document.read_text(encoding="utf-8"))
+            if problem is not None:
+                wrong.append(f"{document.relative_to(ROOT).as_posix()}: {problem}")
         self.assertEqual(
             wrong,
             [],
@@ -394,6 +439,94 @@ class FloorCheckRegressionTests(unittest.TestCase):
     def test_declaration_sites_all_exist(self) -> None:
         missing = [site for site in DECLARATION_SITES if not (ROOT / site).is_file()]
         self.assertEqual(missing, [], f"declaration sites that do not exist: {missing}")
+
+
+#: A wrong floor, split across literals so the scan above does not read it as a declaration.
+WRONG_FLOOR = "python" ">=" "3.10"
+
+
+def frontmatter(*lines: str) -> str:
+    """A skill document whose frontmatter holds ``lines`` beside a ``name`` key."""
+    return "\n".join(["---", "name: example", *lines, "---", "", "# Example", ""])
+
+
+class FrontmatterReaderTests(unittest.TestCase):
+    """The nested reader and the floor check, each on a fixture that names one edge case."""
+
+    def test_a_plain_nested_compatibility_is_read(self) -> None:
+        text = frontmatter("metadata:", f"  compatibility: {PYTHON_FLOOR_SPECIFIER}")
+        self.assertEqual(
+            read_frontmatter(text),
+            {"name": "example", "metadata": {"compatibility": PYTHON_FLOOR_SPECIFIER}},
+        )
+
+    def test_a_commented_metadata_header_still_opens_a_mapping(self) -> None:
+        text = frontmatter(
+            "metadata: # the floor is declared below",
+            f"  compatibility: {PYTHON_FLOOR_SPECIFIER}",
+        )
+        self.assertEqual(
+            read_frontmatter(text)["metadata"], {"compatibility": PYTHON_FLOOR_SPECIFIER}
+        )
+        self.assertIsNone(declared_floor_problem(text))
+
+    def test_a_trailing_comment_is_not_part_of_a_nested_value(self) -> None:
+        text = frontmatter("metadata:", f"  compatibility: {PYTHON_FLOOR_SPECIFIER}  # minimum")
+        self.assertEqual(
+            read_frontmatter(text)["metadata"], {"compatibility": PYTHON_FLOOR_SPECIFIER}
+        )
+
+    def test_a_quoted_nested_value_is_unquoted(self) -> None:
+        text = frontmatter("metadata:", f'  compatibility: "{PYTHON_FLOOR_SPECIFIER}"')
+        self.assertIsNone(declared_floor_problem(text))
+
+    def test_a_flow_mapping_under_metadata_is_refused(self) -> None:
+        text = frontmatter(f"metadata: {{compatibility: {PYTHON_FLOOR_SPECIFIER}}}")
+        problem = declared_floor_problem(text)
+        self.assertIsNotNone(problem)
+        self.assertIn("not a block mapping", problem)
+
+    def test_a_block_sequence_under_metadata_is_refused(self) -> None:
+        text = frontmatter("metadata:", f"  - compatibility: {PYTHON_FLOOR_SPECIFIER}")
+        problem = declared_floor_problem(text)
+        self.assertIsNotNone(problem)
+        self.assertIn("not a block mapping", problem)
+
+    def test_a_block_scalar_sibling_does_not_overwrite_the_child(self) -> None:
+        text = frontmatter(
+            "metadata:",
+            f"  compatibility: {PYTHON_FLOOR_SPECIFIER}",
+            "  notes: |",
+            f"    compatibility: {WRONG_FLOOR}",
+        )
+        self.assertEqual(
+            read_frontmatter(text)["metadata"]["compatibility"], PYTHON_FLOOR_SPECIFIER
+        )
+        self.assertIsNone(declared_floor_problem(text))
+
+    def test_a_deeper_nested_key_does_not_overwrite_the_child(self) -> None:
+        text = frontmatter(
+            "metadata:",
+            f"  compatibility: {PYTHON_FLOOR_SPECIFIER}",
+            f"    compatibility: {WRONG_FLOOR}",
+        )
+        self.assertIsNone(declared_floor_problem(text))
+
+    def test_a_wrong_nested_floor_fails(self) -> None:
+        text = frontmatter("metadata:", f"  compatibility: {WRONG_FLOOR}")
+        problem = declared_floor_problem(text)
+        self.assertIsNotNone(problem)
+        self.assertIn(WRONG_FLOOR, problem)
+
+    def test_a_wrong_floor_behind_a_commented_header_fails(self) -> None:
+        text = frontmatter("metadata: # req", f"  compatibility: {WRONG_FLOOR}")
+        self.assertIn(WRONG_FLOOR, declared_floor_problem(text) or "")
+
+    def test_an_absent_declaration_passes(self) -> None:
+        self.assertIsNone(
+            declared_floor_problem(frontmatter("metadata:", "  when_to_use: Use it."))
+        )
+        self.assertIsNone(declared_floor_problem(frontmatter("license: Apache-2.0")))
 
 
 if __name__ == "__main__":

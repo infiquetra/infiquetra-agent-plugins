@@ -20,21 +20,31 @@ first", which was the state before this change. A `CLAUDE.md` symlink to `AGENTS
 arrangement the team scaffold gives the repositories it generates
 (`plugins/home-lab-ops/skills/team-scaffold/scripts/team_scaffold/repo_stamp.py`). The link
 would give Claude Code the same file, but this validator rejects a root `CLAUDE.md` whether
-it is a regular file or a link.
+it is a regular file or a link. Claude Code reads `AGENTS.md` directly, so the link would
+add nothing for Claude.
 
-**Consequence.** Claude Code reads `CLAUDE.md` files. The agent launcher's list of Claude
-instruction files is `CLAUDE.md` and `CLAUDE.local.md` (`REVIEWER_INSTRUCTION_NAMES` in
-`plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`). After this change, a
-Claude session in this repository gets no repository-level instruction file loaded
-automatically. This entry did not verify how Claude Code treats `AGENTS.md`.
+**Consequence.** Claude Code reads a repository's `AGENTS.md` when no `CLAUDE.md` (and no
+`CLAUDE.local.md` or `.claude/CLAUDE.md`) sits in the working directory or above it. The
+Claude Code documentation (code.claude.com/docs/en/memory, read on 2026-10-13) describes
+this from v2.1.277, and says that some sessions before v2.1.281 read only `CLAUDE.md`. A
+probe on Claude Code 2.1.299, run on 2026-10-13, found that a directory holding only an
+`AGENTS.md` answered with that file's marker line from its context, with no tool calls. A
+directory holding only a `CLAUDE.md` control did the same. So the removal keeps the same
+rules in front of Claude in this repository, read from `AGENTS.md`. It also makes
+`AGENTS.md` the file Claude reads here, which brings in the reviewer screening gap queued in
+[`QUEUED.md`](QUEUED.md).
 
-**Revisit when.** Claude Code loads `AGENTS.md` on its own, or the repository decides that
-a root `CLAUDE.md` link to `AGENTS.md` is acceptable after all.
+**Revisit when.** A Claude Code release stops reading `AGENTS.md` when no `CLAUDE.md` is
+present, or this repository needs a Claude-only instruction file that `AGENTS.md` cannot hold.
+
+**Refs.** Cycle 27 of the mutation proof, which breaks each guard on purpose to check that a
+test fails, re-grades the guard that refuses a root `CLAUDE.md`:
+[the evidence record](../evidence/2026-10-13-cycle27-mutation-proof-root-instructions-and-compatibility.txt).
 
 ### Portable skills declare the Python floor under metadata, and the validator refuses the top-level key
 
-**Decision.** Issue #236. Each portable `SKILL.md` declares the catalog's Python floor as
-`metadata.compatibility: python>=3.12`. `scripts/check_repo.py` no longer admits a
+**Decision.** Issue #236. Each portable `SKILL.md` declares the catalog's minimum supported
+Python version (3.12), called the floor, as `metadata.compatibility: python>=3.12`. `scripts/check_repo.py` no longer admits a
 top-level `compatibility` key, and it reports one with a pointer to
 `metadata.compatibility`. The floor test in `tests/test_python_floor.py` and the skill tests
 for `voice` and `hermes-profile-evolution` read the nested value.
@@ -56,6 +66,10 @@ validation run. Changing the validator, which this repository does not own.
 
 **Revisit when.** `muse plugins validate` accepts a top-level `compatibility`, or the
 specification moves the field under `metadata`. Either one removes the reason for the rule.
+
+**Refs.** Cycle 27 of the mutation proof, which breaks each guard on purpose to check that a
+test fails, re-grades the top-level `compatibility` guard in `scripts/check_repo.py`:
+[the evidence record](../evidence/2026-10-13-cycle27-mutation-proof-root-instructions-and-compatibility.txt).
 
 ## 2026-10-12
 
@@ -2790,6 +2804,8 @@ command, hook body, agent, or permission. Every Claude *behaviour* remains
 inside `com.infiquetra.claude/`. `tests/test_claude_plugin_packaging.py`
 enforces both halves — that the manifests exist where Claude looks, and that no
 `hooks/`, `agents/`, or `commands/` directory appears at the portable root.
+
+The rule moved to `AGENTS.md` on 2026-10-13 (#236).
 
 **Revisit when.** Claude Code supports a manifest location other than
 `<root>/.claude-plugin/`, or a marketplace source that installs a directory
