@@ -2,6 +2,30 @@
 
 ## 2026-10-14
 
+### `muse skills uninstall` operates on the single user skill lock and rejects `--scope`
+
+**Evidence.** Live cutover of `scripts/install_client.py --client muse --execute --uninstall-legacy`
+against Muse Code 1.4.7 failed at `muse skills uninstall agent-launcher --scope user` with exit
+status 2 (`usage: muse skills uninstall <skill-id> [--keep-files] [--json]`). Replacing the
+invocation in `scripts/install_client.py:1509` with `muse skills uninstall <name>` and rejecting
+`"skills uninstall "*"--scope"*` in `tests/test_install_client.py:101` let all 37 legacy
+user-scope skills uninstall cleanly.
+
+**Mechanism.** Unlike `muse skills install` and `muse skills import`, which accept `--scope user`,
+`muse skills uninstall` reads `~/.config/muse/skills/.muse/lock.json` directly and has no `--scope`
+flag. A fake test binary that only rejected `--scope` on `plugins install <name>@<marketplace>`
+allowed the unverified flag on `skills uninstall` to pass unit tests.
+
+**Generalizable rule.** Verify every subcommand's flag grammar against the real client binary (`--help` or a throwaway invocation) and mirror each subcommand's rejected flag combinations in the test double.
+
+### `check_markdown_links` must prune git-ignored build and local-state directories
+
+**Evidence.** After `scripts/install_client.py --client muse --execute` materialized `build/muse-marketplace/` in the repository root, `python3 scripts/check_repo.py` failed with 29 broken local link errors in `build/muse-marketplace/plugins/*/README.md` (`plugin.json`, `../../AGENTS.md`) because `check_markdown_links` in `scripts/check_repo.py:406` only skipped `.git` rather than `MODULE_SOURCE_PRUNED_DIRECTORY_NAMES`.
+
+**Mechanism.** `stage_muse_marketplace` intentionally omits each package's portable `plugin.json` and top-level repository files when staging `build/muse-marketplace/`, so relative links inside copied package READMEs do not resolve inside the git-ignored build tree.
+
+**Generalizable rule.** Every repository-wide file walk in `scripts/check_repo.py` must prune `MODULE_SOURCE_PRUNED_DIRECTORY_NAMES` so git-ignored build outputs and local agent-state directories never trip tracked-tree validators.
+
 ### A release bump moves the pinned predecessor and every prose link to a retired matrix
 
 **Evidence.** Release 234 (issue 234) failed two checks that the version-bump list did not

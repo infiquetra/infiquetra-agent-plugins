@@ -338,7 +338,7 @@ unselected plugins. Unrelated marketplace sources remain untouched.
 Migration also removes selected redundant user-scope skills whose source is
 proven by `~/.config/muse/.infiquetra-skills.json` or
 `~/.config/muse/skills/.muse/lock.json`, using
-`muse skills uninstall <name> --scope user`. Conflicting or missing provenance
+`muse skills uninstall <name>`. Conflicting or missing provenance
 preserves the copy. A drained installer sidecar is removed. Without the legacy
 flag, plugin refresh preserves standalone skills. The internal `plan_uninstall`
 API removes legacy placements only; the CLI migration's `plan_install` composes
