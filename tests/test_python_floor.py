@@ -3,7 +3,7 @@
 ``PYTHON_FLOOR`` below is the authority. Everywhere else in this repository that
 states a floor -- the continuous-integration interpreter pin, the repository
 README, the pilot plan, the Fleet Core package README and changelog, the
-recorded decision, and a portable skill's ``compatibility`` frontmatter -- is
+recorded decision, and a portable skill's ``metadata.compatibility`` frontmatter -- is
 checked against it here rather than maintained by hand. Before this module
 existed the floor was five independently typed strings, and they had already
 fallen out of agreement with the code they described: the catalog documented a
@@ -160,29 +160,48 @@ def declaring_lines(text: str) -> list[tuple[int, str]]:
     return lines
 
 
-def read_frontmatter(text: str) -> dict[str, str] | None:
-    """Top-level scalar keys of a YAML frontmatter block, or ``None``.
+def read_frontmatter(text: str) -> dict[str, str | dict[str, str]] | None:
+    """Top-level keys of a YAML frontmatter block, or ``None``.
 
-    Deliberately the same minimal reader ``scripts/check_repo.py`` uses, for the
-    same reason: this suite stays standard-library-only and Python ships no YAML
-    parser.
+    Deliberately minimal, for the same reason as ``scripts/check_repo.py``: this suite
+    stays standard-library-only and Python ships no YAML parser. It reads one level
+    further down than that reader does, because the floor lives under ``metadata``. A
+    top-level key with a scalar value maps to that string. A top-level key with no value
+    opens a block mapping, and the indented scalar keys beneath it map to a dict. Deeper
+    nesting and sequences are not read.
     """
     lines = text.splitlines()
     if not lines or lines[0].strip() != FRONTMATTER_DELIMITER:
         return None
-    fields: dict[str, str] = {}
+    fields: dict[str, str | dict[str, str]] = {}
+    block: dict[str, str] | None = None
     for line in lines[1:]:
         if line.strip() == FRONTMATTER_DELIMITER:
             return fields
-        if not line.strip() or line[0] in " \t-#":
+        if not line.strip() or line[0] == "#":
             continue
+        if line[0] in " \t":
+            match = FRONTMATTER_KEY.match(line.strip())
+            if block is not None and match:
+                block[match.group(1)] = _frontmatter_scalar(match.group(2))
+            continue
+        block = None
         match = FRONTMATTER_KEY.match(line)
-        if match:
-            value = (match.group(2) or "").strip()
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-                value = value[1:-1]
-            fields[match.group(1)] = value
+        if not match:
+            continue
+        if (match.group(2) or "").strip():
+            fields[match.group(1)] = _frontmatter_scalar(match.group(2))
+        else:
+            block = {}
+            fields[match.group(1)] = block
     return None
+
+
+def _frontmatter_scalar(raw: str | None) -> str:
+    value = (raw or "").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1]
+    return value
 
 
 def portable_skill_documents() -> list[Path]:
@@ -271,25 +290,25 @@ class PythonFloorTests(unittest.TestCase):
     def test_a_portable_skill_that_declares_compatibility_declares_the_floor(self) -> None:
         """Absence is allowed; disagreement is not.
 
-        Both portable ``SKILL.md`` documents are upstream byte copies whose
-        digests are pinned in provenance, so the declaration has to be authored
-        upstream and arrive by re-synchronization. That is queued. What this
-        repository can guarantee in the meantime is that when one arrives it
-        carries the catalog floor rather than a second opinion.
+        Every portable ``SKILL.md`` is authored in this repository, because custody
+        of every package moved here on 2026-09-22, so its declaration is written and
+        checked here. The declaration sits under ``metadata``, the one place
+        ``check_repo`` admits it, and this test reads it there.
         """
         wrong: list[str] = []
         for document in portable_skill_documents():
             fields = read_frontmatter(document.read_text(encoding="utf-8")) or {}
-            declared = fields.get("compatibility")
+            metadata = fields.get("metadata")
+            declared = metadata.get("compatibility") if isinstance(metadata, dict) else None
             if declared is not None and declared != PYTHON_FLOOR_SPECIFIER:
                 wrong.append(
                     f"{document.relative_to(ROOT).as_posix()} declares "
-                    f"compatibility {declared!r}"
+                    f"metadata.compatibility {declared!r}"
                 )
         self.assertEqual(
             wrong,
             [],
-            f"a portable skill's compatibility must be {PYTHON_FLOOR_SPECIFIER!r}; "
+            f"a portable skill's metadata.compatibility must be {PYTHON_FLOOR_SPECIFIER!r}; "
             f"{wrong}",
         )
 

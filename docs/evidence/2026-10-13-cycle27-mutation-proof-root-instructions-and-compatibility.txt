@@ -1,0 +1,74 @@
+# Cycle-27 mutation proof - the root CLAUDE.md guard and the top-level compatibility guard
+# Digests are bound by MutationProofBindingTest: change a graded file
+# without re-running this proof and the suite fails. Paths are repository-relative.
+#
+# Supersedes 2026-10-07-cycle26-mutation-proof-semgrep-targets.txt for
+# the binding test only. Cycle 26 is preserved unedited. Reason: issue #236 changed
+# scripts/check_repo.py in four places: it no longer requires a root CLAUDE.md, it
+# refuses one (FORBIDDEN_ROOT_PATHS), it no longer admits a top-level compatibility key
+# in skill frontmatter, and it names metadata.compatibility as where that key belongs.
+#
+# The other four graded files were not edited and were not re-graded:
+#   plugins/unifi/scripts/site_profile.py
+#   scripts/assess_clients.py
+#   scripts/check_compatibility_matrix.py
+#   scripts/port_config.py
+# Their cycle-26 digests are carried below.
+#
+# Runner: each mutation is one exact string replacement in a copy of
+# scripts/check_repo.py, then `python3 -m unittest tests.test_check_repo`, then the
+# pristine bytes are written back and their digest checked. The baseline was green
+# (OK) before any mutation. A mutation counts as killed only when that
+# command fails a test. Each mutation names the first test that failed. The campaign
+# ran in a copy of the working tree, so the working tree itself was never mutated.
+# Two tests were added before this run so that two mutations have a test that can fail:
+# the dangling-symlink test (M3) and the allowlist-constant test (M7).
+
+## scripts/check_repo.py -- the root-instructions guard and the top-level compatibility guard, 11 mutations, 11 killed
+
+## MUTATION 1: the forbidden-root-path check is no longer run by check_repo
+   Killed by: tests.test_check_repo.GateWiringTests.test_the_gate_reports_a_root_claude_md
+   FAILED (failures=1)
+## MUTATION 2: the forbidden-root-path check never reports anything
+   Killed by: tests.test_check_repo.GateWiringTests.test_the_gate_reports_a_root_claude_md
+   FAILED (failures=3)
+## MUTATION 3: the link clause is dropped, so a dangling CLAUDE.md link goes unreported
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_a_root_claude_md_symlink_is_rejected_too
+   FAILED (failures=1)
+## MUTATION 4: the forbidden list is emptied
+   Killed by: tests.test_check_repo.GateWiringTests.test_the_gate_reports_a_root_claude_md
+   FAILED (failures=3)
+## MUTATION 5: the message stops pointing authors to AGENTS.md
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_a_root_claude_md_symlink_is_rejected_too
+   FAILED (failures=2)
+## MUTATION 6: CLAUDE.md is put back in the required paths
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_live_repository_has_required_baseline
+   FAILED (failures=2)
+## MUTATION 7: compatibility is put back in the top-level allowlist
+   Killed by: tests.test_check_repo.SkillFrontmatterTests.test_compatibility_is_not_a_top_level_skill_field
+   FAILED (failures=1)
+## MUTATION 8: the targeted top-level branch is keyed to the wrong name
+   Killed by: tests.test_check_repo.SkillFrontmatterTests.test_top_level_compatibility_is_rejected_and_points_at_metadata
+   FAILED (failures=1)
+## MUTATION 9: the targeted message names the wrong key
+   Killed by: tests.test_check_repo.SkillFrontmatterTests.test_top_level_compatibility_is_rejected_and_points_at_metadata
+   FAILED (failures=1)
+## MUTATION 10: the general disallowed-field check is disabled
+   Killed by: tests.test_check_repo.SkillFrontmatterTests.test_disallowed_field_is_reported_by_name
+   FAILED (failures=1)
+## MUTATION 11: metadata is dropped from the top-level allowlist
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_live_repository_passes_every_check
+   FAILED (failures=5)
+
+## RESTORED
+
+# carried from cycle 26, not re-graded in this cycle:
+plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
+scripts/check_repo.py sha256: 31a95ab2ab1bd10af6b909b004ad1941c4a4a5aa213a96aab89668914184a8c0
+# carried from cycle 26, not re-graded in this cycle:
+scripts/check_compatibility_matrix.py sha256: c5c5752c038325c63a67c7c790ef88922c6c30e9a520ea77c7ad7d4fdc489808
+# carried from cycle 26, not re-graded in this cycle:
+scripts/port_config.py sha256: 56216b7c8018b361d611356e21bc2383cb7d71ebf478f28436fee3c5c8e46b17
+# carried from cycle 26, not re-graded in this cycle:
+scripts/assess_clients.py sha256: 375eccd3b7252cd7ae1754682fa7bb4b5fe8b1a1a1536c5bc4f74b0b35a684e1
+byte-identical to pristine: YES

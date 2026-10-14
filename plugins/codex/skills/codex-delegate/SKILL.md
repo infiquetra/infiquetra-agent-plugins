@@ -1,7 +1,8 @@
 ---
 name: codex-delegate
 description: Build a codex.delegation.v1 envelope and run it through the guarded Codex wrapper, which supervises one codex exec and writes an evidence bundle with an output-attested receipt.
-compatibility: python>=3.12
+metadata:
+  compatibility: python>=3.12
 ---
 
 # Codex delegate

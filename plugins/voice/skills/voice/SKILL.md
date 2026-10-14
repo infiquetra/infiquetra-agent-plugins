@@ -1,7 +1,8 @@
 ---
 name: voice
 description: Operate the voice conversational loop for one bound Herdr-managed Claude session — bind an agent, start the Voice pane, toggle recording, stop playback, and preflight the declared providers
-compatibility: python>=3.12
+metadata:
+  compatibility: python>=3.12
 ---
 
 # Voice

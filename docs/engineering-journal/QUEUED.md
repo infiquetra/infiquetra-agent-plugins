@@ -224,7 +224,7 @@ cycles before anyone compared it to the tree.
 **Priority.** P2
 
 **Effort.** One upstream change in `infiquetra-claude-plugins`: add
-`compatibility: python>=3.12` to both UniFi `SKILL.md` documents, release it, and take it
+`metadata.compatibility: python>=3.12` to both UniFi `SKILL.md` documents, release it, and take it
 here by re-synchronization. Downstream, nothing but a re-sync and a matrix re-run.
 
 **Worth it when.** Whenever the next UniFi re-synchronization happens for another reason.

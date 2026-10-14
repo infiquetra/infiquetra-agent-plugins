@@ -1,5 +1,41 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-13
+
+### The validator emits a different code than the one a verification step names
+
+**Evidence.** Issue #236 verifies the fold by counting `unknown-frontmatter-field` diagnostics
+from `muse plugins validate`. That code never appears in this build. Before the change, each
+of the six portable skill packages (agy, codex, deploy, hermes-profile-evolution,
+redis-channel, voice) reported the condition as `unsupported-field`, with the message "Agent
+skill frontmatter key `compatibility` is not recognized; ignored". After the fold, each
+package lost that one diagnostic and gained none, and all six stayed valid.
+
+**Mechanism.** A count of a code the tool never emits is zero before and after any change, so
+it cannot show that the change worked. The mismatch surfaced only when the tool's real output
+was read.
+
+**Generalizable rule.** Before using a diagnostic code as proof that a fix works, read what the
+tool actually emits for that condition, and count that code before and after the change.
+
+### A reader that sees only top-level keys passes a moved field without checking it
+
+**Evidence.** The floor test in `tests/test_python_floor.py` compares a skill's declared floor
+only when `fields.get("compatibility")` is not `None`, and its reader returned top-level keys
+only. Once the key moved under `metadata`, that read returned `None` for every skill, so the
+comparison never ran. The voice skill test had the same shape, and the hermes skill test
+failed outright on its top-level assertion. After the readers went one level deeper, a copy of
+the tree that declared an older floor, 3.10, under `metadata` failed the floor test, the voice skill
+test, and the hermes skill test.
+
+**Mechanism.** "Absent is allowed" is the correct branch for a skill that declares no floor. A
+reader blind to a nested key takes that branch for every skill, so the test passes whatever
+value the skill declares.
+
+**Generalizable rule.** When a declaration moves into a nested block, change every reader of it
+in the same change, then confirm each reader fails on a wrong value and not only on a missing
+one.
+
 ## 2026-10-12
 
 ### Moving Muse to muse-wonder-full-1.0 changed no probe verdict

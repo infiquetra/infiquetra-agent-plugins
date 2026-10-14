@@ -26,24 +26,35 @@ ALLOWED_FRONTMATTER_FIELDS = (
     "name",
     "description",
     "license",
-    "compatibility",
     "metadata",
     "allowed-tools",
 )
 
 
-def _frontmatter(text: str) -> dict[str, str]:
+def _frontmatter(text: str) -> dict[str, str | dict[str, str]]:
+    """Top-level keys; a key with no value opens a block mapping, read one level deep."""
     lines = text.splitlines()
     assert lines and lines[0].strip() == "---"
-    fields: dict[str, str] = {}
+    fields: dict[str, str | dict[str, str]] = {}
+    block: dict[str, str] | None = None
     for line in lines[1:]:
         if line.strip() == "---":
             return fields
-        if not line.strip() or line[0] in " \t-#":
+        if not line.strip() or line[0] in "#-":
+            continue
+        if line[0] in " \t":
+            key, separator, value = line.strip().partition(":")
+            if block is not None and separator:
+                block[key.strip()] = value.strip()
             continue
         key, separator, value = line.partition(":")
         assert separator
-        fields[key.strip()] = value.strip()
+        block = None
+        if value.strip():
+            fields[key.strip()] = value.strip()
+        else:
+            block = {}
+            fields[key.strip()] = block
     raise AssertionError("skill frontmatter is unterminated")
 
 
@@ -97,8 +108,11 @@ def test_skill_names_the_script_actions_and_routing_variables() -> None:
     fields = _frontmatter(text)
     assert set(fields) <= set(ALLOWED_FRONTMATTER_FIELDS)
     assert fields["name"] == "hermes-profile-evolution"
-    assert fields["description"].strip()
-    assert fields.get("compatibility") == "python>=3.12"
+    assert isinstance(fields["description"], str) and fields["description"].strip()
+    metadata = fields.get("metadata")
+    assert isinstance(metadata, dict)
+    assert metadata.get("compatibility") == "python>=3.12"
+    assert "compatibility" not in fields
     assert "scripts/profile_request.py" in text
     for action in ACTIONS:
         assert action in text

@@ -1,5 +1,62 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-10-13
+
+### Root CLAUDE.md is removed; AGENTS.md is the one repository instruction file
+
+**Decision.** Issue #236. `CLAUDE.md` is removed from the repository root. `AGENTS.md` now
+carries the Claude packaging rule that only `CLAUDE.md` held: the manifest locations that
+the Claude CLI forces on each package with a Claude adapter. `scripts/check_repo.py` rejects
+a root `CLAUDE.md` by name (`FORBIDDEN_ROOT_PATHS`), and its message sends the author to
+`AGENTS.md`.
+
+**Rationale.** Two root instruction files are two copies. `AGENTS.md` was complete except
+for that packaging rule. The code that enforces packaging already cites `AGENTS.md` as the
+source of the rule (`scripts/install_client.py`, `scripts/import_vendor_package.py`), so
+moving the rule there makes those citations true.
+
+**Rejected alternatives.** Keeping a root `CLAUDE.md` that only says "read `AGENTS.md`
+first", which was the state before this change. A `CLAUDE.md` symlink to `AGENTS.md`, the
+arrangement the team scaffold gives the repositories it generates
+(`plugins/home-lab-ops/skills/team-scaffold/scripts/team_scaffold/repo_stamp.py`). The link
+would give Claude Code the same file, but this validator rejects a root `CLAUDE.md` whether
+it is a regular file or a link.
+
+**Consequence.** Claude Code reads `CLAUDE.md` files. The agent launcher's list of Claude
+instruction files is `CLAUDE.md` and `CLAUDE.local.md` (`REVIEWER_INSTRUCTION_NAMES` in
+`plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`). After this change, a
+Claude session in this repository gets no repository-level instruction file loaded
+automatically. This entry did not verify how Claude Code treats `AGENTS.md`.
+
+**Revisit when.** Claude Code loads `AGENTS.md` on its own, or the repository decides that
+a root `CLAUDE.md` link to `AGENTS.md` is acceptable after all.
+
+### Portable skills declare the Python floor under metadata, and the validator refuses the top-level key
+
+**Decision.** Issue #236. Each portable `SKILL.md` declares the catalog's Python floor as
+`metadata.compatibility: python>=3.12`. `scripts/check_repo.py` no longer admits a
+top-level `compatibility` key, and it reports one with a pointer to
+`metadata.compatibility`. The floor test in `tests/test_python_floor.py` and the skill tests
+for `voice` and `hermes-profile-evolution` read the nested value.
+
+**Rationale.** This build of `muse plugins validate` ignores a top-level `compatibility`
+key and reports it as `unsupported-field` ("Agent skill frontmatter key `compatibility` is
+not recognized; ignored"). Each of the six portable packages carried that warning. Under
+`metadata`, the same value passes with no diagnostic.
+
+**Deviation.** The published Agent Skills specification (agentskills.io/specification, read
+on 2026-10-13) defines `compatibility` as a top-level field of up to 500 characters, and
+defines `metadata` as a map from string keys to string values. This rule rejects the
+top-level placement the specification defines, so the catalog is stricter than the
+specification on this point. The rule follows the validator the catalog is checked with,
+not the specification.
+
+**Rejected alternatives.** Keeping the top-level key and accepting six warnings on every
+validation run. Changing the validator, which this repository does not own.
+
+**Revisit when.** `muse plugins validate` accepts a top-level `compatibility`, or the
+specification moves the field under `metadata`. Either one removes the reason for the rule.
+
 ## 2026-10-12
 
 ### Saga's workflow language id is `github-workflow`, matching the corpus

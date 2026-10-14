@@ -28,14 +28,13 @@ sys.path.insert(0, str(PACKAGE_ROOT / "scripts"))
 import process  # noqa: E402
 import voice_cli  # noqa: E402
 
-#: The open Agent Skills frontmatter allowlist mirrored by
-#: ``scripts/check_repo.py`` — kept here so the entrypoint fails its own
-#: tests, not only the repository gate.
+#: The top-level frontmatter allowlist ``scripts/check_repo.py`` enforces, mirrored
+#: here so the entrypoint fails its own tests, not only the repository gate.
+#: ``compatibility`` belongs under ``metadata``, not at the top level.
 ALLOWED_FRONTMATTER_FIELDS = (
     "name",
     "description",
     "license",
-    "compatibility",
     "metadata",
     "allowed-tools",
 )
@@ -46,24 +45,45 @@ FRONTMATTER_KEY = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_.-]*):(?:[ \t]+(.*))?$")
 IN_PANE_KEYS = ("t", "s", "u", "d", "q")
 
 
-def read_frontmatter(text: str) -> dict[str, str] | None:
-    """Top-level scalar keys of a YAML frontmatter block, or ``None``."""
+def read_frontmatter(text: str) -> dict[str, str | dict[str, str]] | None:
+    """Top-level keys of a YAML frontmatter block, or ``None``.
+
+    A top-level key with a scalar value maps to that string. A top-level key with no
+    value opens a block mapping, whose indented scalar keys map to a dict, so
+    ``metadata.compatibility`` is readable. Deeper nesting and sequences are not read.
+    """
     lines = text.splitlines()
     if not lines or lines[0].strip() != FRONTMATTER_DELIMITER:
         return None
-    fields: dict[str, str] = {}
+    fields: dict[str, str | dict[str, str]] = {}
+    block: dict[str, str] | None = None
     for line in lines[1:]:
         if line.strip() == FRONTMATTER_DELIMITER:
             return fields
-        if not line.strip() or line[0] in " \t-#":
+        if not line.strip() or line[0] in "#-":
             continue
+        if line[0] in " \t":
+            match = FRONTMATTER_KEY.match(line.strip())
+            if block is not None and match:
+                block[match.group(1)] = _scalar(match.group(2))
+            continue
+        block = None
         match = FRONTMATTER_KEY.match(line)
-        if match:
-            value = (match.group(2) or "").strip()
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-                value = value[1:-1]
-            fields[match.group(1)] = value
+        if not match:
+            continue
+        if (match.group(2) or "").strip():
+            fields[match.group(1)] = _scalar(match.group(2))
+        else:
+            block = {}
+            fields[match.group(1)] = block
     return None
+
+
+def _scalar(raw: str | None) -> str:
+    value = (raw or "").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1]
+    return value
 
 
 class SkillDocumentTests(unittest.TestCase):
@@ -93,10 +113,12 @@ class SkillDocumentTests(unittest.TestCase):
         self.assertEqual(self.frontmatter.get("name"), "voice")
 
     def test_skill_carries_a_description(self) -> None:
-        self.assertTrue(self.frontmatter.get("description", "").strip())
+        description = self.frontmatter.get("description")
+        self.assertTrue(isinstance(description, str) and description.strip())
 
     def test_compatibility_states_the_floor_exactly_or_is_absent(self) -> None:
-        declared = self.frontmatter.get("compatibility")
+        metadata = self.frontmatter.get("metadata")
+        declared = metadata.get("compatibility") if isinstance(metadata, dict) else None
         if declared is not None:
             self.assertEqual(declared, "python>=3.12")
 
