@@ -2,6 +2,16 @@
 
 ## 2026-10-14
 
+### Omit skill-duplicating command wrappers from staged Muse manifests
+
+**Decision.** `stage_muse_plugin` in `scripts/sync_marketplace.py` omits any `com.infiquetra.claude/commands/<stem>.md` entry from the staged `.claude-plugin/plugin.json` when the package also ships `skills/<stem>/SKILL.md` (19 wrappers across `hermes-profile-evolution`, `mission-control`, `orchestrate`, and `saga`) or `skills/<package>-<stem>/SKILL.md` (`agy` and `codex` `commands/delegate.md`), and drops the `"commands"` key when no non-colliding commands remain. The 15 distinct command wrappers (`deploy`, `deploy-hotfix`, `deploy-notes`, `deploy-status`, `issue`, 8 `redis-channel-*` commands, `ceo-review`, `unifi`) remain staged.
+
+**Rationale.** Claude Code namespaces plugin commands (`/agy:delegate`, `/codex:delegate`, `/saga:brainstorm`), so source packages keep `com.infiquetra.claude/commands/*.md` for Claude Code and its surface tests. Muse 1.4.7 flattens both plugin `skill_shortcut`s and `plugin_command`s into one un-namespaced `/<name>` tier and withholds both entries on `same_tier_collision`. Filtering the staged manifest preserves all 37 skill shortcuts and 15 distinct command wrappers in Muse while leaving the committed Claude manifests untouched.
+
+**Rejected alternatives.** Deleting the 21 `com.infiquetra.claude/commands/*.md` files from the source tree (breaks Claude Code namespaced command wrappers and existing package surface tests); pointing Muse directly at the raw GitHub repository URL without staging (rejected by `muse-bin-1.4.7`'s single-manifest rule because source packages carry portable `plugin.json`, `.claude-plugin/plugin.json`, and `.codex-plugin/plugin.json` side by side, triggering `multiple-manifests` and `agent-overlay-inactive` diagnostics).
+
+**Revisit when.** Muse namespaces plugin commands by package name or natively deduplicates a plugin's own command wrapper against its same-named skill shortcut.
+
 ### Release 234 holds unifi and fleet-core, and bumps the other twelve packages
 
 **Decision.** The 2026-10-14 release (issue 234) bumps twelve packages and holds two.
