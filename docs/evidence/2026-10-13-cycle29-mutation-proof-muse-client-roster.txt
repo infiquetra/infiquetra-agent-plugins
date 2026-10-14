@@ -259,14 +259,20 @@ With: 'if False:'
 Killed by: tests.test_check_compatibility_matrix.ClientAssessmentInventoryTest.test_muse_inventory_alias_and_exclusions_cannot_drift
 FAILED (failures=2)
 
-Restored baseline: 45 tests, OK
-Mutations: 34; killed: 34; survivors: 0
+## MUTATION 35: Markdown link check stops pruning git-ignored build directories
+File: scripts/check_repo.py
+Replace: 'if any(part in MODULE_SOURCE_PRUNED_DIRECTORY_NAMES for part in document.relative_to(root).parts):'
+With: 'if ".git" in document.parts:'
+Killed by: tests.test_check_repo.CheckRepoTests.test_markdown_links_in_pruned_build_directory_are_ignored
+FAILED (failures=1)
+
+Restored baseline: 46 tests, OK
+Mutations: 35; killed: 35; survivors: 0
 
 ## RESTORED
 # Carried unchanged from Cycle 28, not re-graded:
 plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
-# Carried unchanged from Cycle 28, not re-graded:
-scripts/check_repo.py sha256: c168109e13a5bb2f83b60efb82cecfefb05415e2766fc144eff7cb934c1f4ad0
+scripts/check_repo.py sha256: 39d77d5e7bd36e2eb14d45ed6a792f0ff9f1d939dc49874180a888b2479c5fa6
 scripts/check_compatibility_matrix.py sha256: c6d7be179386fac119af06ebc79d0ba637530d16a38b421670c956c6462f1441
 # Carried unchanged from Cycle 28, not re-graded:
 scripts/port_config.py sha256: 56216b7c8018b361d611356e21bc2383cb7d71ebf478f28436fee3c5c8e46b17
