@@ -98,6 +98,7 @@ class InstallFixture(unittest.TestCase):
             '  "plugins list --available --json") printf "%s\\n" ' + shlex.quote(offered) + ' ;;\n'
             '  "plugins list --json") printf "%s\\n" ' + shlex.quote(installed) + ' ;;\n'
             '  "plugins install "*"@"*"--scope"*) exit 2 ;;\n'
+            '  "skills uninstall "*"--scope"*) exit 2 ;;\n'
             '  *) exit 0 ;;\n'
             'esac\n')
 
@@ -1533,7 +1534,7 @@ class MuseMarketplaceTest(InstallFixture):
             "--client", "muse", "--package", "voice", "--uninstall-legacy", "--execute"
         )
         self.assertEqual(code, 0, err)
-        self.assertIn("skills uninstall voice --scope user", self.logged())
+        self.assertIn("skills uninstall voice", self.logged())
         self.assertFalse((skills / "voice").exists())
         self.assertTrue((skills / "unifi-network").exists())
         self.assertTrue((skills / "unifi-protect").exists())

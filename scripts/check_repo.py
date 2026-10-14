@@ -403,7 +403,7 @@ def _link_target(raw_target: str) -> str:
 def check_markdown_links(root: Path) -> list[str]:
     errors: list[str] = []
     for document in sorted(root.rglob("*.md")):
-        if ".git" in document.parts:
+        if any(part in MODULE_SOURCE_PRUNED_DIRECTORY_NAMES for part in document.relative_to(root).parts):
             continue
         text = document.read_text(encoding="utf-8")
         for match in MARKDOWN_LINK.finditer(text):

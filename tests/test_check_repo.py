@@ -166,6 +166,15 @@ class RepositoryValidationTests(unittest.TestCase):
                 ["broken local link in README.md: docs/missing.md"],
             )
 
+    def test_markdown_links_in_pruned_build_directory_are_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staged = root / "build" / "muse-marketplace" / "plugins" / "example"
+            staged.mkdir(parents=True)
+            (staged / "README.md").write_text("[manifest](plugin.json)\n", encoding="utf-8")
+
+            self.assertEqual(check_repo.check_markdown_links(root), [])
+
     def test_valid_plugin_manifest_passes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

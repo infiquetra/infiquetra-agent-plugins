@@ -1506,7 +1506,7 @@ def muse_legacy_skills(
             actions.append(
                 command_action(
                     "muse",
-                    ("skills", "uninstall", name, "--scope", "user"),
+                    ("skills", "uninstall", name),
                     overrides,
                     required=required,
                 )
