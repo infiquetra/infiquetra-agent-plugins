@@ -1596,3 +1596,37 @@ def test_finish_without_store_posts_round_only(tmp_path: Path, monkeypatch: pyte
     assert code == 0, err
     [trace] = [r for r in opener.requests if r.full_url.endswith("/otel/v1/traces")]
     assert '"no-store"' in trace.data.decode()
+
+
+def _package_with_manifests(root: Path, **manifests: str | None) -> Path:
+    """A package directory whose ``scripts/`` the command believes it runs from."""
+    (root / "scripts").mkdir(parents=True)
+    for relative, text in manifests.items():
+        if text is not None:
+            target = root / relative.replace("__", "/")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding="utf-8")
+    return root / "scripts"
+
+
+@pytest.mark.parametrize(
+    ("manifests", "expected"),
+    [
+        ({"plugin.json": '{"version": "9.1.0"}'}, "9.1.0"),
+        (
+            {"plugin.json": '{"version": "9.1.0"}', ".claude-plugin__plugin.json": '{"version": "8"}'},
+            "9.1.0",
+        ),
+        ({".claude-plugin__plugin.json": '{"version": "9.2.0"}'}, "9.2.0"),
+        ({"plugin.json": "{ not json", ".claude-plugin__plugin.json": '{"version": "9.3.0"}'}, "9.3.0"),
+        ({"plugin.json": '{"version": " "}', ".claude-plugin__plugin.json": '{"version": "9.4.0"}'}, "9.4.0"),
+        ({}, "not-recorded"),
+        ({"plugin.json": "[]", ".claude-plugin__plugin.json": '{"name": "saga"}'}, "not-recorded"),
+    ],
+)
+def test_saga_version_falls_back_to_the_claude_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manifests: dict[str, str], expected: str
+) -> None:
+    """A Muse-staged copy has no root ``plugin.json``; the version must still be read."""
+    monkeypatch.setattr(C, "_SCRIPTS_DIR", _package_with_manifests(tmp_path, **manifests))
+    assert C._saga_version() == expected

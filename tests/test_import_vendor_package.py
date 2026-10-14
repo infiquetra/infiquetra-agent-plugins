@@ -45,6 +45,7 @@ UPSTREAM_MANIFEST = {
     "description": "An example package used only by this test.",
     "author": {"name": "Example", "email": "nobody@example.com"},
     "repository": "https://example.com/upstream",
+    "license": "MIT",
     "keywords": ["example"],
 }
 
@@ -414,7 +415,7 @@ class ManifestGenerationTests(ImportCase):
         self.assertEqual(portable["repository"], ivp.THIS_REPOSITORY)
         self.assertEqual(portable["author"], UPSTREAM_MANIFEST["author"])
         self.assertEqual(portable["keywords"], UPSTREAM_MANIFEST["keywords"])
-        self.assertEqual(portable["license"], ivp.THIS_LICENSE)
+        self.assertEqual(portable["license"], UPSTREAM_MANIFEST["license"])
 
     def test_the_claude_manifest_carries_no_presentation_metadata(self) -> None:
         """`check_repo.py` refuses them there; Muse reports each as unsupported."""
@@ -430,6 +431,39 @@ class ManifestGenerationTests(ImportCase):
         self.upstream.build(minimal_files(**{".claude-plugin/plugin.json": _json(manifest)}))
         self.assertEqual(self.run_import(), 0)
         self.assertEqual(self.load(ivp.PORTABLE_MANIFEST_NAME)["license"], "Apache-2.0")
+
+    def test_an_upstream_missing_presentation_metadata_is_refused_and_writes_nothing(self) -> None:
+        cases = {
+            "author": ("author", None),
+            "an author with no name": ("author", {"email": "nobody@example.com"}),
+            "keywords": ("keywords", None),
+            "empty keywords": ("keywords", []),
+            "a non-string keyword": ("keywords", ["ok", 3]),
+            "a blank keyword": ("keywords", [" "]),
+            "license": ("license", None),
+            "a blank license": ("license", " "),
+        }
+        for label, (field, value) in cases.items():
+            with self.subTest(case=label):
+                manifest = dict(UPSTREAM_MANIFEST)
+                if value is None:
+                    del manifest[field]
+                else:
+                    manifest[field] = value
+                self.upstream.build({".claude-plugin/plugin.json": _json(manifest)})
+                with self.assertRaises(ivp.ImportVendorError) as caught:
+                    self.plan()
+                self.assertIn(field, str(caught.exception))
+                self.assertNotEqual(self.run_import(), 0)
+                self.assertEqual(list(self.destination.rglob("*")), [])
+
+    def test_every_missing_field_is_named_in_one_message(self) -> None:
+        manifest = {k: v for k, v in UPSTREAM_MANIFEST.items() if k not in ("author", "license")}
+        self.upstream.build({".claude-plugin/plugin.json": _json(manifest)})
+        with self.assertRaises(ivp.ImportVendorError) as caught:
+            self.plan()
+        self.assertIn("author", str(caught.exception))
+        self.assertIn("license", str(caught.exception))
 
     def test_the_relocated_manifest_keeps_the_upstream_repository(self) -> None:
         """It is the upstream's own manifest, preserved, not a rewritten copy."""

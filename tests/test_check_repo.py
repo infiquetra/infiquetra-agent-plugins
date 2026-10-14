@@ -198,6 +198,20 @@ class RepositoryValidationTests(unittest.TestCase):
                 self.assertIn(field, errors[0])
                 self.assertIn("plugins/example/plugin.json", errors[0])
 
+    def test_the_required_fields_are_the_ones_the_constant_names(self) -> None:
+        """A field added to the constant is enforced without touching the check."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            make_plugin(root)
+            fields = (*check_repo.PORTABLE_PRESENTATION_FIELDS, "homepage")
+            with mock.patch.object(check_repo, "PORTABLE_PRESENTATION_FIELDS", fields):
+                errors = check_repo._portable_presentation_errors(
+                    portable_manifest(), Path("plugins/example/plugin.json")
+                )
+
+            self.assertEqual(len(errors), 1, errors)
+            self.assertIn("homepage", errors[0])
+
     def test_malformed_presentation_metadata_is_reported(self) -> None:
         malformed = {
             "author": {"email": "nobody@example.com"},
@@ -219,6 +233,7 @@ class RepositoryValidationTests(unittest.TestCase):
     def test_blank_or_non_string_entries_are_reported(self) -> None:
         cases = {
             "blank author name": {"author": {"name": "   "}},
+            "author that is not an object": {"author": "Example"},
             "blank keyword": {"keywords": ["ok", " "]},
             "non-string keyword": {"keywords": ["ok", 3]},
         }

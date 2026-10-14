@@ -1105,7 +1105,7 @@ class MutationProofBindingTest(unittest.TestCase):
         before issue #235 added the portable presentation-metadata check, the
         Claude-manifest presentation refusal and the Muse staging check to
         ``check_plugin_manifests`` in ``scripts/check_repo.py``; cycle 28
-        re-grades only those guards (twenty-three mutations, twenty-three
+        re-grades only those guards (twenty-five mutations, twenty-five
         killed) and carries the other four digests.
 
         Cycle 27's account follows. Cycle 26 remains the proof of the bytes

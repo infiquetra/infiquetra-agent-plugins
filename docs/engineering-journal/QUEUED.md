@@ -528,6 +528,58 @@ was found in the review of #236 and is not changed there.
 **Refs.** `plugins/agent-launcher/tests/test_launcher_reviewer.py` (line 260 pins the Claude
 recipe's instruction names).
 
+### Define the presentation-field list once
+
+**Author.** Jeff Cox and Claude
+
+**Priority.** P2
+
+**What it is.** Issue #235 left the list of presentation fields in several places:
+`PORTABLE_PRESENTATION_FIELDS` and `CLAUDE_PRESENTATION_FIELDS` in `scripts/check_repo.py`,
+`CARRIED_PRESENTATION_FIELDS` in `scripts/import_vendor_package.py`, `PORTABLE_STRINGS` in
+`scripts/sync_codex_packaging.py`, and `MUSE_UNSUPPORTED_KEYS` in `scripts/sync_marketplace.py`. The lists differ
+partly by design (the last one also strips `types`, `outputStyles` and `agents`). `check_repo.py` also repeats
+`CLAUDE_MANIFEST_RELATIVE`. Define the list once and derive the others from it.
+
+**Revisit when.** A fifth presentation field is added, or any one of these lists changes.
+
+### Move Muse staging into its own adapter script
+
+**Author.** Jeff Cox and Claude
+
+**Priority.** P2
+
+**What it is.** Muse staging lives in `scripts/sync_marketplace.py`, which is the Claude marketplace generator.
+Codex has its own `scripts/sync_codex_packaging.py`. Give Muse the same shape.
+
+**Revisit when.** Issue #237 adds `install_client.py --client muse`, which is the operator entry point for
+staging.
+
+### Have the gate check the shape of the staged Muse manifest
+
+**Author.** Jeff Cox and Claude
+
+**Priority.** P2
+
+**What it is.** `check_repo.py` only checks that staging succeeds and leaves no competing manifest. It does not
+look at the staged `.claude-plugin/plugin.json` itself (no rejected key, list-shaped `skills` and `commands`).
+Only `MuseValidationTests`, which needs the `muse` CLI and is skipped in continuous integration, checks that.
+
+**Revisit when.** The unit test that seeds every rejected key (`StageMusePluginTests`) proves insufficient, or a
+Muse release changes what it rejects.
+
+### Stage tracked files only
+
+**Author.** Jeff Cox and Claude
+
+**Priority.** P2
+
+**What it is.** Staging copies the package directory as it sits on disk, so an untracked or ignored file in a
+package would reach a Muse install. Only `__pycache__` and `.pytest_cache` are skipped today. Copy the files
+`git ls-files` lists instead.
+
+**Revisit when.** Before `build/muse-marketplace` becomes an install source in issue #237.
+
 ## P3
 
 No items.

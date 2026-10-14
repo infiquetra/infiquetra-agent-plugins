@@ -20,6 +20,7 @@ Standard library only, matching the repository baseline.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -151,24 +152,25 @@ class EntryFieldTests(MarketplaceCase):
         self.add_package("alpha")
         self.assertEqual(self.generate()["plugins"][0]["source"], "./plugins/alpha")
 
-    def test_identity_and_metadata_come_from_the_claude_manifest(self) -> None:
+    def test_version_and_description_come_from_the_claude_manifest(self) -> None:
         self.write_catalog()
         self.add_package("alpha")
         entry = self.generate()["plugins"][0]
         manifest = claude_manifest("alpha")
-        for field in ("version", "description", "author", "repository", "license"):
+        for field in ("version", "description"):
             with self.subTest(field=field):
                 self.assertEqual(entry[field], manifest[field])
 
-    def test_a_field_the_manifest_does_not_state_is_omitted(self) -> None:
+    def test_presentation_fields_only_the_claude_manifest_states_are_ignored(self) -> None:
+        """The Claude manifest carries none; one that does is not a second source."""
         self.write_catalog()
-        manifest = claude_manifest("alpha")
-        del manifest["license"]
-        package = self.add_package("alpha")
-        (package / sm.CLAUDE_MANIFEST_RELATIVE).write_text(
-            json.dumps(manifest, indent=2), encoding="utf-8"
+        self.add_package(
+            "alpha", claude_overrides={"homepage": "https://example.com", "category": "tools"}
         )
-        self.assertNotIn("license", self.generate()["plugins"][0])
+        entry = self.generate()["plugins"][0]
+        for field in ("author", "repository", "license", "homepage", "keywords", "category"):
+            with self.subTest(field=field):
+                self.assertNotIn(field, entry)
 
     def test_keywords_prefer_the_portable_manifest(self) -> None:
         self.write_catalog()
@@ -214,12 +216,6 @@ class EntryFieldTests(MarketplaceCase):
         self.assertEqual(entry["repository"], "https://example.com/portable")
         self.assertEqual(entry["license"], "MIT")
         self.assertEqual(entry["keywords"], ["portable"])
-
-    def test_keywords_fall_back_to_the_claude_manifest(self) -> None:
-        """Which is where the catalog actually keeps them today."""
-        self.write_catalog()
-        self.add_package("alpha")
-        self.assertEqual(self.generate()["plugins"][0]["keywords"], ["alpha", "example"])
 
     def test_the_entry_and_the_manifest_cannot_disagree_on_version(self) -> None:
         """The agreement `claude plugin tag` refuses to release without."""
@@ -361,6 +357,7 @@ def muse_manifest(name: str, **overrides: object) -> dict:
             "agents": ["./com.infiquetra.claude/agents/helper.md"],
             "mcpServers": "./com.infiquetra.claude/mcp/servers.json",
             "types": "./com.infiquetra.claude/types/index.d.ts",
+            "outputStyles": "./com.infiquetra.claude/output-styles/",
             "homepage": "https://example.com/home",
         }
     )
@@ -486,10 +483,27 @@ class StageMusePluginTests(MuseStagingCase):
         sm.stage_muse_plugin(package, staged)
         self.assertTrue((staged / "schemas" / "plugin.json").is_file())
 
+    #: Written out here, not read from `sm.MUSE_UNSUPPORTED_KEYS`: a test that iterates
+    #: the production constant stays green when a key is deleted from it.
+    REJECTED_BY_MUSE = (
+        "author",
+        "repository",
+        "keywords",
+        "license",
+        "homepage",
+        "types",
+        "outputStyles",
+        "agents",
+    )
+
     def test_claude_only_keys_are_removed_from_the_staged_manifest(self) -> None:
-        manifest = self.staged_manifest(self.stage())
-        for key in sm.MUSE_UNSUPPORTED_KEYS:
+        staged = self.stage()
+        source_path = self.root / "plugins" / "alpha" / sm.CLAUDE_MANIFEST_RELATIVE
+        source = json.loads(source_path.read_text(encoding="utf-8"))
+        manifest = self.staged_manifest(staged)
+        for key in self.REJECTED_BY_MUSE:
             with self.subTest(key=key):
+                self.assertIn(key, source, "the fixture must declare every rejected key")
                 self.assertNotIn(key, manifest)
         self.assertEqual(manifest["name"], "alpha")
         self.assertEqual(manifest["version"], "1.2.3")
@@ -536,10 +550,92 @@ class StageMusePluginTests(MuseStagingCase):
             servers_before,
         )
 
-    def test_staging_over_the_package_itself_is_refused(self) -> None:
+    def snapshot(self, directory: Path) -> dict[str, bytes]:
+        return {
+            str(path.relative_to(directory)): path.read_bytes()
+            for path in sorted(directory.rglob("*"))
+            if path.is_file()
+        }
+
+    def test_a_destination_that_overlaps_the_package_is_refused_and_nothing_is_deleted(
+        self,
+    ) -> None:
         package = self.add_muse_package("alpha")
+        sibling = package.parent / "sibling.txt"
+        sibling.write_text("kept\n", encoding="utf-8")
+        before = self.snapshot(package.parent)
+        for label, destination in (
+            ("the package itself", package),
+            ("an ancestor", package.parent),
+            ("a descendant", package / "nested"),
+        ):
+            with self.subTest(destination=label):
+                with self.assertRaises(sm.MarketplaceError):
+                    sm.stage_muse_plugin(package, destination)
+                self.assertEqual(self.snapshot(package.parent), before)
+
+    def test_a_manifest_path_that_leaves_the_package_is_refused(self) -> None:
+        victim = self.root / "victim.json"
+        victim.write_text('{"a": 1}', encoding="utf-8")
+        cases = {
+            "absolute mcpServers": {"mcpServers": str(victim)},
+            "climbing mcpServers": {"mcpServers": "../../victim.json"},
+            "climbing commands": {"commands": "../outside/"},
+            "absolute commands": {"commands": str(self.root)},
+            "climbing skills": {"skills": ["./skills/", "../../elsewhere/"]},
+            "non-string skills": {"skills": [3]},
+        }
+        for label, overrides in cases.items():
+            with self.subTest(case=label):
+                name = label.replace(" ", "-")
+                package = self.add_muse_package(name, muse_manifest(name, **overrides))
+                destination = self.root / "staged" / name
+                with self.assertRaises(sm.MarketplaceError):
+                    sm.stage_muse_plugin(package, destination)
+                self.assertFalse(destination.exists())
+                self.assertEqual(victim.read_text(encoding="utf-8"), '{"a": 1}')
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symbolic links are not supported here")
+    def test_a_symlink_that_leaves_the_package_is_refused(self) -> None:
+        package = self.add_muse_package("alpha")
+        outside = self.root / "outside.txt"
+        outside.write_text("secret\n", encoding="utf-8")
+        (package / "link.txt").symlink_to(outside)
+        destination = self.root / "staged" / "alpha"
+        with self.assertRaises(sm.MarketplaceError) as caught:
+            sm.stage_muse_plugin(package, destination)
+        self.assertIn("link.txt", str(caught.exception))
+        self.assertFalse(destination.exists())
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symbolic links are not supported here")
+    def test_a_symlink_loop_is_refused_and_an_inside_symlink_is_copied(self) -> None:
+        package = self.add_muse_package("alpha")
+        (package / "loop").symlink_to(package / "loop")
         with self.assertRaises(sm.MarketplaceError):
-            sm.stage_muse_plugin(package, package)
+            sm.stage_muse_plugin(package, self.root / "staged" / "alpha")
+        (package / "loop").unlink()
+        (package / "alias.md").symlink_to(package / "README.md")
+        staged = sm.stage_muse_plugin(package, self.root / "staged" / "alpha")
+        self.assertEqual((staged / "alias.md").read_text(encoding="utf-8"), "Readme.\n")
+
+    def test_a_staged_saga_still_reports_the_saga_version(self) -> None:
+        """A staged copy drops the root manifest, so a reader of it must have a fallback."""
+        staged = sm.stage_muse_plugin(ROOT / "plugins" / "saga", self.root / "staged" / "saga")
+        self.assertFalse((staged / "plugin.json").exists())
+        expected = json.loads((ROOT / "plugins/saga/plugin.json").read_text(encoding="utf-8"))
+        program = (
+            "import sys; sys.path.insert(0, sys.argv[1]); import review_command; "
+            "print(review_command._saga_version())"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-I", "-c", program, str(staged / "scripts")],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), expected["version"])
 
 
 class StageMuseMarketplaceTests(MuseStagingCase):
@@ -574,6 +670,42 @@ class StageMuseMarketplaceTests(MuseStagingCase):
         self.assertEqual(
             (self.target / "plugins/alpha/README.md").read_text(encoding="utf-8"), "Changed.\n"
         )
+
+    def test_a_full_run_prunes_packages_the_source_no_longer_has(self) -> None:
+        sm.stage_muse_marketplace(self.root, self.target)
+        shutil.rmtree(self.root / "plugins/beta")
+        sm.stage_muse_marketplace(self.root, self.target)
+        self.assertEqual(self.listed(), ["alpha"])
+        self.assertFalse((self.target / "plugins/beta").exists())
+
+    def test_a_full_run_prunes_packages_muse_can_no_longer_install(self) -> None:
+        sm.stage_muse_marketplace(self.root, self.target)
+        (self.root / "plugins/beta" / sm.CLAUDE_MANIFEST_RELATIVE).write_text(
+            json.dumps({"name": "beta", "outputStyles": "./styles/"}), encoding="utf-8"
+        )
+        sm.stage_muse_marketplace(self.root, self.target)
+        self.assertEqual(self.listed(), ["alpha"])
+        self.assertFalse((self.target / "plugins/beta").exists())
+
+    def test_a_partial_run_does_not_prune(self) -> None:
+        sm.stage_muse_marketplace(self.root, self.target)
+        shutil.rmtree(self.root / "plugins/beta")
+        sm.stage_muse_marketplace(self.root, self.target, packages=["alpha"])
+        self.assertEqual(self.listed(), ["alpha", "beta"])
+
+    def test_a_target_that_overlaps_the_source_packages_is_refused(self) -> None:
+        before = sorted(str(path) for path in (self.root / "plugins").rglob("*"))
+        for label, target in (
+            ("the repository", self.root),
+            ("the packages directory", self.root / "plugins"),
+            ("inside the packages", self.root / "plugins" / "alpha" / "out"),
+        ):
+            with self.subTest(target=label):
+                with self.assertRaises(sm.MarketplaceError):
+                    sm.stage_muse_marketplace(self.root, target)
+                self.assertEqual(
+                    sorted(str(path) for path in (self.root / "plugins").rglob("*")), before
+                )
 
     def test_a_partial_run_into_an_empty_target_lists_only_what_it_staged(self) -> None:
         sm.stage_muse_marketplace(self.root, self.target, packages=["beta"])
@@ -610,12 +742,59 @@ def _mcp_count(package: Path) -> int:
     return len(data.get("mcpServers", data))
 
 
-@unittest.skipUnless(shutil.which("muse"), "the muse CLI is not installed")
-class MuseValidationTests(unittest.TestCase):
-    """Muse itself accepts what staging produces."""
+class MuseReportContract(unittest.TestCase):
+    """What a staged package's `muse plugins validate --json` report must say."""
 
-    #: Diagnostics that mean the package was not in a shape Muse accepts.
-    REFUSED_CODES = ("unsupported-field", "agent-overlay-inactive", "multiple-manifests")
+    def assert_report_is_clean(self, report: dict, expected: dict[str, int]) -> None:
+        self.assertTrue(report["valid"])
+        self.assertEqual(report["diagnostics"], [])
+        found = {k: len(v) for k, v in report["capabilities"].items() if k in expected}
+        self.assertEqual(found, expected)
+
+
+class MuseReportContractTests(MuseReportContract):
+    """The contract is proved here without the muse CLI, which CI does not install."""
+
+    EXPECTED = {"skills": 1, "commands": 2, "hooks": 0, "mcp_servers": 1}
+
+    def report(self, **changes: object) -> dict:
+        report: dict = {
+            "valid": True,
+            "diagnostics": [],
+            "capabilities": {
+                "skills": ["a"],
+                "commands": ["a", "b"],
+                "hooks": [],
+                "mcp_servers": ["a"],
+                "reminders": [],
+            },
+        }
+        report.update(changes)
+        return report
+
+    def test_a_clean_report_passes(self) -> None:
+        self.assert_report_is_clean(self.report(), self.EXPECTED)
+
+    def test_any_diagnostic_fails_whatever_its_code(self) -> None:
+        for code in ("unsupported-field", "agent-overlay-inactive", "some-new-warning"):
+            with self.subTest(code=code), self.assertRaises(AssertionError):
+                self.assert_report_is_clean(
+                    self.report(diagnostics=[{"code": code, "severity": "warning"}]),
+                    self.EXPECTED,
+                )
+
+    def test_an_invalid_report_or_a_lost_capability_fails(self) -> None:
+        with self.assertRaises(AssertionError):
+            self.assert_report_is_clean(self.report(valid=False), self.EXPECTED)
+        lost = self.report()
+        lost["capabilities"]["commands"] = ["a"]
+        with self.assertRaises(AssertionError):
+            self.assert_report_is_clean(lost, self.EXPECTED)
+
+
+@unittest.skipUnless(shutil.which("muse"), "the muse CLI is not installed")
+class MuseValidationTests(MuseReportContract):
+    """Muse itself accepts what staging produces."""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -636,21 +815,15 @@ class MuseValidationTests(unittest.TestCase):
     def test_every_staged_package_validates_with_its_capabilities_intact(self) -> None:
         for package in sm.muse_applicable_packages(ROOT):
             with self.subTest(package=package.name):
-                report = self.validate(package.name)
-                self.assertTrue(report["valid"])
-                self.assertEqual(
-                    [d for d in report["diagnostics"] if d["code"] in self.REFUSED_CODES], []
+                self.assert_report_is_clean(
+                    self.validate(package.name),
+                    {
+                        "skills": len(list(package.glob("skills/*/SKILL.md"))),
+                        "commands": len(list(package.glob("com.infiquetra.claude/commands/*.md"))),
+                        "hooks": _hook_count(package),
+                        "mcp_servers": _mcp_count(package),
+                    },
                 )
-                capabilities = report["capabilities"]
-                self.assertEqual(
-                    len(capabilities["skills"]), len(list(package.glob("skills/*/SKILL.md")))
-                )
-                self.assertEqual(
-                    len(capabilities["commands"]),
-                    len(list(package.glob("com.infiquetra.claude/commands/*.md"))),
-                )
-                self.assertEqual(len(capabilities["hooks"]), _hook_count(package))
-                self.assertEqual(len(capabilities["mcp_servers"]), _mcp_count(package))
 
 
 class CommittedMarketplaceTests(unittest.TestCase):

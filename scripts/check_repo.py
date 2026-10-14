@@ -451,25 +451,30 @@ def check_plugin_manifests(root: Path) -> list[str]:
 
 
 def _portable_presentation_errors(payload: dict[str, object], relative: Path) -> list[str]:
+    """One error per field of ``PORTABLE_PRESENTATION_FIELDS`` the manifest lacks or states badly.
+
+    ``author`` is an object with a non-empty ``name``, ``keywords`` a non-empty
+    list of non-empty strings, and every other field a non-empty string.
+    """
     errors: list[str] = []
-    author = payload.get("author")
-    if not (
-        isinstance(author, dict)
-        and isinstance(author.get("name"), str)
-        and author["name"].strip()
-    ):
-        errors.append(f"missing author with a non-empty name in {relative}")
-    for field in ("repository", "license"):
+    for field in PORTABLE_PRESENTATION_FIELDS:
         value = payload.get(field)
-        if not isinstance(value, str) or not value.strip():
-            errors.append(f"missing non-empty {field} in {relative}")
-    keywords = payload.get("keywords")
-    if not (
-        isinstance(keywords, list)
-        and keywords
-        and all(isinstance(word, str) and word.strip() for word in keywords)
-    ):
-        errors.append(f"missing non-empty keywords list of strings in {relative}")
+        if field == "author":
+            name = value.get("name") if isinstance(value, dict) else None
+            valid = isinstance(name, str) and bool(name.strip())
+            expected = "author with a non-empty name"
+        elif field == "keywords":
+            valid = (
+                isinstance(value, list)
+                and bool(value)
+                and all(isinstance(word, str) and bool(word.strip()) for word in value)
+            )
+            expected = "non-empty keywords list of strings"
+        else:
+            valid = isinstance(value, str) and bool(value.strip())
+            expected = f"non-empty {field}"
+        if not valid:
+            errors.append(f"missing {expected} in {relative}")
     return errors
 
 

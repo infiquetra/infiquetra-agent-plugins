@@ -225,10 +225,11 @@ CARRIED_MANIFEST_FIELDS = ("name", "version", "description")
 #: Presentation metadata the generated portable manifest carries over from the
 #: upstream one. `repository` is deliberately not among them: it is rewritten to
 #: name this repository, which is where the package is maintained after the
-#: import, and a missing `license` takes this repository's.
+#: import. `homepage` is optional; the other three are required, because
+#: `scripts/check_repo.py` refuses a portable manifest without them and this
+#: import will not invent an author, a licence or keywords.
 CARRIED_PRESENTATION_FIELDS = ("author", "homepage", "license", "keywords")
 THIS_REPOSITORY = "https://github.com/infiquetra/infiquetra-agent-plugins"
-THIS_LICENSE = "MIT"
 
 #: A `fleet_commons_shim.load("<module>")` call. Read from the *upstream* bytes,
 #: before a transform rewrites them away, because the module name is what the
@@ -499,6 +500,12 @@ def build_portable_manifest(upstream: dict[str, Any]) -> dict[str, Any]:
             f"the upstream Claude manifest states no {', '.join(missing)}; the portable "
             "manifest requires all three and this import will not invent them"
         )
+    absent = _missing_presentation(upstream)
+    if absent:
+        raise ImportVendorError(
+            f"the upstream Claude manifest states no usable {', '.join(absent)}; the portable "
+            "manifest requires them and this import will not invent them"
+        )
     manifest: dict[str, Any] = {
         "$schema": PORTABLE_SCHEMA,
         "name": upstream["name"],
@@ -509,8 +516,27 @@ def build_portable_manifest(upstream: dict[str, Any]) -> dict[str, Any]:
         if field in upstream:
             manifest[field] = upstream[field]
     manifest["repository"] = THIS_REPOSITORY
-    manifest.setdefault("license", THIS_LICENSE)
     return manifest
+
+
+def _missing_presentation(upstream: dict[str, Any]) -> list[str]:
+    """The required presentation fields the upstream manifest lacks, or states badly."""
+    absent: list[str] = []
+    author = upstream.get("author")
+    name = author.get("name") if isinstance(author, dict) else None
+    if not isinstance(name, str) or not name.strip():
+        absent.append("author with a name")
+    keywords = upstream.get("keywords")
+    if not (
+        isinstance(keywords, list)
+        and keywords
+        and all(isinstance(word, str) and word.strip() for word in keywords)
+    ):
+        absent.append("keywords")
+    license_ = upstream.get("license")
+    if not isinstance(license_, str) or not license_.strip():
+        absent.append("license")
+    return absent
 
 
 def _json_bytes(payload: dict[str, Any]) -> bytes:

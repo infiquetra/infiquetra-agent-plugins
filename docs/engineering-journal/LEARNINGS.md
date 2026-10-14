@@ -64,28 +64,60 @@ in the same change, then confirm each reader fails on a wrong value and not only
 one. Three readers must change together if the key moves again: `read_frontmatter` in
 `tests/test_python_floor.py`, `read_frontmatter` in `plugins/voice/tests/test_skill_entrypoint.py`,
 and `_frontmatter` in `plugins/hermes-profile-evolution/tests/test_profile_request_entrypoint.py`.
+
 ### Muse validates a package as a foreign plugin, so a staged copy has to match its loader
 
 **Evidence.** Issue #235. `muse plugins validate plugins/redis-channel --json` (Muse Code 1.4.7) reported
 `multiple-manifests` and an `agent-overlay-inactive` diagnostic for each key in `.claude-plugin/plugin.json`.
-After `stage_muse_plugin` rewrote a copy, all twelve installable packages validated with no manifest
-diagnostic, and Muse's skill, command, hook and MCP server counts matched the source tree
+After `stage_muse_plugin` rewrote a copy, all twelve installable packages validated with an empty
+diagnostics list, and Muse's skill, command, hook and MCP server counts matched the source tree
 (`tests/test_sync_marketplace.py`, `MuseValidationTests`).
 
 **Mechanism.** Muse treats the root `plugin.json` and `.codex-plugin/` as competing manifests and ignores
 Claude-only keys in the overlay. It also wants `skills` and `commands` as lists of paths, not directory
-strings, and a `mcpServers` wrapper in the MCP file. With #236's move of the skills' `compatibility` key
-under `metadata`, Muse reports no diagnostic at all for a staged package.
+strings, and a `mcpServers` wrapper in the MCP file. An earlier change (#236) moved the skills' top-level
+`compatibility` frontmatter key under `metadata`, which removed Muse's unknown-frontmatter-field diagnostic.
+After it, Muse reports nothing at all for a staged package.
 
 **Generalizable rule.** Prove a client adapter with that client's own validator, and derive the expected
 capability counts from the source tree rather than hard-coding them.
 
-**Follow-up (phase B).** Tightening the vendor-package importer showed the same rule from the other side: the
-importer wrote the presentation keys into the Claude manifest, so the new gate refused its output. A generator
-and the gate that checks its output have to change together. Cycle 28 of the mutation proof
+**Follow-up.** Changing the vendor-package importer showed the same rule from the other side: the importer
+wrote the presentation keys into the Claude manifest, so the new gate refused its output. A generator and the
+gate that checks its output have to change together. Cycle 28 of the mutation proof
 ([the evidence record](../evidence/2026-10-13-cycle28-mutation-proof-manifest-and-muse-staging.txt)) first
-left four of twenty-three mutations alive: a blank author name, a blank keyword, a Claude manifest that is not
-an object, and the call that runs the staging check. Each got a test before the proof was published.
+left four mutations alive: a blank author name, a blank keyword, a Claude manifest that is not an object, and
+the call that runs the staging check. Each got a test before the proof was published.
+
+### A staged copy that drops a manifest silently changes every runtime reader of it
+
+**Evidence.** Code review of issue #235. `_saga_version()` in `plugins/saga/scripts/review_command.py` read only
+the root `plugin.json`, which staging leaves out because Muse reads it as a second manifest. Run from a staged
+copy it returned `not-recorded`; from the source it returned `1.3.2`. Muse validation and the capability counts
+both passed, so neither noticed. It now falls back to `.claude-plugin/plugin.json`, and
+`tests/test_sync_marketplace.py` runs the staged copy's reader in a subprocess.
+
+**Mechanism.** Validation proves the package loads. It says nothing about files the package reads at runtime
+by path. A sweep of the other packages found no further reader of the root `plugin.json`.
+
+**Generalizable rule.** When a staging step removes a file, search for runtime readers of that file and test the
+copy by running it, not only by validating it.
+
+### Staging acts on paths it reads from data, so it checks them before it writes
+
+**Evidence.** Code review of issue #235 reproduced four failures in `stage_muse_plugin` and
+`stage_muse_marketplace`: a destination that was the package's parent deleted the source and a sibling file
+before raising; an absolute `mcpServers` path caused an outside JSON file to be rewritten; a full restage kept
+packages that had left the source; and a symlink was copied as the bytes of its outside target.
+`scripts/check_repo.py` runs staging on every invocation, so each was reachable from the repository gate.
+
+**Mechanism.** The first code deleted its destination and read manifest paths without asking where either
+pointed. The staging now refuses, before it writes anything, a destination that is, holds or sits inside its
+source, a symlink that resolves outside the package, and any `skills`, `commands` or `mcpServers` path that is
+absolute or leaves the package. A full run prunes by comparing the staged names with the applicable set.
+
+**Generalizable rule.** Code that deletes a directory and then copies into it needs the containment check
+first; a manifest is untrusted data even when this repository wrote it.
 
 ## 2026-10-12
 
