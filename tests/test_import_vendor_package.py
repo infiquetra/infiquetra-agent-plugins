@@ -407,10 +407,29 @@ class ManifestGenerationTests(ImportCase):
             if isinstance(value, str):
                 self.assertNotIn("${CLAUDE_PLUGIN_ROOT}", value)
 
-    def test_the_claude_manifest_names_this_repository_not_the_upstream(self) -> None:
+    def test_the_portable_manifest_names_this_repository_not_the_upstream(self) -> None:
         self.upstream.build(minimal_files())
         self.assertEqual(self.run_import(), 0)
-        self.assertEqual(self.load(ivp.CLAUDE_MANIFEST_PATH)["repository"], ivp.THIS_REPOSITORY)
+        portable = self.load(ivp.PORTABLE_MANIFEST_NAME)
+        self.assertEqual(portable["repository"], ivp.THIS_REPOSITORY)
+        self.assertEqual(portable["author"], UPSTREAM_MANIFEST["author"])
+        self.assertEqual(portable["keywords"], UPSTREAM_MANIFEST["keywords"])
+        self.assertEqual(portable["license"], ivp.THIS_LICENSE)
+
+    def test_the_claude_manifest_carries_no_presentation_metadata(self) -> None:
+        """`check_repo.py` refuses them there; Muse reports each as unsupported."""
+        self.upstream.build(minimal_files())
+        self.assertEqual(self.run_import(), 0)
+        manifest = self.load(ivp.CLAUDE_MANIFEST_PATH)
+        for field in ("author", "repository", "keywords", "homepage", "license"):
+            with self.subTest(field=field):
+                self.assertNotIn(field, manifest)
+
+    def test_an_upstream_license_is_kept(self) -> None:
+        manifest = dict(UPSTREAM_MANIFEST, license="Apache-2.0")
+        self.upstream.build(minimal_files(**{".claude-plugin/plugin.json": _json(manifest)}))
+        self.assertEqual(self.run_import(), 0)
+        self.assertEqual(self.load(ivp.PORTABLE_MANIFEST_NAME)["license"], "Apache-2.0")
 
     def test_the_relocated_manifest_keeps_the_upstream_repository(self) -> None:
         """It is the upstream's own manifest, preserved, not a rewritten copy."""

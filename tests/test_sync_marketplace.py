@@ -614,10 +614,8 @@ def _mcp_count(package: Path) -> int:
 class MuseValidationTests(unittest.TestCase):
     """Muse itself accepts what staging produces."""
 
-    #: Diagnostics that mean the manifest was not in a shape Muse accepts. A skill's
-    #: own `compatibility` frontmatter is reported as unsupported too, but that is
-    #: Agent Skills content Muse ignores, not a manifest defect, so it is excluded.
-    MANIFEST_CODES = ("agent-overlay-inactive", "multiple-manifests")
+    #: Diagnostics that mean the package was not in a shape Muse accepts.
+    REFUSED_CODES = ("unsupported-field", "agent-overlay-inactive", "multiple-manifests")
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -640,18 +638,8 @@ class MuseValidationTests(unittest.TestCase):
             with self.subTest(package=package.name):
                 report = self.validate(package.name)
                 self.assertTrue(report["valid"])
-                diagnostics = report["diagnostics"]
                 self.assertEqual(
-                    [d for d in diagnostics if d["code"] in self.MANIFEST_CODES], []
-                )
-                self.assertEqual(
-                    [
-                        d
-                        for d in diagnostics
-                        if d["code"] == "unsupported-field"
-                        and not d["path"].endswith("SKILL.md")
-                    ],
-                    [],
+                    [d for d in report["diagnostics"] if d["code"] in self.REFUSED_CODES], []
                 )
                 capabilities = report["capabilities"]
                 self.assertEqual(

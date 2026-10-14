@@ -217,19 +217,18 @@ SKILLS_DIRECTORY = "skills"
 SKILLS_MANIFEST_FIELD = "skills"
 SKILLS_MANIFEST_VALUE = f"./{SKILLS_DIRECTORY}/"
 
-#: Metadata the generated Claude manifest carries over from the upstream one.
-#: `repository` is deliberately not among them: it is rewritten to name this
-#: repository, which is where the package is maintained after the import.
-CARRIED_MANIFEST_FIELDS = (
-    "name",
-    "version",
-    "description",
-    "author",
-    "homepage",
-    "license",
-    "keywords",
-)
+#: Identity the generated Claude manifest carries over from the upstream one.
+#: Presentation metadata is not here: it belongs in the portable manifest, and
+#: `scripts/check_repo.py` refuses it in Claude's.
+CARRIED_MANIFEST_FIELDS = ("name", "version", "description")
+
+#: Presentation metadata the generated portable manifest carries over from the
+#: upstream one. `repository` is deliberately not among them: it is rewritten to
+#: name this repository, which is where the package is maintained after the
+#: import, and a missing `license` takes this repository's.
+CARRIED_PRESENTATION_FIELDS = ("author", "homepage", "license", "keywords")
 THIS_REPOSITORY = "https://github.com/infiquetra/infiquetra-agent-plugins"
+THIS_LICENSE = "MIT"
 
 #: A `fleet_commons_shim.load("<module>")` call. Read from the *upstream* bytes,
 #: before a transform rewrites them away, because the module name is what the
@@ -488,7 +487,6 @@ def build_claude_manifest(upstream: dict[str, Any], declared: dict[str, str]) ->
     for field in CARRIED_MANIFEST_FIELDS:
         if field in upstream:
             manifest[field] = upstream[field]
-    manifest["repository"] = THIS_REPOSITORY
     manifest.update(declared)
     return manifest
 
@@ -501,12 +499,18 @@ def build_portable_manifest(upstream: dict[str, Any]) -> dict[str, Any]:
             f"the upstream Claude manifest states no {', '.join(missing)}; the portable "
             "manifest requires all three and this import will not invent them"
         )
-    return {
+    manifest: dict[str, Any] = {
         "$schema": PORTABLE_SCHEMA,
         "name": upstream["name"],
         "version": upstream["version"],
         "description": upstream["description"],
     }
+    for field in CARRIED_PRESENTATION_FIELDS:
+        if field in upstream:
+            manifest[field] = upstream[field]
+    manifest["repository"] = THIS_REPOSITORY
+    manifest.setdefault("license", THIS_LICENSE)
+    return manifest
 
 
 def _json_bytes(payload: dict[str, Any]) -> bytes:

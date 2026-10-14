@@ -70,6 +70,7 @@ specification moves the field under `metadata`. Either one removes the reason fo
 **Refs.** Cycle 27 of the mutation proof, which breaks each guard on purpose to check that a
 test fails, re-grades the top-level `compatibility` guard in `scripts/check_repo.py`:
 [the evidence record](../evidence/2026-10-13-cycle27-mutation-proof-root-instructions-and-compatibility.txt).
+
 ### Presentation metadata lives in the portable manifest; Muse gets a staged copy
 
 **Decision.** Issue #235, phase A. `author`, `repository`, `license` and `keywords` are authored once, in each
@@ -89,8 +90,20 @@ untouched.
 (the warnings are the loader refusing the keys). A second hand-maintained Muse manifest in each package
 (two files to drift).
 
+**Phase B.** `check_plugin_manifests` in `scripts/check_repo.py` now requires `author` (with a name),
+`repository`, `license` and `keywords` in every portable `plugin.json`, refuses `author`, `repository`,
+`keywords`, `homepage` and `license` in every `.claude-plugin/plugin.json`, and stages the Muse catalog into a
+temporary directory, failing when staging fails or leaves a root `plugin.json` or `.codex-plugin/` in a staged
+package. `scripts/import_vendor_package.py` follows the same rule: it writes the upstream's `author`,
+`homepage`, `license` and `keywords` to the portable manifest (with this repository's URL and, when the
+upstream states none, `MIT`) and no longer writes them to the Claude manifest.
+
 **Revisit when.** Muse's loader accepts the Claude manifest keys unchanged, or Claude reads presentation
 metadata from the portable manifest.
+
+**Refs.** Cycle 28 of the mutation proof, which breaks each new guard on purpose to check that a test fails,
+re-grades them in `scripts/check_repo.py`:
+[the evidence record](../evidence/2026-10-13-cycle28-mutation-proof-manifest-and-muse-staging.txt).
 
 ## 2026-10-12
 

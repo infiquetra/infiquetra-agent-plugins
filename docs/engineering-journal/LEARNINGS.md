@@ -74,12 +74,18 @@ diagnostic, and Muse's skill, command, hook and MCP server counts matched the so
 
 **Mechanism.** Muse treats the root `plugin.json` and `.codex-plugin/` as competing manifests and ignores
 Claude-only keys in the overlay. It also wants `skills` and `commands` as lists of paths, not directory
-strings, and a `mcpServers` wrapper in the MCP file. One diagnostic stays: a skill's `compatibility`
-frontmatter is reported `unsupported-field`. That is Agent Skills content, not the manifest, so the staging
-leaves it and the test excludes `SKILL.md` paths.
+strings, and a `mcpServers` wrapper in the MCP file. With #236's move of the skills' `compatibility` key
+under `metadata`, Muse reports no diagnostic at all for a staged package.
 
 **Generalizable rule.** Prove a client adapter with that client's own validator, and derive the expected
 capability counts from the source tree rather than hard-coding them.
+
+**Follow-up (phase B).** Tightening the vendor-package importer showed the same rule from the other side: the
+importer wrote the presentation keys into the Claude manifest, so the new gate refused its output. A generator
+and the gate that checks its output have to change together. Cycle 28 of the mutation proof
+([the evidence record](../evidence/2026-10-13-cycle28-mutation-proof-manifest-and-muse-staging.txt)) first
+left four of twenty-three mutations alive: a blank author name, a blank keyword, a Claude manifest that is not
+an object, and the call that runs the staging check. Each got a test before the proof was published.
 
 ## 2026-10-12
 

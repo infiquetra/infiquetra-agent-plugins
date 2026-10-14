@@ -17,6 +17,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -67,6 +68,15 @@ PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
 # mistaken for a specification rule by a later reader.
 SPECIFICATION_REQUIRED_MANIFEST_FIELDS = ("name",)
 REPOSITORY_REQUIRED_MANIFEST_FIELDS = ("name", "version", "description")
+
+# Presentation metadata (who wrote the package, where it lives, how it is
+# licensed, what it is about) is authored once, in the portable manifest, and the
+# marketplace generator reads it from there. The Claude packaging manifest must
+# not repeat it: Muse's foreign-plugin loader reports each of these keys as
+# unsupported when it finds them in `.claude-plugin/plugin.json`.
+CLAUDE_PRESENTATION_FIELDS = ("author", "repository", "keywords", "homepage", "license")
+PORTABLE_PRESENTATION_FIELDS = ("author", "repository", "license", "keywords")
+CLAUDE_MANIFEST_RELATIVE = Path(".claude-plugin") / "plugin.json"
 
 # The provenance manifest a synchronization script writes beside a derived
 # package. It records where the bytes came from and what may be done to each
@@ -434,7 +444,81 @@ def check_plugin_manifests(root: Path) -> list[str]:
             value = payload.get(field)
             if not isinstance(value, str) or not value.strip():
                 errors.append(f"missing non-empty {field} in {relative}")
+        errors.extend(_portable_presentation_errors(payload, relative))
+        errors.extend(_claude_presentation_errors(plugin_dir, root))
+    errors.extend(_muse_staging_errors(root))
     return errors
+
+
+def _portable_presentation_errors(payload: dict[str, object], relative: Path) -> list[str]:
+    errors: list[str] = []
+    author = payload.get("author")
+    if not (
+        isinstance(author, dict)
+        and isinstance(author.get("name"), str)
+        and author["name"].strip()
+    ):
+        errors.append(f"missing author with a non-empty name in {relative}")
+    for field in ("repository", "license"):
+        value = payload.get(field)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"missing non-empty {field} in {relative}")
+    keywords = payload.get("keywords")
+    if not (
+        isinstance(keywords, list)
+        and keywords
+        and all(isinstance(word, str) and word.strip() for word in keywords)
+    ):
+        errors.append(f"missing non-empty keywords list of strings in {relative}")
+    return errors
+
+
+def _claude_presentation_errors(plugin_dir: Path, root: Path) -> list[str]:
+    manifest = plugin_dir / CLAUDE_MANIFEST_RELATIVE
+    if not manifest.is_file():
+        return []
+    relative = manifest.relative_to(root)
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return [f"invalid Claude plugin manifest {relative}: {exc}"]
+    if not isinstance(payload, dict):
+        return [f"invalid Claude plugin manifest {relative}: expected a JSON object"]
+    portable = (plugin_dir / "plugin.json").relative_to(root)
+    return [
+        f"{relative} must not carry {field}: put presentation metadata in the "
+        f"portable {portable}, which the marketplace generator reads"
+        for field in CLAUDE_PRESENTATION_FIELDS
+        if field in payload
+    ]
+
+
+def _muse_staging_errors(root: Path) -> list[str]:
+    """Staging the Muse catalog must succeed and leave no competing manifest behind.
+
+    Muse reports a root `plugin.json` or a `.codex-plugin/` directory beside the
+    Claude manifest as `multiple-manifests`, so a staged package carrying either
+    would validate as the wrong thing. The import is local, matching the other
+    generated-artifact checks in this file.
+    """
+    scripts_dir = str(Path(__file__).resolve().parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    from sync_marketplace import MarketplaceError, stage_muse_marketplace  # noqa: PLC0415
+
+    with tempfile.TemporaryDirectory() as scratch:
+        try:
+            staged = stage_muse_marketplace(root, Path(scratch) / "muse-marketplace")
+        except (MarketplaceError, OSError) as exc:
+            return [f"Muse staging failed: {exc}"]
+        errors: list[str] = []
+        for package in sorted((staged / "plugins").iterdir()):
+            for competing in ("plugin.json", ".codex-plugin"):
+                if (package / competing).exists():
+                    errors.append(
+                        f"Muse staging left {competing} in the staged package {package.name}"
+                    )
+        return errors
 
 
 def _relative_path_error(relative_manifest: Path, index: int, path_value: object) -> str | None:
