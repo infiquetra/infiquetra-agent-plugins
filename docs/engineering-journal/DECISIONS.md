@@ -70,6 +70,27 @@ specification moves the field under `metadata`. Either one removes the reason fo
 **Refs.** Cycle 27 of the mutation proof, which breaks each guard on purpose to check that a
 test fails, re-grades the top-level `compatibility` guard in `scripts/check_repo.py`:
 [the evidence record](../evidence/2026-10-13-cycle27-mutation-proof-root-instructions-and-compatibility.txt).
+### Presentation metadata lives in the portable manifest; Muse gets a staged copy
+
+**Decision.** Issue #235, phase A. `author`, `repository`, `license` and `keywords` are authored once, in each
+package's portable `plugins/<package>/plugin.json` (all 14, `fleet-core` included). The thirteen
+`.claude-plugin/plugin.json` manifests keep only runtime and packaging keys. `scripts/sync_marketplace.py` reads
+the presentation fields from the portable manifest first and falls back to the Claude one. For Muse it adds
+`muse_applicable_packages`, `stage_muse_plugin` and `stage_muse_marketplace`, which copy the twelve installable
+packages into a scratch marketplace and rewrite only the copy: drop the Claude-only keys, turn `skills` and
+`commands` into path lists, and wrap a bare MCP server map under `mcpServers`.
+
+**Rationale.** Muse reads `.claude-plugin/plugin.json` as a foreign plugin and reports the presentation keys,
+`types`, `outputStyles` and `agents` as unsupported or inactive overlay. Claude accepts them, so the committed
+manifests cannot change shape for Muse. A staged copy keeps one source of truth and leaves the Claude install
+untouched.
+
+**Rejected alternatives.** Keeping the metadata in the Claude manifest and suppressing Muse's diagnostics
+(the warnings are the loader refusing the keys). A second hand-maintained Muse manifest in each package
+(two files to drift).
+
+**Revisit when.** Muse's loader accepts the Claude manifest keys unchanged, or Claude reads presentation
+metadata from the portable manifest.
 
 ## 2026-10-12
 

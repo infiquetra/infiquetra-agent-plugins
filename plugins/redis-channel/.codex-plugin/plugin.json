@@ -2,6 +2,21 @@
   "name": "redis-channel",
   "version": "0.5.3",
   "description": "Portable Redis Streams bridge. The core is an MCP server and scripts that register one agent session and carry messages on Redis streams. Claude commands, the coach agent, and the MCP registration live under the com.infiquetra.claude client extension.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+  "license": "MIT",
+  "keywords": [
+    "claude-code-channel",
+    "mcp",
+    "redis",
+    "redis-streams",
+    "router-agnostic",
+    "voice",
+    "hands-free"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Redis Channel",

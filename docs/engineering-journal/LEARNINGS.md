@@ -64,6 +64,22 @@ in the same change, then confirm each reader fails on a wrong value and not only
 one. Three readers must change together if the key moves again: `read_frontmatter` in
 `tests/test_python_floor.py`, `read_frontmatter` in `plugins/voice/tests/test_skill_entrypoint.py`,
 and `_frontmatter` in `plugins/hermes-profile-evolution/tests/test_profile_request_entrypoint.py`.
+### Muse validates a package as a foreign plugin, so a staged copy has to match its loader
+
+**Evidence.** Issue #235. `muse plugins validate plugins/redis-channel --json` (Muse Code 1.4.7) reported
+`multiple-manifests` and an `agent-overlay-inactive` diagnostic for each key in `.claude-plugin/plugin.json`.
+After `stage_muse_plugin` rewrote a copy, all twelve installable packages validated with no manifest
+diagnostic, and Muse's skill, command, hook and MCP server counts matched the source tree
+(`tests/test_sync_marketplace.py`, `MuseValidationTests`).
+
+**Mechanism.** Muse treats the root `plugin.json` and `.codex-plugin/` as competing manifests and ignores
+Claude-only keys in the overlay. It also wants `skills` and `commands` as lists of paths, not directory
+strings, and a `mcpServers` wrapper in the MCP file. One diagnostic stays: a skill's `compatibility`
+frontmatter is reported `unsupported-field`. That is Agent Skills content, not the manifest, so the staging
+leaves it and the test excludes `SKILL.md` paths.
+
+**Generalizable rule.** Prove a client adapter with that client's own validator, and derive the expected
+capability counts from the source tree rather than hard-coding them.
 
 ## 2026-10-12
 

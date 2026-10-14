@@ -2,6 +2,19 @@
   "name": "codex",
   "version": "0.1.7",
   "description": "Portable Codex delegation wrapper. It validates one codex.delegation.v1 envelope, supervises one codex exec, and writes an evidence bundle plus an output-attested bridge receipt. Claude commands and agents live under the com.infiquetra.claude client extension directory.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "openai",
+    "delegation",
+    "teammate",
+    "evidence"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Codex",

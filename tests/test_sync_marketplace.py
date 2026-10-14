@@ -20,6 +20,8 @@ Standard library only, matching the repository baseline.
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -175,6 +177,44 @@ class EntryFieldTests(MarketplaceCase):
         )
         self.assertEqual(self.generate()["plugins"][0]["keywords"], ["portable", "words"])
 
+    def test_presentation_metadata_prefers_the_portable_manifest(self) -> None:
+        self.write_catalog()
+        portable_values = {
+            "author": {"name": "Portable", "email": "portable@example.com"},
+            "repository": "https://example.com/portable",
+            "license": "Apache-2.0",
+            "homepage": "https://example.com/home",
+        }
+        self.add_package("alpha", portable=portable_manifest("alpha", **portable_values))
+        entry = self.generate()["plugins"][0]
+        for field, value in portable_values.items():
+            with self.subTest(field=field):
+                self.assertEqual(entry[field], value)
+
+    def test_presentation_metadata_is_read_when_only_the_portable_manifest_states_it(
+        self,
+    ) -> None:
+        self.write_catalog()
+        package = self.add_package(
+            "alpha",
+            portable=portable_manifest(
+                "alpha",
+                author={"name": "Portable", "email": "portable@example.com"},
+                repository="https://example.com/portable",
+                license="MIT",
+                keywords=["portable"],
+            ),
+        )
+        (package / sm.CLAUDE_MANIFEST_RELATIVE).write_text(
+            json.dumps({"name": "alpha", "version": "1.2.3", "description": "Alpha."}),
+            encoding="utf-8",
+        )
+        entry = self.generate()["plugins"][0]
+        self.assertEqual(entry["author"]["name"], "Portable")
+        self.assertEqual(entry["repository"], "https://example.com/portable")
+        self.assertEqual(entry["license"], "MIT")
+        self.assertEqual(entry["keywords"], ["portable"])
+
     def test_keywords_fall_back_to_the_claude_manifest(self) -> None:
         """Which is where the catalog actually keeps them today."""
         self.write_catalog()
@@ -310,6 +350,319 @@ class StalenessTests(MarketplaceCase):
         self.assertTrue(
             any("marketplace" in problem for problem in check_repo.check_repo(self.root))
         )
+
+
+def muse_manifest(name: str, **overrides: object) -> dict:
+    manifest = claude_manifest(name)
+    manifest.update(
+        {
+            "skills": "./skills/",
+            "commands": "./com.infiquetra.claude/commands/",
+            "agents": ["./com.infiquetra.claude/agents/helper.md"],
+            "mcpServers": "./com.infiquetra.claude/mcp/servers.json",
+            "types": "./com.infiquetra.claude/types/index.d.ts",
+            "homepage": "https://example.com/home",
+        }
+    )
+    manifest.update(overrides)
+    return manifest
+
+
+class MuseStagingCase(MarketplaceCase):
+    """A scratch package carrying every kind of file staging must keep or drop."""
+
+    def add_muse_package(self, name: str, manifest: dict | None = None) -> Path:
+        package = self.add_package(name, claude=False)
+        (package / ".claude-plugin").mkdir()
+        (package / sm.CLAUDE_MANIFEST_RELATIVE).write_text(
+            json.dumps(manifest or muse_manifest(name)), encoding="utf-8"
+        )
+        files = {
+            "skills/one/SKILL.md": "---\nname: one\ndescription: One.\n---\n",
+            "scripts/run.py": "print('run')\n",
+            "references/guide.md": "A guide.\n",
+            "roles/role.md": "A role.\n",
+            "server/app.py": "print('server')\n",
+            "config/settings.json": "{}\n",
+            "schemas/s.json": "{}\n",
+            "templates/t.txt": "t\n",
+            "com.infiquetra.claude/commands/zeta.md": "Zeta.\n",
+            "com.infiquetra.claude/commands/alpha.md": "Alpha.\n",
+            "com.infiquetra.claude/commands/notes.txt": "Not a command.\n",
+            "com.infiquetra.claude/hooks/hooks.json": '{"hooks": {}}\n',
+            "com.infiquetra.claude/agents/helper.md": "Helper.\n",
+            "com.infiquetra.claude/mcp/servers.json": json.dumps(
+                {name: {"command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/server/app.py"]}}
+            ),
+            "README.md": "Readme.\n",
+            "CHANGELOG.md": "Changes.\n",
+            "LICENSE": "MIT\n",
+            ".codex-plugin/plugin.json": "{}\n",
+            "__pycache__/x.pyc": "x",
+            ".pytest_cache/y": "y",
+        }
+        for relative, text in files.items():
+            path = package / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        return package
+
+
+class MuseApplicablePackageTests(MuseStagingCase):
+    def test_only_packages_declaring_a_loadable_capability_are_applicable(self) -> None:
+        self.write_catalog()
+        self.add_muse_package("alpha")
+        self.add_package("beta", claude=False)
+        style = self.add_package("styled")
+        (style / sm.CLAUDE_MANIFEST_RELATIVE).write_text(
+            json.dumps({"name": "styled", "outputStyles": "./com.infiquetra.claude/styles/"}),
+            encoding="utf-8",
+        )
+        self.assertEqual(
+            [package.name for package in sm.muse_applicable_packages(self.root)], ["alpha"]
+        )
+
+    def test_the_committed_tree_has_exactly_the_twelve_installable_packages(self) -> None:
+        self.assertEqual(
+            [package.name for package in sm.muse_applicable_packages(ROOT)],
+            [
+                "agent-launcher",
+                "agy",
+                "codex",
+                "deploy",
+                "hermes-profile-evolution",
+                "home-lab-ops",
+                "mission-control",
+                "orchestrate",
+                "redis-channel",
+                "saga",
+                "unifi",
+                "voice",
+            ],
+        )
+
+
+class StageMusePluginTests(MuseStagingCase):
+    def stage(self, name: str = "alpha", manifest: dict | None = None) -> Path:
+        package = self.add_muse_package(name, manifest)
+        destination = self.root / "staged" / name
+        self.assertEqual(sm.stage_muse_plugin(package, destination), destination)
+        return destination
+
+    def staged_manifest(self, staged: Path) -> dict:
+        return json.loads((staged / sm.CLAUDE_MANIFEST_RELATIVE).read_text(encoding="utf-8"))
+
+    def test_runtime_directories_and_documents_are_preserved(self) -> None:
+        staged = self.stage()
+        for relative in (
+            "skills/one/SKILL.md",
+            "scripts/run.py",
+            "references/guide.md",
+            "roles/role.md",
+            "server/app.py",
+            "config/settings.json",
+            "schemas/s.json",
+            "templates/t.txt",
+            "com.infiquetra.claude/commands/alpha.md",
+            "com.infiquetra.claude/hooks/hooks.json",
+            "com.infiquetra.claude/mcp/servers.json",
+            "README.md",
+            "CHANGELOG.md",
+            "LICENSE",
+        ):
+            with self.subTest(path=relative):
+                self.assertTrue((staged / relative).is_file())
+
+    def test_other_adapters_manifests_and_caches_are_left_behind(self) -> None:
+        staged = self.stage()
+        for relative in ("plugin.json", ".codex-plugin", "__pycache__", ".pytest_cache"):
+            with self.subTest(path=relative):
+                self.assertFalse((staged / relative).exists())
+
+    def test_a_nested_plugin_json_is_not_mistaken_for_the_root_one(self) -> None:
+        package = self.add_muse_package("alpha")
+        (package / "schemas" / "plugin.json").write_text("{}\n", encoding="utf-8")
+        staged = self.root / "staged" / "alpha"
+        sm.stage_muse_plugin(package, staged)
+        self.assertTrue((staged / "schemas" / "plugin.json").is_file())
+
+    def test_claude_only_keys_are_removed_from_the_staged_manifest(self) -> None:
+        manifest = self.staged_manifest(self.stage())
+        for key in sm.MUSE_UNSUPPORTED_KEYS:
+            with self.subTest(key=key):
+                self.assertNotIn(key, manifest)
+        self.assertEqual(manifest["name"], "alpha")
+        self.assertEqual(manifest["version"], "1.2.3")
+
+    def test_skills_become_a_list_and_commands_become_sorted_files(self) -> None:
+        manifest = self.staged_manifest(self.stage())
+        self.assertEqual(manifest["skills"], ["./skills/"])
+        self.assertEqual(
+            manifest["commands"],
+            [
+                "./com.infiquetra.claude/commands/alpha.md",
+                "./com.infiquetra.claude/commands/zeta.md",
+            ],
+        )
+
+    def test_a_bare_mcp_server_map_is_wrapped(self) -> None:
+        staged = self.stage()
+        servers = json.loads(
+            (staged / "com.infiquetra.claude/mcp/servers.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(list(servers), ["mcpServers"])
+        self.assertIn("alpha", servers["mcpServers"])
+
+    def test_an_already_wrapped_mcp_map_is_left_alone(self) -> None:
+        package = self.add_muse_package("alpha")
+        wrapped = {"mcpServers": {"alpha": {"command": "python3"}}}
+        servers = package / "com.infiquetra.claude/mcp/servers.json"
+        servers.write_text(json.dumps(wrapped), encoding="utf-8")
+        staged = self.root / "staged" / "alpha"
+        sm.stage_muse_plugin(package, staged)
+        self.assertEqual(
+            json.loads((staged / "com.infiquetra.claude/mcp/servers.json").read_text("utf-8")),
+            wrapped,
+        )
+
+    def test_the_source_package_is_not_modified(self) -> None:
+        package = self.add_muse_package("alpha")
+        before = (package / sm.CLAUDE_MANIFEST_RELATIVE).read_text(encoding="utf-8")
+        servers_before = (package / "com.infiquetra.claude/mcp/servers.json").read_text("utf-8")
+        sm.stage_muse_plugin(package, self.root / "staged" / "alpha")
+        self.assertEqual((package / sm.CLAUDE_MANIFEST_RELATIVE).read_text("utf-8"), before)
+        self.assertEqual(
+            (package / "com.infiquetra.claude/mcp/servers.json").read_text("utf-8"),
+            servers_before,
+        )
+
+    def test_staging_over_the_package_itself_is_refused(self) -> None:
+        package = self.add_muse_package("alpha")
+        with self.assertRaises(sm.MarketplaceError):
+            sm.stage_muse_plugin(package, package)
+
+
+class StageMuseMarketplaceTests(MuseStagingCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.write_catalog()
+        for name in ("alpha", "beta"):
+            self.add_muse_package(name)
+        self.target = self.root / "out"
+
+    def listed(self) -> list[str]:
+        payload = json.loads(
+            (self.target / sm.MARKETPLACE_PATH).read_text(encoding="utf-8")
+        )
+        return [entry["name"] for entry in payload["plugins"]]
+
+    def test_every_applicable_package_is_staged_and_listed(self) -> None:
+        sm.stage_muse_marketplace(self.root, self.target)
+        self.assertEqual(self.listed(), ["alpha", "beta"])
+        self.assertTrue((self.target / "plugins/alpha/roles/role.md").is_file())
+        self.assertTrue((self.target / "plugins/beta/references/guide.md").is_file())
+        self.assertTrue((self.target / "plugins/beta/server/app.py").is_file())
+
+    def test_a_partial_run_keeps_the_packages_already_staged(self) -> None:
+        sm.stage_muse_marketplace(self.root, self.target)
+        sentinel = self.target / "plugins/beta/sentinel.txt"
+        sentinel.write_text("kept\n", encoding="utf-8")
+        (self.root / "plugins/alpha/README.md").write_text("Changed.\n", encoding="utf-8")
+        sm.stage_muse_marketplace(self.root, self.target, packages=["alpha"])
+        self.assertEqual(self.listed(), ["alpha", "beta"])
+        self.assertTrue(sentinel.is_file())
+        self.assertEqual(
+            (self.target / "plugins/alpha/README.md").read_text(encoding="utf-8"), "Changed.\n"
+        )
+
+    def test_a_partial_run_into_an_empty_target_lists_only_what_it_staged(self) -> None:
+        sm.stage_muse_marketplace(self.root, self.target, packages=["beta"])
+        self.assertEqual(self.listed(), ["beta"])
+
+    def test_a_package_that_cannot_be_installed_is_refused_by_name(self) -> None:
+        with self.assertRaises(sm.MarketplaceError) as caught:
+            sm.stage_muse_marketplace(self.root, self.target, packages=["missing"])
+        self.assertIn("missing", str(caught.exception))
+
+    def test_the_catalog_block_is_carried_into_the_staged_marketplace(self) -> None:
+        sm.stage_muse_marketplace(self.root, self.target)
+        payload = json.loads((self.target / sm.MARKETPLACE_PATH).read_text(encoding="utf-8"))
+        for key in sm.PRESERVED_TOP_LEVEL:
+            with self.subTest(key=key):
+                self.assertEqual(payload[key], CATALOG[key])
+
+
+def _hook_count(package: Path) -> int:
+    declared = json.loads((package / sm.CLAUDE_MANIFEST_RELATIVE).read_text("utf-8")).get("hooks")
+    if not isinstance(declared, str):
+        return 0
+    entries = json.loads((package / declared).read_text("utf-8")).get("hooks", {})
+    return sum(len(matcher["hooks"]) for matchers in entries.values() for matcher in matchers)
+
+
+def _mcp_count(package: Path) -> int:
+    declared = json.loads((package / sm.CLAUDE_MANIFEST_RELATIVE).read_text("utf-8")).get(
+        "mcpServers"
+    )
+    if not isinstance(declared, str):
+        return 0
+    data = json.loads((package / declared).read_text("utf-8"))
+    return len(data.get("mcpServers", data))
+
+
+@unittest.skipUnless(shutil.which("muse"), "the muse CLI is not installed")
+class MuseValidationTests(unittest.TestCase):
+    """Muse itself accepts what staging produces."""
+
+    #: Diagnostics that mean the manifest was not in a shape Muse accepts. A skill's
+    #: own `compatibility` frontmatter is reported as unsupported too, but that is
+    #: Agent Skills content Muse ignores, not a manifest defect, so it is excluded.
+    MANIFEST_CODES = ("agent-overlay-inactive", "multiple-manifests")
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._directory = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls._directory.cleanup)
+        cls.target = sm.stage_muse_marketplace(ROOT, Path(cls._directory.name) / "marketplace")
+
+    def validate(self, name: str) -> dict:
+        completed = subprocess.run(
+            ["muse", "plugins", "validate", str(self.target / "plugins" / name), "--json"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        return json.loads(completed.stdout)
+
+    def test_every_staged_package_validates_with_its_capabilities_intact(self) -> None:
+        for package in sm.muse_applicable_packages(ROOT):
+            with self.subTest(package=package.name):
+                report = self.validate(package.name)
+                self.assertTrue(report["valid"])
+                diagnostics = report["diagnostics"]
+                self.assertEqual(
+                    [d for d in diagnostics if d["code"] in self.MANIFEST_CODES], []
+                )
+                self.assertEqual(
+                    [
+                        d
+                        for d in diagnostics
+                        if d["code"] == "unsupported-field"
+                        and not d["path"].endswith("SKILL.md")
+                    ],
+                    [],
+                )
+                capabilities = report["capabilities"]
+                self.assertEqual(
+                    len(capabilities["skills"]), len(list(package.glob("skills/*/SKILL.md")))
+                )
+                self.assertEqual(
+                    len(capabilities["commands"]),
+                    len(list(package.glob("com.infiquetra.claude/commands/*.md"))),
+                )
+                self.assertEqual(len(capabilities["hooks"]), _hook_count(package))
+                self.assertEqual(len(capabilities["mcp_servers"]), _mcp_count(package))
 
 
 class CommittedMarketplaceTests(unittest.TestCase):

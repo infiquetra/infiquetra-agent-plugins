@@ -2,5 +2,20 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "voice",
   "version": "0.4.0",
-  "description": "Portable voice package: a spoken conversational loop for one explicitly bound, Herdr-managed Claude Code session. The bound session speaks its completed response, the operator answers by voice, and the transcript lands editable and unsubmitted in that same session's input box. The portable core carries the provider declaration contract, the stated settings surface, and the subprocess discipline; Claude-specific files live under the com.infiquetra.claude client extension directory."
+  "description": "Portable voice package: a spoken conversational loop for one explicitly bound, Herdr-managed Claude Code session. The bound session speaks its completed response, the operator answers by voice, and the transcript lands editable and unsubmitted in that same session's input box. The portable core carries the provider declaration contract, the stated settings surface, and the subprocess discipline; Claude-specific files live under the com.infiquetra.claude client extension directory.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+  "license": "MIT",
+  "keywords": [
+    "voice",
+    "speech",
+    "text-to-speech",
+    "speech-to-text",
+    "herdr",
+    "conversational-loop",
+    "accessibility"
+  ]
 }

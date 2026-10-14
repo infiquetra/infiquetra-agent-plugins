@@ -2,6 +2,23 @@
   "name": "unifi",
   "version": "2.0.7",
   "description": "Portable UniFi Network and Protect package: two Agent Skills with their bundled Python clients. Claude Code files live under the com.infiquetra.claude client extension directory; the operator site-profile contract, discovery, and drift reporting are maintained in this repository.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+  "license": "MIT",
+  "keywords": [
+    "unifi",
+    "ubiquiti",
+    "network",
+    "protect",
+    "cameras",
+    "home-lab",
+    "udm",
+    "firewall",
+    "vlan"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Unifi",
