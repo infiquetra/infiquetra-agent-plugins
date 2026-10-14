@@ -2285,5 +2285,98 @@ class EvidenceDiscoveryTest(unittest.TestCase):
                     )
 
 
+
+class ClientAssessmentInventoryTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.path = Path(self.temporary.name) / "clients.json"
+        self.document = json.loads(ccm.CLIENT_ASSESSMENT_PATH.read_text())
+
+    def check(self):
+        self.path.write_text(json.dumps(self.document))
+        return ccm.check_client_assessment(self.path)
+
+    def test_current_inventory_includes_muse_as_a_marketplace_client(self) -> None:
+        self.assertEqual(ccm.check_client_assessment(), [])
+        self.assertIn("muse", ccm.EXPECTED_ASSESSMENT_CLIENTS)
+        self.assertEqual(len(ccm.EXPECTED_ASSESSMENT_CLIENTS), 9)
+        muse = next(row for row in self.document["clients"] if row["id"] == "muse")
+        self.assertEqual(muse["placement"], "plugin-marketplace")
+        self.assertIs(muse["skill_scoped"], False)
+
+    def test_a_missing_extra_or_duplicate_client_is_rejected(self) -> None:
+        for variant in ("missing", "extra", "duplicate"):
+            with self.subTest(variant=variant):
+                self.document = json.loads(ccm.CLIENT_ASSESSMENT_PATH.read_text())
+                if variant == "missing":
+                    self.document["clients"] = [
+                        row for row in self.document["clients"] if row["id"] != "muse"
+                    ]
+                else:
+                    row = (
+                        {"id": "unexpected", "name": "Unexpected"}
+                        if variant == "extra"
+                        else dict(self.document["clients"][6])
+                    )
+                    self.document["clients"].append(row)
+                self.assertTrue(self.check())
+
+    def test_muse_cannot_regress_to_skill_placement(self) -> None:
+        muse = next(row for row in self.document["clients"] if row["id"] == "muse")
+        for field, value in (
+            ("placement", "skills"),
+            ("skill_scoped", True),
+            ("skill_scoped", None),
+        ):
+            old = muse[field]
+            muse[field] = value
+            self.assertTrue(self.check())
+            muse[field] = old
+
+    def test_client_names_and_ids_are_bound_to_the_same_roster(self) -> None:
+        self.document["clients"][6]["name"] = "Gemini CLI"
+        self.assertTrue(self.check())
+
+    def test_unreadable_or_malformed_inventory_is_rejected(self) -> None:
+        self.assertTrue(ccm.check_client_assessment(self.path))
+        for raw in (
+            "not json",
+            "[]",
+            "{}",
+            '{"clients":[null]}',
+            '{"clients":[{"id":1}]}',
+        ):
+            with self.subTest(raw=raw):
+                self.path.write_text(raw)
+                self.assertTrue(ccm.check_client_assessment(self.path))
+
+    def test_cli_runs_the_inventory_guard(self) -> None:
+        from unittest.mock import patch
+
+        with (
+            patch.object(ccm, "check_client_assessment", return_value=["inventory is invalid"]),
+            redirect_stdout(io.StringIO()) as output,
+        ):
+            self.assertEqual(ccm.main([str(LIVE_DOCUMENT)]), 1)
+        self.assertIn("inventory is invalid", output.getvalue())
+
+    def test_historical_rosters_still_require_the_muse_row(self) -> None:
+        for date in ("2026-10-03", "2026-10-04", "2026-10-13"):
+            self.assertIn("Muse", ccm.required_clients({"assessed_on": date}))
+
+    def test_muse_inventory_alias_and_exclusions_cannot_drift(self) -> None:
+        muse = next(row for row in self.document["clients"] if row["id"] == "muse")
+        for field, value in (
+            ("marketplace", "unrelated"),
+            ("excluded_packages", []),
+            ("excluded_packages", ["fleet-core", "voice"]),
+        ):
+            with self.subTest(field=field, value=value):
+                original = muse[field]
+                muse[field] = value
+                self.assertTrue(self.check())
+                muse[field] = original
+
 if __name__ == "__main__":
     unittest.main()

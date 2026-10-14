@@ -72,6 +72,8 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 import check_compatibility_matrix as ccm  # noqa: E402
 import port_config  # noqa: E402
+import muse_cli  # noqa: E402
+import sync_marketplace  # noqa: E402
 from port_config import PortConfig, PortConfigError  # noqa: E402
 
 
@@ -85,6 +87,8 @@ CLIENT_HOME = "<client-home>"
 PYTHON = "<python>"
 PLUGIN_ID = "<plugin-id>"
 PLUGIN_NAME = "<plugin-name>"
+PLUGIN_ROOT = "<plugin-root>"
+MUSE_STAGING = f"{CLIENT_HOME}/{sync_marketplace.MUSE_STAGING_DEFAULT}"
 
 #: Every stage gets a deadline. Two clients prompt for confirmation on standard
 #: input and one of them hangs rather than declining when stdin is closed, so a
@@ -406,27 +410,24 @@ def _client_plans() -> tuple[ClientPlan, ...]:
         ClientPlan(
             "Muse",
             binary="muse",
-            invocation_root=f"{CLIENT_HOME}/.config/muse/skills",
-            skill_scoped=True,
+            invocation_root=PLUGIN_ROOT,
             quirk=(
-                "Refuses the package root as an installable unit, so the skill units install "
-                "individually. '--force' is required on the JSON install for it to report a "
-                "content digest once placement has already installed the unit."
+                "Full plugin-marketplace client. Stage the Claude-compatible projection under "
+                "the isolated home; raw catalog roots contain competing manifests. Read JSON "
+                "diagnostics and resolve invocation from the installed cache, "
+                "never from skills copies."
             ),
             stages=(
                 StageSpec(
                     "placement",
-                    ("muse", "skills", "install", SKILL, "--scope", "user"),
-                    per_skill=True,
+                    (
+                        "muse", "plugins", "validate",
+                        f"{MUSE_STAGING}/plugins/{PLUGIN_NAME}", "--json",
+                    ),
                     writes_client_state=True,
                 ),
-                StageSpec("discovery", ("muse", "skills", "list", "--source", "user")),
-                StageSpec(
-                    "load",
-                    ("muse", "skills", "install", SKILL, "--scope", "user", "--force", "--json"),
-                    per_skill=True,
-                    writes_client_state=True,
-                ),
+                StageSpec("discovery", ("muse", "plugins", "list", "--json")),
+                StageSpec("load", ("muse", "plugins", "inspect", PLUGIN_NAME, "--json")),
                 StageSpec("invocation", from_package=True),
             ),
         ),
@@ -486,11 +487,14 @@ def _client_plans() -> tuple[ClientPlan, ...]:
 
 
 CLIENT_PLANS = _client_plans()
+PLAN_CLIENTS = tuple(
+    "cursor" if plan.binary == "cursor-agent" else plan.binary for plan in CLIENT_PLANS
+)
 
 #: Clients that may never run against the operator's own home, whatever the
 #: command line says. Hermes composes prompts from the live profile, so a run
 #: against the real home is both a false measurement and a live mutation.
-ISOLATED_ONLY = frozenset({"Hermes"})
+ISOLATED_ONLY = frozenset({"Hermes", "Muse"})
 
 
 def plan_for(name: str) -> ClientPlan:
@@ -973,7 +977,7 @@ def substitute(argv: tuple[str, ...], values: dict[str, str]) -> tuple[str, ...]
 #: own `$.package.name`, and putting it back would rewrite it wherever it
 #: appears *inside* a path -- turning `skills/unifi-network/…` into
 #: `skills/<plugin-name>-network/…`, which describes a command nobody ran.
-PATH_PLACEHOLDERS = (PACKAGE, CLIENT_HOME, PYTHON)
+PATH_PLACEHOLDERS = (PACKAGE, CLIENT_HOME, PYTHON, PLUGIN_ROOT)
 
 
 def redaction_values(values: dict[str, str]) -> dict[str, str]:
@@ -1019,7 +1023,7 @@ def unresolved_placeholders(argv: tuple[str, ...]) -> list[str]:
     exits non-zero, and the package is blamed for a value the client never
     reported.
     """
-    known = (PACKAGE, SKILL, CLIENT_HOME, PYTHON, PLUGIN_ID, PLUGIN_NAME)
+    known = (PACKAGE, SKILL, CLIENT_HOME, PYTHON, PLUGIN_ID, PLUGIN_NAME, PLUGIN_ROOT)
     joined = " ".join(argv)
     return [placeholder for placeholder in known if placeholder in joined]
 
@@ -1052,6 +1056,17 @@ def stage_argvs(
         return tuple(
             substitute(argv, values) for argv in invocation_argv(config, plan, values[PYTHON])
         )
+    if plan.name == "Muse" and spec.stage == "placement":
+        return tuple(substitute(argv, values) for argv in (
+            spec.argv,
+            ("muse", "plugins", "marketplace", "add", MUSE_STAGING),
+            (
+                "muse", "plugins", "install",
+                f"{PLUGIN_NAME}@{muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS}",
+            ),
+        ))
+    if plan.name == "Muse" and spec.stage == "discovery":
+        return (substitute(spec.argv, values), ("muse", "plugins", "list", "--available", "--json"))
     if spec.per_skill:
         return tuple(
             substitute(spec.argv, {**values, SKILL: f"{values[PACKAGE]}/{unit}"})
@@ -1104,6 +1119,100 @@ def stage_blocked_reason(
                 "so invocation is blocked in advance."
             )
     return None
+
+
+def prepare_muse_catalog(scratch: Path, home: Path, name: str) -> Path:
+    """Stage the assessment's own package copy inside its isolated home."""
+    catalog = home / "catalog"
+    shutil.copytree(scratch, catalog / "plugins" / name, symlinks=True)
+    return sync_marketplace.stage_muse_marketplace(
+        catalog,
+        home / sync_marketplace.MUSE_STAGING_DEFAULT,
+        packages=[name],
+        name=muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS,
+    )
+
+
+def muse_observation(
+    stage: str,
+    argv: tuple[str, ...],
+    completed: subprocess.CompletedProcess,
+    values: dict[str, str],
+) -> tuple[list[str], dict[str, str]]:
+    """An exit-zero process alone does not prove discovery or clean load."""
+    if completed.returncode != 0:
+        return ([f"Muse {stage}: command exited {completed.returncode}"], {})
+    if stage == "placement" and argv[1:3] != ("plugins", "validate"):
+        return ([], {})
+    try:
+        document = json.loads(completed.stdout or "")
+    except json.JSONDecodeError:
+        return ([f"Muse {stage}: expected JSON readback"], {})
+    if not isinstance(document, dict):
+        return ([f"Muse {stage}: expected a JSON object"], {})
+    if stage == "discovery":
+        if "--available" in argv:
+            return (
+                muse_cli.available_problems(document, [values[PLUGIN_NAME]]),
+                {},
+            )
+        try:
+            rows = muse_cli.plugin_rows(document)
+        except muse_cli.MuseCLIError as error:
+            return ([str(error)], {})
+        ours = [
+            row
+            for row in rows
+            if row["record"].get("id") == values[PLUGIN_NAME]
+            and muse_cli.source_marketplace(
+                row["record"],
+                staging_dir=Path(values[CLIENT_HOME]) / sync_marketplace.MUSE_STAGING_DEFAULT,
+            )
+            == muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS
+        ]
+        if (
+            len(ours) != 1
+            or ours[0]["record"].get("enabled") is not True
+            or ours[0].get("valid") is not True
+            or ours[0].get("diagnostics") != []
+        ):
+            return (
+                [
+                    "Muse discovery: selected plugin must be installed, enabled, valid "
+                    "and have 0 diagnostics"
+                ],
+                {},
+            )
+        return ([], {})
+    if document.get("valid") is not True or document.get("diagnostics") != []:
+        return (
+            [f"Muse {stage}: validation requires valid == true and diagnostics == []"],
+            {},
+        )
+    if stage != "load":
+        return ([], {})
+    record = document.get("record", {})
+    if (
+        not isinstance(record, dict)
+        or record.get("id") != values[PLUGIN_NAME]
+        or record.get("enabled") is not True
+        or muse_cli.source_marketplace(
+            record, staging_dir=Path(values[CLIENT_HOME]) / sync_marketplace.MUSE_STAGING_DEFAULT
+        )
+        != muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS
+    ):
+        return (
+            ["Muse load: inspect did not resolve the selected enabled marketplace plugin"],
+            {},
+        )
+    cache = record.get("cache_path")
+    if (
+        not isinstance(cache, str)
+        or not Path(cache).is_absolute()
+        or not Path(cache).resolve().is_relative_to(Path(values[CLIENT_HOME]).resolve())
+    ):
+        return (["Muse load: no installed cache path inside the isolated home"], {})
+    return ([], {PLUGIN_ROOT: cache})
 
 
 def run_stage(
@@ -1164,7 +1273,8 @@ def run_stage(
     statuses: list[int] = []
     captured: dict[str, str] = {}
 
-    for argv in argvs:
+    pending_argvs = list(argvs)
+    for argv in pending_argvs:
         if shutil.which(argv[0], path=environment.get("PATH")) is None:
             return StageOutcome(
                 spec.stage,
@@ -1237,7 +1347,14 @@ def run_stage(
                     f"left running. {killed}"
                 ),
             )
-        statuses.append(completed.returncode)
+        fallback = (
+            muse_cli.fallback_argv(argv, completed.stdout or "", completed.stderr or "")
+            if plan.name == "Muse" and completed.returncode != 0 else None
+        )
+        if fallback is not None:
+            pending_argvs.insert(pending_argvs.index(argv) + 1, fallback)
+        else:
+            statuses.append(completed.returncode)
         recorded_commands.append(
             StageCommand(redact(" ".join(argv), values), completed.returncode)
         )
@@ -1249,6 +1366,15 @@ def run_stage(
                 stderr=_bounded(completed.stderr),
             )
         )
+        if plan.name == "Muse" and spec.stage != "invocation" and fallback is None:
+            problems, resolved = muse_observation(spec.stage, argv, completed, values)
+            if problems:
+                return StageOutcome(
+                    spec.stage, BLOCKED, command=recorded,
+                    commands=tuple(recorded_commands), transcript=tuple(transcript),
+                    reason="; ".join(problems),
+                )
+            captured.update(resolved)
         if spec.capture is not None and not captured:
             placeholder, pattern = spec.capture
             match = re.search(pattern, f"{completed.stdout or ''}{completed.stderr or ''}")
@@ -1263,7 +1389,7 @@ def run_stage(
         commands=tuple(recorded_commands),
         evidence=(
             spec.evidence
-            or f"Ran {len(argvs)} command(s); exit status {summary}. "
+            or f"Ran {len(recorded_commands)} command(s); exit status {summary}. "
             "Replace this line with the observation from the transcript."
         ),
         returncodes=tuple(statuses),
@@ -1553,7 +1679,7 @@ def assess(
         # fingerprint. `allocate_run_directory` and `require_fresh_run_directory`
         # both guarantee this path is new and empty.
         scratch.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(package_root, scratch)
+        shutil.copytree(package_root, scratch, symlinks=plan.name == "Muse")
         scratch_before = ccm.package_fingerprint(scratch)
         home = stage_home(base, plan) if plan.home == ISOLATED_HOME else None
         values = {
@@ -1586,6 +1712,20 @@ def assess(
             unresolved_override = ""
         environment = build_environment(config, home=home, extra=extra)
 
+        preparation_error = ""
+        staged_package = None
+        staged_before = None
+        if plan.name == "Muse":
+            refuse_unsafe_home(plan, plan.stage("placement"), plan.home)
+            if execute:
+                try:
+                    staged_root = prepare_muse_catalog(
+                        scratch, Path(values[CLIENT_HOME]), config.name
+                    )
+                    staged_package = staged_root / "plugins" / config.name
+                    staged_before = ccm.package_fingerprint(staged_package)
+                except (sync_marketplace.MarketplaceError, OSError) as error:
+                    preparation_error = f"Muse staging failed: {error}"
         outcomes: dict[str, StageOutcome] = {}
         for spec in sorted(plan.stages, key=lambda item: ccm.STAGES.index(item.stage)):
             # Checked before anything runs, and for every stage rather than only
@@ -1593,13 +1733,13 @@ def assess(
             # run, and discovering it mid-way would already have installed
             # something.
             refuse_unsafe_home(plan, spec, plan.home)
-            if execute and unresolved_override:
+            if execute and (unresolved_override or preparation_error):
                 # Every stage of this client is blocked, not failed. The
                 # launcher cannot reach the client at all, which is a property
                 # of the operator's wrapper arrangement and this method's
                 # isolated home -- never a package defect.
                 outcomes[spec.stage] = StageOutcome(
-                    spec.stage, BLOCKED, reason=unresolved_override
+                    spec.stage, BLOCKED, reason=unresolved_override or preparation_error
                 )
                 continue
             blocked = stage_blocked_reason(config, plan, spec)
@@ -1626,12 +1766,22 @@ def assess(
         # because the answer decides whether *this* client's evidence describes
         # the package at all.
         scratch_after = ccm.package_fingerprint(scratch)
-        mutated = scratch_after != scratch_before
+        staged_after = None
+        if staged_package is not None:
+            staged_after = (
+                ccm.package_fingerprint(staged_package) if staged_package.is_dir() else (0, "")
+            )
+        staged_mutated = staged_before is not None and staged_after != staged_before
+        mutated = scratch_after != scratch_before or staged_mutated
         if mutated:
             mutated_by.append(plan.name)
+            changed_before = staged_before if staged_mutated else scratch_before
+            changed_after = staged_after if staged_mutated else scratch_after
             invalidated = (
-                f"This client changed the package copy it was handed: "
-                f"{scratch_before[0]} files before, {scratch_after[0]} after. Every stage "
+                ("This client changed the staged Muse package: " if staged_mutated
+                 else "This client changed the package copy it was handed: ")
+                +
+                f"{changed_before[0]} files before, {changed_after[0]} after. Every stage "
                 "result here describes bytes that no longer exist, so the row carries no "
                 "classification. Re-run this client against a fresh copy once the cause is "
                 "understood."
@@ -1705,6 +1855,7 @@ def assess(
             "isolation": (
                 f"Each client was handed its own fresh copy of the shipped tree, at "
                 f"{before[0]} files, fingerprinted before and after that client ran. "
+                "Muse's staged package is fingerprinted separately before and after its stages. "
                 + (
                     "Every copy was unchanged afterwards, so no client added a vendor "
                     "artifact to the package."

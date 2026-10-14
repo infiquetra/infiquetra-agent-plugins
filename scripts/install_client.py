@@ -9,6 +9,11 @@ replaced Gemini CLI, but the placement stays for a machine that still has it.
 It also does not run anything unless ``--execute`` is passed; the default
 prints every command and file operation and stops.
 
+Muse is a full plugin-marketplace client: a deterministic projection under
+``build/muse-marketplace`` excludes competing manifests. Its optional legacy
+migration removes source-proven standalone skill copies and selected legacy
+marketplace plugins before installing the selected bundles.
+
 Two calls that are not obvious from the command list:
 
 * Codex installs from ``.agents/plugins/marketplace.json``.
@@ -33,9 +38,16 @@ import shlex
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+import muse_cli  # noqa: E402
+import sync_marketplace  # noqa: E402
 
 CLIENTS = (
     "claude",
@@ -65,7 +77,8 @@ CLIENT_BINARIES = {
     "hermes": "hermes",
 }
 
-SKILL_CLIENTS = frozenset({"opencode", "gemini", "muse", "hermes"})
+CLIENT_CHOICES = (*CLIENTS, "all")
+SKILL_CLIENTS = frozenset({"opencode", "gemini", "hermes"})
 
 CATALOG_GIT_URL = "https://github.com/infiquetra/infiquetra-agent-plugins"
 LEGACY_GIT_URL = "https://github.com/infiquetra/infiquetra-claude-plugins"
@@ -119,6 +132,17 @@ class Action:
     payload: dict | None = None
     message: str = ""
     schema: str = ""
+    fatal: bool = False
+    retry: Callable[[tuple[str, ...], str, str], tuple[str, ...] | None] | None = None
+
+
+@dataclass(frozen=True)
+class InstallOptions:
+    staging_dir: Path | None = None
+    scope: str = "user"
+    filtered: bool = False
+    uninstall_legacy: bool = False
+    allow_inapplicable: bool = False
 
 
 @dataclass
@@ -127,6 +151,19 @@ class Readback:
     package: str
     status: str
     source: str = ""
+    must_match_catalog: bool = False
+
+
+class Readbacks(list[str]):
+    """Printable readback with failure policy attached to structured rows."""
+
+    def __init__(self, rows: list[Readback]) -> None:
+        super().__init__(format_readback(row) for row in rows)
+        self.failed = any(
+            row.status == "absent"
+            or (row.must_match_catalog and row.status == "installed-from-elsewhere")
+            for row in rows
+        )
 
 
 @dataclass
@@ -151,7 +188,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--client",
         required=True,
-        choices=[*CLIENTS, "all"],
+        choices=CLIENT_CHOICES,
         help="Harness name, or all ten",
     )
     parser.add_argument(
@@ -164,6 +201,17 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--catalog",
         type=Path,
         help="Catalog root. Default: the repository that contains this script",
+    )
+    parser.add_argument(
+        "--staging-dir",
+        type=Path,
+        help=f"Muse marketplace projection. Default: <catalog>/{sync_marketplace.MUSE_STAGING_DEFAULT}",
+    )
+    parser.add_argument(
+        "--scope",
+        choices=("user", "project"),
+        default="user",
+        help="Muse plugin install and legacy uninstall scope. Default: user",
     )
     parser.add_argument(
         "--binary",
@@ -200,6 +248,10 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         ),
     )
     args = parser.parse_args(argv)
+    if args.client in ("muse", "all") and args.scope != "user":
+        parser.error(
+            "Muse marketplace installation supports only user scope; project scope is refused"
+        )
     if args.execute and args.dry_run:
         parser.error("--execute and --dry-run together do not describe one run")
     if args.check and args.execute:
@@ -446,6 +498,9 @@ def package_applicability(client: str, package: Package) -> str | None:
         return "library"
     if client in SKILL_CLIENTS and not package.skills:
         return "no skills"
+    if client == "muse":
+        if not sync_marketplace.is_muse_applicable(package.root):
+            return "no Muse capabilities"
     return None
 
 
@@ -491,7 +546,13 @@ def command_action(
     stdin: str | None = None,
 ) -> Action:
     executable = resolve_executable(client, overrides, required=required)
-    return Action("command", client, argv=(executable, *args), stdin=stdin)
+    return Action(
+        "command",
+        client,
+        argv=(executable, *args),
+        stdin=stdin,
+        retry=muse_cli.fallback_argv if client == "muse" else None,
+    )
 
 
 def kill_group(process: subprocess.Popen) -> None:
@@ -511,7 +572,7 @@ def kill_group(process: subprocess.Popen) -> None:
             process.kill()
 
 
-def run_command(action: Action) -> None:
+def run_command(action: Action) -> str:
     process = subprocess.Popen(
         action.argv,
         stdin=subprocess.PIPE if action.stdin is not None else subprocess.DEVNULL,
@@ -531,6 +592,13 @@ def run_command(action: Action) -> None:
             code=1,
         ) from exc
     if process.returncode != 0:
+        fallback = action.retry(action.argv, stdout, stderr) if action.retry else None
+        if fallback is not None:
+            return run_command(
+                Action(
+                    "command", action.client, argv=fallback, stdin=action.stdin, retry=action.retry
+                )
+            )
         detail = (stderr or stdout or "").strip().splitlines()
         tail = "\n".join(detail[-8:])
         raise InstallError(
@@ -538,9 +606,28 @@ def run_command(action: Action) -> None:
             + (f"\n{tail}" if tail else ""),
             code=1,
         )
+    return stdout
 
 
 def format_action(action: Action) -> str:
+    if action.kind == "not-applicable":
+        return f"muse {action.payload['package']} not-applicable ({action.payload['reason']})"
+    if action.kind == "stage-muse":
+        sweep = "; remove stale owned Infiquetra entries" if not action.payload["filtered"] else ""
+        return (
+            f"muse: stage marketplace: {action.payload['catalog']} -> {action.path} "
+            f"packages={', '.join(action.payload['packages'])}{sweep}"
+        )
+    if action.kind == "muse-remove-plugins":
+        return (
+            f"muse: inspect: {shlex.join(action.argv)}; uninstall selected plugins "
+            f"from {', '.join(action.payload['marketplaces'])} "
+            f"--scope {action.payload['scope']}: {', '.join(action.payload['packages'])}"
+        )
+    if action.kind == "drop-muse-lock":
+        return f"muse: write: {action.path} drop={action.payload['skill']}"
+    if action.kind == "prune-muse-manifest":
+        return f"muse: remove if drained: {action.path}"
     if action.kind == "command":
         text = f"{action.client}: command: {shlex.join(action.argv)}"
         if action.stdin is not None:
@@ -555,7 +642,9 @@ def format_action(action: Action) -> str:
     if action.kind == "merge-qwen":
         return f"{action.client}: write: {action.path} source={action.target} type=local"
     if action.kind == "merge-agy":
-        return f"{action.client}: write: {action.path} package={action.message} source={action.target}"
+        return (
+            f"{action.client}: write: {action.path} package={action.message} source={action.target}"
+        )
     if action.kind == "remove":
         return f"{action.client}: remove: {action.path}"
     if action.kind == "drop-link":
@@ -1352,15 +1441,282 @@ def plan_gemini(packages, home, overrides, *, required: bool) -> list[Action]:
     )
 
 
-def plan_muse(packages, home, overrides, *, required: bool) -> list[Action]:
-    return plan_command_skills(
+def muse_packages(catalog: Path, packages: list[Package], *, filtered: bool) -> list[Package]:
+    """Selection comes from the staging contract, including command-only packages."""
+    try:
+        applicable = {path.name for path in sync_marketplace.muse_applicable_packages(catalog)}
+    except sync_marketplace.MarketplaceError as error:
+        raise InstallError(f"muse: {error}") from error
+    refused = [package.name for package in packages if package.name not in applicable]
+    if filtered and refused:
+        raise InstallError("not installable in Muse: " + ", ".join(refused))
+    return [package for package in packages if package.name in applicable]
+
+
+def muse_json(action: Action) -> dict:
+    try:
+        document = json.loads(run_command(action))
+    except json.JSONDecodeError as error:
+        raise InstallError("muse: expected JSON from " + shlex.join(action.argv), code=1) from error
+    if not isinstance(document, dict):
+        raise InstallError("muse: expected a JSON object", code=1)
+    return document
+
+
+def muse_legacy_skills(
+    packages: list[Package],
+    catalog: Path,
+    home: Path,
+    overrides: dict[str, str],
+    *,
+    required: bool,
+) -> list[Action]:
+    """Remove selected skills only when an installer sidecar or Muse lock proves custody."""
+    skills_root, manifest_path, schema = skill_destinations("muse", home)
+    document = link_manifest(manifest_path, schema) if manifest_path.is_file() else {"links": []}
+    lock_path = skills_root / ".muse" / "lock.json"
+    lock = load_object(lock_path) or {}
+    locked = lock.get("skills", {})
+    if not isinstance(locked, dict):
+        raise InstallError(f"{lock_path}: skills must be an object")
+    selected = {skill.name for package in packages for skill in package.skills}
+    actions: list[Action] = []
+    for name in sorted(selected):
+        dest = skills_root / name
+        entry = find_link(document, str(dest))
+        target = entry.get("target", "") if entry else ""
+        locked_entry = locked.get(name, {})
+        source = locked_entry.get("source", {}) if isinstance(locked_entry, dict) else {}
+        locked_target = source.get("path", "") if isinstance(source, dict) else ""
+        sources = [value for value in (target, locked_target) if isinstance(value, str) and value]
+        proven = bool(sources) and all(
+            is_legacy_source(value) or is_catalog_source(value, catalog) for value in sources
+        )
+        if not proven:
+            if dest.exists() or dest.is_symlink():
+                actions.append(
+                    Action(
+                        "refuse",
+                        "muse",
+                        message=f"{dest} has no manifest entry or lock source proving Infiquetra custody",
+                    )
+                )
+            continue
+        if dest.exists() or dest.is_symlink():
+            actions.append(
+                command_action(
+                    "muse",
+                    ("skills", "uninstall", name, "--scope", "user"),
+                    overrides,
+                    required=required,
+                )
+            )
+        actions.append(Action("remove", "muse", path=str(dest), target=str(skills_root)))
+        if entry:
+            actions.append(
+                Action(
+                    "drop-link",
+                    "muse",
+                    path=str(manifest_path),
+                    message=str(dest),
+                    schema=schema,
+                )
+            )
+        if name in locked:
+            actions.append(
+                Action("drop-muse-lock", "muse", path=str(lock_path), payload={"skill": name})
+            )
+    if manifest_path.is_file():
+        actions.append(
+            Action("prune-muse-manifest", "muse", path=str(manifest_path), schema=schema)
+        )
+    return actions
+
+
+def muse_registrations(home: Path) -> dict[str, dict]:
+    return muse_cli.registry_entries(load_object(home / muse_cli.MUSE_REGISTRY_RELATIVE) or {})
+
+
+def muse_remove_action(
+    packages: list[Package],
+    home: Path,
+    registrations: dict,
+    aliases: list[str],
+    overrides: dict[str, str],
+    *,
+    required: bool,
+    remove_empty: bool,
+) -> Action:
+    inspect = command_action("muse", ("plugins", "list", "--json"), overrides, required=required)
+    return Action(
+        "muse-remove-plugins",
         "muse",
-        lambda target: ("skills", "install", target, "--scope", "user"),
-        packages,
-        home,
-        overrides,
-        required=required,
+        argv=inspect.argv,
+        fatal=True,
+        payload={
+            "packages": [p.name for p in packages],
+            "scope": "user",
+            "registrations": registrations,
+            "marketplaces": aliases,
+            "home": str(home),
+            "remove_empty": remove_empty,
+        },
     )
+
+
+def plan_muse(
+    packages: list[Package],
+    catalog: Path,
+    home: Path,
+    overrides: dict[str, str],
+    *,
+    required: bool,
+    options: InstallOptions,
+) -> list[Action]:
+    if options.scope != "user":
+        raise InstallError("Muse marketplace installation supports only user scope")
+    applicable = muse_packages(
+        catalog, packages, filtered=options.filtered and not options.allow_inapplicable
+    )
+    excluded = [p for p in packages if p not in applicable]
+    actions = [
+        Action(
+            "not-applicable",
+            "muse",
+            payload={"package": p.name, "reason": package_applicability("muse", p)},
+        )
+        for p in excluded
+    ]
+    if not applicable:
+        return actions
+    staging_dir = (
+        options.staging_dir or catalog / sync_marketplace.MUSE_STAGING_DEFAULT
+    ).absolute()
+    actions.append(
+        Action(
+            "stage-muse",
+            "muse",
+            path=str(staging_dir),
+            fatal=True,
+            payload={
+                "catalog": str(catalog),
+                "packages": [p.name for p in applicable],
+                "filtered": options.filtered,
+            },
+        )
+    )
+    entries = muse_registrations(home)
+    alias = muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS
+    entry = entries.get(alias)
+    recorded = muse_cli.registration_source(entry or {})
+    same = (
+        bool(recorded)
+        and Path(recorded).is_absolute()
+        and Path(recorded).resolve() == staging_dir.resolve()
+    )
+    if entry and not same:
+        actions.append(
+            muse_remove_action(
+                applicable, home, entries, [alias], overrides, required=required, remove_empty=False
+            )
+        )
+        remove = command_action(
+            "muse", ("plugins", "marketplace", "remove", alias), overrides, required=required
+        )
+        remove.fatal = True
+        actions.append(remove)
+    if options.uninstall_legacy:
+        actions.extend(
+            plan_uninstall(
+                "muse", applicable, catalog, home, overrides, required=required, options=options
+            )
+        )
+    argv = (
+        ("plugins", "marketplace", "update", alias)
+        if same
+        else ("plugins", "marketplace", "add", str(staging_dir))
+    )
+    register = command_action("muse", argv, overrides, required=required)
+    register.fatal = True
+    actions.append(register)
+    for package in applicable:
+        actions.append(
+            command_action(
+                "muse",
+                ("plugins", "install", f"{package.name}@{alias}"),
+                overrides,
+                required=required,
+            )
+        )
+    return actions
+
+
+def check_muse(
+    packages: list[Package],
+    catalog: Path,
+    home: Path,
+    staging_dir: Path | None,
+    overrides: dict[str, str],
+) -> list[Readback]:
+    staging = (staging_dir or catalog / sync_marketplace.MUSE_STAGING_DEFAULT).resolve()
+    entries = muse_registrations(home)
+    alias = muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS
+    source = muse_cli.registration_source(entries.get(alias, {}))
+    registered = bool(source) and Path(source).is_absolute() and Path(source).resolve() == staging
+    installed = muse_json(
+        command_action("muse", ("plugins", "list", "--json"), overrides, required=True)
+    )
+    available = muse_json(
+        command_action(
+            "muse", ("plugins", "list", "--available", "--json"), overrides, required=True
+        )
+    )
+    problems = muse_cli.available_problems(available, [p.name for p in packages])
+    rows = muse_cli.plugin_rows(installed)
+    checked: list[Readback] = []
+    for package in packages:
+        for skill in package.skills:
+            dest = home / ".config/muse/skills" / skill.name
+            if dest.is_dir() or dest.is_symlink():
+                problems.append(f"muse: standalone skill collides with {package.name}: {dest}")
+        matches = [row for row in rows if row["record"]["id"].partition("@")[0] == package.name]
+        ours = [
+            row
+            for row in matches
+            if registered
+            and muse_cli.source_marketplace(
+                row["record"], available, registrations=entries, home=home
+            )
+            == alias
+            and muse_cli.record_source(row["record"])
+            and Path(muse_cli.record_source(row["record"])).resolve()
+            == (staging / "plugins" / package.name).resolve()
+        ]
+        if not ours:
+            observed = muse_cli.record_source(matches[0]["record"]) if matches else ""
+            checked.append(
+                Readback(
+                    "muse",
+                    package.name,
+                    "installed-from-elsewhere" if matches else "absent",
+                    observed or source,
+                    must_match_catalog=True,
+                )
+            )
+            continue
+        if (
+            len(ours) != 1
+            or ours[0]["record"].get("enabled") is not True
+            or ours[0].get("valid") is not True
+            or ours[0].get("diagnostics") != []
+        ):
+            problems.append(f"muse: {package.name} must be enabled, valid and have 0 diagnostics")
+        checked.append(
+            Readback("muse", package.name, "installed-from-catalog", must_match_catalog=True)
+        )
+    if problems:
+        raise InstallError("; ".join(problems), code=1)
+    return checked
 
 
 def plan_install(
@@ -1371,7 +1727,13 @@ def plan_install(
     overrides: dict[str, str],
     *,
     required: bool,
+    options: InstallOptions | None = None,
 ) -> list[Action]:
+    options = options or InstallOptions()
+    if options.uninstall_legacy and client != "muse":
+        return plan_uninstall(
+            client, packages, catalog, home, overrides, required=required, options=options
+        )
     if client == "claude":
         return plan_claude(packages, catalog, home, overrides, required=required)
     if client == "codex":
@@ -1389,7 +1751,7 @@ def plan_install(
     if client == "gemini":
         return plan_gemini(packages, home, overrides, required=required)
     if client == "muse":
-        return plan_muse(packages, home, overrides, required=required)
+        return plan_muse(packages, catalog, home, overrides, required=required, options=options)
     if client == "agy":
         return plan_agy(packages, catalog, home, overrides, required=required)
     raise InstallError(f"unknown client {client}")  # pragma: no cover
@@ -1836,7 +2198,9 @@ def plan_uninstall(
     overrides: dict[str, str],
     *,
     required: bool,
+    options: InstallOptions | None = None,
 ) -> list[Action]:
+    options = options or InstallOptions()
     if client == "claude":
         return plan_claude_uninstall(home, overrides, required=required)
     if client == "codex":
@@ -1867,14 +2231,23 @@ def plan_uninstall(
             uninstall_argv=lambda name: ("skills", "uninstall", name),
         )
     if client == "muse":
-        return plan_skill_uninstall(
-            "muse",
-            packages,
-            home,
-            overrides,
-            required=required,
-            uninstall_argv=lambda name: ("skills", "uninstall", name),
-        )
+        entries = muse_registrations(home)
+        legacy = [
+            name
+            for name, entry in entries.items()
+            if is_legacy_source(muse_cli.registration_source(entry))
+        ]
+        actions = []
+        if legacy:
+            actions.append(
+                muse_remove_action(
+                    packages, home, entries, legacy, overrides, required=required, remove_empty=True
+                )
+            )
+        actions.extend(muse_legacy_skills(packages, catalog, home, overrides, required=required))
+        for action in actions:
+            action.fatal = True
+        return actions
     raise InstallError(f"unknown client {client}")  # pragma: no cover
 
 
@@ -2116,7 +2489,14 @@ def check_codex(packages: list[Package], catalog: Path, home: Path) -> list[Read
     return rows
 
 
-def check_client(client: str, packages: list[Package], catalog: Path, home: Path) -> list[str]:
+def check_client(
+    client: str,
+    packages: list[Package],
+    catalog: Path,
+    home: Path,
+    overrides: dict[str, str] | None = None,
+    options: InstallOptions | None = None,
+) -> Readbacks:
     """Readback lines, one per package, in the order ``packages`` was given.
 
     A package a client cannot hold at all -- a library with no skills and no
@@ -2146,17 +2526,21 @@ def check_client(client: str, packages: list[Package], catalog: Path, home: Path
             checked = check_grok(applicable, home, catalog)
         elif client == "agy":
             checked = check_agy(applicable, home, catalog)
+        elif client == "muse":
+            checked = check_muse(
+                applicable,
+                catalog,
+                home,
+                (options or InstallOptions()).staging_dir,
+                overrides or {},
+            )
         elif client in SKILL_CLIENTS:
             checked = check_skill_client(client, applicable, home, catalog)
         else:
             raise InstallError(f"unknown client {client}")  # pragma: no cover
         for row in checked:
             rows_by_name[row.package] = row
-    return [format_readback(rows_by_name[package.name]) for package in packages]
-
-
-def absent_in(lines: list[str]) -> bool:
-    return any(line.endswith(" absent") for line in lines)
+    return Readbacks([rows_by_name[package.name] for package in packages])
 
 
 # --- perform ------------------------------------------------------------------
@@ -2222,7 +2606,98 @@ def drop_agy_action(action: Action) -> None:
         write_json(path, document)
 
 
+def perform_muse_removals(action: Action) -> None:
+    """Remove selected records proven to belong to the captured registrations."""
+    payload = action.payload
+    installed = muse_json(Action("command", "muse", argv=action.argv))
+    available = muse_json(
+        Action("command", "muse", argv=(action.argv[0], "plugins", "list", "--available", "--json"))
+    )
+    rows = muse_cli.plugin_rows(installed)
+    attributed = [
+        (
+            row["record"],
+            muse_cli.source_marketplace(
+                row["record"],
+                available,
+                registrations=payload["registrations"],
+                home=Path(payload["home"]),
+            ),
+        )
+        for row in rows
+    ]
+    removed: set[str] = set()
+    for record, alias in attributed:
+        name = record["id"].partition("@")[0]
+        if name in payload["packages"] and name not in removed and alias in payload["marketplaces"]:
+            run_command(
+                Action(
+                    "command",
+                    "muse",
+                    argv=(
+                        action.argv[0],
+                        "plugins",
+                        "uninstall",
+                        f"{name}@{alias}",
+                        "--scope",
+                        payload["scope"],
+                    ),
+                    retry=muse_cli.fallback_argv,
+                )
+            )
+            removed.add(name)
+    if payload["remove_empty"]:
+        current = muse_registrations(Path(payload["home"]))
+        for alias in payload["marketplaces"]:
+            if alias not in current or muse_cli.registration_source(
+                current[alias]
+            ) != muse_cli.registration_source(payload["registrations"][alias]):
+                continue
+            remains = any(
+                record["id"].partition("@")[0] not in removed and owner == alias
+                for record, owner in attributed
+            )
+            if not remains:
+                run_command(
+                    Action(
+                        "command",
+                        "muse",
+                        argv=(action.argv[0], "plugins", "marketplace", "remove", alias),
+                        retry=muse_cli.fallback_argv,
+                    )
+                )
+
+
 def perform(action: Action) -> None:
+    if action.kind == "not-applicable":
+        return
+    if action.kind == "stage-muse":
+        try:
+            sync_marketplace.stage_muse_marketplace(
+                Path(action.payload["catalog"]),
+                Path(action.path),
+                packages=action.payload["packages"] if action.payload["filtered"] else None,
+                name=muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS,
+            )
+        except (sync_marketplace.MarketplaceError, OSError) as error:
+            raise InstallError(f"muse: {error}", code=1) from error
+        return
+    if action.kind == "muse-remove-plugins":
+        perform_muse_removals(action)
+        return
+    if action.kind == "drop-muse-lock":
+        path = Path(action.path)
+        document = load_object(path)
+        skill = action.payload["skill"]
+        if document and skill in document.get("skills", {}):
+            del document["skills"][skill]
+            write_json(path, document)
+        return
+    if action.kind == "prune-muse-manifest":
+        path = Path(action.path)
+        if path.is_file() and not link_manifest(path, action.schema)["links"]:
+            path.unlink()
+        return
     if action.kind == "command":
         run_command(action)
         return
@@ -2272,6 +2747,15 @@ def run(argv: list[str] | None = None) -> int:
         raise InstallError(f"--catalog {catalog} is not a directory")
     packages = select_packages(catalog, args.package)
     clients = selected_clients(args.client)
+    options = InstallOptions(
+        args.staging_dir,
+        args.scope,
+        bool(args.package),
+        args.uninstall_legacy,
+        allow_inapplicable=args.client == "all",
+    )
+    if clients == ("muse",):
+        muse_packages(catalog, packages, filtered=options.filtered)
     if any(client in SKILL_CLIENTS for client in clients):
         require_unique_skills(packages)
     overrides = parse_binaries(args.binary)
@@ -2281,32 +2765,38 @@ def run(argv: list[str] | None = None) -> int:
 
     if args.check:
         lines: list[str] = []
+        failed = False
         if not is_all:
             for client in clients:
-                lines.extend(check_client(client, packages, catalog, home))
+                result = check_client(client, packages, catalog, home, overrides, options)
+                lines.extend(result)
+                failed = failed or result.failed
             print("\n".join(lines))
-            return 1 if absent_in(lines) else 0
+            return 1 if failed else 0
         # --client all: one client's unreadable state does not hide every
         # other client's readback, and is reported alongside it.
         failures: list[str] = []
         for client in clients:
             try:
-                lines.extend(check_client(client, packages, catalog, home))
-            except InstallError as exc:
+                result = check_client(client, packages, catalog, home, overrides, options)
+                lines.extend(result)
+                failed = failed or result.failed
+            except (InstallError, muse_cli.MuseCLIError) as exc:
                 failures.append(f"{client}: {exc}")
         print("\n".join(lines))
         if failures:
             _print_failures(failures)
             return 1
-        return 1 if absent_in(lines) else 0
+        return 1 if failed else 0
 
     if not is_all:
         actions: list[Action] = []
         for client in clients:
-            if args.uninstall_legacy:
-                actions.extend(plan_uninstall(client, packages, catalog, home, overrides, required=required))
-            else:
-                actions.extend(plan_install(client, packages, catalog, home, overrides, required=required))
+            actions.extend(
+                plan_install(
+                    client, packages, catalog, home, overrides, required=required, options=options
+                )
+            )
         for action in actions:
             print(format_action(action))
             if args.execute:
@@ -2319,11 +2809,10 @@ def run(argv: list[str] | None = None) -> int:
     failures = []
     for client in clients:
         try:
-            if args.uninstall_legacy:
-                client_actions = plan_uninstall(client, packages, catalog, home, overrides, required=required)
-            else:
-                client_actions = plan_install(client, packages, catalog, home, overrides, required=required)
-        except InstallError as exc:
+            client_actions = plan_install(
+                client, packages, catalog, home, overrides, required=required, options=options
+            )
+        except (InstallError, muse_cli.MuseCLIError) as exc:
             failures.append(f"{client}: plan: {exc}")
             continue
         for action in client_actions:
@@ -2331,8 +2820,12 @@ def run(argv: list[str] | None = None) -> int:
             if args.execute:
                 try:
                     perform(action)
-                except InstallError as exc:
+                except (InstallError, muse_cli.MuseCLIError) as exc:
                     failures.append(f"{client}: {format_action(action)}: {exc}")
+                    if action.fatal:
+                        # A failed projection, registration or migration invalidates
+                        # every later install, while other clients may still proceed.
+                        break
     if failures:
         _print_failures(failures)
         return 1
@@ -2342,9 +2835,9 @@ def run(argv: list[str] | None = None) -> int:
 def main(argv: list[str] | None = None) -> int:
     try:
         return run(argv)
-    except InstallError as exc:
+    except (InstallError, muse_cli.MuseCLIError) as exc:
         print(f"install_client: {exc}", file=sys.stderr)
-        return exc.code
+        return exc.code if isinstance(exc, InstallError) else 1
 
 
 if __name__ == "__main__":

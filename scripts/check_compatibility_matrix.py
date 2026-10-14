@@ -105,6 +105,8 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+import muse_cli  # noqa: E402
+import sync_marketplace  # noqa: E402
 import port_config  # noqa: E402
 from port_config import PortConfig, PortConfigError  # noqa: E402
 
@@ -151,6 +153,60 @@ CANONICAL_CLIENTS = (
     "Agy",
     "Hermes",
 )
+
+# Machine-independent installer/assessment identifiers. The dated matrix rosters
+# below remain historical evidence; this inventory describes the current tools.
+ASSESSMENT_CLIENT_NAMES = {
+    "claude": "Claude Code",
+    "codex": "OpenAI Codex",
+    "cursor": "Cursor Agent",
+    "qwen": "Qwen",
+    "grok": "Grok",
+    "opencode": "OpenCode",
+    "muse": "Muse",
+    "agy": "Agy",
+    "hermes": "Hermes",
+}
+EXPECTED_ASSESSMENT_CLIENTS = tuple(ASSESSMENT_CLIENT_NAMES)
+CLIENT_ASSESSMENT_PATH = ROOT / "docs/compatibility/client-assessment.json"
+
+
+def check_client_assessment(path: Path = CLIENT_ASSESSMENT_PATH) -> list[str]:
+    """The published client inventory must cover the current roster and Muse's bundle path."""
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return [f"client assessment inventory: {error}"]
+    clients = document.get("clients") if isinstance(document, dict) else None
+    if not isinstance(clients, list) or any(not isinstance(row, dict) for row in clients):
+        return ["client assessment inventory: clients must be an array of objects"]
+    ids = [row.get("id") for row in clients]
+    if any(not isinstance(identity, str) for identity in ids):
+        return ["client assessment inventory: each client needs a string id"]
+    problems = []
+    if len(ids) != len(set(ids)) or set(ids) != set(EXPECTED_ASSESSMENT_CLIENTS):
+        problems.append("client assessment inventory: missing, extra or duplicate client ids")
+    expected_names = ASSESSMENT_CLIENT_NAMES
+    applicable = {path.name for path in sync_marketplace.muse_applicable_packages(ROOT)}
+    excluded = sorted(
+        path.name
+        for path in (ROOT / "plugins").iterdir()
+        if (path / "plugin.json").is_file() and path.name not in applicable
+    )
+    for row in clients:
+        if row.get("name") != expected_names.get(row["id"]):
+            problems.append(f"client assessment inventory: wrong name for {row['id']}")
+        if row["id"] == "muse":
+            if row.get("marketplace") != muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS:
+                problems.append("client assessment inventory: wrong Muse marketplace alias")
+            if row.get("excluded_packages") != excluded:
+                problems.append("client assessment inventory: wrong Muse excluded packages")
+            if row.get("placement") != "plugin-marketplace" or row.get("skill_scoped") is not False:
+                problems.append(
+                    "client assessment inventory: Muse must use plugin-marketplace placement, "
+                    "not skill copies"
+                )
+    return problems
 
 #: The ten-client roster that applied to every record assessed before
 #: ``NINE_CLIENT_ROSTER_FROM``.
@@ -1349,6 +1405,11 @@ def main(argv: list[str] | None = None) -> int:
 
     failed = 0
     reports: list[str] = []
+    inventory_problems = check_client_assessment()
+    if inventory_problems:
+        failed += len(inventory_problems)
+        for problem in inventory_problems:
+            print(problem)
     for document in documents:
         problems = check_matrix(document, reports=reports)
         if problems:

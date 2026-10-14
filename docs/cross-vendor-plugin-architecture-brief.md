@@ -100,8 +100,19 @@ become portable merely because it is stored beside the portable core.
 | Gemini CLI | Agent Skills through `.agents/skills` | Gemini extension for commands, hooks, subagents, and policies |
 | Antigravity | Agent Skills | Antigravity manifest, agents, hooks, rules, and orchestration |
 | OpenCode | Agent Skills through `.agents/skills` and `.claude/skills` | Native plugin code and runtime-specific commands or agents |
-| Muse Code | Imports skills from Claude or Codex | No confirmed complete Agent Plugins runtime; managed skill sync is required |
+| Muse Code | Plugin marketplaces loading staged Claude-compatible skills, commands, hooks, and MCP declarations | Muse projection excludes competing manifests and unsupported Claude fields; raw catalog roots cannot substitute for the staging view |
 | Hermes Agent | Skills and MCP concepts plus a native plugin system | Python `plugin.yaml` packages for tools, hooks, commands, permissions, and profiles |
+
+Since 2026-10-14, Muse placement is package-scoped. The shared
+`stage_muse_marketplace` helper materializes the 12 Muse-applicable packages;
+`fleet-core` is a build-time library and `house-style` declares only a Claude
+output style. The installer registers `build/muse-marketplace/` as
+`infiquetra-claude-plugins`, refreshing a registration that points elsewhere.
+The assessment uses the same [projection](runbooks/install-clients.md#muse) inside an isolated home and invokes
+entrypoints from the installed cache path reported by `muse plugins inspect`.
+This updates the client workflow; historical matrices retain their original
+assessment dates and results. [The client inventory](compatibility/client-assessment.json)
+describes current plans, with live cutover acceptance remaining under parent #234.
 
 ## Initial Infiquetra plugin classification
 

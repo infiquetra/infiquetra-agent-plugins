@@ -48,6 +48,7 @@ import argparse
 import json
 import os
 import shutil
+import stat
 import sys
 from collections.abc import Iterable
 from pathlib import Path
@@ -278,17 +279,16 @@ def _difference_summary(current: str, expected: str) -> list[str]:
     return problems
 
 
-def muse_applicable_packages(root: Path = ROOT) -> list[Path]:
-    """Every package directory Muse can install: a Claude manifest declaring a capability.
+def is_muse_applicable(package: Path) -> bool:
+    """The one capability predicate used by staging and client applicability."""
+    manifest = package / CLAUDE_MANIFEST_RELATIVE
+    fields = _load(manifest) if manifest.is_file() else {}
+    return any(key in fields for key in MUSE_CAPABILITY_KEYS)
 
-    A library with no Claude manifest, and a package that declares only keys
-    Muse cannot load (an output style), have nothing to stage.
-    """
-    return [
-        package
-        for package in claude_packages(root)
-        if any(key in _load(package / CLAUDE_MANIFEST_RELATIVE) for key in MUSE_CAPABILITY_KEYS)
-    ]
+
+def muse_applicable_packages(root: Path = ROOT) -> list[Path]:
+    """Package directories with a Claude manifest declaring a Muse capability."""
+    return [package for package in claude_packages(root) if is_muse_applicable(package)]
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -416,53 +416,118 @@ def stage_muse_plugin(package_dir: Path, dest_dir: Path) -> Path:
     return dest_dir
 
 
+MUSE_STAGING_MARKER = ".infiquetra-muse-staging"
+
+
+def _secure_staging_path(path: Path, *, directory: bool) -> None:
+    if path.is_symlink():
+        raise MarketplaceError(f"{path}: staging path must not be a symlink")
+    if not path.exists():
+        return
+    details = path.stat()
+    if (directory and not stat.S_ISDIR(details.st_mode)) or (
+        not directory and not stat.S_ISREG(details.st_mode)
+    ):
+        raise MarketplaceError(f"{path}: invalid staging path type")
+    if hasattr(os, "getuid") and details.st_uid != os.getuid():
+        raise MarketplaceError(f"{path}: staging path is owned by another user")
+    if details.st_mode & 0o022:
+        raise MarketplaceError(f"{path}: staging path is writable by group or others")
+
+
+def muse_staging_ownership(root: Path, target_dir: Path) -> set[str]:
+    """Read custody without writing: only a marked, private directory may be updated."""
+    _refuse_overlap(root / PLUGIN_PARENT, target_dir, "the packages")
+    _secure_staging_path(target_dir, directory=True)
+    for child in (target_dir / PLUGIN_PARENT, target_dir / MARKETPLACE_PATH.parent):
+        _secure_staging_path(child, directory=True)
+    marker_path = target_dir / MUSE_STAGING_MARKER
+    _secure_staging_path(marker_path, directory=False)
+    manifest_path = target_dir / MARKETPLACE_PATH
+    _secure_staging_path(manifest_path, directory=False)
+    if not marker_path.exists():
+        if target_dir.exists() and any(target_dir.iterdir()):
+            raise MarketplaceError(
+                f"{target_dir}: non-empty staging directory lacks {MUSE_STAGING_MARKER}"
+            )
+        return set()
+    marker = _load(marker_path)
+    if marker.get("version") != 1 or marker.get("catalog") != str(root.resolve()):
+        raise MarketplaceError(f"{marker_path}: staging custody does not match this catalog")
+    declared = marker.get("packages")
+    if not isinstance(declared, list) or any(not isinstance(value, str) for value in declared):
+        raise MarketplaceError(f"{marker_path}: packages must be a list of names")
+    previous = _load(manifest_path) if manifest_path.is_file() else {}
+    listed = previous.get("plugins", [])
+    if not isinstance(listed, list):
+        raise MarketplaceError(f"{manifest_path}: plugins must be a list")
+    owned = set()
+    for entry in listed:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        if (
+            not isinstance(name, str)
+            or name not in declared
+            or name in (".", "..")
+            or Path(name).name != name
+        ):
+            continue
+        if entry.get("source") == f"./{PLUGIN_PARENT}/{name}":
+            owned.add(name)
+    return owned
+
+
 def stage_muse_marketplace(
     root: Path = ROOT,
     target_dir: Path = ROOT / MUSE_STAGING_DEFAULT,
     packages: Iterable[str] | None = None,
+    *,
+    name: str | None = None,
 ) -> Path:
-    """Stage Muse-installable packages into `target_dir` and list them.
+    """Stage selected bundles under an owned directory; publish only owned packages.
 
-    `packages` restricts which are (re)staged; packages already staged there are
-    kept, so a partial run updates only what it names. A full run (`packages` is
-    None) also removes staged packages the source no longer has or Muse can no
-    longer install. The marketplace file lists everything present under
-    `target_dir/plugins`.
+    A full run sweeps stale entries only if both the custody marker and previous
+    generated marketplace list them. Foreign entries survive and are never listed.
+    Partial runs retain previously owned packages. `name` overrides catalog identity.
     """
-    target_dir = Path(target_dir)
-    _refuse_overlap(root / PLUGIN_PARENT, target_dir, "the packages")
+    target_dir = Path(target_dir).absolute()
+    owned = muse_staging_ownership(root, target_dir)
     applicable = {package.name: package for package in muse_applicable_packages(root)}
-    if packages is None:
-        selected = sorted(applicable)
-    else:
-        selected = sorted(set(packages))
-        unknown = [name for name in selected if name not in applicable]
-        if unknown:
-            raise MarketplaceError(
-                f"not installable in Muse: {', '.join(unknown)}. "
-                f"Installable packages are {', '.join(sorted(applicable))}"
-            )
-
+    selected = sorted(applicable if packages is None else set(packages))
+    unknown = [value for value in selected if value not in applicable]
+    if unknown:
+        raise MarketplaceError(f"not installable in Muse: {', '.join(unknown)}")
     plugins_dir = target_dir / PLUGIN_PARENT
-    plugins_dir.mkdir(parents=True, exist_ok=True)
+    for value in selected:
+        destination = plugins_dir / value
+        if destination.exists() and value not in owned:
+            raise MarketplaceError(f"{destination}: existing package has no staging custody")
+        _secure_staging_path(destination, directory=True)
+    target_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _secure_staging_path(target_dir, directory=True)
+    _secure_staging_path(plugins_dir, directory=True)
+    plugins_dir.mkdir(mode=0o700, exist_ok=True)
     if packages is None:
-        for stale in plugins_dir.iterdir():
-            if stale.name in applicable:
-                continue
+        for value in sorted(owned - set(applicable)):
+            stale = plugins_dir / value
             if stale.is_symlink():
                 stale.unlink()
             elif stale.is_dir():
                 shutil.rmtree(stale)
-    for name in selected:
-        stage_muse_plugin(applicable[name], plugins_dir / name)
-
+        owned &= set(applicable)
+    for value in selected:
+        stage_muse_plugin(applicable[value], plugins_dir / value)
+    staged = sorted(
+        plugins_dir / value
+        for value in (owned | set(selected))
+        if (plugins_dir / value / CLAUDE_MANIFEST_RELATIVE).is_file()
+    )
+    for package in staged:
+        _secure_staging_path(package, directory=True)
+        _refuse_outside_symlinks(package)
     existing_path = root / MARKETPLACE_PATH
     catalog = _load(existing_path) if existing_path.is_file() else {}
-    staged = sorted(
-        path
-        for path in plugins_dir.iterdir()
-        if path.is_dir() and (path / CLAUDE_MANIFEST_RELATIVE).is_file()
-    )
     marketplace: dict[str, Any] = {}
     for key in PRESERVED_TOP_LEVEL:
         if key in catalog:
@@ -470,6 +535,8 @@ def stage_muse_marketplace(
     entries = {
         entry.get("name"): entry for entry in catalog.get("plugins", []) if isinstance(entry, dict)
     }
+    if name is not None:
+        marketplace["name"] = name
     marketplace["plugins"] = []
     for package in staged:
         manifest = _load(package / CLAUDE_MANIFEST_RELATIVE)
@@ -487,6 +554,8 @@ def stage_muse_marketplace(
     marketplace_path = target_dir / MARKETPLACE_PATH
     marketplace_path.parent.mkdir(parents=True, exist_ok=True)
     marketplace_path.write_text(render(marketplace), encoding="utf-8")
+    marker = {"version": 1, "catalog": str(root.resolve()), "packages": [p.name for p in staged]}
+    (target_dir / MUSE_STAGING_MARKER).write_text(render(marker), encoding="utf-8")
     return target_dir
 
 

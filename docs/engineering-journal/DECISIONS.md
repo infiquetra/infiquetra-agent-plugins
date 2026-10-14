@@ -1,5 +1,78 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-10-14
+
+### Keep client selection explicit, refuse Muse project scope, and defer the stage engine refactor
+
+**Decision.** Issue #237 code-review repair, 2026-10-14. `--client` stays required;
+a missing argument must never select every harness for an `--execute` run. Muse
+1.4.7 marketplace installs use a single user registry and do not accept project
+scope, so `--scope project` is refused before any staging or registration change.
+Marketplace install commands carry no scope flag.
+
+**Rationale.** The real CLI rejects project scope after registration work would
+otherwise already have happened. Explicit client selection preserves the
+installer's original operator contract. Stage ownership is recorded by a
+marker, and only previously listed owned entries may be swept.
+
+**Deferred.** Review item ARCH-4 proposes extra command and observation hooks
+in the generic assessment engine. It changes no behaviour and affects every
+client, so this single repair pass records it in
+[QUEUED.md](QUEUED.md#muse-stage-command-and-observation-hooks-arch-4). Revisit
+when a second client needs extra stage commands or JSON observations.
+
+**Refs.** [Repair evidence](../evidence/2026-10-14-issue237-review-repair-checks.txt),
+[install runbook](../runbooks/install-clients.md#muse).
+
+### Muse installs staged plugin bundles and shares their assessment path
+
+**Decision.** Issue #237, "muse: full plugin-marketplace client support in
+install_client.py and assess_clients.py without command collisions". Muse leaves `SKILL_CLIENTS` and installs the
+12 packages selected by `sync_marketplace.muse_applicable_packages` through
+`muse plugins`. `fleet-core` and `house-style` are refused for explicit Muse selections;
+`--client all` reports them as not applicable and continues. Execution stages at `<catalog>/build/muse-marketplace`
+(or `--staging-dir`), with marketplace identity `infiquetra-claude-plugins`;
+this compatibility name points to the projection of this repository. Selected plugins from a previous registration are uninstalled before that
+registration is retargeted. A partial staging run
+preserves unselected packages.
+
+**Rationale.** Standalone skills collide with installed plugin commands in Muse.
+The projection from #235 supplies the loader shapes Muse accepts while keeping
+vendor source manifests authoritative. Assessment now validates, installs,
+discovers and inspects the package under an isolated home, then invokes from
+Muse's reported installed cache. Its JSON guards require enabled, valid bundles
+with zero diagnostics and no skipped entries for the selected marketplace.
+
+**Migration boundary.** `--uninstall-legacy` migrates and installs in one Muse
+run. Legacy custody comes from a registration
+source, including the old `infiquetra` git registration, rather than its name.
+Only selected legacy marketplace plugins are uninstalled; the old registration
+is removed when no installed record still needs it. This replaces the retired
+`infiquetra` source with this catalog's compatibility alias and satisfies the
+issue's repointing requirement. Selected
+standalone skills require custody in the installer sidecar or the native Muse
+lock; conflicting or absent provenance preserves the copy. A drained sidecar is
+removed. Other clients retain their existing standalone legacy-removal mode.
+
+**Rejected alternatives.** Installing individual Muse skill shortcuts alongside
+plugins; pointing Muse at the raw multi-manifest source tree; removing copies
+based only on a familiar skill name; treating exit-zero JSON diagnostics as
+proof that a package loaded cleanly.
+
+**Compatibility and limits.** Muse 1.4.7's parser requires a name on marketplace
+add and calls user-plugin uninstall `remove`; narrow parser retries support
+those forms. Historical matrix rosters and results remain unchanged. The new
+[client inventory](../compatibility/client-assessment.json) describes current
+plans, not live acceptance. Parent #234 owns the workstation cutover and session
+collision check; this change does not close the issue.
+
+**Refs.** [Install runbook](../runbooks/install-clients.md#muse),
+[isolated Muse evidence](../evidence/2026-10-13-muse-marketplace-client-isolated-check.txt),
+[Cycle 29 mutation proof](../evidence/2026-10-13-cycle29-mutation-proof-muse-client-roster.txt).
+**Revisit when.** Muse can adopt `infiquetra-agent-plugins` as a marketplace name
+without orphaning installed records; retire the compatibility alias through a
+verified migration then. Also revisit when Muse's command or manifest contract changes.
+
 ## 2026-10-13
 
 ### Root CLAUDE.md is removed; AGENTS.md is the one repository instruction file

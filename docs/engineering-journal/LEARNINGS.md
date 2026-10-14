@@ -1,5 +1,44 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-14
+
+### Removing a Muse marketplace leaves its installed records intact
+
+**Evidence.** The issue #237 [repair reproductions](../evidence/2026-10-14-issue237-review-repair-checks.txt)
+retarget a selected plugin between two staged directories under a disposable
+home. Removal of the registration alone retains the old installed source;
+uninstalling the selected record first lets the new marketplace install succeed.
+The legacy `infiquetra` registration also migrates successfully when its source
+points to the retired repository.
+
+**Mechanism.** Marketplace registrations and installed records are separate
+stores. Registration names do not establish repository custody: a local-path
+record keeps the original staged path, and a git record can keep a generation
+worktree path. Correlating those paths with the registry and available list
+proves which registration owns the selected record. Unselected installed records
+keep their old source and, during legacy cleanup, their registration.
+
+**Generalizable rule.** Prove custody from recorded sources before replacing registrations or removing installed records.
+
+### Muse local marketplace records retain the staged package source path
+
+**Evidence.** [The isolated native check](../evidence/2026-10-13-muse-marketplace-client-isolated-check.txt)
+installed all 12 applicable bundles with Muse 1.4.7 and passed installer readback:
+enabled and valid records, zero diagnostics, and no skipped Infiquetra entries.
+UniFi assessment completed placement, discovery, load and both credential-free
+entrypoint invocations from the installed cache. Temporary homes and XDG
+locations were removed after the run; live workstation migration remains pending.
+
+**Mechanism.** A local-path marketplace install records
+`source.provenance = marketplace-user-added` and the staged package path in
+`source.path`. It need not contain a `marketplaces/<name>` component. Comparing
+that path with `available[].install.source` establishes its marketplace;
+`record.cache_path` from bare-id `plugins inspect` establishes the runtime
+entrypoint root. Inferring the marketplace solely from a cache directory would
+misclassify a successful local install as coming from elsewhere.
+
+**Generalizable rule.** Query a client's JSON in an isolated home before pinning its readback shape in tests.
+
 ## 2026-10-13
 
 ### Claude Code reads AGENTS.md when a repository has no CLAUDE.md

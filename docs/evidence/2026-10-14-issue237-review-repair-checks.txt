@@ -1,0 +1,134 @@
+Issue #237 single code-review repair pass, 2026-10-14.
+Real client: Muse 1.4.7 (1.4.7-R6101.1).
+All homes and XDG state locations are disposable. Live operator state was not changed.
+Paths in command/output transcripts are replaced by inert placeholders.
+
+CR-237-01: all clients continue for house-style
+Command: <tool-prefix>/opt/python@3.14/bin/python3.14 <catalog>/scripts/install_client.py --catalog <catalog> --binary muse=<muse-binary> --client all --package house-style --dry-run
+Expected exit: 0; actual exit: 0
+stdout:
+claude: command: <operator-home>/.local/bin/claude plugin marketplace add infiquetra/infiquetra-agent-plugins
+claude: command: <operator-home>/.local/bin/claude plugin install house-style@infiquetra-agent-plugins
+codex: command: <operator-home>/.local/bin/codex plugin marketplace add <catalog>
+codex: command: <operator-home>/.local/bin/codex plugin add house-style@infiquetra-agent-plugins
+cursor: command: <operator-home>/.local/bin/cursor-agent plugin marketplace add https://github.com/infiquetra/infiquetra-agent-plugins
+qwen: command: <operator-home>/.local/bin/qwen extensions install <catalog>/plugins/house-style stdin=y\n
+qwen: write: <scratch>/home/.qwen/extensions/house-style/.qwen-extension-install.json source=<catalog>/plugins/house-style type=local
+grok: command: <operator-home>/.local/bin/grok plugin install <catalog>/plugins/house-style --trust
+opencode: skip: house-style has no skill units
+gemini: skip: house-style has no skill units
+muse house-style not-applicable (no Muse capabilities)
+agy: command: <operator-home>/.local/bin/agy plugin install <catalog>/plugins/house-style
+agy: write: <scratch>/home/.gemini/config/plugins/.infiquetra-install.json package=house-style source=<catalog>/plugins/house-style
+hermes: skip: house-style has no skill units
+stderr:
+
+
+Setup: install all 12 packages in stage A
+Command: <tool-prefix>/opt/python@3.14/bin/python3.14 <catalog>/scripts/install_client.py --catalog <catalog> --binary muse=<muse-binary> --client muse --staging-dir <scratch>/stage-a --execute
+Expected exit: 0; actual exit: 0
+stdout:
+muse fleet-core not-applicable (library)
+muse house-style not-applicable (no Muse capabilities)
+muse: stage marketplace: <catalog> -> <scratch>/stage-a packages=agent-launcher, agy, codex, deploy, hermes-profile-evolution, home-lab-ops, mission-control, orchestrate, redis-channel, saga, unifi, voice; remove stale owned Infiquetra entries
+muse: command: <muse-binary> plugins marketplace add <scratch>/stage-a
+muse: command: <muse-binary> plugins install agent-launcher@infiquetra-claude-plugins
+muse: command: <muse-binary> plugins install agy@infiquetra-claude-plugins
+muse: command: <muse-binary> plugins install codex@infiquetra-claude-plugins
+muse: command: <muse-binary> plugins install deploy@infiquetra-claude-plugins
+muse: command: <muse-binary> plugins install hermes-profile-evolution@infiquetra-claude-plugins
+muse: command: <muse-binary> plugins install home-lab-ops@infiquetra-claude-plugins
+muse: command: <muse-binary> plugins install mission-control@infiquetra-claude-plugins
+muse: command: <muse-binary> plugins install orchestrate@infiquetra-claude-plugins
+muse: command: <muse-binary> plugins install redis-channel@infiquetra-claude-plugins
+muse: command: <muse-binary> plugins install saga@infiquetra-claude-plugins
+muse: command: <muse-binary> plugins install unifi@infiquetra-claude-plugins
+muse: command: <muse-binary> plugins install voice@infiquetra-claude-plugins
+stderr:
+
+
+CR-237-03: retarget selected voice to stage B
+Command: <tool-prefix>/opt/python@3.14/bin/python3.14 <catalog>/scripts/install_client.py --catalog <catalog> --binary muse=<muse-binary> --client muse --package voice --staging-dir <scratch>/stage-b --execute
+Expected exit: 0; actual exit: 0
+stdout:
+muse: stage marketplace: <catalog> -> <scratch>/stage-b packages=voice
+muse: inspect: <muse-binary> plugins list --json; uninstall selected plugins from infiquetra-claude-plugins --scope user: voice
+muse: command: <muse-binary> plugins marketplace remove infiquetra-claude-plugins
+muse: command: <muse-binary> plugins marketplace add <scratch>/stage-b
+muse: command: <muse-binary> plugins install voice@infiquetra-claude-plugins
+stderr:
+
+
+CR-237-03 assertion: all eleven unselected installed source paths were unchanged.
+
+CR-237-05: mismatched staging verification
+Command: <tool-prefix>/opt/python@3.14/bin/python3.14 <catalog>/scripts/install_client.py --catalog <catalog> --binary muse=<muse-binary> --client muse --package voice --staging-dir <scratch>/nonexistent --check
+Expected exit: 1; actual exit: 1
+stdout:
+muse voice installed-from-elsewhere (/private<scratch>/stage-b/plugins/voice)
+stderr:
+
+
+CR-237-05: matching staging verification
+Command: <tool-prefix>/opt/python@3.14/bin/python3.14 <catalog>/scripts/install_client.py --catalog <catalog> --binary muse=<muse-binary> --client muse --package voice --staging-dir <scratch>/stage-b --check
+Expected exit: 0; actual exit: 0
+stdout:
+muse voice installed-from-catalog
+stderr:
+
+
+CR-237-06: selected standalone skill makes check fail
+Command: <tool-prefix>/opt/python@3.14/bin/python3.14 <catalog>/scripts/install_client.py --catalog <catalog> --binary muse=<muse-binary> --client muse --package voice --staging-dir <scratch>/stage-b --check
+Expected exit: 1; actual exit: 1
+stdout:
+
+stderr:
+install_client: muse: standalone skill collides with voice: <scratch>/home/.config/muse/skills/voice
+
+CR-237-07: project scope is refused before any change
+Command: <tool-prefix>/opt/python@3.14/bin/python3.14 <catalog>/scripts/install_client.py --catalog <catalog> --binary muse=<muse-binary> --client muse --scope project --staging-dir <scratch>/project --execute
+Expected exit: 2; actual exit: 2
+stdout:
+
+stderr:
+usage: install_client.py [-h]
+                         --client {claude,codex,cursor,qwen,grok,opencode,gemini,muse,agy,hermes,all}
+                         [--package PACKAGE] [--catalog CATALOG]
+                         [--staging-dir STAGING_DIR] [--scope {user,project}]
+                         [--binary CLIENT=PATH] [--execute] [--dry-run]
+                         [--check] [--uninstall-legacy]
+install_client.py: error: Muse marketplace installation supports only user scope; project scope is refused
+
+CR-237-08: unmarked nonempty staging is refused
+Command: <tool-prefix>/opt/python@3.14/bin/python3.14 <catalog>/scripts/install_client.py --catalog <catalog> --binary muse=<muse-binary> --client muse --staging-dir <scratch>/unmarked --execute
+Expected exit: 1; actual exit: 1
+stdout:
+muse fleet-core not-applicable (library)
+muse house-style not-applicable (no Muse capabilities)
+muse: stage marketplace: <catalog> -> <scratch>/unmarked packages=agent-launcher, agy, codex, deploy, hermes-profile-evolution, home-lab-ops, mission-control, orchestrate, redis-channel, saga, unifi, voice; remove stale owned Infiquetra entries
+stderr:
+install_client: muse: <scratch>/unmarked: non-empty staging directory lacks .infiquetra-muse-staging
+
+CR-237-04: source-proven infiquetra legacy migration
+Fixture: a native-created disposable infiquetra registration was changed to the legacy git
+source URL with its existing local worktree retained; no network fetch was required.
+Command: <tool-prefix>/opt/python@3.14/bin/python3.14 <catalog>/scripts/install_client.py --catalog <catalog> --binary muse=<muse-binary> --client muse --package voice --uninstall-legacy --staging-dir <scratch>/new-legacy-stage --execute
+Expected exit: 0; actual exit: 0
+stdout:
+muse: stage marketplace: <catalog> -> <scratch>/new-legacy-stage packages=voice
+muse: inspect: <muse-binary> plugins list --json; uninstall selected plugins from infiquetra --scope user: voice
+muse: command: <muse-binary> plugins marketplace add <scratch>/new-legacy-stage
+muse: command: <muse-binary> plugins install voice@infiquetra-claude-plugins
+stderr:
+
+
+CR-237-04: migrated plugin passes strict check
+Command: <tool-prefix>/opt/python@3.14/bin/python3.14 <catalog>/scripts/install_client.py --catalog <catalog> --binary muse=<muse-binary> --client muse --package voice --staging-dir <scratch>/new-legacy-stage --check
+Expected exit: 0; actual exit: 0
+stdout:
+muse voice installed-from-catalog
+stderr:
+
+
+All native reproductions passed. Temporary directories were removed after the run.
+No authenticated Muse session or live workstation cutover is claimed; parent #234 retains that gate.

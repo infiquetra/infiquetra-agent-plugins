@@ -19,7 +19,6 @@ docs/plans/2026-08-24-mission-control-port-u1-phase0-note.md:
 
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import os

@@ -1,5 +1,24 @@
 # Queued work - infiquetra-agent-plugins
 
+## 2026-10-14 review follow-up
+
+### Muse stage command and observation hooks (ARCH-4)
+
+**Priority.** P2. Deferred from the single issue #237 repair pass.
+
+**What it is.** `stage_argvs`, `run_stage` and `assess` currently check the Muse
+plan name to supply extra commands, parser retries, preparation and JSON
+observations. Move those choices into `StageSpec` command data and optional
+per-plan prepare/observe hooks, then remove those Muse name checks.
+
+**Why deferred.** The change affects every client's generic stage engine without
+changing current behaviour. This repair pass fixes attribution, staging safety
+and validation first. The controller explicitly deferred this architecture item.
+
+**Revisit when.** A second client needs extra stage commands or JSON observation.
+
+**Refs.** [Repair decision](DECISIONS.md#keep-client-selection-explicit-refuse-muse-project-scope-and-defer-the-stage-engine-refactor).
+
 ## Follow-ups from the 2026-09-22 custody-move run
 
 Activation trigger for all of these: the cutover (every harness on the Mac

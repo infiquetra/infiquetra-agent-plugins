@@ -1,0 +1,77 @@
+{
+  "schema_version": "1",
+  "description": "Current client plan inventory, not a live compatibility result. Historical matrices retain their assessed_on rosters.",
+  "clients": [
+    {
+      "id": "claude",
+      "name": "Claude Code",
+      "placement": "plugin",
+      "skill_scoped": false
+    },
+    {
+      "id": "codex",
+      "name": "OpenAI Codex",
+      "placement": "plugin",
+      "skill_scoped": false
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor Agent",
+      "placement": "plugin",
+      "skill_scoped": false
+    },
+    {
+      "id": "qwen",
+      "name": "Qwen",
+      "placement": "plugin",
+      "skill_scoped": false
+    },
+    {
+      "id": "grok",
+      "name": "Grok",
+      "placement": "plugin",
+      "skill_scoped": false
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "placement": "skills",
+      "skill_scoped": true
+    },
+    {
+      "id": "muse",
+      "name": "Muse",
+      "placement": "plugin-marketplace",
+      "skill_scoped": false,
+      "marketplace": "infiquetra-claude-plugins",
+      "staging_directory": "<catalog>/build/muse-marketplace",
+      "excluded_packages": [
+        "fleet-core",
+        "house-style"
+      ],
+      "verification": {
+        "installed": "muse plugins list --json",
+        "available": "muse plugins list --available --json",
+        "requirements": [
+          "installed and enabled from infiquetra-claude-plugins",
+          "valid == true",
+          "diagnostics == []",
+          "skipped == [] for infiquetra-claude-plugins"
+        ]
+      },
+      "live_acceptance": "pending; performed by the parent #234 cutover"
+    },
+    {
+      "id": "agy",
+      "name": "Agy",
+      "placement": "plugin",
+      "skill_scoped": false
+    },
+    {
+      "id": "hermes",
+      "name": "Hermes",
+      "placement": "skills",
+      "skill_scoped": true
+    }
+  ]
+}
