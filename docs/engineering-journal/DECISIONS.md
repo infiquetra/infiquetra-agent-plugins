@@ -1,5 +1,76 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-10-13
+
+### Root CLAUDE.md is removed; AGENTS.md is the one repository instruction file
+
+**Decision.** Issue #236. `CLAUDE.md` is removed from the repository root. `AGENTS.md` now
+carries the Claude packaging rule that only `CLAUDE.md` held: the manifest locations that
+the Claude CLI forces on each package with a Claude adapter. `scripts/check_repo.py` rejects
+a root `CLAUDE.md` by name (`FORBIDDEN_ROOT_PATHS`), and its message sends the author to
+`AGENTS.md`.
+
+**Rationale.** Two root instruction files are two copies. `AGENTS.md` was complete except
+for that packaging rule. The code that enforces packaging already cites `AGENTS.md` as the
+source of the rule (`scripts/install_client.py`, `scripts/import_vendor_package.py`), so
+moving the rule there makes those citations true.
+
+**Rejected alternatives.** Keeping a root `CLAUDE.md` that only says "read `AGENTS.md`
+first", which was the state before this change. A `CLAUDE.md` symlink to `AGENTS.md`, the
+arrangement the team scaffold gives the repositories it generates
+(`plugins/home-lab-ops/skills/team-scaffold/scripts/team_scaffold/repo_stamp.py`). The link
+would give Claude Code the same file, but this validator rejects a root `CLAUDE.md` whether
+it is a regular file or a link. Claude Code reads `AGENTS.md` directly, so the link would
+add nothing for Claude.
+
+**Consequence.** Claude Code reads a repository's `AGENTS.md` when no `CLAUDE.md` (and no
+`CLAUDE.local.md` or `.claude/CLAUDE.md`) sits in the working directory or above it. The
+Claude Code documentation (code.claude.com/docs/en/memory, read on 2026-10-13) describes
+this from v2.1.277, and says that some sessions before v2.1.281 read only `CLAUDE.md`. A
+probe on Claude Code 2.1.299, run on 2026-10-13, found that a directory holding only an
+`AGENTS.md` answered with that file's marker line from its context, with no tool calls. A
+directory holding only a `CLAUDE.md` control did the same. So the removal keeps the same
+rules in front of Claude in this repository, read from `AGENTS.md`. It also makes
+`AGENTS.md` the file Claude reads here, which brings in the reviewer screening gap queued in
+[`QUEUED.md`](QUEUED.md).
+
+**Revisit when.** A Claude Code release stops reading `AGENTS.md` when no `CLAUDE.md` is
+present, or this repository needs a Claude-only instruction file that `AGENTS.md` cannot hold.
+
+**Refs.** Cycle 27 of the mutation proof, which breaks each guard on purpose to check that a
+test fails, re-grades the guard that refuses a root `CLAUDE.md`:
+[the evidence record](../evidence/2026-10-13-cycle27-mutation-proof-root-instructions-and-compatibility.txt).
+
+### Portable skills declare the Python floor under metadata, and the validator refuses the top-level key
+
+**Decision.** Issue #236. Each portable `SKILL.md` declares the catalog's minimum supported
+Python version (3.12), called the floor, as `metadata.compatibility: python>=3.12`. `scripts/check_repo.py` no longer admits a
+top-level `compatibility` key, and it reports one with a pointer to
+`metadata.compatibility`. The floor test in `tests/test_python_floor.py` and the skill tests
+for `voice` and `hermes-profile-evolution` read the nested value.
+
+**Rationale.** This build of `muse plugins validate` ignores a top-level `compatibility`
+key and reports it as `unsupported-field` ("Agent skill frontmatter key `compatibility` is
+not recognized; ignored"). Each of the six portable packages carried that warning. Under
+`metadata`, the same value passes with no diagnostic.
+
+**Deviation.** The published Agent Skills specification (agentskills.io/specification, read
+on 2026-10-13) defines `compatibility` as a top-level field of up to 500 characters, and
+defines `metadata` as a map from string keys to string values. This rule rejects the
+top-level placement the specification defines, so the catalog is stricter than the
+specification on this point. The rule follows the validator the catalog is checked with,
+not the specification.
+
+**Rejected alternatives.** Keeping the top-level key and accepting six warnings on every
+validation run. Changing the validator, which this repository does not own.
+
+**Revisit when.** `muse plugins validate` accepts a top-level `compatibility`, or the
+specification moves the field under `metadata`. Either one removes the reason for the rule.
+
+**Refs.** Cycle 27 of the mutation proof, which breaks each guard on purpose to check that a
+test fails, re-grades the top-level `compatibility` guard in `scripts/check_repo.py`:
+[the evidence record](../evidence/2026-10-13-cycle27-mutation-proof-root-instructions-and-compatibility.txt).
+
 ## 2026-10-12
 
 ### Saga's workflow language id is `github-workflow`, matching the corpus
@@ -2733,6 +2804,8 @@ command, hook body, agent, or permission. Every Claude *behaviour* remains
 inside `com.infiquetra.claude/`. `tests/test_claude_plugin_packaging.py`
 enforces both halves — that the manifests exist where Claude looks, and that no
 `hooks/`, `agents/`, or `commands/` directory appears at the portable root.
+
+The rule moved to `AGENTS.md` on 2026-10-13 (#236).
 
 **Revisit when.** Claude Code supports a manifest location other than
 `<root>/.claude-plugin/`, or a marketplace source that installs a directory

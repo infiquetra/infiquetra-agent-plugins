@@ -25,7 +25,6 @@ REQUIRED_PATHS = (
     "README.md",
     "AGENTS.md",
     ".gitignore",
-    "CLAUDE.md",
     "GEMINI.md",
     "llms.txt",
     ".github/CODEOWNERS",
@@ -49,6 +48,11 @@ REQUIRED_PATHS = (
     "docs/engineering-journal/narratives/_template.md",
     "docs/engineering-journal/audits/_template.md",
 )
+
+# Root files this repository must not carry. AGENTS.md is the one repository instruction
+# file, and a root CLAUDE.md would be a second copy of it that drifts. A reintroduced file
+# is reported with a pointer to AGENTS.md, not as a missing-file gap.
+FORBIDDEN_ROOT_PATHS = ("CLAUDE.md",)
 
 MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 EXTERNAL_PREFIXES = ("http://", "https://", "mailto:", "tel:")
@@ -120,13 +124,15 @@ BUNDLE_REQUIRED_STAMP_FIELDS = (
 FLEET_CORE_PLUGIN_NAME = "fleet-core"
 FLEET_BUNDLE_FILENAME = "fleet-bundle.json"
 
-# The open Agent Skills specification permits exactly these six frontmatter
-# fields, and requires a skill's `name` to match its parent directory name.
+# The open Agent Skills specification defines six frontmatter fields, and requires a
+# skill's `name` to match its parent directory name. This catalog admits five at the top
+# level and not `compatibility`: the Python floor sits under `metadata` (a string-to-string
+# map in the specification) because the Muse validator ignores a top-level `compatibility`
+# key. The 2026-10-13 entries in docs/engineering-journal/DECISIONS.md record the deviation.
 SKILL_FRONTMATTER_FIELDS = (
     "name",
     "description",
     "license",
-    "compatibility",
     "metadata",
     "allowed-tools",
 )
@@ -364,6 +370,14 @@ def plugin_directories(root: Path) -> list[Path]:
 
 def check_required_paths(root: Path) -> list[str]:
     return [f"missing required path: {path}" for path in REQUIRED_PATHS if not (root / path).exists()]
+
+
+def check_forbidden_root_paths(root: Path) -> list[str]:
+    return [
+        f"{path} must not exist at the repository root: put repository instructions in AGENTS.md"
+        for path in FORBIDDEN_ROOT_PATHS
+        if (root / path).exists() or (root / path).is_symlink()
+    ]
 
 
 def _link_target(raw_target: str) -> str:
@@ -904,7 +918,13 @@ def check_skill_frontmatter(root: Path) -> list[str]:
                 errors.append(f"missing or unterminated frontmatter in {relative}")
                 continue
             for field in fields:
-                if field not in SKILL_FRONTMATTER_FIELDS:
+                if field == "compatibility":
+                    errors.append(
+                        f"disallowed skill frontmatter field in {relative}: compatibility "
+                        "is not accepted at the top level; declare it as "
+                        "metadata.compatibility"
+                    )
+                elif field not in SKILL_FRONTMATTER_FIELDS:
                     errors.append(f"disallowed skill frontmatter field in {relative}: {field}")
             name = fields.get("name")
             if name is None:
@@ -1265,6 +1285,7 @@ def check_review_calibration(root: Path) -> list[str]:
 def check_repo(root: Path) -> list[str]:
     return [
         *check_required_paths(root),
+        *check_forbidden_root_paths(root),
         *check_port_descriptors(root),
         *check_marketplace_manifest(root),
         *check_codex_packaging_manifest(root),

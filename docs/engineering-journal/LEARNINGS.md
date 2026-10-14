@@ -1,5 +1,70 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-13
+
+### Claude Code reads AGENTS.md when a repository has no CLAUDE.md
+
+**Evidence.** Checked on 2026-10-13 with Claude Code 2.1.299. Two throwaway directories each
+held one instruction file with a unique marker line: one held `AGENTS.md` and no `CLAUDE.md`,
+and the other held a `CLAUDE.md` as a control. Each was run in print mode with an instruction
+not to use tools. Each answered with its own marker in one turn with no tool calls, so each
+file was already in the session's context. The Claude Code documentation
+(code.claude.com/docs/en/memory, "When Claude Code reads AGENTS.md") states the same rule from
+v2.1.277.
+
+**Mechanism.** Claude Code reads `AGENTS.md` in place of `CLAUDE.md` when the working directory
+and the directories above it contain no `CLAUDE.md`, `CLAUDE.local.md`, or `.claude/CLAUDE.md`.
+Until commit ebe415e removed the root `CLAUDE.md`, that file was the one Claude read for this
+repository, and `AGENTS.md` was not read at all. Now `AGENTS.md` is read, which makes the reviewer
+screening gap in the agent launcher live for this repository; it is queued in
+[`QUEUED.md`](QUEUED.md).
+
+**Generalizable rule.** Before a decision records how an external tool loads a file, run a
+probe that includes a control (a file the tool must find), and check the tool's documentation.
+A claim from memory of how a tool is designed is not evidence. Deleting a file can change what
+a tool reads, so check the tool's fallback rules when a file goes away.
+
+### The validator emits a different code than the one a verification step names
+
+**Evidence.** Issue #236 (the change landed in commit ebe415e) verifies moving compatibility
+under metadata by counting `unknown-frontmatter-field` diagnostics from `muse plugins
+validate`. That code never appears in this build. Before the change, each of the six portable
+skill packages (agy, codex, deploy, hermes-profile-evolution, redis-channel, voice) reported
+the condition as `unsupported-field`, with the message "Agent skill frontmatter key
+`compatibility` is not recognized; ignored". One example is
+`plugins/agy/skills/agy-delegate/SKILL.md`. After the move, each package lost that one
+diagnostic and gained none, and all six stayed valid.
+
+**Mechanism.** A count of a code the tool never emits is zero before and after any change, so
+it cannot show that the change worked. The mismatch surfaced only when the tool's real output
+was read.
+
+**Generalizable rule.** Before using a diagnostic code as proof that a fix works, read what the
+tool actually emits for that condition, and count that code before and after the change.
+
+### A reader that sees only top-level keys passes a moved field without checking it
+
+**Evidence.** The floor test in `tests/test_python_floor.py` checks each portable skill against
+the minimum supported Python version (3.12), which the catalog calls the floor. That test
+compared a skill only when `fields.get("compatibility")` was not `None`, and its reader returned
+top-level keys only. Once the key moved under `metadata`, that read returned `None` for every
+skill, so the comparison never ran. The voice skill test
+(`plugins/voice/tests/test_skill_entrypoint.py`) had the same shape. The hermes skill test
+(`plugins/hermes-profile-evolution/tests/test_profile_request_entrypoint.py`) failed outright on
+its top-level assertion. After the readers went one level deeper, I ran a copy of the tree with
+the floor under `metadata` set to 3.10, an older version. The floor test, the voice skill test,
+and the hermes skill test each failed.
+
+**Mechanism.** "Absent is allowed" is the correct branch for a skill that declares no floor. A
+reader blind to a nested key takes that branch for every skill, so the test passes whatever
+value the skill declares.
+
+**Generalizable rule.** When a declaration moves into a nested block, change every reader of it
+in the same change, then confirm each reader fails on a wrong value and not only on a missing
+one. Three readers must change together if the key moves again: `read_frontmatter` in
+`tests/test_python_floor.py`, `read_frontmatter` in `plugins/voice/tests/test_skill_entrypoint.py`,
+and `_frontmatter` in `plugins/hermes-profile-evolution/tests/test_profile_request_entrypoint.py`.
+
 ## 2026-10-12
 
 ### Moving Muse to muse-wonder-full-1.0 changed no probe verdict

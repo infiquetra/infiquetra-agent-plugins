@@ -26,24 +26,72 @@ ALLOWED_FRONTMATTER_FIELDS = (
     "name",
     "description",
     "license",
-    "compatibility",
     "metadata",
     "allowed-tools",
 )
 
 
-def _frontmatter(text: str) -> dict[str, str]:
+#: The frontmatter key form, matching ``scripts/check_repo.py``.
+FRONTMATTER_KEY = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_.-]*):(?:[ \t]+(.*))?$")
+
+#: A double-quoted or single-quoted scalar at the start of a value.
+QUOTED_SCALAR = re.compile(r"""^(?:"([^"]*)"|'([^']*)')""")
+
+
+def _frontmatter_scalar(raw: str | None) -> str:
+    """The scalar a value holds: quotes removed, and any trailing comment dropped."""
+    if raw is None:
+        return ""
+    value = raw.strip()
+    quoted = QUOTED_SCALAR.match(value)
+    if quoted:
+        return quoted.group(1) if quoted.group(1) is not None else quoted.group(2)
+    if value.startswith("#"):
+        return ""
+    return re.split(r"\s+#", value, maxsplit=1)[0].strip()
+
+
+def _frontmatter(text: str) -> dict[str, object]:
+    """Top-level keys. A key with no value opens a block, read one level deep, like the others."""
     lines = text.splitlines()
     assert lines and lines[0].strip() == "---"
-    fields: dict[str, str] = {}
+    fields: dict[str, object] = {}
+    owner: str | None = None
+    child_indent: int | None = None
     for line in lines[1:]:
         if line.strip() == "---":
             return fields
-        if not line.strip() or line[0] in " \t-#":
+        if not line.strip() or line.lstrip().startswith("#"):
             continue
-        key, separator, value = line.partition(":")
-        assert separator
-        fields[key.strip()] = value.strip()
+        indent = len(line) - len(line.lstrip())
+        if indent == 0:
+            owner, child_indent = None, None
+            match = FRONTMATTER_KEY.match(line)
+            assert match, f"unreadable frontmatter line: {line!r}"
+            raw = match.group(2)
+            if raw is None or not raw.strip() or raw.strip().startswith("#"):
+                owner = match.group(1)
+                fields[owner] = {}
+            else:
+                fields[match.group(1)] = _frontmatter_scalar(raw)
+            continue
+        if owner is None:
+            continue
+        if child_indent is None:
+            child_indent = indent
+        if indent != child_indent:
+            continue
+        child = line.strip()
+        block = fields[owner]
+        if child == "-" or child.startswith("- "):
+            if isinstance(block, dict) and not block:
+                block = fields[owner] = []
+            if isinstance(block, list):
+                block.append(_frontmatter_scalar(child[1:]))
+            continue
+        match = FRONTMATTER_KEY.match(child)
+        if match and isinstance(block, dict):
+            block[match.group(1)] = _frontmatter_scalar(match.group(2))
     raise AssertionError("skill frontmatter is unterminated")
 
 
@@ -97,8 +145,11 @@ def test_skill_names_the_script_actions_and_routing_variables() -> None:
     fields = _frontmatter(text)
     assert set(fields) <= set(ALLOWED_FRONTMATTER_FIELDS)
     assert fields["name"] == "hermes-profile-evolution"
-    assert fields["description"].strip()
-    assert fields.get("compatibility") == "python>=3.12"
+    assert isinstance(fields["description"], str) and fields["description"].strip()
+    metadata = fields.get("metadata")
+    assert isinstance(metadata, dict)
+    assert metadata.get("compatibility") == "python>=3.12"
+    assert "compatibility" not in fields
     assert "scripts/profile_request.py" in text
     for action in ACTIONS:
         assert action in text

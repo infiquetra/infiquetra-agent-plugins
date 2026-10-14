@@ -1,7 +1,8 @@
 ---
 name: deploy-state
 description: Infiquetra tag-promotion deployment. Mint a policy tag, report environment drift, preview release notes, or prepare a hotfix. Use for deploy, deploy-status, deploy-notes, and deploy-hotfix.
-compatibility: python>=3.12
+metadata:
+  compatibility: python>=3.12
 ---
 
 # Deploy State

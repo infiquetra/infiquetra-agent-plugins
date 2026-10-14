@@ -1,7 +1,8 @@
 ---
 name: redis-channel
 description: Run the redis-channel Redis Streams bridge. Use when connecting an agent session to an external router over Redis, launching the Model Context Protocol server, or checking the live integration harness.
-compatibility: python>=3.12
+metadata:
+  compatibility: python>=3.12
 ---
 
 # redis-channel

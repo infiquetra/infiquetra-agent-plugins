@@ -1,7 +1,8 @@
 ---
 name: hermes-profile-evolution
 description: Route proposed Team Mimir profile behavior changes to target-owned Hermes dialogue.
-compatibility: python>=3.12
+metadata:
+  compatibility: python>=3.12
 ---
 
 # Hermes Profile Evolution

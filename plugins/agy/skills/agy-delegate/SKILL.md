@@ -1,8 +1,8 @@
 ---
 name: agy-delegate
 description: Build one agy.delegation.v1 envelope and run it through the guarded agy wrapper, which executes in a disposable clone and returns a patch.
-compatibility: python>=3.12
 metadata:
+  compatibility: python>=3.12
   when_to_use: Use when the operator calls /agy:delegate or when agy-coder or agy-reviewer must delegate a bounded coding or review task to Antigravity.
 ---
 

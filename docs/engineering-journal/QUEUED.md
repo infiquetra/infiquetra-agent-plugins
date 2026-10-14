@@ -224,8 +224,9 @@ cycles before anyone compared it to the tree.
 **Priority.** P2
 
 **Effort.** One upstream change in `infiquetra-claude-plugins`: add
-`compatibility: python>=3.12` to both UniFi `SKILL.md` documents, release it, and take it
-here by re-synchronization. Downstream, nothing but a re-sync and a matrix re-run.
+`metadata.compatibility: python>=3.12` to both UniFi `SKILL.md` documents, release it, and
+take it here by re-synchronization. Downstream, nothing but a re-sync and a matrix
+re-run.
 
 **Worth it when.** Whenever the next UniFi re-synchronization happens for another reason.
 It is not worth a re-synchronization of its own, because the floor is already declared and
@@ -233,7 +234,7 @@ checked in five other places and a consuming client that reads only frontmatter 
 hypothetical, not an observed one.
 
 **Context.** The pilot plan's KTD7 claimed the floor is declared in the skills'
-`compatibility` frontmatter field. It never was. Both
+compatibility field (now `metadata.compatibility`). It never was. Both
 [`plugins/unifi/skills/unifi-network/SKILL.md`](../../plugins/unifi/skills/unifi-network/SKILL.md)
 and
 [`plugins/unifi/skills/unifi-protect/SKILL.md`](../../plugins/unifi/skills/unifi-protect/SKILL.md)
@@ -248,9 +249,9 @@ to it — the same eight-test failure the 0.25.1 re-synchronization caused, and 
 only be cleared honestly by re-running an operator-run ten-client assessment.
 
 **What is enforced meanwhile.** [`tests/test_python_floor.py`](../../tests/test_python_floor.py)
-does not require a portable skill to declare `compatibility`, but it does require that one
-which declares it declares the catalog floor. So the upstream change can land without a
-downstream edit, and it cannot land at the wrong value.
+does not require a portable skill to declare `metadata.compatibility`, but it does require
+that one which declares it declares the catalog floor. So the upstream change can land
+without a downstream edit, and it cannot land at the wrong value.
 
 **Refs.** [The floor decision](DECISIONS.md#the-portable-catalogs-minimum-supported-python-is-python312),
 [pilot plan KTD7](../plans/2026-08-21-unifi-fleet-core-portability-pilot-plan.md)
@@ -498,6 +499,34 @@ pilot and custody decision authorize that work.
 [archived pilot decision](ARCHIVE.md#choose-the-first-portability-pilot-and-custody-gate),
 [current Saga Plan](https://github.com/infiquetra/infiquetra-claude-plugins/blob/main/plugins/saga/skills/plan/SKILL.md),
 [current Saga Code Review](https://github.com/infiquetra/infiquetra-claude-plugins/blob/main/plugins/saga/skills/code-review/SKILL.md).
+
+### Claude's reviewer does not screen AGENTS.md for '@' imports
+
+**Author.** Jeff Cox and Claude
+
+**Priority.** P2
+
+**Effort.** One change in `plugins/agent-launcher`: add `AGENTS.md` to the instruction files
+the Claude reviewer screens, so that an `@` import in it reaching outside the review copy
+withholds the file, as it already does for `CLAUDE.md`. Add a test beside the existing
+`CLAUDE.md` case.
+
+**Worth it when.** Before the next Claude review of a change to this repository. Since #236
+removed the root `CLAUDE.md`, that review loads the reviewed copy's `AGENTS.md`.
+
+**Context.** The Claude reviewer's instruction-file list is `CLAUDE.md` and `CLAUDE.local.md`
+(`REVIEWER_INSTRUCTION_NAMES` in
+`plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`, line 2178). The Grok and
+Muse reviewer recipes list `AGENTS.md` as well (lines 3192 and 3213). The screen that
+withholds a file whose `@` imports reach outside the review copy runs only on files in that
+list, so Claude's reviewer does not screen `AGENTS.md`. Claude Code reads `AGENTS.md` as
+project instructions when no `CLAUDE.md` is present, and it expands `@` imports in that file.
+That was checked on 2026-10-13 with Claude Code 2.1.299; the 2026-10-13 LEARNINGS entry
+"Claude Code reads AGENTS.md when a repository has no CLAUDE.md" records the probe. The gap
+was found in the review of #236 and is not changed there.
+
+**Refs.** `plugins/agent-launcher/tests/test_launcher_reviewer.py` (line 260 pins the Claude
+recipe's instruction names).
 
 ## P3
 

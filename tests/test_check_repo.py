@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import check_repo  # noqa: E402
 
 
-# The compatibility value is the catalog's declared Python floor, held by
+# The metadata.compatibility value is the catalog's declared Python floor, held by
 # tests/test_python_floor.py. A fixture is a declaration like any other: the
 # floor gate scans this file too, so a stale value here fails that test rather
 # than sitting in the suite contradicting the contract it helps validate.
@@ -26,7 +26,8 @@ CONFORMANT_SKILL = """---
 name: unifi-network
 description: Manage UniFi network infrastructure.
 license: Apache-2.0
-compatibility: python>=3.12
+metadata:
+  compatibility: python>=3.12
 ---
 
 # UniFi network
@@ -119,6 +120,35 @@ class RepositoryValidationTests(unittest.TestCase):
 
     def test_live_repository_passes_every_check(self) -> None:
         self.assertEqual(check_repo.check_repo(ROOT), [])
+
+    def test_root_claude_md_is_rejected_with_a_pointer_to_agents_md(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.assertEqual(check_repo.check_forbidden_root_paths(root), [])
+
+            write(root / "CLAUDE.md", "Repository rules.\n")
+
+            self.assertEqual(
+                check_repo.check_forbidden_root_paths(root),
+                [
+                    "CLAUDE.md must not exist at the repository root: "
+                    "put repository instructions in AGENTS.md"
+                ],
+            )
+
+    def test_a_root_claude_md_symlink_is_rejected_too(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # A dangling link: exists() reads False for it, so only the link check catches it.
+            (root / "CLAUDE.md").symlink_to("AGENTS.md")
+
+            self.assertEqual(
+                check_repo.check_forbidden_root_paths(root),
+                [
+                    "CLAUDE.md must not exist at the repository root: "
+                    "put repository instructions in AGENTS.md"
+                ],
+            )
 
     def test_broken_local_markdown_link_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -279,6 +309,20 @@ class GateWiringTests(unittest.TestCase):
             root = Path(directory)
             self.misplaced_module(root)
             self.assertTrue(check_repo.check_claude_module_sources(root))
+
+    @staticmethod
+    def root_claude_md(root: Path) -> None:
+        write(root / "CLAUDE.md", "Repository rules.\n")
+
+    def test_the_gate_reports_a_root_claude_md(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.root_claude_md(root)
+            problems = check_repo.check_repo(root)
+        self.assertTrue(
+            any("CLAUDE.md must not exist" in problem for problem in problems),
+            f"check_repo did not run the forbidden root path check; it reported {problems}",
+        )
 
 
 class ProvenanceManifestTests(unittest.TestCase):
@@ -874,6 +918,45 @@ class SkillFrontmatterTests(unittest.TestCase):
         )
 
         self.assertEqual(sorted(fields or {}), ["metadata", "name"])
+
+    def test_top_level_compatibility_is_rejected_and_points_at_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            write(
+                plugin / "skills" / "unifi-network" / "SKILL.md",
+                CONFORMANT_SKILL.replace(
+                    "metadata:\n  compatibility: python>=3.12\n",
+                    "compatibility: python>=3.12\n",
+                ),
+            )
+
+            self.assertEqual(
+                check_repo.check_skill_frontmatter(root),
+                [
+                    "disallowed skill frontmatter field in "
+                    "plugins/example/skills/unifi-network/SKILL.md: compatibility is not "
+                    "accepted at the top level; declare it as metadata.compatibility"
+                ],
+            )
+
+    def test_metadata_compatibility_is_accepted_beside_other_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            write(
+                plugin / "skills" / "unifi-network" / "SKILL.md",
+                CONFORMANT_SKILL.replace(
+                    "  compatibility: python>=3.12\n",
+                    "  when_to_use: Use for UniFi network work.\n"
+                    "  compatibility: python>=3.12\n",
+                ),
+            )
+
+            self.assertEqual(check_repo.check_skill_frontmatter(root), [])
+
+    def test_compatibility_is_not_a_top_level_skill_field(self) -> None:
+        self.assertNotIn("compatibility", check_repo.SKILL_FRONTMATTER_FIELDS)
 
 
 class SecretFreeValueTests(unittest.TestCase):

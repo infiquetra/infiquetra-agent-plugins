@@ -54,6 +54,24 @@ git diff --check
   the one thing that may sit outside its adapter, and only where that vendor's
   tooling refuses to look anywhere else; it carries paths into the adapter, never
   behaviour.
+- Claude-specific agents, commands, hooks, permissions, and marketplace metadata
+  belong in an explicit Claude adapter, the package's `com.infiquetra.claude/`
+  directory. They are not portable core merely because Claude is an initial source
+  system. One narrow exception is forced by the Claude CLI rather than chosen: a Claude
+  *packaging* manifest must sit at `<installed root>/.claude-plugin/plugin.json`, and a
+  marketplace must sit at `<repository root>/.claude-plugin/marketplace.json`. The CLI
+  offers no other location. So each package with a Claude adapter carries two manifests
+  side by side: `plugins/<package>/plugin.json`, the portable Agent Plugins manifest,
+  and `plugins/<package>/.claude-plugin/plugin.json`, Claude's packaging manifest. The
+  Claude manifest holds paths into `com.infiquetra.claude/` or the portable skills,
+  never behaviour. The reasoning is in the `2026-08-25` decision "Claude installs the
+  package root; the client extension keeps the behaviour" in
+  [`docs/engineering-journal/DECISIONS.md`](docs/engineering-journal/DECISIONS.md), and
+  `tests/test_claude_plugin_packaging.py` enforces both halves.
+- Do not add a root `CLAUDE.md`; `scripts/check_repo.py` rejects it. `AGENTS.md` is the
+  single repository instruction file. The 2026-10-13 decision "Root CLAUDE.md is removed"
+  in [`docs/engineering-journal/DECISIONS.md`](docs/engineering-journal/DECISIONS.md)
+  records why.
 - Do not claim a vendor package is generated or portable until the relevant
   build and live compatibility checks prove it.
 - Treat existing vendor repositories as authoritative until a recorded custody
