@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Presentation metadata (author, repository, license, and keywords) now lives in the
+  portable `plugin.json`. The Claude manifest keeps `author` and its paths, and no longer
+  repeats `repository` or `keywords`.
+
+- The bundled `retry_backoff.py` copies in both clients now carry the Fleet Core 0.33.2
+  stamp.
+
 ## [2.0.7] - 2026-09-22
 
 2.0.7 — imported from infiquetra-claude-plugins@acc99fe7 (upstream 2.0.6); authored here from this commit; no provenance manifest from now on.
@@ -20,8 +31,6 @@
 - Dropped from `tests/test_unifi_site_profile_loader.py`, because their premise is one operator's lab topology and this public package must not carry it: `test_every_prior_agent_fact_survives_in_the_relocated_profile` and `test_no_prior_agent_fact_is_left_behind_in_the_agent`, and the `PRIOR_AGENT_FACTS` table those two parametrize. The loader contract tests remain and use an inert documentation profile. The guard that the package contains no lab-prefix literal remains, and it skips `tests/` so the guard's own search string is not a hit.
 - `test_the_invocation_extractor_actually_finds_invocations` no longer requires the portable README to contain sixty client invocations. That floor described the upstream README. This README is target-owned and does not duplicate the command catalog; the skills and the agent still have floors.
 - `plugins/unifi/tests/test_client_entrypoints.py` runs both clients with `--help`, credentials stripped, and transport stubbed. The repository-level `tests/test_client_entrypoints.py` skips a package that has no `PROVENANCE.json`, which is every authored package.
-
-## [Unreleased]
 
 ## [2.0.6] - 2026-08-23
 

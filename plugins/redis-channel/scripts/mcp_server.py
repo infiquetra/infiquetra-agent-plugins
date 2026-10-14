@@ -25,7 +25,7 @@ SOURCE_ENV = Path.home() / ".claude" / "channels" / "redis-channel" / "source-en
 SERVER_INFO = {
     "serverInfo": {
         "name": "redis-channel",
-        "version": "0.5.3",
+        "version": "0.5.4",
     }
 }
 

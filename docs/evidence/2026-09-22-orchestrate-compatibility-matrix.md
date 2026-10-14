@@ -1,5 +1,5 @@
 <!-- matrix-status: superseded -->
-<!-- superseded-by: 2026-10-04-orchestrate-compatibility-matrix.md -->
+<!-- superseded-by: 2026-10-14-orchestrate-compatibility-notice.md -->
 <!-- superseded-reason: The package version moved from 6.0.1 to 6.1.0 for the 2026-10-04 release, so the assessment was re-run and the record re-bound. The fresh run covers nine clients, because Agy replaced Gemini CLI on the operator's machine. -->
 
 # Ten-client compatibility matrix — portable orchestrate package (6.0.1)

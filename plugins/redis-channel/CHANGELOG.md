@@ -5,6 +5,23 @@ All notable changes to the `redis-channel` plugin will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and
 the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4] - 2026-10-14
+
+### Changed
+
+- Presentation metadata (author, repository, license, and keywords) now lives in the
+  portable `plugin.json`. The Claude manifest keeps `author` and its paths, and no longer
+  repeats `repository` or `keywords`.
+
+- The Python floor in `SKILL.md` frontmatter now sits under `metadata`, not as a top-level
+  `compatibility` key.
+
+- The Codex manifest, `.codex-plugin/plugin.json`, is generated from the portable
+  `plugin.json` (infiquetra-agent-plugins #77).
+
+- The Claude manifest lists its agents as files rather than as a directory
+  (infiquetra-agent-plugins #80).
+
 ## [0.5.3] - 2026-09-22
 
 0.5.3 — imported from infiquetra-claude-plugins@acc99fe7 (upstream 0.5.2); authored here from this commit; no provenance manifest from now on.

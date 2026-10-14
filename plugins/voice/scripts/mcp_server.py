@@ -466,7 +466,7 @@ class MCPServer:
                 },
                 "serverInfo": {
                     "name": "auralis-voice",
-                    "version": "0.4.0",
+                    "version": "0.4.1",
                 },
             }
             return json.dumps({"jsonrpc": "2.0", "id": req_id, "result": result})

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.2] - 2026-10-14
+
+### Changed
+
+- Presentation metadata (author, repository, license, and keywords) now lives in the
+  portable `plugin.json`. The Claude manifest keeps `author` and its paths, and no longer
+  repeats `repository` or `keywords`.
+
+- The Codex manifest, `.codex-plugin/plugin.json`, is generated from the portable
+  `plugin.json` (infiquetra-agent-plugins #77).
+
 ## [0.1.1] - 2026-09-22
 
 0.1.1 — imported from infiquetra-claude-plugins@acc99fe7 (upstream 0.1.0); authored here from this commit; no provenance manifest from now on.

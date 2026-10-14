@@ -20,7 +20,7 @@ REPO_ROOT = PACKAGE_ROOT.parent.parent
 ADAPTER = PACKAGE_ROOT / "com.infiquetra.claude"
 SKILL_ROOT = PACKAGE_ROOT / "skills" / "deploy-state"
 SCRIPTS = SKILL_ROOT / "scripts"
-AUTHORED_VERSION = "0.2.3"
+AUTHORED_VERSION = "0.2.4"
 ENTRYPOINTS = ("mint_tag.py", "query_deployments.py", "preview_release_notes.py")
 CREDENTIAL_PREFIXES = ("GH_", "GITHUB_")
 

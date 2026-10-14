@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [6.1.1] - 2026-10-14
 
 ### Added
 
@@ -9,6 +9,10 @@
 - `orchestrate.py review-launch` starts one targeted reviewer, and on a high or very-high risk tier one external reviewer, through `launcher.py review`. Orchestrate does not read the answer. `go` does not open a pane for either seat (issue #159).
 
 ### Changed
+
+- Presentation metadata (author, repository, license, and keywords) now lives in the
+  portable `plugin.json`. The Claude manifest keeps `author` and its paths, and no longer
+  repeats `repository` or `keywords`.
 
 - A review run (`review_records.v1`, kind `review_run`) routes through the same outcome words as `review_result.v2`. The Claude adapter's agent-launcher floor is now `>=1.7.2`, and `review-launch` also requires the `review` subcommand (issue #159).
 - `review-launch` passes `--max-budget-usd` on a Claude seat, from the one named constant

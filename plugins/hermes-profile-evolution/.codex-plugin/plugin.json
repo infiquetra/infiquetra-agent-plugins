@@ -1,6 +1,6 @@
 {
   "name": "hermes-profile-evolution",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Portable request adapter for target-sovereign Hermes profile evolution. It builds a closed version-1 proposal envelope and forwards it to the canonical hermes profile-request command. The Claude command and file-edit hook live under com.infiquetra.claude.",
   "author": {
     "name": "Infiquetra",

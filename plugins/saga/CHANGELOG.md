@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.3.3] - 2026-10-14
 
 ### Added
 
@@ -29,6 +29,10 @@
   refuses `--handoff` on an enforced block or a secret in the diff.
 
 ### Changed
+
+- Presentation metadata (author, repository, license, and keywords) now lives in the
+  portable `plugin.json`. The Claude manifest keeps `author` and its paths, and no longer
+  repeats `repository` or `keywords`.
 
 - The bundled `staffing.json` follows fleet-core: Muse now runs `muse-wonder-full-1.0`.
 

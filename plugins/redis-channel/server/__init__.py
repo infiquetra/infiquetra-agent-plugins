@@ -11,4 +11,4 @@ This package is the CC-side implementation: an MCP server (stdio) that:
   - relays permission_request / permission_verdict
 """
 
-__version__ = "0.5.3"
+__version__ = "0.5.4"

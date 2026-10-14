@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.5] - 2026-10-14
+
+### Changed
+
+- Presentation metadata (author, repository, license, and keywords) now lives in the
+  portable `plugin.json`. The Claude manifest keeps `author` and its paths, and no longer
+  repeats `repository` or `keywords`.
+
+- The Python floor in `SKILL.md` frontmatter now sits under `metadata`, not as a top-level
+  `compatibility` key.
+
 ## [0.6.3] - 2026-10-07
 
 ### Changed

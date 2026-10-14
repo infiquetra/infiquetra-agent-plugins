@@ -1,4 +1,6 @@
-<!-- matrix-status: current -->
+<!-- matrix-status: superseded -->
+<!-- superseded-by: 2026-10-14-orchestrate-compatibility-notice.md -->
+<!-- superseded-reason: The package version moved from 6.1.0 to 6.1.1 for the 2026-10-14 release (infiquetra-agent-plugins issue 234); no client assessment has been run against 6.1.1 yet. -->
 
 # Nine-client compatibility matrix — portable orchestrate package (6.1.0)
 

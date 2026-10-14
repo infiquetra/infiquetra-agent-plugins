@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.7.3] - 2026-10-14
 
 The roles library moves to infiquetra-sdlc revision `f8d0994` (X1a: the lifecycle records saga's
 new review model). The snapshot gains the `targeted_reviewer` role, `implementation-result` gains
@@ -55,6 +55,10 @@ for C8 to extend.
   `--model` now defaults to the recipe's probe model.
 
 ### Changed
+
+- Presentation metadata (author, repository, license, and keywords) now lives in the
+  portable `plugin.json`. The Claude manifest keeps `author` and its paths, and no longer
+  repeats `repository` or `keywords`.
 
 - The Muse reviewer candidate's probe model is now `muse-wonder-full-1.0`, and its probe record
   was re-recorded live against it. The verdicts are unchanged: the same six checks fail, so Muse

@@ -2,6 +2,29 @@
 
 ## 2026-10-14
 
+### A release bump moves the pinned predecessor and every prose link to a retired matrix
+
+**Evidence.** Release 234 (issue 234) failed two checks that the version-bump list did not
+name. The first unittest run failed `test_no_prose_outside_evidence_links_a_superseded_document`
+on a bare link to the superseded agent-launcher matrix in
+[the 2026-08-27 notice](../evidence/2026-08-27-agent-launcher-compatibility-matrix.md); a mirror scan
+of the tracked markdown also found the same bare link in
+[the install runbook](../runbooks/install-clients.md). Separately,
+`test_the_changelog_opens_on_this_version_and_names_its_predecessor` in
+`plugins/orchestrate/tests/test_orchestrate_surface.py` failed until its `ORCHESTRATE_PREDECESSOR`
+moved from 6.0.1 to 6.1.0, although only `ORCHESTRATE_VERSION` was on the list.
+
+**Mechanism.** A superseded matrix stops being a current answer, so a prose link that cites it
+must say so in its own anchor text, or repoint to the successor. The citation test checks each
+link's anchor for "supersed", "historical", or "retired", and it stops at the first bare link, so
+one run can hide the rest. The orchestrate test pins the predecessor beside the version, and its
+comment says the pair exists so that a bump is deliberate.
+
+**Generalizable rule.** When a release supersedes an evidence matrix, change the anchor text of
+every tracked link to it in the same commit, and scan all of them rather than trusting the first
+failure. When a release bumps a package whose tests pin a predecessor version, move that pin with
+the version constant.
+
 ### Removing a Muse marketplace leaves its installed records intact
 
 **Evidence.** The issue #237 [repair reproductions](../evidence/2026-10-14-issue237-review-repair-checks.txt)

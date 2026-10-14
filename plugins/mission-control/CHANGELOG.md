@@ -1,8 +1,12 @@
 # Changelog
 
-## [Unreleased]
+## [2.21.5] - 2026-10-14
 
 ### Changed
+
+- Presentation metadata (author, repository, license, and keywords) now lives in the
+  portable `plugin.json`. The Claude manifest keeps `author` and its paths, and no longer
+  repeats `repository` or `keywords`.
 
 - The bundled `staffing.json` follows fleet-core: Muse now runs `muse-wonder-full-1.0`.
 

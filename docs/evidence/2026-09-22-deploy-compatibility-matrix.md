@@ -1,4 +1,6 @@
-<!-- matrix-status: current -->
+<!-- matrix-status: superseded -->
+<!-- superseded-by: 2026-10-14-deploy-compatibility-notice.md -->
+<!-- superseded-reason: The package version moved from 0.2.3 to 0.2.4 for the 2026-10-14 release (infiquetra-agent-plugins issue 234); no client assessment has been run against 0.2.4 yet. -->
 
 # Ten-client compatibility matrix — portable deploy package (0.2.3)
 
