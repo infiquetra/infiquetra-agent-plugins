@@ -1,0 +1,37 @@
+Muse marketplace client check for issue #237 / Unit U3
+Run date: 2026-10-14 (America/Indiana/Indianapolis); filename follows the October 13 plan
+Client: Muse 1.4.7 (1.4.7-R6101.1)
+Scope: temporary isolated home and staging directory; no live workstation cutover.
+
+Installer command (paths replaced by inert placeholders):
+python3 scripts/install_client.py --client muse --staging-dir <scratch>/staged --binary muse=<muse-binary> --execute
+Exit: 0
+
+Readback command:
+python3 scripts/install_client.py --client muse --staging-dir <scratch>/staged --binary muse=<muse-binary> --check
+Exit: 0
+All 12 Muse-applicable packages installed-from-catalog:
+agent-launcher, agy, codex, deploy, hermes-profile-evolution, home-lab-ops,
+mission-control, orchestrate, redis-channel, saga, unifi, voice.
+Every selected record: enabled == true, valid == true, diagnostics == [].
+Available marketplace infiquetra-claude-plugins: all 12 packages, skipped == [].
+The marketplace is the projection of infiquetra-agent-plugins, despite its compatibility name.
+
+Assessment: assess_clients.assess(port_config.load("unifi"), execute=True,
+only=("Muse",), python=<python>, workspace=<scratch>/assessment).
+The subprocess runner invoked the installed Muse binary directly under the
+assessment's isolated HOME and XDG directories, bypassing the updating launcher.
+Placement, discovery, load, invocation: executed; proposed status works-directly.
+Both credential-free UniFi entrypoints ran from the installed cache path that
+Muse returned, rather than from the source or the staging package.
+
+Command compatibility observations:
+- Muse 1.4.7 requires marketplace add <name> <source>; the primary one-source
+  form was refused by its parser, then succeeded with the explicit name.
+- Local-path installs keep source.provenance = marketplace-user-added and
+  source.path = <scratch>/staged/plugins/<name>; the installed source was
+  compared with available[].install.source for marketplace attribution.
+
+Not assessed here: legacy cleanup in the live operator home, authenticated Muse
+session startup, or slash-command collision counts. Parent #234 retains those
+acceptance gates; this evidence does not close issue #237 or claim a live cutover.

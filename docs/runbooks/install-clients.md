@@ -1,8 +1,7 @@
 # Runbook: place this catalog on each harness
 
-**Version 1.1.0** · Adopted 2026-09-22 · Amended 2026-09-22 to make placement
-idempotent, add the `not-applicable` readback status, and make `--client all`
-continue past a failing client or package
+**Version 1.2.0** · Adopted 2026-09-22 · Amended 2026-10-13 for Muse plugin
+marketplace staging, migration and JSON verification
 
 This is the operator checklist for
 [`scripts/install_client.py`](../../scripts/install_client.py). The calls behind
@@ -18,7 +17,7 @@ compatibility matrices
 [agent-launcher](../evidence/2026-10-04-agent-launcher-compatibility-matrix.md)).
 The script does not invent a second way to put a package where a client looks.
 
-The catalog root is the checkout that contains the script. `--catalog` overrides
+The default client selection is `all`. The catalog root is the checkout that contains the script. `--catalog` overrides
 it. Packages default to every `plugins/<name>/` that has a `plugin.json`.
 Nothing is installed, linked, or deleted unless `--execute` is passed. The
 default, and `--dry-run`, print every command and file operation.
@@ -37,15 +36,18 @@ python3 scripts/install_client.py --client all --uninstall-legacy
 - `not-applicable (<reason>)`
 - `absent`
 
-The process exits 1 when any package is absent. A package installed from
+The process exits 1 when any package is absent. Muse also exits 1 for a plugin
+from another marketplace, a disabled or invalid plugin, diagnostics, an
+unavailable selection, or skipped entries in its Infiquetra marketplace. A package installed from
 somewhere else is not an absence, and neither is a package a client cannot
-hold at all: a skill-scoped client (OpenCode, Gemini CLI, Muse, Hermes)
+hold at all: a skill-scoped client (OpenCode, Gemini CLI, Hermes)
 reports `not-applicable (no skills)` for a package with no skill units, and
 every client reports `not-applicable (library)` for `fleet-core`, which has no
 per-package Claude packaging manifest and is bundled into other packages at
 build time rather than installed on its own.
 
-Placing a package is idempotent. Before running the client's own install
+For clients other than Muse, placing a package is idempotent. Muse re-stages
+and refreshes selected bundles so source changes reach the installed cache. Before running the client's own install
 command, the script reads back that client's own state the same way `--check`
 does. A package already `installed-from-catalog` is skipped with a message
 naming that; nothing is re-run, so a client whose install command refuses a
@@ -67,7 +69,7 @@ stops that run immediately with the error's own exit code.
 the bytes came from `infiquetra/infiquetra-claude-plugins`. A directory with no
 source record is left in place. These three repositories are never removed:
 `infiquetra-codex-plugins`, `infiquetra-opencode-plugins`,
-`infiquetra-antigravity-plugins`. It is a standalone removal run: pair it with
+`infiquetra-antigravity-plugins`. For clients other than Muse it is a standalone removal run: pair it with
 a plain `--execute` afterward to place the package fresh from this catalog
 once the old placement is gone.
 
@@ -259,22 +261,74 @@ is refused.
 
 ## Muse
 
+Muse installs complete plugin bundles from the projected marketplace. Planning
+performs no staging or CLI call. Execution uses
+`sync_marketplace.stage_muse_marketplace`, then registers and installs:
+
 ```text
-muse skills install <skill directory> --scope user
+muse plugins marketplace add <catalog>/build/muse-marketplace
+muse plugins install <name>@infiquetra-claude-plugins --scope user
 ```
 
-The client refuses the package root, so each skill unit is installed on its
-own, as the assessment did. The script records the unit in
-`~/.config/muse/.infiquetra-skills.json`. `--scope user` is what lands it in
-`~/.config/muse/skills/`.
+The projected manifest's marketplace name is `infiquetra-claude-plugins`.
+Despite that compatibility name, its source is this catalog's staging directory.
+The raw repository contains competing plugin manifests and must not be used as
+the Muse marketplace source. An existing registration of this name pointing
+elsewhere is removed and added at the staging path; one already pointing there
+is refreshed with `muse plugins marketplace update infiquetra-claude-plugins`.
+Muse 1.4.7 requires an explicit name on `marketplace add`; the installer retries
+that parser refusal as `muse plugins marketplace add infiquetra-claude-plugins
+<staging directory>`.
 
-`--check` reads that directory plus the manifest.
+An unrestricted run selects all 12 packages returned by
+`muse_applicable_packages`. Explicit `--package fleet-core` and
+`--package house-style` are errors: the first is a bundled library, the second
+has only a Claude output style. `--package` may be repeated; a partial staging
+run preserves unselected packages already staged. `--staging-dir <directory>`
+overrides `<catalog>/build/muse-marketplace`. Keep the staging directory at a
+stable path because the marketplace registers it as a source. `--scope user`
+is the default; `--scope project` selects project scope where the client supports it.
 
-`--uninstall-legacy` runs `muse skills uninstall <name>` for a manifest entry
-whose target is the old repository, then removes a leftover copy under the
-skills directory. An unsourced directory is refused. Muse has no record of
-source of its own; without the manifest we wrote, the copy is not ours to
-delete.
+```bash
+python3 scripts/install_client.py --client muse --dry-run
+python3 scripts/install_client.py --client muse --uninstall-legacy --execute
+python3 scripts/install_client.py --client muse --check
+python3 scripts/install_client.py --client muse --package unifi --staging-dir build/muse-marketplace --execute
+```
+
+For Muse, `--uninstall-legacy --execute` performs migration and installation in
+one run. It queries `muse plugins list --json` and uninstalls only selected
+plugins whose record proves they came from `claude-code-Marketplace`, using
+`muse plugins uninstall <name>@claude-code-Marketplace --scope <scope>`. Muse
+1.4.7 calls this `muse plugins remove <bare-id>` and has a single user registry;
+only user scope receives that compatibility retry. Runtime failures are reported.
+
+Migration also removes selected redundant user-scope skills whose source is
+proven by `~/.config/muse/.infiquetra-skills.json` or the native
+`~/.config/muse/skills/.muse/lock.json`, using
+`muse skills uninstall <name> --scope user`. Both the legacy repository and
+this catalog are accepted custody sources. Unselected skills, unrelated source
+records, and copies without provenance are preserved. A drained installer
+sidecar is removed. Running without `--uninstall-legacy` refreshes plugins and
+preserves standalone skills.
+
+`--check` reads both `muse plugins list --json` and
+`muse plugins list --available --json`. Every selected plugin must be installed,
+enabled and valid from `infiquetra-claude-plugins`, with `diagnostics == []`.
+The available catalog must include every selected plugin and have no skipped
+entries for that marketplace, including entries outside a package filter.
+External marketplace diagnostics and skipped entries do not fail this check.
+Local-path installs identify their marketplace by matching the installed
+source path against the available marketplace's source; a marketplace name in
+a cache path is also accepted. `--check` performs no staging or installation.
+
+`assess_clients.py` stages and installs inside an isolated home, validates the
+staged package, reads installed and available JSON, and uses the bare plugin id
+for `muse plugins inspect <name> --json`. It requires a clean load and resolves
+entrypoints from the installed cache path returned by Muse. It never places
+standalone skills. The [client inventory](../compatibility/client-assessment.json)
+records this plan without claiming a live workstation cutover. Parent #234 owns
+that acceptance and the remaining session-level collision check.
 
 ## Agy
 

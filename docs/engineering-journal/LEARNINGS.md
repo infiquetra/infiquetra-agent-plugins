@@ -1,5 +1,30 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-14
+
+### Muse local marketplace records retain the staged package source path
+
+**Evidence.** [The isolated native check](../evidence/2026-10-13-muse-marketplace-client-isolated-check.txt)
+installed all 12 applicable bundles with Muse 1.4.7 and passed installer readback:
+enabled and valid records, zero diagnostics, and no skipped Infiquetra entries.
+UniFi assessment completed placement, discovery, load and both credential-free
+entrypoint invocations from the installed cache. Temporary homes and XDG
+locations were removed after the run; live workstation migration remains pending.
+
+**Mechanism.** A local-path marketplace install records
+`source.provenance = marketplace-user-added` and the staged package path in
+`source.path`. It need not contain a `marketplaces/<name>` component. Comparing
+that path with `available[].install.source` establishes its marketplace;
+`record.cache_path` from bare-id `plugins inspect` establishes the runtime
+entrypoint root. Inferring the marketplace solely from a cache directory would
+misclassify a successful local install as coming from elsewhere.
+
+**Generalizable rule.** Query the real client's JSON in an isolated home before
+pinning a readback shape in tests. Process success and valid manifests are
+separate observations: a clean install requires enabled records, zero
+diagnostics and an unskipped catalog. Preserve command parser retries in the
+assessment transcript so the evidence describes the commands that ran.
+
 ## 2026-10-13
 
 ### Claude Code reads AGENTS.md when a repository has no CLAUDE.md

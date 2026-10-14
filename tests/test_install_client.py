@@ -14,6 +14,7 @@ import stat
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -66,6 +67,7 @@ class InstallFixture(unittest.TestCase):
                 '} >> "$ARGV_LOG"\n'
                 "exit 0\n",
             )
+        self.muse_state([], available=["unifi", "voice"])
         self._saved = {
             key: os.environ.get(key) for key in ("HOME", "PATH", "ARGV_LOG")
         }
@@ -73,6 +75,18 @@ class InstallFixture(unittest.TestCase):
         os.environ["PATH"] = os.pathsep.join([str(self.bin), os.environ.get("PATH", "")])
         os.environ["ARGV_LOG"] = str(self.argv_log)
         self.addCleanup(self._restore_env)
+
+    def muse_state(self, rows: list[dict], *, available: list[str] | None = None,
+                   skipped: list[dict] | None = None, raw: str | None = None) -> None:
+        installed = json.dumps({"plugins": rows}) if raw is None else raw
+        offered = json.dumps({"available": [{"name": name, "marketplace": installer.MUSE_MARKETPLACE} for name in (available or [])], "skipped": skipped or []})
+        write_executable(self.bin, "muse",
+            'printf "%s\\n" "$*" >> "$ARGV_LOG"\n'
+            'case "$*" in\n'
+            '  "plugins list --available --json") printf "%s\\n" ' + shlex.quote(offered) + ' ;;\n'
+            '  "plugins list --json") printf "%s\\n" ' + shlex.quote(installed) + ' ;;\n'
+            '  *) exit 0 ;;\n'
+            'esac\n')
 
     def _restore_env(self) -> None:
         for key, value in self._saved.items():
@@ -118,6 +132,8 @@ class InstallFixture(unittest.TestCase):
     def _package(self, name: str, skills: list[str]) -> None:
         root = self.catalog / "plugins" / name
         write_json(root / "plugin.json", {"name": name, "version": "0.0.1"})
+        if skills:
+            write_json(root / ".claude-plugin/plugin.json", {"name": name, "version": "0.0.1", "skills": ["./skills/"]})
         for skill in skills:
             skill_dir = root / "skills" / skill
             skill_dir.mkdir(parents=True)
@@ -1023,15 +1039,6 @@ class GeminiMuseHermesTest(InstallFixture):
         self.assertEqual(code, 0, err)
         self.assertIn("gemini voice installed-from-catalog", out)
 
-    def test_muse_installs_at_user_scope_and_records_a_manifest(self) -> None:
-        code, out, err = self.invoke("--client", "muse", "--package", "voice", "--execute")
-        self.assertEqual(code, 0, err)
-        target = str((self.catalog / "plugins/voice/skills/voice").resolve())
-        self.assertIn(self.command("muse", "skills", "install", target, "--scope", "user"), out)
-        manifest = self.home / ".config/muse/.infiquetra-skills.json"
-        document = json.loads(manifest.read_text(encoding="utf-8"))
-        self.assertEqual(document["links"][0]["target"], target)
-
     def test_hermes_symlinks_because_its_installer_rejects_a_local_path(self) -> None:
         code, out, err = self.invoke("--client", "hermes", "--package", "voice", "--execute")
         self.assertEqual(code, 0, err)
@@ -1069,27 +1076,6 @@ class GeminiMuseHermesTest(InstallFixture):
         self.assertFalse(dest.exists())
         self.assertEqual((catalog_skill / "keep").read_text(encoding="utf-8"), "catalog")
 
-    def test_muse_uninstall_uses_the_client_and_refuses_an_unsourced_directory(self) -> None:
-        unsourced = self.home / ".config/muse/skills/voice"
-        unsourced.mkdir(parents=True)
-        (unsourced / "keep").write_text("keep", encoding="utf-8")
-        legacy = self.base / "infiquetra-claude-plugins" / "skills" / "unifi-network"
-        copied = self.home / ".config/muse/skills/unifi-network"
-        copied.mkdir(parents=True)
-        (copied / "copied").write_text("copied", encoding="utf-8")
-        write_json(
-            self.home / ".config/muse/.infiquetra-skills.json",
-            {
-                "schema": installer.MUSE_SCHEMA,
-                "links": [{"target": str(legacy), "link": str(copied)}],
-            },
-        )
-        code, out, err = self.invoke("--client", "muse", "--uninstall-legacy", "--execute")
-        self.assertEqual(code, 0, err)
-        self.assertIn(self.command("muse", "skills", "uninstall", "unifi-network"), out)
-        self.assertFalse(copied.exists())
-        self.assertTrue((unsourced / "keep").is_file())
-        self.assertIn("no manifest entry", out)
 
 
 class AgyTest(InstallFixture):
@@ -1310,3 +1296,526 @@ class InvocationTest(InstallFixture):
         log = self.logged()
         self.assertIn("plugin install voice@infiquetra-agent-plugins", log)
         self.assertIn("extensions install", log)
+
+
+class MuseMarketplaceTest(InstallFixture):
+    def row(self, name="voice", marketplace=None, **changes):
+        row = {
+            "record": {
+                "id": name,
+                "enabled": True,
+                "source": {
+                    "path": str(
+                        self.home
+                        / ".local/share/muse/plugins/marketplaces"
+                        / (marketplace or installer.MUSE_MARKETPLACE)
+                        / "source/plugins"
+                        / name
+                    )
+                },
+            },
+            "valid": True,
+            "diagnostics": [],
+        }
+        row.update(changes)
+        return row
+
+    def test_dry_run_stages_and_installs_plugins_without_running_or_writing(
+        self,
+    ) -> None:
+        sentinel = self.home / ".muse/keep"
+        sentinel.parent.mkdir()
+        sentinel.write_text("keep")
+        code, out, err = self.invoke("--client", "muse", "--dry-run")
+        self.assertEqual(code, 0, err)
+        staging = (self.catalog / "build/muse-marketplace").resolve()
+        self.assertIn(str(staging), out)
+        self.assertIn(
+            self.command("muse", "plugins", "marketplace", "add", str(staging)), out
+        )
+        for name in ("unifi", "voice"):
+            self.assertIn(
+                self.command(
+                    "muse",
+                    "plugins",
+                    "install",
+                    f"{name}@{installer.MUSE_MARKETPLACE}",
+                    "--scope",
+                    "user",
+                ),
+                out,
+            )
+        self.assertNotIn("skills install", out)
+        self.assertNotIn("fleet-core@", out)
+        self.assertEqual(self.logged(), "")
+        self.assertFalse(staging.exists())
+        self.assertEqual(sentinel.read_text(), "keep")
+
+    def test_execute_materializes_the_projection_and_registers_it_before_install(
+        self,
+    ) -> None:
+        source = (self.catalog / "plugins/voice/plugin.json").read_bytes()
+        staging = self.base / "staged marketplace"
+        code, out, err = self.invoke(
+            "--client",
+            "muse",
+            "--package",
+            "voice",
+            "--staging-dir",
+            str(staging),
+            "--scope",
+            "project",
+            "--execute",
+        )
+        self.assertEqual(code, 0, err)
+        manifest = json.loads((staging / ".claude-plugin/marketplace.json").read_text())
+        self.assertEqual(manifest["name"], installer.MUSE_MARKETPLACE)
+        self.assertEqual([row["name"] for row in manifest["plugins"]], ["voice"])
+        self.assertFalse((staging / "plugins/voice/plugin.json").exists())
+        self.assertTrue(
+            (staging / "plugins/voice/.claude-plugin/plugin.json").is_file()
+        )
+        self.assertEqual(
+            (self.catalog / "plugins/voice/plugin.json").read_bytes(), source
+        )
+        log = self.logged()
+        self.assertLess(log.index("marketplace add"), log.index("plugins install"))
+        self.assertIn("--scope project", log)
+        self.assertFalse((self.home / ".config/muse/skills").exists())
+
+    def test_unrestricted_real_catalog_has_twelve_applicable_packages(self) -> None:
+        packages = installer.muse_packages(
+            ROOT, installer.discover_packages(ROOT), filtered=False
+        )
+        self.assertEqual(len(packages), 12)
+        self.assertNotIn("fleet-core", [p.name for p in packages])
+        self.assertNotIn("house-style", [p.name for p in packages])
+        self.assertIn("orchestrate", [p.name for p in packages])
+        self.assertIn("muse", installer.CLIENT_CHOICES)
+        self.assertIn("muse", installer.selected_clients("all"))
+        self.assertNotIn("muse", installer.SKILL_CLIENTS)
+
+    def test_explicit_non_applicable_packages_are_refused_before_mutation(self) -> None:
+        self._package("house-style", [])
+        write_json(
+            self.catalog / "plugins/house-style/.claude-plugin/plugin.json",
+            {"name": "house-style", "outputStyles": "./styles"},
+        )
+        for name in ("fleet-core", "house-style"):
+            for mode in ("--dry-run", "--execute", "--check"):
+                with self.subTest(name=name, mode=mode):
+                    code, out, err = self.invoke(
+                        "--client", "muse", "--package", name, mode
+                    )
+                    self.assertEqual(code, 2)
+                    self.assertIn("not installable in Muse", err)
+        self.assertEqual(self.logged(), "")
+        self.assertFalse((self.catalog / "build").exists())
+
+    def test_a_command_only_package_is_applicable(self) -> None:
+        self._package("commands-only", [])
+        root = self.catalog / "plugins/commands-only"
+        (root / "commands").mkdir()
+        (root / "commands/run.md").write_text("run")
+        write_json(
+            root / ".claude-plugin/plugin.json",
+            {"name": "commands-only", "commands": ["./commands/run.md"]},
+        )
+        code, out, err = self.invoke("--client", "muse", "--package", "commands-only")
+        self.assertEqual(code, 0, err)
+        self.assertIn("commands-only@", out)
+
+    def test_partial_staging_keeps_unselected_packages(self) -> None:
+        self.assertEqual(self.invoke("--client", "muse", "--execute")[0], 0)
+        sentinel = self.catalog / "build/muse-marketplace/plugins/unifi/keep"
+        sentinel.write_text("unselected")
+        code, out, err = self.invoke(
+            "--client", "muse", "--package", "voice", "--execute"
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(sentinel.read_text(), "unselected")
+        self.assertNotIn("unifi@", out)
+
+    def test_a_wrong_marketplace_registration_is_removed_before_add(self) -> None:
+        write_json(
+            self.home / ".local/share/muse/plugins/marketplaces.json",
+            {
+                "marketplaces": {
+                    installer.MUSE_MARKETPLACE: {
+                        "source": {"kind": "local", "path": str(self.catalog)}
+                    }
+                }
+            },
+        )
+        code, out, err = self.invoke("--client", "muse", "--execute")
+        self.assertEqual(code, 0, err)
+        log = self.logged()
+        self.assertLess(log.index("marketplace remove"), log.index("marketplace add"))
+        self.assertLess(log.index("marketplace add"), log.index("plugins install"))
+
+    def test_an_existing_staging_registration_is_updated(self) -> None:
+        staging = (self.catalog / "build/muse-marketplace").resolve()
+        write_json(
+            self.home / ".local/share/muse/plugins/marketplaces.json",
+            {
+                "marketplaces": {
+                    installer.MUSE_MARKETPLACE: {"source": {"path": str(staging)}}
+                }
+            },
+        )
+        code, out, err = self.invoke("--client", "muse")
+        self.assertEqual(code, 0, err)
+        self.assertIn("marketplace update", out)
+        self.assertNotIn("marketplace remove", out)
+        self.assertNotIn("marketplace add", out)
+        self.assertEqual(self.logged(), "")
+
+    def test_legacy_plugin_migration_is_selected_and_source_proven(self) -> None:
+        self.muse_state(
+            [
+                self.row("voice", installer.MUSE_LEGACY_MARKETPLACE),
+                self.row("unifi", installer.MUSE_LEGACY_MARKETPLACE),
+                self.row("external", installer.MUSE_LEGACY_MARKETPLACE),
+            ]
+        )
+        code, out, err = self.invoke(
+            "--client", "muse", "--package", "voice", "--uninstall-legacy", "--execute"
+        )
+        self.assertEqual(code, 0, err)
+        log = self.logged()
+        expected = (
+            f"plugins uninstall voice@{installer.MUSE_LEGACY_MARKETPLACE} --scope user"
+        )
+        self.assertIn(expected, log)
+        self.assertNotIn("uninstall unifi", log)
+        self.assertNotIn("uninstall external", log)
+        self.assertLess(log.index(expected), log.index("plugins install"))
+
+    def test_legacy_flag_dry_run_does_not_call_the_client(self) -> None:
+        self.muse_state([self.row("voice", installer.MUSE_LEGACY_MARKETPLACE)])
+        code, out, err = self.invoke(
+            "--client", "muse", "--uninstall-legacy", "--dry-run"
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("inspect:", out)
+        self.assertEqual(self.logged(), "")
+        self.assertFalse((self.catalog / "build").exists())
+
+    def test_legacy_plugin_in_another_marketplace_is_preserved(self) -> None:
+        self.muse_state([self.row("voice", "external-marketplace")])
+        code, out, err = self.invoke(
+            "--client", "muse", "--uninstall-legacy", "--execute"
+        )
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("plugins uninstall", self.logged())
+
+    def test_skill_manifest_cleanup_keeps_unselected_and_unsourced_copies(self) -> None:
+        skills = self.home / ".config/muse/skills"
+        manifest = skills.parent / ".infiquetra-skills.json"
+        for name in ("voice", "unifi-network", "unifi-protect"):
+            (skills / name).mkdir(parents=True)
+        write_json(
+            manifest,
+            {
+                "schema": installer.MUSE_SCHEMA,
+                "links": [
+                    {
+                        "target": str(self.catalog / "plugins/voice/skills/voice"),
+                        "link": str(skills / "voice"),
+                    },
+                    {
+                        "target": str(
+                            self.base / "infiquetra-claude-plugins/skills/unifi-network"
+                        ),
+                        "link": str(skills / "unifi-network"),
+                    },
+                ],
+            },
+        )
+        code, out, err = self.invoke(
+            "--client", "muse", "--package", "voice", "--uninstall-legacy", "--execute"
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("skills uninstall voice --scope user", self.logged())
+        self.assertFalse((skills / "voice").exists())
+        self.assertTrue((skills / "unifi-network").exists())
+        self.assertTrue((skills / "unifi-protect").exists())
+        self.assertEqual(len(json.loads(manifest.read_text())["links"]), 1)
+        code, out, err = self.invoke(
+            "--client", "muse", "--package", "unifi", "--uninstall-legacy", "--execute"
+        )
+        self.assertEqual(code, 0, err)
+        self.assertFalse(manifest.exists())
+        self.assertTrue((skills / "unifi-protect").exists())
+        self.assertIn("no manifest entry or lock source", out)
+
+    def test_native_skill_lock_proves_custody_and_preserves_other_entries(self) -> None:
+        skills = self.home / ".config/muse/skills"
+        (skills / "voice").mkdir(parents=True)
+        lock = skills / ".muse/lock.json"
+        write_json(
+            lock,
+            {
+                "version": 1,
+                "skills": {
+                    "voice": {
+                        "source": {
+                            "type": "local",
+                            "path": str(self.catalog / "plugins/voice/skills/voice"),
+                        }
+                    },
+                    "external": {
+                        "source": {"type": "local", "path": str(self.base / "external")}
+                    },
+                },
+            },
+        )
+        code, out, err = self.invoke(
+            "--client", "muse", "--package", "voice", "--uninstall-legacy", "--execute"
+        )
+        self.assertEqual(code, 0, err)
+        self.assertFalse((skills / "voice").exists())
+        self.assertEqual(set(json.loads(lock.read_text())["skills"]), {"external"})
+
+    def test_check_requires_installed_enabled_clean_marketplace_plugins(self) -> None:
+        self.muse_state(
+            [self.row("voice"), self.row("unifi")], available=["voice", "unifi"]
+        )
+        code, out, err = self.invoke("--client", "muse", "--check")
+        self.assertEqual(code, 0, err)
+        self.assertIn("muse voice installed-from-catalog", out)
+        self.assertNotIn("fleet-core", out)
+        self.assertIn("plugins list --json", self.logged())
+        self.assertIn("plugins list --available --json", self.logged())
+        self.assertNotIn("plugins install", self.logged())
+        self.assertFalse((self.catalog / "build").exists())
+
+    def test_check_fails_for_missing_elsewhere_disabled_invalid_or_diagnostic_plugins(
+        self,
+    ) -> None:
+        disabled = self.row()
+        disabled["record"]["enabled"] = False
+        for row in (
+            None,
+            self.row(marketplace="external"),
+            disabled,
+            self.row(valid=False),
+            self.row(diagnostics=[{"code": "warning"}]),
+            self.row(diagnostics=None),
+        ):
+            with self.subTest(row=row):
+                self.muse_state([] if row is None else [row], available=["voice"])
+                code, out, err = self.invoke(
+                    "--client", "muse", "--package", "voice", "--check"
+                )
+                self.assertEqual(code, 1, out + err)
+
+    def test_check_rejects_unavailable_or_skipped_catalog_packages(self) -> None:
+        for available, skipped in (
+            ([], []),
+            (
+                ["voice"],
+                [
+                    {
+                        "marketplace": installer.MUSE_MARKETPLACE,
+                        "name": "unselected",
+                        "reason": "invalid",
+                    }
+                ],
+            ),
+        ):
+            with self.subTest(available=available, skipped=skipped):
+                self.muse_state([self.row()], available=available, skipped=skipped)
+                code, out, err = self.invoke(
+                    "--client", "muse", "--package", "voice", "--check"
+                )
+                self.assertEqual(code, 1, out + err)
+
+    def test_external_diagnostics_and_skipped_packages_do_not_fail_our_check(
+        self,
+    ) -> None:
+        self.muse_state(
+            [
+                self.row(),
+                self.row("external", "external", diagnostics=[{"code": "warning"}]),
+            ],
+            available=["voice"],
+            skipped=[{"marketplace": "external", "name": "external"}],
+        )
+        code, out, err = self.invoke(
+            "--client", "muse", "--package", "voice", "--check"
+        )
+        self.assertEqual(code, 0, err)
+
+    def test_check_rejects_invalid_json_and_malformed_records(self) -> None:
+        for raw in ("not json", "[]", "{}", '{"plugins":[{}]}'):
+            with self.subTest(raw=raw):
+                self.muse_state([], available=["voice"], raw=raw)
+                code, out, err = self.invoke(
+                    "--client", "muse", "--package", "voice", "--check"
+                )
+                self.assertEqual(code, 1, out + err)
+
+    def test_check_uses_the_binary_override(self) -> None:
+        self.muse_state([self.row()], available=["voice"])
+        real = self.base / "muse-real"
+        real.write_bytes((self.bin / "muse").read_bytes())
+        real.chmod(0o755)
+        code, out, err = self.invoke(
+            "--client",
+            "muse",
+            "--package",
+            "voice",
+            "--binary",
+            f"muse={real}",
+            "--check",
+        )
+        self.assertEqual(code, 0, err)
+
+    def test_staging_failure_never_registers_or_installs(self) -> None:
+        code, out, err = self.invoke(
+            "--client", "muse", "--staging-dir", str(self.catalog), "--execute"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("staging would overwrite", err)
+        self.assertEqual(self.logged(), "")
+
+    def test_known_older_parser_forms_are_supported_without_retrying_runtime_failures(
+        self,
+    ) -> None:
+        argv = ("muse", "plugins", "marketplace", "add", "/example/staged")
+        self.assertEqual(
+            installer.muse_fallback_argv(
+                argv, "", "usage: muse plugins marketplace add <name> <source> [--json]"
+            ),
+            (
+                "muse",
+                "plugins",
+                "marketplace",
+                "add",
+                installer.MUSE_MARKETPLACE,
+                "/example/staged",
+            ),
+        )
+        self.assertIsNone(
+            installer.muse_fallback_argv(argv, "", "failed to load marketplace")
+        )
+        old = (
+            "muse",
+            "plugins",
+            "uninstall",
+            "voice@claude-code-Marketplace",
+            "--scope",
+            "user",
+        )
+        self.assertEqual(
+            installer.muse_fallback_argv(
+                old, "", "unsupported plugins command `uninstall`"
+            ),
+            ("muse", "plugins", "remove", "voice"),
+        )
+        self.assertIsNone(
+            installer.muse_fallback_argv(
+                (*old[:-1], "project"), "", "unsupported plugins command `uninstall`"
+            )
+        )
+
+    def test_default_client_resolution_includes_muse(self) -> None:
+        self.assertEqual(installer.parse_args([]).client, "all")
+        self.assertIn(
+            "muse", installer.selected_clients(installer.parse_args([]).client)
+        )
+
+    def test_local_path_marketplace_provenance_is_verified_against_available_sources(
+        self,
+    ) -> None:
+        source = str(self.base / "staged/plugins/voice")
+        row = self.row()
+        row["record"]["source"] = {
+            "provenance": "marketplace-user-added",
+            "path": source,
+        }
+        installed = json.dumps({"plugins": [row]})
+        available = json.dumps(
+            {
+                "available": [
+                    {
+                        "name": "voice",
+                        "marketplace": installer.MUSE_MARKETPLACE,
+                        "install": {"source": source},
+                    }
+                ],
+                "skipped": [],
+            }
+        )
+        with patch.object(
+            installer,
+            "muse_json",
+            side_effect=[json.loads(installed), json.loads(available)],
+        ):
+            packages = installer.select_packages(self.catalog, ["voice"])
+            self.assertEqual(
+                installer.check_muse(packages, {})[0].status, "installed-from-catalog"
+            )
+        row["record"]["source"]["provenance"] = "foreign-import"
+        self.assertEqual(
+            installer.muse_source_marketplace(row["record"], json.loads(available)), ""
+        )
+
+    def test_conflicting_native_skill_provenance_prevents_removal(self) -> None:
+        skills = self.home / ".config/muse/skills"
+        dest = skills / "voice"
+        dest.mkdir(parents=True)
+        (dest / "keep").write_text("unrelated replacement")
+        write_json(
+            skills.parent / ".infiquetra-skills.json",
+            {
+                "schema": installer.MUSE_SCHEMA,
+                "links": [
+                    {
+                        "target": str(self.catalog / "plugins/voice/skills/voice"),
+                        "link": str(dest),
+                    }
+                ],
+            },
+        )
+        write_json(
+            skills / ".muse/lock.json",
+            {
+                "skills": {
+                    "voice": {"source": {"path": str(self.base / "unrelated/voice")}}
+                }
+            },
+        )
+        code, out, err = self.invoke(
+            "--client", "muse", "--package", "voice", "--uninstall-legacy", "--execute"
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual((dest / "keep").read_text(), "unrelated replacement")
+        self.assertNotIn("skills uninstall voice", self.logged())
+        self.assertIn("refuse:", out)
+
+    def test_all_stops_muse_dependency_actions_after_staging_failure(self) -> None:
+        code, out, err = self.invoke(
+            "--client", "all", "--staging-dir", str(self.catalog), "--execute"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("muse", err)
+        self.assertNotIn("plugins install", self.logged())
+        self.assertIn("hermes:", out)
+
+    def test_older_marketplace_add_parser_retry_runs_as_a_real_subprocess(self) -> None:
+        write_executable(
+            self.bin,
+            "muse",
+            'printf "%s\\n" "$*" >> "$ARGV_LOG"\n'
+            'if [ "$1 $2 $3" = "plugins marketplace add" ] && [ "$#" = 4 ]; then\n'
+            '  echo "usage: muse plugins marketplace add <name> <source> [--json]" >&2\n'
+            "  exit 2\nfi\nexit 0\n",
+        )
+        code, out, err = self.invoke(
+            "--client", "muse", "--package", "voice", "--execute"
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("marketplace add infiquetra-claude-plugins", self.logged())
+        self.assertIn("plugins install voice@", self.logged())

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -101,6 +102,7 @@ class FakeClientFixture(unittest.TestCase):
             harness.CLIENT_HOME: str(self.home),
             harness.PLUGIN_NAME: CONFIG.name,
             harness.PLUGIN_ID: CONFIG.name,
+            harness.PLUGIN_ROOT: str(self.home / "installed"),
         }
 
     def outcome(self, spec: harness.StageSpec, plan: harness.ClientPlan | None = None):
@@ -155,7 +157,7 @@ class RosterTest(unittest.TestCase):
             "Grok": "GROK_AUTO_TRUST_REAL_BIN",
             "Agy": "AGY_AUTO_TRUST_REAL_BIN",
             "Qwen": "standard input",
-            "Muse": "--force",
+            "Muse": "marketplace",
             "Hermes": "isolated",
             "OpenAI Codex": "actionable",
         }
@@ -181,8 +183,13 @@ class RosterTest(unittest.TestCase):
         self.assertNotIn("Gemini CLI", names)
         self.assertEqual(len(names), 9)
 
-    def test_the_muse_load_stage_forces_the_digest(self) -> None:
-        self.assertIn("--force", harness.plan_for("Muse").stage("load").argv)
+    def test_muse_is_a_plugin_marketplace_client(self) -> None:
+        plan = harness.plan_for("Muse")
+        self.assertFalse(plan.skill_scoped)
+        self.assertEqual(plan.stage("load").argv, ("muse", "plugins", "inspect", harness.PLUGIN_NAME, "--json"))
+        self.assertEqual(plan.invocation_root, harness.PLUGIN_ROOT)
+        self.assertIn("muse", harness.PLAN_CLIENTS)
+        self.assertEqual(set(harness.PLAN_CLIENTS), set(ccm.EXPECTED_ASSESSMENT_CLIENTS))
 
 
 class SubprocessResultTest(FakeClientFixture):
@@ -1382,6 +1389,7 @@ class EntrypointPathTest(unittest.TestCase):
             harness.CLIENT_HOME: "/scratch/home",
             harness.PYTHON: "/usr/bin/python3.12",
             harness.PLUGIN_NAME: CONFIG.name,
+            harness.PLUGIN_ROOT: "/scratch/home/installed",
             harness.PLUGIN_ID: "unifi-37c9f17b",
         }
         for plan in harness.CLIENT_PLANS:
@@ -1429,7 +1437,7 @@ class EntrypointPathTest(unittest.TestCase):
     def test_skill_scoped_plan_with_package_root_entrypoints_blocks_invocation_in_advance(self) -> None:
         """When entrypoints sit at package root, a skill-scoped client blocks invocation."""
         mc_config = port_config.load("mission-control", ROOT)
-        for name in ("OpenCode", "Muse", "Hermes"):
+        for name in ("OpenCode", "Hermes"):
             plan = harness.plan_for(name)
             spec = plan.stage("invocation")
             with self.subTest(client=name):
@@ -1456,7 +1464,7 @@ class EntrypointPathTest(unittest.TestCase):
 
     def test_skill_scoped_plan_with_all_deliverable_entrypoints_is_not_blocked(self) -> None:
         """When all entrypoints sit under skill units, skill-scoped clients execute normally."""
-        for name in ("OpenCode", "Muse", "Hermes"):
+        for name in ("OpenCode", "Hermes"):
             plan = harness.plan_for(name)
             spec = plan.stage("invocation")
             with self.subTest(client=name):
@@ -1483,7 +1491,7 @@ class EntrypointPathTest(unittest.TestCase):
         package must not resemble (its entrypoints sit at the package root).
         """
         al_config = port_config.load("agent-launcher", ROOT)
-        for name in ("OpenCode", "Muse", "Hermes"):
+        for name in ("OpenCode", "Hermes"):
             plan = harness.plan_for(name)
             spec = plan.stage("invocation")
             with self.subTest(client=name):
@@ -1501,12 +1509,12 @@ class EntrypointPathTest(unittest.TestCase):
         OpenAI Codex's load and invocation stay statically blocked by that
         client's own plan — it refuses the package root — which is a client
         property recorded in every matrix, not an agent-launcher geometry
-        block; the four skill-scoped clients must show no invocation block.
+        block; the two skill-scoped clients must show no invocation block.
         """
         al_config = port_config.load("agent-launcher", ROOT)
         plan_text = harness.describe_plan(al_config)
         self.assertIn("Assessment plan for agent-launcher", plan_text)
-        for name in ("OpenCode", "Muse", "Hermes"):
+        for name in ("OpenCode", "Hermes"):
             with self.subTest(skill_scoped_client=name):
                 section = plan_text.split(f"## {name}")[1].split("## ")[0]
                 self.assertIn("invocation  <python>", section)
@@ -1562,7 +1570,7 @@ class EntrypointPathTest(unittest.TestCase):
     def test_package_scoped_plan_with_package_root_entrypoints_resolves_unchanged(self) -> None:
         """Package-scoped clients resolve package-root entrypoints without blocking."""
         mc_config = port_config.load("mission-control", ROOT)
-        for name in ("Claude Code", "Cursor Agent", "Qwen", "Grok", "Agy"):
+        for name in ("Claude Code", "Cursor Agent", "Qwen", "Grok", "Muse", "Agy"):
             plan = harness.plan_for(name)
             spec = plan.stage("invocation")
             with self.subTest(client=name):
@@ -1578,12 +1586,12 @@ class EntrypointPathTest(unittest.TestCase):
         mc_config = port_config.load("mission-control", ROOT)
         plan_text = harness.describe_plan(mc_config)
         self.assertIn("Assessment plan for mission-control", plan_text)
-        for name in ("OpenCode", "Muse", "Hermes"):
+        for name in ("OpenCode", "Hermes"):
             with self.subTest(skill_scoped_client=name):
                 section = plan_text.split(f"## {name}")[1].split("## ")[0]
                 self.assertIn("invocation  blocked in advance:", section)
                 self.assertIn("scripts/sdlc_manager.py", section)
-        for name in ("Claude Code", "Cursor Agent", "Qwen", "Grok", "Agy"):
+        for name in ("Claude Code", "Cursor Agent", "Qwen", "Grok", "Muse", "Agy"):
             with self.subTest(package_scoped_client=name):
                 section = plan_text.split(f"## {name}")[1].split("## ")[0]
                 self.assertIn("invocation  <python>", section)
@@ -2070,6 +2078,344 @@ class CommandLineTest(unittest.TestCase):
             sum(1 for line in stage_lines if "deadline" in line), len(runnable)
         )
 
+
+
+class MuseMarketplaceAssessmentTest(FakeClientFixture):
+    def setUp(self) -> None:
+        super().setUp()
+        write_executable(self.bin, "muse", "exit 0\n")
+        self.plan = harness.plan_for("Muse")
+        self.calls = []
+        self.changed_document = None
+
+    def run_muse(self, argv, **kwargs):
+        self.calls.append(tuple(argv))
+        home = Path(kwargs["env"]["HOME"])
+        self.assertNotEqual(home, Path.home())
+        self.assertEqual(kwargs["env"]["XDG_DATA_HOME"], str(home / ".local/share"))
+        cache = home / "installed" / CONFIG.name
+        record = {
+            "id": CONFIG.name,
+            "enabled": True,
+            "cache_path": str(cache),
+            "source": {
+                "path": str(
+                    home
+                    / ".local/share/muse/plugins/marketplaces"
+                    / harness.installer.MUSE_MARKETPLACE
+                    / "source/plugins"
+                    / CONFIG.name
+                )
+            },
+        }
+        result = {"valid": True, "diagnostics": []}
+        if argv[1:3] == ["plugins", "install"]:
+            shutil.copytree(
+                home / "build/muse-marketplace/plugins" / CONFIG.name, cache
+            )
+        if argv[1:3] == ["plugins", "list"]:
+            result = {"plugins": [{"record": record, "valid": True, "diagnostics": []}]}
+            if "--available" in argv:
+                result = {
+                    "available": [
+                        {
+                            "marketplace": harness.installer.MUSE_MARKETPLACE,
+                            "name": CONFIG.name,
+                        }
+                    ],
+                    "skipped": [],
+                }
+        if argv[1:3] == ["plugins", "inspect"]:
+            result = {"record": record, "valid": True, "diagnostics": []}
+        if self.changed_document:
+            result = self.changed_document(argv, result)
+        return subprocess.CompletedProcess(argv, 0, json.dumps(result), "")
+
+    def assessment(self, *, execute=True, runner=None):
+        with unittest.mock.patch.dict(os.environ, {"PATH": self.environment["PATH"]}):
+            return harness.assess(
+                CONFIG,
+                python=sys.executable,
+                execute=execute,
+                only=("Muse",),
+                workspace=self.base / "assessment",
+                runner=runner or self.run_muse,
+            )
+
+    def test_plan_is_package_scoped_and_prints_every_marketplace_command(self) -> None:
+        text = harness.describe_plan(CONFIG).split("## Muse")[1].split("## ")[0]
+        self.assertIn("plugins validate", text)
+        self.assertIn(
+            "plugins marketplace add <client-home>/build/muse-marketplace", text
+        )
+        self.assertIn(
+            f"plugins install {CONFIG.name}@infiquetra-claude-plugins --scope user",
+            text,
+        )
+        self.assertIn("plugins list --available --json", text)
+        self.assertIn(f"plugins inspect {CONFIG.name} --json", text)
+        self.assertIn("<plugin-root>/", text)
+        self.assertNotIn("skills install", text)
+        self.assertNotIn("--force", text)
+        self.assertEqual(
+            len(
+                harness.stage_argvs(
+                    CONFIG, self.plan, self.plan.stage("placement"), self.values
+                )
+            ),
+            3,
+        )
+
+    def test_assessment_stages_and_invokes_from_the_inspected_installed_cache(
+        self,
+    ) -> None:
+        record = self.assessment()
+        row = record["clients"][0]
+        self.assertEqual(row["status"], "works-directly")
+        validation = self.calls[0]
+        staged = Path(validation[3])
+        self.assertTrue((staged / ".claude-plugin/plugin.json").is_file())
+        self.assertFalse((staged / "plugin.json").exists())
+        self.assertFalse((staged / ".codex-plugin").exists())
+        invocation = [argv for argv in self.calls if argv[0] == sys.executable]
+        self.assertEqual(len(invocation), len(CONFIG.assessment.entrypoints))
+        for argv, relative in zip(invocation, CONFIG.assessment.entrypoints):
+            self.assertIn(f"/installed/{CONFIG.name}/{relative}", argv[1])
+            self.assertTrue(Path(argv[1]).is_file())
+        self.assertNotIn("skills install", json.dumps(self.calls))
+        self.assertNotIn(str(self.base), json.dumps(record))
+        self.assertIn("<plugin-root>", json.dumps(row["stages"]["invocation"]))
+        self.assertFalse(
+            any(
+                (home / ".config/muse/skills").exists()
+                for home in (self.base / "assessment").glob("*/muse/home")
+            )
+        )
+
+    def test_dry_run_neither_stages_nor_invokes_muse(self) -> None:
+        with unittest.mock.patch.object(
+            harness,
+            "prepare_muse_catalog",
+            side_effect=AssertionError("dry-run staged"),
+        ):
+            record = self.assessment(execute=False)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(record["clients"][0]["status"], "unsupported")
+        self.assertFalse(list((self.base / "assessment").rglob("muse-marketplace")))
+
+    def test_muse_cannot_use_the_real_home(self) -> None:
+        with self.assertRaises(harness.AssessmentError):
+            harness.refuse_unsafe_home(
+                self.plan, self.plan.stage("discovery"), harness.REAL_HOME
+            )
+
+    def test_semantic_json_failures_block_the_stage_even_with_exit_zero(self) -> None:
+        cases = (
+            ("placement", {"valid": False, "diagnostics": []}),
+            ("placement", {"valid": True, "diagnostics": [{"code": "warning"}]}),
+            ("discovery", {"plugins": []}),
+            ("discovery", {"available": [], "skipped": []}),
+            (
+                "discovery",
+                {
+                    "available": [
+                        {
+                            "name": CONFIG.name,
+                            "marketplace": harness.installer.MUSE_MARKETPLACE,
+                        }
+                    ],
+                    "skipped": [
+                        {
+                            "marketplace": harness.installer.MUSE_MARKETPLACE,
+                            "name": "orchestrate",
+                        }
+                    ],
+                },
+            ),
+            (
+                "load",
+                {
+                    "valid": True,
+                    "diagnostics": [],
+                    "record": {"id": CONFIG.name, "enabled": False},
+                },
+            ),
+        )
+        for stage, document in cases:
+            argv = (
+                "muse",
+                "plugins",
+                "validate"
+                if stage == "placement"
+                else "list"
+                if stage == "discovery"
+                else "inspect",
+            )
+            if "available" in document:
+                argv += ("--available",)
+            with self.subTest(stage=stage, document=document):
+                problems, captured = harness.muse_observation(
+                    stage,
+                    argv,
+                    subprocess.CompletedProcess(argv, 0, json.dumps(document), ""),
+                    self.values,
+                )
+                self.assertTrue(problems)
+                self.assertEqual(captured, {})
+
+    def test_discovery_requires_a_matching_enabled_valid_clean_record(self) -> None:
+        good = {"record": {"id": CONFIG.name, "enabled": True,
+                "source": {"marketplace": harness.installer.MUSE_MARKETPLACE}},
+                "valid": True, "diagnostics": []}
+        for field, value in (("id", "other"), ("enabled", False),
+                             ("source", {"marketplace": "other"}),
+                             ("valid", False), ("diagnostics", [{"code": "warning"}])):
+            row = json.loads(json.dumps(good))
+            target = row if field in ("valid", "diagnostics") else row["record"]
+            target[field] = value
+            problems, captured = harness.muse_observation(
+                "discovery", ("muse", "plugins", "list", "--json"),
+                subprocess.CompletedProcess([], 0, json.dumps({"plugins": [row]}), ""), self.values)
+            self.assertTrue(problems, field)
+            self.assertEqual(captured, {})
+
+    def test_inspected_staging_source_is_attributed_to_the_muse_marketplace(self) -> None:
+        record = {"id": CONFIG.name, "enabled": True,
+                  "source": {"provenance": "marketplace-user-added",
+                             "path": str(self.home / "build/muse-marketplace/plugins" / CONFIG.name)},
+                  "cache_path": str(self.home / "installed")}
+        problems, captured = harness.muse_observation(
+            "load", ("muse", "plugins", "inspect"),
+            subprocess.CompletedProcess([], 0, json.dumps({"record": record, "valid": True, "diagnostics": []}), ""),
+            self.values)
+        self.assertEqual(problems, [])
+        self.assertEqual(captured, {harness.PLUGIN_ROOT: str(self.home / "installed")})
+
+    def test_load_refuses_unresolved_or_outside_installed_paths(self) -> None:
+        for cache in (None, "relative/path", "/example/outside"):
+            document = {
+                "valid": True,
+                "diagnostics": [],
+                "record": {
+                    "id": CONFIG.name,
+                    "enabled": True,
+                    "cache_path": cache,
+                    "source": {"marketplace": harness.installer.MUSE_MARKETPLACE},
+                },
+            }
+            problems, captured = harness.muse_observation(
+                "load",
+                ("muse", "plugins", "inspect"),
+                subprocess.CompletedProcess([], 0, json.dumps(document), ""),
+                self.values,
+            )
+            self.assertTrue(problems)
+            self.assertEqual(captured, {})
+        outcome = harness.run_stage(
+            self.plan,
+            self.plan.stage("invocation"),
+            CONFIG,
+            {k: v for k, v in self.values.items() if k != harness.PLUGIN_ROOT},
+            self.environment,
+        )
+        self.assertEqual(outcome.result, harness.BLOCKED)
+        self.assertIn("<plugin-root>", outcome.reason)
+
+    def test_load_requires_matching_source_identity_and_zero_diagnostics(self) -> None:
+        good = {
+            "valid": True,
+            "diagnostics": [],
+            "record": {
+                "id": CONFIG.name,
+                "enabled": True,
+                "cache_path": str(self.home / "installed"),
+                "source": {"marketplace": harness.installer.MUSE_MARKETPLACE},
+            },
+        }
+        for field, value in (
+            ("id", "other"),
+            ("enabled", False),
+            ("source", {"marketplace": "other"}),
+        ):
+            document = json.loads(json.dumps(good))
+            document["record"][field] = value
+            problems, captured = harness.muse_observation(
+                "load",
+                ("muse", "plugins", "inspect"),
+                subprocess.CompletedProcess([], 0, json.dumps(document), ""),
+                self.values,
+            )
+            self.assertTrue(problems)
+            self.assertEqual(captured, {})
+        problems, captured = harness.muse_observation(
+            "load",
+            ("muse", "plugins", "inspect"),
+            subprocess.CompletedProcess([], 0, json.dumps(good), ""),
+            self.values,
+        )
+        self.assertEqual(problems, [])
+        self.assertEqual(captured, {harness.PLUGIN_ROOT: str(self.home / "installed")})
+
+    def test_invalid_json_or_command_failure_cannot_be_recorded_as_success(
+        self,
+    ) -> None:
+        for status, raw in ((0, "not json"), (0, "[]"), (3, "{}")):
+            problems, captured = harness.muse_observation(
+                "load",
+                ("muse", "plugins", "inspect"),
+                subprocess.CompletedProcess([], status, raw, ""),
+                self.values,
+            )
+            self.assertTrue(problems)
+            self.assertEqual(captured, {})
+
+    def test_invalid_validation_stops_placement_before_registration(self) -> None:
+        self.changed_document = lambda argv, result: (
+            {"valid": False, "diagnostics": []}
+            if argv[1:3] == ["plugins", "validate"]
+            else result
+        )
+        record = self.assessment()
+        row = record["clients"][0]
+        self.assertEqual(row["stages"]["placement"]["result"], "blocked")
+        self.assertNotIn("works-directly", row["status"])
+        self.assertFalse(
+            any(argv[1:4] == ("plugins", "marketplace", "add") for argv in self.calls)
+        )
+
+    def test_staging_error_blocks_every_stage_and_starts_no_process(self) -> None:
+        with unittest.mock.patch.object(
+            harness,
+            "prepare_muse_catalog",
+            side_effect=harness.sync_marketplace.MarketplaceError("unusable"),
+        ):
+            record = self.assessment()
+        self.assertEqual(self.calls, [])
+        for stage in record["clients"][0]["stages"].values():
+            self.assertEqual(stage["result"], "blocked")
+            self.assertIn("Muse staging failed", stage["reason"])
+
+    def test_parser_compatibility_retry_is_recorded_with_its_actual_argv(self) -> None:
+        def older(argv, **kwargs):
+            if argv[1:4] == ["plugins", "marketplace", "add"] and len(argv) == 5:
+                return subprocess.CompletedProcess(
+                    argv,
+                    2,
+                    "",
+                    "usage: muse plugins marketplace add <name> <source> [--json]",
+                )
+            return self.run_muse(argv, **kwargs)
+
+        record = self.assessment(runner=older)
+        row = record["clients"][0]
+        self.assertEqual(row["status"], "works-directly")
+        commands = row["stages"]["placement"]["commands"]
+        self.assertEqual(len(commands), 4)
+        self.assertEqual(commands[1]["exit_status"], 2)
+        self.assertIn(
+            "marketplace add infiquetra-claude-plugins <client-home>",
+            commands[2]["command"],
+        )
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
