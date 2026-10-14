@@ -1,3 +1,6 @@
+Historical initial implementation check; current repaired behaviour is verified in
+2026-10-14-issue237-review-repair-checks.txt. This file retains the original observations.
+
 Muse marketplace client check for issue #237 / Unit U3
 Run date: 2026-10-14 (America/Indiana/Indianapolis); filename follows the October 13 plan
 Client: Muse 1.4.7 (1.4.7-R6101.1)

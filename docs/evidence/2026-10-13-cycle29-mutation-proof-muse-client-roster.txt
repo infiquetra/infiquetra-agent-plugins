@@ -1,30 +1,32 @@
-# Cycle-29 mutation proof - Muse marketplace assessment and current client inventory guards
-# Run date: 2026-10-14; filename follows the October 13 issue #237 plan.
-# Supersedes Cycle 28 for MutationProofBindingTest only; earlier evidence remains unedited.
-# Re-grades only scripts/assess_clients.py and scripts/check_compatibility_matrix.py.
-# The other three GRADED files are unchanged: their exact Cycle-28 digests are carried.
-# No older guards in those files were re-patched in this run.
+# Cycle-29 mutation proof - repaired Muse marketplace assessment and current inventory guards
+# Cycle 28 is the preceding proof of manifest/staging guards in scripts/check_repo.py:
+# [Cycle 28](2026-10-13-cycle28-mutation-proof-manifest-and-muse-staging.txt).
+# Cycle 29 proves the Muse client assessment/inventory guards introduced by issue #237.
+# This 2026-10-14 single repair pass re-ran all 29 original challenges, re-anchored after
+# extracting muse_cli.py, and added T237-1 plus staged-copy and inventory-drift mutations.
+# The filename follows the October 13 plan date; implementation and repair evidence use 2026-10-14.
+# Supersedes the earlier Cycle-29 run for the digest binding. Cycle 28 remains unedited.
+# Carried digests identify three unchanged files and preserve their prior proof bindings;
+# those older guards were not re-mutated here.
 #
-# Runner: a fresh copy of the working tree excluding .git, build and caches;
-# each mutation below is one exact, unique string replacement in the named file.
-# Run the test command below, then restore pristine bytes before the next mutation.
-# PYTHONDONTWRITEBYTECODE=1 prevents stale bytecode between replacements.
-# A mutation is killed only by a test failure or error, never a syntax/import failure
-# or the digest-binding test. MutationProofBindingTest is excluded by class selection.
-# The baseline must pass. Every graded file is checked byte-identical after restoration.
-# Tests use scratch homes and fake clients; no live Muse state is changed.
+# Runner: fresh copy excluding .git, build and caches; one unique exact replacement per mutation.
+# Run the command below, restore pristine bytes, then continue. PYTHONDONTWRITEBYTECODE=1
+# prevents stale bytecode. Baseline and restored baseline must pass. A kill requires an
+# actual test failure or error; SyntaxError/ImportError and digest-binding failures do not count.
+# MutationProofBindingTest is excluded by class selection. All GRADED bytes are checked restored.
+# Scratch homes and fake clients only: no live Muse state changed by the mutation run.
 #
 Test command: python3 -m unittest tests.test_assess_clients.RosterTest tests.test_assess_clients.MuseMarketplaceAssessmentTest tests.test_check_compatibility_matrix.ClientAssessmentInventoryTest tests.test_check_compatibility_matrix.CoverageTest
-Baseline: 41 tests, OK
+Baseline: 45 tests, OK
 
-## 29 mutations
+## 34 mutations
 
 ## MUTATION 1: Muse removed from the current client identifiers
 File: scripts/check_compatibility_matrix.py
-Replace: '    "muse",\n'
+Replace: '    "muse": "Muse",\n'
 With: ''
 Killed by: tests.test_assess_clients.RosterTest.test_muse_is_a_plugin_marketplace_client
-FAILED (failures=2)
+FAILED (failures=3)
 
 ## MUTATION 2: Missing or extra inventory clients no longer refused
 File: scripts/check_compatibility_matrix.py
@@ -70,8 +72,8 @@ FAILED (failures=1)
 
 ## MUTATION 8: Muse dropped from PLAN_CLIENTS
 File: scripts/assess_clients.py
-Replace: 'for plan in CLIENT_PLANS)\n\n#: Clients'
-With: 'for plan in CLIENT_PLANS if plan.name != "Muse")\n\n#: Clients'
+Replace: 'else plan.binary for plan in CLIENT_PLANS\n'
+With: 'else plan.binary for plan in CLIENT_PLANS if plan.name != "Muse"\n'
 Killed by: tests.test_assess_clients.RosterTest.test_muse_is_a_plugin_marketplace_client
 FAILED (failures=1)
 
@@ -80,7 +82,7 @@ File: scripts/assess_clients.py
 Replace: '"Muse",\n            binary="muse",'
 With: '"Gemini CLI",\n            binary="muse",'
 Killed by: tests.test_assess_clients.RosterTest.test_every_quirk_the_runbook_names_is_carried
-FAILED (failures=2, errors=15)
+FAILED (failures=2, errors=18)
 
 ## MUTATION 10: Muse returns to skill-scoped placement
 File: scripts/assess_clients.py
@@ -94,7 +96,7 @@ File: scripts/assess_clients.py
 Replace: 'invocation_root=PLUGIN_ROOT,'
 With: 'invocation_root=PACKAGE,'
 Killed by: tests.test_assess_clients.RosterTest.test_muse_is_a_plugin_marketplace_client
-FAILED (failures=4)
+FAILED (failures=8)
 
 ## MUTATION 12: Muse permitted to read the real home
 File: scripts/assess_clients.py
@@ -112,7 +114,7 @@ FAILED (failures=2)
 
 ## MUTATION 14: Placement stops installing the plugin
 File: scripts/assess_clients.py
-Replace: '            ("muse", "plugins", "install", f"{PLUGIN_NAME}@{installer.MUSE_MARKETPLACE}", "--scope", "user"),\n'
+Replace: '            (\n                "muse", "plugins", "install",\n                f"{PLUGIN_NAME}@{muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS}",\n            ),\n'
 With: ''
 Killed by: tests.test_assess_clients.MuseMarketplaceAssessmentTest.test_assessment_stages_and_invokes_from_the_inspected_installed_cache
 FAILED (failures=3)
@@ -129,18 +131,18 @@ File: scripts/assess_clients.py
 Replace: 'if document.get("valid") is not True or document.get("diagnostics") != []:'
 With: 'if document.get("diagnostics") != []:'
 Killed by: tests.test_assess_clients.MuseMarketplaceAssessmentTest.test_invalid_validation_stops_placement_before_registration
-FAILED (failures=2)
+FAILED (failures=3)
 
 ## MUTATION 17: Package validation diagnostics accepted
 File: scripts/assess_clients.py
 Replace: 'if document.get("valid") is not True or document.get("diagnostics") != []:'
 With: 'if document.get("valid") is not True:'
-Killed by: tests.test_assess_clients.MuseMarketplaceAssessmentTest.test_semantic_json_failures_block_the_stage_even_with_exit_zero
-FAILED (failures=1)
+Killed by: tests.test_assess_clients.MuseMarketplaceAssessmentTest.test_load_validation_failures_capture_nothing_and_block_invocation
+FAILED (failures=4)
 
 ## MUTATION 18: Unavailable and skipped catalog entries accepted
 File: scripts/assess_clients.py
-Replace: 'installer.muse_available_problems(document, [values[PLUGIN_NAME]]),'
+Replace: 'muse_cli.available_problems(document, [values[PLUGIN_NAME]]),'
 With: '[],'
 Killed by: tests.test_assess_clients.MuseMarketplaceAssessmentTest.test_semantic_json_failures_block_the_stage_even_with_exit_zero
 FAILED (failures=2)
@@ -168,10 +170,10 @@ FAILED (failures=1)
 
 ## MUTATION 22: Inspect accepts another marketplace
 File: scripts/assess_clients.py
-Replace: '\n        != installer.MUSE_MARKETPLACE\n'
-With: '\n        != installer.muse_source_marketplace(record)\n'
-Killed by: tests.test_assess_clients.MuseMarketplaceAssessmentTest.test_inspected_staging_source_is_attributed_to_the_muse_marketplace
-FAILED (failures=2)
+Replace: '\n        != muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS\n'
+With: '\n        != muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS and False\n'
+Killed by: tests.test_assess_clients.MuseMarketplaceAssessmentTest.test_load_requires_matching_source_identity_and_zero_diagnostics
+FAILED (failures=1)
 
 ## MUTATION 23: Inspected cache capture replaced with package source
 File: scripts/assess_clients.py
@@ -185,7 +187,7 @@ File: scripts/assess_clients.py
 Replace: 'if plan.name == "Muse" and spec.stage != "invocation" and fallback is None:'
 With: 'if False:'
 Killed by: tests.test_assess_clients.MuseMarketplaceAssessmentTest.test_assessment_stages_and_invokes_from_the_inspected_installed_cache
-FAILED (failures=3)
+FAILED (failures=7)
 
 ## MUTATION 25: Installed cache path no longer redacted with its placeholder
 File: scripts/assess_clients.py
@@ -196,8 +198,8 @@ FAILED (failures=1)
 
 ## MUTATION 26: Dry-run calls the staging helper
 File: scripts/assess_clients.py
-Replace: '            if execute:\n                try:\n                    prepare_muse_catalog'
-With: '            if True:\n                try:\n                    prepare_muse_catalog'
+Replace: '            if execute:\n                try:\n                    staged_root = prepare_muse_catalog('
+With: '            if True:\n                try:\n                    staged_root = prepare_muse_catalog('
 Killed by: tests.test_assess_clients.MuseMarketplaceAssessmentTest.test_dry_run_neither_stages_nor_invokes_muse
 FAILED (failures=1)
 
@@ -222,16 +224,51 @@ With: 'or False'
 Killed by: tests.test_assess_clients.MuseMarketplaceAssessmentTest.test_discovery_requires_a_matching_enabled_valid_clean_record
 FAILED (failures=1)
 
-Restored baseline: 41 tests, OK
-Mutations: 29; killed: 29; survivors: 0
+## MUTATION 30: T237-1: load alone bypasses valid and diagnostics validation
+File: scripts/assess_clients.py
+Replace: 'if document.get("valid") is not True or document.get("diagnostics") != []:'
+With: 'if stage != "load" and (document.get("valid") is not True or document.get("diagnostics") != []):'
+Killed by: tests.test_assess_clients.MuseMarketplaceAssessmentTest.test_load_validation_failures_capture_nothing_and_block_invocation
+FAILED (failures=4)
+
+## MUTATION 31: A changed staged Muse package no longer invalidates the row
+File: scripts/assess_clients.py
+Replace: 'staged_mutated = staged_before is not None and staged_after != staged_before'
+With: 'staged_mutated = False'
+Killed by: tests.test_assess_clients.MuseMarketplaceAssessmentTest.test_mutation_of_the_staged_package_invalidates_the_muse_row
+FAILED (failures=1)
+
+## MUTATION 32: The staged package is excluded from the mutation decision
+File: scripts/assess_clients.py
+Replace: 'mutated = scratch_after != scratch_before or staged_mutated'
+With: 'mutated = scratch_after != scratch_before'
+Killed by: tests.test_assess_clients.MuseMarketplaceAssessmentTest.test_mutation_of_the_staged_package_invalidates_the_muse_row
+FAILED (failures=1)
+
+## MUTATION 33: A drifted Muse marketplace alias in inventory is accepted
+File: scripts/check_compatibility_matrix.py
+Replace: 'if row.get("marketplace") != muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS:'
+With: 'if False:'
+Killed by: tests.test_check_compatibility_matrix.ClientAssessmentInventoryTest.test_muse_inventory_alias_and_exclusions_cannot_drift
+FAILED (failures=1)
+
+## MUTATION 34: A drifted Muse exclusion list in inventory is accepted
+File: scripts/check_compatibility_matrix.py
+Replace: 'if row.get("excluded_packages") != excluded:'
+With: 'if False:'
+Killed by: tests.test_check_compatibility_matrix.ClientAssessmentInventoryTest.test_muse_inventory_alias_and_exclusions_cannot_drift
+FAILED (failures=2)
+
+Restored baseline: 45 tests, OK
+Mutations: 34; killed: 34; survivors: 0
 
 ## RESTORED
-# Carried from Cycle 28, not re-graded in this cycle:
+# Carried unchanged from Cycle 28, not re-graded:
 plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
-# Carried from Cycle 28, not re-graded in this cycle:
+# Carried unchanged from Cycle 28, not re-graded:
 scripts/check_repo.py sha256: c168109e13a5bb2f83b60efb82cecfefb05415e2766fc144eff7cb934c1f4ad0
-scripts/check_compatibility_matrix.py sha256: 545486dfc2f90e966b965b78ac87a0eecb9883febf731a519848503c29a20d38
-# Carried from Cycle 28, not re-graded in this cycle:
+scripts/check_compatibility_matrix.py sha256: c6d7be179386fac119af06ebc79d0ba637530d16a38b421670c956c6462f1441
+# Carried unchanged from Cycle 28, not re-graded:
 scripts/port_config.py sha256: 56216b7c8018b361d611356e21bc2383cb7d71ebf478f28436fee3c5c8e46b17
-scripts/assess_clients.py sha256: b3733ceb71636962e7b6e0a3af76a5d703d04472b062d565c167eb8cdc644acc
+scripts/assess_clients.py sha256: 12d9b904a107be04e4be2a331e59f80fa91447cee52d773a59de6389d5ac20c6
 byte-identical to pristine: YES

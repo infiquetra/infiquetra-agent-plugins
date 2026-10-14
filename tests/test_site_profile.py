@@ -1105,8 +1105,9 @@ class MutationProofBindingTest(unittest.TestCase):
         before issue #237 made Muse a plugin-marketplace assessment client
         and added the current client-inventory guard. Cycle 29 re-grades those
         guards in ``scripts/assess_clients.py`` and
-        ``scripts/check_compatibility_matrix.py`` (twenty-nine mutations,
-        twenty-nine killed), excluding this binding test from grading, and
+        ``scripts/check_compatibility_matrix.py`` (thirty-four mutations,
+        thirty-four killed after the single repair pass, including T237-1's
+        load-stage validation bypass), excluding this binding test from grading, and
         carries the other three unchanged digests.
 
         Cycle 28's account follows. Cycle 27 remains the proof of the bytes

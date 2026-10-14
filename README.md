@@ -41,7 +41,9 @@ What every package looks like now:
 - **Muse installs plugin bundles through a staged marketplace** at
   `build/muse-marketplace/` (`scripts/sync_marketplace.py`). The installer
   selects the 12 applicable packages, projects their Claude-compatible manifests,
-  and installs via `muse plugins`. `fleet-core` and `house-style` are excluded.
+  and installs via `muse plugins`, registered under the compatibility name
+  `infiquetra-claude-plugins` but built from this repository. `fleet-core` and
+  `house-style` are excluded.
   See [the Muse install workflow](docs/runbooks/install-clients.md#muse).
 - **Fleet Core is a library, bundled at build time** into each consumer's
   `_bundled/` directory (`scripts/bundle_fleet_module.py`); it is not

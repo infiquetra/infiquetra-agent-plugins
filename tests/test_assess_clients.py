@@ -2099,27 +2099,22 @@ class MuseMarketplaceAssessmentTest(FakeClientFixture):
             "enabled": True,
             "cache_path": str(cache),
             "source": {
+                "provenance": "marketplace-user-added",
                 "path": str(
-                    home
-                    / ".local/share/muse/plugins/marketplaces"
-                    / harness.installer.MUSE_MARKETPLACE
-                    / "source/plugins"
-                    / CONFIG.name
-                )
+                    home / harness.sync_marketplace.MUSE_STAGING_DEFAULT / "plugins" / CONFIG.name
+                ),
             },
         }
         result = {"valid": True, "diagnostics": []}
         if argv[1:3] == ["plugins", "install"]:
-            shutil.copytree(
-                home / "build/muse-marketplace/plugins" / CONFIG.name, cache
-            )
+            shutil.copytree(home / "build/muse-marketplace/plugins" / CONFIG.name, cache)
         if argv[1:3] == ["plugins", "list"]:
             result = {"plugins": [{"record": record, "valid": True, "diagnostics": []}]}
             if "--available" in argv:
                 result = {
                     "available": [
                         {
-                            "marketplace": harness.installer.MUSE_MARKETPLACE,
+                            "marketplace": harness.muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS,
                             "name": CONFIG.name,
                         }
                     ],
@@ -2145,11 +2140,9 @@ class MuseMarketplaceAssessmentTest(FakeClientFixture):
     def test_plan_is_package_scoped_and_prints_every_marketplace_command(self) -> None:
         text = harness.describe_plan(CONFIG).split("## Muse")[1].split("## ")[0]
         self.assertIn("plugins validate", text)
+        self.assertIn("plugins marketplace add <client-home>/build/muse-marketplace", text)
         self.assertIn(
-            "plugins marketplace add <client-home>/build/muse-marketplace", text
-        )
-        self.assertIn(
-            f"plugins install {CONFIG.name}@infiquetra-claude-plugins --scope user",
+            f"plugins install {CONFIG.name}@infiquetra-claude-plugins",
             text,
         )
         self.assertIn("plugins list --available --json", text)
@@ -2158,11 +2151,7 @@ class MuseMarketplaceAssessmentTest(FakeClientFixture):
         self.assertNotIn("skills install", text)
         self.assertNotIn("--force", text)
         self.assertEqual(
-            len(
-                harness.stage_argvs(
-                    CONFIG, self.plan, self.plan.stage("placement"), self.values
-                )
-            ),
+            len(harness.stage_argvs(CONFIG, self.plan, self.plan.stage("placement"), self.values)),
             3,
         )
 
@@ -2205,9 +2194,7 @@ class MuseMarketplaceAssessmentTest(FakeClientFixture):
 
     def test_muse_cannot_use_the_real_home(self) -> None:
         with self.assertRaises(harness.AssessmentError):
-            harness.refuse_unsafe_home(
-                self.plan, self.plan.stage("discovery"), harness.REAL_HOME
-            )
+            harness.refuse_unsafe_home(self.plan, self.plan.stage("discovery"), harness.REAL_HOME)
 
     def test_semantic_json_failures_block_the_stage_even_with_exit_zero(self) -> None:
         cases = (
@@ -2221,12 +2208,12 @@ class MuseMarketplaceAssessmentTest(FakeClientFixture):
                     "available": [
                         {
                             "name": CONFIG.name,
-                            "marketplace": harness.installer.MUSE_MARKETPLACE,
+                            "marketplace": harness.muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS,
                         }
                     ],
                     "skipped": [
                         {
-                            "marketplace": harness.installer.MUSE_MARKETPLACE,
+                            "marketplace": harness.muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS,
                             "name": "orchestrate",
                         }
                     ],
@@ -2264,30 +2251,52 @@ class MuseMarketplaceAssessmentTest(FakeClientFixture):
                 self.assertEqual(captured, {})
 
     def test_discovery_requires_a_matching_enabled_valid_clean_record(self) -> None:
-        good = {"record": {"id": CONFIG.name, "enabled": True,
-                "source": {"marketplace": harness.installer.MUSE_MARKETPLACE}},
-                "valid": True, "diagnostics": []}
-        for field, value in (("id", "other"), ("enabled", False),
-                             ("source", {"marketplace": "other"}),
-                             ("valid", False), ("diagnostics", [{"code": "warning"}])):
+        good = {
+            "record": {
+                "id": CONFIG.name,
+                "enabled": True,
+                "source": {"marketplace": harness.muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS},
+            },
+            "valid": True,
+            "diagnostics": [],
+        }
+        for field, value in (
+            ("id", "other"),
+            ("enabled", False),
+            ("source", {"marketplace": "other"}),
+            ("valid", False),
+            ("diagnostics", [{"code": "warning"}]),
+        ):
             row = json.loads(json.dumps(good))
             target = row if field in ("valid", "diagnostics") else row["record"]
             target[field] = value
             problems, captured = harness.muse_observation(
-                "discovery", ("muse", "plugins", "list", "--json"),
-                subprocess.CompletedProcess([], 0, json.dumps({"plugins": [row]}), ""), self.values)
+                "discovery",
+                ("muse", "plugins", "list", "--json"),
+                subprocess.CompletedProcess([], 0, json.dumps({"plugins": [row]}), ""),
+                self.values,
+            )
             self.assertTrue(problems, field)
             self.assertEqual(captured, {})
 
     def test_inspected_staging_source_is_attributed_to_the_muse_marketplace(self) -> None:
-        record = {"id": CONFIG.name, "enabled": True,
-                  "source": {"provenance": "marketplace-user-added",
-                             "path": str(self.home / "build/muse-marketplace/plugins" / CONFIG.name)},
-                  "cache_path": str(self.home / "installed")}
+        record = {
+            "id": CONFIG.name,
+            "enabled": True,
+            "source": {
+                "provenance": "marketplace-user-added",
+                "path": str(self.home / "build/muse-marketplace/plugins" / CONFIG.name),
+            },
+            "cache_path": str(self.home / "installed"),
+        }
         problems, captured = harness.muse_observation(
-            "load", ("muse", "plugins", "inspect"),
-            subprocess.CompletedProcess([], 0, json.dumps({"record": record, "valid": True, "diagnostics": []}), ""),
-            self.values)
+            "load",
+            ("muse", "plugins", "inspect"),
+            subprocess.CompletedProcess(
+                [], 0, json.dumps({"record": record, "valid": True, "diagnostics": []}), ""
+            ),
+            self.values,
+        )
         self.assertEqual(problems, [])
         self.assertEqual(captured, {harness.PLUGIN_ROOT: str(self.home / "installed")})
 
@@ -2300,7 +2309,7 @@ class MuseMarketplaceAssessmentTest(FakeClientFixture):
                     "id": CONFIG.name,
                     "enabled": True,
                     "cache_path": cache,
-                    "source": {"marketplace": harness.installer.MUSE_MARKETPLACE},
+                    "source": {"marketplace": harness.muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS},
                 },
             }
             problems, captured = harness.muse_observation(
@@ -2329,7 +2338,7 @@ class MuseMarketplaceAssessmentTest(FakeClientFixture):
                 "id": CONFIG.name,
                 "enabled": True,
                 "cache_path": str(self.home / "installed"),
-                "source": {"marketplace": harness.installer.MUSE_MARKETPLACE},
+                "source": {"marketplace": harness.muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS},
             },
         }
         for field, value in (
@@ -2371,17 +2380,13 @@ class MuseMarketplaceAssessmentTest(FakeClientFixture):
 
     def test_invalid_validation_stops_placement_before_registration(self) -> None:
         self.changed_document = lambda argv, result: (
-            {"valid": False, "diagnostics": []}
-            if argv[1:3] == ["plugins", "validate"]
-            else result
+            {"valid": False, "diagnostics": []} if argv[1:3] == ["plugins", "validate"] else result
         )
         record = self.assessment()
         row = record["clients"][0]
         self.assertEqual(row["stages"]["placement"]["result"], "blocked")
         self.assertNotIn("works-directly", row["status"])
-        self.assertFalse(
-            any(argv[1:4] == ("plugins", "marketplace", "add") for argv in self.calls)
-        )
+        self.assertFalse(any(argv[1:4] == ("plugins", "marketplace", "add") for argv in self.calls))
 
     def test_staging_error_blocks_every_stage_and_starts_no_process(self) -> None:
         with unittest.mock.patch.object(
@@ -2416,6 +2421,89 @@ class MuseMarketplaceAssessmentTest(FakeClientFixture):
             "marketplace add infiquetra-claude-plugins <client-home>",
             commands[2]["command"],
         )
+
+    def test_load_validation_failures_capture_nothing_and_block_invocation(self) -> None:
+        for variant in ("invalid", "diagnostics", "missing", "null"):
+
+            def corrupt(argv, document):
+                if argv[1:3] == ["plugins", "inspect"]:
+                    if variant == "invalid":
+                        document["valid"] = False
+                    elif variant == "diagnostics":
+                        document["diagnostics"] = [{"code": "warning"}]
+                    elif variant == "missing":
+                        document.pop("diagnostics")
+                    else:
+                        document["diagnostics"] = None
+                return document
+
+            with self.subTest(variant=variant):
+                self.changed_document = corrupt
+                self.calls = []
+                record = self.assessment()
+                row = record["clients"][0]
+                self.assertEqual(row["stages"]["load"]["result"], "blocked")
+                self.assertEqual(row["stages"]["invocation"]["result"], "blocked")
+                self.assertNotEqual(row["status"], "works-directly")
+                self.assertFalse(any(call[0] == sys.executable for call in self.calls))
+                good = {
+                    "valid": True,
+                    "diagnostics": [],
+                    "record": {
+                        "id": CONFIG.name,
+                        "enabled": True,
+                        "source": {"marketplace": harness.muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS},
+                        "cache_path": str(self.home / "installed"),
+                    },
+                }
+                damaged = corrupt(["muse", "plugins", "inspect"], good)
+                problems, captured = harness.muse_observation(
+                    "load",
+                    ("muse", "plugins", "inspect"),
+                    subprocess.CompletedProcess([], 0, json.dumps(damaged), ""),
+                    self.values,
+                )
+                self.assertTrue(problems)
+                self.assertEqual(captured, {})
+
+    def test_mutation_of_the_staged_package_invalidates_the_muse_row(self) -> None:
+        def change_stage(argv, **kwargs):
+            if argv[1:3] == ["plugins", "validate"]:
+                staged = Path(argv[3])
+                (staged / CONFIG.assessment.entrypoints[0]).write_text("changed during validation")
+            return self.run_muse(argv, **kwargs)
+
+        record = self.assessment(runner=change_stage)
+        row = record["clients"][0]
+        self.assertEqual(row["status"], "unsupported")
+        for stage in row["stages"].values():
+            self.assertEqual(stage["result"], "blocked")
+            self.assertIn("changed the staged Muse package", stage["reason"])
+
+    def test_outside_source_symlinks_are_preserved_until_staging_refuses_them(self) -> None:
+        import copy
+
+        package = self.base / "source"
+        shutil.copytree(CONFIG.package_directory, package)
+        outside = self.base / "outside.txt"
+        outside.write_text("inert outside fixture")
+        (package / "outside-link").symlink_to(outside)
+        config = copy.copy(CONFIG)
+        config.root = self.base
+        config.package_root = "source"
+        with unittest.mock.patch.dict(os.environ, {"PATH": self.environment["PATH"]}):
+            record = harness.assess(
+                config,
+                python=sys.executable,
+                execute=True,
+                only=("Muse",),
+                workspace=self.base / "links",
+                runner=self.run_muse,
+            )
+        self.assertEqual(self.calls, [])
+        for stage in record["clients"][0]["stages"].values():
+            self.assertEqual(stage["result"], "blocked")
+            self.assertIn("symlink points outside", stage["reason"])
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

@@ -103,12 +103,12 @@ become portable merely because it is stored beside the portable core.
 | Muse Code | Plugin marketplaces loading staged Claude-compatible skills, commands, hooks, and MCP declarations | Muse projection excludes competing manifests and unsupported Claude fields; raw catalog roots cannot substitute for the staging view |
 | Hermes Agent | Skills and MCP concepts plus a native plugin system | Python `plugin.yaml` packages for tools, hooks, commands, permissions, and profiles |
 
-As of issue #237 (2026-10-13), Muse placement is package-scoped. The shared
+Since 2026-10-14, Muse placement is package-scoped. The shared
 `stage_muse_marketplace` helper materializes the 12 Muse-applicable packages;
 `fleet-core` is a build-time library and `house-style` declares only a Claude
 output style. The installer registers `build/muse-marketplace/` as
 `infiquetra-claude-plugins`, refreshing a registration that points elsewhere.
-The assessment uses the same projection inside an isolated home and invokes
+The assessment uses the same [projection](runbooks/install-clients.md#muse) inside an isolated home and invokes
 entrypoints from the installed cache path reported by `muse plugins inspect`.
 This updates the client workflow; historical matrices retain their original
 assessment dates and results. [The client inventory](compatibility/client-assessment.json)

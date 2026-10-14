@@ -2355,9 +2355,7 @@ class ClientAssessmentInventoryTest(unittest.TestCase):
         from unittest.mock import patch
 
         with (
-            patch.object(
-                ccm, "check_client_assessment", return_value=["inventory is invalid"]
-            ),
+            patch.object(ccm, "check_client_assessment", return_value=["inventory is invalid"]),
             redirect_stdout(io.StringIO()) as output,
         ):
             self.assertEqual(ccm.main([str(LIVE_DOCUMENT)]), 1)
@@ -2366,6 +2364,19 @@ class ClientAssessmentInventoryTest(unittest.TestCase):
     def test_historical_rosters_still_require_the_muse_row(self) -> None:
         for date in ("2026-10-03", "2026-10-04", "2026-10-13"):
             self.assertIn("Muse", ccm.required_clients({"assessed_on": date}))
+
+    def test_muse_inventory_alias_and_exclusions_cannot_drift(self) -> None:
+        muse = next(row for row in self.document["clients"] if row["id"] == "muse")
+        for field, value in (
+            ("marketplace", "unrelated"),
+            ("excluded_packages", []),
+            ("excluded_packages", ["fleet-core", "voice"]),
+        ):
+            with self.subTest(field=field, value=value):
+                original = muse[field]
+                muse[field] = value
+                self.assertTrue(self.check())
+                muse[field] = original
 
 if __name__ == "__main__":
     unittest.main()

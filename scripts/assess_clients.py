@@ -72,7 +72,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 import check_compatibility_matrix as ccm  # noqa: E402
 import port_config  # noqa: E402
-import install_client as installer  # noqa: E402
+import muse_cli  # noqa: E402
 import sync_marketplace  # noqa: E402
 from port_config import PortConfig, PortConfigError  # noqa: E402
 
@@ -88,7 +88,7 @@ PYTHON = "<python>"
 PLUGIN_ID = "<plugin-id>"
 PLUGIN_NAME = "<plugin-name>"
 PLUGIN_ROOT = "<plugin-root>"
-MUSE_STAGING = f"{CLIENT_HOME}/build/muse-marketplace"
+MUSE_STAGING = f"{CLIENT_HOME}/{sync_marketplace.MUSE_STAGING_DEFAULT}"
 
 #: Every stage gets a deadline. Two clients prompt for confirmation on standard
 #: input and one of them hangs rather than declining when stdin is closed, so a
@@ -414,12 +414,16 @@ def _client_plans() -> tuple[ClientPlan, ...]:
             quirk=(
                 "Full plugin-marketplace client. Stage the Claude-compatible projection under "
                 "the isolated home; raw catalog roots contain competing manifests. Read JSON "
-                "diagnostics and resolve invocation from the installed cache, never from skills copies."
+                "diagnostics and resolve invocation from the installed cache, "
+                "never from skills copies."
             ),
             stages=(
                 StageSpec(
                     "placement",
-                    ("muse", "plugins", "validate", f"{MUSE_STAGING}/plugins/{PLUGIN_NAME}", "--json"),
+                    (
+                        "muse", "plugins", "validate",
+                        f"{MUSE_STAGING}/plugins/{PLUGIN_NAME}", "--json",
+                    ),
                     writes_client_state=True,
                 ),
                 StageSpec("discovery", ("muse", "plugins", "list", "--json")),
@@ -483,7 +487,9 @@ def _client_plans() -> tuple[ClientPlan, ...]:
 
 
 CLIENT_PLANS = _client_plans()
-PLAN_CLIENTS = tuple("cursor" if plan.binary == "cursor-agent" else plan.binary for plan in CLIENT_PLANS)
+PLAN_CLIENTS = tuple(
+    "cursor" if plan.binary == "cursor-agent" else plan.binary for plan in CLIENT_PLANS
+)
 
 #: Clients that may never run against the operator's own home, whatever the
 #: command line says. Hermes composes prompts from the live profile, so a run
@@ -1054,7 +1060,10 @@ def stage_argvs(
         return tuple(substitute(argv, values) for argv in (
             spec.argv,
             ("muse", "plugins", "marketplace", "add", MUSE_STAGING),
-            ("muse", "plugins", "install", f"{PLUGIN_NAME}@{installer.MUSE_MARKETPLACE}", "--scope", "user"),
+            (
+                "muse", "plugins", "install",
+                f"{PLUGIN_NAME}@{muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS}",
+            ),
         ))
     if plan.name == "Muse" and spec.stage == "discovery":
         return (substitute(spec.argv, values), ("muse", "plugins", "list", "--available", "--json"))
@@ -1115,17 +1124,12 @@ def stage_blocked_reason(
 def prepare_muse_catalog(scratch: Path, home: Path, name: str) -> Path:
     """Stage the assessment's own package copy inside its isolated home."""
     catalog = home / "catalog"
-    shutil.copytree(scratch, catalog / "plugins" / name)
-    marketplace_path = catalog / sync_marketplace.MARKETPLACE_PATH
-    marketplace_path.parent.mkdir(parents=True, exist_ok=True)
-    marketplace_path.write_text(
-        json.dumps({"name": installer.MUSE_MARKETPLACE, "plugins": []}),
-        encoding="utf-8",
-    )
+    shutil.copytree(scratch, catalog / "plugins" / name, symlinks=True)
     return sync_marketplace.stage_muse_marketplace(
         catalog,
-        home / "build" / "muse-marketplace",
+        home / sync_marketplace.MUSE_STAGING_DEFAULT,
         packages=[name],
+        name=muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS,
     )
 
 
@@ -1149,22 +1153,22 @@ def muse_observation(
     if stage == "discovery":
         if "--available" in argv:
             return (
-                installer.muse_available_problems(document, [values[PLUGIN_NAME]]),
+                muse_cli.available_problems(document, [values[PLUGIN_NAME]]),
                 {},
             )
         try:
-            rows = installer.muse_plugin_rows(document)
-        except installer.InstallError as error:
+            rows = muse_cli.plugin_rows(document)
+        except muse_cli.MuseCLIError as error:
             return ([str(error)], {})
         ours = [
             row
             for row in rows
             if row["record"].get("id") == values[PLUGIN_NAME]
-            and installer.muse_source_marketplace(
+            and muse_cli.source_marketplace(
                 row["record"],
-                staging_dir=Path(values[CLIENT_HOME]) / "build/muse-marketplace",
+                staging_dir=Path(values[CLIENT_HOME]) / sync_marketplace.MUSE_STAGING_DEFAULT,
             )
-            == installer.MUSE_MARKETPLACE
+            == muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS
         ]
         if (
             len(ours) != 1
@@ -1174,7 +1178,8 @@ def muse_observation(
         ):
             return (
                 [
-                    "Muse discovery: selected plugin must be installed, enabled, valid and have 0 diagnostics"
+                    "Muse discovery: selected plugin must be installed, enabled, valid "
+                    "and have 0 diagnostics"
                 ],
                 {},
             )
@@ -1191,15 +1196,13 @@ def muse_observation(
         not isinstance(record, dict)
         or record.get("id") != values[PLUGIN_NAME]
         or record.get("enabled") is not True
-        or installer.muse_source_marketplace(
-            record, staging_dir=Path(values[CLIENT_HOME]) / "build/muse-marketplace"
+        or muse_cli.source_marketplace(
+            record, staging_dir=Path(values[CLIENT_HOME]) / sync_marketplace.MUSE_STAGING_DEFAULT
         )
-        != installer.MUSE_MARKETPLACE
+        != muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS
     ):
         return (
-            [
-                "Muse load: inspect did not resolve the selected enabled marketplace plugin"
-            ],
+            ["Muse load: inspect did not resolve the selected enabled marketplace plugin"],
             {},
         )
     cache = record.get("cache_path")
@@ -1345,7 +1348,7 @@ def run_stage(
                 ),
             )
         fallback = (
-            installer.muse_fallback_argv(argv, completed.stdout or "", completed.stderr or "")
+            muse_cli.fallback_argv(argv, completed.stdout or "", completed.stderr or "")
             if plan.name == "Muse" and completed.returncode != 0 else None
         )
         if fallback is not None:
@@ -1676,7 +1679,7 @@ def assess(
         # fingerprint. `allocate_run_directory` and `require_fresh_run_directory`
         # both guarantee this path is new and empty.
         scratch.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(package_root, scratch)
+        shutil.copytree(package_root, scratch, symlinks=plan.name == "Muse")
         scratch_before = ccm.package_fingerprint(scratch)
         home = stage_home(base, plan) if plan.home == ISOLATED_HOME else None
         values = {
@@ -1710,11 +1713,17 @@ def assess(
         environment = build_environment(config, home=home, extra=extra)
 
         preparation_error = ""
+        staged_package = None
+        staged_before = None
         if plan.name == "Muse":
             refuse_unsafe_home(plan, plan.stage("placement"), plan.home)
             if execute:
                 try:
-                    prepare_muse_catalog(scratch, Path(values[CLIENT_HOME]), config.name)
+                    staged_root = prepare_muse_catalog(
+                        scratch, Path(values[CLIENT_HOME]), config.name
+                    )
+                    staged_package = staged_root / "plugins" / config.name
+                    staged_before = ccm.package_fingerprint(staged_package)
                 except (sync_marketplace.MarketplaceError, OSError) as error:
                     preparation_error = f"Muse staging failed: {error}"
         outcomes: dict[str, StageOutcome] = {}
@@ -1757,12 +1766,22 @@ def assess(
         # because the answer decides whether *this* client's evidence describes
         # the package at all.
         scratch_after = ccm.package_fingerprint(scratch)
-        mutated = scratch_after != scratch_before
+        staged_after = None
+        if staged_package is not None:
+            staged_after = (
+                ccm.package_fingerprint(staged_package) if staged_package.is_dir() else (0, "")
+            )
+        staged_mutated = staged_before is not None and staged_after != staged_before
+        mutated = scratch_after != scratch_before or staged_mutated
         if mutated:
             mutated_by.append(plan.name)
+            changed_before = staged_before if staged_mutated else scratch_before
+            changed_after = staged_after if staged_mutated else scratch_after
             invalidated = (
-                f"This client changed the package copy it was handed: "
-                f"{scratch_before[0]} files before, {scratch_after[0]} after. Every stage "
+                ("This client changed the staged Muse package: " if staged_mutated
+                 else "This client changed the package copy it was handed: ")
+                +
+                f"{changed_before[0]} files before, {changed_after[0]} after. Every stage "
                 "result here describes bytes that no longer exist, so the row carries no "
                 "classification. Re-run this client against a fresh copy once the cause is "
                 "understood."
@@ -1836,6 +1855,7 @@ def assess(
             "isolation": (
                 f"Each client was handed its own fresh copy of the shipped tree, at "
                 f"{before[0]} files, fingerprinted before and after that client ran. "
+                "Muse's staged package is fingerprinted separately before and after its stages. "
                 + (
                     "Every copy was unchanged afterwards, so no client added a vendor "
                     "artifact to the package."

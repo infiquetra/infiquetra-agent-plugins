@@ -647,9 +647,7 @@ class StageMuseMarketplaceTests(MuseStagingCase):
         self.target = self.root / "out"
 
     def listed(self) -> list[str]:
-        payload = json.loads(
-            (self.target / sm.MARKETPLACE_PATH).read_text(encoding="utf-8")
-        )
+        payload = json.loads((self.target / sm.MARKETPLACE_PATH).read_text(encoding="utf-8"))
         return [entry["name"] for entry in payload["plugins"]]
 
     def test_every_applicable_package_is_staged_and_listed(self) -> None:
@@ -722,6 +720,69 @@ class StageMuseMarketplaceTests(MuseStagingCase):
         for key in sm.PRESERVED_TOP_LEVEL:
             with self.subTest(key=key):
                 self.assertEqual(payload[key], CATALOG[key])
+
+    def test_staging_name_override_is_owned_by_the_generator(self) -> None:
+        sm.stage_muse_marketplace(self.root, self.target, name="explicit-muse-name")
+        payload = json.loads((self.target / sm.MARKETPLACE_PATH).read_text())
+        self.assertEqual(payload["name"], "explicit-muse-name")
+        self.assertTrue((self.target / sm.MUSE_STAGING_MARKER).is_file())
+
+    def test_non_empty_unmarked_target_is_refused_without_deleting_files(self) -> None:
+        sentinel = self.target / "plugins/precious-data/keep"
+        sentinel.parent.mkdir(parents=True)
+        sentinel.write_text("valuable")
+        with self.assertRaises(sm.MarketplaceError):
+            sm.stage_muse_marketplace(self.root, self.target)
+        self.assertEqual(sentinel.read_text(), "valuable")
+
+    def test_foreign_entries_in_owned_staging_survive_and_are_never_listed(self) -> None:
+        sm.stage_muse_marketplace(self.root, self.target)
+        foreign = self.target / "plugins/precious-data"
+        (foreign / ".claude-plugin").mkdir(parents=True)
+        (foreign / ".claude-plugin/plugin.json").write_text(json.dumps({"name": "precious-data"}))
+        (foreign / "keep").write_text("valuable")
+        sm.stage_muse_marketplace(self.root, self.target)
+        self.assertEqual((foreign / "keep").read_text(), "valuable")
+        self.assertNotIn("precious-data", self.listed())
+
+    def test_a_symlinked_or_group_writable_staging_path_is_refused(self) -> None:
+        other = self.root / "outside-stage"
+        other.mkdir()
+        self.target.symlink_to(other, target_is_directory=True)
+        with self.assertRaises(sm.MarketplaceError):
+            sm.stage_muse_marketplace(self.root, self.target)
+        self.target.unlink()
+        self.target.mkdir()
+        self.target.chmod(0o770)
+        with self.assertRaises(sm.MarketplaceError):
+            sm.stage_muse_marketplace(self.root, self.target)
+
+    def test_another_users_staging_path_is_refused(self) -> None:
+        from unittest.mock import patch
+
+        self.target.mkdir()
+        with patch.object(sm.os, "getuid", return_value=self.target.stat().st_uid + 1):
+            with self.assertRaises(sm.MarketplaceError):
+                sm.stage_muse_marketplace(self.root, self.target)
+
+    def test_planted_plugins_symlink_cannot_write_outside_staging(self) -> None:
+        sm.stage_muse_marketplace(self.root, self.target)
+        shutil.rmtree(self.target / "plugins")
+        other = self.root / "unrelated"
+        other.mkdir()
+        (self.target / "plugins").symlink_to(other, target_is_directory=True)
+        with self.assertRaises(sm.MarketplaceError):
+            sm.stage_muse_marketplace(self.root, self.target)
+        self.assertEqual(list(other.iterdir()), [])
+
+    def test_marker_from_another_catalog_is_refused(self) -> None:
+        sm.stage_muse_marketplace(self.root, self.target)
+        path = self.target / sm.MUSE_STAGING_MARKER
+        payload = json.loads(path.read_text())
+        payload["catalog"] = "/example/unrelated"
+        path.write_text(json.dumps(payload))
+        with self.assertRaises(sm.MarketplaceError):
+            sm.stage_muse_marketplace(self.root, self.target)
 
 
 def _hook_count(package: Path) -> int:

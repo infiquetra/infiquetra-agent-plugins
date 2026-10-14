@@ -50,7 +50,6 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import check_repo  # noqa: E402
 import port_config  # noqa: E402
-import sync_vendor_source as svs  # noqa: E402
 
 
 #: Package-internal or Fleet Core modules that must never be treated as optional
