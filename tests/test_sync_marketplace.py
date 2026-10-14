@@ -519,6 +519,30 @@ class StageMusePluginTests(MuseStagingCase):
             ],
         )
 
+    def test_commands_duplicating_skill_shortcuts_are_omitted(self) -> None:
+        package = self.add_muse_package("alpha")
+        (package / "com.infiquetra.claude/commands/one.md").write_text("# one\n", encoding="utf-8")
+        (package / "skills/alpha-delegate").mkdir(parents=True)
+        (package / "skills/alpha-delegate/SKILL.md").write_text("---\nname: alpha-delegate\n---\n")
+        (package / "com.infiquetra.claude/commands/delegate.md").write_text(
+            "# delegate\n", encoding="utf-8"
+        )
+        staged = sm.stage_muse_plugin(package, self.root / "staged" / "alpha")
+        manifest = self.staged_manifest(staged)
+        self.assertEqual(
+            manifest["commands"],
+            [
+                "./com.infiquetra.claude/commands/alpha.md",
+                "./com.infiquetra.claude/commands/zeta.md",
+            ],
+        )
+
+        # When every command wrapper duplicates a skill shortcut, drop the empty key.
+        (package / "com.infiquetra.claude/commands/alpha.md").unlink()
+        (package / "com.infiquetra.claude/commands/zeta.md").unlink()
+        staged_empty = sm.stage_muse_plugin(package, self.root / "staged" / "alpha-empty")
+        self.assertNotIn("commands", self.staged_manifest(staged_empty))
+
     def test_a_bare_mcp_server_map_is_wrapped(self) -> None:
         staged = self.stage()
         servers = json.loads(
@@ -785,6 +809,16 @@ class StageMuseMarketplaceTests(MuseStagingCase):
             sm.stage_muse_marketplace(self.root, self.target)
 
 
+def _command_count(package: Path) -> int:
+    skills = package / "skills"
+    return sum(
+        1
+        for path in package.glob("com.infiquetra.claude/commands/*.md")
+        if not (skills / path.stem / "SKILL.md").is_file()
+        and not (skills / f"{package.name}-{path.stem}" / "SKILL.md").is_file()
+    )
+
+
 def _hook_count(package: Path) -> int:
     declared = json.loads((package / sm.CLAUDE_MANIFEST_RELATIVE).read_text("utf-8")).get("hooks")
     if not isinstance(declared, str):
@@ -874,17 +908,24 @@ class MuseValidationTests(MuseReportContract):
         return json.loads(completed.stdout)
 
     def test_every_staged_package_validates_with_its_capabilities_intact(self) -> None:
+        all_skills: set[str] = set()
+        all_commands: list[str] = []
         for package in sm.muse_applicable_packages(ROOT):
             with self.subTest(package=package.name):
+                report = self.validate(package.name)
                 self.assert_report_is_clean(
-                    self.validate(package.name),
+                    report,
                     {
                         "skills": len(list(package.glob("skills/*/SKILL.md"))),
-                        "commands": len(list(package.glob("com.infiquetra.claude/commands/*.md"))),
+                        "commands": _command_count(package),
                         "hooks": _hook_count(package),
                         "mcp_servers": _mcp_count(package),
                     },
                 )
+                all_skills.update(entry["id"] for entry in report["capabilities"]["skills"])
+                all_commands.extend(entry["id"] for entry in report["capabilities"]["commands"])
+        self.assertEqual(len(all_commands), len(set(all_commands)))
+        self.assertEqual(all_skills & set(all_commands), set())
 
 
 class CommittedMarketplaceTests(unittest.TestCase):

@@ -2,6 +2,14 @@
 
 ## 2026-10-14
 
+### Muse registers active plugin skills as flat `/<name>` shortcuts and withholds colliding plugin commands
+
+**Evidence.** After `scripts/install_client.py --client muse --execute --uninstall-legacy` removed the 37 legacy user-scoped skills that had previously blocked plugin skills via `plugin-skill-id-conflict`, `muse plugins list --json` and `muse plugins validate --json` reported `0` diagnostics, but the interactive `/plugin` → `[Errors]` tab in Muse Code 1.4.7 showed 40 `plugin_command_name_withheld (same_tier_collision)` warnings across `agy`, `codex`, `hermes-profile-evolution`, `mission-control`, `orchestrate`, and `saga`. Filtering `commands` in `scripts/sync_marketplace.py:315` (`_command_collides_with_skill`) to omit command wrappers whose stem matches `skills/<stem>/SKILL.md` or `skills/<package>-<stem>/SKILL.md` reduced interactive `/plugin` → `[Errors]` diagnostics for Infiquetra plugins from 40 to 0.
+
+**Mechanism.** `muse plugins validate` and `muse plugins list` validate individual package manifests in isolation without running the interactive slash-command router. At runtime, Muse registers every active plugin skill `skills/<name>/SKILL.md` as a `/<name>` (`skill_shortcut`) at the plugin tier and registers every `com.infiquetra.claude/commands/<name>.md` as an un-namespaced `/<name>` (`plugin_command`) at the same plugin tier. When both exist (19 skill-matching command wrappers plus `agy` and `codex` both declaring `commands/delegate.md`), Muse's `same_tier_collision` policy withholds both registrations (`20 × 2 = 40` warnings).
+
+**Generalizable rule.** When a target client flattens plugin skills and plugin commands into one un-namespaced slash-command tier, stage only command wrappers whose names are disjoint from active skill shortcuts, and assert cross-package command uniqueness in validation tests.
+
 ### `muse skills uninstall` operates on the single user skill lock and rejects `--scope`
 
 **Evidence.** Live cutover of `scripts/install_client.py --client muse --execute --uninstall-legacy`

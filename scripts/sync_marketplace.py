@@ -312,17 +312,37 @@ def _contained(base: Path, value: Any, field: str) -> Path:
     return resolved
 
 
+def _command_collides_with_skill(package: Path, command_stem: str) -> bool:
+    """True when Muse already registers this command as a skill shortcut.
+
+    Muse registers every active plugin skill `skills/<name>/SKILL.md` as a
+    `/<name>` slash shortcut at the plugin tier and does not namespace
+    `commands/<name>.md` by plugin name. Loading both produces a
+    `plugin_command_name_withheld (same_tier_collision)` diagnostic that
+    withholds both `/<name>` entries. A command wrapper is also redundant in
+    Muse when the package ships a `<package>-<stem>` skill (such as
+    `agy-delegate` and `codex-delegate` for `commands/delegate.md`).
+    """
+    skills_dir = package / "skills"
+    return (
+        (skills_dir / command_stem / "SKILL.md").is_file()
+        or (skills_dir / f"{package.name}-{command_stem}" / "SKILL.md").is_file()
+    )
+
+
 def _expand_commands(package: Path, value: Any) -> list[str]:
-    """A `commands` directory path becomes the sorted `.md` files inside it."""
+    """A `commands` directory path becomes the sorted non-colliding `.md` files inside it."""
     expanded: list[str] = []
     for item in _as_list(value):
         directory = _contained(package, item, "commands")
         if directory.is_dir():
             prefix = item.rstrip("/")
             expanded.extend(
-                f"{prefix}/{path.name}" for path in sorted(directory.glob("*.md")) if path.is_file()
+                f"{prefix}/{path.name}"
+                for path in sorted(directory.glob("*.md"))
+                if path.is_file() and not _command_collides_with_skill(package, path.stem)
             )
-        else:
+        elif not _command_collides_with_skill(package, directory.stem):
             expanded.append(item)
     return expanded
 
@@ -367,11 +387,13 @@ def stage_muse_plugin(package_dir: Path, dest_dir: Path) -> Path:
     """Copy one package to `dest_dir` in the shape Muse's loader accepts.
 
     Only the copy is rewritten: Claude-only keys are dropped from its
-    `.claude-plugin/plugin.json`, `skills` and `commands` become lists of paths,
-    and a bare MCP server map is wrapped under `mcpServers`. Everything is
-    checked before the destination is touched: it must not overlap the package,
-    no symlink may leave the package, and every path the manifest declares for
-    `skills`, `commands` and `mcpServers` must stay inside it.
+    `.claude-plugin/plugin.json`, `skills` and `commands` become lists of paths
+    (omitting command wrappers that collide with the package's own skill
+    shortcuts in Muse's flat plugin tier), and a bare MCP server map is wrapped
+    under `mcpServers`. Everything is checked before the destination is touched:
+    it must not overlap the package, no symlink may leave the package, and every
+    path the manifest declares for `skills`, `commands` and `mcpServers` must
+    stay inside it.
     """
     package_dir = Path(package_dir)
     dest_dir = Path(dest_dir)
@@ -403,7 +425,11 @@ def stage_muse_plugin(package_dir: Path, dest_dir: Path) -> Path:
     if "skills" in manifest:
         manifest["skills"] = _as_list(manifest["skills"])
     if "commands" in manifest:
-        manifest["commands"] = _expand_commands(package_dir, manifest["commands"])
+        commands = _expand_commands(package_dir, manifest["commands"])
+        if commands:
+            manifest["commands"] = commands
+        else:
+            manifest.pop("commands", None)
     manifest_path.write_text(render(manifest), encoding="utf-8")
 
     servers = manifest.get("mcpServers")
