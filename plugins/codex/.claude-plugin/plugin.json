@@ -6,14 +6,6 @@
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"
   },
-  "keywords": [
-    "codex",
-    "openai",
-    "delegation",
-    "teammate",
-    "evidence"
-  ],
-  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
   "commands": "./com.infiquetra.claude/commands/",
   "agents": [
     "./com.infiquetra.claude/agents/codex-coder.md",

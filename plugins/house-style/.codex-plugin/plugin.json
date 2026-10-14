@@ -2,6 +2,20 @@
   "name": "house-style",
   "version": "0.1.1",
   "description": "Claude-only package. The portable core is empty of runtime behaviour by design: no scripts, no skills, and no executable. Two reference documents sit at the package root as text other packages copy. The behaviour Claude Code loads is the output style under com.infiquetra.claude/, declared by the outputStyles key because that key replaces the default output-styles/ directory.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+  "license": "MIT",
+  "keywords": [
+    "output-style",
+    "house-style",
+    "presentation",
+    "formatting",
+    "subagent-relay",
+    "infiquetra"
+  ],
   "interface": {
     "displayName": "House Style",
     "shortDescription": "Claude-only package. The portable core is empty of runtime behaviour by design: no scripts, no skills, and no executable. Two reference documents sit at the package root as text other packages copy. The behaviour Claude Code loads is the output style under com.infiquetra.claude/, declared by the outputStyles key because that key replaces the default output-styles/ directory."

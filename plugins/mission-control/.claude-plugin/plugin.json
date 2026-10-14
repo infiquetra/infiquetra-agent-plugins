@@ -6,19 +6,6 @@
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"
   },
-  "keywords": [
-    "sdlc",
-    "github-projects",
-    "kanban",
-    "issues",
-    "labels",
-    "metrics",
-    "sub-issues",
-    "campps",
-    "asgard",
-    "operations"
-  ],
-  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
   "commands": "./com.infiquetra.claude/commands/",
   "agents": [
     "./com.infiquetra.claude/agents/sdlc-operator.md"

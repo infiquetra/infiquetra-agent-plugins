@@ -22,9 +22,17 @@ manifest found in directory".
 **Where each field comes from.** Everything an entry states about a package is
 read from that package's own manifests, so the entry cannot drift from the
 manifest it describes -- which is the agreement `claude plugin tag` refuses to
-release without. `keywords` and `category` are read from the portable
-`plugin.json` when it carries them, falling back to the Claude manifest for
-`keywords`, which is where the catalog actually keeps them today.
+release without. `version` and `description` come from the Claude manifest. The
+presentation fields (`author`, `repository`, `license`, `keywords`, `homepage`,
+`category`) come from the portable `plugin.json` alone, and `category` may also be
+kept from the existing marketplace entry. The Claude manifest carries no
+presentation metadata, which `scripts/check_repo.py` enforces, because Muse's
+foreign-plugin loader reports those keys as unsupported.
+
+**Muse staging.** Muse reads the same `.claude-plugin/plugin.json` but rejects
+several keys and shapes Claude accepts. `stage_muse_marketplace` copies the
+Muse-installable packages into a scratch marketplace, rewriting only the staged
+copy, so the committed manifests stay exactly what Claude installs.
 
 **What is preserved.** The top-level `name`, `owner`, and `metadata` block are
 carried from the existing file unchanged. They describe the catalog rather than
@@ -38,9 +46,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
 
 MARKETPLACE_PATH = Path(".claude-plugin") / "marketplace.json"
 
@@ -60,9 +73,15 @@ PORTABLE_MANIFEST_NAME = "plugin.json"
 CARRIED_FROM_CLAUDE_MANIFEST = (
     "version",
     "description",
+)
+
+#: Entry fields read from the portable manifest alone, in the order they are
+#: written. `keywords` and `category` follow, because an empty value is omitted.
+CARRIED_FROM_PORTABLE_MANIFEST = (
     "author",
     "repository",
     "license",
+    "homepage",
 )
 
 #: Catalog-level keys preserved from the existing file. Nothing under
@@ -70,12 +89,38 @@ CARRIED_FROM_CLAUDE_MANIFEST = (
 PRESERVED_TOP_LEVEL = ("name", "owner", "metadata")
 
 
+#: Claude manifest keys Muse's foreign-plugin loader reports as unsupported or
+#: inactive, removed from the staged copy only. `agents` is the Claude agent
+#: overlay, which Muse cannot activate.
+MUSE_UNSUPPORTED_KEYS = (
+    "author",
+    "repository",
+    "keywords",
+    "license",
+    "homepage",
+    "types",
+    "outputStyles",
+    "agents",
+)
+
+#: Manifest keys declaring a capability Muse can load. A package declaring none
+#: of them has nothing to install there.
+MUSE_CAPABILITY_KEYS = ("skills", "commands", "hooks", "mcpServers")
+
+#: Names skipped when staging. The root `plugin.json` and `.codex-plugin/` are
+#: other adapters' manifests and would make Muse see several manifests.
+MUSE_STAGING_IGNORED = (".codex-plugin", ".git", "__pycache__", ".pytest_cache")
+
+#: Where staged marketplaces are written by default. `build/` is not tracked.
+MUSE_STAGING_DEFAULT = Path("build") / "muse-marketplace"
+
+
 class MarketplaceError(Exception):
     """The marketplace could not be generated, and says why."""
 
 
 def repository_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return ROOT
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -135,8 +180,11 @@ def build_entry(package: Path, existing: dict[str, Any] | None = None) -> dict[s
     for field in CARRIED_FROM_CLAUDE_MANIFEST:
         if field in claude:
             entry[field] = claude[field]
+    for field in CARRIED_FROM_PORTABLE_MANIFEST:
+        if field in portable:
+            entry[field] = portable[field]
 
-    keywords = portable.get("keywords", claude.get("keywords"))
+    keywords = portable.get("keywords")
     if keywords:
         entry["keywords"] = keywords
     category = portable.get("category", (existing or {}).get("category"))
@@ -228,6 +276,218 @@ def _difference_summary(current: str, expected: str) -> list[str]:
     if not missing and not extra:
         problems.append("  one or more entries disagree with the manifest they describe")
     return problems
+
+
+def muse_applicable_packages(root: Path = ROOT) -> list[Path]:
+    """Every package directory Muse can install: a Claude manifest declaring a capability.
+
+    A library with no Claude manifest, and a package that declares only keys
+    Muse cannot load (an output style), have nothing to stage.
+    """
+    return [
+        package
+        for package in claude_packages(root)
+        if any(key in _load(package / CLAUDE_MANIFEST_RELATIVE) for key in MUSE_CAPABILITY_KEYS)
+    ]
+
+
+def _as_list(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, list) else [value]
+
+
+def _contained(base: Path, value: Any, field: str) -> Path:
+    """The path a manifest `field` names, refused unless it stays inside `base`.
+
+    A manifest is data the staging code reads and then acts on, so an absolute
+    path or one that climbs out of the package would let it read, glob or
+    rewrite files elsewhere.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise MarketplaceError(f"{field}: expected a path, found {value!r}")
+    if Path(value).is_absolute():
+        raise MarketplaceError(f"{field}: {value!r} is absolute; it must stay inside the package")
+    resolved = (base / value).resolve()
+    if not resolved.is_relative_to(base.resolve()):
+        raise MarketplaceError(f"{field}: {value!r} leaves the package")
+    return resolved
+
+
+def _expand_commands(package: Path, value: Any) -> list[str]:
+    """A `commands` directory path becomes the sorted `.md` files inside it."""
+    expanded: list[str] = []
+    for item in _as_list(value):
+        directory = _contained(package, item, "commands")
+        if directory.is_dir():
+            prefix = item.rstrip("/")
+            expanded.extend(
+                f"{prefix}/{path.name}" for path in sorted(directory.glob("*.md")) if path.is_file()
+            )
+        else:
+            expanded.append(item)
+    return expanded
+
+
+def _refuse_overlap(source: Path, destination: Path, what: str) -> None:
+    """Refuse a destination that is, holds, or sits inside the source it replaces.
+
+    Staging deletes the destination before copying, so an overlap would delete
+    the source or copy a package into itself.
+    """
+    source, destination = source.resolve(), destination.resolve()
+    if (
+        destination == source
+        or destination.is_relative_to(source)
+        or source.is_relative_to(destination)
+    ):
+        raise MarketplaceError(f"{destination}: staging would overwrite or nest {what} {source}")
+
+
+def _refuse_outside_symlinks(package: Path) -> None:
+    """Refuse a symlink whose target leaves the package or cannot be resolved.
+
+    `shutil.copytree` copies a symlink's target, so one pointing outside would
+    carry unrelated bytes into the staged marketplace.
+    """
+    base = package.resolve()
+    for directory, names, files in os.walk(package, followlinks=False):
+        names[:] = [name for name in names if name not in MUSE_STAGING_IGNORED]
+        for name in (*names, *files):
+            path = Path(directory) / name
+            if not path.is_symlink():
+                continue
+            try:
+                target = path.resolve(strict=True)
+            except (OSError, RuntimeError) as error:
+                raise MarketplaceError(f"{path}: symlink cannot be resolved: {error}") from error
+            if not target.is_relative_to(base):
+                raise MarketplaceError(f"{path}: symlink points outside the package, to {target}")
+
+
+def stage_muse_plugin(package_dir: Path, dest_dir: Path) -> Path:
+    """Copy one package to `dest_dir` in the shape Muse's loader accepts.
+
+    Only the copy is rewritten: Claude-only keys are dropped from its
+    `.claude-plugin/plugin.json`, `skills` and `commands` become lists of paths,
+    and a bare MCP server map is wrapped under `mcpServers`. Everything is
+    checked before the destination is touched: it must not overlap the package,
+    no symlink may leave the package, and every path the manifest declares for
+    `skills`, `commands` and `mcpServers` must stay inside it.
+    """
+    package_dir = Path(package_dir)
+    dest_dir = Path(dest_dir)
+    _refuse_overlap(package_dir, dest_dir, "the package")
+    _refuse_outside_symlinks(package_dir)
+    source_manifest = _load(package_dir / CLAUDE_MANIFEST_RELATIVE)
+    for field in ("skills", "commands"):
+        if field in source_manifest:
+            for item in _as_list(source_manifest[field]):
+                _contained(package_dir, item, field)
+    if isinstance(source_manifest.get("mcpServers"), str):
+        _contained(package_dir, source_manifest["mcpServers"], "mcpServers")
+
+    if dest_dir.exists():
+        shutil.rmtree(dest_dir)
+
+    def ignore(directory: str, names: list[str]) -> set[str]:
+        skipped = {name for name in names if name in MUSE_STAGING_IGNORED}
+        if Path(directory) == package_dir and PORTABLE_MANIFEST_NAME in names:
+            skipped.add(PORTABLE_MANIFEST_NAME)
+        return skipped
+
+    shutil.copytree(package_dir, dest_dir, ignore=ignore)
+
+    manifest_path = dest_dir / CLAUDE_MANIFEST_RELATIVE
+    manifest = _load(manifest_path)
+    for key in MUSE_UNSUPPORTED_KEYS:
+        manifest.pop(key, None)
+    if "skills" in manifest:
+        manifest["skills"] = _as_list(manifest["skills"])
+    if "commands" in manifest:
+        manifest["commands"] = _expand_commands(package_dir, manifest["commands"])
+    manifest_path.write_text(render(manifest), encoding="utf-8")
+
+    servers = manifest.get("mcpServers")
+    if isinstance(servers, str):
+        servers_path = _contained(dest_dir, servers, "mcpServers")
+        if servers_path.is_file():
+            data = _load(servers_path)
+            if "mcpServers" not in data:
+                servers_path.write_text(render({"mcpServers": data}), encoding="utf-8")
+    return dest_dir
+
+
+def stage_muse_marketplace(
+    root: Path = ROOT,
+    target_dir: Path = ROOT / MUSE_STAGING_DEFAULT,
+    packages: Iterable[str] | None = None,
+) -> Path:
+    """Stage Muse-installable packages into `target_dir` and list them.
+
+    `packages` restricts which are (re)staged; packages already staged there are
+    kept, so a partial run updates only what it names. A full run (`packages` is
+    None) also removes staged packages the source no longer has or Muse can no
+    longer install. The marketplace file lists everything present under
+    `target_dir/plugins`.
+    """
+    target_dir = Path(target_dir)
+    _refuse_overlap(root / PLUGIN_PARENT, target_dir, "the packages")
+    applicable = {package.name: package for package in muse_applicable_packages(root)}
+    if packages is None:
+        selected = sorted(applicable)
+    else:
+        selected = sorted(set(packages))
+        unknown = [name for name in selected if name not in applicable]
+        if unknown:
+            raise MarketplaceError(
+                f"not installable in Muse: {', '.join(unknown)}. "
+                f"Installable packages are {', '.join(sorted(applicable))}"
+            )
+
+    plugins_dir = target_dir / PLUGIN_PARENT
+    plugins_dir.mkdir(parents=True, exist_ok=True)
+    if packages is None:
+        for stale in plugins_dir.iterdir():
+            if stale.name in applicable:
+                continue
+            if stale.is_symlink():
+                stale.unlink()
+            elif stale.is_dir():
+                shutil.rmtree(stale)
+    for name in selected:
+        stage_muse_plugin(applicable[name], plugins_dir / name)
+
+    existing_path = root / MARKETPLACE_PATH
+    catalog = _load(existing_path) if existing_path.is_file() else {}
+    staged = sorted(
+        path
+        for path in plugins_dir.iterdir()
+        if path.is_dir() and (path / CLAUDE_MANIFEST_RELATIVE).is_file()
+    )
+    marketplace: dict[str, Any] = {}
+    for key in PRESERVED_TOP_LEVEL:
+        if key in catalog:
+            marketplace[key] = catalog[key]
+    entries = {
+        entry.get("name"): entry for entry in catalog.get("plugins", []) if isinstance(entry, dict)
+    }
+    marketplace["plugins"] = []
+    for package in staged:
+        manifest = _load(package / CLAUDE_MANIFEST_RELATIVE)
+        entry: dict[str, Any] = {
+            "name": package.name,
+            "source": f"./{PLUGIN_PARENT}/{package.name}",
+        }
+        for field in CARRIED_FROM_CLAUDE_MANIFEST:
+            if field in manifest:
+                entry[field] = manifest[field]
+        category = entries.get(package.name, {}).get("category")
+        if category:
+            entry["category"] = category
+        marketplace["plugins"].append(entry)
+    marketplace_path = target_dir / MARKETPLACE_PATH
+    marketplace_path.parent.mkdir(parents=True, exist_ok=True)
+    marketplace_path.write_text(render(marketplace), encoding="utf-8")
+    return target_dir
 
 
 def build_argument_parser() -> argparse.ArgumentParser:

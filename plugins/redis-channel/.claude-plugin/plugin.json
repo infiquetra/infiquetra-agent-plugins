@@ -6,16 +6,6 @@
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"
   },
-  "keywords": [
-    "claude-code-channel",
-    "mcp",
-    "redis",
-    "redis-streams",
-    "router-agnostic",
-    "voice",
-    "hands-free"
-  ],
-  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
   "commands": "./com.infiquetra.claude/commands/",
   "agents": [
     "./com.infiquetra.claude/agents/redis-channel-coach.md"

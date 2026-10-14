@@ -272,6 +272,44 @@ class ClaudeManifestLocationTests(unittest.TestCase):
                 self.assertTrue((extension / "plugin.json").is_file())
 
 
+#: Presentation metadata forbidden in `.claude-plugin/plugin.json`. `author` stays
+#: in `.claude-plugin/plugin.json` because `claude plugin validate --strict`
+#: requires it; `stage_muse_plugin` strips `author` when staging for Muse.
+PRESENTATION_KEYS = ("repository", "keywords", "homepage", "license")
+
+#: The presentation keys every portable manifest must state.
+PORTABLE_PRESENTATION_KEYS = ("author", "repository", "license", "keywords")
+
+
+class PresentationMetadataTests(unittest.TestCase):
+    """Presentation metadata lives in the portable manifest, with `author` mirrored for Claude strict validation."""
+
+    def test_the_claude_manifest_carries_no_presentation_metadata(self) -> None:
+        for package in claude_packages():
+            claude = _load(package / CLAUDE_MANIFEST_RELATIVE)
+            portable = _load(package / PORTABLE_MANIFEST_RELATIVE)
+            with self.subTest(package=package.name, key="author"):
+                self.assertEqual(claude.get("author"), portable.get("author"))
+            for key in PRESENTATION_KEYS:
+                with self.subTest(package=package.name, key=key):
+                    self.assertNotIn(key, claude)
+
+    def test_every_portable_manifest_states_its_presentation_metadata(self) -> None:
+        for manifest in sorted(PLUGINS.glob("*/plugin.json")):
+            portable = _load(manifest)
+            for key in PORTABLE_PRESENTATION_KEYS:
+                with self.subTest(package=manifest.parent.name, key=key):
+                    self.assertTrue(portable.get(key), f"{manifest} states no {key}")
+
+    def test_the_marketplace_entry_carries_the_portable_metadata(self) -> None:
+        entries = marketplace_entries()
+        for package in claude_packages():
+            portable = _load(package / PORTABLE_MANIFEST_RELATIVE)
+            for key in PORTABLE_PRESENTATION_KEYS:
+                with self.subTest(package=package.name, key=key):
+                    self.assertEqual(entries[package.name].get(key), portable[key])
+
+
 class DeclaredComponentPathTests(unittest.TestCase):
     """Every path the Claude manifest declares must resolve, and stay in its lane."""
 

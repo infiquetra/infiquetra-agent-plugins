@@ -6,19 +6,6 @@
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"
   },
-  "keywords": [
-    "proxmox",
-    "ansible",
-    "ceph",
-    "homelab",
-    "infrastructure",
-    "monitoring",
-    "grafana",
-    "prometheus",
-    "vault",
-    "team-scaffold"
-  ],
-  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
   "agents": [
     "./com.infiquetra.claude/agents/homelab-sre.md"
   ],

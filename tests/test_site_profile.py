@@ -1101,7 +1101,14 @@ class MutationProofBindingTest(unittest.TestCase):
         changes a graded file's bytes. Counting that as a kill made every
         mutation a kill by construction -- see the cycle-12 proof's header.
 
-        The document is cycle 27. Cycle 26 remains the proof of the bytes
+        The document is cycle 28. Cycle 27 remains the proof of the bytes
+        before issue #235 added the portable presentation-metadata check, the
+        Claude-manifest presentation refusal and the Muse staging check to
+        ``check_plugin_manifests`` in ``scripts/check_repo.py``; cycle 28
+        re-grades only those guards (twenty-five mutations, twenty-five
+        killed) and carries the other four digests.
+
+        Cycle 27's account follows. Cycle 26 remains the proof of the bytes
         before issue #236 changed the root instruction rule and the top-level
         compatibility rule in ``scripts/check_repo.py``; cycle 27 re-grades only
         those guards (eleven mutations, eleven killed) and carries the other four
@@ -1160,7 +1167,7 @@ class MutationProofBindingTest(unittest.TestCase):
         """
         root = self.EVIDENCE.parent.parent
         recorded = self._recorded(
-            "2026-10-13-cycle27-mutation-proof-root-instructions-and-compatibility.txt"
+            "2026-10-13-cycle28-mutation-proof-manifest-and-muse-staging.txt"
         )
         self.assertEqual(set(recorded), set(self.GRADED), recorded)
         for relative in self.GRADED:

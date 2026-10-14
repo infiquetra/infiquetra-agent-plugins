@@ -40,19 +40,25 @@ def write(path: Path, text: str) -> Path:
     return path
 
 
+def portable_manifest(name: str = "example", **overrides: object) -> dict[str, object]:
+    """A valid portable manifest, with the presentation metadata the gate requires."""
+    manifest: dict[str, object] = {
+        "$schema": check_repo.PLUGIN_SCHEMA,
+        "name": name,
+        "version": "0.1.0",
+        "description": "Example plugin",
+        "author": {"name": "Example", "email": "nobody@example.com"},
+        "repository": "https://example.com/catalog",
+        "license": "MIT",
+        "keywords": ["example"],
+    }
+    manifest.update(overrides)
+    return manifest
+
+
 def make_plugin(root: Path, name: str = "example") -> Path:
     plugin = root / "plugins" / name
-    write(
-        plugin / "plugin.json",
-        json.dumps(
-            {
-                "$schema": check_repo.PLUGIN_SCHEMA,
-                "name": name,
-                "version": "0.1.0",
-                "description": "Example plugin",
-            }
-        ),
-    )
+    write(plugin / "plugin.json", json.dumps(portable_manifest(name)))
     return plugin
 
 
@@ -176,6 +182,182 @@ class RepositoryValidationTests(unittest.TestCase):
                 check_repo.check_plugin_manifests(root),
                 ["missing plugin manifest: plugins/example/plugin.json"],
             )
+
+    def test_missing_presentation_metadata_is_reported_by_field(self) -> None:
+        for field in check_repo.PORTABLE_PRESENTATION_FIELDS:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                plugin = make_plugin(root)
+                manifest = portable_manifest()
+                del manifest[field]
+                write(plugin / "plugin.json", json.dumps(manifest))
+
+                errors = check_repo.check_plugin_manifests(root)
+
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn(field, errors[0])
+                self.assertIn("plugins/example/plugin.json", errors[0])
+
+    def test_the_required_fields_are_the_ones_the_constant_names(self) -> None:
+        """A field added to the constant is enforced without touching the check."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            make_plugin(root)
+            fields = (*check_repo.PORTABLE_PRESENTATION_FIELDS, "homepage")
+            with mock.patch.object(check_repo, "PORTABLE_PRESENTATION_FIELDS", fields):
+                errors = check_repo._portable_presentation_errors(
+                    portable_manifest(), Path("plugins/example/plugin.json")
+                )
+
+            self.assertEqual(len(errors), 1, errors)
+            self.assertIn("homepage", errors[0])
+
+    def test_malformed_presentation_metadata_is_reported(self) -> None:
+        malformed = {
+            "author": {"email": "nobody@example.com"},
+            "repository": "  ",
+            "license": 7,
+            "keywords": [],
+        }
+        for field, value in malformed.items():
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                plugin = make_plugin(root)
+                write(plugin / "plugin.json", json.dumps(portable_manifest(**{field: value})))
+
+                errors = check_repo.check_plugin_manifests(root)
+
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn(field, errors[0])
+
+    def test_blank_or_non_string_entries_are_reported(self) -> None:
+        cases = {
+            "blank author name": {"author": {"name": "   "}},
+            "author that is not an object": {"author": "Example"},
+            "blank keyword": {"keywords": ["ok", " "]},
+            "non-string keyword": {"keywords": ["ok", 3]},
+        }
+        for label, overrides in cases.items():
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                plugin = make_plugin(root)
+                write(plugin / "plugin.json", json.dumps(portable_manifest(**overrides)))
+
+                self.assertEqual(len(check_repo.check_plugin_manifests(root)), 1)
+
+    def test_presentation_metadata_in_the_claude_manifest_is_rejected(self) -> None:
+        values = {
+            "repository": "https://example.com/catalog",
+            "keywords": ["example"],
+            "homepage": "https://example.com",
+            "license": "MIT",
+        }
+        self.assertEqual(set(values), set(check_repo.CLAUDE_PRESENTATION_FIELDS))
+        for field, value in values.items():
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                plugin = make_plugin(root)
+                write(
+                    plugin / ".claude-plugin" / "plugin.json",
+                    json.dumps({"name": "example", "skills": "./skills/", field: value}),
+                )
+                (plugin / "skills").mkdir()
+
+                errors = check_repo.check_plugin_manifests(root)
+
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn("plugins/example/.claude-plugin/plugin.json", errors[0])
+                self.assertIn(field, errors[0])
+                self.assertIn("portable plugins/example/plugin.json", errors[0])
+
+    def test_a_claude_manifest_without_presentation_metadata_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            (plugin / "skills").mkdir()
+            write(
+                plugin / ".claude-plugin" / "plugin.json",
+                json.dumps({"name": "example", "version": "0.1.0", "skills": "./skills/"}),
+            )
+
+            self.assertEqual(check_repo.check_plugin_manifests(root), [])
+
+    def test_an_unreadable_claude_manifest_is_reported(self) -> None:
+        for label, text in (("not JSON", "{ not json"), ("not an object", "[]")):
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                plugin = make_plugin(root)
+                write(plugin / ".claude-plugin" / "plugin.json", text)
+
+                errors = check_repo.check_plugin_manifests(root)
+
+                self.assertTrue(
+                    any("invalid Claude plugin manifest" in error for error in errors), errors
+                )
+
+    def test_the_manifest_check_runs_the_muse_staging_check(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            write(plugin / ".claude-plugin" / "plugin.json", "{ not json")
+
+            errors = check_repo.check_plugin_manifests(root)
+
+            self.assertTrue(
+                any(error.startswith("Muse staging failed:") for error in errors), errors
+            )
+
+    def test_muse_staging_failure_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            write(plugin / ".claude-plugin" / "plugin.json", "{ not json")
+
+            errors = check_repo._muse_staging_errors(root)
+
+            self.assertEqual(len(errors), 1, errors)
+            self.assertTrue(errors[0].startswith("Muse staging failed:"), errors)
+
+    def test_a_package_that_stages_cleanly_reports_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = make_plugin(root)
+            (plugin / "skills").mkdir()
+            write(
+                plugin / ".claude-plugin" / "plugin.json",
+                json.dumps({"name": "example", "skills": "./skills/"}),
+            )
+
+            self.assertEqual(check_repo._muse_staging_errors(root), [])
+
+    def test_a_staged_competing_manifest_is_reported(self) -> None:
+        import sync_marketplace  # noqa: PLC0415
+
+        for competing in ("plugin.json", ".codex-plugin"):
+            with self.subTest(competing=competing), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                plugin = make_plugin(root)
+                (plugin / "skills").mkdir()
+                write(
+                    plugin / ".claude-plugin" / "plugin.json",
+                    json.dumps({"name": "example", "skills": "./skills/"}),
+                )
+                real_stage = sync_marketplace.stage_muse_plugin
+
+                def leaky_stage(package_dir: Path, dest_dir: Path, _real=real_stage) -> Path:
+                    staged = _real(package_dir, dest_dir)
+                    if competing.startswith("."):
+                        (staged / competing).mkdir()
+                    else:
+                        (staged / competing).write_text("{}", encoding="utf-8")
+                    return staged
+
+                with mock.patch.object(sync_marketplace, "stage_muse_plugin", leaky_stage):
+                    errors = check_repo._muse_staging_errors(root)
+
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn(competing, errors[0])
+                self.assertIn("example", errors[0])
 
     def test_repository_without_plugins_passes_the_new_checks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

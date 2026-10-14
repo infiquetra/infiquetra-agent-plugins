@@ -6,18 +6,6 @@
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"
   },
-  "keywords": [
-    "unifi",
-    "ubiquiti",
-    "network",
-    "protect",
-    "cameras",
-    "home-lab",
-    "udm",
-    "firewall",
-    "vlan"
-  ],
-  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
   "commands": "./com.infiquetra.claude/commands/",
   "agents": [
     "./com.infiquetra.claude/agents/unifi-network-ops.md"

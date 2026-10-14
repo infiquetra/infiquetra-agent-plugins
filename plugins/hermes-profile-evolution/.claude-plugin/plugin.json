@@ -6,13 +6,6 @@
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"
   },
-  "keywords": [
-    "hermes",
-    "profiles",
-    "sovereignty",
-    "governance"
-  ],
-  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
   "commands": "./com.infiquetra.claude/commands/",
   "hooks": "./com.infiquetra.claude/hooks/hooks.json",
   "skills": "./skills/"

@@ -168,11 +168,12 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
+    portable_json = json.loads(_read(PLUGIN_ROOT / "plugin.json"))
     # "handoff" and "optimize" were in the manifest's keywords until issue 1030 removed both
     # commands. The keywords are a search surface, so they must not advertise a command that is
     # gone; this set names five that survive.
     assert {"lifecycle", "strategy", "plan", "doc-review", "code-review"} <= set(
-        plugin_json["keywords"]
+        portable_json["keywords"]
     )
 
 

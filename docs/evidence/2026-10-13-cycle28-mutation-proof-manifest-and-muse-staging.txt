@@ -1,0 +1,130 @@
+# Cycle-28 mutation proof - the portable presentation-metadata, Claude-manifest and Muse staging guards
+# Digests are bound by MutationProofBindingTest: change a graded file
+# without re-running this proof and the suite fails. Paths are repository-relative.
+#
+# Terms. A cycle is one run of this mutation proof. A mutation is one exact string
+# replacement that breaks a guard on purpose; it is killed when the test run then fails,
+# and it survives when the test run still passes. In "FAILED (failures=N)", N counts the
+# failing tests in tests.test_check_repo for that mutation.
+#
+# Supersedes 2026-10-13-cycle27-mutation-proof-root-instructions-and-compatibility.txt for
+# the binding test only. Cycle 27 is preserved unedited. Reason: issue #235 added three
+# guards to check_plugin_manifests in scripts/check_repo.py: every portable plugin.json
+# must state author (with a name), repository, license and keywords; the Claude packaging
+# manifest must not state author, repository, keywords, homepage or license; and staging
+# the Muse catalog must succeed and leave no root plugin.json or .codex-plugin/ in a
+# staged package. Code review of that change then made the portable check read its field
+# list from PORTABLE_PRESENTATION_FIELDS, so this run grades the guards as they now stand.
+#
+# The other four graded files were not edited and were not re-graded:
+#   plugins/unifi/scripts/site_profile.py
+#   scripts/assess_clients.py
+#   scripts/check_compatibility_matrix.py
+#   scripts/port_config.py
+# Their cycle-27 digests are carried below.
+#
+# Runner: each mutation is one exact string replacement (the pattern occurs exactly once)
+# in a copy of scripts/check_repo.py, then `python3 -m unittest tests.test_check_repo`,
+# then the pristine bytes are written back and their digest checked. The copy is of the
+# working tree, so the working tree itself was never mutated. MutationProofBindingTest
+# lives in tests.test_site_profile and is not part of that command, so the runner
+# excludes it from grading. The baseline was green (117 tests, OK) before any mutation.
+# A mutation counts as killed only when that command fails a test. Each mutation names
+# the first test that failed.
+#
+# An earlier run, against the first version of these guards, killed 19 of 23 mutations.
+# Four survived (a blank author name, a blank keyword, a Claude manifest that is not a
+# JSON object, and the call that runs the Muse staging check), and a test was added for
+# each. The run recorded here repeats the mutations against the refactored guard and adds
+# one for a blank repository or license and one for a field list copied into the check.
+
+## scripts/check_repo.py -- the presentation-metadata and Muse staging guards, 25 mutations, 25 killed
+
+## MUTATION 1: the portable presentation check is no longer run
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_blank_or_non_string_entries_are_reported
+   FAILED (failures=12)
+## MUTATION 2: the Claude presentation check is no longer run
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_an_unreadable_claude_manifest_is_reported
+   FAILED (failures=7)
+## MUTATION 3: the Muse staging check is no longer run
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_the_manifest_check_runs_the_muse_staging_check
+   FAILED (failures=1)
+## MUTATION 4: an author without a name is accepted
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_blank_or_non_string_entries_are_reported
+   FAILED (failures=2)
+## MUTATION 5: a blank author name is accepted
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_blank_or_non_string_entries_are_reported
+   FAILED (failures=1)
+## MUTATION 6: an author that is not an object is accepted
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_blank_or_non_string_entries_are_reported
+   FAILED (errors=1)
+## MUTATION 7: license is no longer required
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_malformed_presentation_metadata_is_reported
+   FAILED (failures=1)
+## MUTATION 8: repository is no longer required
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_malformed_presentation_metadata_is_reported
+   FAILED (failures=1)
+## MUTATION 9: an empty keywords list is accepted
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_malformed_presentation_metadata_is_reported
+   FAILED (failures=1)
+## MUTATION 10: a keyword that is not a string is accepted
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_blank_or_non_string_entries_are_reported
+   FAILED (failures=2)
+## MUTATION 11: a blank keyword is accepted
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_blank_or_non_string_entries_are_reported
+   FAILED (failures=1)
+## MUTATION 12: homepage is allowed in the Claude manifest
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_presentation_metadata_in_the_claude_manifest_is_rejected
+   FAILED (failures=1)
+## MUTATION 13: license is allowed in the Claude manifest
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_presentation_metadata_in_the_claude_manifest_is_rejected
+   FAILED (failures=1)
+## MUTATION 14: a presentation field in the Claude manifest is never reported
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_presentation_metadata_in_the_claude_manifest_is_rejected
+   FAILED (failures=5)
+## MUTATION 15: the Claude manifest error stops naming the portable manifest
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_presentation_metadata_in_the_claude_manifest_is_rejected
+   FAILED (failures=5)
+## MUTATION 16: an unreadable Claude manifest is not reported
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_an_unreadable_claude_manifest_is_reported
+   FAILED (failures=1)
+## MUTATION 17: a Claude manifest that is not an object is not reported
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_an_unreadable_claude_manifest_is_reported
+   FAILED (failures=1)
+## MUTATION 18: a package without a Claude manifest is no longer skipped
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_blank_or_non_string_entries_are_reported
+   FAILED (failures=14)
+## MUTATION 19: a staging failure is no longer caught
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_an_unreadable_claude_manifest_is_reported
+   FAILED (errors=4)
+## MUTATION 20: a staging failure is swallowed
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_muse_staging_failure_is_reported
+   FAILED (failures=2)
+## MUTATION 21: a staged root plugin.json is not reported
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_a_staged_competing_manifest_is_reported
+   FAILED (failures=1)
+## MUTATION 22: a staged .codex-plugin is not reported
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_a_staged_competing_manifest_is_reported
+   FAILED (failures=1)
+## MUTATION 23: a staged competing manifest is never reported
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_a_staged_competing_manifest_is_reported
+   FAILED (failures=2)
+## MUTATION 24: a blank repository or license is accepted
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_malformed_presentation_metadata_is_reported
+   FAILED (failures=1)
+## MUTATION 25: the field list is copied into the check instead of read from the constant
+   Killed by: tests.test_check_repo.RepositoryValidationTests.test_the_required_fields_are_the_ones_the_constant_names
+   FAILED (failures=1)
+
+## RESTORED
+
+# carried from cycle 27, not re-graded in this cycle:
+plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
+scripts/check_repo.py sha256: c168109e13a5bb2f83b60efb82cecfefb05415e2766fc144eff7cb934c1f4ad0
+# carried from cycle 27, not re-graded in this cycle:
+scripts/check_compatibility_matrix.py sha256: c5c5752c038325c63a67c7c790ef88922c6c30e9a520ea77c7ad7d4fdc489808
+# carried from cycle 27, not re-graded in this cycle:
+scripts/port_config.py sha256: 56216b7c8018b361d611356e21bc2383cb7d71ebf478f28436fee3c5c8e46b17
+# carried from cycle 27, not re-graded in this cycle:
+scripts/assess_clients.py sha256: 375eccd3b7252cd7ae1754682fa7bb4b5fe8b1a1a1536c5bc4f74b0b35a684e1
+scripts/check_repo.py byte-identical to pristine after the run: YES

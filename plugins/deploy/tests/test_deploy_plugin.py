@@ -67,7 +67,7 @@ def test_version_sites_agree_on_the_authored_cut() -> None:
     )
     assert entry["source"] == "./plugins/deploy"
     assert "tag-promotion" in claude["description"]
-    assert {"deploy", "tag-promotion", "rollback", "hotfix"} <= set(claude["keywords"])
+    assert {"deploy", "tag-promotion", "rollback", "hotfix"} <= set(portable["keywords"])
     assert claude["commands"] == "./com.infiquetra.claude/commands/"
     assert claude["agents"] == ["./com.infiquetra.claude/agents/release-orchestrator.md"]
     assert claude["skills"] == "./skills/"

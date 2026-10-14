@@ -71,6 +71,53 @@ specification moves the field under `metadata`. Either one removes the reason fo
 test fails, re-grades the top-level `compatibility` guard in `scripts/check_repo.py`:
 [the evidence record](../evidence/2026-10-13-cycle27-mutation-proof-root-instructions-and-compatibility.txt).
 
+### Presentation metadata lives in the portable manifest; Muse gets a staged copy
+
+**Decision.** Issue #235. `author`, `repository`, `license` and `keywords` are written once, by hand, in each
+package's portable `plugins/<package>/plugin.json`. All fourteen packages carry them. Thirteen packages have a
+Claude manifest (`fleet-core` is a library and has none), and those thirteen `.claude-plugin/plugin.json` files
+keep only runtime and packaging keys. `scripts/sync_marketplace.py` reads the presentation fields, and
+`category`, from the portable manifest alone. Two generators copy the portable values: `sync_marketplace.py`
+writes the marketplace entries, and `sync_codex_packaging.py` writes the fourteen
+`.codex-plugin/plugin.json` files. So "written once" means one authored source with generated copies.
+
+For Muse, `sync_marketplace.py` adds `muse_applicable_packages`, `stage_muse_plugin` and
+`stage_muse_marketplace`. They copy twelve of the fourteen packages into a scratch marketplace and rewrite only
+the copy. The other two are `fleet-core`, which has no Claude manifest, and `house-style`, which declares only
+`outputStyles`, a key Muse cannot load. In the copy the staging drops the Claude-only keys, turns `skills` and
+`commands` into path lists, and wraps a bare MCP server map under `mcpServers`. It refuses a destination that
+overlaps its source, a symlink that leaves the package, and a manifest path that leaves the package. A full
+run also removes staged packages the source no longer has or Muse can no longer install.
+
+**Gate and importer.** `check_plugin_manifests` in `scripts/check_repo.py` requires `author` (with a name),
+`repository`, `license` and `keywords` in every portable `plugin.json`. It refuses `author`, `repository`,
+`keywords`, `homepage` and `license` in every `.claude-plugin/plugin.json`. It also stages the Muse catalog
+into a temporary directory and fails when staging fails or leaves a root `plugin.json` or `.codex-plugin/`
+in a staged package. `scripts/import_vendor_package.py` follows the same rule: it writes the upstream's
+`author`, `homepage`, `license` and `keywords` to the portable manifest, with this repository's URL, and
+refuses an upstream that lacks an author, keywords or a license rather than inventing them.
+
+**Rationale.** Muse reads `.claude-plugin/plugin.json` as a foreign plugin and reports the presentation keys,
+`types`, `outputStyles` and `agents` as unsupported or inactive overlay. Claude accepts them, so the committed
+manifests cannot change shape for Muse. A staged copy keeps one source of truth and leaves the Claude install
+untouched.
+
+**Rejected alternatives.** Keeping the metadata in the Claude manifest and suppressing Muse's diagnostics
+(the warnings are the loader refusing the keys). A second hand-maintained Muse manifest in each package
+(two files to drift). Defaulting a missing license to `MIT` in the importer (a legal claim the importer
+cannot make for an upstream).
+
+**Supersedes in part.** The Codex decision "Codex packaging sits at the repository root because the Codex CLI
+looks nowhere else" says the Codex manifest takes `name`, `version` and `description` from the portable
+manifest. It now also takes `author`, `repository`, `license` and `keywords`.
+
+**Revisit when.** Muse's loader accepts the Claude manifest keys unchanged, or Claude reads presentation
+metadata from the portable manifest.
+
+**Refs.** Cycle 28 of the mutation proof, which deliberately breaks each new guard in
+`scripts/check_repo.py` and checks that a test fails, covers these guards:
+[the evidence record](../evidence/2026-10-13-cycle28-mutation-proof-manifest-and-muse-staging.txt).
+
 ## 2026-10-12
 
 ### Saga's workflow language id is `github-workflow`, matching the corpus
@@ -1458,7 +1505,8 @@ waits for the operator.
   `installation = AVAILABLE`, `authentication = ON_INSTALL`.
 - `plugins/<package>/.codex-plugin/plugin.json` for every package that has a
   portable `plugin.json`. `name`, `version`, and `description` come from that
-  portable manifest. `skills` is `./skills/` when that directory exists.
+  portable manifest (since 2026-10-13 also `author`, `repository`, `license` and
+  `keywords`; see "Presentation metadata lives in the portable manifest"). `skills` is `./skills/` when that directory exists.
   `mcpServers` is a path to `com.infiquetra.codex/.mcp.json` only when that
   adapter file exists. The manifest has no `hooks` and no
   `interface.defaultPrompt`.

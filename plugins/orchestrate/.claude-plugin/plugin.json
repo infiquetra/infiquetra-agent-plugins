@@ -6,19 +6,6 @@
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"
   },
-  "keywords": [
-    "orchestration",
-    "register",
-    "herdr",
-    "multi-vendor",
-    "dispatch",
-    "state-model",
-    "events",
-    "verification",
-    "consensus",
-    "review"
-  ],
-  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
   "commands": "./com.infiquetra.claude/commands/",
   "skills": "./skills/",
   "hooks": "./com.infiquetra.claude/hooks/hooks.json",

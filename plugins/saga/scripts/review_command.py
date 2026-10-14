@@ -1349,15 +1349,21 @@ def _tool_versions(findings: Sequence[Any]) -> dict[str, str]:
     return dict(sorted(versions.items()))
 
 
+#: Manifests that state the saga version, in the order they are tried. The root
+#: `plugin.json` is the portable one. A Muse-staged copy drops it, because Muse
+#: reads a root `plugin.json` as a second manifest, and keeps the Claude one.
+_VERSION_MANIFESTS = (Path("plugin.json"), Path(".claude-plugin") / "plugin.json")
+
+
 def _saga_version() -> str:
-    path = _SCRIPTS_DIR.parent / "plugin.json"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return "not-recorded"
-    version = data.get("version") if isinstance(data, Mapping) else None
-    if isinstance(version, str) and version.strip():
-        return version
+    for relative in _VERSION_MANIFESTS:
+        try:
+            data = json.loads((_SCRIPTS_DIR.parent / relative).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        version = data.get("version") if isinstance(data, Mapping) else None
+        if isinstance(version, str) and version.strip():
+            return version
     return "not-recorded"
 
 

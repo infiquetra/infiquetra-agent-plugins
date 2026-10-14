@@ -19,6 +19,7 @@
         "email": "hello@infiquetra.com"
       },
       "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "license": "MIT",
       "keywords": [
         "agent-launcher",
         "agents",
@@ -37,6 +38,7 @@
         "email": "hello@infiquetra.com"
       },
       "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "license": "MIT",
       "keywords": [
         "agy",
         "antigravity",
@@ -55,6 +57,7 @@
         "email": "hello@infiquetra.com"
       },
       "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "license": "MIT",
       "keywords": [
         "codex",
         "openai",
@@ -73,6 +76,7 @@
         "email": "hello@infiquetra.com"
       },
       "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "license": "MIT",
       "keywords": [
         "deploy",
         "tag-promotion",
@@ -92,6 +96,7 @@
         "email": "hello@infiquetra.com"
       },
       "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "license": "MIT",
       "keywords": [
         "hermes",
         "profiles",
@@ -109,6 +114,7 @@
         "email": "hello@infiquetra.com"
       },
       "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "license": "MIT",
       "keywords": [
         "proxmox",
         "ansible",
@@ -132,6 +138,7 @@
         "email": "hello@infiquetra.com"
       },
       "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "license": "MIT",
       "keywords": [
         "output-style",
         "house-style",
@@ -151,6 +158,7 @@
         "email": "hello@infiquetra.com"
       },
       "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "license": "MIT",
       "keywords": [
         "sdlc",
         "github-projects",
@@ -174,6 +182,7 @@
         "email": "hello@infiquetra.com"
       },
       "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "license": "MIT",
       "keywords": [
         "orchestration",
         "register",
@@ -197,6 +206,7 @@
         "email": "hello@infiquetra.com"
       },
       "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "license": "MIT",
       "keywords": [
         "claude-code-channel",
         "mcp",
@@ -217,6 +227,7 @@
         "email": "hello@infiquetra.com"
       },
       "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "license": "MIT",
       "keywords": [
         "lifecycle",
         "sdlc-workflow",
@@ -240,6 +251,7 @@
         "email": "hello@infiquetra.com"
       },
       "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "license": "MIT",
       "keywords": [
         "unifi",
         "ubiquiti",

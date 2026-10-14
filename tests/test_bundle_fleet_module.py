@@ -49,6 +49,15 @@ def tree_snapshot(root: Path) -> dict[str, bytes]:
     }
 
 
+#: The presentation metadata the repository gate requires in every portable manifest.
+PRESENTATION = {
+    "author": {"name": "Example", "email": "nobody@example.com"},
+    "repository": "https://example.com/catalog",
+    "license": "MIT",
+    "keywords": ["example"],
+}
+
+
 def make_repo(
     tmp: Path,
     *,
@@ -84,6 +93,7 @@ def make_repo(
                 "name": "fleet-core",
                 "version": PIN["source_version"],
                 "description": "Portable Fleet Core slice",
+                **PRESENTATION,
             }
         )
         + "\n",
@@ -110,6 +120,7 @@ def make_repo(
                     "name": consumer,
                     "version": "0.1.0",
                     "description": "Example consumer",
+                    **PRESENTATION,
                 }
             )
             + "\n",
