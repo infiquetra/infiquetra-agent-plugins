@@ -1358,6 +1358,165 @@ def test_mutants_that_pass_first_time_run_once_with_no_flaky_note(tmp_path: Path
     assert _degraded(output, "cargo-mutants") == []
 
 
+class _Clock:
+    """A stand-in for the ``time`` module in review_tools that only the test advances."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+
+class _SlowFirstRun(_FlakyBaseline):
+    """The first cargo-mutants run fails its baseline after ``spend`` seconds on the clock."""
+
+    def __init__(self, *args: Any, clock: _Clock, spend: float, **kwargs: Any) -> None:
+        super().__init__(*args, failures=1, **kwargs)
+        self.clock = clock
+        self.spend = spend
+        self.timeouts: list[int] = []
+
+    def __call__(self, argv: list[str], *, cwd: Path, **kwargs: Any) -> Any:
+        if self._tool(argv) == "cargo-mutants" and "--version" not in argv:
+            self.timeouts.append(kwargs["timeout"])
+            if not self.timeouts[1:]:
+                self.clock.now += self.spend
+        return super().__call__(argv, cwd=cwd, **kwargs)
+
+
+def _slow_baseline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, spend: float,
+) -> tuple[Path, _SlowFirstRun]:
+    clock = _Clock()
+    monkeypatch.setattr(T, "time", clock)
+    repo, source = _mutants_repo(tmp_path)
+    base = _commit(repo, "base")
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("    a + b\n", "    a + b + 0\n"),
+        encoding="utf-8",
+    )
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    runner = _SlowFirstRun(
+        base, "", code=2, clock=clock, spend=spend,
+        files={"mutants.out/outcomes.json": _fixture("mutants-27.1.0-exit-2.json")},
+    )
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("cargo-mutants")], runner,
+    ) == 0
+    return output, runner
+
+
+def test_mutants_retry_is_clamped_to_the_time_left_under_the_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue 260 review: the second run may not take the adapter's full timeout past the cap."""
+    left = 100
+    output, runner = _slow_baseline(
+        tmp_path, monkeypatch, spend=T.MUTATION_CAP_SECONDS - left,
+    )
+    assert runner.timeouts == [600, left]
+    assert len(_read(output, "findings.json")) == 5
+
+
+def test_mutants_retry_is_skipped_when_no_time_is_left_under_the_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output, runner = _slow_baseline(
+        tmp_path, monkeypatch, spend=T.MUTATION_CAP_SECONDS - 0.5,
+    )
+    assert len(runner.timeouts) == 1
+    assert _read(output, "findings.json") == []
+    assert [item["reason"] for item in _degraded(output, "cargo-mutants")] == ["baseline-failed"]
+
+
+def _in_diff_context(tmp_path: Path, scratch: Path) -> Any:
+    repo, source = _mutants_repo(tmp_path)
+    base = _commit(repo, "base")
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("    a + b\n", "    a + b + 0\n"),
+        encoding="utf-8",
+    )
+    _commit(repo, "head")
+    return T.ScanContext(repo, repo, tmp_path / "home", base=base, scratch=scratch)
+
+
+def test_in_diff_is_rewritten_in_place_on_a_second_call(tmp_path: Path) -> None:
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    context = _in_diff_context(tmp_path, scratch)
+    first = A._write_in_diff(context)
+    first.write_text("stale\n", encoding="utf-8")
+    assert A._write_in_diff(context) == first
+    assert "+    a + b + 0" in first.read_text(encoding="utf-8")
+
+
+def test_in_diff_is_not_written_through_a_scratch_folder_replaced_by_a_symlink(
+    tmp_path: Path,
+) -> None:
+    """Issue 260 review: the first run's build can swap the folder; the retry must not follow."""
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    context = _in_diff_context(tmp_path, scratch)
+    A._write_in_diff(context)
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    (victim / "in-diff.patch").write_text("keep\n", encoding="utf-8")
+    scratch.rename(tmp_path / "moved")
+    scratch.symlink_to(victim)
+    with pytest.raises(T.ToolGap) as caught:
+        A._write_in_diff(context)
+    assert caught.value.reason == "diff-unavailable"
+    assert (victim / "in-diff.patch").read_text(encoding="utf-8") == "keep\n"
+
+
+def test_a_retry_after_the_scratch_folder_was_swapped_records_baseline_failed(
+    tmp_path: Path,
+) -> None:
+    """End to end: the first run swaps the folder for a symlink; the retry declines."""
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    (victim / "in-diff.patch").write_text("keep\n", encoding="utf-8")
+    swapped: list[Path] = []
+
+    class Swapper(_FlakyBaseline):
+        def __call__(self, argv: list[str], *, cwd: Path, **kwargs: Any) -> Any:
+            if self._tool(argv) == "cargo-mutants" and "--version" not in argv and not swapped:
+                folder = Path(argv[argv.index("--in-diff") + 1]).parent
+                folder.rename(folder.with_name(folder.name + "-moved"))
+                folder.symlink_to(victim)
+                swapped.append(folder)
+            return super().__call__(argv, cwd=cwd, **kwargs)
+
+    repo, source = _mutants_repo(tmp_path)
+    base = _commit(repo, "base")
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("    a + b\n", "    a + b + 0\n"),
+        encoding="utf-8",
+    )
+    head = _commit(repo, "head")
+    runner = Swapper(
+        base, "", code=2, failures=1,
+        files={"mutants.out/outcomes.json": _fixture("mutants-27.1.0-exit-2.json")},
+    )
+    try:
+        assert _run(
+            repo, base, head, _profile(tmp_path / "profile.json"), tmp_path / "out",
+            tmp_path / "home", [_adapter("cargo-mutants")], runner,
+        ) == 0
+    finally:
+        for folder in swapped:
+            folder.unlink(missing_ok=True)
+            shutil.rmtree(folder.with_name(folder.name + "-moved"), ignore_errors=True)
+    assert len(_mutant_runs(runner)) == 1
+    assert (victim / "in-diff.patch").read_text(encoding="utf-8") == "keep\n"
+    assert [item["reason"] for item in _degraded(tmp_path / "out", "cargo-mutants")] == [
+        "baseline-failed"
+    ]
+
+
 def _mutant_argv(tmp_path: Path, config: str | None) -> list[str]:
     repo, source = _mutants_repo(tmp_path)
     if config is not None:

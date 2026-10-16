@@ -1383,7 +1383,8 @@ def _run_adapter(
                 )
             else:
                 hits, digests = _once(
-                    adapter, context, process, env, timeout, "head", degraded, items
+                    adapter, context, process, env, timeout, "head", degraded, items,
+                    deadline,
                 )
         if not hits and not digests:
             return []
@@ -1421,6 +1422,7 @@ def _once(
     label: str,
     degraded: list[dict[str, str]],
     items: list[Mapping[str, Any]],
+    deadline: float | None = None,
 ) -> tuple[tuple[Hit, ...], dict[str, str]]:
     try:
         result, problem, ran = _capture(adapter, context, process, env, timeout)
@@ -1436,7 +1438,7 @@ def _once(
     try:
         parsed, failure = _parsed(adapter, result, label)
         if failure in adapter.retry_failures:
-            retried = _retry(adapter, context, process, env, timeout, label)
+            retried = _retry(adapter, context, process, env, timeout, label, deadline)
             if retried is not None:
                 result, parsed = retried
                 failure = None
@@ -1481,12 +1483,20 @@ def _retry(
     env: Mapping[str, str],
     timeout: int,
     label: str,
+    deadline: float | None = None,
 ) -> tuple[ProcessResult, ParseResult] | None:
     """One more run of the command after a failure the adapter calls flaky (issue 260).
 
     The result and its parse when the second run succeeds, else None, so the first failure is
     what gets recorded. A second run that declines or cannot run is the same as a second failure.
+    A mutation tool's retry stays inside the mutation cap: its timeout is clamped to the time
+    left before ``deadline``, and with under a second left there is no retry.
     """
+    if adapter.mutation and deadline is not None:
+        left = int(deadline - time.monotonic())
+        if left < 1:
+            return None
+        timeout = min(timeout, left)
     try:
         result, problem, ran = _capture(adapter, context, process, env, timeout)
     except ToolGap:

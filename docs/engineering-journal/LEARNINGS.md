@@ -27,7 +27,13 @@ load was recorded as `baseline-failed`. The fixed `--timeout 180` and one baseli
 dependence on load, and a repository that sets `timeout_multiplier` or `minimum_test_timeout` in
 `.cargo/mutants.toml` keeps its own scaling. The retry also exposed that `_write_in_diff` created
 its scratch file with `O_EXCL`, so a second invoke in one scratch folder raised `FileExistsError`;
-it now unlinks first.
+it now unlinks first. Code review of e498a93 then found two holes in the retry. It reused the
+adapter's full timeout, so the first attempt plus the retry could pass the 900 second cap (the
+deadline is now passed in and the retry clamped or skipped). And a path-based `unlink` and `open`
+in the scratch folder follow a symlink the first run's build scripts may have put in place of the
+folder; the file is now handled through a directory descriptor opened with
+`O_DIRECTORY | O_NOFOLLOW`. A second run of an untrusted build's tool needs the same containment
+as the first, and a time budget has to be threaded to every run it covers.
 
 **Generalizable rule.** Sort every set or dict-from-set that feeds stored or hashed output, and test
 it by running the code in subprocesses with different `PYTHONHASHSEED` values and comparing bytes.

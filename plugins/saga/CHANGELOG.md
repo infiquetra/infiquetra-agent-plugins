@@ -47,8 +47,12 @@
   `--timeout 180` instead of a timeout scaled from the baseline (skipped when
   `.cargo/mutants.toml` sets `timeout_multiplier` or `minimum_test_timeout`), and a failed
   baseline is run once more (`Adapter.retry_failures`): a pass on the retry keeps its result and
-  records `baseline-flaky`, a second failure records `baseline-failed` as before. The retry also
-  fixed `--in-diff` file creation failing on a second invoke in one scratch folder. No version
+  records `baseline-flaky`, a second failure records `baseline-failed` as before. The retry is
+  clamped to the time left under the 900 second mutation cap and skipped when none is left. The
+  retry also fixed `--in-diff` file creation failing on a second invoke in one scratch folder; the
+  file is now removed and created through a descriptor for the scratch folder opened with
+  `O_DIRECTORY | O_NOFOLLOW`, so a folder the first run replaced with a symlink is refused
+  (`diff-unavailable`). No version
   bump; that belongs to #147's saga release step.
 - Issue #253: four review-tool faults no longer degrade every Rust review. cargo-mutants exits 2
   and 3 are parsed like exit 0 (`Adapter.parsed_exits`), and exit 4, a failing unmutated baseline,

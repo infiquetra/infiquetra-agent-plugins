@@ -69,8 +69,11 @@ _MUTANTS_RETRY_FAILURES = ("baseline-failed",)
 #: Seconds each mutant's tests may run (issue 260). Left to itself cargo-mutants sets this to
 #: five times the baseline's test time, with a 20 second floor, so the same mutant could pass
 #: one prepare and time out in the next as the machine's load changed. This sits well above the
-#: floor and above five times a typical suite, so a slow machine does not cut off a good mutant,
-#: and three stuck mutants (540 seconds) still end inside the adapter's 600 second budget.
+#: floor and above five times a typical suite, so a slow machine does not cut off a good mutant.
+#: The baseline and every mutant share the adapter's 600 second budget (and the 900 second cap
+#: across tools): three stuck mutants take 540 seconds, which leaves under a minute for the
+#: baseline. A suite whose baseline is longer than that and has stuck mutants ends at the
+#: adapter timeout, recorded as ``timeout``, never as a clean result.
 _MUTANT_TEST_TIMEOUT = 180
 #: Settings in .cargo/mutants.toml that mean the repository chose its own timeout scaling. A
 #: command line ``--timeout`` would override them, so it is left off when one is set.
@@ -489,16 +492,35 @@ def _write_in_diff(context: ScanContext) -> Path:
     )
     if result.returncode != 0:
         raise ToolGap("diff-unavailable", _MUTANT_ROW)
-    target = context.scratch / _IN_DIFF
-    # A retried run (issue 260) invokes this again in the same scratch folder. Unlinking first
-    # keeps O_EXCL | O_NOFOLLOW meaningful: the file is always created fresh by this call.
-    target.unlink(missing_ok=True)
-    descriptor = os.open(
-        target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600
-    )
+    # A retried run (issue 260) invokes this again in the same scratch folder, after the first
+    # run executed the reviewed tree's build scripts. Those could have replaced the folder with
+    # a symlink, so the folder is opened without following one and the file is removed and
+    # created through that descriptor: a path-based unlink or open would follow the link.
+    try:
+        folder = os.open(
+            context.scratch,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except OSError as exc:
+        raise ToolGap("diff-unavailable", _MUTANT_ROW) from exc
+    try:
+        try:
+            os.unlink(_IN_DIFF, dir_fd=folder)
+        except FileNotFoundError:
+            pass
+        descriptor = os.open(
+            _IN_DIFF,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=folder,
+        )
+    except OSError as exc:
+        raise ToolGap("diff-unavailable", _MUTANT_ROW) from exc
+    finally:
+        os.close(folder)
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         handle.write(result.stdout)
-    return target
+    return context.scratch / _IN_DIFF
 
 
 def _without_times(value: object) -> object:
