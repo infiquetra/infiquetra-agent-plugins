@@ -5021,6 +5021,21 @@ def test_reviewer_claude_argv_passes_the_answer_schema_before_the_ceiling(
     )
 
 
+def test_reviewer_claude_argv_drops_the_schema_uri_claude_cannot_resolve(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    schema = json.dumps({
+        "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://example.invalid/x",
+        "type": "object", "$defs": {"a": {"type": "string"}},
+    })
+    argv = launcher.reviewer_claude_argv(
+        "opus", "high", tmp_path / "s.json", max_budget_usd="5", answer_schema=schema
+    )
+    assert json.loads(argv[argv.index("--json-schema") + 1]) == {
+        "type": "object", "$defs": {"a": {"type": "string"}},
+    }
+
+
 def test_reviewer_other_vendors_take_the_answer_schema_keyword_and_ignore_it(
     launcher: ModuleType, tmp_path: Path
 ) -> None:
@@ -5043,9 +5058,12 @@ def test_reviewer_launch_hands_claude_the_request_schema_and_reads_structured_ou
         _request(launcher, repo, head, tmp_path), env=_env(home), session=session
     )
     argv = session.calls[0]["argv"]
-    assert json.loads(argv[argv.index("--json-schema") + 1]) == json.loads(
-        SAGA_SCHEMA.read_text(encoding="utf-8")
-    )
+    full = json.loads(SAGA_SCHEMA.read_text(encoding="utf-8"))
+    passed = json.loads(argv[argv.index("--json-schema") + 1])
+    # Claude 2.1.301 refuses a schema that declares the 2020-12 `$schema` URI, so those two
+    # keys are dropped and nothing else changes.
+    assert passed == {k: v for k, v in full.items() if k not in ("$schema", "$id")}
+    assert "$schema" in full and "$schema" not in passed and "$id" not in passed
     assert code == 0 and result["answer_source"] == "structured_output"
     assert result["final_message"] is None
     written = json.loads((tmp_path / "out" / "answer.json").read_text())

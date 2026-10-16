@@ -2330,6 +2330,21 @@ def reviewer_ceiling_problem(amount: str | None) -> str | None:
     return None
 
 
+#: Schema keys Claude Code 2.1.301 cannot take in ``--json-schema``. Measured: a schema declaring
+#: ``"$schema": "https://json-schema.org/draft/2020-12/schema"`` is refused before the session
+#: starts (``--json-schema is not a valid JSON Schema: no schema with key or ref ...``). Neither key
+#: changes what the schema accepts.
+REVIEWER_CLAUDE_SCHEMA_DROPPED = ("$schema", "$id")
+
+
+def reviewer_claude_schema_text(answer_schema: str) -> str:
+    """The answer schema as compact JSON without the keys Claude's validator cannot resolve."""
+    schema = json.loads(answer_schema)
+    for key in REVIEWER_CLAUDE_SCHEMA_DROPPED:
+        schema.pop(key, None)
+    return json.dumps(schema, separators=(",", ":"), ensure_ascii=False)
+
+
 def reviewer_claude_argv(
     model: str,
     effort: str | None,
@@ -2363,7 +2378,7 @@ def reviewer_claude_argv(
         "--no-session-persistence",
     ]
     if answer_schema:
-        argv += ["--json-schema", answer_schema]
+        argv += ["--json-schema", reviewer_claude_schema_text(answer_schema)]
     return argv + ["--max-budget-usd", str(max_budget_usd)]
 
 

@@ -10,7 +10,10 @@ the final message was discarded, so the cause could not be diagnosed. Measured o
 2.1.301 with a throwaway Haiku call: with `--json-schema` the `--output-format json` result carries
 a parsed `structured_output` object. A model that declined to call the structured-output tool left
 the key out entirely and still reported `subtype: success`, `is_error: false`, with prose in
-`result`. Fixed in `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`
+`result`. The first live review through the launcher exited 3 with "the session printed no JSON
+result": the session's stderr (not recorded) said `--json-schema is not a valid JSON Schema: no
+schema with key or ref "https://json-schema.org/draft/2020-12/schema"`, because saga's answer
+schema declares that `$schema`; contract tests with a fake session had passed. Fixed in `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`
 (`reviewer_claude_argv`, `reviewer_read_answer`, `reviewer_keep_final_message`).
 
 **Mechanism.** The reviewer prompt asked for "the answer JSON and nothing else", and the launcher
@@ -19,7 +22,7 @@ review that had already been paid for. The CLI validates a schema itself when as
 `structured_output` key is the only signal that it was not produced, because the session still
 looks successful.
 
-**Generalizable rule.** When a headless CLI offers schema-validated output, use it and read the
+**Generalizable rule.** Run the real CLI once with the real schema before trusting a fake-session test. When a headless CLI offers schema-validated output, use it and read the
 structured field first; treat its absence, not `is_error`, as the failure signal; and when no
 answer can be read, write the raw final message (bounded) beside the result so the failure can be
 diagnosed.

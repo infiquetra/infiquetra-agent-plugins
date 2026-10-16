@@ -97,6 +97,9 @@ for C8 to extend.
   prose, accepted only when it carries every key the schema requires. When no answer can be read
   the final message is kept, cut at 64 KiB, as `final-message.txt` beside `result.json` (never in
   the scratch copy), and the result's `final_message` gives its path, size and whether it was cut.
+  Claude Code 2.1.301 refuses a schema that declares the 2020-12 `$schema` URI (`--json-schema is
+  not a valid JSON Schema: no schema with key or ref ...`) before the session starts, so the
+  launcher drops `$schema` and `$id` from the copy it passes; nothing else changes.
   Grok and Muse accept the new keyword and ignore it.
 - **The targeted reviewer's sandbox reads only what the review needs (issue #189).** Claude's
   command sandbox now blocks reads of the whole home directory and allows back only the scratch
