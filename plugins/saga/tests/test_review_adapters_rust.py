@@ -1261,11 +1261,25 @@ def test_mutants_exit_2_survivors_are_findings(tmp_path: Path) -> None:
     assert _degraded(output, "cargo-mutants") == []
 
 
-def test_mutants_exit_3_timeout_is_parsed_not_unparseable(tmp_path: Path) -> None:
-    """Exit 3 (a mutant timed out) with no survivor is a clean answer, not ``unparseable``."""
+def test_mutants_exit_3_timeout_is_a_degraded_row_not_a_clean_run(tmp_path: Path) -> None:
+    """Exit 3 (a mutant timed out) parses, but a timeout never reads as every mutant caught."""
     output = _mutants_exit(tmp_path, 3, _fixture("mutants-27.1.0-exit-3.json"))
     assert _read(output, "findings.json") == []
-    assert _degraded(output, "cargo-mutants") == []
+    assert [(item["input"], item["reason"]) for item in _degraded(output, "cargo-mutants")] == [
+        ("testing.surviving-mutant", "mutant-timeout")
+    ]
+
+
+def test_mutants_timeout_still_reports_the_survivors(tmp_path: Path) -> None:
+    """A run with a timed-out mutant and missed ones keeps every survivor as a finding."""
+    report = json.loads(_fixture("mutants-27.1.0-exit-2.json"))
+    timeout = json.loads(_fixture("mutants-27.1.0-exit-3.json"))
+    report["outcomes"].extend(
+        item for item in timeout["outcomes"] if item["summary"] == "Timeout"
+    )
+    output = _mutants_exit(tmp_path, 3, json.dumps(report))
+    assert len(_read(output, "findings.json")) == 5
+    assert [item["reason"] for item in _degraded(output, "cargo-mutants")] == ["mutant-timeout"]
 
 
 def test_mutants_exit_4_records_a_failed_baseline_and_keeps_the_report(tmp_path: Path) -> None:

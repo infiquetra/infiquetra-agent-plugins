@@ -25,7 +25,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
 import yaml
 
@@ -208,6 +208,8 @@ SKIP_DIRS = frozenset(
     {".git", "node_modules", ".venv", "venv", "dist", "build", "__pycache__", ".saga"}
 )
 _SHEBANG = re.compile(r"^#!.*\b(?:sh|bash|zsh)\b")
+#: Shell suffixes, the ones the shellcheck wrapper scans.
+_SHELL_SUFFIXES = frozenset({".sh", ".bash", ".ksh"})
 #: Any ``AWS::`` text or a top-level ``Resources`` key counts: the check errs toward
 #: running the CloudFormation tools.
 _CLOUDFORMATION = re.compile(
@@ -704,6 +706,18 @@ TRACKED_PRELUDE = r"""
 import os, subprocess
 from pathlib import Path
 
+def regular_in_root(path, root):
+    # A regular file, or a symlink whose target is a regular file inside root.
+    if not path.is_file():
+        return False
+    if not path.is_symlink():
+        return True
+    try:
+        path.resolve().relative_to(Path(root).resolve())
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return True
+
 def _tracked_names(directory):
     try:
         top = subprocess.run(
@@ -1038,14 +1052,10 @@ def _walk_files(root: Path) -> Iterator[tuple[Path, str]]:
             yield path, path.relative_to(base).as_posix()
 
 
-def detect_languages(root: Path) -> list[str]:
-    """Formula languages present in *root*, in ``review_formula.LANGUAGES`` order.
-
-    ``cloudformation`` is not detected. ``cdk.json`` does not add Python. ``/saga:setup``
-    pins only the tools this selects, and the runner skips the rest (issue 253).
-    """
+def _languages_in(files: Iterable[tuple[Path, str]]) -> set[str]:
+    """Formula languages among ``(path, posix path relative to the root)`` pairs."""
     found: set[str] = set()
-    for path, relative in _walk_files(root):
+    for path, relative in files:
         name = path.name
         suffix = path.suffix.lower()
         if name == "Cargo.toml":
@@ -1062,7 +1072,7 @@ def detect_languages(root: Path) -> list[str]:
             found.add("swift")
         elif suffix == ".md":
             found.add("markdown")
-        elif suffix == ".sh":
+        elif suffix in _SHELL_SUFFIXES:
             found.add("shell")
         elif suffix == "" and _shebang_shell(path):
             found.add("shell")
@@ -1071,41 +1081,53 @@ def detect_languages(root: Path) -> list[str]:
             or "/.github/workflows/" in f"/{relative}"
         ):
             found.add("github-workflow")
+    return found
+
+
+def detect_languages(root: Path) -> list[str]:
+    """Formula languages present in *root*, in ``review_formula.LANGUAGES`` order.
+
+    ``cloudformation`` is not detected. ``cdk.json`` does not add Python. ``/saga:setup``
+    pins the tools this selects. ``SKIP_DIRS`` are not read.
+    """
+    found = _languages_in(_walk_files(root))
     return [language for language in review_formula.LANGUAGES if language in found]
 
 
-def _cloudformation_present(root: Path) -> bool:
-    """True when *root* holds ``cdk.json`` or a CloudFormation template.
+def _cloudformation_present(files: Iterable[tuple[Path, str]]) -> bool:
+    """True when ``files`` hold ``cdk.json`` or a CloudFormation template.
 
-    It reads every file the checkov and cfn-lint wrappers would scan (every directory
-    but ``.git``, no size limit), so it never skips a template they would have read.
+    A template-suffix symlink counts without reading its target: the wrappers may copy
+    what it points at, and the check must never skip a file they would scan.
     """
-    for directory, dirnames, filenames in os.walk(root, followlinks=False):
-        dirnames[:] = [name for name in dirnames if name != ".git"]
-        for name in filenames:
-            path = Path(directory) / name
-            if name == "cdk.json":
+    for path, _relative in files:
+        if path.name == "cdk.json":
+            return True
+        if path.suffix.lower() not in _CLOUDFORMATION_SUFFIXES:
+            continue
+        if path.is_symlink():
+            return True
+        if not path.is_file():
+            continue
+        try:
+            if _CLOUDFORMATION.search(path.read_bytes()):
                 return True
-            if path.suffix.lower() not in _CLOUDFORMATION_SUFFIXES:
-                continue
-            if path.is_symlink() or not path.is_file():
-                continue
-            try:
-                if _CLOUDFORMATION.search(path.read_bytes()):
-                    return True
-            except OSError:
-                continue
+        except OSError:
+            continue
     return False
 
 
 def run_languages(root: Path) -> frozenset[str]:
-    """The languages an adapter may run for: setup's detection plus ``cloudformation``.
+    """The languages an adapter may run for, read from the files the adapters scan.
 
-    Setup does not detect ``cloudformation``, so its tools gate on ``cdk.json`` or a
-    template here, which is what their own invoke functions look for.
+    A suffix language is present when ``scan_files`` (``.git`` pruned only) holds a file
+    of it, so Python under ``build/`` still runs bandit. ``cloudformation`` is added for
+    ``cdk.json`` or a template, which setup does not detect.
     """
-    found = set(detect_languages(root))
-    if _cloudformation_present(root):
+    root = Path(root)
+    files = [(path, path.relative_to(root).as_posix()) for path in scan_files(root)]
+    found = _languages_in(files)
+    if _cloudformation_present(files):
         found.add("cloudformation")
     return frozenset(found)
 

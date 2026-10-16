@@ -559,6 +559,50 @@ def test_run_languages_adds_cloudformation_for_cdk_json_or_a_template(tmp_path: 
     assert "cloudformation" in T.run_languages(tmp_path / "built")
 
 
+def test_a_template_suffix_symlink_counts_as_cloudformation(tmp_path: Path) -> None:
+    """The cfn wrappers copy a link's target, so detection must not skip a linked template."""
+    (tmp_path / "stack.txt").write_text(
+        "Resources:\n  Bucket:\n    Type: AWS::S3::Bucket\n", encoding="utf-8"
+    )
+    (tmp_path / "stack.yaml").symlink_to("stack.txt")
+    assert "cloudformation" in T.run_languages(tmp_path)
+
+
+def test_the_cfn_wrappers_copy_only_files_inside_the_root(tmp_path: Path) -> None:
+    namespace: dict[str, Any] = {}
+    exec(T.TRACKED_PRELUDE, namespace)  # noqa: S102 - saga's own wrapper prelude
+    regular_in_root = namespace["regular_in_root"]
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "secret.yaml"
+    outside.write_text("key: value\n", encoding="utf-8")
+    (root / "inside.yaml").write_text("key: value\n", encoding="utf-8")
+    (root / "linked.yaml").symlink_to("inside.yaml")
+    (root / "escape.yaml").symlink_to(outside)
+    (root / "dir.yaml").mkdir()
+    assert regular_in_root(root / "inside.yaml", root)
+    assert regular_in_root(root / "linked.yaml", root)
+    assert not regular_in_root(root / "escape.yaml", root)
+    assert not regular_in_root(root / "dir.yaml", root)
+    infrastructure = (SCRIPTS / "review_adapters_infrastructure.py").read_text(encoding="utf-8")
+    assert infrastructure.count("if not regular_in_root(path, root):") == 2
+
+
+def test_python_under_build_still_runs_its_tools(tmp_path: Path) -> None:
+    """The runner reads the files the adapters scan: only .git is pruned (bandit -r .)."""
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build" / "gen.py").write_text("print(1)\n", encoding="utf-8")
+    assert "python" in T.run_languages(tmp_path)
+    assert "python" not in T.detect_languages(tmp_path)
+
+
+@pytest.mark.parametrize("name", ["deploy.sh", "deploy.bash", "deploy.ksh"])
+def test_every_shellcheck_suffix_is_shell(tmp_path: Path, name: str) -> None:
+    (tmp_path / name).write_text("echo hi\n", encoding="utf-8")
+    assert "shell" in T.detect_languages(tmp_path)
+    assert "shell" in T.run_languages(tmp_path)
+
+
 def test_language_detection_does_not_read_through_a_symlink(tmp_path: Path) -> None:
     """The reviewed tree is untrusted: a suffixless symlink to a FIFO must not block."""
     fifo = tmp_path / "pipe"

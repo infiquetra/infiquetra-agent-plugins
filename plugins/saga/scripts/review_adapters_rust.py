@@ -58,6 +58,8 @@ _NOTHING_TO_MUTATE = ("Diff changes no Rust source files", "No mutants to filter
 #: cargo-mutants 27 exits 2 when a mutant survives and 3 when one times out,
 #: with a complete outcomes.json either way.
 _MUTANTS_PARSED_EXITS = (2, 3)
+#: The degraded reason when any mutant timed out (exit 3).
+_MUTANT_TIMEOUT = "mutant-timeout"
 #: Exit 4: the unmutated tree failed its own tests, so no mutant was tested.
 _MUTANTS_EXIT_REASONS = ((4, "baseline-failed"),)
 #: nextest's own configuration. Its presence is the repository asking for nextest.
@@ -506,10 +508,15 @@ def _parse_cargo_mutants(text: str) -> ParseResult:
     if not isinstance(outcomes, list):
         raise ValueError("cargo-mutants outcomes must be a list")
     hits: list[Hit] = []
+    timed_out = False
     for outcome in outcomes:
         if not isinstance(outcome, dict):
             continue
-        if str(outcome.get("summary") or "") != "MissedMutant":
+        summary = str(outcome.get("summary") or "")
+        if summary == "Timeout":
+            timed_out = True
+            continue
+        if summary != "MissedMutant":
             continue
         scenario = outcome.get("scenario") or {}
         mutant = scenario.get("Mutant") if isinstance(scenario, dict) else None
@@ -539,7 +546,10 @@ def _parse_cargo_mutants(text: str) -> ParseResult:
             end=end or start,
             row="testing.surviving-mutant",
         ))
-    return ParseResult(tuple(hits))
+    # A timed-out mutant was neither caught nor missed, so the run cannot vouch for a
+    # clean surviving-mutant row; survivors are still reported (issue 253).
+    gaps = ((_MUTANT_TIMEOUT, _MUTANT_ROW),) if timed_out else ()
+    return ParseResult(tuple(hits), gaps=gaps)
 
 
 def _invoke_cargo_machete(context: ScanContext) -> list[str]:

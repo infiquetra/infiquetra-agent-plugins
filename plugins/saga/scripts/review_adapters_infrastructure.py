@@ -188,7 +188,7 @@ if mode == "cdk":
     scan = dest
 else:
     for path in tracked_files(root):
-        if not path.is_file():
+        if not regular_in_root(path, root):
             continue
         if path.name.startswith(".checkov"):
             continue
@@ -242,7 +242,7 @@ root = Path(sys.argv[1])
 dest = Path(sys.argv[2])
 rels = []
 for path in tracked_files(root):
-    if not path.is_file():
+    if not regular_in_root(path, root):
         continue
     if path.name.startswith(".") and "cfnlint" in path.name:
         continue
