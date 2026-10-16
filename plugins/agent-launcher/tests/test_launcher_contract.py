@@ -5007,6 +5007,175 @@ def test_reviewer_a_fenced_final_message_still_parses(launcher: ModuleType) -> N
     assert (answer, error) == (ANSWER, None)
 
 
+def test_reviewer_claude_argv_passes_the_answer_schema_before_the_ceiling(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    schema = json.dumps({"type": "object", "required": ["a"]}, separators=(",", ":"))
+    argv = launcher.reviewer_claude_argv(
+        "opus", "high", tmp_path / "s.json", max_budget_usd="5", answer_schema=schema
+    )
+    assert argv[argv.index("--json-schema") + 1] == schema
+    assert argv[-2:] == ["--max-budget-usd", "5"]
+    assert "--json-schema" not in launcher.reviewer_claude_argv(
+        "opus", "high", tmp_path / "s.json", max_budget_usd="5"
+    )
+
+
+def test_reviewer_claude_argv_drops_the_schema_uri_claude_cannot_resolve(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    schema = json.dumps({
+        "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://example.invalid/x",
+        "type": "object", "$defs": {"a": {"type": "string"}},
+    })
+    argv = launcher.reviewer_claude_argv(
+        "opus", "high", tmp_path / "s.json", max_budget_usd="5", answer_schema=schema
+    )
+    assert json.loads(argv[argv.index("--json-schema") + 1]) == {
+        "type": "object", "$defs": {"a": {"type": "string"}},
+    }
+
+
+def test_reviewer_other_vendors_take_the_answer_schema_keyword_and_ignore_it(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    exe, prompt = tmp_path / "bin", tmp_path / "message.md"
+    for build in (launcher.reviewer_grok_argv, launcher.reviewer_muse_argv):
+        plain = build("m", "high", tmp_path / "s", executable=exe, prompt_path=prompt)
+        with_schema = build(
+            "m", "high", tmp_path / "s", executable=exe, prompt_path=prompt, answer_schema="{}"
+        )
+        assert plain == with_schema and "--json-schema" not in with_schema
+
+
+def test_reviewer_launch_hands_claude_the_request_schema_and_reads_structured_output(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, home: Path
+) -> None:
+    repo, head = reviewed_repo
+    session = FakeSession(_claude_result("Done, see the structured output.",
+                                         structured_output=ANSWER))
+    result, code = launcher.reviewer_launch(
+        _request(launcher, repo, head, tmp_path), env=_env(home), session=session
+    )
+    argv = session.calls[0]["argv"]
+    full = json.loads(SAGA_SCHEMA.read_text(encoding="utf-8"))
+    passed = json.loads(argv[argv.index("--json-schema") + 1])
+    # Claude 2.1.301 refuses a schema that declares the 2020-12 `$schema` URI, so those two
+    # keys are dropped and nothing else changes.
+    assert passed == {k: v for k, v in full.items() if k not in ("$schema", "$id")}
+    assert "$schema" in full and "$schema" not in passed and "$id" not in passed
+    assert code == 0 and result["answer_source"] == "structured_output"
+    assert result["final_message"] is None
+    written = json.loads((tmp_path / "out" / "answer.json").read_text())
+    assert written == ANSWER
+
+
+def test_reviewer_structured_output_wins_over_a_final_message_that_is_prose(
+    launcher: ModuleType,
+) -> None:
+    parsed = launcher.reviewer_parse_claude_result(
+        _claude_result("I reviewed it.", structured_output=ANSWER)
+    )
+    assert parsed["structured"] == ANSWER
+    assert launcher.reviewer_read_answer(parsed) == (ANSWER, "structured_output", None)
+
+
+def test_reviewer_a_missing_structured_output_key_falls_back_to_the_final_message(
+    launcher: ModuleType,
+) -> None:
+    parsed = launcher.reviewer_parse_claude_result(_claude_result(json.dumps(ANSWER)))
+    assert parsed["structured"] is None
+    assert launcher.reviewer_read_answer(parsed) == (ANSWER, "final_message", None)
+
+
+def test_reviewer_a_whole_message_bare_or_fenced_object_is_still_read(launcher: ModuleType) -> None:
+    for final in (json.dumps(ANSWER), "```json\n" + json.dumps(ANSWER) + "\n```"):
+        parsed = {"final": final, "structured": None}
+        assert launcher.reviewer_read_answer(parsed) == (ANSWER, "final_message", None)
+
+
+def test_reviewer_an_example_object_quoted_before_the_answer_is_refused_and_kept(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, home: Path
+) -> None:
+    repo, head = reviewed_repo
+    example = {"schema": "targeted_reviewer_answer.v1", "items": [], "findings": []}
+    # The prompt's own example object, then the real answer after it, all inside prose.
+    final = ("The prompt shows this shape:\n\n```json\n" + json.dumps(example) + "\n```\n\n"
+             "My answer: " + json.dumps(ANSWER))
+    assert launcher.reviewer_read_answer({"final": final, "structured": None}) == (
+        None, None, "the final message is not JSON"
+    )
+    result, code = launcher.reviewer_launch(
+        _request(launcher, repo, head, tmp_path), env=_env(home),
+        session=FakeSession(_claude_result(final)),
+    )
+    kept = result["final_message"]
+    assert code == 3 and result["answer_path"] is None and result["answer_source"] is None
+    assert result["error"] == "the final message is not JSON"
+    assert Path(kept["path"]).read_text() == final
+    assert not (tmp_path / "out" / "answer.json").exists()
+
+
+def test_reviewer_an_unreadable_answer_keeps_the_final_message_beside_result_json(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, home: Path
+) -> None:
+    repo, head = reviewed_repo
+    prose = "I could not finish the review."
+    result, code = launcher.reviewer_launch(
+        _request(launcher, repo, head, tmp_path), env=_env(home),
+        session=FakeSession(_claude_result(prose)),
+    )
+    kept = result["final_message"]
+    assert code == 3 and result["answer_source"] is None
+    assert result["error"] == "the final message is not JSON"
+    assert Path(kept["path"]) == tmp_path / "out" / "final-message.txt"
+    assert Path(kept["path"]).read_text() == prose
+    assert kept["bytes"] == len(prose) and kept["truncated"] is False
+    assert not Path(kept["path"]).resolve().is_relative_to(Path(result["scratch"]["path"]))
+    written = json.loads((tmp_path / "out" / "result.json").read_text())
+    assert written["final_message"] == kept
+
+
+def test_reviewer_a_huge_unreadable_final_message_is_kept_bounded(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, home: Path
+) -> None:
+    repo, head = reviewed_repo
+    huge = "\u00e9" * (launcher.REVIEWER_FINAL_MESSAGE_LIMIT)  # two bytes each
+    result, code = launcher.reviewer_launch(
+        _request(launcher, repo, head, tmp_path), env=_env(home),
+        session=FakeSession(_claude_result(huge)),
+    )
+    kept = result["final_message"]
+    size = Path(kept["path"]).stat().st_size
+    assert code == 3 and kept["truncated"] is True
+    assert size <= launcher.REVIEWER_FINAL_MESSAGE_LIMIT and kept["bytes"] == 2 * len(huge)
+
+
+def test_reviewer_no_final_message_keeps_nothing(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, home: Path
+) -> None:
+    repo, head = reviewed_repo
+    result, code = launcher.reviewer_launch(
+        _request(launcher, repo, head, tmp_path), env=_env(home),
+        session=FakeSession(_claude_result("")),
+    )
+    assert code == 3 and result["final_message"] is None
+    assert not (tmp_path / "out" / "final-message.txt").exists()
+
+
+def test_reviewer_an_answer_schema_that_is_not_an_object_is_refused(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, home: Path
+) -> None:
+    repo, head = reviewed_repo
+    bad = tmp_path / "bad.schema.json"
+    bad.write_text("[1]", "utf-8")
+    with pytest.raises(launcher.ReviewerRefused, match="not a JSON object"):
+        launcher.reviewer_launch(
+            _request(launcher, repo, head, tmp_path, schema=bad), env=_env(home),
+            session=FakeSession(_claude_result("x")),
+        )
+
+
 def test_reviewer_no_parsable_answer_exits_3_and_writes_no_answer(
     launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, home: Path
 ) -> None:
