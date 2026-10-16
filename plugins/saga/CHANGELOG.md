@@ -38,6 +38,29 @@
 
 ### Fixed
 
+- Issue #244: preparing the same change twice writes the same packet. Stored raw tool output,
+  and so each finding's `proof.raw_output` hash, names saga's scratch folders stably; the
+  cargo JSON stream is stored sorted and cargo-mutants and lychee reports without timings;
+  hit text loses the scan root; `findings.json`, `degraded.json`, `where-to-look.json` and
+  `missing-tools.json` are written sorted; the Vitest, Jest, Dart and pytest-randomly shuffle
+  seeds come from the change's base and head. lychee runs `--offline` and reads the
+  `error_map` key its pinned 0.24.2 writes. Mutation tools spend their budget on the change:
+  cargo-mutants gets `--workspace --in-diff` (it used to mutate only the root package),
+  StrykerJS the changed line ranges in one comma-separated `--mutate` (a repeated flag keeps
+  only the last, which had also dropped four of the five `--ignorePatterns`), Muter the changed
+  files, mutate4dart `--diff-base`, and cosmic-ray runs `cr-filter-git`; a change with nothing
+  to mutate records `nothing-to-mutate` instead of running. bandit's stored report drops
+  `generated_at`, semgrep's its `time` object, jscpd's its `detectionDate`, and coverage
+  reports their timestamp. Test runner transcripts (pytest, Vitest, Jest, Dart, and the
+  relocated test command) are stored without durations or clock times and with what parallel
+  workers print sorted; Dart keeps its failures and summary, since its progress lines name
+  whichever test happened to be running. Muter gets one `--files-to-mutate` per changed file
+  (one flag followed by two paths is refused) and no `--configuration`, an option Muter 16
+  does not have and refused on every run; it reads the base config staged in its working
+  directory, a `muter.conf.yaml` staged as `muter.conf.yml`. Since a Muter config names the
+  command Muter runs, the head's `muter.conf.json` is now stripped like the other two names and
+  every Muter config name is cleared before the base one is staged. Network-dependent tools are left
+  for #245. No version bump; that belongs to #147's saga release step.
 - Issue #226: the setup survey no longer reports run-time-loaded tools as missing. The
   pytest-randomly, pytest-socket, ruff-lint, and ruff-format rows probe the uv loader
   instead of PATH executables (installed at the pin on a clean versioned answer,

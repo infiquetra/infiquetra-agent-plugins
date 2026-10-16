@@ -12,8 +12,9 @@ import hashlib
 import io
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -54,6 +55,50 @@ def _semgrep_argv(context: ScanContext) -> list[str]:
         argv.extend(["--config", str(config)])
     argv.append(str(context.root))
     return argv
+
+
+def _stable_json(text: str, drop: Callable[[dict[str, Any]], None]) -> str:
+    """A JSON report with its per-run fields removed, keys sorted. Text that is not JSON stays."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    if isinstance(data, dict):
+        drop(data)
+    return json.dumps(data, indent=2, sort_keys=True) + "\n"
+
+
+def _sorted_items(items: object) -> object:
+    if not isinstance(items, list):
+        return items
+    return sorted(items, key=lambda item: json.dumps(item, sort_keys=True))
+
+
+def _drop_semgrep_timing(data: dict[str, Any]) -> None:
+    # semgrep --json always writes a top-level ``time`` object (rule parse time,
+    # scanning time, peak memory); it differs on every run (issue 244).
+    data.pop("time", None)
+    data.pop("profiling_results", None)
+    for key in ("results", "errors"):
+        if key in data:
+            data[key] = _sorted_items(data[key])
+
+
+def _drop_jscpd_date(data: dict[str, Any]) -> None:
+    # jscpd's report records when it ran in ``statistics.detectionDate``.
+    statistics = data.get("statistics")
+    if isinstance(statistics, dict):
+        statistics.pop("detectionDate", None)
+    if "duplicates" in data:
+        data["duplicates"] = _sorted_items(data["duplicates"])
+
+
+def _stable_semgrep(text: str) -> str:
+    return _stable_json(text, _drop_semgrep_timing)
+
+
+def _stable_jscpd(text: str) -> str:
+    return _stable_json(text, _drop_jscpd_date)
 
 
 def _invoke_semgrep_security(context: ScanContext) -> list[str]:
@@ -407,6 +452,13 @@ def _level_map(row: Mapping[str, object]) -> tuple[tuple[str, str], ...]:
     return tuple((str(key), str(value)) for key, value in mapping.items())
 
 
+_STABLE_RAW: dict[str, Callable[[str], str]] = {
+    "semgrep-security": _stable_semgrep,
+    "semgrep-saga": _stable_semgrep,
+    "jscpd": _stable_jscpd,
+}
+
+
 def _build(document: Mapping[str, object]) -> list[Adapter]:
     tools = document.get("tools")
     if not isinstance(tools, list):
@@ -472,6 +524,7 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
             curated_rules=tuple(str(item) for item in (row.get("curated_block_rules") or ())),
             level_map=_level_map(row),
             rules=_rules(row),
+            stable_raw=_STABLE_RAW.get(tool_id),
         ))
     return built
 

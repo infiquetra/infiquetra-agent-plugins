@@ -235,7 +235,11 @@ def _invoke_mutate4dart(context: ScanContext) -> list[str]:
     if not _files_with(context.root, _DART_SUFFIXES):
         return []
     _needs_resolution(context, "testing.surviving-mutant")
-    return ["mutate4dart", "--format", "json", "--no-coverage"]
+    argv = ["mutate4dart", "--format", "json", "--no-coverage"]
+    if context.base:
+        # Only lines changed since the base commit are mutated (issue 244).
+        argv.extend(["--diff-base", context.base])
+    return argv
 
 
 def _parse_mutate4dart(text: str) -> ParseResult:
@@ -285,7 +289,8 @@ def _invoke_dart_shuffle(context: ScanContext) -> list[str]:
         return []
     _needs_resolution(context, "testing.flaky-order-or-network")
     return [
-        "dart", "test", "--test-randomize-ordering-seed=random",
+        "dart", "test",
+        f"--test-randomize-ordering-seed={review_tools.change_seed(context)}",
         "--reporter", "expanded",
     ]
 
@@ -360,6 +365,10 @@ def _level_map(row: Mapping[str, object]) -> tuple[tuple[str, str], ...]:
     return tuple((str(key), str(value)) for key, value in mapping.items())
 
 
+# Test runner transcripts carry durations and finish order (issue 244).
+_TRANSCRIPTS = ("dart-shuffle",)
+
+
 def _build(document: Mapping[str, object]) -> list[Adapter]:
     tools = document.get("tools")
     if not isinstance(tools, list):
@@ -417,6 +426,7 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
             gap_first=bool(row.get("gap_first")),
             base_files=tuple(str(item) for item in (row.get("base_files") or ())),
             local_bins=tuple(str(item) for item in (row.get("local_bins") or ())),
+            stable_raw=review_tools.stable_transcript if tool_id in _TRANSCRIPTS else None,
         ))
     return built
 

@@ -1,5 +1,78 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-16
+
+### A determinism audit proves nothing about a tool that reported no finding, and an argv test proves nothing the tool's parser has not accepted
+
+**Evidence.** Issue #244, code review of 9e3bdee. The first fix found bandit's `generated_at` by
+preparing a polyglot fixture twice with every installed tool, yet missed four more per-run values,
+because a raw-output hash reaches the packet only through a kept finding and in that fixture
+semgrep had no rule cache, jscpd hit a version mismatch and pytest had no test command. Two live
+runs each, same input: semgrep 1.179.0 `--json` differs only in its top-level `time` object;
+jscpd only in `statistics.detectionDate`; coverage.py only in `meta.timestamp` (JSON) and
+`timestamp` (Cobertura); pytest in its summary duration. Jest 30.5.2 and Vitest 4.1.11 also print
+each failing file in the order their workers finished (Jest put `e.test.js` before `f.test.js` in
+one of four runs), and Dart 3.13 interleaves concurrent files so that even which test name a
+progress line carries changes. Fixed by `review_tools.stable_transcript`,
+`review_tools.stable_coverage_report` and the semgrep and jscpd `stable_raw` rewrites in
+`review_adapters_all_languages.py`. Separately, the Muter test asserted
+`--files-to-mutate a.swift b.swift`, which Muter 16 refuses (`Unexpected argument
+'Sources/b.swift'`), and `--configuration`, an option Muter 16 does not have (`Unknown option
+'--configuration'`): Muter had refused every run since it was added (fcf1dfe) while its tests
+stayed green.
+
+**Mechanism.** Determinism is only observable where the varying bytes are recorded, so an audit
+inherits the coverage of its fixture: a tool that degrades or reports nothing contributes no hash
+and looks stable. A test that compares argv with an expected list checks the adapter against the
+author's belief about the CLI, not against the CLI.
+
+**Generalizable rule.** Audit reproducibility with a fixture that makes every tool keep at least
+one finding, and diff two real runs of each tool's raw output rather than reading its docs; pin
+every argv shape a test asserts with one live run of the pinned tool (`<tool> --help` or a run
+past argument parsing) before trusting the test.
+
+## 2026-10-15
+
+### A review packet must hash only what the change decides, and mutation must be told where the change is
+
+**Evidence.** Issue #244: the saga-review corpus harness prepares each case twice and stopped on
+its first Rust cases. Measured on a ripgrep change of my own (`return Some(got);` in
+`crates/globset/src/pathutil.rs`, a clippy `needless_return` finding), `review_command.py prepare`
+twice before and after the fix:
+
+| | Before (a48f527) | After |
+|---|---|---|
+| Wall time per prepare | 853.7 s, 850.4 s | 229.7 s, 202.0 s |
+| cargo-mutants | killed at its 600 s limit both times (`timeout`) | `--workspace --in-diff`: 7 mutants on the change, 59.5 s and 35.6 s, exit 0 (none survived or timed out) |
+| lychee | `timeout` (network) | offline; no entry |
+| Two packets byte-identical | no: `findings.json`, `grades.json`, `outcomes.json` differ | yes |
+
+The findings were the same in every field but `proof.raw_output`, the SHA-256 of the stored raw
+tool output: cargo's JSON stream embeds the scratch worktree path (`.../T/saga-review-0mcv6e45/...`
+in `manifest_path`, `src_path`, `package_id`), bandit stamps `generated_at`, lychee and
+cargo-mutants record durations, and a multi-crate build prints its records in a new order each
+run. Fixed in `review_tools._stable_raw` and per-adapter `stable_raw` rewrites. Separately,
+cargo-mutants without `--workspace` lists only the root package (1,915 mutants in `crates/core`,
+none in `crates/globset`), so before the fix it spent its whole budget on mutants that could never
+lie on the change; `--workspace --in-diff` (`review_adapters_rust._invoke_cargo_mutants`) fixes
+both. StrykerJS 10 reads `--mutate` and `--ignorePatterns` as one comma-separated list and a
+repeated flag replaces the earlier one (`@stryker-mutator/core/dist/src/stryker-cli.js`, the
+`list` parser), so the old five `--ignorePatterns` flags kept only the last.
+
+**Mechanism.** A packet is compared byte for byte, so anything in it derived from bytes the
+change does not decide (scratch paths, clocks, scheduler order, random seeds, remote servers)
+breaks reproducibility even when every finding is the same. The hash is the subtle case: it
+carries no visible path, yet it changes whenever the raw text does. Mutation tools default to the
+whole project (or, for cargo-mutants, the current package), and filtering survivors to changed
+lines afterwards does not shorten the run.
+
+**Generalizable rule.** Before hashing or recording tool output, rewrite it to what the reviewed
+change determines (relative paths, no timings, sorted independent records, seeds derived from the
+change), and give every mutation tool the change itself (`--in-diff`, line ranges, changed files,
+`--diff-base`, a git filter) rather than discarding off-change mutants after a full run. Check a
+CLI's repeated-flag semantics against the installed tool's source before passing a list as
+repeated flags.
+
 ## 2026-10-14
 
 ### Muse registers active plugin skills as flat `/<name>` shortcuts and withholds colliding plugin commands

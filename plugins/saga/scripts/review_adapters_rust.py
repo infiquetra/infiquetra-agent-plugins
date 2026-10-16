@@ -11,6 +11,7 @@ import math
 import os
 import re
 import shutil
+import subprocess  # nosec B404
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -47,6 +48,15 @@ _NON_VULNERABILITY_CODES = ("unmaintained", "unsound", "notice", "yanked")
 _YANKED_PACKAGE = re.compile(r"cargo update -p ([^`\s]+)")
 _MUTANT_NAME = re.compile(r"^(.+?):\d+:\d+:\s*(.*)$")
 _MACHETE_SECTION = re.compile(r"^(.*?)\s+--\s+(.*?):\s*$")
+_MUTANT_ROW = "testing.surviving-mutant"
+#: The change's diff for ``--in-diff``, written in the runner's private scratch
+#: folder: the scanned tree is untrusted, and its build scripts run before this.
+_IN_DIFF = "in-diff.patch"
+#: What cargo-mutants 27 prints, exiting 0 without a report, when the diff
+#: leaves it nothing to test.
+_NOTHING_TO_MUTATE = ("Diff changes no Rust source files", "No mutants to filter")
+#: Timing values in outcomes.json; they differ on every run.
+_MUTANT_TIMES = frozenset({"start_time", "end_time", "duration"})
 
 _ROWS: dict[str, tuple[str, ...]] = {
     "cargo-deny": ("security.dependency-high", "security.dependency-medium-low"),
@@ -313,6 +323,16 @@ def _invoke_cargo_check(context: ScanContext) -> list[str]:
     return ["cargo", "check", "--locked", "--message-format=json"]
 
 
+def _stable_cargo_stream(text: str) -> str:
+    """A cargo JSON stream with its records sorted.
+
+    Each line is one independent record. A workspace build finishes its crates
+    in a different order each run, so the stored stream must not keep that order.
+    """
+    lines = sorted(line.strip() for line in text.splitlines() if line.strip())
+    return "".join(f"{line}\n" for line in lines)
+
+
 def _parse_cargo_check(text: str) -> ParseResult:
     hits: list[Hit] = []
     for message in _compiler_messages(text):
@@ -400,17 +420,79 @@ def _invoke_cargo_mutants(context: ScanContext) -> list[str]:
         return []
     if not _files_with(context.root, _RUST_SUFFIXES):
         return []
+    if context.change is not None and not any(
+        item.path.endswith(_RUST_SUFFIXES) and item.lines for item in context.change.files
+    ):
+        raise ToolGap("nothing-to-mutate", _MUTANT_ROW)
     _stage_toolchain(context)
-    argv = ["cargo-mutants", "mutants", "-C", "--locked"]
+    diff = _write_in_diff(context)
+    # --workspace: without it cargo-mutants mutates only the package in the
+    # current directory, so a change in any other workspace member is never tested.
+    argv = [
+        "cargo-mutants", "mutants", "-C", "--locked", "--workspace", "--in-diff", str(diff),
+    ]
     if shutil.which("cargo-nextest") is not None:
         argv.extend(["--test-tool", "nextest"])
     return argv
+
+
+def _write_in_diff(context: ScanContext) -> Path:
+    """The change's diff, for ``--in-diff``, so only changed lines are mutated (issue 244).
+
+    Without it cargo-mutants tests every mutant in the workspace and the review
+    keeps only those on changed lines; on a real workspace that never finishes.
+    """
+    if not context.base or context.scratch is None:
+        raise ToolGap("diff-unavailable", _MUTANT_ROW)
+    result = subprocess.run(  # nosec B603 B607
+        [
+            "git", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames",
+            context.base, "HEAD",
+        ],
+        cwd=context.root, capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        raise ToolGap("diff-unavailable", _MUTANT_ROW)
+    target = context.scratch / _IN_DIFF
+    descriptor = os.open(
+        target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600
+    )
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(result.stdout)
+    return target
+
+
+def _without_times(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            key: _without_times(item) for key, item in value.items() if key not in _MUTANT_TIMES
+        }
+    if isinstance(value, list):
+        return [_without_times(item) for item in value]
+    return value
+
+
+def _stable_mutants(text: str) -> str:
+    """outcomes.json without timings, outcomes sorted. Console text passes through."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    data = _without_times(data)
+    if isinstance(data, dict) and isinstance(data.get("outcomes"), list):
+        data["outcomes"] = sorted(
+            data["outcomes"], key=lambda item: json.dumps(item, sort_keys=True)
+        )
+    return json.dumps(data, indent=2, sort_keys=True) + "\n"
 
 
 def _parse_cargo_mutants(text: str) -> ParseResult:
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
+        if any(message in text for message in _NOTHING_TO_MUTATE):
+            # A clean answer, not a failure: the changed lines hold no mutant.
+            raise ToolGap("nothing-to-mutate", _MUTANT_ROW) from exc
         raise ValueError("cargo-mutants outcomes are not json") from exc
     if not isinstance(data, dict):
         raise ValueError("cargo-mutants outcomes must be an object")
@@ -554,6 +636,11 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
         "rust-no-network": _parse_empty,
         "rust-coverage": _parse_empty,
     }
+    stable = {
+        "cargo-check": _stable_cargo_stream,
+        "clippy": _stable_cargo_stream,
+        "cargo-mutants": _stable_mutants,
+    }
     built: list[Adapter] = []
     for row in tools:
         if not isinstance(row, dict):
@@ -591,6 +678,8 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
             gap_first=bool(row.get("gap_first")),
             base_files=tuple(str(item) for item in (row.get("base_files") or ())),
             local_bins=tuple(str(item) for item in (row.get("local_bins") or ())),
+            stable_raw=stable.get(tool_id),
+            report_optional=bool(row.get("report_optional")),
         ))
     return built
 

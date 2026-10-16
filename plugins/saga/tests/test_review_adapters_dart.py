@@ -515,7 +515,8 @@ def test_mutate4dart_survivor_on_changed_lines_blocks(tmp_path: Path) -> None:
         if Path(call[0]).name == "mutate4dart" and "--version" not in call
     ]
     assert len(runs) == 1
-    assert runs[0][1:] == ["--format", "json", "--no-coverage"]
+    # Only lines changed since the base commit are mutated (issue 244).
+    assert runs[0][1:] == ["--format", "json", "--no-coverage", "--diff-base", base]
     findings = _read(output, "findings.json")
     assert {finding["rule"]["ref"] for finding in findings} == {"surviving-mutant"}
     assert findings[0]["location"]["file"] == "lib/add.dart"
@@ -601,8 +602,10 @@ def test_dart_shuffle_failure_carries_seed_and_flags(tmp_path: Path) -> None:
         if call[:1] == ["dart"] and "--version" not in call
     ]
     assert len(runs) == 1
+    # The seed is fixed by the change, so two runs of one change shuffle alike (issue 244).
+    seed = T.change_seed(T.ScanContext(repo, repo, repo, base=base, head=head))
     assert runs[0] == [
-        "dart", "test", "--test-randomize-ordering-seed=random",
+        "dart", "test", f"--test-randomize-ordering-seed={seed}",
         "--reporter", "expanded",
     ]
     findings = _read(output, "findings.json")
@@ -995,3 +998,28 @@ def test_live_mutate4dart_reports_a_survivor(tmp_path: Path) -> None:
     _valid(output)
     assert _severity(output, "surviving-mutant") == "blocks"
     assert _finding(output, "surviving-mutant")["location"]["file"] == "lib/add.dart"
+
+
+def test_dart_shuffle_runs_differing_in_interleaving_record_identical_bytes(
+    tmp_path: Path,
+) -> None:
+    """Issue 244: Dart runs test files concurrently, so two runs interleave differently.
+
+    The fixtures are two real runs of Dart 3.13 with the same seed and two
+    failing files: the progress lines, their running counts and the order of
+    the failures differ, and so did the stored transcript's hash.
+    """
+    repo, base, head = _shuffle_repo(tmp_path)
+    outputs = []
+    for run in (1, 2):
+        output = tmp_path / f"out-{run}"
+        assert _run(
+            repo, base, head, _profile(tmp_path / "profile.json"), output,
+            tmp_path / "home", [_adapter("dart-shuffle")],
+            _Calls(base, _fixture(f"dart-shuffle-run-{run}.txt"), code=1),
+        ) == 0
+        outputs.append(output)
+    files = {item["location"]["file"] for item in _read(outputs[0], "findings.json")}
+    assert files == {"test/a_test.dart", "test/b_test.dart"}
+    for name in ("findings.json", "degraded.json", "outcomes.json"):
+        assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes(), name

@@ -8,6 +8,7 @@ import io
 import json
 import os
 import socket
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -1630,3 +1631,144 @@ def test_saga_version_falls_back_to_the_claude_manifest(
     """A Muse-staged copy has no root ``plugin.json``; the version must still be read."""
     monkeypatch.setattr(C, "_SCRIPTS_DIR", _package_with_manifests(tmp_path, **manifests))
     assert C._saga_version() == expected
+
+
+_CLIPPY_FIXTURE = (
+    Path(__file__).resolve().parent / "fixtures" / "review_tools" / "clippy.jsonl"
+)
+
+
+def _rust_change(tmp: Path) -> tuple[Path, str, str]:
+    """A crate whose head adds clippy findings on lines 2, 6 and 7 of src/main.rs."""
+    repo = tmp / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "Cargo.toml").write_text(
+        '[package]\nname = "example"\nversion = "0.1.0"\nedition = "2021"\n', encoding="utf-8",
+    )
+    (repo / "Cargo.lock").write_text(
+        'version = 4\n\n[[package]]\nname = "example"\nversion = "0.1.0"\n', encoding="utf-8",
+    )
+    lines = [
+        "fn add(a: i32, b: i32) -> i32 {\n", "    a + b\n", "}\n", "\n", "fn main() {\n",
+        "    let _used = 1;\n", "    let _zero = 1.0;\n", '    println!("{}", add(1, 2));\n', "}\n",
+    ]
+    (repo / "src" / "main.rs").write_text("".join(lines), encoding="utf-8")
+    base = _commit(repo, "base")
+    lines[1] = "    return a + b;\n"
+    lines[5] = "    let unused_var = 2;\n"
+    lines[6] = "    let _zero = 0.0 / 0.0;\n"
+    (repo / "src" / "main.rs").write_text("".join(lines), encoding="utf-8")
+    return repo, base, _commit(repo, "head")
+
+
+class _ClippyRunner(_Runner):
+    """git for real; cargo-clippy prints the fixture as a real run would, in a chosen order."""
+
+    def __init__(self, *, reverse: bool) -> None:
+        super().__init__()
+        self.reverse = reverse
+
+    def __call__(
+        self, argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        if Path(argv[0]).name != "cargo-clippy":
+            return super().__call__(argv, cwd=cwd, env=env, timeout=timeout, shell=shell)
+        self.calls.append(list(argv))
+        if "--version" in argv:
+            return T.ProcessResult(0, "clippy 0.1.98 (abc 2026-09-01)\n")
+        text = _CLIPPY_FIXTURE.read_text(encoding="utf-8").replace(
+            "/private/tmp/rust-probe", Path(cwd).as_posix(),
+        )
+        lines = text.splitlines(keepends=True)
+        return T.ProcessResult(101, "".join(reversed(lines) if self.reverse else lines))
+
+
+def _packet_bytes(packet: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(packet).as_posix(): path.read_bytes()
+        for path in sorted(packet.rglob("*")) if path.is_file()
+    }
+
+
+def _clippy_adapter() -> Any:
+    import importlib  # noqa: PLC0415
+
+    rust = importlib.import_module("review_adapters_rust")
+    return next(item for item in rust.ADAPTERS if item.id == "clippy")
+
+
+def test_prepare_twice_on_a_rust_change_writes_identical_packets(tmp_path: Path) -> None:
+    """Issue 244: other scratch folders and another build order, the same packet bytes."""
+    repo, base, head = _rust_change(tmp_path)
+    builder = _builder(tmp_path / "builder.json")
+    (tmp_path / "home").mkdir()
+    packets = []
+    for reverse in (False, True):
+        out = tmp_path / f"packet-{reverse}"
+        code, err = _main(
+            [
+                "prepare", "--repo", str(repo), "--base", base, "--head", head,
+                "--profile", str(_profile(tmp_path / "profile")), "--builder-record", str(builder),
+                "--out", str(out), "--home", str(tmp_path / "home"),
+                "--bank", str(tmp_path / "no-bank.json"),
+            ],
+            adapters=[_clippy_adapter()], runner=_ClippyRunner(reverse=reverse),
+        )
+        assert code == 0, err
+        packets.append(out)
+    first, second = (_packet_bytes(packet) for packet in packets)
+    assert sorted(first) == sorted(second)
+    assert {name: data for name, data in first.items()} == second
+    refs = {finding["rule"]["ref"] for finding in _read(packets[0] / "findings.json")}
+    assert {"clippy::eq_op", "clippy::needless_return", "unused_variables"} <= refs
+
+
+@pytest.mark.skipif(shutil.which("cargo-clippy") is None, reason="cargo-clippy is not installed")
+def test_live_prepare_twice_with_clippy_writes_identical_packets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same, with the real clippy and its real scratch-folder paths."""
+    import pwd  # noqa: PLC0415
+
+    # The autouse fixture swaps HOME; rustup still needs the operator's toolchains.
+    if "RUSTUP_HOME" not in os.environ:
+        real_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+        monkeypatch.setenv("RUSTUP_HOME", str(real_home / ".rustup"))
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "Cargo.toml").write_text(
+        '[package]\nname = "example"\nversion = "0.1.0"\nedition = "2021"\n', encoding="utf-8",
+    )
+    (repo / "src" / "main.rs").write_text("fn main() {\n    println!(\"clean\");\n}\n", encoding="utf-8")
+    subprocess.run(
+        ["cargo", "generate-lockfile", "--offline"], cwd=repo, check=True,
+        capture_output=True, text=True, timeout=120,
+    )
+    base = _commit(repo, "base")
+    (repo / "src" / "main.rs").write_text(
+        "fn add(a: i32, b: i32) -> i32 {\n    return a + b;\n}\n\n"
+        "fn main() {\n    println!(\"{}\", add(1, 2));\n}\n",
+        encoding="utf-8",
+    )
+    head = _commit(repo, "head")
+    builder = _builder(tmp_path / "builder.json")
+    (tmp_path / "home").mkdir()
+    packets = []
+    for attempt in (1, 2):
+        out = tmp_path / f"packet-{attempt}"
+        code, err = _main(
+            [
+                "prepare", "--repo", str(repo), "--base", base, "--head", head,
+                "--profile", str(_profile(tmp_path / "profile")), "--builder-record", str(builder),
+                "--out", str(out), "--home", str(tmp_path / "home"),
+                "--bank", str(tmp_path / "no-bank.json"),
+            ],
+            adapters=[_clippy_adapter()],
+        )
+        assert code == 0, err
+        packets.append(out)
+    assert _packet_bytes(packets[0]) == _packet_bytes(packets[1])
+    refs = {finding["rule"]["ref"] for finding in _read(packets[0] / "findings.json")}
+    assert "clippy::needless_return" in refs

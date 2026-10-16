@@ -264,7 +264,8 @@ def test_missing_saga_rules_are_a_gap_and_security_still_runs(
         item["input"] for item in _read(output, "degraded.json")
         if item["reason"] == "known-gap"
     ]
-    assert gaps == list(_PATTERN)
+    # degraded.json is written sorted (issue 244), not in rule-file order.
+    assert gaps == sorted(_PATTERN)
     assert any("scan" in argv for argv in runner.calls)
     assert any(
         item["rule"]["row"] == "security.scanner-high" for item in _read(output, "findings.json")
@@ -833,3 +834,55 @@ def test_empty_or_errored_missing_jscpd_report_is_degraded(tmp_path: Path) -> No
     code = _run(repo, base, head, profile, second, home, [_adapter("jscpd")], handler)
     assert code == 0
     assert base in scanned
+
+
+def _packets_match(first: Path, second: Path) -> None:
+    for name in ("findings.json", "degraded.json", "outcomes.json"):
+        assert (first / name).read_bytes() == (second / name).read_bytes(), name
+
+
+def test_semgrep_runs_differing_only_in_timing_record_identical_bytes(tmp_path: Path) -> None:
+    """Issue 244: semgrep --json always carries a ``time`` object that differs per run."""
+    repo, base, head = _changed_app(tmp_path)
+    home = tmp_path / "home"
+    profile = _semgrep_profile(home, tmp_path)
+    report = json.loads((FIXTURES / "semgrep-security.json").read_text(encoding="utf-8"))
+    outputs = []
+    for run, seconds in enumerate((0.31, 0.27)):
+        timed = dict(report, time={
+            "rules_parse_time": seconds / 10, "max_memory_bytes": 1000 + run,
+            "profiling_times": {"total_time": seconds},
+        }, profiling_results=[{"run": run}])
+        if run:
+            timed["results"] = list(reversed(timed["results"]))
+        output = tmp_path / f"out-{run}"
+        assert _run(
+            repo, base, head, profile, output, home,
+            [_adapter("semgrep-security")], _Calls(base, json.dumps(timed)),
+        ) == 0
+        outputs.append(output)
+    assert _read(outputs[0], "findings.json")
+    _packets_match(*outputs)
+    assert A._stable_semgrep(json.dumps(dict(report, time={"x": 1}))) == A._stable_semgrep(
+        json.dumps(report)
+    )
+
+
+def test_jscpd_runs_differing_only_in_detection_date_record_identical_bytes(
+    tmp_path: Path,
+) -> None:
+    """Issue 244: jscpd writes when it ran in ``statistics.detectionDate``."""
+    repo, base, head = _changed_app(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {"jscpd": {"version": "1.0.0"}})
+    report = json.loads((FIXTURES / "jscpd.json").read_text(encoding="utf-8"))
+    outputs = []
+    for run, date in enumerate(("2026-10-16T05:59:33.964Z", "2026-10-16T05:59:34.021Z")):
+        dated = dict(report, statistics={"detectionDate": date, "total": {"clones": 1}})
+        output = tmp_path / f"out-{run}"
+        assert _run(
+            repo, base, head, profile, output, tmp_path / f"home-{run}",
+            [_adapter("jscpd")], _Calls(base, json.dumps(dated)),
+        ) == 0
+        outputs.append(output)
+    assert _read(outputs[0], "findings.json")
+    _packets_match(*outputs)

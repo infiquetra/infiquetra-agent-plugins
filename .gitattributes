@@ -1,2 +1,6 @@
 # Recorded tool output keeps its exact bytes; whitespace checks do not apply.
 plugins/saga/tests/fixtures/review_tools/dart-shuffle.txt -whitespace
+plugins/saga/tests/fixtures/review_tools/dart-shuffle-run-1.txt -whitespace
+plugins/saga/tests/fixtures/review_tools/dart-shuffle-run-2.txt -whitespace
+plugins/saga/tests/fixtures/review_tools/vitest-shuffle-run-1.txt -whitespace
+plugins/saga/tests/fixtures/review_tools/vitest-shuffle-run-2.txt -whitespace

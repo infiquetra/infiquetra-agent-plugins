@@ -893,7 +893,7 @@ def _runner_repo(
 def test_vitest_shuffle_failure_carries_seed_and_flags(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(A, "_shuffle_seed", lambda: 4242)
+    monkeypatch.setattr(A, "_shuffle_seed", lambda _context: 4242)
     repo, _source = _runner_repo(tmp_path, "vitest")
     base = _commit(repo, "base")
     (repo / "README.md").write_text("head\n", encoding="utf-8")
@@ -953,7 +953,7 @@ def test_vitest_shuffle_with_no_tests_is_a_gap(tmp_path: Path) -> None:
 def test_jest_shuffle_failure_carries_seed_and_flags(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(A, "_shuffle_seed", lambda: 4242)
+    monkeypatch.setattr(A, "_shuffle_seed", lambda _context: 4242)
     repo, _source = _runner_repo(tmp_path, "jest")
     base = _commit(repo, "base")
     (repo / "README.md").write_text("head\n", encoding="utf-8")
@@ -1179,9 +1179,11 @@ def test_stryker_refuses_a_report_parent_outside_the_worktree(
 
 
 def test_stryker_killed_run_records_timeout(tmp_path: Path) -> None:
-    repo, _source = _stryker_repo(tmp_path)
+    repo, source = _stryker_repo(tmp_path)
     base = _commit(repo, "base")
-    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("a + b;", "a + b + 0;"), encoding="utf-8"
+    )
     head = _commit(repo, "head")
     output = tmp_path / "out"
     runner = _Calls(base, "", timeout_tools=("stryker",))
@@ -1196,9 +1198,11 @@ def test_stryker_killed_run_records_timeout(tmp_path: Path) -> None:
 
 
 def test_stryker_reads_the_report_file_not_stdout(tmp_path: Path) -> None:
-    repo, _source = _stryker_repo(tmp_path)
+    repo, source = _stryker_repo(tmp_path)
     base = _commit(repo, "base")
-    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("a + b;", "a + b + 0;"), encoding="utf-8"
+    )
     head = _commit(repo, "head")
     output = tmp_path / "out"
     runner = _Calls(base, "Mutation testing complete: 1 survived, 1 killed.\n")
@@ -1689,3 +1693,107 @@ def test_live_stryker_runs_or_degrades_through_a_recorded_path(tmp_path: Path) -
     # The test-runner plugin may or may not be installed where the binary runs:
     # either way the adapter engaged the real tool and the outcome validates.
     assert _read(output, "findings.json") or _degraded(output, "stryker")
+
+
+def _stryker_runs(runner: Any) -> list[list[str]]:
+    return [
+        call for call in runner.calls
+        if Path(call[0]).name == "stryker" and "--version" not in call
+    ]
+
+
+def test_stryker_mutates_only_the_changed_ranges(tmp_path: Path) -> None:
+    """Issue 244: StrykerJS gets the changed line ranges, not every source file."""
+    repo, source = _stryker_repo(tmp_path)
+    (repo / "test").mkdir()
+    (repo / "test" / "example.test.js").write_text("// test\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    text = source.read_text(encoding="utf-8").splitlines(keepends=True)
+    text[1] = "  return a + b + 0;\n"
+    text[3] = "module.exports = { add, sub: (a, b) => a - b };\n"
+    source.write_text("".join(text), encoding="utf-8")
+    (repo / "test" / "example.test.js").write_text("// test changed\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    runner = _Calls(
+        base, "done\n",
+        files={"reports/mutation/mutation.json": _fixture("stryker-mutation.json")},
+    )
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), tmp_path / "out",
+        tmp_path / "home", [_adapter("stryker")], runner,
+    ) == 0
+    argv = _stryker_runs(runner)[0]
+    # One flag: StrykerJS keeps only the last of repeated --mutate flags.
+    mutate = [argv[index + 1] for index, item in enumerate(argv) if item == "--mutate"]
+    assert mutate == ["src/example.js:2-2,src/example.js:4-4"]
+    ignore = [argv[index + 1] for index, item in enumerate(argv) if item == "--ignorePatterns"]
+    assert ignore == [",".join(A._STRYKER_IGNORE)]
+
+
+def test_stryker_change_without_source_lines_records_nothing_to_mutate(tmp_path: Path) -> None:
+    repo, _source = _stryker_repo(tmp_path)
+    base = _commit(repo, "base")
+    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    runner = _Calls(base, "done\n")
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("stryker")], runner,
+    ) == 0
+    assert _stryker_runs(runner) == []
+    assert [item["reason"] for item in _degraded(output, "stryker")] == ["nothing-to-mutate"]
+
+
+def test_shuffle_seed_is_fixed_by_the_change(tmp_path: Path) -> None:
+    """Issue 244: two runs of one change shuffle in one order."""
+    repo, _source = _runner_repo(tmp_path, "vitest")
+    base = _commit(repo, "base")
+    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    seeds = []
+    for attempt in (1, 2):
+        runner = _Calls(base, " Test Files  1 passed (1)\n")
+        assert _run(
+            repo, base, head, _profile(tmp_path / f"profile-{attempt}.json"),
+            tmp_path / f"out-{attempt}", tmp_path / "home", [_adapter("vitest-shuffle")], runner,
+        ) == 0
+        argv = next(call for call in runner.calls if call[:2] == ["vitest", "run"])
+        seeds.append(argv[argv.index("--sequence.seed") + 1])
+    assert seeds[0] == seeds[1]
+
+
+@pytest.mark.parametrize(("tool_id", "stream"), [
+    ("vitest-shuffle", "stdout"), ("jest-shuffle", "stderr"),
+])
+def test_shuffle_runs_differing_in_timing_and_finish_order_record_identical_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool_id: str, stream: str,
+) -> None:
+    """Issue 244: two live runs of one suite print other durations and finish order.
+
+    The fixtures are two real runs each of Vitest 4.1.11 and Jest 30.5.2 with
+    the same seed, two failing files and four passing ones.
+    """
+    monkeypatch.setattr(A, "_shuffle_seed", lambda _context: 7)
+    runner_name = tool_id.split("-")[0]
+    repo, _source = _runner_repo(tmp_path, runner_name)
+    base = _commit(repo, "base")
+    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    outputs = []
+    for run in (1, 2):
+        text = _fixture(f"{tool_id}-run-{run}.txt")
+        runner = (
+            _Calls(base, text, code=1) if stream == "stdout"
+            else _Calls(base, "", stderr=text, code=1)
+        )
+        output = tmp_path / f"out-{run}"
+        assert _run(
+            repo, base, head, _profile(tmp_path / "profile.json"), output,
+            tmp_path / "home", [_adapter(tool_id)], runner,
+        ) == 0
+        outputs.append(output)
+    files = {item["location"]["file"] for item in _read(outputs[0], "findings.json")}
+    assert files == {"e.test.js", "f.test.js"}
+    for name in ("findings.json", "degraded.json", "outcomes.json"):
+        assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes(), name

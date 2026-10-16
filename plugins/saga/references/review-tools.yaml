@@ -516,7 +516,7 @@ tools:
     tool: lychee
     languages: [markdown]
     lens: architecture-maintainability
-    purpose: A broken link is fix later. Recorded output only, because lychee uses the network. The report has no line, so the link set is compared base against head.
+    purpose: A broken link is fix later. Run with --offline, so only local file links are checked and the network never decides the result. The report has no line, so the link set is compared base against head.
     install: Install lychee on the operator machine. This card does not install it.
     default_version: "0.24.2"
     version_args: ["--version"]
@@ -1097,7 +1097,7 @@ tools:
     tool: cargo-mutants
     languages: ["rust"]
     lens: testing
-    purpose: Rust mutants that survive the suite on changed lines, read from the outcomes report.
+    purpose: Rust mutants that survive the suite on changed lines, read from the outcomes report. Only the change's lines are mutated, in every workspace member (--workspace --in-diff); a change with none records nothing-to-mutate.
     install: Install cargo-mutants on the operator machine. This card does not install it.
     default_version: "27.1.0"
     version_args: ["mutants", "--version"]
@@ -1108,6 +1108,7 @@ tools:
     mutation: true
     mode: report
     report_file: mutants.out/outcomes.json
+    report_optional: true
     level_map: {}
     curated_block_rules: []
     rules: []

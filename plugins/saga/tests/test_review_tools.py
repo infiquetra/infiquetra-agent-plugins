@@ -8,9 +8,11 @@ import inspect
 import json
 import os
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
@@ -1919,3 +1921,237 @@ def test_untrusted_head_rule_is_documented() -> None:
 def test_corpus_language_ids_workflow_detector() -> None:
     assert T.language_for(".github/workflows/ci.yaml") == "github-workflow"
     assert T.language_for("docs/.github/workflows/ci.yml") == "github-workflow"
+
+
+def test_stable_raw_names_two_runs_scratch_folders_alike() -> None:
+    """Two runs get different scratch folders; the stored raw output must not (issue 244)."""
+    roots = [Path(tempfile.mkdtemp(prefix="saga-review-")) for _ in range(2)]
+    try:
+        texts = [
+            T._stable_raw(_stub(), f'{{"manifest_path":"{root.resolve()}/Cargo.toml"}}\n'
+                          f"{root}/src/a.rs\n")
+            for root in roots
+        ]
+    finally:
+        for root in roots:
+            shutil.rmtree(root, ignore_errors=True)
+    assert texts[0] == texts[1]
+    assert "saga-review-/Cargo.toml" in texts[0]
+
+
+def test_stable_raw_applies_the_adapter_rewrite_after_the_scrub() -> None:
+    adapter = _stub(stable_raw=lambda text: "".join(sorted(text.splitlines(keepends=True))))
+    assert T._stable_raw(adapter, "b\na\n") == "a\nb\n"
+
+
+def test_hit_text_loses_the_scan_root(tmp_path: Path) -> None:
+    root = tmp_path.resolve()
+    hit = _hit(
+        rule_id=f"file://{root}/missing.md",
+        anchor=f"file://{root}/missing.md",
+        statement=f"Broken link file://{root}/missing.md.",
+    )
+    stable = T._stable_hit(hit, root)
+    assert stable.rule_id == stable.anchor == "file://missing.md"
+    assert str(root) not in stable.statement
+
+
+def test_records_are_written_in_one_order_whatever_the_tool_order(tmp_path: Path) -> None:
+    """findings.json and degraded.json do not follow the tool's print order (issue 244)."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("ONE\nTWO\nTHREE\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    hits = [_hit(rule_id=f"rule-{n}", anchor=f"rule-{n}", start=n) for n in (1, 2, 3)]
+    outputs = []
+    for order in (hits, list(reversed(hits))):
+        def parse(_text: str, order: list[Any] = order) -> Any:
+            return T.ParseResult(
+                tuple(order),
+                gaps=tuple(("known-gap", f"security.row-{hit.start}") for hit in order),
+            )
+
+        output = tmp_path / f"out-{len(outputs)}"
+        assert _run(
+            repo, base, head, _bare_profile(tmp_path / "profile"), output, tmp_path / "home",
+            adapters=[_stub(parse=parse)], runner=_Calls(_ok()),
+        ) == 0
+        outputs.append(output)
+    for name in ("findings.json", "degraded.json", "outcomes.json", "where-to-look.json"):
+        assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes(), name
+    starts = [item["location"]["lines"]["start"] for item in _read(outputs[0], "findings.json")]
+    assert sorted(starts) == [1, 2, 3]
+
+
+def test_a_missing_optional_report_is_parsed_from_console_text(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    seen: list[str] = []
+
+    def handler(argv: list[str], _cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        return T.ProcessResult(0, "", "INFO nothing here\n")
+
+    def parse(text: str) -> Any:
+        seen.append(text)
+        raise T.ToolGap("nothing-to-mutate", "testing.surviving-mutant")
+
+    adapter = _stub(parse=parse, report_file="out/report.json", report_optional=True)
+    output = tmp_path / "out"
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path / "profile"), output, tmp_path / "home",
+        adapters=[adapter], runner=_Calls(handler),
+    ) == 0
+    assert seen == ["INFO nothing here\n"]
+    assert ("stub", "testing.surviving-mutant", "nothing-to-mutate") in _reasons(output)
+
+
+def test_change_seed_is_fixed_by_base_and_head(tmp_path: Path) -> None:
+    one = T.ScanContext(tmp_path, tmp_path, tmp_path, base="a" * 40, head="b" * 40)
+    again = T.ScanContext(tmp_path / "x", tmp_path / "x", tmp_path, base="a" * 40, head="b" * 40)
+    other = T.ScanContext(tmp_path, tmp_path, tmp_path, base="a" * 40, head="c" * 40)
+    assert T.change_seed(one) == T.change_seed(again)
+    assert T.change_seed(one) != T.change_seed(other)
+    assert 1 <= T.change_seed(one) < 2**31
+
+
+def test_line_ranges_join_consecutive_lines() -> None:
+    assert T.line_ranges(frozenset({7, 1, 2, 3, 9, 10})) == [(1, 3), (7, 7), (9, 10)]
+
+
+def _same_packets(first: Path, second: Path) -> None:
+    for name in ("findings.json", "measurements.json", "degraded.json", "outcomes.json"):
+        assert (first / name).read_bytes() == (second / name).read_bytes(), name
+
+
+def test_relocated_runs_differing_only_in_duration_record_identical_bytes(tmp_path: Path) -> None:
+    """Issue 244: the relocated test command's stored output carried its duration and folder."""
+    repo, base, head = _pair(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {
+        "review_tools": {"languages": {"python": {"test_command": "pytest -q"}}},
+    })
+    outputs = []
+    for run, seconds in enumerate(("0.01s", "3.20s")):
+        def runner(
+            argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+            seconds: str = seconds,
+        ) -> Any:
+            assert shell is False
+            return T.ProcessResult(1, (
+                f"rootdir: {cwd}\n"
+                "FAILED tests/test_app.py::test_one - AssertionError\n"
+                f"==== 1 failed in {seconds} ====\n"
+            ))
+
+        output = tmp_path / f"out-{run}"
+        assert _run(
+            repo, base, head, profile, output, tmp_path / "home",
+            adapters=[], runner=runner, framework=True,
+        ) == 0
+        outputs.append(output)
+    assert any(
+        item["rule"]["row"] == "architecture-maintainability.relocated-run-fails"
+        for item in _read(outputs[0], "findings.json")
+    )
+    _same_packets(*outputs)
+
+
+def test_coverage_reports_differing_only_in_timestamp_record_identical_bytes(
+    tmp_path: Path,
+) -> None:
+    """Issue 244: coverage.py stamps ``meta.timestamp`` into the report whose hash is recorded."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("one\ntwo\nthree\nfour\nfive\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("one\ntwo\nthree\nFOUR\nfive\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    profile = _profile(tmp_path / "profile.json", {"review_tools": {"languages": {"python": {
+        "test_command": "true",
+        "coverage_report": "coverage.json",
+    }}}})
+    outputs = []
+    for run, stamp in enumerate(("2026-10-16T02:01:12.409903", "2026-10-16T02:01:19.110421")):
+        report = json.dumps({
+            "meta": {"format": 3, "version": "7.6.1", "timestamp": stamp},
+            "files": {"src/app.py": {"missing_branches": [[4, 5]], "missing_lines": []}},
+        })
+
+        def runner(
+            argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+            report: str = report,
+        ) -> Any:
+            assert shell is False
+            if argv == ["true"]:
+                (cwd / "coverage.json").write_text(report, encoding="utf-8")
+            return T.ProcessResult(0, "")
+
+        output = tmp_path / f"out-{run}"
+        assert _run(
+            repo, base, head, profile, output, tmp_path / "home",
+            adapters=[], runner=runner, framework=True,
+        ) == 0
+        outputs.append(output)
+    assert _read(outputs[0], "findings.json")
+    _same_packets(*outputs)
+
+
+def test_cobertura_timestamp_and_scratch_source_are_not_stored() -> None:
+    scratch = Path(tempfile.gettempdir()) / "saga-relocated-ab12cd34"
+    one = f'<coverage version="7.6.1" timestamp="1792130474945"><sources><source>{scratch}</source>'
+    two = one.replace("1792130474945", "1792130482403").replace("ab12cd34", "zz99yy88")
+    assert T.stable_coverage_report(one.encode()) == T.stable_coverage_report(two.encode())
+    assert b"1792130474945" not in T.stable_coverage_report(one.encode())
+
+
+@pytest.mark.parametrize(("first", "second"), [
+    # cargo test: libtest prints results as parallel test threads finish.
+    (
+        "running 2 tests\ntest b ... ok\ntest a ... FAILED\n"
+        "test result: FAILED. 1 passed; 1 failed; finished in 0.00s\n",
+        "running 2 tests\ntest a ... FAILED\ntest b ... ok\n"
+        "test result: FAILED. 1 passed; 1 failed; finished in 1.25s\n",
+    ),
+    # pytest -q prints its summary without the = padding.
+    (
+        "FAILED tests/test_app.py::test_one - AssertionError\n1 failed, 3 passed in 0.05s\n",
+        "FAILED tests/test_app.py::test_one - AssertionError\n"
+        "1 failed, 3 passed in 62.10s (0:01:02)\n",
+    ),
+    ("no tests ran in 0.01s\n", "no tests ran in 0.43s\n"),
+    # go test.
+    (
+        "--- FAIL: TestAdd (0.00s)\nFAIL\nFAIL\texample.com/m\t0.012s\n",
+        "--- FAIL: TestAdd (0.31s)\nFAIL\nFAIL\texample.com/m\t0.402s\n",
+    ),
+    # XCTest.
+    (
+        "Test Suite 'All tests' started at 2026-10-16 01:00:00.123\n"
+        "Test Case '-[M.T testA]' failed (0.001 seconds).\n"
+        "\t Executed 1 test, with 1 failure (0 unexpected) in 0.004 (0.005) seconds\n",
+        "Test Suite 'All tests' started at 2026-10-16 01:07:41.981\n"
+        "Test Case '-[M.T testA]' failed (0.214 seconds).\n"
+        "\t Executed 1 test, with 1 failure (0 unexpected) in 0.230 (0.233) seconds\n",
+    ),
+    # Jest's verbose per-test durations, slow-suite durations and colour codes.
+    (
+        "\x1b[1mPASS\x1b[22m ./a.test.js (5.123 s)\n  ✓ adds (2 ms)\nTime:        5.4 s\n",
+        "PASS ./a.test.js (6.010 s)\n  ✓ adds (11 ms)\nTime:        6.2 s, estimated 6 s\n",
+    ),
+])
+def test_stable_transcript_drops_per_run_values(first: str, second: str) -> None:
+    assert T.stable_transcript(first) == T.stable_transcript(second)
+
+
+def test_stable_transcript_keeps_test_names_and_failures() -> None:
+    text = (
+        "FAILED tests/test_app.py::test_waits_5s - AssertionError: took 5s\n"
+        "==== 1 failed in 0.05s ====\n"
+    )
+    stable = T.stable_transcript(text)
+    assert "tests/test_app.py::test_waits_5s - AssertionError: took 5s" in stable
+    assert "0.05s" not in stable
