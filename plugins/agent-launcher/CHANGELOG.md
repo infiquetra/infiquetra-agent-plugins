@@ -98,8 +98,11 @@ for C8 to extend.
   still written, offline and without a replacement, so the reviewer's cargo never looks for
   `~/.cargo`. A new `target/` and a new `Cargo.lock` in the copy are tool clutter, like
   `__pycache__/`; a tracked lock the session changes still counts. `cargo` and `rustc` join the
-  toolchain commands; a rustup proxy under `~/.cargo` is still dropped, because that prefix holds
-  cargo's credentials file. Network and credential denials are unchanged.
+  toolchain commands. A rustup proxy under `~/.cargo/bin` gets that folder back on its own,
+  never `~/.cargo`, which holds cargo's credentials file, plus rustup's `toolchains` and
+  `settings.toml` (never the rustup home, which also keeps downloads); `RUSTUP_HOME` is set and
+  it and `RUSTUP_TOOLCHAIN` join the allow-list, so a rustup machine (CI's) builds too. Network
+  and credential denials are unchanged.
 - **A commit's own cargo source replacement no longer outranks the reviewer's (issue #262).** On
   cargo 1.98.1 a `[source.crates-io] replace-with` in the copy's `.cargo/config.toml` outranked
   both `CARGO_HOME`'s configuration and `CARGO_SOURCE_*` variables, so the reviewer's build

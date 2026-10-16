@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -393,6 +394,40 @@ def test_the_watcher_script_marks_what_it_reports(tmp_path: Path) -> None:
     assert over.stderr.rstrip().endswith(D._WATCHER_MARK)
 
 
+@pytest.mark.parametrize("sig", ["SIGTERM", "SIGINT", "SIGHUP"])
+def test_a_watcher_that_is_stopped_takes_the_command_with_it(tmp_path: Path, sig: str) -> None:
+    """The command runs in its own session, so only the watcher can stop it."""
+    target = tmp_path / "v"
+    watcher = subprocess.Popen(
+        [sys.executable, "-I", str(SCRIPTS / "review_dependencies.py"), "--limit", str(10**9),
+         "--seconds", "120", "--watch", str(target), "--", *_writer(str(target), 1000, 120)],
+        stdout=subprocess.PIPE, text=True,
+    )
+    assert watcher.stdout is not None
+    child = int(watcher.stdout.readline())
+    watcher.send_signal(getattr(signal, sig))
+    assert watcher.wait(timeout=30) == D.TIMEOUT_EXIT
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    with pytest.raises(ProcessLookupError):
+        os.kill(child, 0)
+
+
+def test_one_size_walk_stops_at_the_limit_or_the_deadline(tmp_path: Path) -> None:
+    for index in range(5):
+        folder = tmp_path / f"d{index}"
+        folder.mkdir()
+        (folder / "f").write_bytes(b"x" * 100)
+    assert D._bytes([tmp_path]) == 500
+    assert D._bytes([tmp_path], limit=150) < 500
+    assert D._bytes([tmp_path], deadline=time.monotonic() - 1) < 500
+
+
 def test_a_cargo_exit_code_that_matches_the_watcher_s_is_still_cargo_s(tmp_path: Path) -> None:
     """Without the watcher's mark, 125 is cargo's own failure, reported as such."""
     record, _cargo, _packet = _fetch(
@@ -557,6 +592,40 @@ def test_the_shim_passes_the_home_s_configuration_as_config(tmp_path: Path) -> N
     assert toolchain.stdout.splitlines() == ["+nightly", "--config", config, "test"]
 
 
+def test_rustup_s_home_and_choice_reach_cargo_whatever_home_it_is_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On CI cargo is a rustup proxy; under a fresh HOME it found no toolchain (issue 262)."""
+    monkeypatch.setenv("HOME", str(tmp_path / "operator"))
+    monkeypatch.delenv("RUSTUP_HOME", raising=False)
+    monkeypatch.delenv("RUSTUP_TOOLCHAIN", raising=False)
+    assert D.rustup_env() == {"RUSTUP_HOME": str(tmp_path / "operator" / ".rustup")}
+    monkeypatch.setenv("RUSTUP_HOME", "/opt/example/rustup")
+    monkeypatch.setenv("RUSTUP_TOOLCHAIN", "1.98.1")
+    assert D.rustup_env() == {"RUSTUP_HOME": "/opt/example/rustup", "RUSTUP_TOOLCHAIN": "1.98.1"}
+    assert {"RUSTUP_HOME": "/opt/example/rustup", "RUSTUP_TOOLCHAIN": "1.98.1"}.items() <= (
+        D._cargo_env(_fresh(tmp_path / "work")).items()
+    )
+
+
+def test_a_rustup_cargo_needs_its_bin_and_the_toolchains_never_the_cargo_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "operator"
+    (home / ".cargo" / "bin").mkdir(parents=True)
+    (home / ".cargo" / "credentials.toml").write_text("[registry]\ntoken = \"inert-example\"\n")
+    (home / ".rustup" / "toolchains" / "stable" / "bin").mkdir(parents=True)
+    (home / ".rustup" / "settings.toml").write_text('default_toolchain = "stable"\n')
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("RUSTUP_HOME", raising=False)
+    paths = D.toolchain_paths(str(home / ".cargo" / "bin" / "cargo"))
+    assert paths == (home / ".cargo" / "bin", home / ".rustup" / "toolchains",
+                     home / ".rustup" / "settings.toml")
+    assert home / ".cargo" not in paths
+    assert D.toolchain_paths(None) == ()
+    assert D.toolchain_paths("/opt/homebrew/bin/cargo")[0] == Path("/opt/homebrew/bin")
+
+
 def _vendored_crate(root: Path, value: int) -> None:
     crate = root / "inertdep"
     (crate / "src").mkdir(parents=True)
@@ -604,9 +673,10 @@ def test_live_the_shim_outranks_a_commit_s_own_source_replacement(tmp_path: Path
     home = tmp_path / "home"
     shim = D.write_cargo_home(home, vendor, shutil.which("cargo"))
     assert shim is not None
+    # A fresh HOME, as finish gives its re-run: rustup's toolchain comes from rustup_env().
     env = {"PATH": os.environ["PATH"], "HOME": str(_fresh(tmp_path / "h")),
            "CARGO_HOME": str(home), "CARGO_NET_OFFLINE": "true",
-           "CARGO_TARGET_DIR": str(tmp_path / "target")}
+           "CARGO_TARGET_DIR": str(tmp_path / "target"), **D.rustup_env()}
     through = subprocess.run([str(shim), "run", "-q", "--offline"], cwd=project, env=env,
                              capture_output=True, text=True, timeout=300, check=False)
     assert through.stdout.strip() == "VALUE 2", through.stderr

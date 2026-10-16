@@ -89,6 +89,28 @@ to a source an earlier one named.
 with `--config` (a shim on `PATH` when you do not control the command line), and give the source a
 name the project cannot know.
 
+### A rustup proxy given a fresh HOME picks no toolchain, and passing tests prove nothing about it
+
+**Evidence.** PR #265, CI job 38954956090 on c7f888c: two live shim tests failed with "rustup
+could not choose a version of cargo to run, because one wasn't specified explicitly, and no
+default is configured". They passed on this machine, whose cargo is Homebrew's. Reproduced
+locally by installing rustup (checksummed `rustup-init`, minimal profile) into a fake home in the
+scratch folder and running the suites with that home as `HOME` and its `.cargo/bin` first on
+`PATH`: five tests failed, including the three seatbelt re-run tests CI skips on Linux. With
+`RUSTUP_HOME` passed and `~/.cargo/bin`, `toolchains` and `settings.toml` read and mapped, a
+rustup cargo ran under finish's real seatbelt profile with that home denied
+(`review_dependencies.rustup_env`, `toolchain_paths`; `reviewer_rustup_paths` in launcher.py).
+
+**Mechanism.** A rustup proxy finds its toolchains and default through `RUSTUP_HOME`, which
+defaults to `$HOME/.rustup`. Every confined cargo here runs with a `HOME` that is not the
+operator's, and the sandboxes deny the real home, so the proxy finds nothing unless both the
+variable and the read are given back. The proxy itself sits in `~/.cargo/bin`, beside cargo's
+credentials file.
+
+**Generalizable rule.** Any code that runs cargo with its own `HOME` passes `RUSTUP_HOME` and
+`RUSTUP_TOOLCHAIN`, and its tests run once against a rustup proxy, not only the machine's own
+cargo.
+
 ### `cargo vendor` with nothing to vendor writes no folder
 
 **Evidence.** Issue #262, cargo 1.98.1: `cargo vendor --locked <dir>` on a crate with no

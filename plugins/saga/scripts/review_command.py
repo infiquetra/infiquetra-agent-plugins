@@ -50,6 +50,8 @@ _NARROW_READS = ("/etc", "/private/etc", "/private/var/db/timezone")
 # pytest and the dynamic linker write these. Other device nodes stay read-only.
 _DEVICE_WRITES = ("/dev/null", "/dev/zero", "/dev/dtracehelper")
 # /usr/bin/python3 is a shim into one of these. They are read-only toolchain trees.
+#: Re-runs that need rustup's toolchain when cargo or rustc is a rustup proxy (issue 262).
+_RUST_COMMANDS = ("cargo", "rustc")
 _TOOLCHAIN_PREFIXES = (
     "/Applications/Xcode.app",
     "/Library/Developer/CommandLineTools",
@@ -170,6 +172,8 @@ class Offline:
     env: Mapping[str, str]
     reads: tuple[Path, ...]
     cargo: Path | None = None
+    #: Paths the re-run may read and map as code: the real cargo's folder and rustup's toolchains.
+    toolchain: tuple[Path, ...] = ()
 
     def argv(self, argv: list[str]) -> list[str]:
         """*argv*, with a ``cargo`` command, by name or by path, run through the shim."""
@@ -187,12 +191,15 @@ def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
         return
     home = Path(tempfile.mkdtemp(prefix="saga-review-cargo-home-"))
     try:
-        shim = review_dependencies.write_cargo_home(home, vendor, shutil.which("cargo"))
-        env = {"CARGO_HOME": str(home), "CARGO_NET_OFFLINE": "true"}
+        cargo = shutil.which("cargo")
+        shim = review_dependencies.write_cargo_home(home, vendor, cargo)
+        env = {"CARGO_HOME": str(home), "CARGO_NET_OFFLINE": "true",
+               **review_dependencies.rustup_env()}
         if shim is not None:
             # A cargo that another command starts finds the shim first, too.
             env["PATH"] = os.pathsep.join([str(shim.parent), os.environ.get("PATH", "")])
-        yield Offline(env=env, reads=(vendor, home), cargo=shim)
+        yield Offline(env=env, reads=(vendor, home), cargo=shim,
+                      toolchain=review_dependencies.toolchain_paths(cargo))
     finally:
         shutil.rmtree(home, ignore_errors=True)
 
@@ -206,21 +213,23 @@ def run_confined(
     runner: Process,
     timeout: int = RERUN_TIMEOUT,
     reads: Sequence[Path] = (),
+    toolchain: Sequence[Path] = (),
 ) -> review_tools.ProcessResult:
     """Run ``argv`` inside the platform helper. The caller has already decided one exists.
 
     *reads* are extra paths the command may read and not write: the packet's vendored
-    dependencies and the cargo home that points at them (issue 262).
+    dependencies and the cargo home that points at them (issue 262). *toolchain* paths may also
+    be mapped as code, never written: a rustup proxy's folder and its toolchains.
     """
     helper = platform_helper()
     if helper is None:
         raise CommandFailure(2, "no reproduction helper")
     if helper == "sandbox-exec":
         wrapped: list[str] = [
-            "/usr/bin/sandbox-exec", "-p", _seatbelt(scratch, argv, reads), *list(argv),
+            "/usr/bin/sandbox-exec", "-p", _seatbelt(scratch, argv, reads, toolchain), *list(argv),
         ]
     else:
-        wrapped = _bwrap(scratch, argv, reads)
+        wrapped = _bwrap(scratch, argv, (*reads, *toolchain))
     return runner(wrapped, cwd=cwd, env=dict(env), timeout=timeout, shell=False)
 
 
@@ -839,16 +848,22 @@ def _rerun_one(
         )]
     env = child_environment(scratch)
     reads: tuple[Path, ...] = ()
+    toolchain: tuple[Path, ...] = ()
     if offline is not None:
         env.update(offline.env)
-        reads = offline.reads
+        reads, toolchain = offline.reads, offline.toolchain
         argv = offline.argv(argv)
+    elif Path(argv[0]).name in _RUST_COMMANDS:
+        # Without vendored crates a Rust re-run still needs rustup's toolchain (issue 262).
+        env.update(review_dependencies.rustup_env())
+        toolchain = review_dependencies.toolchain_paths(shutil.which(argv[0]))
     try:
         if confine is not None:
             ran = confine(argv, scratch, env, scratch)
         else:
             ran = run_confined(
                 argv, scratch, env, scratch, runner=runner, timeout=RERUN_TIMEOUT, reads=reads,
+                toolchain=toolchain,
             )
     except subprocess.TimeoutExpired:
         _downgrade(finding)
@@ -1530,7 +1545,10 @@ def _degraded(lens: str, language: str, name: str, tool: str, reason: str) -> di
     }
 
 
-def _seatbelt(scratch: Path, argv: Sequence[str], reads: Sequence[Path] = ()) -> str:
+def _seatbelt(
+    scratch: Path, argv: Sequence[str], reads: Sequence[Path] = (),
+    toolchain: Sequence[Path] = (),
+) -> str:
     home = str(Path.home().resolve())
     root = str(scratch.resolve())
     lines = [
@@ -1565,6 +1583,10 @@ def _seatbelt(scratch: Path, argv: Sequence[str], reads: Sequence[Path] = ()) ->
     # After the home deny, so a packet under home is readable; never writable.
     for path in reads:
         lines.append(f'(allow file-read* (subpath "{Path(path).resolve()}"))')
+    for path in toolchain:
+        for form in dict.fromkeys((Path(path).absolute(), Path(path).resolve())):
+            lines.append(f'(allow file-read* (subpath "{form}"))')
+            lines.append(f'(allow file-map-executable (subpath "{form}"))')
     # No mach-lookup allow. The pasteboard and other named services stay unreachable.
     lines.append("(deny mach-lookup)")
     lines.append("(deny network*)")

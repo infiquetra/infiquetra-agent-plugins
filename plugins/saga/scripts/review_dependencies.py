@@ -361,11 +361,36 @@ def _cargo_env(work: Path) -> dict[str, str]:
         path.mkdir(mode=0o700)
         env[name] = str(path)
     env["CARGO_NET_GIT_FETCH_WITH_CLI"] = "false"
-    # A rustup proxy finds its toolchain under the real rustup home, as review_tools does.
-    env["RUSTUP_HOME"] = os.environ.get("RUSTUP_HOME") or str(Path.home() / ".rustup")
-    if "RUSTUP_TOOLCHAIN" in os.environ:
+    env.update(rustup_env())
+    return env
+
+
+def rustup_env() -> dict[str, str]:
+    """What a rustup proxy needs to pick its toolchain once ``HOME`` is not the operator's.
+
+    ``RUSTUP_HOME`` defaults to the real home's ``.rustup``, as review_tools does, and
+    ``RUSTUP_TOOLCHAIN`` passes when set. Without them a proxy reports that no default toolchain
+    is configured (seen on CI, whose cargo is rustup's).
+    """
+    env = {"RUSTUP_HOME": os.environ.get("RUSTUP_HOME") or str(Path.home() / ".rustup")}
+    if os.environ.get("RUSTUP_TOOLCHAIN"):
         env["RUSTUP_TOOLCHAIN"] = os.environ["RUSTUP_TOOLCHAIN"]
     return env
+
+
+def toolchain_paths(cargo: str | None) -> tuple[Path, ...]:
+    """What a confined cargo must read and map to run: its own folder, and rustup's toolchains.
+
+    For a rustup proxy under ``~/.cargo/bin`` that is the ``bin`` folder only, never ``~/.cargo``,
+    which holds cargo's credentials file, plus ``toolchains`` and ``settings.toml`` under the
+    rustup home. A cargo outside home needs nothing, and nothing is added for it but its folder.
+    """
+    if cargo is None:
+        return ()
+    paths = [Path(cargo).absolute().parent]
+    rustup = Path(rustup_env()["RUSTUP_HOME"])
+    paths += [rustup / part for part in ("toolchains", "settings.toml") if (rustup / part).exists()]
+    return tuple(paths)
 
 
 def _cargo(
@@ -426,8 +451,12 @@ def _remove(path: Path) -> None:
 _WATCHER_MARK = "(saga fetch watcher)"
 
 
-def _bytes(paths: list[Path]) -> int:
-    """The bytes of the regular files under *paths*, not following symlinks."""
+def _bytes(paths: list[Path], limit: int | None = None, deadline: float | None = None) -> int:
+    """The bytes of the regular files under *paths*, not following symlinks.
+
+    The count stops early once it passes *limit* or the clock passes *deadline*, so one walk of a
+    huge tree cannot keep the watcher from its own deadline.
+    """
     total = 0
     for root in paths:
         for folder, _dirs, files in os.walk(root):
@@ -436,7 +465,19 @@ def _bytes(paths: list[Path]) -> int:
                     total += os.lstat(os.path.join(folder, name)).st_size
                 except OSError:
                     continue
+            if (limit is not None and total > limit) or (
+                deadline is not None and time.monotonic() > deadline
+            ):
+                return total
     return total
+
+
+class _Stopped(Exception):
+    """The watcher itself was asked to stop."""
+
+
+def _raise_stopped(_signum: int, _frame: Any) -> None:
+    raise _Stopped
 
 
 def _stop(proc: subprocess.Popen[bytes]) -> None:
@@ -452,27 +493,37 @@ def watch(argv: list[str], watched: list[Path], limit: int, seconds: float) -> i
 
     The last check runs after the command ends, so a command quicker than one interval is
     counted too. Returns the command's exit code, :data:`LIMIT_EXIT` or :data:`TIMEOUT_EXIT`.
+    However the watcher leaves, short of ``SIGKILL``, the command's process group goes with it:
+    ``SIGTERM``, ``SIGINT`` and ``SIGHUP`` stop it, and so does any exception.
     """
     proc = subprocess.Popen(argv, start_new_session=True)  # nosec B603
     deadline = time.monotonic() + seconds
-    while True:
-        try:
-            code: int | None = proc.wait(timeout=_WATCH_INTERVAL)
-        except subprocess.TimeoutExpired:
-            code = None
-        used = _bytes(watched)
-        if used > limit:
-            if code is None:
-                _stop(proc)
-            print(f"saga: the fetch wrote {used} bytes, over its {limit} byte limit "
-                  f"{_WATCHER_MARK}", file=sys.stderr)
-            return LIMIT_EXIT
-        if code is not None:
-            return code
-        if time.monotonic() > deadline:
+    previous = {sig: signal.signal(sig, _raise_stopped)
+                for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+    try:
+        while True:
+            try:
+                code: int | None = proc.wait(timeout=_WATCH_INTERVAL)
+            except subprocess.TimeoutExpired:
+                code = None
+            used = _bytes(watched, limit, deadline)
+            if used > limit:
+                print(f"saga: the fetch wrote at least {used} bytes, over its {limit} byte limit "
+                      f"{_WATCHER_MARK}", file=sys.stderr)
+                return LIMIT_EXIT
+            if code is not None:
+                return code
+            if time.monotonic() > deadline:
+                print(f"saga: the fetch ran past {seconds:g} seconds {_WATCHER_MARK}",
+                      file=sys.stderr)
+                return TIMEOUT_EXIT
+    except _Stopped:
+        return TIMEOUT_EXIT
+    finally:
+        if proc.poll() is None:
             _stop(proc)
-            print(f"saga: the fetch ran past {seconds:g} seconds {_WATCHER_MARK}", file=sys.stderr)
-            return TIMEOUT_EXIT
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
 
 def main(arguments: list[str]) -> int:

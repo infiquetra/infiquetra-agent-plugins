@@ -76,11 +76,20 @@
   run as a script) that kills its process group once the vendored folder plus the fetch's cargo
   home, home and temp folder pass 2 GiB, records `not-fetched`, and deletes the partial tree.
   The watcher also keeps the 600 second limit itself, so a timeout no longer leaves cargo
-  running. The re-run's cargo home names the vendored source with a random suffix, and its
+  running. cargo runs in its own session, so the watcher kills that group whenever it leaves:
+  on `SIGTERM`, `SIGINT` or `SIGHUP`, on any exception, and at its deadline. One size walk also
+  stops at the limit or the deadline, so a huge tree cannot hold the watcher past it. The re-run's cargo home names the vendored source with a random suffix, and its
   `bin/cargo` runs the real cargo with that home's `config.toml` passed as `--config`. That
   comes first on `PATH`, and finish runs a `cargo` command through it. On cargo 1.98.1 a
   commit's own `[source.crates-io] replace-with` outranked the cargo home and `CARGO_SOURCE_*`
   variables; only `--config` outranks it.
+- Issue #262, on a rustup machine (CI's cargo is rustup's). finish's re-run gives cargo
+  `HOME` set to the scratch copy, so a rustup proxy found no default toolchain. Every cargo
+  command saga now runs (the fetch, and a cargo or rustc re-run, with or without vendored
+  crates) gets `RUSTUP_HOME`, defaulting to the real home's `.rustup` as review_tools does, and
+  `RUSTUP_TOOLCHAIN` when set. The seatbelt profile reads and maps the cargo binary's own folder
+  (`~/.cargo/bin`, never `~/.cargo`) and rustup's `toolchains` and `settings.toml`; bwrap binds
+  them read-only.
 - Issue #253: four review-tool faults no longer degrade every Rust review. cargo-mutants exits 2
   and 3 are parsed like exit 0 (`Adapter.parsed_exits`), and exit 4, a failing unmutated baseline,
   is its own reason, `baseline-failed` (`Adapter.exit_reasons`). A timed-out mutant records

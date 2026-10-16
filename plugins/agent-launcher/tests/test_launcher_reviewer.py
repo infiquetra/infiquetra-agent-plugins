@@ -1240,6 +1240,72 @@ def test_offline_the_cargo_on_path_runs_through_the_cargo_home_s_shim(
     assert str(cargo_home.resolve()) in filesystem["denyWrite"]
 
 
+def _rustup_home(tmp_path: Path) -> tuple[Path, Path]:
+    """A home laid out as rustup installs it: proxies in ~/.cargo/bin beside the credentials."""
+    home = tmp_path / "home"
+    bindir = home / ".cargo" / "bin"
+    bindir.mkdir(parents=True)
+    rustup = bindir / "rustup"
+    rustup.write_text("#!/bin/sh\nexit 0\n", "utf-8")
+    rustup.chmod(0o755)
+    for name in ("cargo", "rustc"):
+        (bindir / name).symlink_to("rustup")
+    (home / ".cargo" / "credentials.toml").write_text('[registry]\ntoken = "inert-example"\n')
+    (home / ".rustup" / "toolchains" / "stable" / "bin").mkdir(parents=True)
+    (home / ".rustup" / "settings.toml").write_text('default_toolchain = "stable"\n', "utf-8")
+    (home / ".rustup" / "downloads").mkdir()
+    return home, bindir
+
+
+def test_offline_a_rustup_cargo_gets_its_bin_and_toolchains_never_the_credentials(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    """On CI cargo is a rustup proxy under ~/.cargo/bin; the whole prefix used to be dropped."""
+    home, bindir = _rustup_home(tmp_path)
+    env = {"HOME": str(home), "PATH": f"{bindir}{os.pathsep}/usr/bin:/bin"}
+    allowed, dropped = launcher.reviewer_toolchain_paths(env)
+    paths = {item["path"] for item in allowed}
+    assert {str(bindir), str(home / ".rustup" / "toolchains"),
+            str(home / ".rustup" / "settings.toml")} <= paths
+    for path in paths:
+        assert launcher.reviewer_allowed_read_problem(Path(path), home) is None
+    assert str(home / ".cargo") not in paths and str(home / ".rustup") not in paths
+    assert str(home / ".rustup" / "downloads") not in paths
+    assert any(item["path"] == str(home / ".cargo") for item in dropped)
+
+
+def test_offline_a_cargo_outside_home_opens_no_rustup_folder(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    home, _bindir = _rustup_home(tmp_path)
+    tools = tmp_path / "opt" / "bin"
+    tools.mkdir(parents=True)
+    for name in ("cargo", "rustc"):
+        (tools / name).write_text("#!/bin/sh\nexit 0\n", "utf-8")
+        (tools / name).chmod(0o755)
+    allowed, _dropped = launcher.reviewer_toolchain_paths(
+        {"HOME": str(home), "PATH": f"{tools}{os.pathsep}/usr/bin:/bin"}
+    )
+    assert not any(".rustup" in item["path"] or ".cargo" in item["path"] for item in allowed)
+
+
+def test_offline_the_reviewer_s_commands_get_rustup_s_home_and_choice(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    packet = _vendored_packet(launcher, tmp_path)
+    _result, _settings, env = _launch_with(launcher, repo, head, tmp_path, packet)
+    assert env["RUSTUP_HOME"] == str(tmp_path / "home" / ".rustup")
+    _result, _settings, env = _launch_with(
+        launcher, repo, head, tmp_path, packet,
+        RUSTUP_HOME="/opt/example/rustup", RUSTUP_TOOLCHAIN="1.98.1",
+    )
+    assert env["RUSTUP_HOME"] == "/opt/example/rustup" and env["RUSTUP_TOOLCHAIN"] == "1.98.1"
+    script = launcher.reviewer_claude_shell_script(tmp_path / "sentinel", "token")
+    for name in ("RUSTUP_HOME", "RUSTUP_TOOLCHAIN"):
+        assert f'${{{name}+"{name}=${name}"}}' in script
+
+
 def test_offline_without_a_cargo_on_path_there_is_no_shim(
     launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
 ) -> None:
@@ -1293,10 +1359,12 @@ def test_live_offline_the_shim_outranks_a_commit_s_own_source_replacement(
     (project / "src" / "main.rs").write_text(
         'fn main() { println!("VALUE {}", inertdep::two()); }\n', "utf-8"
     )
-    home = tmp_path / "home"
-    home.mkdir()
-    session_env = {"PATH": os.environ["PATH"], "HOME": str(home),
-                   "CARGO_TARGET_DIR": str(tmp_path / "target")}
+    # The session environment a launch builds: the operator's own HOME and RUSTUP_* values.
+    session_env = launcher.reviewer_session_environment(
+        {**{k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "RUSTUP_HOME",
+                                                        "RUSTUP_TOOLCHAIN", "LANG")},
+         "CARGO_TARGET_DIR": str(tmp_path / "target")}
+    )
     cargo_home = launcher.reviewer_cargo_home(tmp_path / "root", vendor, session_env)
     launcher.reviewer_offline_cargo(session_env, cargo_home)
     through = subprocess.run(["cargo", "run", "-q", "--offline"], cwd=project, env=session_env,

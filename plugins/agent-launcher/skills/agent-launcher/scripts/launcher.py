@@ -2120,6 +2120,8 @@ REVIEWER_ENVIRONMENT_ALLOWED = (
     "GIT_CONFIG_GLOBAL",  # points git at /dev/null, because home is unreadable
     "CARGO_HOME",  # issue #262: the launcher's read-only cargo home beside the copy
     "CARGO_NET_OFFLINE",  # issue #262: cargo never tries the network it is denied
+    "RUSTUP_HOME",  # issue #262: a rustup proxy finds its toolchains
+    "RUSTUP_TOOLCHAIN",  # issue #262: the operator's toolchain choice, when set
 )
 #: Credential files and directories. The sandbox blocks the whole home directory, so this list no
 #: longer feeds ``denyRead``. It feeds the permission layer's ``Read`` deny rules, and the check
@@ -2154,8 +2156,9 @@ REVIEWER_SHARED_ROOTS = ("~/.config", "~/.local", "~/.local/share", "~/.cache", 
 REVIEWER_TOOLCHAIN_COMMANDS = (
     ("python3", "python3 on the session PATH resolves here; its standard library and packages"),
     ("node", "node on the session PATH resolves here; its bundled libraries"),
-    # Issue #262. A rustup proxy under ``~/.cargo`` is still dropped: that prefix holds cargo's
-    # credentials file. A Homebrew or system cargo sits outside home and needs nothing.
+    # Issue #262. A rustup proxy under ``~/.cargo``: that prefix holds cargo's credentials file,
+    # so only its ``bin`` comes back, with rustup's toolchains (``reviewer_rustup_paths``). A
+    # Homebrew or system cargo sits outside home and needs nothing.
     ("cargo", "cargo on the session PATH resolves here; its executables and libraries"),
     ("rustc", "rustc on the session PATH resolves here; its executables and libraries"),
 )
@@ -2310,11 +2313,14 @@ def reviewer_toolchain_paths(
     allowed: list[dict[str, str]] = []
     dropped: list[dict[str, str]] = []
     seen: set[str] = set()
+    rust_under_home = False
     for command, reason in REVIEWER_TOOLCHAIN_COMMANDS:
         found = shutil.which(command, path=env.get("PATH", ""))
         if not found:
             continue
         binary = Path(os.path.normpath(Path(found).absolute()))
+        if command in ("cargo", "rustc") and any(binary.is_relative_to(h) for h in homes):
+            rust_under_home = True
         for candidate in (binary.parent.parent, binary.resolve().parent.parent):
             if str(candidate) in seen or not any(candidate.is_relative_to(h) for h in homes):
                 continue
@@ -2322,6 +2328,17 @@ def reviewer_toolchain_paths(
             problem = reviewer_allowed_read_problem(candidate, home)
             if problem:
                 dropped.append({"path": str(candidate), "reason": problem})
+                # Issue #262: rustup's ``~/.cargo`` holds cargo's credentials beside ``bin/``.
+                # For cargo and rustc only, the folder holding the binary comes back on its own
+                # when it passes the check; any other interpreter there is still dropped.
+                folder = binary.parent
+                if (command in ("cargo", "rustc") and "credential path" in problem
+                        and str(folder) not in seen
+                        and folder.is_relative_to(candidate)
+                        and reviewer_allowed_read_problem(folder, home) is None):
+                    seen.add(str(folder))
+                    allowed.append({"path": str(folder), "reason": f"{reason}; its executables, "
+                                    "without the prefix that holds a credential path"})
                 continue
             # Only the parts an interpreter reads, never the prefix itself: a prefix such as
             # ``~/.sometool`` can hold that tool's own ``.env`` beside ``bin/`` (measured: a uv
@@ -2333,7 +2350,39 @@ def reviewer_toolchain_paths(
                     trouble = reviewer_allowed_read_problem(path, home)
                     entry = {"path": str(path), "reason": trouble or f"{reason}; {why}"}
                     (dropped if trouble else allowed).append(entry)
+    if rust_under_home:
+        for path, why in reviewer_rustup_paths(env):
+            if str(path) in seen:
+                continue
+            seen.add(str(path))
+            trouble = reviewer_allowed_read_problem(path, home)
+            entry = {"path": str(path), "reason": trouble or why}
+            (dropped if trouble else allowed).append(entry)
     return sorted(allowed, key=lambda i: i["path"]), sorted(dropped, key=lambda i: i["path"])
+
+
+def reviewer_rustup_home(env: Mapping[str, str]) -> Path:
+    """The rustup home: ``RUSTUP_HOME``, or ``.rustup`` in the session's home."""
+    given = env.get("RUSTUP_HOME")
+    return Path(given) if given else _reviewer_home(env) / ".rustup"
+
+
+def reviewer_rustup_paths(env: Mapping[str, str]) -> list[tuple[Path, str]]:
+    """What a rustup proxy under home reads to run a toolchain (issue #262), when it exists.
+
+    Only ``toolchains`` and ``settings.toml``; never the rustup home itself, which also keeps
+    downloads and update state.
+    """
+    rustup = reviewer_rustup_home(env)
+    homes = _reviewer_forms(_reviewer_home(env))
+    if not any(rustup.absolute().is_relative_to(h) for h in homes):
+        return []
+    return [
+        (rustup / part, f"rustup's {why}, which a rustup cargo or rustc runs (issue #262)")
+        for part, why in (("toolchains", "installed toolchains"),
+                          ("settings.toml", "default toolchain"))
+        if (rustup / part).exists()
+    ]
 
 
 def reviewer_ceiling_problem(amount: str | None) -> str | None:
@@ -2562,6 +2611,8 @@ def reviewer_offline_cargo(session_env: dict[str, str], cargo_home: Path) -> Non
     """
     session_env["CARGO_HOME"] = str(cargo_home)
     session_env["CARGO_NET_OFFLINE"] = "true"
+    # A rustup proxy picks its toolchain from here; the shell prefix passes both names.
+    session_env["RUSTUP_HOME"] = str(reviewer_rustup_home(session_env))
     shim = cargo_home / "bin" / "cargo"
     if shim.is_file():
         session_env["PATH"] = os.pathsep.join(

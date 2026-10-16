@@ -70,6 +70,17 @@ def _no_operator_langfuse(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pyt
     monkeypatch.setenv("HOME", str(tmp_path_factory.mktemp("operator-home")))
 
 
+#: The home this run started with, before the autouse fixture above swaps HOME.
+_OPERATOR_HOME = Path(os.environ.get("HOME") or Path.home())
+
+
+@pytest.fixture
+def operator_rustup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A rustup proxy (CI's cargo) still finds the operator's toolchains under the swapped HOME."""
+    if "RUSTUP_HOME" not in os.environ:
+        monkeypatch.setenv("RUSTUP_HOME", str(_OPERATOR_HOME / ".rustup"))
+
+
 def _git(repo: Path, *args: str) -> str:
     proc = subprocess.run(
         ["git", *args], cwd=repo, check=True, capture_output=True, text=True,
@@ -1827,12 +1838,9 @@ def test_live_prepare_twice_with_clippy_writes_identical_packets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The same, with the real clippy and its real scratch-folder paths."""
-    import pwd  # noqa: PLC0415
-
     # The autouse fixture swaps HOME; rustup still needs the operator's toolchains.
     if "RUSTUP_HOME" not in os.environ:
-        real_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
-        monkeypatch.setenv("RUSTUP_HOME", str(real_home / ".rustup"))
+        monkeypatch.setenv("RUSTUP_HOME", str(_OPERATOR_HOME / ".rustup"))
     repo = tmp_path / "repo"
     _init(repo)
     (repo / "src").mkdir()
@@ -2088,6 +2096,58 @@ def test_finish_reruns_offline_against_the_packet_s_vendored_crates(tmp_path: Pa
         assert env["PATH"].split(os.pathsep)[0] == str(shim.parent)
 
 
+def test_the_rerun_s_offline_cargo_carries_rustup_s_home_and_toolchain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """finish's re-run HOME is the scratch copy, so a rustup proxy needs RUSTUP_HOME (CI)."""
+    monkeypatch.delenv("RUSTUP_HOME", raising=False)
+    monkeypatch.delenv("RUSTUP_TOOLCHAIN", raising=False)
+    packet = _inert_vendored_packet(tmp_path)
+    with C._offline_dependencies(packet) as offline:
+        assert offline is not None
+        assert offline.env["RUSTUP_HOME"] == str(Path.home() / ".rustup")
+        if shutil.which("cargo"):
+            assert offline.toolchain[0] == Path(str(shutil.which("cargo"))).absolute().parent
+
+
+def test_a_cargo_rerun_without_vendored_crates_still_gets_rustup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "operator"
+    (home / ".cargo" / "bin").mkdir(parents=True)
+    proxy = home / ".cargo" / "bin" / "cargo"
+    proxy.write_text("#!/bin/sh\nexit 0\n")
+    proxy.chmod(0o755)
+    (home / ".rustup" / "toolchains").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", f"{proxy.parent}{os.pathsep}/usr/bin:/bin")
+    monkeypatch.delenv("RUSTUP_HOME", raising=False)
+    monkeypatch.setattr(C, "platform_helper", lambda: "sandbox-exec")
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    seen: list[tuple[list[str], dict[str, str]]] = []
+
+    def record(argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int,
+               shell: bool) -> Any:
+        if argv[0] == "/usr/bin/sandbox-exec":
+            seen.append((list(argv), dict(env)))
+            return T.ProcessResult(1, _CAPTURED)
+        return runner(argv, cwd=cwd, env=env, timeout=timeout, shell=shell)
+
+    finding = _finding("A retry returns the new number.")
+    finding["proof"]["command"] = "cargo test --offline"
+    code, err = _finish(packet, [(_answer([finding]), _result(scratch, changes))], home, record,
+                        ask=_ask(consequence_status="error"))
+    assert code == 0, err
+    argv, env = seen[0]
+    assert env["RUSTUP_HOME"] == str(home / ".rustup") and env["HOME"] != str(home)
+    profile = argv[2]
+    for path in (proxy.parent, home / ".rustup" / "toolchains"):
+        assert f'(allow file-map-executable (subpath "{path.resolve()}"))' in profile
+    assert f'(subpath "{(home / ".cargo").resolve()}")' not in profile
+
+
 def test_a_cargo_rerun_goes_through_the_cargo_home_s_shim(tmp_path: Path) -> None:
     shim = tmp_path / "cargo-home" / "bin" / "cargo"
     offline = C.Offline(env={}, reads=(), cargo=shim)
@@ -2155,6 +2215,7 @@ def _inert_vendored_packet(tmp: Path) -> Path:
     shutil.which("cargo") is None or C.platform_helper() is None,
     reason="needs cargo and the platform's confinement helper",
 )
+@pytest.mark.usefixtures("operator_rustup")
 def test_live_the_confined_rerun_builds_offline_from_the_vendored_crates(tmp_path: Path) -> None:
     packet = _inert_vendored_packet(tmp_path)
     scratch = tmp_path / "scratch"
@@ -2181,10 +2242,12 @@ def test_live_the_confined_rerun_builds_offline_from_the_vendored_crates(tmp_pat
         ran = C.run_confined(
             ["cargo", "test", "--offline"], scratch, env, scratch,
             runner=T.subprocess_runner, timeout=300, reads=offline.reads,
+            toolchain=offline.toolchain,
         )
         wrote = C.run_confined(
             ["/usr/bin/touch", str(vendor / "planted")], scratch, env, scratch,
             runner=T.subprocess_runner, timeout=30, reads=offline.reads,
+            toolchain=offline.toolchain,
         )
     output = ran.stdout + ran.stderr
     assert ran.code == 101, output
@@ -2192,15 +2255,8 @@ def test_live_the_confined_rerun_builds_offline_from_the_vendored_crates(tmp_pat
     assert wrote.code != 0 and not (vendor / "planted").exists()
 
 
-@pytest.mark.skipif(
-    shutil.which("cargo") is None or C.platform_helper() is None,
-    reason="needs cargo and the platform's confinement helper",
-)
-def test_live_a_commit_s_own_source_replacement_cannot_outrank_the_rerun_s(
-    tmp_path: Path,
-) -> None:
-    """The scratch copy's ``.cargo/config.toml`` replaces crates.io with a crate it ships."""
-    packet = _inert_vendored_packet(tmp_path)
+def _hostile_scratch(tmp_path: Path) -> Path:
+    """A scratch copy whose ``.cargo/config.toml`` replaces crates.io with its own crate."""
     scratch = tmp_path / "scratch"
     (scratch / "src").mkdir(parents=True)
     (scratch / "tmp").mkdir()
@@ -2233,17 +2289,50 @@ def test_live_a_commit_s_own_source_replacement_cannot_outrank_the_rerun_s(
         "    let got = inertdep::two();\n    assert_eq!(got, 3, \"returned {got}\");\n}\n",
         encoding="utf-8",
     )
+    return scratch
+
+
+@pytest.mark.skipif(shutil.which("cargo") is None, reason="cargo is not installed")
+@pytest.mark.usefixtures("operator_rustup")
+def test_live_the_rerun_s_environment_runs_the_shim_whatever_cargo_is(tmp_path: Path) -> None:
+    """finish's own re-run environment, HOME the scratch copy, unconfined so CI runs it too.
+
+    On CI cargo is a rustup proxy, which picks no toolchain under that HOME without RUSTUP_HOME.
+    """
+    packet = _inert_vendored_packet(tmp_path)
+    scratch = _hostile_scratch(tmp_path)
+    with C._offline_dependencies(packet) as offline:
+        assert offline is not None
+        env = {**C.child_environment(scratch), **offline.env}
+        ran = subprocess.run(offline.argv(["cargo", "test", "--offline"]), cwd=scratch, env=env,
+                             capture_output=True, text=True, timeout=300, check=False)
+    assert "returned 2" in ran.stdout + ran.stderr, ran.stdout + ran.stderr
+
+
+@pytest.mark.skipif(
+    shutil.which("cargo") is None or C.platform_helper() is None,
+    reason="needs cargo and the platform's confinement helper",
+)
+@pytest.mark.usefixtures("operator_rustup")
+def test_live_a_commit_s_own_source_replacement_cannot_outrank_the_rerun_s(
+    tmp_path: Path,
+) -> None:
+    """The scratch copy's ``.cargo/config.toml`` replaces crates.io with a crate it ships."""
+    packet = _inert_vendored_packet(tmp_path)
+    scratch = _hostile_scratch(tmp_path)
     with C._offline_dependencies(packet) as offline:
         assert offline is not None and offline.cargo is not None
         env = {**C.child_environment(scratch), **offline.env}
         ran = C.run_confined(
             offline.argv(["cargo", "test", "--offline"]), scratch, env, scratch,
             runner=T.subprocess_runner, timeout=300, reads=offline.reads,
+            toolchain=offline.toolchain,
         )
         # The control: cargo by its real path, past the shim, takes the commit's crate.
         plain = C.run_confined(
             [str(shutil.which("cargo")), "test", "--offline"], scratch, env, scratch,
             runner=T.subprocess_runner, timeout=300, reads=offline.reads,
+            toolchain=offline.toolchain,
         )
     assert "returned 2" in ran.stdout + ran.stderr, ran.stdout + ran.stderr
     assert "returned 99" in plain.stdout + plain.stderr, plain.stdout + plain.stderr
