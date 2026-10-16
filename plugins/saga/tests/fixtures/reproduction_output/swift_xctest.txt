@@ -1,0 +1,29 @@
+Building for debugging...
+Build complete! (1.58 sec)
+Test Suite 'All tests' started at 2026-10-16 14:07:41.487.
+Test Suite 'DemoTests.xctest' started at 2026-10-16 14:07:41.488.
+Test Suite 'DemoTests' started at 2026-10-16 14:07:41.488.
+Test Case '-[DemoTests.DemoTests testAdds]' started.
+/work/sw/Tests/DemoTests/DemoTests.swift:4: error: -[DemoTests.DemoTests testAdds] : XCTAssertEqual failed: ("-1") is not equal to ("5")
+Test Case '-[DemoTests.DemoTests testAdds]' failed (0.052 seconds).
+Test Case '-[DemoTests.DemoTests testOk]' started.
+Test Case '-[DemoTests.DemoTests testOk]' passed (0.000 seconds).
+Test Suite 'DemoTests' failed at 2026-10-16 14:07:41.541.
+	 Executed 2 tests, with 1 failure (0 unexpected) in 0.052 (0.053) seconds
+Test Suite 'OtherTests' started at 2026-10-16 14:07:41.541.
+Test Case '-[DemoTests.OtherTests testBroken]' started.
+/work/sw/Tests/DemoTests/DemoTests.swift:8: error: -[DemoTests.OtherTests testBroken] : failed - other broke
+Test Case '-[DemoTests.OtherTests testBroken]' failed (0.000 seconds).
+Test Suite 'OtherTests' failed at 2026-10-16 14:07:41.542.
+	 Executed 1 test, with 1 failure (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'DemoTests.xctest' failed at 2026-10-16 14:07:41.542.
+	 Executed 3 tests, with 2 failures (0 unexpected) in 0.053 (0.054) seconds
+Test Suite 'All tests' failed at 2026-10-16 14:07:41.542.
+	 Executed 3 tests, with 2 failures (0 unexpected) in 0.053 (0.055) seconds
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.
+Note: Some test targets reported failures:
+  - DemoTests (XCTest)
+exit 1

@@ -142,6 +142,35 @@ stable assertion line and a bare test name.
 **Generalizable rule.** A re-run matcher must be checked against each test runner's real output
 before a language's reproductions are counted; one live run per language finds it.
 
+### A reproduction is matched by the runner's own failure lines, and a reviewer may record them on one line
+
+**Evidence.** Issue #264, measured on 2026-10-16 with cargo 1.98.1, cargo-nextest 0.9.146,
+pytest 9.0.3, Python 3.14 unittest, Vitest 4.1.11, Jest 30.5.2, Go 1.27.1, Dart 3.13.2 and Swift
+6.4 (XCTest and Swift Testing); the transcripts are committed under
+`plugins/saga/tests/fixtures/reproduction_output/`. Only pytest prints `path::name`. Every other
+runner printed the test its own way (`test name ... FAILED`, `FAIL file > suite > name`,
+`--- FAIL: TestName`, `-[Module.Class method]`, `✘ Test name() failed after`), and every one ended
+with a line that changes between runs (`finished in 0.00s`, `Duration  114ms`, `Time: 0.248 s`,
+`FAIL demo 0.104s`). Live, on ripgrep 3fce3b5 with a planted defect and a Haiku reviewer through
+`launcher.py review`, the reviewer recorded its cargo failure as one line carrying its own process
+id (`names: ["single-dot-test-36207", ...]. test result: FAILED. 0 passed; 1 failed`). The code
+before the fix graded that finding `traced` and `fix-later`; with the fix, from the same answer
+and result files, `reproduced` and `blocks`. Code: `plugins/saga/scripts/reproduction_match.py`.
+
+**Mechanism.** The old rule asked for two things only pytest provides: the cited id word for word,
+and the recorded last line unchanged. A runner-aware reading asks instead whether the cited test
+is among the tests that failed in the re-run (name and file, with every runner's separators read
+as one), and then whether the recorded failure line is in that test's own failure lines. Colour
+codes, thread ids, timings, addresses, time stamps, the directory in front of a path, and runs of
+five or more digits (process ids, ports) are removed from both sides first. A reviewer who wrote
+the failure on one line still matches when the re-run test's own message lines appear in what it
+recorded, so the check reads the failure both ways round.
+
+**Generalizable rule.** Match a re-run against the runner's own list of failed tests, not against
+a string the runner may never print, and compare failure text only after removing what differs
+between two runs of the same failure. Capture each runner's transcript for a passing test, the
+cited failing test and an unrelated failing test before writing the rule.
+
 ### A check that reads the copy must read only what git tracks, because earlier tools write into it
 
 **Evidence.** Issue #252. In the saga-review-corpus pilot (on befe132), two ripgrep versions gave

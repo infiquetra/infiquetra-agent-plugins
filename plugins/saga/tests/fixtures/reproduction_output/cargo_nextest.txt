@@ -1,0 +1,51 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.00s
+────────────
+ Nextest run ID 804445f1-11ed-40c7-adb0-919937626d56 with nextest profile: default
+    Starting 3 tests across 1 binary
+        PASS [   0.008s] (1/3) demo::repro_test passes
+        FAIL [   0.008s] (2/3) demo::repro_test adds_two_numbers
+  stdout ───
+
+    running 1 test
+    test adds_two_numbers ... FAILED
+
+    failures:
+
+    failures:
+        adds_two_numbers
+
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+  stderr ───
+
+    thread 'adds_two_numbers' (131866350) panicked at tests/repro_test.rs:3:25:
+    assertion `left == right` failed
+      left: -1
+     right: 5
+    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+  Cancelling due to test failure: 1 test still running
+        FAIL [   0.008s] (3/3) demo::repro_test other_failure
+  stdout ───
+
+    running 1 test
+    test other_failure ... FAILED
+
+    failures:
+
+    failures:
+        other_failure
+
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+  stderr ───
+
+    thread 'other_failure' (131866351) panicked at tests/repro_test.rs:5:22:
+    other broke
+    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+────────────
+     Summary [   0.012s] 3 tests run: 1 passed, 2 failed, 0 skipped
+        FAIL [   0.008s] (2/3) demo::repro_test adds_two_numbers
+        FAIL [   0.008s] (3/3) demo::repro_test other_failure
+error: test run failed

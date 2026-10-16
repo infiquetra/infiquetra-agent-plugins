@@ -1,0 +1,7 @@
+--- FAIL: TestAdd (0.00s)
+    add_test.go:4: want 5 got -1
+--- FAIL: TestOther (0.00s)
+    add_test.go:5: other broke
+FAIL
+FAIL	demo	0.104s
+FAIL

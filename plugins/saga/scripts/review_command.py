@@ -37,6 +37,7 @@ import review_diff  # noqa: E402
 import review_formula  # noqa: E402
 import review_records  # noqa: E402
 import review_tools  # noqa: E402
+import reproduction_match  # noqa: E402
 import reviewer_answer  # noqa: E402
 import run_record  # noqa: E402
 import saga_setup  # noqa: E402
@@ -56,12 +57,6 @@ _TOOLCHAIN_PREFIXES = (
     "/Applications/Xcode.app",
     "/Library/Developer/CommandLineTools",
 )
-# A recorded line that is only one of these matches every Python or pytest failure.
-_GENERIC_LINES = frozenset({
-    "Traceback (most recent call last):",
-    "During handling of the above exception, another exception occurred:",
-    "The above exception was the direct cause of the following exception:",
-})
 _PACKET_FILES = (
     "change.json",
     "diff.patch",
@@ -1380,43 +1375,7 @@ def _argv(command: Any) -> list[str] | None:
 
 def _matches(result: review_tools.ProcessResult, output: str, test: str = "") -> bool:
     """True when the re-run failed with the recorded failure, not with a generic header."""
-    if result.code == 0:
-        return False
-    captured = f"{result.stdout}{result.stderr}"[:8000]
-    line = _specific_line(output, test)
-    if line is None or line not in captured:
-        return False
-    if "::" in test and test not in captured:
-        return False
-    return True
-
-
-def _specific_line(output: str, test: str) -> str | None:
-    """The last recorded line that names this failure.
-
-    A traceback header matches every Python crash. The test id matches every failure of that
-    test. Neither is the failure.
-    """
-    file = test.split("::", 1)[0] if test else ""
-    chosen = ""
-    for raw in output.splitlines():
-        line = raw.strip()[:200]
-        if not line or _generic_line(line):
-            continue
-        if test and line == test:
-            continue
-        if file and line == file:
-            continue
-        chosen = line
-    return chosen or None
-
-
-def _generic_line(line: str) -> bool:
-    if line in _GENERIC_LINES or line.startswith("INTERNALERROR"):
-        return True
-    if line.startswith(("====", "----", "++++")):
-        return True
-    return line.strip("=+- ") == ""
+    return reproduction_match.matches(result.code, f"{result.stdout}{result.stderr}", output, test)
 
 
 def _downgrade(finding: dict[str, Any]) -> None:
