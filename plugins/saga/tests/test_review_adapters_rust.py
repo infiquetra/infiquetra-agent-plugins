@@ -1294,6 +1294,121 @@ def test_mutants_exit_4_records_a_failed_baseline_and_keeps_the_report(tmp_path:
     assert stored.read_bytes() == A._stable_mutants(report).encode()
 
 
+class _FlakyBaseline(_Calls):
+    """cargo-mutants exits 4 (baseline failed) for its first ``failures`` runs, then ``code``."""
+
+    def __init__(self, *args: Any, failures: int, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.failures = failures
+        self.runs = 0
+
+    def __call__(self, argv: list[str], *, cwd: Path, **kwargs: Any) -> Any:
+        result = super().__call__(argv, cwd=cwd, **kwargs)
+        if self._tool(argv) != "cargo-mutants" or "--version" in argv:
+            return result
+        self.runs += 1
+        if self.runs <= self.failures:
+            return T.ProcessResult(4, result.stdout, result.stderr)
+        return result
+
+
+def _flaky_baseline(tmp_path: Path, failures: int) -> tuple[Path, _FlakyBaseline]:
+    repo, source = _mutants_repo(tmp_path)
+    base = _commit(repo, "base")
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("    a + b\n", "    a + b + 0\n"),
+        encoding="utf-8",
+    )
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    runner = _FlakyBaseline(
+        base, "", code=2, failures=failures,
+        files={"mutants.out/outcomes.json": _fixture("mutants-27.1.0-exit-2.json")},
+    )
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("cargo-mutants")], runner,
+    ) == 0
+    _valid(output)
+    return output, runner
+
+
+def test_mutants_failed_baseline_is_retried_once_and_a_pass_keeps_the_result(
+    tmp_path: Path,
+) -> None:
+    """Issue 260: a baseline that failed under load and passes on the retry is a normal result."""
+    output, runner = _flaky_baseline(tmp_path, failures=1)
+    assert len(_mutant_runs(runner)) == 2
+    assert len(_read(output, "findings.json")) == 5
+    assert [(item["input"], item["reason"]) for item in _degraded(output, "cargo-mutants")] == [
+        ("testing.surviving-mutant", "baseline-flaky")
+    ]
+
+
+def test_mutants_baseline_that_fails_twice_is_recorded_once_as_failed(tmp_path: Path) -> None:
+    output, runner = _flaky_baseline(tmp_path, failures=5)
+    assert len(_mutant_runs(runner)) == 2
+    assert _read(output, "findings.json") == []
+    assert [item["reason"] for item in _degraded(output, "cargo-mutants")] == ["baseline-failed"]
+
+
+def test_mutants_that_pass_first_time_run_once_with_no_flaky_note(tmp_path: Path) -> None:
+    output, runner = _flaky_baseline(tmp_path, failures=0)
+    assert len(_mutant_runs(runner)) == 1
+    assert _degraded(output, "cargo-mutants") == []
+
+
+def _mutant_argv(tmp_path: Path, config: str | None) -> list[str]:
+    repo, source = _mutants_repo(tmp_path)
+    if config is not None:
+        (repo / ".cargo").mkdir(exist_ok=True)
+        (repo / ".cargo" / "mutants.toml").write_text(config, encoding="utf-8")
+    base = _commit(repo, "base")
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("    a + b\n", "    a + b + 0\n"),
+        encoding="utf-8",
+    )
+    head = _commit(repo, "head")
+    runner = _Calls(
+        base, "", code=2,
+        files={"mutants.out/outcomes.json": _fixture("mutants-27.1.0-exit-2.json")},
+    )
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), tmp_path / "out",
+        tmp_path / "home", [_adapter("cargo-mutants")], runner,
+    ) == 0
+    runs = _mutant_runs(runner)
+    assert len(runs) == 1
+    return runs[0]
+
+
+def test_mutants_get_a_fixed_per_mutant_timeout_not_one_scaled_from_the_baseline(
+    tmp_path: Path,
+) -> None:
+    """Issue 260: --timeout is explicit, so machine load cannot change which mutants time out."""
+    argv = _mutant_argv(tmp_path, None)
+    assert argv[argv.index("--timeout") + 1] == str(A._MUTANT_TEST_TIMEOUT)
+    assert "--timeout-multiplier" not in argv and "--minimum-test-timeout" not in argv
+
+
+@pytest.mark.parametrize("config", [
+    "timeout_multiplier = 8\n",
+    "minimum_test_timeout = 90\n",
+    'exclude_globs = ["x"]\ntimeout_multiplier = 3.5\n',
+])
+def test_mutants_leave_the_timeout_to_a_repository_that_sets_its_own(
+    tmp_path: Path, config: str,
+) -> None:
+    assert "--timeout" not in _mutant_argv(tmp_path, config)
+
+
+@pytest.mark.parametrize("config", ['exclude_globs = ["x"]\n', "not = [valid toml\n", ""])
+def test_mutants_keep_the_fixed_timeout_when_the_config_does_not_set_one(
+    tmp_path: Path, config: str,
+) -> None:
+    assert "--timeout" in _mutant_argv(tmp_path, config)
+
+
 def test_mutants_unparseable_report_keeps_the_raw_output(tmp_path: Path) -> None:
     output = _mutants_exit(tmp_path, 1, "not json\n")
     degraded = _degraded(output, "cargo-mutants")

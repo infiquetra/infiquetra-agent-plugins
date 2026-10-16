@@ -2,6 +2,39 @@
 
 ## 2026-10-16
 
+### Anything a packet hashes must come out in a fixed order, and a text fallback must not treat language words as names
+
+**Evidence.** Issue #260. The saga-review-corpus pilot (on 99fb202) found 3 of 18 ripgrep versions
+giving different packets across two prepares. For the mention check, 413 findings of one version
+changed `proof.raw_output` between prepares though the findings were identical once sorted. I
+reproduced it with a six-name fixture: `changed_names` gave six different hit orders and six
+different output hashes under `PYTHONHASHSEED=1..6`, and a removed Markdown line "We skip the step
+if self is stale." produced 570 mentions of `if`, `self`, `the` and so on in a ripgrep clone. Fixed
+in `plugins/saga/scripts/review_checks.py`, `review_adapters_rust.py` and `review_tools.py`. Tests:
+`test_raw_output_is_identical_under_different_hash_seeds`, the `_text_names` keyword tests in
+`test_review_check_changed_names.py`, and the `test_mutants_*` timeout and baseline tests in
+`test_review_adapters_rust.py`.
+
+**Mechanism.** `_removed_names` built the removed names from set differences, so the dict, the
+compiled patterns and the order of hits inside one line followed each process's hash seed. The hit
+set was the same, so a test that compared sets or sorted findings could never see it; only the hash
+of the stored raw output moved. Separately, the text fallback (used for any language ctags or `ast`
+cannot read) took every word on a removed line as a name, so `if` and `self` made each remaining use
+in the repository a finding. cargo-mutants had the same shape in time rather than order: its
+per-mutant timeout is five times the measured baseline (20 second floor, seen as `Auto-set test
+timeout to 20s`), so machine load decided which mutants timed out, and a baseline that failed under
+load was recorded as `baseline-failed`. The fixed `--timeout 180` and one baseline retry remove the
+dependence on load, and a repository that sets `timeout_multiplier` or `minimum_test_timeout` in
+`.cargo/mutants.toml` keeps its own scaling. The retry also exposed that `_write_in_diff` created
+its scratch file with `O_EXCL`, so a second invoke in one scratch folder raised `FileExistsError`;
+it now unlinks first.
+
+**Generalizable rule.** Sort every set or dict-from-set that feeds stored or hashed output, and test
+it by running the code in subprocesses with different `PYTHONHASHSEED` values and comparing bytes.
+Give a tool anything that scales with the machine (timeouts, thread counts) as a fixed value, and
+let the repository's own config win. A text fallback needs a reason for every token it admits:
+filter language keywords and very short tokens before searching the repository for them.
+
 ### A check that reads the copy must read only what git tracks, because earlier tools write into it
 
 **Evidence.** Issue #252. In the saga-review-corpus pilot (on befe132), two ripgrep versions gave

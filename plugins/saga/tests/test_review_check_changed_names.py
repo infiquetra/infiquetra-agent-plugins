@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
 import socket
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -221,3 +225,117 @@ def test_a_symlink_that_leaves_the_scan_root_is_still_refused(tmp_path: Path) ->
     H.commit(repo, "link")
     assert {path.name for path in H.C._walk(repo)} == {"a.py", "caller.py"}
     assert _mentions(repo, base_sha) == {"caller.py"}
+
+
+SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
+_RAW = (
+    "import json, sys\n"
+    "from pathlib import Path\n"
+    f"sys.path.insert(0, {str(SCRIPTS)!r})\n"
+    "import review_checks\n"
+    "payload = review_checks.changed_names(Path(sys.argv[1]), sys.argv[2])\n"
+    "sys.stdout.write(json.dumps(payload))\n"
+)
+
+
+def _raw_output(repo: Path, base: str, seed: int) -> str:
+    """The check's whole output, as the stored raw output is built, in a fresh process."""
+    proc = subprocess.run(
+        [sys.executable, "-I", "-c", _RAW, str(repo), base],
+        env={**os.environ, "PYTHONHASHSEED": str(seed)},
+        capture_output=True, text=True, check=True,
+    )
+    return proc.stdout
+
+
+def test_raw_output_is_identical_under_different_hash_seeds(tmp_path: Path) -> None:
+    """Issue 260: removed names came from sets, so hit order followed each process's seed."""
+    names = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"]
+    base = {
+        "a.py": "".join(f"def {name}():\n    return 1\n" for name in names),
+        "all.py": "x = " + ", ".join(f"{name}()" for name in names) + "\n",
+        "b.txt": " ".join(names) + "\n",
+        "--flags.md": "".join(f"--{name}-flag " for name in names) + "\n",
+    }
+    head = {**base, "a.py": "def zulu():\n    return 1\n", "--flags.md": "nothing\n"}
+    repo, base_sha, _head_sha = H.make_repo(tmp_path, base, head)
+    outputs = {_raw_output(repo, base_sha, seed) for seed in (0, 1, 2, 3, 4, 5, 6, 7)}
+    assert len(outputs) == 1
+    hits = json.loads(next(iter(outputs)))["hits"]
+    assert len(hits) > len(names)
+    assert hits == sorted(hits, key=lambda hit: (hit["path"], hit["rule_id"]))
+
+
+def test_hits_are_sorted_by_path_and_name(tmp_path: Path) -> None:
+    base, head = _files(
+        "def zed():\n    pass\n\ndef abe():\n    pass\n", NEW,
+        **{"z.py": "zed(); abe()\n", "m.py": "abe(); zed()\n"},
+    )
+    repo, base_sha, _head_sha = H.make_repo(tmp_path, base, head)
+    hits = H.C.changed_names(repo, base_sha)["hits"]
+    assert [(hit["path"], hit["rule_id"]) for hit in hits] == [
+        ("m.py", "abe"), ("m.py", "zed"), ("z.py", "abe"), ("z.py", "zed"),
+    ]
+
+
+@pytest.mark.parametrize(("path", "line", "keywords"), [
+    ("a.rs", "if self.ready { fn old_thing() }", ["if", "self", "fn"]),
+    ("a.py", "if self.ready: return old_thing", ["if", "self", "return"]),
+    ("a.go", "for _, v := range old_thing { func }", ["for", "range", "func"]),
+    ("a.ts", "if (this.ready) { const old_thing }", ["if", "this", "const"]),
+    ("a.sh", "if [ -n old_thing ]; then local fi", ["if", "then", "local", "fi"]),
+    ("a.c", "if (ready) { while (old_thing) static }", ["if", "while", "static"]),
+])
+def test_the_text_fallback_never_reads_a_keyword_as_a_removed_name(
+    path: str, line: str, keywords: list[str],
+) -> None:
+    names = H.C._text_names([line], [], path)
+    assert not set(keywords) & set(names)
+    assert "old_thing" in names
+
+
+def test_the_text_fallback_keeps_a_keyword_of_another_language() -> None:
+    """``func`` is Go's, not Python's: a Python file's own tokens decide."""
+    assert "func" in H.C._text_names(["func run_it()"], [], "a.py")
+    assert "func" not in H.C._text_names(["func run_it()"], [], "a.go")
+
+
+@pytest.mark.parametrize("path", ["a.go", "a.c", "a.rs", "a.py", "a.ts", "a.sh", "notes.md"])
+def test_the_text_fallback_drops_self_and_nothing_words_in_every_language(path: str) -> None:
+    """Issue 260: ``self`` is noise in a Go or C file as much as in Python."""
+    names = H.C._text_names(["self this cls nil null true None legacy_flag"], [], path)
+    assert names == ["legacy_flag"]
+
+
+def test_the_text_fallback_drops_every_languages_keywords_for_an_unlisted_suffix() -> None:
+    names = H.C._text_names(["if self is pub in fn while legacy_flag"], [], "notes.md")
+    assert names == ["legacy_flag"]
+
+
+def test_the_text_fallback_drops_short_tokens_and_returns_sorted_names() -> None:
+    names = H.C._text_names(["id io ab abc zebra apple q"], [], "a.go")
+    assert names == ["abc", "apple", "zebra"]
+    assert H.C._text_names(["old_thing"], ["old_thing"], "a.go") == []
+
+
+def test_keywords_in_a_changed_go_file_are_not_mentions(tmp_path: Path) -> None:
+    """End to end: Go has no ctags path, so a removed line's words used to be names."""
+    base = {
+        "a.go": "func run() {\n\tif legacy_flag() { return }\n}\n",
+        "other.go": "func other() {\n\tif ok { return }\n}\nlegacy_flag()\n",
+    }
+    head = {**base, "a.go": "func run() {\n\t// gone\n}\n"}
+    repo, base_sha, _head_sha = H.make_repo(tmp_path, base, head)
+    hits = H.C.changed_names(repo, base_sha)["hits"]
+    assert [(hit["path"], hit["rule_id"]) for hit in hits] == [("other.go", "legacy_flag")]
+
+
+def test_a_python_file_that_does_not_parse_also_drops_keywords(tmp_path: Path) -> None:
+    base = {
+        "a.py": "def run(self):\n    if self.x:\n        legacy_flag()\n",
+        "caller.py": "if self.x:\n    legacy_flag()\n",
+    }
+    head = {**base, "a.py": "def run(\n"}
+    repo, base_sha, _head_sha = H.make_repo(tmp_path, base, head)
+    hits = H.C.changed_names(repo, base_sha)["hits"]
+    assert {(hit["path"], hit["rule_id"]) for hit in hits} == {("caller.py", "legacy_flag")}

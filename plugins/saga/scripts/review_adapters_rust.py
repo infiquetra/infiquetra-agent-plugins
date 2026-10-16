@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess  # nosec B404
+import tomllib
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -62,6 +63,19 @@ _MUTANTS_PARSED_EXITS = (2, 3)
 _MUTANT_TIMEOUT = "mutant-timeout"
 #: Exit 4: the unmutated tree failed its own tests, so no mutant was tested.
 _MUTANTS_EXIT_REASONS = ((4, "baseline-failed"),)
+#: A failed baseline gets one more run before it is recorded (issue 260): on ripgrep it failed
+#: in one prepare and passed in the next, from machine load rather than the change.
+_MUTANTS_RETRY_FAILURES = ("baseline-failed",)
+#: Seconds each mutant's tests may run (issue 260). Left to itself cargo-mutants sets this to
+#: five times the baseline's test time, with a 20 second floor, so the same mutant could pass
+#: one prepare and time out in the next as the machine's load changed. This sits well above the
+#: floor and above five times a typical suite, so a slow machine does not cut off a good mutant,
+#: and three stuck mutants (540 seconds) still end inside the adapter's 600 second budget.
+_MUTANT_TEST_TIMEOUT = 180
+#: Settings in .cargo/mutants.toml that mean the repository chose its own timeout scaling. A
+#: command line ``--timeout`` would override them, so it is left off when one is set.
+_MUTANTS_OWN_TIMEOUT_KEYS = ("timeout_multiplier", "minimum_test_timeout")
+_MUTANTS_CONFIG = ".cargo/mutants.toml"
 #: nextest's own configuration. Its presence is the repository asking for nextest.
 _NEXTEST_CONFIG = ".config/nextest.toml"
 #: Timing values in outcomes.json; they differ on every run.
@@ -434,6 +448,8 @@ def _invoke_cargo_mutants(context: ScanContext) -> list[str]:
     argv = [
         "cargo-mutants", "mutants", "-C", "--locked", "--workspace", "--in-diff", str(diff),
     ]
+    if not _repository_sets_mutant_timeout(context.root):
+        argv.extend(["--timeout", str(_MUTANT_TEST_TIMEOUT)])
     # nextest runs each test in its own process, which breaks suites whose tests
     # share temporary paths (issue 253 saw ripgrep's baseline fail). Use it only when
     # the repository configures it (issue 253); a ``test_tool`` in
@@ -442,6 +458,18 @@ def _invoke_cargo_mutants(context: ScanContext) -> list[str]:
     if nextest.is_file() and not nextest.is_symlink() and shutil.which("cargo-nextest"):
         argv.extend(["--test-tool", "nextest"])
     return argv
+
+
+def _repository_sets_mutant_timeout(root: Path) -> bool:
+    """True when .cargo/mutants.toml sets the timeout scaling itself (issue 260)."""
+    config = root / _MUTANTS_CONFIG
+    if not config.is_file() or config.is_symlink():
+        return False
+    try:
+        settings = tomllib.loads(config.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+        return False
+    return any(key in settings for key in _MUTANTS_OWN_TIMEOUT_KEYS)
 
 
 def _write_in_diff(context: ScanContext) -> Path:
@@ -462,6 +490,9 @@ def _write_in_diff(context: ScanContext) -> Path:
     if result.returncode != 0:
         raise ToolGap("diff-unavailable", _MUTANT_ROW)
     target = context.scratch / _IN_DIFF
+    # A retried run (issue 260) invokes this again in the same scratch folder. Unlinking first
+    # keeps O_EXCL | O_NOFOLLOW meaningful: the file is always created fresh by this call.
+    target.unlink(missing_ok=True)
     descriptor = os.open(
         target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600
     )
@@ -698,6 +729,7 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
             report_optional=bool(row.get("report_optional")),
             parsed_exits=_MUTANTS_PARSED_EXITS if tool_id == "cargo-mutants" else (),
             exit_reasons=_MUTANTS_EXIT_REASONS if tool_id == "cargo-mutants" else (),
+            retry_failures=_MUTANTS_RETRY_FAILURES if tool_id == "cargo-mutants" else (),
         ))
     return built
 

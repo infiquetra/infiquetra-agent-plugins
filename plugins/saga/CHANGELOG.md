@@ -38,6 +38,18 @@
 
 ### Fixed
 
+- Issue #260: preparing one change twice gives one packet for the mention check and for
+  cargo-mutants. The mention check built its removed names from sets, so the order of hits (and
+  the hash of `proof.raw_output`) followed each process's `PYTHONHASHSEED`; every set-derived
+  order is now sorted and hits are sorted by path and name. The text fallback no longer reads a
+  language keyword (Rust, Python, Go, TypeScript, shell, C-like, or every list's union for a suffix
+  with none) or a token shorter than three characters as a removed name. cargo-mutants gets
+  `--timeout 180` instead of a timeout scaled from the baseline (skipped when
+  `.cargo/mutants.toml` sets `timeout_multiplier` or `minimum_test_timeout`), and a failed
+  baseline is run once more (`Adapter.retry_failures`): a pass on the retry keeps its result and
+  records `baseline-flaky`, a second failure records `baseline-failed` as before. The retry also
+  fixed `--in-diff` file creation failing on a second invoke in one scratch folder. No version
+  bump; that belongs to #147's saga release step.
 - Issue #253: four review-tool faults no longer degrade every Rust review. cargo-mutants exits 2
   and 3 are parsed like exit 0 (`Adapter.parsed_exits`), and exit 4, a failing unmutated baseline,
   is its own reason, `baseline-failed` (`Adapter.exit_reasons`). A timed-out mutant records
