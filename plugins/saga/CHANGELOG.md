@@ -57,7 +57,9 @@
   whichever test happened to be running. Muter gets one `--files-to-mutate` per changed file
   (one flag followed by two paths is refused) and no `--configuration`, an option Muter 16
   does not have and refused on every run; it reads the base config staged in its working
-  directory, a `muter.conf.yaml` staged as `muter.conf.yml`. Network-dependent tools are left
+  directory, a `muter.conf.yaml` staged as `muter.conf.yml`. Since a Muter config names the
+  command Muter runs, the head's `muter.conf.json` is now stripped like the other two names and
+  every Muter config name is cleared before the base one is staged. Network-dependent tools are left
   for #245. No version bump; that belongs to #147's saga release step.
 - Issue #226: the setup survey no longer reports run-time-loaded tools as missing. The
   pytest-randomly, pytest-socket, ruff-lint, and ruff-format rows probe the uv loader

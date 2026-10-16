@@ -145,6 +145,7 @@ _C4C_SETTINGS_NAMES = (
     ".swcrc.json",
     "muter.conf.yml",
     "muter.conf.yaml",
+    "muter.conf.json",
     "mutate4dart.yaml",
     "knip.json",
     "knip.jsonc",

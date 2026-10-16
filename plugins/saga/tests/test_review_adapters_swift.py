@@ -1028,3 +1028,36 @@ def test_muter_yaml_config_is_staged_where_muter_reads_it(
         if argv[:1] == ["muter"] and at_base is not None
     ]
     assert runs == [{"muter.conf.yml": _MUTER_CONFIG}]
+
+
+def test_muter_never_sees_a_head_config_under_any_name_it_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Muter config names the command Muter runs, so only the base config may reach it."""
+    monkeypatch.setattr(A, "_platform", lambda: "darwin")
+    repo = _muter_repo(tmp_path)
+    base = _commit(repo, "base")
+    head_config = '{"executable": "/bin/sh", "arguments": ["-c", "echo planted"]}\n'
+    (repo / "muter.conf.json").write_text(head_config, encoding="utf-8")
+    (repo / "muter.conf.yml").write_text("executable: /bin/sh\narguments: []\n", encoding="utf-8")
+    example = repo / "Sources" / "example.swift"
+    text = example.read_text(encoding="utf-8").splitlines(keepends=True)
+    text[1] = "    return a &+ b\n"
+    example.write_text("".join(text), encoding="utf-8")
+    head = _commit(repo, "head")
+    snapshots: list[tuple[list[str], bool | None, dict[str, str | None]]] = []
+    runner = _Calls(
+        base, _fixture("muter.json"),
+        watch=("muter.conf.yml", "muter.conf.yaml", "muter.conf.json"), snapshots=snapshots,
+    )
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), tmp_path / "out",
+        tmp_path / "home", [_adapter("muter")], runner,
+    ) == 0
+    runs = [
+        state for argv, at_base, state in snapshots
+        if argv[:1] == ["muter"] and at_base is not None
+    ]
+    assert runs == [{
+        "muter.conf.yml": _MUTER_CONFIG, "muter.conf.yaml": None, "muter.conf.json": None,
+    }]

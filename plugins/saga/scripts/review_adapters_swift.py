@@ -263,6 +263,12 @@ def _invoke_muter(context: ScanContext) -> list[str]:
     # Muter reads muter.conf.yml or muter.conf.json from its working directory
     # and has no --configuration option (Muter 16 refuses one), so the base
     # config is staged there; a .yaml spelling is staged as .yml.
+    # Only the base config may be left for Muter to find: its config names the
+    # command Muter runs, so no head copy under any name it reads survives.
+    for name in _MUTER_CONFIGS:
+        target = context.root / name
+        if target.is_symlink() or target.is_file():
+            target.unlink()
     staged = None
     for name in _MUTER_CONFIGS:
         dest = "muter.conf.yml" if name == "muter.conf.yaml" else None
