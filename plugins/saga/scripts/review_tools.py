@@ -208,8 +208,17 @@ SKIP_DIRS = frozenset(
     {".git", "node_modules", ".venv", "venv", "dist", "build", "__pycache__", ".saga"}
 )
 _SHEBANG = re.compile(r"^#!.*\b(?:sh|bash|zsh)\b")
-#: Any ``AWS::`` text counts: the check errs toward running the CloudFormation tools.
-_CLOUDFORMATION = re.compile(rb"AWSTemplateFormatVersion|AWS::")
+#: Any ``AWS::`` text or a top-level ``Resources`` key counts: the check errs toward
+#: running the CloudFormation tools.
+_CLOUDFORMATION = re.compile(
+    rb"AWSTemplateFormatVersion|AWS::|^Resources\s*:|\"Resources\"\s*:", re.MULTILINE
+)
+#: Dependency manifests that keep a language's tools running with no source file
+#: (a lockfile audit still applies). Python's join the commit markers above.
+_PYTHON_GATE_MARKERS = frozenset({
+    "pyproject.toml", "setup.py", "setup.cfg", "Pipfile", "Pipfile.lock", "poetry.lock",
+    "uv.lock", "requirements.txt",
+})
 #: The suffixes the checkov and cfn-lint wrappers copy for scanning.
 _CLOUDFORMATION_SUFFIXES = frozenset({".yaml", ".yml", ".json", ".template"})
 
@@ -1101,14 +1110,32 @@ def run_languages(root: Path) -> frozenset[str]:
     return frozenset(found)
 
 
-def _language_absent(adapter: Adapter, languages: frozenset[str] | None) -> bool:
+def _language_absent(
+    adapter: Adapter,
+    languages: frozenset[str] | None,
+    markers: frozenset[str] | None = None,
+) -> bool:
     """True when none of the adapter's languages is in the reviewed tree.
 
-    A ``*`` adapter scans whatever the tree holds; ``None`` means the tree was not read.
+    A language is present when setup's detection finds it or the head tree commits one
+    of its marker files, so a dependency audit still runs on a lockfile alone. A ``*``
+    adapter scans whatever the tree holds; ``None`` means the tree was not read.
     """
     if languages is None or "*" in adapter.languages:
         return False
-    return not languages & set(adapter.languages)
+    if languages & set(adapter.languages):
+        return False
+    if markers is None:
+        return True
+    for language in adapter.languages:
+        if _marker_hit(language, markers):
+            return False
+        if language == "python" and any(
+            name in _PYTHON_GATE_MARKERS or name.startswith("requirements")
+            for name in markers
+        ):
+            return False
+    return True
 
 
 def _marker_hit(language: str, basenames: frozenset[str]) -> bool:
@@ -1263,7 +1290,7 @@ def _run_adapter(
         degraded.append(
             _degraded(adapter, _primary_row(adapter), "language-markers-removed")
         )
-    if _language_absent(adapter, head_languages):
+    if _language_absent(adapter, head_languages, head_markers):
         # Setup never pins a tool for a language the repository lacks, so running
         # it would only record a degraded row that no lens can use (issue 253).
         return []
