@@ -1,0 +1,63 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.8, pytest-9.0.3, pluggy-1.6.0
+rootdir: /work/py
+plugins: cov-7.1.0, anyio-4.13.0
+collected 6 items
+
+test_demo.py FF.FFF                                                      [100%]
+
+=================================== FAILURES ===================================
+___________________________________ test_add ___________________________________
+
+    def test_add():
+>       assert add(2,3) == 5
+E       assert -1 == 5
+E        +  where -1 = add(2, 3)
+
+test_demo.py:4: AssertionError
+__________________________________ test_other __________________________________
+
+    def test_other():
+>       raise ValueError("other broke")
+E       ValueError: other broke
+
+test_demo.py:6: ValueError
+______________________________ TestK.test_method _______________________________
+
+self = <test_demo.TestK object at 0x1074e5e50>
+
+    def test_method(self):
+>       assert add(1,1) == 2
+E       assert 0 == 2
+E        +  where 0 = add(1, 1)
+
+test_demo.py:11: AssertionError
+________________________________ test_param[1] _________________________________
+
+x = 1
+
+    @pytest.mark.parametrize("x", [1,2])
+    def test_param(x):
+>       assert add(x,x) == 2*x+1
+E       assert 0 == ((2 * 1) + 1)
+E        +  where 0 = add(1, 1)
+
+test_demo.py:14: AssertionError
+________________________________ test_param[2] _________________________________
+
+x = 2
+
+    @pytest.mark.parametrize("x", [1,2])
+    def test_param(x):
+>       assert add(x,x) == 2*x+1
+E       assert 0 == ((2 * 2) + 1)
+E        +  where 0 = add(2, 2)
+
+test_demo.py:14: AssertionError
+=========================== short test summary info ============================
+FAILED test_demo.py::test_add - assert -1 == 5
+FAILED test_demo.py::test_other - ValueError: other broke
+FAILED test_demo.py::TestK::test_method - assert 0 == 2
+FAILED test_demo.py::test_param[1] - assert 0 == ((2 * 1) + 1)
+FAILED test_demo.py::test_param[2] - assert 0 == ((2 * 2) + 1)
+========================= 5 failed, 1 passed in 0.03s ==========================

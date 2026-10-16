@@ -1,0 +1,36 @@
+FAIL ./add.test.js
+  ● math › adds
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 5
+    Received: -1
+
+      1 | const add = (a,b)=>a-b;
+      2 | describe("math", () => {
+    > 3 |   it("adds", () => { expect(add(2,3)).toBe(5); });
+        |                                       ^
+      4 |   it("ok", () => { expect(add(0,0)).toBe(0); });
+      5 |   it("other", () => { throw new Error("other broke"); });
+      6 | });
+
+      at Object.toBe (add.test.js:3:39)
+
+  ● math › other
+
+    other broke
+
+      3 |   it("adds", () => { expect(add(2,3)).toBe(5); });
+      4 |   it("ok", () => { expect(add(0,0)).toBe(0); });
+    > 5 |   it("other", () => { throw new Error("other broke"); });
+        |                             ^
+      6 | });
+      7 |
+
+      at Object.<anonymous> (add.test.js:5:29)
+
+Test Suites: 1 failed, 1 total
+Tests:       2 failed, 1 passed, 3 total
+Snapshots:   0 total
+Time:        0.118 s, estimated 1 s
+Ran all test suites.

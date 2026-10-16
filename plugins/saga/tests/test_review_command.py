@@ -1141,6 +1141,43 @@ def test_reproduced_rerun_real_helper_denies_home_network_and_credentials(
         assert f"{name}=absent" in text
 
 
+def _cargo_reproduction(statement: str, recorded: str, cited: str) -> dict[str, Any]:
+    found = _finding(statement, key="cargo-" + cited.rsplit("::", 1)[-1])
+    found["language"] = "rust"
+    found["proof"] = {
+        "test": f"tests/repro_test.rs::{cited}",
+        "command": "cargo test --offline --test repro_test",
+        "output": recorded,
+    }
+    return found
+
+
+def test_reproduced_rerun_matches_a_rust_test_in_cargos_own_output(tmp_path: Path) -> None:
+    """Issue 264: cargo never prints ``path.rs::name``, and its panic line carries a thread id."""
+    fixtures = Path(__file__).resolve().parent / "fixtures" / "reproduction_output"
+    recorded = (fixtures / "cargo_two_failures.txt").read_text(encoding="utf-8")
+    rerun = (fixtures / "cargo_one_failure.txt").read_text(encoding="utf-8")
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    home = tmp_path / "home"
+    scratch = tmp_path / "scratch"
+    (scratch / "tests").mkdir(parents=True)
+    (scratch / "tests" / "repro_test.rs").write_text("// reproduction\n", encoding="utf-8")
+    changes = {"added": ["tests/repro_test.rs"], "modified": [], "deleted": []}
+    confirmed = _cargo_reproduction("add subtracts.", recorded, "adds_two_numbers")
+    unrelated = _cargo_reproduction("A different test failed.", recorded, "other_failure")
+    unrelated["location"] = {**_location(), "anchor": "other", "function": "other"}
+    confine = _Confine(101, rerun)
+    code, err = _finish(
+        packet, [(_answer([confirmed, unrelated]), _result(scratch, changes))],
+        home, runner, ask=_ask(consequence_status="error"), confine=confine,
+    )
+    assert code == 0, err
+    run = _read(packet / "review-run.json")
+    stored = {item["statement"]: item for item in run["findings"] if item["source"]["kind"] == "llm"}
+    assert stored["add subtracts."]["evidence"] == "reproduced"
+    assert stored["A different test failed."]["evidence"] == "traced"
+
+
 def test_reproduced_rerun_generic_header_is_traced(tmp_path: Path) -> None:
     _repo_path, packet, runner = _repro_packet(tmp_path)
     home = tmp_path / "home"
