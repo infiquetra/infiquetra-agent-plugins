@@ -782,3 +782,65 @@ def test_ruff_format_live_writes_no_record(tmp_path: Path) -> None:
     )
     assert code == 0
     assert _read(output, "findings.json") == []
+
+
+def _lychee_report(root: Path, broken: list[tuple[str, str]], nanos: int) -> str:
+    """lychee 0.24's report shape: error_map, absolute file URLs, a duration everywhere."""
+    error_map: dict[str, list[dict[str, Any]]] = {}
+    for source, target in broken:
+        error_map.setdefault(source, []).append({
+            "url": f"file://{root}/{target}",
+            "status": {"text": "File not found", "details": "File not found"},
+            "span": {"line": 3, "column": 1},
+            "duration": {"secs": 0, "nanos": nanos},
+        })
+    return json.dumps({
+        "total": len(broken), "errors": len(broken), "error_map": error_map,
+        "duration": {"secs": 0, "nanos": nanos * 3}, "detailed_stats": False,
+    })
+
+
+def test_lychee_runs_offline(tmp_path: Path) -> None:
+    """Issue 244: a remote server must not decide the recorded result."""
+    repo, base, head = _repo(tmp_path, {"a.md": "# a\n"}, {"a.md": "# a changed\n"})
+    runner = _Calls(base, json.dumps({"total": 0, "error_map": {}}))
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), tmp_path / "out",
+        tmp_path / "home", [_adapter("lychee")], runner,
+    ) == 0
+    scans = [call for call in runner.calls if call[0] == "lychee" and "--version" not in call]
+    assert scans and all("--offline" in call for call in scans)
+
+
+def test_lychee_local_broken_links_are_stable_across_runs_and_trees(tmp_path: Path) -> None:
+    """error_map is read; scratch roots and durations leave no trace in the packet."""
+    repo, base, head = _repo(
+        tmp_path,
+        {"a.md": "# a\n\n[old](gone.md)\n"},
+        {"a.md": "# a\n\n[old](gone.md)\n[new](missing.md)\n"},
+    )
+    outputs = []
+    for nanos in (1047417, 2981):
+        def choose(argv: list[str], cwd: Path, nanos: int = nanos) -> Any:
+            if argv[0] != "lychee":
+                return None
+            at_base = _git(cwd, "rev-parse", "HEAD") == base
+            broken = [("a.md", "gone.md")] + ([] if at_base else [("a.md", "missing.md")])
+            return T.ProcessResult(2, _lychee_report(cwd, broken, nanos))
+
+        output = tmp_path / f"out-{nanos}"
+        assert _run(
+            repo, base, head, _profile(tmp_path / f"profile-{nanos}.json"), output,
+            tmp_path / f"home-{nanos}", [_adapter("lychee")], _Calls(base, "", choose=choose),
+        ) == 0
+        outputs.append(output)
+    for name in ("findings.json", "degraded.json", "outcomes.json"):
+        assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes(), name
+    assert _refs(outputs[0]) == {"file://missing.md"}
+    assert _read(outputs[0], "degraded.json") == []
+
+
+def test_lychee_stored_report_drops_durations() -> None:
+    one = M._stable_lychee(_lychee_report(Path("/r"), [("a.md", "x.md")], 5))
+    two = M._stable_lychee(_lychee_report(Path("/r"), [("a.md", "x.md")], 9))
+    assert one == two and "duration" not in one

@@ -338,9 +338,25 @@ if __name__ == "__main__":
 '''
 
 
+_STUB_FILTER_BODY = '''\
+import os
+import sys
+
+record = os.environ.get("STUB_RECORD")
+if record:
+    with open(record, "a", encoding="utf-8") as handle:
+        handle.write("filter " + " ".join(sys.argv[2:]).split(" ")[0] + "\\n")
+raise SystemExit(int(os.environ.get("STUB_FILTER_EXIT", "0")))
+'''
+
+
 def _write_cosmic_stub(path: Path) -> Path:
     path.write_text(f"#!{sys.executable}\n" + _STUB_COSMIC_BODY, encoding="utf-8")
     path.chmod(0o755)
+    # cr-filter-git ships with cosmic-ray; the wrapper runs it between init and exec.
+    scoped = path.parent / "cr-filter-git"
+    scoped.write_text(f"#!{sys.executable}\n" + _STUB_FILTER_BODY, encoding="utf-8")
+    scoped.chmod(0o755)
     return path
 
 
@@ -1438,7 +1454,6 @@ def test_cosmic_ray_array_dump_without_a_position_is_unfinished(tmp_path: Path) 
         pytest.param("exception", None, None, id="worker-exception"),
         pytest.param("abnormal", None, None, id="worker-abnormal"),
         pytest.param("no-test", None, None, id="worker-no-test"),
-        pytest.param("skipped", None, None, id="worker-skipped"),
         pytest.param("normal", "incompetent", None, id="test-incompetent"),
         pytest.param(None, None, "null-result", id="pending-null"),
         pytest.param("normal", None, None, id="null-test-outcome"),
@@ -1540,7 +1555,9 @@ def test_cosmic_ray_passing_baseline_runs_the_stages_in_order(tmp_path: Path) ->
     out = _run_wrapper(config, tmp_path, env)
     assert out["unfinished"] is False
     assert out["survivors"] == []
-    assert record.read_text(encoding="utf-8").splitlines() == ["init", "exec", "dump"]
+    assert record.read_text(encoding="utf-8").splitlines() == [
+        "init", "filter --config", "exec", "dump",
+    ]
 
 
 def test_cosmic_ray_dump_failure_marks_the_run_unfinished(tmp_path: Path) -> None:
@@ -1662,3 +1679,66 @@ def test_pytest_socket_resolves_bare_python(tmp_path: Path) -> None:
     assert code == 0
     scan = next(argv for argv in runner.calls if "--with" in argv)
     assert scan[scan.index("--with") + 2] == sys.executable
+
+
+def test_cosmic_ray_skips_mutants_off_the_change(tmp_path: Path) -> None:
+    """Issue 244: cr-filter-git marks off-change mutants skipped; they are neither run nor unfinished."""
+    stub_dir = tmp_path / "stub"
+    stub_dir.mkdir()
+    _write_cosmic_stub(stub_dir / "cosmic-ray")
+    dump = tmp_path / "dump.txt"
+    rows = [
+        [
+            {"job_id": "off", "mutations": [{"module_path": "app.py", "start_pos": [9, 0]}]},
+            {"worker_outcome": "skipped", "output": "Filtered git", "test_outcome": None},
+        ],
+        [
+            {"job_id": "on", "mutations": [{"module_path": "app.py", "start_pos": [2, 16]}]},
+            {"worker_outcome": "normal", "output": "", "test_outcome": "survived", "diff": ""},
+        ],
+    ]
+    dump.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    env = _wrapper_env(stub_dir, (), STUB_DUMP=str(dump))
+    config = _wrapper_config(tmp_path / "cosmic-ray.toml", f"{sys.executable} -c pass")
+    out = _run_wrapper(config, tmp_path, env)
+    assert out == {"unfinished": False, "survivors": [{"path": "app.py", "line": 2}]}
+
+
+def test_cosmic_ray_failed_filter_marks_the_run_unfinished(tmp_path: Path) -> None:
+    stub_dir = tmp_path / "stub"
+    stub_dir.mkdir()
+    _write_cosmic_stub(stub_dir / "cosmic-ray")
+    record = tmp_path / "record.txt"
+    env = _wrapper_env(
+        stub_dir, (), STUB_DUMP=str(_COSMIC_FIXTURE), STUB_FILTER_EXIT="1",
+        STUB_RECORD=str(record),
+    )
+    config = _wrapper_config(tmp_path / "cosmic-ray.toml", f"{sys.executable} -c pass")
+    out = _run_wrapper(config, tmp_path, env)
+    assert out["unfinished"] is True
+    assert "exec" not in record.read_text(encoding="utf-8").splitlines()
+
+
+def test_pytest_randomly_seed_is_fixed_by_the_change(tmp_path: Path) -> None:
+    """Issue 244: two runs of one change test one order."""
+    repo, base, head = _repo(tmp_path, {"app.py": "x = 1\n"}, {"app.py": "x = 2\n"})
+    seeds = []
+    for attempt in (1, 2):
+        runner = _Calls(base, "1 passed\n")
+        _run(
+            repo, base, head,
+            _profile(tmp_path / f"profile-{attempt}.json", "python -m pytest -q"),
+            tmp_path / f"out-{attempt}", tmp_path / "home", [_adapter("pytest-randomly")], runner,
+        )
+        scan = next(call for call in runner.calls if "pytest-randomly==5.0.0" in call)
+        seeds.append([item for item in scan if item.startswith("--randomly-seed=")])
+    assert seeds[0] == seeds[1] and len(seeds[0]) == 1
+
+
+def test_bandit_stored_report_drops_its_timestamp() -> None:
+    """Issue 244: bandit stamps generated_at, so its hash changed on every run."""
+    one = json.dumps({"generated_at": "2026-10-16T03:30:11Z", "results": [], "errors": []})
+    two = json.dumps({"generated_at": "2026-10-16T03:31:57Z", "results": [], "errors": []})
+    adapter = _adapter("bandit")
+    assert T._stable_raw(adapter, one) == T._stable_raw(adapter, two)
+    assert "generated_at" not in T._stable_raw(adapter, one)

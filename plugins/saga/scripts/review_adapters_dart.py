@@ -235,7 +235,11 @@ def _invoke_mutate4dart(context: ScanContext) -> list[str]:
     if not _files_with(context.root, _DART_SUFFIXES):
         return []
     _needs_resolution(context, "testing.surviving-mutant")
-    return ["mutate4dart", "--format", "json", "--no-coverage"]
+    argv = ["mutate4dart", "--format", "json", "--no-coverage"]
+    if context.base:
+        # Only lines changed since the base commit are mutated (issue 244).
+        argv.extend(["--diff-base", context.base])
+    return argv
 
 
 def _parse_mutate4dart(text: str) -> ParseResult:
@@ -285,7 +289,8 @@ def _invoke_dart_shuffle(context: ScanContext) -> list[str]:
         return []
     _needs_resolution(context, "testing.flaky-order-or-network")
     return [
-        "dart", "test", "--test-randomize-ordering-seed=random",
+        "dart", "test",
+        f"--test-randomize-ordering-seed={review_tools.change_seed(context)}",
         "--reporter", "expanded",
     ]
 

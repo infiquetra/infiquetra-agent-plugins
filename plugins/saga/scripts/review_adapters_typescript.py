@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import random
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -543,6 +542,27 @@ _STRYKER_MUTATE = ("**/*.+(ts|js|mts|cts|tsx|jsx)",)
 _STRYKER_IGNORE = (
     "**/*.spec.*", "**/*.test.*", "**/__tests__/**", "**/test/**", "**/tests/**",
 )
+_STRYKER_SUFFIXES = (".ts", ".js", ".mts", ".cts", ".tsx", ".jsx")
+_TEST_DIRS = frozenset({"__tests__", "test", "tests"})
+
+
+def _stryker_targets(context: ScanContext) -> list[str] | None:
+    """``file:start-end`` for each changed source range, or None without a change.
+
+    StrykerJS mutates only these ranges, so the run spends its budget on the
+    change instead of every source file (issue 244). Test files are skipped, as
+    the ignore globs above skip them in a whole-project run.
+    """
+    if context.change is None:
+        return None
+    targets: list[str] = []
+    for path, lines in review_tools.changed_lines(context, _STRYKER_SUFFIXES):
+        parts = Path(path).parts
+        name = parts[-1]
+        if ".spec." in name or ".test." in name or _TEST_DIRS & set(parts[:-1]):
+            continue
+        targets.extend(f"{path}:{start}-{end}" for start, end in review_tools.line_ranges(lines))
+    return targets
 
 
 def _invoke_stryker(context: ScanContext) -> list[str]:
@@ -555,11 +575,16 @@ def _invoke_stryker(context: ScanContext) -> list[str]:
     argv = ["stryker", "run", "--testRunner", runner, "--reporters", "json"]
     staged = _stage_first_base(context, _STRYKER_CONFIGS)
     _refuse_relative_imports(staged, "testing.surviving-mutant")
+    targets = _stryker_targets(context)
+    if targets is not None and not targets:
+        raise ToolGap("nothing-to-mutate", "testing.surviving-mutant")
+    # StrykerJS 10 reads each of these flags as one comma-separated list, and a
+    # repeated flag replaces the earlier one, so every value goes in one flag.
+    mutate = targets or (list(_STRYKER_MUTATE) if staged is None else [])
+    if mutate:
+        argv.extend(["--mutate", ",".join(mutate)])
     if staged is None:
-        for pattern in _STRYKER_MUTATE:
-            argv.extend(["--mutate", pattern])
-        for pattern in _STRYKER_IGNORE:
-            argv.extend(["--ignorePatterns", pattern])
+        argv.extend(["--ignorePatterns", ",".join(_STRYKER_IGNORE)])
     return argv
 
 
@@ -608,8 +633,9 @@ def _parse_stryker(text: str) -> ParseResult:
     return ParseResult(tuple(hits))
 
 
-def _shuffle_seed() -> int:
-    return random.randint(1, 2**31 - 1)
+def _shuffle_seed(context: ScanContext) -> int:
+    """Fixed by the change, so two runs of one change shuffle alike (issue 244)."""
+    return review_tools.change_seed(context)
 
 
 def _invoke_vitest_shuffle(context: ScanContext) -> list[str]:
@@ -622,7 +648,7 @@ def _invoke_vitest_shuffle(context: ScanContext) -> list[str]:
     _refuse_relative_imports(staged, "testing.flaky-order-or-network")
     return [
         "vitest", "run", "--sequence.shuffle",
-        "--sequence.seed", str(_shuffle_seed()),
+        "--sequence.seed", str(_shuffle_seed(context)),
     ]
 
 
@@ -671,7 +697,7 @@ def _invoke_jest_shuffle(context: ScanContext) -> list[str]:
     _stage_first_base(context, (".swcrc", ".swcrc.json"))
     staged = _stage_first_base(context, _JEST_CONFIGS)
     _refuse_relative_imports(staged, "testing.flaky-order-or-network")
-    argv = ["jest", "--randomize", "--seed", str(_shuffle_seed()), "--showSeed"]
+    argv = ["jest", "--randomize", "--seed", str(_shuffle_seed(context)), "--showSeed"]
     if staged is None:
         package = _base_json(context, "package.json")
         key = package.get("jest")

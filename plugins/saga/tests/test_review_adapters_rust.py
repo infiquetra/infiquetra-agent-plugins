@@ -895,6 +895,47 @@ def test_inline_allow_is_noted_not_applied(tmp_path: Path) -> None:
     assert ("clippy", "rust-allow") in notes
 
 
+
+def _rooted_clippy(*, reverse: bool) -> str:
+    """The clippy fixture as a real run prints it: scan-root paths, one span absolute."""
+    text = _fixture("clippy.jsonl").replace("/private/tmp/rust-probe", "@ROOT@")
+    text = text.replace('"file_name": "src/main.rs"', '"file_name": "@ROOT@/src/main.rs"', 1)
+    lines = text.splitlines(keepends=True)
+    return "".join(reversed(lines) if reverse else lines)
+
+
+def test_clippy_runs_differing_in_scratch_folder_and_order_record_identical_bytes(
+    tmp_path: Path,
+) -> None:
+    """Issue 244: same findings, other scratch folder and build order, same packet bytes."""
+    repo, source = _clippy_repo(tmp_path)
+    base = _commit(repo, "base")
+    text = source.read_text(encoding="utf-8").splitlines(keepends=True)
+    text[1] = "    return a + b + 0;\n"
+    text[5] = "    let unused_var = 2;\n"
+    text[6] = "    let _zero = 0.0 / 0.0 + 0.0;\n"
+    source.write_text("".join(text), encoding="utf-8")
+    head = _commit(repo, "head")
+    outputs = []
+    for reverse in (False, True):
+        output = tmp_path / f"out-{reverse}"
+        assert _run(
+            repo, base, head, _profile(tmp_path / "profile.json"), output,
+            tmp_path / "home", [_adapter("clippy")],
+            _Calls(base, _rooted_clippy(reverse=reverse), code=101),
+        ) == 0
+        outputs.append(output)
+    for name in ("findings.json", "degraded.json", "outcomes.json"):
+        assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes(), name
+    files = {finding["location"]["file"] for finding in _read(outputs[0], "findings.json")}
+    assert files == {"src/main.rs"}
+    assert "@ROOT@" not in (outputs[0] / "findings.json").read_text(encoding="utf-8")
+
+
+def test_cargo_stream_is_stored_sorted() -> None:
+    assert A._stable_cargo_stream('{"b":1}\n\n{"a":1}\n') == '{"a":1}\n{"b":1}\n'
+
+
 def _mutants_repo(tmp_path: Path) -> tuple[Path, Path]:
     repo = tmp_path / "repo"
     _init(repo)
@@ -965,9 +1006,12 @@ def test_mutants_past_deadline_records_cap(
 
 
 def test_mutants_killed_run_records_timeout(tmp_path: Path) -> None:
-    repo, _source = _mutants_repo(tmp_path)
+    repo, source = _mutants_repo(tmp_path)
     base = _commit(repo, "base")
-    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("    a + b\n", "    a + b + 0\n"),
+        encoding="utf-8",
+    )
     head = _commit(repo, "head")
     output = tmp_path / "out"
     runner = _Calls(base, "", timeout_tools=("cargo-mutants",))
@@ -982,9 +1026,12 @@ def test_mutants_killed_run_records_timeout(tmp_path: Path) -> None:
 
 
 def test_mutants_reads_the_report_file_not_stdout(tmp_path: Path) -> None:
-    repo, _source = _mutants_repo(tmp_path)
+    repo, source = _mutants_repo(tmp_path)
     base = _commit(repo, "base")
-    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("    a + b\n", "    a + b + 0\n"),
+        encoding="utf-8",
+    )
     head = _commit(repo, "head")
     output = tmp_path / "out"
     runner = _Calls(base, "2 mutants missed.\n")
@@ -998,14 +1045,124 @@ def test_mutants_reads_the_report_file_not_stdout(tmp_path: Path) -> None:
     assert degraded[0]["reason"] == "unparseable"
 
 
+
+def _mutant_runs(runner: Any) -> list[list[str]]:
+    return [
+        call for call in runner.calls
+        if Path(call[0]).name == "cargo-mutants" and "--version" not in call
+    ]
+
+
+def test_mutants_mutate_only_the_change_through_in_diff(tmp_path: Path) -> None:
+    """Issue 244: cargo-mutants gets the change's diff instead of the whole workspace."""
+    repo, source = _mutants_repo(tmp_path)
+    base = _commit(repo, "base")
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("    a + b\n", "    a + b + 0\n"),
+        encoding="utf-8",
+    )
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    runner = _Calls(
+        base, "", watch=(str(A._IN_DIFF),),
+        files={"mutants.out/outcomes.json": _fixture("mutants-outcomes.json")},
+    )
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("cargo-mutants")], runner,
+    ) == 0
+    runs = _mutant_runs(runner)
+    assert len(runs) == 1
+    assert "--in-diff" in runs[0]
+    # A change in a non-root workspace member must be mutated too.
+    assert "--workspace" in runs[0]
+    diff_path = Path(runs[0][runs[0].index("--in-diff") + 1])
+    assert diff_path.as_posix().endswith("target/saga-review/in-diff.patch")
+    seen = [state for argv, _at_base, state in runner.snapshots if "--in-diff" in argv]
+    diff = seen[0][str(A._IN_DIFF)]
+    assert "+++ b/src/lib.rs" in diff and "+    a + b + 0" in diff
+
+
+def test_mutants_change_without_rust_lines_records_nothing_to_mutate(tmp_path: Path) -> None:
+    """A README-only change neither runs cargo-mutants nor reaches its timeout."""
+    repo, _source = _mutants_repo(tmp_path)
+    base = _commit(repo, "base")
+    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    runner = _Calls(base, "", timeout_tools=("cargo-mutants",))
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("cargo-mutants")], runner,
+    ) == 0
+    assert _mutant_runs(runner) == []
+    assert [item["reason"] for item in _degraded(output, "cargo-mutants")] == [
+        "nothing-to-mutate"
+    ]
+
+
+def test_mutants_no_mutant_on_changed_lines_records_nothing_to_mutate(tmp_path: Path) -> None:
+    """cargo-mutants exits 0 with no report when the changed lines hold no mutant."""
+    repo, source = _mutants_repo(tmp_path)
+    base = _commit(repo, "base")
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("    a + b\n", "    // note\n    a + b\n"),
+        encoding="utf-8",
+    )
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    runner = _Calls(base, "", stderr=" INFO No mutants to filter\n")
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("cargo-mutants")], runner,
+    ) == 0
+    assert len(_mutant_runs(runner)) == 1
+    assert _read(output, "findings.json") == []
+    assert [item["reason"] for item in _degraded(output, "cargo-mutants")] == [
+        "nothing-to-mutate"
+    ]
+
+
+def test_mutants_timings_do_not_change_the_recorded_bytes(tmp_path: Path) -> None:
+    report = json.loads(_fixture("mutants-outcomes.json"))
+    outputs = []
+    for second in (1, 2):
+        (tmp_path / f"run-{second}").mkdir()
+        repo, source = _mutants_repo(tmp_path / f"run-{second}")
+        base = _commit(repo, "base")
+        source.write_text(
+            source.read_text(encoding="utf-8").replace("    a + b\n", "    a + b + 0\n"),
+            encoding="utf-8",
+        )
+        head = _commit(repo, "head")
+        timed = dict(report)
+        timed["start_time"] = f"2026-10-15T00:00:0{second}Z"
+        timed["end_time"] = f"2026-10-15T00:01:0{second}Z"
+        timed["outcomes"] = [
+            {**item, "phase_results": [{"phase": "Test", "duration": second / 10}]}
+            for item in (report["outcomes"] if second == 1 else reversed(report["outcomes"]))
+        ]
+        output = tmp_path / f"out-{second}"
+        runner = _Calls(base, "", files={"mutants.out/outcomes.json": json.dumps(timed)})
+        assert _run(
+            repo, base, head, _profile(tmp_path / f"profile-{second}.json"), output,
+            tmp_path / "home", [_adapter("cargo-mutants")], runner,
+        ) == 0
+        outputs.append(_read(output, "findings.json"))
+    assert outputs[0] and outputs[0] == outputs[1]
+
+
 def test_mutants_passes_nextest_only_when_it_is_on_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     real_which = shutil.which
     seen: list[list[str]] = []
-    repo, _source = _mutants_repo(tmp_path)
+    repo, source = _mutants_repo(tmp_path)
     base = _commit(repo, "base")
-    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("    a + b\n", "    a + b + 0\n"),
+        encoding="utf-8",
+    )
     head = _commit(repo, "head")
 
     def run_with(which_result: str | None) -> Path:

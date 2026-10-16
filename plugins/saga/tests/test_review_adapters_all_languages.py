@@ -264,7 +264,8 @@ def test_missing_saga_rules_are_a_gap_and_security_still_runs(
         item["input"] for item in _read(output, "degraded.json")
         if item["reason"] == "known-gap"
     ]
-    assert gaps == list(_PATTERN)
+    # degraded.json is written sorted (issue 244), not in rule-file order.
+    assert gaps == sorted(_PATTERN)
     assert any("scan" in argv for argv in runner.calls)
     assert any(
         item["rule"]["row"] == "security.scanner-high" for item in _read(output, "findings.json")

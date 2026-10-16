@@ -157,6 +157,12 @@ session = config + ".sqlite"
 init = subprocess.run(["cosmic-ray", "init", config, session], capture_output=True, text=True)
 if init.returncode != 0:
     _done(True, [])
+# Skip every mutant off the change's lines; init alone queues whole files.
+scoped = subprocess.run(
+    ["cr-filter-git", session, "--config", config], capture_output=True, text=True
+)
+if scoped.returncode != 0:
+    _done(True, [])
 ran = subprocess.run(["cosmic-ray", "exec", config, session], capture_output=True, text=True)
 dump = subprocess.run(
     ["cosmic-ray", "dump", session], capture_output=True, text=True
@@ -181,6 +187,9 @@ for line in (dump.stdout or "").splitlines():
         continue
     if result is None:
         unfinished = True
+        continue
+    if result.get("worker_outcome") == "skipped":
+        # cr-filter-git skipped a mutant off the changed lines.
         continue
     if result.get("worker_outcome") != "normal":
         unfinished = True
@@ -315,6 +324,17 @@ def _invoke_bandit(context: ScanContext) -> list[str]:
         "bandit", "-f", "json", "-q", "--ignore-nosec",
         "-c", str(config), "-r", ".",
     ]
+
+
+def _stable_bandit(text: str) -> str:
+    """bandit's report without ``generated_at``, which differs on every run (issue 244)."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    if isinstance(data, dict):
+        data.pop("generated_at", None)
+    return json.dumps(data, indent=2, sort_keys=True) + "\n"
 
 
 def _parse_bandit(text: str) -> ParseResult:
@@ -635,7 +655,11 @@ def _pytest_argv(context: ScanContext, package: str, extra: list[str]) -> list[s
 
 
 def _invoke_randomly(context: ScanContext) -> list[str]:
-    return _pytest_argv(context, "pytest-randomly==5.0.0", ["-p", "randomly"])
+    # The seed is fixed by the change, so two runs of one change test one order.
+    return _pytest_argv(
+        context, "pytest-randomly==5.0.0",
+        ["-p", "randomly", f"--randomly-seed={review_tools.change_seed(context)}"],
+    )
 
 
 def _invoke_socket(context: ScanContext) -> list[str]:
@@ -683,6 +707,7 @@ def _from_row(
     parse: Callable[[str], ParseResult],
     *,
     version_argv: tuple[str, ...] = (),
+    stable_raw: Callable[[str], str] | None = None,
 ) -> Adapter:
     tool_id = str(row.get("id") or "")
     return Adapter(
@@ -704,6 +729,7 @@ def _from_row(
         level_map=_level_map(row),
         version_argv=version_argv,
         narrow_env=bool(row.get("narrow_env")),
+        stable_raw=stable_raw,
     )
 
 
@@ -757,6 +783,7 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
             invoke[tool_id],
             parse[tool_id],
             version_argv=version_argvs.get(tool_id, ()),
+            stable_raw=_stable_bandit if tool_id == "bandit" else None,
         )
         for tool_id in _OWNED
         if tool_id in by_id

@@ -538,7 +538,8 @@ def test_muter_survivors_map_into_repo_and_block(
     assert finding["location"]["file"] in {
         "Sources/example.swift", "Sources/other.swift",
     }
-    assert "RelationalOperatorReplacement" in finding["statement"]
+    statements = [item["statement"] for item in _read(output, "findings.json")]
+    assert any("RelationalOperatorReplacement" in text for text in statements)
     files = {
         item["location"]["file"] for item in _read(output, "findings.json")
     }
@@ -551,6 +552,9 @@ def test_muter_survivors_map_into_repo_and_block(
     argv, _at_base, state = runs[0]
     assert argv[0] == "muter" and argv[1] == "run"
     assert state["muter.conf.yml"] == _MUTER_CONFIG
+    # Muter scopes by file; only the changed files are mutated (issue 244).
+    files = argv[argv.index("--files-to-mutate") + 1:]
+    assert files == ["Sources/example.swift", "Sources/other.swift"]
 
 
 def test_muter_ambiguous_suffix_is_dropped(
@@ -687,10 +691,7 @@ def test_muter_timeout_leaves_timeout_with_no_partials(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(A, "_platform", lambda: "darwin")
-    repo = _muter_repo(tmp_path)
-    base = _commit(repo, "base")
-    (repo / "README.md").write_text("head\n", encoding="utf-8")
-    head = _commit(repo, "head")
+    repo, base, head = _muter_changed_repo(tmp_path)
     output = tmp_path / "out"
     runner = _Calls(base, _fixture("muter.json"), timeout_tools=("muter",))
     assert _run(
@@ -974,3 +975,21 @@ def test_live_muter_run_is_honest(tmp_path: Path) -> None:
     assert code == 0
     _valid(output)
     assert _read(output, "findings.json") != [] or _read(output, "degraded.json") != []
+
+
+def test_muter_change_without_swift_lines_records_nothing_to_mutate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(A, "_platform", lambda: "darwin")
+    repo = _muter_repo(tmp_path)
+    base = _commit(repo, "base")
+    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    runner = _Calls(base, _fixture("muter.json"))
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("muter")], runner,
+    ) == 0
+    assert all(call[:2] != ["muter", "run"] for call in runner.calls)
+    assert [item["reason"] for item in _degraded(output, "muter")] == ["nothing-to-mutate"]

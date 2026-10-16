@@ -276,9 +276,13 @@ def _prepare(
         })
         (staging / "diff.patch").write_text(patch.stdout, encoding="utf-8")
         _write_json(staging / "builder-record.json", builder)
-        _write_json(staging / "degraded.json", degraded)
-        _write_json(staging / "where-to-look.json", where)
-        _write_json(staging / "missing-tools.json", [_gap_question(entry) for entry in gaps])
+        # Sorted, so two prepares of one change write the same bytes (issue 244).
+        _write_json(staging / "degraded.json", review_tools.stable_degraded(degraded))
+        _write_json(staging / "where-to-look.json", review_tools.stable_order(where))
+        _write_json(
+            staging / "missing-tools.json",
+            review_tools.stable_order([_gap_question(entry) for entry in gaps]),
+        )
         _write_json(staging / "may-block.json", reasons)
         _write_json(staging / "open-search-cap.json", {"cap": reviewer_answer.OPEN_SEARCH_CAP})
         _write_json(staging / "grades.json", grades)

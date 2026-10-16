@@ -263,10 +263,18 @@ def _invoke_muter(context: ScanContext) -> list[str]:
     staged = _stage_first_base(context, _MUTER_CONFIGS)
     if staged is None:
         raise ToolGap("not-configured", "testing.surviving-mutant")
-    return [
+    argv = [
         "muter", "run", "--format", "json", "--skip-update-check",
         "--configuration", str(staged),
     ]
+    if context.change is not None:
+        # Muter scopes by file, not line; the changed files are the narrowest
+        # scope it supports (issue 244).
+        files = [path for path, _lines in review_tools.changed_lines(context, (".swift",))]
+        if not files:
+            raise ToolGap("nothing-to-mutate", "testing.surviving-mutant")
+        argv.extend(["--files-to-mutate", *files])
+    return argv
 
 
 def _parse_muter(text: str) -> ParseResult:

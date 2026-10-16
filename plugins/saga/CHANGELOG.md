@@ -38,6 +38,20 @@
 
 ### Fixed
 
+- Issue #244: preparing the same change twice writes the same packet. Stored raw tool output,
+  and so each finding's `proof.raw_output` hash, names saga's scratch folders stably; the
+  cargo JSON stream is stored sorted and cargo-mutants and lychee reports without timings;
+  hit text loses the scan root; `findings.json`, `degraded.json`, `where-to-look.json` and
+  `missing-tools.json` are written sorted; the Vitest, Jest, Dart and pytest-randomly shuffle
+  seeds come from the change's base and head. lychee runs `--offline` and reads the
+  `error_map` key its pinned 0.24.2 writes. Mutation tools spend their budget on the change:
+  cargo-mutants gets `--workspace --in-diff` (it used to mutate only the root package),
+  StrykerJS the changed line ranges in one comma-separated `--mutate` (a repeated flag keeps
+  only the last, which had also dropped four of the five `--ignorePatterns`), Muter the changed
+  files, mutate4dart `--diff-base`, and cosmic-ray runs `cr-filter-git`; a change with nothing
+  to mutate records `nothing-to-mutate` instead of running. bandit's stored report drops
+  `generated_at`. Network-dependent tools are left for
+  #245. No version bump; that belongs to #147's saga release step.
 - Issue #226: the setup survey no longer reports run-time-loaded tools as missing. The
   pytest-randomly, pytest-socket, ruff-lint, and ruff-format rows probe the uv loader
   instead of PATH executables (installed at the pin on a clean versioned answer,

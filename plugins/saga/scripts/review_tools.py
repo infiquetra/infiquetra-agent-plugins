@@ -251,6 +251,10 @@ class ScanContext:
     #: Base-commit files the adapter asked for, as ``(name, path)`` in the order
     #: ``Adapter.base_files`` names them. ``None`` means absent at base.
     base_files: tuple[tuple[str, Path | None], ...] = ()
+    #: The reviewed change, so a mutation tool can scope itself to its lines.
+    change: review_diff.Change | None = None
+    #: The reviewed head commit, for values that must be the same on every run.
+    head: str = ""
 
 
 @dataclass(frozen=True)
@@ -339,6 +343,12 @@ class Adapter:
     base_files: tuple[str, ...] = ()
     #: Directories under the scan root searched for the tool before PATH.
     local_bins: tuple[str, ...] = ()
+    #: Rewrites raw output before it is stored and hashed, removing what differs
+    #: between two runs of the same change (timings, build order). Issue 244.
+    stable_raw: Callable[[str], str] | None = None
+    #: A run that exits 0 without writing ``report_file`` is parsed from its
+    #: console output (stdout then stderr) instead of counting as unparseable.
+    report_optional: bool = False
 
     def __post_init__(self) -> None:
         if self.stream not in ("stdout", "stderr", "both"):
@@ -386,6 +396,38 @@ def default_adapters() -> list[Adapter]:
     ]
 
 
+def changed_lines(
+    context: ScanContext, suffixes: tuple[str, ...]
+) -> list[tuple[str, frozenset[int]]]:
+    """``(path, lines)`` for changed files with one of ``suffixes`` and added lines, sorted."""
+    if context.change is None:
+        return []
+    return sorted(
+        (item.path, item.lines)
+        for item in context.change.files
+        if item.status in {"added", "modified", "renamed"}
+        and item.path.endswith(suffixes)
+        and item.lines
+    )
+
+
+def line_ranges(lines: frozenset[int]) -> list[tuple[int, int]]:
+    """Consecutive runs of ``lines`` as inclusive ``(start, end)`` pairs."""
+    ranges: list[tuple[int, int]] = []
+    for line in sorted(lines):
+        if ranges and line == ranges[-1][1] + 1:
+            ranges[-1] = (ranges[-1][0], line)
+        else:
+            ranges.append((line, line))
+    return ranges
+
+
+def change_seed(context: ScanContext) -> int:
+    """A shuffle seed fixed by the change, so two runs of one change test one order (issue 244)."""
+    digest = hashlib.sha256(f"{context.base}:{context.head}".encode()).hexdigest()
+    return int(digest[:8], 16) % (2**31 - 1) + 1
+
+
 def language_for(path: str) -> str:
     """Suffix to a formula language. An unmapped path is ``none``.
 
@@ -413,6 +455,48 @@ def _overlaps(hit: Hit, change: review_diff.Change) -> bool:
 def _display_path(path: str) -> str:
     text = path.replace("\\", "/")
     return text[2:] if text.startswith("./") else text
+
+
+def _scratch_pattern() -> re.Pattern[str]:
+    """Saga's own scratch folders: ``<tempdir>/saga-<prefix><random>``, either spelling.
+
+    ``tempfile.mkdtemp`` adds eight random characters. macOS reports the temp
+    directory under ``/var`` and resolves it under ``/private/var``.
+    """
+    base = tempfile.gettempdir().rstrip("/")
+    spellings = sorted({base, os.path.realpath(base)}, key=len, reverse=True)
+    choices = "|".join(re.escape(item) for item in spellings)
+    return re.compile(rf"(?:{choices})/(saga-[a-z-]*-)[a-z0-9_]{{8}}")
+
+
+def _scrub(text: str, root: Path | None = None) -> str:
+    """Text with the scan root made relative and saga scratch folders named stably.
+
+    Two runs of the same change get different scratch folders; anything recorded
+    must not carry them (issue 244).
+    """
+    if root is not None:
+        for spelling in sorted({root.as_posix(), os.path.realpath(root)}, key=len, reverse=True):
+            text = text.replace(spelling + "/", "").replace(spelling, ".")
+    return _scratch_pattern().sub(r"<tmp>/\1", text)
+
+
+def _stable_raw(adapter: Adapter, text: str) -> str:
+    """Raw output as stored and hashed: scratch folders named stably, then the adapter's rewrite."""
+    text = _scrub(text)
+    if adapter.stable_raw is not None:
+        text = adapter.stable_raw(text)
+    return text
+
+
+def _stable_hit(hit: Hit, root: Path) -> Hit:
+    """A hit whose rule, anchor and statement carry no scan root or scratch folder."""
+    return replace(
+        hit,
+        rule_id=_scrub(hit.rule_id, root),
+        anchor=_scrub(hit.anchor, root),
+        statement=_scrub(hit.statement, root),
+    )
 
 
 def _relative_hit(hit: Hit, root: Path) -> Hit:
@@ -815,6 +899,8 @@ def _run_adapter(
                 test_command=_python_test_command(profile),
                 commands=_scan_commands(profile),
                 base_files=staged,
+                change=change,
+                head=head_sha,
             )
             if comparison == "base-head":
                 hits, digests = _base_and_head(
@@ -879,7 +965,7 @@ def _once(
         degraded.append(_degraded(adapter, exc.row, exc.reason))
         return (), {}
     if parsed is not None:
-        _note_problems(adapter, parsed, degraded)
+        _note_problems(adapter, parsed, degraded, context.root)
     if failure is not None:
         degraded.append(_degraded(adapter, _primary_row(adapter), failure))
         return (), {}
@@ -898,8 +984,10 @@ def _once(
             gaps=parsed.gaps,
         )
     _absorb(adapter, parsed, label, degraded, items)
-    digest = store_raw((result.stdout or "").encode(), context.home)
-    hits = tuple(_relative_hit(hit, context.root) for hit in parsed.hits)
+    digest = store_raw(_stable_raw(adapter, result.stdout or "").encode(), context.home)
+    hits = tuple(
+        _stable_hit(_relative_hit(hit, context.root), context.root) for hit in parsed.hits
+    )
     return hits, {label: digest}
 
 
@@ -986,7 +1074,7 @@ def _scan_root(
     assert result is not None
     parsed, failure = _parsed(adapter, result, label)
     if parsed is not None:
-        _note_problems(adapter, parsed, degraded)
+        _note_problems(adapter, parsed, degraded, context.root)
     if failure is not None:
         return (), "", failure, True
     assert parsed is not None
@@ -994,8 +1082,10 @@ def _scan_root(
         reason, row = parsed.gap
         degraded.append(_degraded(adapter, row, reason))
         return (), "", None, True
-    digest = store_raw((result.stdout or "").encode(), context.home)
-    hits = tuple(_relative_hit(hit, context.root) for hit in parsed.hits)
+    digest = store_raw(_stable_raw(adapter, result.stdout or "").encode(), context.home)
+    hits = tuple(
+        _stable_hit(_relative_hit(hit, context.root), context.root) for hit in parsed.hits
+    )
     if parsed.unfinished:
         degraded.append(_degraded(adapter, "testing.surviving-mutant", "cap"))
         hits = tuple(replace(hit, degraded=True) for hit in hits)
@@ -1039,6 +1129,11 @@ def _capture(
                 report = scan.root / adapter.report_file
                 if report.is_symlink():
                     return None, "unparseable", True
+                if adapter.report_optional and result.code == 0 and not os.path.lexists(report):
+                    console = "\n".join(
+                        part for part in (result.stdout or "", result.stderr or "") if part
+                    )
+                    return ProcessResult(result.code, console, result.stderr), None, True
                 try:
                     text = report.read_bytes().decode("utf-8", errors="replace")
                 except OSError:
@@ -1241,14 +1336,17 @@ def _gap(lens: str, language: str, row: str, tool: str, reason: str) -> dict[str
 
 
 def _note_problems(
-    adapter: Adapter, parsed: ParseResult, degraded: list[dict[str, str]]
+    adapter: Adapter,
+    parsed: ParseResult,
+    degraded: list[dict[str, str]],
+    root: Path | None = None,
 ) -> None:
     lens = adapter.lens if adapter.lens in review_formula.LENSES else "correctness"
     for problem in parsed.problems:
         degraded.append({
             "lens": lens,
             "language": "none",
-            "input": problem,
+            "input": _scrub(problem, root),
             "tool": adapter.tool or adapter.id,
             "reason": "semgrep-error",
         })
@@ -1838,6 +1936,9 @@ def _settings_digest(adapter: Adapter, rules_digest: str) -> str:
         "flags": flags,
         "filenames": sorted(_SETTINGS_NAMES),
         "thresholds": _row_thresholds(adapter.id),
+        # Base hits cached before issue 244 kept scan-root paths in their text;
+        # they must not be compared with scrubbed head hits.
+        "hit_text": "scrubbed",
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
@@ -2244,11 +2345,27 @@ def _emit(
         })
     except review_formula.FormulaError as exc:
         raise RunnerFailure(2, str(exc)) from exc
-    _write_json(output / "findings.json", list(findings))
-    _write_json(output / "measurements.json", list(measurements))
-    _write_json(output / "degraded.json", list(degraded))
+    _write_json(output / "findings.json", stable_order(findings))
+    _write_json(output / "measurements.json", stable_order(measurements))
+    _write_json(output / "degraded.json", stable_degraded(degraded))
     _write_json(output / "outcomes.json", outcomes)
-    _write_json(output / "where-to-look.json", list(items))
+    _write_json(output / "where-to-look.json", stable_order(items))
+
+
+def stable_order(records: Sequence[Any]) -> list[Any]:
+    """Records in one order whatever order the tools printed them in (issue 244).
+
+    The key is the canonical JSON ``review_formula`` sorts its outcomes by.
+    """
+    return sorted(records, key=lambda record: json.dumps(record, sort_keys=True, ensure_ascii=False))
+
+
+def stable_degraded(entries: Sequence[Mapping[str, Any]]) -> list[Any]:
+    """Degraded entries sorted, with any saga scratch folder named stably."""
+    return stable_order([
+        {key: _scrub(value) if isinstance(value, str) else value for key, value in entry.items()}
+        for entry in entries
+    ])
 
 
 def _write_json(path: Path, payload: object) -> None:

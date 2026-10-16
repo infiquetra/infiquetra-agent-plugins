@@ -8,9 +8,11 @@ import inspect
 import json
 import os
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
@@ -1919,3 +1921,102 @@ def test_untrusted_head_rule_is_documented() -> None:
 def test_corpus_language_ids_workflow_detector() -> None:
     assert T.language_for(".github/workflows/ci.yaml") == "github-workflow"
     assert T.language_for("docs/.github/workflows/ci.yml") == "github-workflow"
+
+
+def test_stable_raw_names_two_runs_scratch_folders_alike() -> None:
+    """Two runs get different scratch folders; the stored raw output must not (issue 244)."""
+    roots = [Path(tempfile.mkdtemp(prefix="saga-review-")) for _ in range(2)]
+    try:
+        texts = [
+            T._stable_raw(_stub(), f'{{"manifest_path":"{root.resolve()}/Cargo.toml"}}\n'
+                          f"{root}/src/a.rs\n")
+            for root in roots
+        ]
+    finally:
+        for root in roots:
+            shutil.rmtree(root, ignore_errors=True)
+    assert texts[0] == texts[1]
+    assert "saga-review-/Cargo.toml" in texts[0]
+
+
+def test_stable_raw_applies_the_adapter_rewrite_after_the_scrub() -> None:
+    adapter = _stub(stable_raw=lambda text: "".join(sorted(text.splitlines(keepends=True))))
+    assert T._stable_raw(adapter, "b\na\n") == "a\nb\n"
+
+
+def test_hit_text_loses_the_scan_root(tmp_path: Path) -> None:
+    root = tmp_path.resolve()
+    hit = _hit(
+        rule_id=f"file://{root}/missing.md",
+        anchor=f"file://{root}/missing.md",
+        statement=f"Broken link file://{root}/missing.md.",
+    )
+    stable = T._stable_hit(hit, root)
+    assert stable.rule_id == stable.anchor == "file://missing.md"
+    assert str(root) not in stable.statement
+
+
+def test_records_are_written_in_one_order_whatever_the_tool_order(tmp_path: Path) -> None:
+    """findings.json and degraded.json do not follow the tool's print order (issue 244)."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("ONE\nTWO\nTHREE\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    hits = [_hit(rule_id=f"rule-{n}", anchor=f"rule-{n}", start=n) for n in (1, 2, 3)]
+    outputs = []
+    for order in (hits, list(reversed(hits))):
+        def parse(_text: str, order: list[Any] = order) -> Any:
+            return T.ParseResult(
+                tuple(order),
+                gaps=tuple(("known-gap", f"security.row-{hit.start}") for hit in order),
+            )
+
+        output = tmp_path / f"out-{len(outputs)}"
+        assert _run(
+            repo, base, head, _bare_profile(tmp_path / "profile"), output, tmp_path / "home",
+            adapters=[_stub(parse=parse)], runner=_Calls(_ok()),
+        ) == 0
+        outputs.append(output)
+    for name in ("findings.json", "degraded.json", "outcomes.json", "where-to-look.json"):
+        assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes(), name
+    starts = [item["location"]["lines"]["start"] for item in _read(outputs[0], "findings.json")]
+    assert sorted(starts) == [1, 2, 3]
+
+
+def test_a_missing_optional_report_is_parsed_from_console_text(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    seen: list[str] = []
+
+    def handler(argv: list[str], _cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        return T.ProcessResult(0, "", "INFO nothing here\n")
+
+    def parse(text: str) -> Any:
+        seen.append(text)
+        raise T.ToolGap("nothing-to-mutate", "testing.surviving-mutant")
+
+    adapter = _stub(parse=parse, report_file="out/report.json", report_optional=True)
+    output = tmp_path / "out"
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path / "profile"), output, tmp_path / "home",
+        adapters=[adapter], runner=_Calls(handler),
+    ) == 0
+    assert seen == ["INFO nothing here\n"]
+    assert ("stub", "testing.surviving-mutant", "nothing-to-mutate") in _reasons(output)
+
+
+def test_change_seed_is_fixed_by_base_and_head(tmp_path: Path) -> None:
+    one = T.ScanContext(tmp_path, tmp_path, tmp_path, base="a" * 40, head="b" * 40)
+    again = T.ScanContext(tmp_path / "x", tmp_path / "x", tmp_path, base="a" * 40, head="b" * 40)
+    other = T.ScanContext(tmp_path, tmp_path, tmp_path, base="a" * 40, head="c" * 40)
+    assert T.change_seed(one) == T.change_seed(again)
+    assert T.change_seed(one) != T.change_seed(other)
+    assert 1 <= T.change_seed(one) < 2**31
+
+
+def test_line_ranges_join_consecutive_lines() -> None:
+    assert T.line_ranges(frozenset({7, 1, 2, 3, 9, 10})) == [(1, 3), (7, 7), (9, 10)]

@@ -6,7 +6,8 @@ markdownlint-cli2 and cspell are notes. markdownlint-cli2 v0.23.3 prints
 some rules, and the older ``path:line:col MDxxx/name message`` shape is still read. A lychee broken
 link is fix later and is compared base against head, because the report names
 the file and the URL and not a line. cspell's dictionary, when the base commit
-has one, is that file. lychee is recorded output only.
+has one, is that file. lychee runs offline, so it checks local file links only and
+a remote server never decides the result (issue 244).
 """
 
 from __future__ import annotations
@@ -107,7 +108,28 @@ def _invoke_lychee(context: ScanContext) -> list[str]:
     files = _markdown_files(context.root)
     if not files:
         return []
-    return ["lychee", "--format", "json", *files]
+    return ["lychee", "--offline", "--format", "json", *files]
+
+
+def _without_durations(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            key: _without_durations(item)
+            for key, item in value.items()
+            if key not in ("duration", "duration_secs")
+        }
+    if isinstance(value, list):
+        return [_without_durations(item) for item in value]
+    return value
+
+
+def _stable_lychee(text: str) -> str:
+    """lychee's report without its timings, which differ on every run."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    return json.dumps(_without_durations(data), indent=2, sort_keys=True) + "\n"
 
 
 def _parse_lychee(text: str) -> ParseResult:
@@ -117,9 +139,11 @@ def _parse_lychee(text: str) -> ParseResult:
         raise ValueError("lychee output is not json") from exc
     if not isinstance(data, dict):
         raise ValueError("lychee output must be an object")
-    fail_map = data.get("fail_map") or {}
+    # lychee 0.24, the pinned version, names the map error_map; older releases
+    # called it fail_map.
+    fail_map = data.get("error_map") or data.get("fail_map") or {}
     if not isinstance(fail_map, dict):
-        raise ValueError("lychee fail_map must be an object")
+        raise ValueError("lychee error_map must be an object")
     hits: list[Hit] = []
     for path, entries in fail_map.items():
         if not isinstance(entries, list):
@@ -185,6 +209,7 @@ def _from_row(
     row: Mapping[str, object],
     invoke: Callable[[ScanContext], list[str]],
     parse: Callable[[str], ParseResult],
+    stable_raw: Callable[[str], str] | None = None,
 ) -> Adapter:
     tool_id = str(row.get("id") or "")
     return Adapter(
@@ -202,6 +227,7 @@ def _from_row(
         default_version=str(row.get("default_version") or "not-recorded"),
         narrow_env=bool(row.get("narrow_env")),
         stream=str(row.get("stream") or "stdout"),
+        stable_raw=stable_raw,
     )
 
 
@@ -215,12 +241,12 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
         if isinstance(row, dict) and str(row.get("id") or "") in _OWNED
     }
     specs = {
-        "markdownlint-cli2": (_invoke_markdownlint, _parse_markdownlint),
-        "lychee": (_invoke_lychee, _parse_lychee),
-        "cspell": (_invoke_cspell, _parse_cspell),
+        "markdownlint-cli2": (_invoke_markdownlint, _parse_markdownlint, None),
+        "lychee": (_invoke_lychee, _parse_lychee, _stable_lychee),
+        "cspell": (_invoke_cspell, _parse_cspell, None),
     }
     return [
-        _from_row(by_id[tool_id], specs[tool_id][0], specs[tool_id][1])
+        _from_row(by_id[tool_id], *specs[tool_id])
         for tool_id in _OWNED
         if tool_id in by_id
     ]
