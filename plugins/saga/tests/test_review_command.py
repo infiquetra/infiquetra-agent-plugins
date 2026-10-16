@@ -749,6 +749,81 @@ def test_finish_refuses_a_bad_answer_and_writes_nothing(tmp_path: Path) -> None:
     assert not (packet / "review-run.json").exists()
 
 
+def _uncited_scratch(tmp: Path, *, with_cited: bool) -> tuple[Path, dict[str, list[str]]]:
+    """A scratch copy that also adds a guard test no finding names."""
+    scratch, changes = _scratch(tmp, with_test=with_cited)
+    (scratch / "tests").mkdir(exist_ok=True)
+    (scratch / "tests" / "test_no_credentials.py").write_text(
+        "def test_guard():\n    assert True\n", encoding="utf-8",
+    )
+    changes["added"] = ["tests/test_no_credentials.py"]
+    return scratch, changes
+
+
+def test_finish_accepts_an_uncited_test_file_with_a_warning_and_grades_the_findings(
+    tmp_path: Path,
+) -> None:
+    _repo_path, packet, runner = _line_packet(tmp_path)
+    home = tmp_path / "home"
+    scratch, changes = _uncited_scratch(tmp_path, with_cited=False)
+    traced = _answer([_finding("The return changed and no test failed.", evidence="traced")])
+    code, err = _finish(packet, [(traced, _result(scratch, changes))], home, runner, ask=_ask())
+    assert code == 0, err
+    assert (
+        "warning: scratch.changes: tests/test_no_credentials.py (added) is a test file no "
+        "reproduced finding names; it is not evidence and was ignored"
+    ) in err
+    run = _read(packet / "review-run.json")
+    assert R.validate(run) == []
+    found = next(item for item in run["findings"] if item["source"]["kind"] == "llm")
+    assert found["evidence"] == "traced"
+    assert found["statement"] == "The return changed and no test failed."
+    entry = {
+        "lens": "correctness", "language": "none", "input": "tests/test_no_credentials.py",
+        "tool": "review-command", "reason": "uncited-test-file",
+    }
+    assert entry in run["degraded_inputs"]
+    correctness = next(row for row in run["lens_grades"] if row["lens"] == "correctness")
+    assert entry in correctness["degraded_inputs"]
+
+
+def test_finish_still_refuses_a_modified_file_beside_an_uncited_test(tmp_path: Path) -> None:
+    _repo_path, packet, runner = _line_packet(tmp_path)
+    home = tmp_path / "home"
+    scratch, changes = _uncited_scratch(tmp_path, with_cited=False)
+    changes["modified"] = ["src/app.py"]
+    code, err = _finish(
+        packet, [(_answer([]), _result(scratch, changes))], home, runner, ask=_ask(),
+    )
+    assert code == 1
+    assert "src/app.py (modified) is not a reproduction test" in err
+    assert "warning:" not in err
+    assert not (packet / "review-run.json").exists()
+
+
+def test_an_uncited_test_file_is_never_laid_over_the_rerun_tree(tmp_path: Path) -> None:
+    _repo_path, packet, runner = _line_packet(tmp_path)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch, changes = _uncited_scratch(tmp_path, with_cited=True)
+    seen: list[tuple[bool, bool]] = []
+
+    def confine(argv: list[str], cwd: Path, _env: dict[str, str], _scratch: Path) -> Any:
+        seen.append((
+            (cwd / "tests" / "test_changed.py").is_file(),
+            (cwd / "tests" / "test_no_credentials.py").exists(),
+        ))
+        return T.ProcessResult(1, _CAPTURED, "")
+
+    code, err = _finish(
+        packet, [(_answer([_finding("A retry returns the new number.")]), _result(scratch, changes))],
+        home, runner, ask=_ask(consequence_status="error"), confine=confine,
+    )
+    assert code == 0, err
+    assert "tests/test_no_credentials.py (added)" in err
+    assert seen == [(True, False)]
+
+
 def test_merge_answers_keeps_one_finding_and_its_reproduction(tmp_path: Path) -> None:
     _repo_path, packet, runner = _line_packet(tmp_path)
     home = tmp_path / "home"

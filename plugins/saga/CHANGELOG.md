@@ -38,6 +38,16 @@
 
 ### Fixed
 
+- Issue #250: an uncited test file in a reviewer's scratch copy no longer discards its answer.
+  `reviewer_answer.check` takes an optional `warnings` list, and `_check_scratch` puts an added
+  test file that no `reproduced` finding names there instead of refusing the answer. `review_command.py
+  finish` prints it as `warning: scratch.changes: ...` on standard error, records a degraded input
+  (`reason` `uncited-test-file`) in the run record and the lens grade, grades the findings as
+  usual, and no longer lays an uncited test over the re-run tree. A symlink, Claude
+  configuration, a deletion, a modification and an added non-test file are still refused. The
+  targeted reviewer prompt says a test you write must be named by a `reproduced` finding's
+  `proof.test` or deleted before you answer. No version bump; that belongs to #147's saga
+  release step.
 - Issue #244: preparing the same change twice writes the same packet. Stored raw tool output,
   and so each finding's `proof.raw_output` hash, names saga's scratch folders stably; the
   cargo JSON stream is stored sorted and cargo-mutants and lychee reports without timings;

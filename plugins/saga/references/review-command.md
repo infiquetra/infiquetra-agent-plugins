@@ -38,6 +38,8 @@ The commit under review does not choose the calibration file or the profile that
 
 `finish` writes `<packet>/review-run.json` only after the answer check and, when `--issue` is set, only after the locked update that appends the review run and the usage entries together. A refused answer does not create that file, does not append a review cycle, and does not write usage.
 
+One scratch change is a warning, not a refusal: an added test file that no `reproduced` finding names as its `proof.test`. `finish` prints `warning: scratch.changes: <path> (added) ...` on standard error, records a degraded input for it (`tool` `review-command`, `reason` `uncited-test-file`, `input` the path) so it shows in `review-run.json` and the lens grade's `degraded_inputs`, never lays the file over a re-run tree, and grades the answer's findings as usual. A symlink, Claude configuration, a deletion, a modification and an added file that is not a test are still refused.
+
 A reproduced finding stays reproduced only when this command's own re-run exits non-zero and the last specific line of the recorded output appears in the captured output. A generic traceback header is not that line. When the proof names a test id, that id has to appear too. The re-run tree is the packet's head commit with the reviewer's test files laid over it. The re-run is this process, confined. It is not a reviewer session. `--final` runs that check again for blocking findings that still have a command, on a detached worktree of the packet's head, with the same test files.
 
 `prepare` publishes `--out` only after every step has succeeded. A failure leaves that directory uncreated.
@@ -57,7 +59,7 @@ After `finish` writes `review-run.json` (and, with `--issue`, the run record), i
 | Code | Meaning |
 |---|---|
 | 0 | The packet or the review run was written. An all-degraded review still exits 0. A missing tool is a degraded input and does not stop the review. A differing reviewer configuration is noted and does not refuse the run. |
-| 1 | An answer was refused. Nothing new is written. |
+| 1 | An answer was refused. Nothing new is written. An uncited added test file does not refuse an answer; see the warning above. |
 | 2 | Bad invocation, an unreadable file, an unknown commit, a record or an answer file that does not validate, more than two answers, a mismatched answer and result count, a missing run record, a unit row that does not resolve, or an open-search cap that is not a non-negative integer. Nothing new is written. |
 
 `prepare` and `finish` both use these codes. Exit 1 is only `finish`: `prepare` has no answer to refuse.

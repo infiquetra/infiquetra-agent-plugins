@@ -12,7 +12,8 @@ This module does three things with an answer, and the review command (card C10a)
 * ``check`` refuses an answer by naming each problem: a skipped or twice-answered item, a finding
   missing a location, statement or closed-list label, a reproduction without its test, command and
   output, any severity, too many open-search findings, or a scratch copy changed outside the
-  reproduction tests.
+  reproduction tests. One exception is a warning, not a refusal: an added test file that no
+  reproduced finding names. The file is never evidence, and the answer's findings stand.
 * ``records`` turns an accepted answer into review_records.v1 findings and answered where-to-look
   records. It first replaces known secret formats in every free-text string a record stores (each
   finding's statement, dispute text, location and proof, and each cleared item's reason) with a
@@ -436,8 +437,17 @@ def reproduction_tests(answer: Mapping[str, Any]) -> set[str]:
     return tests
 
 
-def _check_scratch(check: records._Check, answer: Mapping[str, Any], result: Any) -> None:
-    """The scratch copy differs from the head only by the reproduction tests."""
+UNCITED_TEST = "is a test file no reproduced finding names; it is not evidence and was ignored"
+
+
+def _check_scratch(
+    check: records._Check, answer: Mapping[str, Any], result: Any, warnings: list[str],
+) -> None:
+    """The scratch copy differs from the head only by the reproduction tests.
+
+    An added test file that no reproduced finding names is the one exception: it goes to
+    *warnings*, because refusing it would throw away every finding in an otherwise good answer.
+    """
     scratch = result.get("scratch") if isinstance(result, Mapping) else None
     changes = scratch.get("changes") if isinstance(scratch, Mapping) else None
     if not isinstance(changes, Mapping):
@@ -454,6 +464,9 @@ def _check_scratch(check: records._Check, answer: Mapping[str, Any], result: Any
                 )
                 continue
             normal = str(path).lstrip("./")
+            if kind == "added" and normal not in allowed and looks_like_a_test(normal):
+                warnings.append(f"scratch.changes: {path} (added) {UNCITED_TEST}")
+                continue
             if kind == "deleted" or normal not in allowed or not looks_like_a_test(normal):
                 check.add("scratch.changes", f"{path} ({kind}) is not a reproduction test")
 
@@ -464,8 +477,12 @@ def check(
     *,
     open_search_cap: int = OPEN_SEARCH_CAP,
     result: Any = None,
+    warnings: list[str] | None = None,
 ) -> list[str]:
-    """Every problem with *answer* against *items*; empty when the answer is accepted."""
+    """Every problem with *answer* against *items*; empty when the answer is accepted.
+
+    A warning is not a problem: when *warnings* is a list, each one is appended to it.
+    """
     problems = records._Check()
     if not isinstance(answer, Mapping):
         problems.add("answer", "must be a JSON object")
@@ -524,7 +541,7 @@ def check(
             OPEN_SEARCH, f"{open_search} findings, the cap is {open_search_cap}"
         )
     if result is not None:
-        _check_scratch(problems, answer, result)
+        _check_scratch(problems, answer, result, warnings if warnings is not None else [])
     return problems.problems
 
 
