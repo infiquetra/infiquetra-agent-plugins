@@ -164,3 +164,60 @@ def test_a_python_file_that_does_not_parse_is_degraded(tmp_path: Path) -> None:
     found = _by_file(output, "old_name")["caller.py"]
     assert found["degraded"] is True
     assert found["severity"] == "fix-later"
+
+
+def _mentions(root: Path, base: str) -> set[str]:
+    payload = H.C.changed_names(root, base)
+    return {hit["path"] for hit in payload["hits"]}
+
+
+def test_only_tracked_files_report_a_mention(tmp_path: Path) -> None:
+    """Issue 252: build output and ignored files in the copy are not repository files."""
+    base, head = _files(OLD, NEW, **{"caller.py": CALLER, ".gitignore": "scratch.log\n"})
+    repo, base_sha, _head_sha = H.make_repo(tmp_path, base, head)
+    H.write(repo, {
+        "target/debug/build.txt": "a.old_name()\n",
+        "mutants.out/log.txt": "old_name\n",
+        "scratch.log": "old_name\n",
+    })
+    assert H.git(repo, "status", "--porcelain", "--ignored").count("?? target/") == 1
+    assert _mentions(repo, base_sha) == {"caller.py"}
+
+
+def test_a_tracked_file_a_tool_deleted_is_not_read(tmp_path: Path) -> None:
+    base, head = _files(OLD, NEW, **{"caller.py": CALLER})
+    repo, base_sha, _head_sha = H.make_repo(tmp_path, base, head)
+    (repo / "caller.py").unlink()
+    assert _mentions(repo, base_sha) == set()
+
+
+def test_a_tracked_file_a_tool_rewrote_is_read_as_it_is_on_disk(tmp_path: Path) -> None:
+    """The file list comes from git; the text comes from the copy, as before."""
+    base, head = _files(OLD, NEW, **{"caller.py": "value = 1\n"})
+    repo, base_sha, _head_sha = H.make_repo(tmp_path, base, head)
+    (repo / "caller.py").write_text(CALLER, encoding="utf-8")
+    assert _mentions(repo, base_sha) == {"caller.py"}
+
+
+def test_a_scan_root_that_is_not_a_git_repository_reads_every_file_but_dot_git(
+    tmp_path: Path,
+) -> None:
+    """Fallback: no tracked set exists, so the old walk runs with ``.git`` skipped."""
+    plain = tmp_path / "plain"
+    H.write(plain, {
+        "a.py": NEW, "caller.py": CALLER, "target/debug/build.txt": "a.old_name()\n",
+        ".git/notes.txt": "old_name\n",
+    })
+    paths = {path.relative_to(plain).as_posix() for path in H.C._walk(plain)}
+    assert paths == {"a.py", "caller.py", "target/debug/build.txt"}
+
+
+def test_a_symlink_that_leaves_the_scan_root_is_still_refused(tmp_path: Path) -> None:
+    base, head = _files(OLD, NEW, **{"caller.py": CALLER})
+    repo, base_sha, _head_sha = H.make_repo(tmp_path, base, head)
+    outside = tmp_path / "outside.py"
+    outside.write_text(CALLER, encoding="utf-8")
+    (repo / "link.py").symlink_to(outside)
+    H.commit(repo, "link")
+    assert {path.name for path in H.C._walk(repo)} == {"a.py", "caller.py"}
+    assert _mentions(repo, base_sha) == {"caller.py"}

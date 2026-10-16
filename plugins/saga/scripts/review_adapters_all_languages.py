@@ -266,13 +266,10 @@ def _invoke_osv(npm_audit: bool):
 
 def _lockfiles(root: Path) -> list[Path]:
     names = _SCAN_LOCKFILES | _JS_SKIP
-    found: list[Path] = []
-    for path in root.rglob("*"):
-        if not path.is_file() or ".git" in path.parts:
-            continue
-        if path.name in names:
-            found.append(path)
-    return found
+    return [
+        path for path in review_tools.scan_files(root)
+        if path.name in names and path.is_file()
+    ]
 
 
 def _advisory_score(vuln: Mapping[str, object]) -> float | None:

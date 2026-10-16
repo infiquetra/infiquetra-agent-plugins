@@ -38,6 +38,16 @@
 
 ### Fixed
 
+- Issue #252: the review checks read only the files git tracks at HEAD of the scan root. Earlier
+  prepare tools leave build output in the copy (`target/` from clippy, `mutants.out/` from
+  cargo-mutants), and `changed_names` walked it, so one change prepared twice gave packets that
+  differed in `proof.raw_output` and findings that pointed at build files. `review_tools.scan_files`
+  lists the tracked files (`git ls-tree -r HEAD`, still on disk, symlinks returned unfollowed) and
+  `review_checks._walk`, the four language adapters' `_walk`, the Python, Markdown and lockfile
+  listings, `pip-audit`'s requirements list, and the checkov, cfn-lint and shellcheck wrapper scripts
+  (through `review_tools.TRACKED_PRELUDE`) all use it. A scan root that is not a git repository still
+  reads every file with `.git` skipped. The settings strip in `review_tools._strip_settings` still
+  walks everything on purpose. No version bump; that belongs to #147's saga release step.
 - Issue #250: an uncited test file in a reviewer's scratch copy no longer discards its answer.
   `reviewer_answer.check` takes an optional `warnings` list, and `_check_scratch` puts an added
   test file that no `reproduced` finding names there instead of refusing the answer. `review_command.py

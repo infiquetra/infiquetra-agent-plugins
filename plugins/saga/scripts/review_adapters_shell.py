@@ -22,14 +22,14 @@ _ROWS = {
 }
 
 # Copies scripts, drops "# shellcheck disable", and runs shellcheck --norc.
-_SHELLCHECK_WRAPPER = r"""
+_SHELLCHECK_WRAPPER = review_tools.TRACKED_PRELUDE + r"""
 import json, subprocess, sys
 from pathlib import Path
 root = Path(sys.argv[1])
 dest = Path(sys.argv[2])
 scripts = []
-for path in root.rglob("*"):
-    if not path.is_file() or ".git" in path.parts:
+for path in tracked_files(root):
+    if not path.is_file():
         continue
     if path.name in {".shellcheckrc", "shellcheckrc"}:
         continue

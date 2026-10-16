@@ -673,6 +673,87 @@ def _tracked_files(root: str) -> tuple[str, ...]:
     )
 
 
+#: Python source for the wrapper scripts that run as ``python3 -c``. It defines
+#: ``tracked_files(root)``, the same listing ``scan_files`` makes, because a wrapper cannot
+#: import this module. ``tests/test_review_tools.py`` runs both on one fixture.
+TRACKED_PRELUDE = r"""
+import os, subprocess
+from pathlib import Path
+
+def tracked_files(root, prune=(".git",)):
+    root = Path(root)
+    try:
+        top = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"], cwd=root, capture_output=True, text=True,
+        )
+        listed = subprocess.run(
+            ["git", "ls-tree", "-r", "-z", "--name-only", "HEAD"],
+            cwd=root, capture_output=True, text=True,
+        )
+    except OSError:
+        top = listed = None
+    if (
+        top is not None and top.returncode == 0 and listed.returncode == 0
+        and Path(top.stdout.strip()).resolve() == root.resolve()
+    ):
+        found = []
+        for entry in sorted(listed.stdout.split("\0")):
+            path = root / entry
+            if not entry or set(Path(entry).parts[:-1]) & set(prune):
+                continue
+            if path.is_symlink() or path.is_file():
+                found.append(path)
+        return found
+    # Not a git repository: read every file, skipping the pruned directories.
+    found = []
+    for directory, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = sorted(name for name in dirnames if name not in prune)
+        found.extend(Path(directory) / name for name in sorted(filenames))
+    return found
+"""
+
+
+def scan_files(root: Path, prune: frozenset[str] | set[str] = frozenset({".git"})) -> list[Path]:
+    """The files a review check may read under a scan root, in a fixed order.
+
+    Only files git tracks at HEAD of the scan root, and only those still on disk. Earlier
+    prepare tools leave build output in the copy (``target/``, ``mutants.out/``, caches),
+    and it changes from run to run, so a check that read it would write a different
+    packet each time and point findings at files that are not in the repository. The
+    listing is the same for a clean copy and for one a tool has written into.
+
+    A directory name in ``prune`` drops every path under a directory of that name, even
+    when git tracks it. A symlink is returned as a path, never followed.
+
+    When the scan root is not the top of a git repository (or git cannot read it, for
+    example a ``safe.directory`` refusal), there is no tracked set to read, so this falls
+    back to the old behaviour: every file under the root, with ``prune`` directories
+    skipped and ``.git`` always skipped.
+    """
+    root = Path(root)
+    top = _git(root, ["rev-parse", "--show-toplevel"])
+    listed = _git(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"])
+    if (
+        top.returncode == 0
+        and listed.returncode == 0
+        and Path(top.stdout.strip()).resolve() == root.resolve()
+    ):
+        found: list[Path] = []
+        for entry in sorted(listed.stdout.split("\0")):
+            if not entry or set(Path(entry).parts[:-1]) & set(prune):
+                continue
+            path = root / entry
+            if path.is_symlink() or path.is_file():
+                found.append(path)
+        return found
+    found = []
+    skipped = set(prune) | {".git"}
+    for directory, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = sorted(name for name in dirnames if name not in skipped)
+        found.extend(Path(directory) / name for name in sorted(filenames))
+    return found
+
+
 def _repo_relative(candidate: Path, root: Path) -> str | None:
     """The repo file a foreign absolute path denotes, or None.
 
@@ -2020,6 +2101,8 @@ def _strip_settings(
     """
     names = _STRIP_NAMES if only is None else only
     found: list[str] = []
+    # Deliberately not ``scan_files``: a settings file a tool or the user left untracked in the
+    # copy still steers the scanners, so the strip has to see every file, tracked or not.
     for directory, dirnames, filenames in os.walk(root, followlinks=False):
         if ".git" in dirnames:
             dirnames.remove(".git")

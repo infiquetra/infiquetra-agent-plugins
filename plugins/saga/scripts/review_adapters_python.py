@@ -7,6 +7,7 @@ Settings come from the base commit or from a file this module writes under the r
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import re
 import shlex
@@ -239,12 +240,11 @@ def _rel(path: str) -> str:
 
 
 def _py_rels(root: Path) -> list[str]:
-    found: list[str] = []
-    for path in root.rglob("*.py"):
-        if not path.is_file() or ".git" in path.parts:
-            continue
-        found.append(path.relative_to(root).as_posix())
-    return sorted(found)
+    return sorted(
+        path.relative_to(root).as_posix()
+        for path in review_tools.scan_files(root)
+        if path.suffix == ".py" and path.is_file()
+    )
 
 
 def _changed_python(context: ScanContext) -> list[str]:
@@ -372,8 +372,8 @@ def _parse_bandit(text: str) -> ParseResult:
 def _invoke_pip_audit(context: ScanContext) -> list[str]:
     files = [
         path.relative_to(context.root).as_posix()
-        for path in context.root.rglob("requirements*.txt")
-        if path.is_file() and ".git" not in path.parts
+        for path in review_tools.scan_files(context.root)
+        if fnmatch.fnmatchcase(path.name, "requirements*.txt") and path.is_file()
     ]
     if not files:
         return []
