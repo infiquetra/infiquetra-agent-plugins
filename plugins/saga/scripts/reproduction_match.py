@@ -24,7 +24,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
-_ANSI = re.compile(r"\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\([A-Za-z0-9]|\][^\x07]*\x07)")
+_ANSI = re.compile(r"\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\([A-Za-z0-9]|\][^\x07\x1b]{0,256}(?:\x07|\x1b\\))")
 _THREAD_ID = re.compile(r"(thread '[^']*') \(\d+\)")
 _ADDRESS = re.compile(r"0x[0-9a-fA-F]{4,}")
 _STAMP = re.compile(r"\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d(?:\.\d+)?")
@@ -37,6 +37,7 @@ _BLANKS = re.compile(r"\s+")
 _DOTTED = re.compile(r"\w+(?:\.\w+)+")
 _SEPARATORS = re.compile(r"::|/| > |›|>")
 _CAPTURE_LIMIT = 400_000
+_LINE_COUNT_LIMIT = 20_000
 _LINE_LIMIT = 200
 
 _GENERIC_PREFIXES = (
@@ -141,7 +142,7 @@ def _fits(failure: Failure, file: str, name: str) -> bool:
 
 
 def _lines(text: str) -> list[str]:
-    return text.splitlines()
+    return text.splitlines()[:_LINE_COUNT_LIMIT]
 
 
 def _until(lines: list[str], start: int, stop: Callable[[str], bool]) -> tuple[str, ...]:
@@ -377,8 +378,8 @@ def matches(code: int, captured: str, recorded: str, test: str = "") -> bool:
     """
     if code == 0:
         return False
-    text = strip_ansi(captured)[:_CAPTURE_LIMIT]
-    recorded_text = strip_ansi(recorded)
+    text = strip_ansi(captured[:_CAPTURE_LIMIT])
+    recorded_text = strip_ansi(recorded[:_CAPTURE_LIMIT])
     file, name = _split_cited(test) if test else ("", "")
     failures = failed_tests(text)
     whole = "\n".join(normalise(raw) for raw in _lines(text))
