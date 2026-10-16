@@ -2,6 +2,28 @@
 
 ## 2026-10-16
 
+### A prompt line is not an output contract: ask the CLI to validate the answer, and keep what it said when it will not
+
+**Evidence.** Issue #248. In the saga-review-corpus pilot, one of the first six Claude reviews
+(Opus 5.5 high, 12 turns, $0.73) ended `"exit": 3, "error": "the final message is not JSON"` and
+the final message was discarded, so the cause could not be diagnosed. Measured on Claude Code
+2.1.301 with a throwaway Haiku call: with `--json-schema` the `--output-format json` result carries
+a parsed `structured_output` object. A model that declined to call the structured-output tool left
+the key out entirely and still reported `subtype: success`, `is_error: false`, with prose in
+`result`. Fixed in `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`
+(`reviewer_claude_argv`, `reviewer_read_answer`, `reviewer_keep_final_message`).
+
+**Mechanism.** The reviewer prompt asked for "the answer JSON and nothing else", and the launcher
+accepted only a bare object or one whole-message fence, so any sentence around the answer lost a
+review that had already been paid for. The CLI validates a schema itself when asked. Absence of the
+`structured_output` key is the only signal that it was not produced, because the session still
+looks successful.
+
+**Generalizable rule.** When a headless CLI offers schema-validated output, use it and read the
+structured field first; treat its absence, not `is_error`, as the failure signal; and when no
+answer can be read, write the raw final message (bounded) beside the result so the failure can be
+diagnosed.
+
 ### A determinism audit proves nothing about a tool that reported no finding, and an argv test proves nothing the tool's parser has not accepted
 
 **Evidence.** Issue #244, code review of 9e3bdee. The first fix found bandit's `generated_at` by

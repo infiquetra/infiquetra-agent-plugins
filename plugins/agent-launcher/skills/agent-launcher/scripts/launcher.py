@@ -2046,6 +2046,8 @@ REVIEWER_PROMPT_ID = "targeted-reviewer-prompt"
 REVIEWER_TIMEOUT_SECONDS = 3600
 REVIEWER_EXIT_REFUSED = 2
 REVIEWER_EXIT_NO_ANSWER = 3
+#: Issue #248: the most of an unreadable final message the launcher keeps beside result.json.
+REVIEWER_FINAL_MESSAGE_LIMIT = 64 * 1024
 REVIEWER_EXIT_TIMEOUT = 124
 REVIEWER_DEFAULT_CAP = 5
 #: Issue #223. The dollar ceiling the probe's own Claude launch carries. One shell command on a
@@ -2336,12 +2338,17 @@ def reviewer_claude_argv(
     max_budget_usd: str | None = None,
     executable: Path | None = None,
     prompt_path: Path | None = None,
+    answer_schema: str | None = None,
 ) -> list[str]:
     """Claude's reviewer argv: headless, sandboxed through ``--settings``, JSON result, a ceiling.
 
     Issue #223: every Claude reviewer launch carries ``--max-budget-usd``; there is no default, so a
     caller that forgets one is refused. Claude runs as ``claude`` from ``PATH`` and reads its prompt
     on standard input, so *executable* and *prompt_path* are unused here.
+
+    Issue #248: *answer_schema*, the answer schema as compact JSON text, becomes ``--json-schema``,
+    so Claude validates the answer and returns it in the result's ``structured_output`` field
+    instead of leaving it to a prompt line. Grok and Muse take the keyword and ignore it.
     """
     problem = reviewer_ceiling_problem(max_budget_usd)
     if problem:
@@ -2349,13 +2356,15 @@ def reviewer_claude_argv(
     argv = ["claude", "-p", "--model", model]
     if effort:
         argv += ["--effort", effort]
-    return argv + [
+    argv += [
         "--permission-mode", "dontAsk",
         "--settings", str(settings_path),
         "--output-format", "json",
         "--no-session-persistence",
-        "--max-budget-usd", str(max_budget_usd),
     ]
+    if answer_schema:
+        argv += ["--json-schema", answer_schema]
+    return argv + ["--max-budget-usd", str(max_budget_usd)]
 
 
 #: Issue #225: Claude runs every Bash command, hook and MCP server as ``<prefix> '<command>'``
@@ -2505,6 +2514,12 @@ def reviewer_parse_claude_result(stdout: str) -> dict[str, Any]:
         },
         "resolved": sorted(model_usage) if isinstance(model_usage, dict) else [],
         "final": data.get("result") if isinstance(data.get("result"), str) else None,
+        # Issue #248: with ``--json-schema`` the validated answer is this object. Measured on
+        # Claude Code 2.1.301: a model that never satisfied the schema leaves the key out and
+        # still reports ``subtype: success``, so only the key's absence says there is none.
+        "structured": (
+            data["structured_output"] if isinstance(data.get("structured_output"), dict) else None
+        ),
         "is_error": bool(data.get("is_error")),
         "error": None if not data.get("is_error") else str(data.get("subtype") or "error"),
     }
@@ -2848,6 +2863,7 @@ def reviewer_grok_argv(
     max_budget_usd: str | None = None,
     executable: Path | None = None,
     prompt_path: Path | None = None,
+    answer_schema: str | None = None,
 ) -> list[str]:
     """Grok's reviewer argv, from grok 1.0.50's ``--help`` and headless guide.
 
@@ -3017,6 +3033,7 @@ def reviewer_muse_argv(
     max_budget_usd: str | None = None,
     executable: Path | None = None,
     prompt_path: Path | None = None,
+    answer_schema: str | None = None,
 ) -> list[str]:
     """Muse's reviewer argv, from muse 1.4.6's ``exec --help``.
 
@@ -3474,6 +3491,79 @@ def reviewer_extract_answer(final: str | None) -> tuple[Any, str | None]:
     return answer, None
 
 
+def reviewer_embedded_answer(final: str, required: Sequence[str]) -> Any:
+    """The last JSON object inside prose that carries every *required* key, else ``None``.
+
+    Issue #248: a model sometimes writes a sentence around its answer. The last fenced block is
+    tried first, then the last bare object. Requiring the schema's own required keys keeps an
+    example object quoted in the prose from being taken for the answer.
+    """
+    decoder = json.JSONDecoder()
+    candidates: list[str] = [
+        match.group(1) for match in re.finditer(r"```(?:json)?\s*\n(.*?)\n```", final, re.DOTALL)
+    ]
+    candidates.reverse()
+    bare: list[Any] = []
+    index = final.find("{")
+    while index != -1:
+        try:
+            value, end = decoder.raw_decode(final, index)
+        except ValueError:
+            index = final.find("{", index + 1)
+            continue
+        bare.append(value)
+        index = final.find("{", end)
+    for block in candidates:
+        try:
+            value = json.loads(block)
+        except ValueError:
+            continue
+        if isinstance(value, dict) and all(key in value for key in required):
+            return value
+    for value in reversed(bare):
+        if isinstance(value, dict) and all(key in value for key in required):
+            return value
+    return None
+
+
+def reviewer_read_answer(
+    parsed: Mapping[str, Any], required: Sequence[str] = ()
+) -> tuple[Any, str | None, str | None]:
+    """The answer, where it came from and why there is none: structured output first (issue #248).
+
+    The order is Claude's validated ``structured_output``, then the final message as a whole (a
+    bare object or one fence), then the last object embedded in prose.
+    """
+    structured = parsed.get("structured")
+    if isinstance(structured, dict):
+        return structured, "structured_output", None
+    final = parsed.get("final")
+    answer, missing = reviewer_extract_answer(final)
+    if answer is not None:
+        return answer, "final_message", None
+    if final and final.strip():
+        embedded = reviewer_embedded_answer(final, required)
+        if embedded is not None:
+            return embedded, "final_message", None
+    return None, None, missing
+
+
+def reviewer_keep_final_message(final: str | None, out: Path) -> dict[str, Any] | None:
+    """Write an unreadable final message beside result.json, bounded; never inside the copy.
+
+    The file is evidence only: nothing reads it back or runs it. ``None`` when there was nothing.
+    """
+    if not final or not final.strip():
+        return None
+    raw = final.encode("utf-8")
+    kept = raw[:REVIEWER_FINAL_MESSAGE_LIMIT].decode("utf-8", "ignore")
+    path = out / "final-message.txt"
+    path.write_text(kept, "utf-8")
+    return {
+        "path": str(path), "bytes": len(raw), "truncated": len(raw) > REVIEWER_FINAL_MESSAGE_LIMIT,
+    }
+
+
 def reviewer_deliver_prompt(
     recipe: ReviewerRecipe, root: Path, message: str
 ) -> tuple[Path | None, str]:
@@ -3673,6 +3763,14 @@ def reviewer_launch(
         raise ReviewerRefused(f"{request.prompt} is not saga's {REVIEWER_PROMPT_ID}")
     if not request.schema.is_file():
         raise ReviewerRefused(f"the answer schema {request.schema} does not exist")
+    try:
+        schema_object = json.loads(request.schema.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ReviewerRefused(f"the answer schema {request.schema} is not JSON: {exc}") from None
+    if not isinstance(schema_object, dict):
+        raise ReviewerRefused(f"the answer schema {request.schema} is not a JSON object")
+    answer_schema = json.dumps(schema_object, separators=(",", ":"), ensure_ascii=False)
+    required_keys = [key for key in schema_object.get("required", []) if isinstance(key, str)]
     if not request.packet.is_dir():
         raise ReviewerRefused(f"the review packet {request.packet} is not a directory")
     wrapper = reviewer_wrapper_path()
@@ -3725,13 +3823,13 @@ def reviewer_launch(
             raise
     argv = recipe.argv(
         request.model, request.effort, settings_path, max_budget_usd=request.max_budget_usd,
-        executable=executable, prompt_path=prompt_path,
+        executable=executable, prompt_path=prompt_path, answer_schema=answer_schema,
     )
     proc = session(
         argv, stdin=stdin, cwd=copy, env={**session_env, **extra_env}, timeout=request.timeout
     )
     parsed = recipe.parse(proc.stdout)
-    answer, missing = reviewer_extract_answer(parsed["final"])
+    answer, answer_source, missing = reviewer_read_answer(parsed, required_keys)
 
     shell_reads = [
         {"path": str(Path(extra_env[REVIEWER_SHELL_PREFIX]).parent),
@@ -3739,8 +3837,11 @@ def reviewer_launch(
     ] if REVIEWER_SHELL_PREFIX in extra_env else []
     request.out.mkdir(parents=True, exist_ok=True)
     answer_path = request.out / "answer.json"
+    final_message: dict[str, Any] | None = None
     if answer is not None:
         answer_path.write_text(json.dumps(answer, indent=2, ensure_ascii=False) + "\n", "utf-8")
+    else:
+        final_message = reviewer_keep_final_message(parsed.get("final"), request.out)
     if proc.returncode == REVIEWER_EXIT_TIMEOUT:
         code, error = REVIEWER_EXIT_TIMEOUT, "the session timed out"
     elif answer is None:
@@ -3775,6 +3876,8 @@ def reviewer_launch(
             "dropped": dropped,
         },
         "answer_path": str(answer_path) if answer is not None else None,
+        "answer_source": answer_source,
+        "final_message": final_message,
         "exit": code,
         "error": error,
     }
