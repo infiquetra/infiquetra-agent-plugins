@@ -161,10 +161,21 @@ def child_environment(scratch: Path) -> dict[str, str]:
 
 @dataclass(frozen=True)
 class Offline:
-    """What a re-run adds to build offline from the packet's dependencies (issue 262)."""
+    """What a re-run adds to build offline from the packet's dependencies (issue 262).
+
+    *cargo* is the cargo home's shim, which passes its configuration as ``--config`` so a commit's
+    own ``.cargo/config.toml`` cannot replace crates.io first; ``None`` when no cargo was found.
+    """
 
     env: Mapping[str, str]
     reads: tuple[Path, ...]
+    cargo: Path | None = None
+
+    def argv(self, argv: list[str]) -> list[str]:
+        """*argv*, with a ``cargo`` command, by name or by path, run through the shim."""
+        if self.cargo is not None and argv and Path(argv[0]).name == "cargo":
+            return [str(self.cargo), *argv[1:]]
+        return argv
 
 
 @contextmanager
@@ -176,11 +187,12 @@ def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
         return
     home = Path(tempfile.mkdtemp(prefix="saga-review-cargo-home-"))
     try:
-        review_dependencies.write_cargo_home(home, vendor)
-        yield Offline(
-            env={"CARGO_HOME": str(home), "CARGO_NET_OFFLINE": "true"},
-            reads=(vendor, home),
-        )
+        shim = review_dependencies.write_cargo_home(home, vendor, shutil.which("cargo"))
+        env = {"CARGO_HOME": str(home), "CARGO_NET_OFFLINE": "true"}
+        if shim is not None:
+            # A cargo that another command starts finds the shim first, too.
+            env["PATH"] = os.pathsep.join([str(shim.parent), os.environ.get("PATH", "")])
+        yield Offline(env=env, reads=(vendor, home), cargo=shim)
     finally:
         shutil.rmtree(home, ignore_errors=True)
 
@@ -830,6 +842,7 @@ def _rerun_one(
     if offline is not None:
         env.update(offline.env)
         reads = offline.reads
+        argv = offline.argv(argv)
     try:
         if confine is not None:
             ran = confine(argv, scratch, env, scratch)

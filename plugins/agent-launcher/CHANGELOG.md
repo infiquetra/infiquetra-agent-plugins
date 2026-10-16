@@ -100,6 +100,15 @@ for C8 to extend.
   `__pycache__/`; a tracked lock the session changes still counts. `cargo` and `rustc` join the
   toolchain commands; a rustup proxy under `~/.cargo` is still dropped, because that prefix holds
   cargo's credentials file. Network and credential denials are unchanged.
+- **A commit's own cargo source replacement no longer outranks the reviewer's (issue #262).** On
+  cargo 1.98.1 a `[source.crates-io] replace-with` in the copy's `.cargo/config.toml` outranked
+  both `CARGO_HOME`'s configuration and `CARGO_SOURCE_*` variables, so the reviewer's build
+  resolved the commit's directory, not the vendored tree. The cargo home now holds `bin/cargo`, a
+  shim that runs the cargo found on the session's `PATH` with the home's `config.toml` passed as
+  `--config`, which outranks every config file; a rustup `+toolchain` argument stays first. The
+  shim's folder comes first on the session's `PATH`, and the probe runs with it in place. The
+  vendored source's name now has a random suffix per launch, so the commit cannot name it to
+  redefine it or chain it to another source. A cargo called by its absolute path skips the shim.
 - **A Claude reviewer's answer comes from structured output, and an unreadable answer leaves
   evidence (issue #248).** `launcher.py review` now passes the request's answer schema to
   `claude -p` as `--json-schema` and reads the answer from the `structured_output` field of

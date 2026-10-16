@@ -61,7 +61,45 @@ environment does not exist. An offline build from a directory source writes noth
 `CARGO_HOME` (no registry cache, no lock), which is why a read-only home works.
 
 **Generalizable rule.** To point a sandboxed cargo at vendored sources, write a `config.toml` into
-a cargo home you own and set `CARGO_HOME`; never rely on `CARGO_SOURCE_*` variables.
+a cargo home you own and set `CARGO_HOME`; never rely on `CARGO_SOURCE_*` variables. When the
+project may carry its own cargo configuration, pass that file as `--config` too (next entry).
+
+### A project's own cargo source replacement outranks CARGO_HOME and the environment
+
+**Evidence.** Issue #262's code review (Grok, on 2b906f0), then measured on cargo 1.98.1 on
+2026-10-16. A crate depends on `inertdep`. A vendored tree holds a copy returning 2; the project's
+`.cargo/config.toml` replaces crates.io with a `planted` directory returning 99. With the saga
+cargo home alone, `cargo run --offline` printed 99. Adding
+`CARGO_SOURCE_CRATES_IO_REPLACE_WITH` and `CARGO_SOURCE_SAGA_VENDORED_DIRECTORY` still printed 99.
+`cargo --config <home>/config.toml run` printed 2. A project config that adds `replace-with` to a
+source named `saga-vendored` chained it to its own directory (77) even past `--config`; with a
+random source name the build failed instead of resolving the planted crate. On ripgrep, with the same `replace-with` committed and no
+`planted/` folder, plain cargo failed with exit 101 and the shim built; a live Haiku reviewer
+then ran `cargo test -p ignore --test hidden_repro --offline` in its sandbox and reproduced the
+planted defect ($0.02, 58 s). Tests: `test_live_the_shim_outranks_a_commit_s_own_source_replacement`
+and `test_live_a_commit_s_own_source_replacement_cannot_outrank_the_rerun_s`.
+
+**Mechanism.** Cargo's precedence is `--config` on the command line, then environment variables,
+then config files from the deepest directory up to `CARGO_HOME`, which comes last. Source tables
+are discovered from files only, so an environment variable cannot override a source entry a file
+defines. Source definitions merge across files key by key, so a later file can add `replace-with`
+to a source an earlier one named.
+
+**Generalizable rule.** To make cargo use your sources whatever the project configures, pass them
+with `--config` (a shim on `PATH` when you do not control the command line), and give the source a
+name the project cannot know.
+
+### `cargo vendor` with nothing to vendor writes no folder
+
+**Evidence.** Issue #262, cargo 1.98.1: `cargo vendor --locked <dir>` on a crate with no
+dependencies exits 0 and `<dir>` does not exist. `_fetch_rust` in
+`plugins/saga/scripts/review_dependencies.py` records `no-dependencies` for that case instead of
+"cargo vendor wrote no directory".
+
+**Mechanism.** Cargo creates the destination only when it copies a package into it.
+
+**Generalizable rule.** After `cargo vendor`, treat a missing folder plus an empty lock as
+"nothing to fetch", not as a failure.
 
 ### A reproduced Rust finding still fails finish's match on the test id and the panic line
 

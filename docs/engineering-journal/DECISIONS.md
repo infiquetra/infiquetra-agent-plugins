@@ -28,8 +28,26 @@ now (each needs its own safe fetch: wheel-only resolution with requirement optio
 `npm ci --ignore-scripts` with lockfile URL audits, a read-only pub cache, and SwiftPM's git-only
 dependencies with `Package.swift` evaluated at resolve time).
 
+**After code review (same day).** A commit's own `.cargo/config.toml` outranks a `CARGO_HOME`
+configuration, so each cargo home also holds `bin/cargo`, a shim that passes its `config.toml` to
+the real cargo as `--config`. The shim's folder comes first on `PATH` for the reviewer and the
+re-run, and finish runs a `cargo` command through it directly. The vendored source's name gets a
+random suffix per cargo home. The fetch runs under a watcher that stops it past 2 GiB across the
+vendored folder and the fetch's own cargo home, home and temp folder. That limit is about 13 times
+ripgrep's 155 MB peak (70 MB vendored, plus the cargo home's archives and second extracted copy).
+A lock with no crates.io package is trusted as `no-dependencies` only when no manifest declares a
+dependency that is not a path.
+
+**Rejected alternatives (review).** `CARGO_SOURCE_*` variables on top of the home's file (measured:
+they do not override a source a file defines). Removing the commit's `.cargo/config.toml` from the
+reviewer's copy (it also carries build flags, aliases and target settings the project's tests may
+need). A fixed source name (a commit can add `replace-with` to it and chain it; measured). A byte
+check only after cargo exits (the disk can fill first).
+
 **Revisit when.** Packet disk use matters (ripgrep's packet holds 70 MB of sources), a repository
-under review needs git dependencies, or a second language's reviewer needs offline dependencies.
+under review needs git dependencies, a second language's reviewer needs offline dependencies, a
+real head's dependencies pass 2 GiB, or reviewers are seen calling cargo by its absolute path,
+which skips the shim.
 
 ## 2026-10-14
 

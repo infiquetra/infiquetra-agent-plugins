@@ -69,6 +69,18 @@
   only (seatbelt `file-read*` after the home deny; bwrap `--ro-bind`). Only Rust is fetched; the
   language audit in the pull request lists why Python, TypeScript, Dart, Swift and CDK are not.
   No version bump; that belongs to #147's saga release step.
+- Issue #262, after code review. A lock with no crates.io package is `no-dependencies` only when
+  no manifest declares a dependency that is not a path. Otherwise `cargo vendor --locked` runs,
+  and an out-of-date lock is `not-fetched` with cargo's reason, where before the head was
+  recorded as having nothing to fetch. cargo now runs under a watcher (`review_dependencies.py`
+  run as a script) that kills its process group once the vendored folder plus the fetch's cargo
+  home, home and temp folder pass 2 GiB, records `not-fetched`, and deletes the partial tree.
+  The watcher also keeps the 600 second limit itself, so a timeout no longer leaves cargo
+  running. The re-run's cargo home names the vendored source with a random suffix, and its
+  `bin/cargo` runs the real cargo with that home's `config.toml` passed as `--config`. That
+  comes first on `PATH`, and finish runs a `cargo` command through it. On cargo 1.98.1 a
+  commit's own `[source.crates-io] replace-with` outranked the cargo home and `CARGO_SOURCE_*`
+  variables; only `--config` outranks it.
 - Issue #253: four review-tool faults no longer degrade every Rust review. cargo-mutants exits 2
   and 3 are parsed like exit 0 (`Adapter.parsed_exits`), and exit 4, a failing unmutated baseline,
   is its own reason, `baseline-failed` (`Adapter.exit_reasons`). A timed-out mutant records

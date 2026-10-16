@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -1163,10 +1164,13 @@ def test_offline_the_reviewer_reads_the_vendored_crates_read_only_through_its_ca
     assert env["CARGO_NET_OFFLINE"] == "true"
     config = cargo_home / "config.toml"
     parsed = tomllib.loads(config.read_text("utf-8"))
-    assert parsed["source"]["crates-io"] == {"replace-with": "saga-vendored"}
-    assert parsed["source"]["saga-vendored"] == {"directory": vendor}
+    name = parsed["source"]["crates-io"]["replace-with"]
+    assert name.startswith("saga-vendored-") and len(name) == len("saga-vendored-") + 16
+    assert parsed["source"][name] == {"directory": vendor}
     assert parsed["net"] == {"offline": True}
     assert not os.access(config, os.W_OK)
+    if shutil.which("cargo", path=os.environ.get("PATH", "")):
+        assert env["PATH"].split(os.pathsep)[0] == str(cargo_home / "bin")
     filesystem = settings["sandbox"]["filesystem"]
     for path in (str(cargo_home.resolve()), vendor):
         assert path in filesystem["allowRead"]
@@ -1205,6 +1209,103 @@ def test_offline_an_untrustworthy_entry_is_ignored_and_cargo_stays_offline(
     root = str(packet.resolve())
     reads = settings["sandbox"]["filesystem"]["allowRead"]
     assert [path for path in reads if path != root and path.startswith(root + "/")] == []
+
+
+def test_offline_the_cargo_on_path_runs_through_the_cargo_home_s_shim(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    bindir = tmp_path / "tools"
+    bindir.mkdir()
+    fake = bindir / "cargo"
+    fake.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n', "utf-8")
+    fake.chmod(0o755)
+    packet = _vendored_packet(launcher, tmp_path)
+    _result, settings, env = _launch_with(
+        launcher, repo, head, tmp_path, packet, PATH=f"{bindir}{os.pathsep}/usr/bin:/bin",
+    )
+    cargo_home = Path(env["CARGO_HOME"])
+    shim = cargo_home / "bin" / "cargo"
+    assert env["PATH"] == os.pathsep.join([str(shim.parent), str(bindir), "/usr/bin:/bin"])
+    assert not os.access(shim, os.W_OK)
+    config = str(cargo_home / "config.toml")
+    ran = subprocess.run([str(shim), "test", "-q"], capture_output=True, text=True, check=True)
+    assert ran.stdout.splitlines() == ["--config", config, "test", "-q"]
+    ran = subprocess.run([str(shim), "+nightly", "build"], capture_output=True, text=True,
+                         check=True)
+    assert ran.stdout.splitlines() == ["+nightly", "--config", config, "build"]
+    # The shim sits inside the cargo home, which the sandbox reads and never writes.
+    filesystem = settings["sandbox"]["filesystem"]
+    assert str(cargo_home.resolve()) in filesystem["allowRead"]
+    assert str(cargo_home.resolve()) in filesystem["denyWrite"]
+
+
+def test_offline_without_a_cargo_on_path_there_is_no_shim(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    packet = _vendored_packet(launcher, tmp_path)
+    _result, _settings, env = _launch_with(
+        launcher, repo, head, tmp_path, packet, PATH=str(tmp_path / "empty"),
+    )
+    assert not (Path(env["CARGO_HOME"]) / "bin").exists()
+    assert env["PATH"] == str(tmp_path / "empty")
+
+
+def _inert_crate(root: Path, value: int) -> None:
+    crate = root / "inertdep"
+    (crate / "src").mkdir(parents=True)
+    (crate / "Cargo.toml").write_text(
+        '[package]\nname = "inertdep"\nversion = "0.1.0"\nedition = "2021"\n', "utf-8"
+    )
+    (crate / "src" / "lib.rs").write_text(f"pub fn two() -> i32 {{ {value} }}\n", "utf-8")
+    (crate / ".cargo-checksum.json").write_text(
+        json.dumps({"files": {}, "package": "ab" * 32}), "utf-8"
+    )
+
+
+@pytest.mark.skipif(shutil.which("cargo") is None, reason="cargo is not installed")
+def test_live_offline_the_shim_outranks_a_commit_s_own_source_replacement(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    """Real cargo, offline: the copy replaces crates.io with a crate it ships; the vendored one
+    still wins through the shim, and wins without it only when nothing outranks the home."""
+    vendor = tmp_path / "vendor"
+    _inert_crate(vendor, 2)
+    project = tmp_path / "copy"
+    (project / "src").mkdir(parents=True)
+    (project / ".cargo").mkdir()
+    (project / "Cargo.toml").write_text(
+        '[package]\nname = "example"\nversion = "0.1.0"\nedition = "2021"\n'
+        '\n[dependencies]\ninertdep = "0.1"\n', "utf-8"
+    )
+    (project / "Cargo.lock").write_text(
+        'version = 4\n\n[[package]]\nname = "example"\nversion = "0.1.0"\n'
+        'dependencies = ["inertdep"]\n\n[[package]]\nname = "inertdep"\nversion = "0.1.0"\n'
+        'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
+        f'checksum = "{"ab" * 32}"\n', "utf-8"
+    )
+    (project / ".cargo" / "config.toml").write_text(
+        '[source.crates-io]\nreplace-with = "planted"\n\n[source.planted]\ndirectory = "planted"\n',
+        "utf-8",
+    )
+    _inert_crate(project / "planted", 99)
+    (project / "src" / "main.rs").write_text(
+        'fn main() { println!("VALUE {}", inertdep::two()); }\n', "utf-8"
+    )
+    home = tmp_path / "home"
+    home.mkdir()
+    session_env = {"PATH": os.environ["PATH"], "HOME": str(home),
+                   "CARGO_TARGET_DIR": str(tmp_path / "target")}
+    cargo_home = launcher.reviewer_cargo_home(tmp_path / "root", vendor, session_env)
+    launcher.reviewer_offline_cargo(session_env, cargo_home)
+    through = subprocess.run(["cargo", "run", "-q", "--offline"], cwd=project, env=session_env,
+                             capture_output=True, text=True, timeout=300, check=False)
+    assert through.stdout.strip() == "VALUE 2", through.stderr
+    plain = subprocess.run([str(shutil.which("cargo"))] + ["run", "-q", "--offline"],
+                           cwd=project, env=session_env, capture_output=True, text=True,
+                           timeout=300, check=False)
+    assert plain.stdout.strip() == "VALUE 99", plain.stderr
 
 
 def test_offline_a_symlinked_dependency_folder_is_ignored(

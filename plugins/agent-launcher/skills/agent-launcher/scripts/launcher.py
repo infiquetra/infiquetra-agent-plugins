@@ -2179,6 +2179,8 @@ REVIEWER_SCRATCH_IGNORED = re.compile(
 #: names them in this file. The schema and directory rules match saga's ``review_dependencies``.
 REVIEWER_DEPENDENCIES_FILE = "dependencies.json"
 REVIEWER_DEPENDENCIES_SCHEMA = "saga.review_dependencies.v1"
+#: The start of the name the cargo home gives the vendored sources. Each launch adds a random
+#: suffix, so a commit's own cargo configuration cannot name the source to redefine or chain it.
 REVIEWER_VENDORED_SOURCE = "saga-vendored"
 
 
@@ -2490,7 +2492,7 @@ def reviewer_packet_vendor(packet: Path) -> Path | None:
     return cursor.resolve()
 
 
-def reviewer_cargo_config(vendor: Path | None) -> str:
+def reviewer_cargo_config(vendor: Path | None, source: str = REVIEWER_VENDORED_SOURCE) -> str:
     """The reviewer's cargo ``config.toml``: offline, and crates.io replaced by *vendor* if given.
 
     Measured on cargo 1.98.1 (issue #262): ``CARGO_SOURCE_*`` variables alone do not replace a
@@ -2501,27 +2503,70 @@ def reviewer_cargo_config(vendor: Path | None) -> str:
     if vendor is not None:
         lines += [
             "[source.crates-io]",
-            f"replace-with = {json.dumps(REVIEWER_VENDORED_SOURCE)}",
+            f"replace-with = {json.dumps(source)}",
             "",
-            f"[source.{REVIEWER_VENDORED_SOURCE}]",
+            f"[source.{json.dumps(source)}]",
             f"directory = {json.dumps(str(vendor))}",
             "",
         ]
     return "\n".join(lines + ["[net]", "offline = true", ""])
 
 
-def reviewer_cargo_home(root: Path, vendor: Path | None) -> Path:
+def reviewer_cargo_shim(cargo: str, config: Path) -> str:
+    """A ``cargo`` that runs *cargo* with *config* passed as ``--config`` (issue #262).
+
+    Measured on cargo 1.98.1: a commit's own ``.cargo/config.toml`` that replaces crates.io
+    outranks both the ``CARGO_HOME`` configuration and ``CARGO_SOURCE_*`` variables, and only
+    ``--config`` outranks it. A rustup ``+toolchain`` argument has to stay first.
+    """
+    real, given = shlex.quote(cargo), shlex.quote(str(config))
+    return (
+        "#!/bin/sh\n"
+        "# Written by agent-launcher for an offline review (issue #262): this cargo home's\n"
+        "# configuration outranks the commit's own.\n"
+        'case "${1-}" in\n'
+        f'  +*) toolchain=$1; shift; exec {real} "$toolchain" --config {given} "$@" ;;\n'
+        "esac\n"
+        f'exec {real} --config {given} "$@"\n'
+    )
+
+
+def reviewer_cargo_home(
+    root: Path, vendor: Path | None, env: Mapping[str, str] | None = None
+) -> Path:
     """Write the reviewer's cargo home beside the copy, never in it, with a read-only config.
 
     It is made even without vendored sources, so the reviewer's cargo never looks for the
-    operator's ``~/.cargo``.
+    operator's ``~/.cargo``. When *env*'s ``PATH`` finds a cargo, ``bin/cargo`` is a
+    :func:`reviewer_cargo_shim` around it.
     """
     home = root / "cargo-home"
     home.mkdir(parents=True, exist_ok=True)
     config = home / "config.toml"
-    config.write_text(reviewer_cargo_config(vendor), "utf-8")
+    source = f"{REVIEWER_VENDORED_SOURCE}-{os.urandom(8).hex()}"
+    config.write_text(reviewer_cargo_config(vendor, source), "utf-8")
     config.chmod(0o444)
+    found = shutil.which("cargo", path=env.get("PATH", "")) if env is not None else None
+    if found:
+        shim = home / "bin" / "cargo"
+        shim.parent.mkdir(exist_ok=True)
+        shim.write_text(reviewer_cargo_shim(str(Path(found).absolute()), config), "utf-8")
+        shim.chmod(0o555)
     return home
+
+
+def reviewer_offline_cargo(session_env: dict[str, str], cargo_home: Path) -> None:
+    """Point the session's cargo at *cargo_home*, offline, with its shim first on ``PATH``.
+
+    Both cargo values replace the operator's, whatever they were.
+    """
+    session_env["CARGO_HOME"] = str(cargo_home)
+    session_env["CARGO_NET_OFFLINE"] = "true"
+    shim = cargo_home / "bin" / "cargo"
+    if shim.is_file():
+        session_env["PATH"] = os.pathsep.join(
+            [str(shim.parent)] + ([session_env["PATH"]] if session_env.get("PATH") else [])
+        )
 
 
 def reviewer_claude_settings(
@@ -3861,11 +3906,10 @@ def reviewer_launch(
         copy, recipe.untrusted_dirs, recipe.untrusted_files, recipe.instruction_names
     )
     # Issue #262: cargo builds offline from the packet's vendored crates, through a read-only
-    # cargo home beside the copy. Both values replace the operator's, whatever they were.
+    # cargo home beside the copy and the shim in it.
     vendor = reviewer_packet_vendor(request.packet)
-    cargo_home = reviewer_cargo_home(root, vendor)
-    session_env["CARGO_HOME"] = str(cargo_home)
-    session_env["CARGO_NET_OFFLINE"] = "true"
+    cargo_home = reviewer_cargo_home(root, vendor, session_env)
+    reviewer_offline_cargo(session_env, cargo_home)
     dependency_reads = [
         {"path": str(cargo_home.resolve()),
          "reason": "the reviewer's read-only cargo home, offline (issue #262)"},
@@ -4232,9 +4276,8 @@ def reviewer_probe(
         # every denial is checked with them in place.
         vendored = packet / "dependencies" / "rust"
         vendored.mkdir(parents=True)
-        cargo_home = reviewer_cargo_home(root, vendored.resolve())
-        session_env["CARGO_HOME"] = str(cargo_home)
-        session_env["CARGO_NET_OFFLINE"] = "true"
+        cargo_home = reviewer_cargo_home(root, vendored.resolve(), session_env)
+        reviewer_offline_cargo(session_env, cargo_home)
         settings = recipe.settings(
             copy, packet, session_env, extra_deny_read=[str(outside)],
             read_only=[str(cargo_home.resolve()), str(vendored.resolve())],

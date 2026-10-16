@@ -1965,6 +1965,8 @@ class _VendorRunner(_Runner):
     def __call__(
         self, argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
     ) -> Any:
+        if "--" in argv and argv[:2] == [sys.executable, "-I"]:
+            argv = argv[argv.index("--") + 1:]
         if argv[:2] != ["cargo", "vendor"]:
             return super().__call__(argv, cwd=cwd, env=env, timeout=timeout, shell=shell)
         self.calls.append(list(argv))
@@ -2080,7 +2082,19 @@ def test_finish_reruns_offline_against_the_packet_s_vendored_crates(tmp_path: Pa
     assert Path(env["CARGO_HOME"]).name.startswith("saga-review-cargo-home-")
     assert not Path(env["CARGO_HOME"]).exists(), "the re-run's cargo home is removed afterwards"
     assert f'directory = {json.dumps(str(vendor))}' in confine.configs[0]
-    assert 'replace-with = "saga-vendored"' in confine.configs[0]
+    assert 'replace-with = "saga-vendored-' in confine.configs[0]
+    if shutil.which("cargo"):
+        shim = Path(env["CARGO_HOME"]) / "bin" / "cargo"
+        assert env["PATH"].split(os.pathsep)[0] == str(shim.parent)
+
+
+def test_a_cargo_rerun_goes_through_the_cargo_home_s_shim(tmp_path: Path) -> None:
+    shim = tmp_path / "cargo-home" / "bin" / "cargo"
+    offline = C.Offline(env={}, reads=(), cargo=shim)
+    assert offline.argv(["cargo", "test", "-q"]) == [str(shim), "test", "-q"]
+    assert offline.argv(["/opt/example/bin/cargo", "test"]) == [str(shim), "test"]
+    assert offline.argv(["python3", "-m", "pytest"]) == ["python3", "-m", "pytest"]
+    assert C.Offline(env={}, reads=()).argv(["cargo", "test"]) == ["cargo", "test"]
 
 
 def test_finish_without_vendored_crates_leaves_the_rerun_environment_alone(
@@ -2176,3 +2190,60 @@ def test_live_the_confined_rerun_builds_offline_from_the_vendored_crates(tmp_pat
     assert ran.code == 101, output
     assert "returned 2" in output, "the test compiled against the vendored crate and failed"
     assert wrote.code != 0 and not (vendor / "planted").exists()
+
+
+@pytest.mark.skipif(
+    shutil.which("cargo") is None or C.platform_helper() is None,
+    reason="needs cargo and the platform's confinement helper",
+)
+def test_live_a_commit_s_own_source_replacement_cannot_outrank_the_rerun_s(
+    tmp_path: Path,
+) -> None:
+    """The scratch copy's ``.cargo/config.toml`` replaces crates.io with a crate it ships."""
+    packet = _inert_vendored_packet(tmp_path)
+    scratch = tmp_path / "scratch"
+    (scratch / "src").mkdir(parents=True)
+    (scratch / "tmp").mkdir()
+    (scratch / ".cargo").mkdir()
+    (scratch / "Cargo.toml").write_text(
+        '[package]\nname = "example"\nversion = "0.1.0"\nedition = "2021"\n'
+        '\n[dependencies]\ninertdep = "0.1"\n', encoding="utf-8",
+    )
+    (scratch / "Cargo.lock").write_text(
+        'version = 4\n\n[[package]]\nname = "example"\nversion = "0.1.0"\n'
+        'dependencies = ["inertdep"]\n'
+        f'\n[[package]]\nname = "inertdep"\nversion = "0.1.0"\nsource = "{_CRATES_IO}"\n'
+        f'checksum = "{"ab" * 32}"\n', encoding="utf-8",
+    )
+    (scratch / ".cargo" / "config.toml").write_text(
+        '[source.crates-io]\nreplace-with = "planted"\n\n[source.planted]\ndirectory = "planted"\n',
+        encoding="utf-8",
+    )
+    planted = scratch / "planted" / "inertdep"
+    (planted / "src").mkdir(parents=True)
+    (planted / "Cargo.toml").write_text(
+        '[package]\nname = "inertdep"\nversion = "0.1.0"\nedition = "2021"\n', encoding="utf-8",
+    )
+    (planted / "src" / "lib.rs").write_text("pub fn two() -> i32 { 99 }\n", encoding="utf-8")
+    (planted / ".cargo-checksum.json").write_text(
+        json.dumps({"files": {}, "package": "ab" * 32}), encoding="utf-8",
+    )
+    (scratch / "src" / "lib.rs").write_text(
+        "#[test]\nfn uses_the_dependency() {\n"
+        "    let got = inertdep::two();\n    assert_eq!(got, 3, \"returned {got}\");\n}\n",
+        encoding="utf-8",
+    )
+    with C._offline_dependencies(packet) as offline:
+        assert offline is not None and offline.cargo is not None
+        env = {**C.child_environment(scratch), **offline.env}
+        ran = C.run_confined(
+            offline.argv(["cargo", "test", "--offline"]), scratch, env, scratch,
+            runner=T.subprocess_runner, timeout=300, reads=offline.reads,
+        )
+        # The control: cargo by its real path, past the shim, takes the commit's crate.
+        plain = C.run_confined(
+            [str(shutil.which("cargo")), "test", "--offline"], scratch, env, scratch,
+            runner=T.subprocess_runner, timeout=300, reads=offline.reads,
+        )
+    assert "returned 2" in ran.stdout + ran.stderr, ran.stdout + ran.stderr
+    assert "returned 99" in plain.stdout + plain.stderr, plain.stdout + plain.stderr

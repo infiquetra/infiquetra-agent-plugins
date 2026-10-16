@@ -8,6 +8,8 @@ import os
 import shutil
 import subprocess
 import sys
+import time
+import tomllib
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -38,11 +40,18 @@ class _Result:
         self.code, self.stdout, self.stderr = code, stdout, stderr
 
 
+def _unwrap(argv: list[str]) -> list[str]:
+    """The cargo command inside the fetch watcher's argument vector."""
+    assert argv[:3] == [sys.executable, "-I", str(SCRIPTS / "review_dependencies.py")], argv
+    return argv[argv.index("--") + 1:]
+
+
 class _Cargo:
     """git answers for real; cargo is recorded, and ``vendor`` writes one crate."""
 
-    def __init__(self, *, vendor_code: int = 0) -> None:
+    def __init__(self, *, vendor_code: int = 0, writes: bool = True) -> None:
         self.vendor_code = vendor_code
+        self.writes = writes
         self.calls: list[dict[str, Any]] = []
 
     def __call__(self, argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int,
@@ -52,11 +61,12 @@ class _Cargo:
             proc = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True,
                                   check=False)
             return _Result(proc.returncode, proc.stdout, proc.stderr)
+        raw, argv = list(argv), _unwrap(list(argv))
         self.calls.append({
-            "argv": list(argv), "cwd": Path(cwd), "env": dict(env),
+            "argv": argv, "raw": raw, "cwd": Path(cwd), "env": dict(env), "timeout": timeout,
             "listing": sorted(p.relative_to(cwd).as_posix() for p in Path(cwd).rglob("*")),
         })
-        if argv[1] == "vendor" and self.vendor_code == 0:
+        if argv[1] == "vendor" and self.vendor_code == 0 and self.writes:
             crate = Path(argv[-1]) / "itoa"
             crate.mkdir(parents=True)
             (crate / "Cargo.toml").write_text('[package]\nname = "itoa"\n', encoding="utf-8")
@@ -130,12 +140,20 @@ def test_the_vendor_runs_on_a_sanitised_export_with_a_fresh_environment(
         assert Path(env[name]).parent == call["cwd"].parent
         assert not Path(env[name]).exists(), "the fetch's own folders are removed afterwards"
     assert not call["cwd"].exists()
+    # cargo runs under the watcher, with the byte and time limits and every folder it writes.
+    raw = call["raw"]
+    assert raw[raw.index("--limit") + 1] == str(D.FETCH_MAX_BYTES)
+    assert raw[raw.index("--seconds") + 1] == str(D.FETCH_TIMEOUT)
+    watched = [raw[i + 1] for i, part in enumerate(raw) if part == "--watch"]
+    assert watched == [str(packet / "dependencies" / "rust"), env["HOME"], env["TMPDIR"],
+                       env["CARGO_HOME"]]
+    assert call["timeout"] > D.FETCH_TIMEOUT, "the watcher's own deadline comes first"
 
 
 def test_without_a_lock_the_lock_is_generated_first_then_checked(tmp_path: Path) -> None:
     class _Generates(_Cargo):
         def __call__(self, argv: list[str], **kwargs: Any) -> Any:
-            if argv[1] == "generate-lockfile":
+            if _unwrap(argv)[1] == "generate-lockfile":
                 (kwargs["cwd"] / "Cargo.lock").write_text(_lock(CRATES_IO), encoding="utf-8")
             return super().__call__(argv, **kwargs)
 
@@ -145,10 +163,67 @@ def test_without_a_lock_the_lock_is_generated_first_then_checked(tmp_path: Path)
     assert record["state"] == "fetched"
 
 
-def test_a_lock_with_no_registry_package_fetches_nothing(tmp_path: Path) -> None:
-    record, cargo, packet = _fetch(tmp_path, {"Cargo.toml": _MANIFEST, "Cargo.lock": _lock()})
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        _MANIFEST,
+        _MANIFEST + '\n[dependencies]\nhelper = { path = "helper" }\n',
+        _MANIFEST + '\n[dependencies]\nhelper = { path = "helper", version = "0.1" }\n',
+        _MANIFEST + '\n[patch.crates-io]\nitoa = { path = "itoa" }\n',
+    ],
+)
+def test_a_lock_with_no_registry_package_fetches_nothing(tmp_path: Path, manifest: str) -> None:
+    record, cargo, packet = _fetch(tmp_path, {"Cargo.toml": manifest, "Cargo.lock": _lock()})
     assert record == {"state": "no-dependencies"}
     assert cargo.calls == [] and not (packet / "dependencies").exists()
+
+
+_WORKSPACE_PATH = ('[workspace]\nmembers = ["app"]\n[workspace.dependencies]\n'
+                   'helper = { path = "helper" }\n')
+
+
+@pytest.mark.parametrize(
+    ("tree", "declares"),
+    [
+        ({"Cargo.toml": _ONE_DEP}, True),
+        ({"Cargo.toml": _MANIFEST + '\n[dev-dependencies]\nitoa = { version = "1" }\n'}, True),
+        ({"Cargo.toml": _MANIFEST + "\n[target.'cfg(unix)'.dependencies]\nlibc = \"0.2\"\n"},
+         True),
+        ({"Cargo.toml": '[workspace]\nmembers = ["app"]\n[workspace.dependencies]\nitoa = "1"\n',
+          "app/Cargo.toml": _MANIFEST + "\n[dependencies]\nitoa = { workspace = true }\n"}, True),
+        ({"Cargo.toml": _WORKSPACE_PATH,
+          "app/Cargo.toml": _MANIFEST + "\n[dependencies]\nhelper = { workspace = true }\n"},
+         False),
+        ({"Cargo.toml": _MANIFEST + '\n[dependencies]\nhelper = { path = "helper" }\n'}, False),
+        ({"Cargo.toml": _MANIFEST + '\n[replace]\n"itoa:1.0.0" = { path = "itoa" }\n'}, False),
+    ],
+)
+def test_a_dependency_that_is_not_a_path_is_one_crates_io_must_supply(
+    tmp_path: Path, tree: dict[str, str], declares: bool,
+) -> None:
+    _export_from(tree)(tmp_path)
+    assert D._declares_registry_dependency(tmp_path) is declares
+
+
+def test_a_lock_missing_a_declared_dependency_is_not_recorded_as_none(tmp_path: Path) -> None:
+    """The lock lists only the root package, but the manifest needs itoa: cargo decides."""
+    record, cargo, packet = _fetch(
+        tmp_path, {"Cargo.toml": _ONE_DEP, "Cargo.lock": _lock()}, _Cargo(vendor_code=101),
+    )
+    assert [call["argv"][:3] for call in cargo.calls] == [["cargo", "vendor", "--locked"]]
+    assert record == {"state": "not-fetched",
+                      "reason": "cargo vendor exited 101: error: example failure"}
+    assert not (packet / "dependencies" / "rust").exists()
+
+
+def test_a_declared_dependency_cargo_vendor_finds_nothing_for_is_none(tmp_path: Path) -> None:
+    """An unused ``workspace.dependencies`` entry: cargo agrees there is nothing to fetch."""
+    tree = {"Cargo.toml": '[workspace]\nmembers = ["app"]\n[workspace.dependencies]\nitoa = "1"\n',
+            "app/Cargo.toml": _MANIFEST, "Cargo.lock": _lock()}
+    record, cargo, packet = _fetch(tmp_path, tree, _Cargo(writes=False))
+    assert [call["argv"][1] for call in cargo.calls] == ["vendor"]
+    assert record == {"state": "no-dependencies"}
+    assert not (packet / "dependencies").exists()
 
 
 @pytest.mark.parametrize(
@@ -223,6 +298,111 @@ def test_a_missing_cargo_is_a_reason_not_a_crash(tmp_path: Path) -> None:
     assert record == {"state": "not-fetched", "reason": "cargo is not installed"}
 
 
+def test_a_cargo_the_watcher_cannot_find_is_the_same_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    record, _cargo, _packet = _fetch(
+        tmp_path, {"Cargo.toml": _ONE_DEP, "Cargo.lock": _lock(CRATES_IO)}, _live_runner(),
+    )
+    assert record == {"state": "not-fetched", "reason": "cargo is not installed"}
+
+
+def _writer(target: str, size: int, then_sleep: float) -> list[str]:
+    """A child that writes *size* bytes under *target* in 256 KiB files, then sleeps."""
+    code = (
+        "import os, sys, time\n"
+        "target, size, pause = sys.argv[1], int(sys.argv[2]), float(sys.argv[3])\n"
+        "os.makedirs(os.path.join(target, 'crate'), exist_ok=True)\n"
+        "for index in range(0, size, 262144):\n"
+        "    with open(os.path.join(target, 'crate', f'{index}.rs'), 'wb') as handle:\n"
+        "        handle.write(b'x' * min(262144, size - index))\n"
+        "print(os.getpid(), flush=True)\n"
+        "time.sleep(pause)\n"
+    )
+    return [sys.executable, "-c", code, target, str(size), str(then_sleep)]
+
+
+def test_the_vendor_past_its_byte_limit_is_stopped_and_leaves_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real watcher, with cargo vendor replaced by a child that writes too much."""
+    monkeypatch.setattr(D, "FETCH_MAX_BYTES", 1_000_000)
+    pids: list[int] = []
+
+    def runner(argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int,
+               shell: bool) -> Any:
+        inner = _unwrap(argv)
+        command = argv[: argv.index("--") + 1] + _writer(inner[-1], 3_000_000, 60)
+        start = time.monotonic()
+        proc = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True,
+                              timeout=timeout, check=False)
+        assert time.monotonic() - start < 30, "the watcher stopped the child, not its sleep"
+        pids.extend(int(line) for line in proc.stdout.split() if line.isdigit())
+        return _Result(proc.returncode, proc.stdout, proc.stderr)
+
+    record, _cargo, packet = _fetch(
+        tmp_path, {"Cargo.toml": _ONE_DEP, "Cargo.lock": _lock(CRATES_IO)}, runner,
+    )
+    assert record == {"state": "not-fetched",
+                      "reason": "cargo vendor passed the 1000000 byte limit"}
+    assert not (packet / "dependencies" / "rust").exists(), "the partial tree is deleted"
+    for pid in pids:
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+
+
+def test_the_watcher_counts_a_command_that_ends_inside_one_interval(tmp_path: Path) -> None:
+    code = D.watch(_writer(str(tmp_path / "v"), 2_000_000, 0), [tmp_path / "v"], 1_000_000, 60)
+    assert code == D.LIMIT_EXIT
+
+
+def test_the_watcher_counts_every_watched_folder_together(tmp_path: Path) -> None:
+    (tmp_path / "home").mkdir()
+    (tmp_path / "home" / "archive.crate").write_bytes(b"x" * 600_000)
+    code = D.watch(_writer(str(tmp_path / "v"), 600_000, 0),
+                   [tmp_path / "v", tmp_path / "home", tmp_path / "absent"], 1_000_000, 60)
+    assert code == D.LIMIT_EXIT
+
+
+def test_the_watcher_passes_the_command_s_own_exit_code_under_the_limit(tmp_path: Path) -> None:
+    code = D.watch([sys.executable, "-c", "raise SystemExit(3)"], [tmp_path], 1_000_000, 60)
+    assert code == 3
+
+
+def test_the_watcher_stops_a_command_past_its_deadline(tmp_path: Path) -> None:
+    start = time.monotonic()
+    code = D.watch([sys.executable, "-c", "import time; time.sleep(60)"], [tmp_path], 10**9, 1)
+    assert code == D.TIMEOUT_EXIT and time.monotonic() - start < 30
+
+
+def test_the_watcher_script_marks_what_it_reports(tmp_path: Path) -> None:
+    script = [sys.executable, "-I", str(SCRIPTS / "review_dependencies.py")]
+    missing = subprocess.run(
+        [*script, "--limit", "10", "--seconds", "5", "--", str(tmp_path / "no-such-cargo")],
+        capture_output=True, text=True, check=False,
+    )
+    assert missing.returncode == D.MISSING_EXIT
+    assert missing.stderr.rstrip().endswith(D._WATCHER_MARK)
+    over = subprocess.run(
+        [*script, "--limit", "1000", "--seconds", "30", "--watch", str(tmp_path / "v"), "--",
+         *_writer(str(tmp_path / "v"), 5000, 0)],
+        capture_output=True, text=True, check=False,
+    )
+    assert over.returncode == D.LIMIT_EXIT
+    assert over.stderr.rstrip().endswith(D._WATCHER_MARK)
+
+
+def test_a_cargo_exit_code_that_matches_the_watcher_s_is_still_cargo_s(tmp_path: Path) -> None:
+    """Without the watcher's mark, 125 is cargo's own failure, reported as such."""
+    record, _cargo, _packet = _fetch(
+        tmp_path, {"Cargo.toml": _ONE_DEP, "Cargo.lock": _lock(CRATES_IO)},
+        _Cargo(vendor_code=D.LIMIT_EXIT),
+    )
+    assert record == {"state": "not-fetched",
+                      "reason": "cargo vendor exited 125: error: example failure"}
+
+
 def test_a_head_without_a_root_manifest_records_no_rust_entry(tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
@@ -282,9 +462,11 @@ def _live_runner() -> Any:
         def __call__(self, argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int,
                      shell: bool) -> Any:
             assert shell is False
-            if argv[0] == "cargo":
-                self.calls.append(list(argv))
-                argv = [*argv, "--offline"] if argv[1] == "generate-lockfile" else argv
+            if argv[0] == sys.executable:
+                inner = _unwrap(argv)
+                self.calls.append(inner)
+                if inner[1] == "generate-lockfile":
+                    argv = [*argv, "--offline"]
             proc = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True,
                                   timeout=timeout, check=False)
             return _Result(proc.returncode, proc.stdout, proc.stderr)
@@ -343,14 +525,92 @@ def test_a_missing_or_unreadable_file_is_ignored(tmp_path: Path) -> None:
 def test_the_cargo_home_is_offline_and_replaces_crates_io_with_the_vendored_tree(
     tmp_path: Path,
 ) -> None:
-    import tomllib  # noqa: PLC0415
-
     vendor = tmp_path / 'odd "name"'
-    home = D.write_cargo_home(tmp_path / "home", vendor)
-    config = home / "config.toml"
+    assert D.write_cargo_home(tmp_path / "home", vendor) is None, "no shim without a cargo"
+    config = tmp_path / "home" / "config.toml"
     parsed = tomllib.loads(config.read_text(encoding="utf-8"))
-    assert parsed["source"]["crates-io"] == {"replace-with": D.VENDORED_SOURCE}
-    assert parsed["source"][D.VENDORED_SOURCE] == {"directory": str(vendor)}
+    name = parsed["source"]["crates-io"]["replace-with"]
+    assert name.startswith(D.VENDORED_SOURCE + "-") and len(name) == len(D.VENDORED_SOURCE) + 17
+    assert parsed["source"][name] == {"directory": str(vendor)}
     assert parsed["net"] == {"offline": True}
     assert not os.access(config, os.W_OK)
     assert tomllib.loads(D.cargo_config(None)) == {"net": {"offline": True}}
+    D.write_cargo_home(tmp_path / "other", vendor)
+    other = tomllib.loads((tmp_path / "other" / "config.toml").read_text(encoding="utf-8"))
+    assert other["source"]["crates-io"]["replace-with"] != name, "each home names it afresh"
+
+
+def test_the_shim_passes_the_home_s_configuration_as_config(tmp_path: Path) -> None:
+    fake = tmp_path / "bin with space" / "cargo"
+    fake.parent.mkdir()
+    fake.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n', encoding="utf-8")
+    fake.chmod(0o755)
+    shim = D.write_cargo_home(tmp_path / "home", tmp_path / "vendor", str(fake))
+    assert shim == tmp_path / "home" / "bin" / "cargo"
+    assert not os.access(shim, os.W_OK) and os.access(shim, os.X_OK)
+    config = str(tmp_path / "home" / "config.toml")
+    plain = subprocess.run([str(shim), "test", "-q", "it's"], capture_output=True, text=True,
+                           check=True)
+    assert plain.stdout.splitlines() == ["--config", config, "test", "-q", "it's"]
+    toolchain = subprocess.run([str(shim), "+nightly", "test"], capture_output=True, text=True,
+                               check=True)
+    assert toolchain.stdout.splitlines() == ["+nightly", "--config", config, "test"]
+
+
+def _vendored_crate(root: Path, value: int) -> None:
+    crate = root / "inertdep"
+    (crate / "src").mkdir(parents=True)
+    (crate / "Cargo.toml").write_text(
+        '[package]\nname = "inertdep"\nversion = "0.1.0"\nedition = "2021"\n', encoding="utf-8",
+    )
+    (crate / "src" / "lib.rs").write_text(f"pub fn two() -> i32 {{ {value} }}\n", encoding="utf-8")
+    (crate / ".cargo-checksum.json").write_text(
+        json.dumps({"files": {}, "package": "ab" * 32}), encoding="utf-8",
+    )
+
+
+def hostile_project(root: Path) -> Path:
+    """A crate whose own ``.cargo/config.toml`` replaces crates.io with its own ``inertdep``."""
+    project = root / "project"
+    (project / "src").mkdir(parents=True)
+    (project / ".cargo").mkdir()
+    (project / "Cargo.toml").write_text(
+        '[package]\nname = "example"\nversion = "0.1.0"\nedition = "2021"\n'
+        '\n[dependencies]\ninertdep = "0.1"\n', encoding="utf-8",
+    )
+    (project / "Cargo.lock").write_text(
+        'version = 4\n\n[[package]]\nname = "example"\nversion = "0.1.0"\n'
+        'dependencies = ["inertdep"]\n'
+        f'\n[[package]]\nname = "inertdep"\nversion = "0.1.0"\nsource = "{CRATES_IO}"\n'
+        f'checksum = "{"ab" * 32}"\n', encoding="utf-8",
+    )
+    (project / ".cargo" / "config.toml").write_text(
+        '[source.crates-io]\nreplace-with = "planted"\n\n[source.planted]\ndirectory = "planted"\n',
+        encoding="utf-8",
+    )
+    _vendored_crate(project / "planted", 99)
+    (project / "src" / "main.rs").write_text(
+        'fn main() { println!("VALUE {}", inertdep::two()); }\n', encoding="utf-8",
+    )
+    return project
+
+
+@pytest.mark.skipif(shutil.which("cargo") is None, reason="cargo is not installed")
+def test_live_the_shim_outranks_a_commit_s_own_source_replacement(tmp_path: Path) -> None:
+    """Real cargo, offline: the commit replaces crates.io; the vendored crate still wins."""
+    vendor = tmp_path / "vendor"
+    _vendored_crate(vendor, 2)
+    project = hostile_project(tmp_path)
+    home = tmp_path / "home"
+    shim = D.write_cargo_home(home, vendor, shutil.which("cargo"))
+    assert shim is not None
+    env = {"PATH": os.environ["PATH"], "HOME": str(_fresh(tmp_path / "h")),
+           "CARGO_HOME": str(home), "CARGO_NET_OFFLINE": "true",
+           "CARGO_TARGET_DIR": str(tmp_path / "target")}
+    through = subprocess.run([str(shim), "run", "-q", "--offline"], cwd=project, env=env,
+                             capture_output=True, text=True, timeout=300, check=False)
+    assert through.stdout.strip() == "VALUE 2", through.stderr
+    # The control: plain cargo with the same home takes the commit's replacement.
+    plain = subprocess.run(["cargo", "run", "-q", "--offline"], cwd=project, env=env,
+                           capture_output=True, text=True, timeout=300, check=False)
+    assert plain.stdout.strip() == "VALUE 99", plain.stderr
