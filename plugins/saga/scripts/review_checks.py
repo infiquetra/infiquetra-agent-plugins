@@ -73,6 +73,67 @@ _ACCOUNT = re.compile(r"(?<!\d)(\d{12})(?!\d)")
 _AGENT_NAMES = frozenset({"AGENTS.md", "CLAUDE.md", "GEMINI.md"})
 _AGENT_DIRS = frozenset({"skills", "commands", "agents", "roles"})
 
+#: The text fallback never reads a token shorter than this as a removed name (issue 260):
+#: ``if``, ``fn``, ``id`` and ``of`` are on almost every removed line and in every file.
+_MIN_NAME_LENGTH = 3
+_RUST_KEYWORDS = (
+    "as async await break const continue crate dyn else enum extern false fn for if impl in let "
+    "loop match mod move mut pub ref return self Self static struct super trait true type unsafe "
+    "use where while abstract become box do final macro override priv typeof unsized virtual "
+    "yield try"
+)
+_PYTHON_KEYWORDS = (
+    "False None True and as assert async await break class continue def del elif else except "
+    "finally for from global if import in is lambda nonlocal not or pass raise return try while "
+    "with yield self cls"
+)
+_GO_KEYWORDS = (
+    "break case chan const continue default defer else fallthrough for func go goto if import "
+    "interface map package range return select struct switch type var nil true false iota"
+)
+_SCRIPT_KEYWORDS = (
+    "abstract any as async await boolean break case catch class const continue debugger default "
+    "delete do else enum export extends false finally for from function if implements import in "
+    "instanceof interface let namespace never new null number of package private protected "
+    "public readonly return static string super switch this throw true try type typeof "
+    "undefined unknown var void while with yield"
+)
+_SHELL_KEYWORDS = (
+    "if then else elif fi for while until do done case esac in function select time coproc "
+    "local export return exit break continue shift set unset readonly declare true false"
+)
+_C_KEYWORDS = (
+    "auto break case char const continue default do double else enum extern float for goto if "
+    "int long register return short signed sizeof static struct switch typedef union unsigned "
+    "void volatile while class public private protected new delete this try catch throw "
+    "namespace template typename virtual bool true false null nullptr final abstract interface "
+    "implements extends import package boolean byte instanceof synchronized throws"
+)
+_KEYWORDS_BY_SUFFIX: dict[str, frozenset[str]] = {
+    ".rs": frozenset(_RUST_KEYWORDS.split()),
+    ".py": frozenset(_PYTHON_KEYWORDS.split()),
+    ".go": frozenset(_GO_KEYWORDS.split()),
+    **{
+        suffix: frozenset(_SCRIPT_KEYWORDS.split())
+        for suffix in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
+    },
+    **{
+        suffix: frozenset(_SHELL_KEYWORDS.split())
+        for suffix in (".sh", ".bash", ".zsh", ".ksh")
+    },
+    **{
+        suffix: frozenset(_C_KEYWORDS.split())
+        for suffix in (".c", ".h", ".cc", ".cpp", ".hpp", ".java")
+    },
+}
+#: Words that stand for "this object", "nothing" or a boolean in most languages, filtered whatever
+#: the file's language: ``self`` is a receiver name in Go and a parameter in plenty of C code, and
+#: a removed line naming it is no more a removed name there than in Python.
+_COMMON_KEYWORDS = frozenset("self Self this cls super true false null nil None True False".split())
+#: A suffix with no keyword list (Markdown, YAML, text) drops the keywords of every list, since a
+#: word reserved in any of these languages is as likely to be noise there.
+_ALL_KEYWORDS = frozenset().union(*_KEYWORDS_BY_SUFFIX.values())
+
 
 def _script() -> str:
     return str(plugin_root() / "scripts" / "review_checks.py")
@@ -918,9 +979,21 @@ def _diff_lines(repo: Path, base: str) -> dict[str, tuple[list[str], list[str]]]
     return files
 
 
-def _text_names(removed: Sequence[str], added: Sequence[str]) -> set[str]:
+def _text_names(removed: Sequence[str], added: Sequence[str], path: str) -> list[str]:
+    """Tokens on removed lines and not on added ones, sorted, minus keywords and short tokens.
+
+    The fallback has no definition to point at, so any word on a removed line is a candidate;
+    without the filter ``if`` and ``self`` made every remaining use in the repository a finding
+    (issue 260). The keywords are the file's language's, or every language's for a suffix
+    with none, plus the words in ``_COMMON_KEYWORDS``.
+    """
     gone = set(_TOKEN.findall("\n".join(removed))) - set(_TOKEN.findall("\n".join(added)))
-    return {token for token in gone if _searchable(token)}
+    keywords = _KEYWORDS_BY_SUFFIX.get(Path(path).suffix.lower(), _ALL_KEYWORDS) | _COMMON_KEYWORDS
+    return sorted(
+        token
+        for token in gone
+        if len(token) >= _MIN_NAME_LENGTH and token not in keywords and _searchable(token)
+    )
 
 
 def _show(repo: Path, revision: str, path: str) -> str:
@@ -951,7 +1024,7 @@ def _removed_names(root: Path, base: str, change: review_diff.Change) -> dict[st
     for removed, added in diff.values():
         removed_flags.update(_FLAG.findall("\n".join(removed)))
         added_flags.update(_FLAG.findall("\n".join(added)))
-    for flag in removed_flags - added_flags:
+    for flag in sorted(removed_flags - added_flags):
         _remember(found, flag, False)
     for item in change.files:
         old = item.old_path or item.path
@@ -969,13 +1042,17 @@ def _removed_names(root: Path, base: str, change: review_diff.Change) -> dict[st
         removed_lines, added_lines = diff.get(item.path, ([], []))
         suffix = Path(item.path).suffix.lower()
         if suffix == ".py":
-            _python_removed(found, before, after, removed_lines, added_lines)
+            _python_removed(found, before, after, item.path, removed_lines, added_lines)
         elif suffix == ".json":
-            _structured_removed(found, before, after, removed_lines, added_lines, _json_keys)
+            _structured_removed(
+                found, before, after, item.path, removed_lines, added_lines, _json_keys
+            )
         elif suffix == ".toml":
-            _structured_removed(found, before, after, removed_lines, added_lines, _toml_keys)
+            _structured_removed(
+                found, before, after, item.path, removed_lines, added_lines, _toml_keys
+            )
         elif suffix in {".yaml", ".yml"}:
-            for name in _text_names(removed_lines, added_lines):
+            for name in _text_names(removed_lines, added_lines, item.path):
                 _remember(found, name, True)
         else:
             language = language_for(item.path)
@@ -987,6 +1064,7 @@ def _python_removed(
     found: dict[str, bool],
     before: str,
     after: str,
+    path: str,
     removed_lines: Sequence[str],
     added_lines: Sequence[str],
 ) -> None:
@@ -995,13 +1073,13 @@ def _python_removed(
     base_flags = _argument_flags(before) if before else set()
     head_flags = _argument_flags(after) if after else set()
     if (before and base_defs is None) or (after and head_defs is None):
-        for name in _text_names(removed_lines, added_lines):
+        for name in _text_names(removed_lines, added_lines, path):
             _remember(found, name, True)
         return
-    for _kind, _scope, name in set(base_defs or ()) - set(head_defs or ()):
+    for _kind, _scope, name in sorted(set(base_defs or ()) - set(head_defs or ())):
         _remember(found, name, False)
     if base_flags is not None and head_flags is not None:
-        for flag in set(base_flags) - set(head_flags):
+        for flag in sorted(set(base_flags) - set(head_flags)):
             _remember(found, flag, False)
 
 
@@ -1009,6 +1087,7 @@ def _structured_removed(
     found: dict[str, bool],
     before: str,
     after: str,
+    path: str,
     removed_lines: Sequence[str],
     added_lines: Sequence[str],
     keys_of: Any,
@@ -1016,12 +1095,12 @@ def _structured_removed(
     base_keys = keys_of(before) if before else set()
     head_keys = keys_of(after) if after else set()
     if (before and base_keys is None) or (after and head_keys is None):
-        for name in _text_names(removed_lines, added_lines):
+        for name in _text_names(removed_lines, added_lines, path):
             _remember(found, name, True)
         return
-    head_paths = {path for path, _leaf in set(head_keys or ())}
-    for path, leaf in set(base_keys or ()):
-        if path not in head_paths:
+    head_paths = {key_path for key_path, _leaf in set(head_keys or ())}
+    for key_path, leaf in sorted(set(base_keys or ())):
+        if key_path not in head_paths:
             _remember(found, leaf, False)
 
 
@@ -1040,10 +1119,10 @@ def _other_removed(
         base_names = _span_names(before, path, language)
         head_names = _span_names(after, path, language)
         if base_names is not None and head_names is not None:
-            for name in base_names - head_names:
+            for name in sorted(base_names - head_names):
                 _remember(found, name, False)
             return
-    for name in _text_names(removed_lines, added_lines):
+    for name in _text_names(removed_lines, added_lines, path):
         _remember(found, name, True)
 
 
@@ -1090,7 +1169,7 @@ def changed_names(root: Path, base: str) -> dict[str, Any]:
     hits: list[dict[str, Any]] = []
     patterns = {
         name: re.compile(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])")
-        for name in removed
+        for name in sorted(removed)
     }
     seen: set[tuple[str, str]] = set()
     for path in _walk(root):
@@ -1116,6 +1195,8 @@ def changed_names(root: Path, base: str) -> dict[str, Any]:
                     language=language_for(rel),
                     degraded=removed[name],
                 ))
+    # One hit per path and name, so this key is unique and the order never follows the walk.
+    hits.sort(key=lambda hit: (hit["path"], hit["rule_id"]))
     return {"hits": hits, "where_to_look": [], "gaps": []}
 
 

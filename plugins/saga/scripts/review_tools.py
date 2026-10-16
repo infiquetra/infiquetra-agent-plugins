@@ -379,6 +379,9 @@ class Adapter:
     #: Exits that mean the run could not answer, each with its own degraded
     #: reason instead of ``unparseable`` (cargo-mutants 4: the baseline failed).
     exit_reasons: tuple[tuple[int, str], ...] = ()
+    #: Failure reasons that earn one more run of the same command before they are recorded
+    #: (issue 260). A pass on the retry keeps its result and adds a ``baseline-flaky`` note.
+    retry_failures: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.stream not in ("stdout", "stderr", "both"):
@@ -1380,7 +1383,8 @@ def _run_adapter(
                 )
             else:
                 hits, digests = _once(
-                    adapter, context, process, env, timeout, "head", degraded, items
+                    adapter, context, process, env, timeout, "head", degraded, items,
+                    deadline,
                 )
         if not hits and not digests:
             return []
@@ -1418,6 +1422,7 @@ def _once(
     label: str,
     degraded: list[dict[str, str]],
     items: list[Mapping[str, Any]],
+    deadline: float | None = None,
 ) -> tuple[tuple[Hit, ...], dict[str, str]]:
     try:
         result, problem, ran = _capture(adapter, context, process, env, timeout)
@@ -1432,6 +1437,12 @@ def _once(
     assert result is not None
     try:
         parsed, failure = _parsed(adapter, result, label)
+        if failure in adapter.retry_failures:
+            retried = _retry(adapter, context, process, env, timeout, label, deadline)
+            if retried is not None:
+                result, parsed = retried
+                failure = None
+                degraded.append(_degraded(adapter, _primary_row(adapter), "baseline-flaky"))
     except ToolGap as exc:
         degraded.append(_degraded(adapter, exc.row, exc.reason))
         return (), {}
@@ -1463,6 +1474,39 @@ def _once(
         _stable_hit(_relative_hit(hit, context.root), context.root) for hit in parsed.hits
     )
     return hits, {label: digest}
+
+
+def _retry(
+    adapter: Adapter,
+    context: ScanContext,
+    process: Process,
+    env: Mapping[str, str],
+    timeout: int,
+    label: str,
+    deadline: float | None = None,
+) -> tuple[ProcessResult, ParseResult] | None:
+    """One more run of the command after a failure the adapter calls flaky (issue 260).
+
+    The result and its parse when the second run succeeds, else None, so the first failure is
+    what gets recorded. A second run that declines or cannot run is the same as a second failure.
+    A mutation tool's retry stays inside the mutation cap: its timeout is clamped to the time
+    left before ``deadline``, and with under a second left there is no retry.
+    """
+    if adapter.mutation and deadline is not None:
+        left = int(deadline - time.monotonic())
+        if left < 1:
+            return None
+        timeout = min(timeout, left)
+    try:
+        result, problem, ran = _capture(adapter, context, process, env, timeout)
+    except ToolGap:
+        return None
+    if not ran or problem is not None or result is None:
+        return None
+    parsed, failure = _parsed(adapter, result, label)
+    if failure is not None or parsed is None or parsed.gap is not None:
+        return None
+    return result, parsed
 
 
 def _base_and_head(
