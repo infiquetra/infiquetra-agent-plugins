@@ -90,6 +90,12 @@
   `RUSTUP_TOOLCHAIN` when set. The seatbelt profile reads and maps the cargo binary's own folder
   (`~/.cargo/bin`, never `~/.cargo`) and rustup's `toolchains` and `settings.toml`; bwrap binds
   them read-only.
+- Issue #262, after the automated security review of bce7699. A cargo or rustc re-run looks the
+  toolchain up by name on the operator's `PATH`, never through a folder in the reviewer's
+  command, and every toolchain path is dropped when it is home or above it, a shared root, or is,
+  is inside or holds a credential path (the same lists as agent-launcher's, kept equal by a test).
+  The fetch watcher fails closed: a size count cut short by its deadline ends the fetch as timed
+  out, never with cargo's own exit code.
 - Issue #253: four review-tool faults no longer degrade every Rust review. cargo-mutants exits 2
   and 3 are parsed like exit 0 (`Adapter.parsed_exits`), and exit 4, a failing unmutated baseline,
   is its own reason, `baseline-failed` (`Adapter.exit_reasons`). A timed-out mutant records

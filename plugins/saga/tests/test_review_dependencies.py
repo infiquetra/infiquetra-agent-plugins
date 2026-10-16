@@ -423,9 +423,20 @@ def test_one_size_walk_stops_at_the_limit_or_the_deadline(tmp_path: Path) -> Non
         folder = tmp_path / f"d{index}"
         folder.mkdir()
         (folder / "f").write_bytes(b"x" * 100)
-    assert D._bytes([tmp_path]) == 500
-    assert D._bytes([tmp_path], limit=150) < 500
-    assert D._bytes([tmp_path], deadline=time.monotonic() - 1) < 500
+    assert D._bytes([tmp_path]) == (500, True)
+    over, complete = D._bytes([tmp_path], limit=150)
+    assert 150 < over < 500 and complete, "past the limit is a complete answer"
+    cut, complete = D._bytes([tmp_path], deadline=time.monotonic() - 1)
+    assert cut < 500 and not complete
+
+
+def test_a_count_cut_short_never_passes_the_command_s_success_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail closed: cargo finished, but the walk ran out of time before it saw everything."""
+    monkeypatch.setattr(D, "_bytes", lambda *_args: (0, False))
+    code = D.watch([sys.executable, "-c", "pass"], [tmp_path], 10**9, 60)
+    assert code == D.TIMEOUT_EXIT
 
 
 def test_a_cargo_exit_code_that_matches_the_watcher_s_is_still_cargo_s(tmp_path: Path) -> None:
@@ -623,6 +634,22 @@ def test_a_rustup_cargo_needs_its_bin_and_the_toolchains_never_the_cargo_prefix(
                      home / ".rustup" / "settings.toml")
     assert home / ".cargo" not in paths
     assert D.toolchain_paths(None) == ()
+    # A cargo in home itself or a credential folder gives nothing of that folder back.
+    for folder in (home, home / ".ssh", home / ".cargo"):
+        assert folder not in D.toolchain_paths(str(folder / "cargo"))
+    assert D.read_problem(home / ".config", home) is not None
+    assert D.read_problem(home / ".cargo" / "bin", home) is None
+
+
+def test_the_credential_paths_match_agent_launcher_s() -> None:
+    launcher = REPO_ROOT / "plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py"
+    spec = importlib.util.spec_from_file_location("launcher_for_saga_test", launcher)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["launcher_for_saga_test"] = module
+    spec.loader.exec_module(module)
+    assert D.CREDENTIAL_PATHS == module.REVIEWER_CREDENTIAL_PATHS
+    assert D.SHARED_ROOTS == module.REVIEWER_SHARED_ROOTS
     assert D.toolchain_paths("/opt/homebrew/bin/cargo")[0] == Path("/opt/homebrew/bin")
 
 

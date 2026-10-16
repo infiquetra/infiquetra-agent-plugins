@@ -856,7 +856,8 @@ def _rerun_one(
     elif Path(argv[0]).name in _RUST_COMMANDS:
         # Without vendored crates a Rust re-run still needs rustup's toolchain (issue 262).
         env.update(review_dependencies.rustup_env())
-        toolchain = review_dependencies.toolchain_paths(shutil.which(argv[0]))
+        # By name on the operator's PATH: a folder in the reviewer's command is never trusted.
+        toolchain = review_dependencies.toolchain_paths(shutil.which(Path(argv[0]).name))
     try:
         if confine is not None:
             ran = confine(argv, scratch, env, scratch)

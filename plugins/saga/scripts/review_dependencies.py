@@ -71,6 +71,33 @@ _DEPENDENCY_TABLES = (
 _REMOTE_KEYS = ("git", "registry", "registry-index")
 _ENV_COPIED = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
 
+#: Paths under home a confined re-run is never given back, as agent-launcher's
+#: ``REVIEWER_CREDENTIAL_PATHS`` and ``REVIEWER_SHARED_ROOTS`` (the packages share no code; a
+#: test keeps the two lists equal).
+CREDENTIAL_PATHS = (
+    "~/.ssh",
+    "~/.aws",
+    "~/.config/gh",
+    "~/.gnupg",
+    "~/.netrc",
+    "~/.docker/config.json",
+    "~/.kube",
+    "~/.config/gcloud",
+    "~/.azure",
+    "~/.claude/.credentials.json",
+    "~/.codex/auth.json",
+    "~/.git-credentials",
+    "~/.pypirc",
+    "~/.cargo/credentials",
+    "~/.cargo/credentials.toml",
+    "~/.terraform.d",
+    "~/.vault-token",
+    "~/.config/hub",
+    "~/.local/share/keyrings",
+    "~/.npmrc",
+)
+SHARED_ROOTS = ('~/.config', '~/.local', '~/.local/share', '~/.cache', '~/Library')
+
 Process = Callable[..., Any]
 Export = Callable[[Path], bool]
 
@@ -384,13 +411,33 @@ def toolchain_paths(cargo: str | None) -> tuple[Path, ...]:
     For a rustup proxy under ``~/.cargo/bin`` that is the ``bin`` folder only, never ``~/.cargo``,
     which holds cargo's credentials file, plus ``toolchains`` and ``settings.toml`` under the
     rustup home. A cargo outside home needs nothing, and nothing is added for it but its folder.
+    *cargo* is what the operator's ``PATH`` finds, never a path from a reviewer's command, and a
+    path that is home or above it, a shared root, or is, is inside or holds a credential path is
+    dropped (:func:`read_problem`).
     """
     if cargo is None:
         return ()
     paths = [Path(cargo).absolute().parent]
     rustup = Path(rustup_env()["RUSTUP_HOME"])
     paths += [rustup / part for part in ("toolchains", "settings.toml") if (rustup / part).exists()]
-    return tuple(paths)
+    return tuple(path for path in paths if read_problem(path) is None)
+
+
+def read_problem(path: Path, home: Path | None = None) -> str | None:
+    """Why giving *path* back to a confined command would re-open too much, or ``None``."""
+    home = home or Path.home()
+    homes = {home.absolute(), home.resolve()}
+    for form in {path.absolute(), path.resolve()}:
+        if any(form == h or h.is_relative_to(form) for h in homes):
+            return f"{path} is the home directory or above it"
+        for h in homes:
+            if any(form == h / root[2:] for root in SHARED_ROOTS):
+                return f"{path} is a shared root"
+            for credential in CREDENTIAL_PATHS:
+                held = h / credential[2:]
+                if form == held or form.is_relative_to(held) or held.is_relative_to(form):
+                    return f"{path} is, is inside, or holds the credential path {credential}"
+    return None
 
 
 def _cargo(
@@ -451,11 +498,15 @@ def _remove(path: Path) -> None:
 _WATCHER_MARK = "(saga fetch watcher)"
 
 
-def _bytes(paths: list[Path], limit: int | None = None, deadline: float | None = None) -> int:
-    """The bytes of the regular files under *paths*, not following symlinks.
+def _bytes(
+    paths: list[Path], limit: int | None = None, deadline: float | None = None,
+) -> tuple[int, bool]:
+    """The bytes of the regular files under *paths*, not following symlinks, and whether the
+    count is complete.
 
     The count stops early once it passes *limit* or the clock passes *deadline*, so one walk of a
-    huge tree cannot keep the watcher from its own deadline.
+    huge tree cannot keep the watcher from its own deadline. A count cut short by the deadline is
+    incomplete, and the watcher never treats it as under the limit.
     """
     total = 0
     for root in paths:
@@ -465,11 +516,11 @@ def _bytes(paths: list[Path], limit: int | None = None, deadline: float | None =
                     total += os.lstat(os.path.join(folder, name)).st_size
                 except OSError:
                     continue
-            if (limit is not None and total > limit) or (
-                deadline is not None and time.monotonic() > deadline
-            ):
-                return total
-    return total
+            if limit is not None and total > limit:
+                return total, True
+            if deadline is not None and time.monotonic() > deadline:
+                return total, False
+    return total, True
 
 
 class _Stopped(Exception):
@@ -506,14 +557,15 @@ def watch(argv: list[str], watched: list[Path], limit: int, seconds: float) -> i
                 code: int | None = proc.wait(timeout=_WATCH_INTERVAL)
             except subprocess.TimeoutExpired:
                 code = None
-            used = _bytes(watched, limit, deadline)
+            used, complete = _bytes(watched, limit, deadline)
             if used > limit:
                 print(f"saga: the fetch wrote at least {used} bytes, over its {limit} byte limit "
                       f"{_WATCHER_MARK}", file=sys.stderr)
                 return LIMIT_EXIT
-            if code is not None:
+            # Fail closed: the command's own code counts only after a complete count.
+            if code is not None and complete:
                 return code
-            if time.monotonic() > deadline:
+            if not complete or time.monotonic() > deadline:
                 print(f"saga: the fetch ran past {seconds:g} seconds {_WATCHER_MARK}",
                       file=sys.stderr)
                 return TIMEOUT_EXIT

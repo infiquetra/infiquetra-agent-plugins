@@ -2148,6 +2148,41 @@ def test_a_cargo_rerun_without_vendored_crates_still_gets_rustup(
     assert f'(subpath "{(home / ".cargo").resolve()}")' not in profile
 
 
+def test_a_cargo_named_by_a_folder_in_the_command_never_opens_that_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reviewer writes the command, so the toolchain is looked up on the operator's PATH."""
+    home = tmp_path / "operator"
+    (home / ".ssh").mkdir(parents=True)
+    planted = home / ".ssh" / "cargo"
+    planted.write_text("#!/bin/sh\nexit 0\n")
+    planted.chmod(0o755)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setattr(C, "platform_helper", lambda: "sandbox-exec")
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    profiles: list[str] = []
+
+    def record(argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int,
+               shell: bool) -> Any:
+        if argv[0] == "/usr/bin/sandbox-exec":
+            profiles.append(argv[2])
+            return T.ProcessResult(1, _CAPTURED)
+        return runner(argv, cwd=cwd, env=env, timeout=timeout, shell=shell)
+
+    finding = _finding("A retry returns the new number.")
+    finding["proof"]["command"] = f"{planted} test --offline"
+    code, err = _finish(packet, [(_answer([finding]), _result(scratch, changes))], home, record,
+                        ask=_ask(consequence_status="error"))
+    assert code == 0, err
+    lines = profiles[0].splitlines()
+    deny = lines.index(f'(deny file-read* (subpath "{home.resolve()}"))')
+    ssh = str((home / ".ssh").resolve())
+    assert not any(ssh in line for line in lines[deny:]), "nothing re-opens it after the deny"
+
+
 def test_a_cargo_rerun_goes_through_the_cargo_home_s_shim(tmp_path: Path) -> None:
     shim = tmp_path / "cargo-home" / "bin" / "cargo"
     offline = C.Offline(env={}, reads=(), cargo=shim)
