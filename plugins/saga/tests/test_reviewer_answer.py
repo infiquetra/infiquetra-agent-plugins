@@ -483,6 +483,61 @@ def test_every_other_uncited_scratch_change_is_still_refused(kind: str, path: st
     assert warnings == []
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".tests/payload.py",
+        ".test_payload.py",
+        "notatest\\test_secret.py",
+        "../tests/payload.py",
+        "tests/../src/app.py",
+        "/tmp/tests/payload.py",
+        "./tests/payload.py",
+        "tests//payload.py",
+        "C:/tests/payload.py",
+    ],
+)
+def test_a_path_that_only_looks_like_a_test_after_normalising_is_refused(path: str) -> None:
+    result = copy.deepcopy(RESULT)
+    result["scratch"]["changes"]["added"].append(path)
+    warnings: list[str] = []
+    problems = A.check(ANSWER, ITEMS, result=result, warnings=warnings)
+    assert f"scratch.changes: {path} (added) is not a reproduction test" in problems
+    assert warnings == []
+    assert not A.is_plain_test_path(path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["tests/test_Charge_Retry.py", "tests/TEST_CHARGE_RETRY.py", "tests/test_charge_retry.py"],
+)
+def test_a_case_only_spelling_of_a_cited_test_is_that_cited_test(path: str) -> None:
+    result = copy.deepcopy(RESULT)
+    result["scratch"]["changes"]["added"] = [path]
+    warnings: list[str] = []
+    assert A.check(ANSWER, ITEMS, result=result, warnings=warnings) == []
+    assert warnings == []
+
+
+def test_a_case_spelling_that_stops_looking_like_a_test_is_refused_not_warned() -> None:
+    result = copy.deepcopy(RESULT)
+    result["scratch"]["changes"]["added"] = ["TESTS/TEST_CHARGE_RETRY.PY"]
+    warnings: list[str] = []
+    problems = A.check(ANSWER, ITEMS, result=result, warnings=warnings)
+    assert "scratch.changes: TESTS/TEST_CHARGE_RETRY.PY (added) is not a reproduction test" in problems
+    assert warnings == []
+
+
+def test_the_warning_and_the_re_run_copy_never_pick_the_same_file() -> None:
+    cited = A.cited_keys(ANSWER)
+    for path in ("tests/test_charge_retry.py", "tests/Test_Charge_Retry.py", "tests/test_other.py"):
+        result = copy.deepcopy(RESULT)
+        result["scratch"]["changes"]["added"] = [path]
+        warnings: list[str] = []
+        A.check(ANSWER, ITEMS, result=result, warnings=warnings)
+        assert bool(warnings) is (A.path_key(path) not in cited)
+
+
 def test_an_uncited_test_warning_does_not_hide_a_refusal_beside_it() -> None:
     result = copy.deepcopy(RESULT)
     result["scratch"]["changes"]["added"].append("tests/test_unrelated.py")

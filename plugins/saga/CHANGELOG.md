@@ -46,8 +46,10 @@
   usual, and no longer lays an uncited test over the re-run tree. A symlink, Claude
   configuration, a deletion, a modification and an added non-test file are still refused. The
   targeted reviewer prompt says a test you write must be named by a `reproduced` finding's
-  `proof.test` or deleted before you answer. No version bump; that belongs to #147's saga
-  release step.
+  `proof.test` or deleted before you answer. Only a path written as a plain relative path that
+  names a test warns (no leading `./`, backslash, absolute path or `.`/`..` component), and the
+  warning and the re-run copy compare paths through one case-folded key. No version bump; that
+  belongs to #147's saga release step.
 - Issue #244: preparing the same change twice writes the same packet. Stored raw tool output,
   and so each finding's `proof.raw_output` hash, names saga's scratch folders stably; the
   cargo JSON stream is stored sorted and cargo-mutants and lychee reports without timings;

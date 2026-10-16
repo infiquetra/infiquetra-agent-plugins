@@ -579,7 +579,7 @@ def _finish(
     available = reproduction_available(home, confine)
     # The answers name their reproduction tests; a re-run downgrade later replaces a finding's
     # proof, so the cited files are read here, before any re-run.
-    cited = [reviewer_answer.reproduction_tests(answer) for answer in answers]
+    cited = [reviewer_answer.cited_keys(answer) for answer in answers]
     for position, (produced, result) in enumerate(zip(converted, results, strict=True)):
         degraded.extend(_rerun_findings(
             produced["findings"], result, repo, str(change.get("head") or ""),
@@ -1180,7 +1180,7 @@ def _copy_shared_tests(
     for kind in ("added", "modified"):
         for raw in changes.get(kind) or []:
             text = str(raw).lstrip("./")
-            if text in cited and reviewer_answer.looks_like_a_test(text):
+            if reviewer_answer.path_key(text) in cited and reviewer_answer.looks_like_a_test(text):
                 _copy_one(source, dest, text)
 
 

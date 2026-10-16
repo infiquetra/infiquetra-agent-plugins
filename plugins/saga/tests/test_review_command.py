@@ -824,6 +824,29 @@ def test_an_uncited_test_file_is_never_laid_over_the_rerun_tree(tmp_path: Path) 
     assert seen == [(True, False)]
 
 
+def test_a_case_only_spelling_of_the_cited_test_is_neither_warned_nor_ignored(
+    tmp_path: Path,
+) -> None:
+    _repo_path, packet, runner = _line_packet(tmp_path)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch = tmp_path / "scratch"
+    (scratch / "tests").mkdir(parents=True)
+    (scratch / "tests" / "test_Changed.py").write_text(
+        "def test_changed():\n    assert False\n", encoding="utf-8",
+    )
+    changes = {"added": ["tests/test_Changed.py"], "modified": [], "deleted": []}
+    confine = _Confine(1, _CAPTURED)
+    code, err = _finish(
+        packet, [(_answer([_finding("A retry returns the new number.")]), _result(scratch, changes))],
+        home, runner, ask=_ask(consequence_status="error"), confine=confine,
+    )
+    assert code == 0, err
+    assert "warning:" not in err
+    run = _read(packet / "review-run.json")
+    assert not [d for d in run["degraded_inputs"] if d["reason"] == "uncited-test-file"]
+
+
 def test_merge_answers_keeps_one_finding_and_its_reproduction(tmp_path: Path) -> None:
     _repo_path, packet, runner = _line_packet(tmp_path)
     home = tmp_path / "home"

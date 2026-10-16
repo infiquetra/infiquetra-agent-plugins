@@ -250,6 +250,32 @@ def looks_like_a_test(path: str) -> bool:
     return bool(_TEST_DIR.search(normal) or _TEST_NAME.search(name))
 
 
+def path_key(path: str) -> str:
+    """The one comparison for a cited test and a scratch change: Unicode-folded, case-folded.
+
+    A volume that ignores case opens ``tests/test_Changed.py`` for ``tests/test_changed.py``, so
+    the two spellings are one file. Warning about the file and copying it into a re-run tree must
+    both decide through this key, so the file a warning names is never the file that is copied.
+    """
+    return unicodedata.normalize("NFKC", str(path).lstrip("./")).casefold()
+
+
+def is_plain_test_path(path: str) -> bool:
+    """Whether *path* is a relative path as written that names a test, with nothing normalised.
+
+    Unlike ``looks_like_a_test``, which forgives a leading ``./`` and reads a backslash as a
+    separator, this refuses an absolute path, a backslash, and any empty, ``.`` or ``..``
+    component, and reads the path exactly as written. ``.tests/x.py``, ``notatest\\test_x.py``,
+    ``../tests/x.py`` and ``tests/../src/x.py`` are not tests.
+    """
+    text = str(path)
+    if not text or "\\" in text or text.startswith("/") or re.match(r"[A-Za-z]:", text):
+        return False
+    if any(part in ("", ".", "..") for part in text.split("/")):
+        return False
+    return bool(_TEST_DIR.search(text) or _TEST_NAME.search(text.rsplit("/", 1)[-1]))
+
+
 def _describe(item: Any) -> str:
     """``file:start-end`` for an item, from its C1 location; the file alone for whole-project."""
     location = item.get("location") if isinstance(item, Mapping) else None
@@ -437,6 +463,11 @@ def reproduction_tests(answer: Mapping[str, Any]) -> set[str]:
     return tests
 
 
+def cited_keys(answer: Mapping[str, Any]) -> set[str]:
+    """``path_key`` of each test file the answer's reproduced findings name."""
+    return {path_key(test) for test in reproduction_tests(answer)}
+
+
 UNCITED_TEST = "is a test file no reproduced finding names; it is not evidence and was ignored"
 
 
@@ -453,7 +484,7 @@ def _check_scratch(
     if not isinstance(changes, Mapping):
         check.add("scratch.changes", "the launch result does not list the scratch copy's changes")
         return
-    allowed = reproduction_tests(answer)
+    allowed = cited_keys(answer)
     for path in changes.get("links") or ():
         check.add("scratch.changes", f"{path} (symlink) is a link the session made, never a test")
     for kind in ("added", "modified", "deleted"):
@@ -463,12 +494,13 @@ def _check_scratch(
                     "scratch.changes", f"{path} ({kind}) is Claude configuration, never a test"
                 )
                 continue
-            normal = str(path).lstrip("./")
-            if kind == "added" and normal not in allowed and looks_like_a_test(normal):
+            cited = path_key(str(path)) in allowed
+            if kind != "deleted" and cited and looks_like_a_test(str(path).lstrip("./")):
+                continue
+            if kind == "added" and not cited and is_plain_test_path(str(path)):
                 warnings.append(f"scratch.changes: {path} (added) {UNCITED_TEST}")
                 continue
-            if kind == "deleted" or normal not in allowed or not looks_like_a_test(normal):
-                check.add("scratch.changes", f"{path} ({kind}) is not a reproduction test")
+            check.add("scratch.changes", f"{path} ({kind}) is not a reproduction test")
 
 
 def check(

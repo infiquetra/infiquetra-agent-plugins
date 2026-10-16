@@ -25,9 +25,19 @@ uncited test would have run under a reproduced finding's broad command. The cite
 read from the answers before any re-run, not from the findings: a downgrade to `traced` replaces a
 finding's whole `proof`, so by the final round `proof.test` is gone (the first attempt read it from
 the findings and failed `test_reproduced_rerun_final_round_reruns_blocking_commands`). Relaxing a refusal means
-auditing every later reader of the thing it used to keep out. The warning travels as a degraded
+auditing every later reader of the thing it used to keep out, and when two checks must agree about which file is meant, they have to share one comparison. The warning travels as a degraded
 input (`reason: uncited-test-file`) because that is the one field the lens grade and the run
 record already carry; it does not change the letter grade.
+
+Code review of 3cc1c60 found the first warning path too loose in two ways. `looks_like_a_test`
+strips leading `.` and `/` and reads a backslash as a separator, so `.tests/payload.py`,
+`.test_payload.py`, `notatest\\test_secret.py`, `../tests/payload.py` and `tests/../src/app.py` all
+passed as warned tests instead of refused non-tests; the warning now requires
+`is_plain_test_path`, which reads the path exactly as written and refuses absolute paths,
+backslashes and empty, `.` or `..` components. And the cited-set comparison was case-sensitive
+while the re-run copy opens files through the filesystem, so on a case-insensitive volume
+`tests/test_Changed.py` was warned as uncited and then copied as the cited `tests/test_changed.py`.
+The warning and the copy now both decide through one `path_key` (Unicode and case folded).
 
 **Generalizable rule.** When a gate refuses on something harmless, downgrade it to a recorded
 warning only for the narrow harmless case, keep every other case refused, and then find each
