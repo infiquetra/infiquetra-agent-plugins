@@ -248,3 +248,14 @@ def test_an_empty_or_header_only_recorded_output_never_matches() -> None:
     assert not M.matches(101, _text("cargo_one_failure"), "", CARGO)
     assert not M.matches(101, _text("cargo_one_failure"), "test result: FAILED\n", CARGO)
     assert not M.matches(1, _text("pytest_quiet"), "============\n", "test_demo.py::test_add")
+
+
+def test_hostile_output_is_bounded_before_it_is_parsed() -> None:
+    """A run that prints a huge unterminated escape sequence must not make the match slow."""
+    import time
+
+    hostile = "\x1b]" * 200_000 + "x" * 1_000_000
+    start = time.monotonic()
+    assert not M.matches(1, hostile, _text("cargo_one_failure"), CARGO)
+    assert not M.matches(1, _text("cargo_one_failure"), hostile, CARGO)
+    assert time.monotonic() - start < 5
