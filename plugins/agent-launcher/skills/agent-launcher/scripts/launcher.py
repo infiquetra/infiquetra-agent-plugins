@@ -2118,6 +2118,10 @@ REVIEWER_ENVIRONMENT_ALLOWED = (
     "TZ",  # time zone
     "TMPDIR",  # where temp files go; the sandbox sets its own
     "GIT_CONFIG_GLOBAL",  # points git at /dev/null, because home is unreadable
+    "CARGO_HOME",  # issue #262: the launcher's read-only cargo home beside the copy
+    "CARGO_NET_OFFLINE",  # issue #262: cargo never tries the network it is denied
+    "RUSTUP_HOME",  # issue #262: a rustup proxy finds its toolchains
+    "RUSTUP_TOOLCHAIN",  # issue #262: the operator's toolchain choice, when set
 )
 #: Credential files and directories. The sandbox blocks the whole home directory, so this list no
 #: longer feeds ``denyRead``. It feeds the permission layer's ``Read`` deny rules, and the check
@@ -2152,6 +2156,11 @@ REVIEWER_SHARED_ROOTS = ("~/.config", "~/.local", "~/.local/share", "~/.cache", 
 REVIEWER_TOOLCHAIN_COMMANDS = (
     ("python3", "python3 on the session PATH resolves here; its standard library and packages"),
     ("node", "node on the session PATH resolves here; its bundled libraries"),
+    # Issue #262. A rustup proxy under ``~/.cargo``: that prefix holds cargo's credentials file,
+    # so only its ``bin`` comes back, with rustup's toolchains (``reviewer_rustup_paths``). A
+    # Homebrew or system cargo sits outside home and needs nothing.
+    ("cargo", "cargo on the session PATH resolves here; its executables and libraries"),
+    ("rustc", "rustc on the session PATH resolves here; its executables and libraries"),
 )
 #: The parts of a toolchain install allowed back, never the whole install.
 REVIEWER_TOOLCHAIN_PARTS = (
@@ -2161,12 +2170,21 @@ REVIEWER_TOOLCHAIN_PARTS = (
 )
 #: Paths in the scratch copy that tools write and nobody edits: Python's temp-directory fallback
 #: (the sandbox denies the system temp roots, so ``tempfile`` falls back to the working directory),
-#: pytest's caches and compiled bytecode. They never count as a change. ``.claude/`` is not among
+#: pytest's caches and compiled bytecode; since issue #262 cargo's ``target/`` and a ``Cargo.lock``
+#: that a build writes where the head has none. They never count as a change. ``.claude/`` is not among
 #: them: Claude leaves only an empty ``.claude/.cc-writes/`` there (measured on 2.1.292), so a file
 #: under it is one the session wrote, and saga's check refuses it.
 REVIEWER_SCRATCH_IGNORED = re.compile(
-    r"^(pytest-of-[^/]+/|\.pytest_cache/|tmp[a-z0-9_]{8}/)|(^|/)__pycache__/|\.pyc$"
+    r"^(pytest-of-[^/]+/|\.pytest_cache/|tmp[a-z0-9_]{8}/|target/)|(^|/)__pycache__/|\.pyc$"
+    r"|(^|/)Cargo\.lock$"
 )
+#: Issue #262: saga's prepare vendors the head's crates.io dependencies into the packet and
+#: names them in this file. The schema and directory rules match saga's ``review_dependencies``.
+REVIEWER_DEPENDENCIES_FILE = "dependencies.json"
+REVIEWER_DEPENDENCIES_SCHEMA = "saga.review_dependencies.v1"
+#: The start of the name the cargo home gives the vendored sources. Each launch adds a random
+#: suffix, so a commit's own cargo configuration cannot name the source to redefine or chain it.
+REVIEWER_VENDORED_SOURCE = "saga-vendored"
 
 
 #: The change under review is untrusted. Claude acts on a project's ``.claude/`` directory (settings
@@ -2295,11 +2313,14 @@ def reviewer_toolchain_paths(
     allowed: list[dict[str, str]] = []
     dropped: list[dict[str, str]] = []
     seen: set[str] = set()
+    rust_under_home = False
     for command, reason in REVIEWER_TOOLCHAIN_COMMANDS:
         found = shutil.which(command, path=env.get("PATH", ""))
         if not found:
             continue
         binary = Path(os.path.normpath(Path(found).absolute()))
+        if command in ("cargo", "rustc") and any(binary.is_relative_to(h) for h in homes):
+            rust_under_home = True
         for candidate in (binary.parent.parent, binary.resolve().parent.parent):
             if str(candidate) in seen or not any(candidate.is_relative_to(h) for h in homes):
                 continue
@@ -2307,6 +2328,17 @@ def reviewer_toolchain_paths(
             problem = reviewer_allowed_read_problem(candidate, home)
             if problem:
                 dropped.append({"path": str(candidate), "reason": problem})
+                # Issue #262: rustup's ``~/.cargo`` holds cargo's credentials beside ``bin/``.
+                # For cargo and rustc only, the folder holding the binary comes back on its own
+                # when it passes the check; any other interpreter there is still dropped.
+                folder = binary.parent
+                if (command in ("cargo", "rustc") and "credential path" in problem
+                        and str(folder) not in seen
+                        and folder.is_relative_to(candidate)
+                        and reviewer_allowed_read_problem(folder, home) is None):
+                    seen.add(str(folder))
+                    allowed.append({"path": str(folder), "reason": f"{reason}; its executables, "
+                                    "without the prefix that holds a credential path"})
                 continue
             # Only the parts an interpreter reads, never the prefix itself: a prefix such as
             # ``~/.sometool`` can hold that tool's own ``.env`` beside ``bin/`` (measured: a uv
@@ -2318,7 +2350,39 @@ def reviewer_toolchain_paths(
                     trouble = reviewer_allowed_read_problem(path, home)
                     entry = {"path": str(path), "reason": trouble or f"{reason}; {why}"}
                     (dropped if trouble else allowed).append(entry)
+    if rust_under_home:
+        for path, why in reviewer_rustup_paths(env):
+            if str(path) in seen:
+                continue
+            seen.add(str(path))
+            trouble = reviewer_allowed_read_problem(path, home)
+            entry = {"path": str(path), "reason": trouble or why}
+            (dropped if trouble else allowed).append(entry)
     return sorted(allowed, key=lambda i: i["path"]), sorted(dropped, key=lambda i: i["path"])
+
+
+def reviewer_rustup_home(env: Mapping[str, str]) -> Path:
+    """The rustup home: ``RUSTUP_HOME``, or ``.rustup`` in the session's home."""
+    given = env.get("RUSTUP_HOME")
+    return Path(given) if given else _reviewer_home(env) / ".rustup"
+
+
+def reviewer_rustup_paths(env: Mapping[str, str]) -> list[tuple[Path, str]]:
+    """What a rustup proxy under home reads to run a toolchain (issue #262), when it exists.
+
+    Only ``toolchains`` and ``settings.toml``; never the rustup home itself, which also keeps
+    downloads and update state.
+    """
+    rustup = reviewer_rustup_home(env)
+    homes = _reviewer_forms(_reviewer_home(env))
+    if not any(rustup.absolute().is_relative_to(h) for h in homes):
+        return []
+    return [
+        (rustup / part, f"rustup's {why}, which a rustup cargo or rustc runs (issue #262)")
+        for part, why in (("toolchains", "installed toolchains"),
+                          ("settings.toml", "default toolchain"))
+        if (rustup / part).exists()
+    ]
 
 
 def reviewer_ceiling_problem(amount: str | None) -> str | None:
@@ -2445,6 +2509,117 @@ def reviewer_claude_materialize(
     return path, {REVIEWER_SHELL_PREFIX: str(prefix)}
 
 
+def reviewer_packet_vendor(packet: Path) -> Path | None:
+    """The packet's vendored Rust sources (issue #262), or ``None`` when there are none to trust.
+
+    The entry counts only when it says ``fetched`` and names a relative directory inside the
+    packet that exists, with no symlink anywhere along the way. Anything else is ignored and the
+    reviewer runs without it.
+    """
+    try:
+        data = json.loads((packet / REVIEWER_DEPENDENCIES_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("schema") != REVIEWER_DEPENDENCIES_SCHEMA:
+        return None
+    entry = data.get("rust")
+    if not isinstance(entry, dict) or entry.get("state") != "fetched":
+        return None
+    relative = entry.get("directory")
+    if not isinstance(relative, str) or not relative or Path(relative).is_absolute():
+        return None
+    parts = Path(relative).parts
+    if any(part in ("", ".", "..") for part in parts) or packet.is_symlink():
+        return None
+    cursor = packet
+    for part in parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            return None
+    if not cursor.is_dir() or not _reviewer_inside(cursor, packet):
+        return None
+    return cursor.resolve()
+
+
+def reviewer_cargo_config(vendor: Path | None, source: str = REVIEWER_VENDORED_SOURCE) -> str:
+    """The reviewer's cargo ``config.toml``: offline, and crates.io replaced by *vendor* if given.
+
+    Measured on cargo 1.98.1 (issue #262): ``CARGO_SOURCE_*`` variables alone do not replace a
+    source, a ``config.toml`` in ``CARGO_HOME`` does, and cargo builds offline from a directory
+    source with that home and the vendored tree both read-only.
+    """
+    lines = ["# Written by agent-launcher for an offline review (issue #262).", ""]
+    if vendor is not None:
+        lines += [
+            "[source.crates-io]",
+            f"replace-with = {json.dumps(source)}",
+            "",
+            f"[source.{json.dumps(source)}]",
+            f"directory = {json.dumps(str(vendor))}",
+            "",
+        ]
+    return "\n".join(lines + ["[net]", "offline = true", ""])
+
+
+def reviewer_cargo_shim(cargo: str, config: Path) -> str:
+    """A ``cargo`` that runs *cargo* with *config* passed as ``--config`` (issue #262).
+
+    Measured on cargo 1.98.1: a commit's own ``.cargo/config.toml`` that replaces crates.io
+    outranks both the ``CARGO_HOME`` configuration and ``CARGO_SOURCE_*`` variables, and only
+    ``--config`` outranks it. A rustup ``+toolchain`` argument has to stay first.
+    """
+    real, given = shlex.quote(cargo), shlex.quote(str(config))
+    return (
+        "#!/bin/sh\n"
+        "# Written by agent-launcher for an offline review (issue #262): this cargo home's\n"
+        "# configuration outranks the commit's own.\n"
+        'case "${1-}" in\n'
+        f'  +*) toolchain=$1; shift; exec {real} "$toolchain" --config {given} "$@" ;;\n'
+        "esac\n"
+        f'exec {real} --config {given} "$@"\n'
+    )
+
+
+def reviewer_cargo_home(
+    root: Path, vendor: Path | None, env: Mapping[str, str] | None = None
+) -> Path:
+    """Write the reviewer's cargo home beside the copy, never in it, with a read-only config.
+
+    It is made even without vendored sources, so the reviewer's cargo never looks for the
+    operator's ``~/.cargo``. When *env*'s ``PATH`` finds a cargo, ``bin/cargo`` is a
+    :func:`reviewer_cargo_shim` around it.
+    """
+    home = root / "cargo-home"
+    home.mkdir(parents=True, exist_ok=True)
+    config = home / "config.toml"
+    source = f"{REVIEWER_VENDORED_SOURCE}-{os.urandom(8).hex()}"
+    config.write_text(reviewer_cargo_config(vendor, source), "utf-8")
+    config.chmod(0o444)
+    found = shutil.which("cargo", path=env.get("PATH", "")) if env is not None else None
+    if found:
+        shim = home / "bin" / "cargo"
+        shim.parent.mkdir(exist_ok=True)
+        shim.write_text(reviewer_cargo_shim(str(Path(found).absolute()), config), "utf-8")
+        shim.chmod(0o555)
+    return home
+
+
+def reviewer_offline_cargo(session_env: dict[str, str], cargo_home: Path) -> None:
+    """Point the session's cargo at *cargo_home*, offline, with its shim first on ``PATH``.
+
+    Both cargo values replace the operator's, whatever they were.
+    """
+    session_env["CARGO_HOME"] = str(cargo_home)
+    session_env["CARGO_NET_OFFLINE"] = "true"
+    # A rustup proxy picks its toolchain from here; the shell prefix passes both names.
+    session_env["RUSTUP_HOME"] = str(reviewer_rustup_home(session_env))
+    shim = cargo_home / "bin" / "cargo"
+    if shim.is_file():
+        session_env["PATH"] = os.pathsep.join(
+            [str(shim.parent)] + ([session_env["PATH"]] if session_env.get("PATH") else [])
+        )
+
+
 def reviewer_claude_settings(
     copy: Path,
     packet: Path,
@@ -2453,6 +2628,7 @@ def reviewer_claude_settings(
     toolchain: Sequence[Mapping[str, str]] | None = None,
     extra_deny_read: Sequence[str] = (),
     platform: str | None = None,
+    read_only: Sequence[str] = (),
 ) -> dict[str, Any]:
     """The per-launch settings that turn on Claude's command sandbox and confine the session.
 
@@ -2468,12 +2644,16 @@ def reviewer_claude_settings(
     Issue #225: commands run through the reviewer's shell prefix, whose directory is readable and
     whose sentinel is denied by name, so the prefix filters even when the launch root is outside
     the home directory. The prefix is named in ``env`` as well, which outranks the user's settings.
+
+    Issue #262: *read_only* (the cargo home and the vendored dependencies) is allowed back for
+    reading and named in ``denyWrite``, so read-only is stated rather than implied.
     """
     if toolchain is None:
         toolchain = reviewer_toolchain_paths(env)[0]
     prefix, sentinel = reviewer_claude_shell_paths(copy)
     allow_read = [str(copy.resolve()), str(packet.resolve()), str(prefix.parent)]
     allow_read += [item["path"] for item in toolchain if item["path"] not in allow_read]
+    allow_read += [path for path in read_only if path not in allow_read]
     return {
         "env": {REVIEWER_SHELL_PREFIX: str(prefix)},
         "sandbox": {
@@ -2482,7 +2662,7 @@ def reviewer_claude_settings(
             "autoAllowBashIfSandboxed": True,
             "allowUnsandboxedCommands": False,
             "filesystem": {
-                "denyWrite": list(reviewer_temp_roots(platform)),
+                "denyWrite": list(reviewer_temp_roots(platform)) + list(read_only),
                 "denyRead": ["~"] + list(extra_deny_read) + [str(sentinel)],
                 "allowRead": allow_read,
             },
@@ -2911,6 +3091,7 @@ def reviewer_grok_settings(
     toolchain: Sequence[Mapping[str, str]] | None = None,
     extra_deny_read: Sequence[str] = (),
     platform: str | None = None,
+    read_only: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Grok's per-launch sandbox profile and the environment overlay for its commands.
 
@@ -2923,8 +3104,9 @@ def reviewer_grok_settings(
     if toolchain is None:
         toolchain = reviewer_toolchain_paths(env)[0]
     home = _reviewer_home(env)
-    read_only = [str(packet.resolve()), str((copy.parent / "prompt").resolve())]
-    read_only += [item["path"] for item in toolchain if item["path"] not in read_only]
+    granted = [str(packet.resolve()), str((copy.parent / "prompt").resolve())]
+    granted += [item["path"] for item in toolchain if item["path"] not in granted]
+    granted += [path for path in read_only if path not in granted]
     deny = list(reviewer_temp_roots(platform)) + [
         str(_reviewer_expand(path, home)) for path in REVIEWER_GROK_CREDENTIAL_FILES
     ] + list(extra_deny_read)
@@ -2932,7 +3114,7 @@ def reviewer_grok_settings(
         "profile": {
             "extends": "strict",
             "restrict_network": True,
-            "read_only": read_only,
+            "read_only": granted,
             "deny": deny,
         },
         "overlay": {
@@ -3080,6 +3262,7 @@ def reviewer_muse_settings(
     toolchain: Sequence[Mapping[str, str]] | None = None,
     extra_deny_read: Sequence[str] = (),
     platform: str | None = None,
+    read_only: Sequence[str] = (),
 ) -> dict[str, Any]:
     """What the Muse launch asks of its sandbox, for the record: Muse takes it as flags."""
     return {"sandbox": "default (on)", "sandbox_network": "restricted", "web_tools": "disabled"}
@@ -3773,8 +3956,23 @@ def reviewer_launch(
     withheld = reviewer_withhold_untrusted(
         copy, recipe.untrusted_dirs, recipe.untrusted_files, recipe.instruction_names
     )
+    # Issue #262: cargo builds offline from the packet's vendored crates, through a read-only
+    # cargo home beside the copy and the shim in it.
+    vendor = reviewer_packet_vendor(request.packet)
+    cargo_home = reviewer_cargo_home(root, vendor, session_env)
+    reviewer_offline_cargo(session_env, cargo_home)
+    dependency_reads = [
+        {"path": str(cargo_home.resolve()),
+         "reason": "the reviewer's read-only cargo home, offline (issue #262)"},
+    ] + ([{"path": str(vendor),
+           "reason": "the packet's vendored Rust dependencies, read-only (issue #262)"}]
+         if vendor is not None else [])
     settings_path, extra_env = recipe.materialize(
-        recipe.settings(copy, request.packet, session_env, toolchain=toolchain), root, copy
+        recipe.settings(
+            copy, request.packet, session_env, toolchain=toolchain,
+            read_only=[item["path"] for item in dependency_reads],
+        ),
+        root, copy,
     )
     manifest = _reviewer_manifest(copy)
     configuration = reviewer_configuration_fingerprint(recipe.config_sources(copy, session_env))
@@ -3845,7 +4043,7 @@ def reviewer_launch(
             "allowed": [
                 {"path": str(copy.resolve()), "reason": "the scratch copy the review works in"},
                 {"path": str(request.packet.resolve()), "reason": "the review packet"},
-            ] + shell_reads + list(toolchain),
+            ] + shell_reads + dependency_reads + list(toolchain),
             "dropped": dropped,
         },
         "answer_path": str(answer_path) if answer is not None else None,
@@ -4125,7 +4323,16 @@ def reviewer_probe(
         session_env = reviewer_session_environment(
             environ, recipe.api_key_variables, recipe.api_key_prefixes
         )
-        settings = recipe.settings(copy, packet, session_env, extra_deny_read=[str(outside)])
+        # Issue #262: the same offline cargo home and read-only vendored folder a review gets, so
+        # every denial is checked with them in place.
+        vendored = packet / "dependencies" / "rust"
+        vendored.mkdir(parents=True)
+        cargo_home = reviewer_cargo_home(root, vendored.resolve(), session_env)
+        reviewer_offline_cargo(session_env, cargo_home)
+        settings = recipe.settings(
+            copy, packet, session_env, extra_deny_read=[str(outside)],
+            read_only=[str(cargo_home.resolve()), str(vendored.resolve())],
+        )
         settings_path, extra_env = recipe.materialize(settings, root, copy)
         prompt_path, stdin = reviewer_deliver_prompt(recipe, root, REVIEWER_PROBE_MESSAGE)
         if executable is not None:

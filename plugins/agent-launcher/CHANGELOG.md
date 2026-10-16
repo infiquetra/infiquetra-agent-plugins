@@ -88,6 +88,30 @@ for C8 to extend.
 
 ### Fixed
 
+- **A Rust reviewer builds offline from the packet's vendored crates (issue #262).** When the
+  packet's `dependencies.json` says saga vendored the head's Rust dependencies, and names a plain
+  folder inside the packet, `launcher.py review` writes `cargo-home/config.toml` beside the copy
+  (read-only; crates.io replaced by the vendored tree; `net.offline = true`) and sets
+  `CARGO_HOME` and `CARGO_NET_OFFLINE=true` in place of any operator value. Both names join the
+  sandboxed commands' allow-list. Claude's sandbox and Grok's profile read the cargo home and the
+  vendored tree, and Claude's `denyWrite` names both. Without vendored crates the cargo home is
+  still written, offline and without a replacement, so the reviewer's cargo never looks for
+  `~/.cargo`. A new `target/` and a new `Cargo.lock` in the copy are tool clutter, like
+  `__pycache__/`; a tracked lock the session changes still counts. `cargo` and `rustc` join the
+  toolchain commands. A rustup proxy under `~/.cargo/bin` gets that folder back on its own,
+  never `~/.cargo`, which holds cargo's credentials file, plus rustup's `toolchains` and
+  `settings.toml` (never the rustup home, which also keeps downloads); `RUSTUP_HOME` is set and
+  it and `RUSTUP_TOOLCHAIN` join the allow-list, so a rustup machine (CI's) builds too. Network
+  and credential denials are unchanged.
+- **A commit's own cargo source replacement no longer outranks the reviewer's (issue #262).** On
+  cargo 1.98.1 a `[source.crates-io] replace-with` in the copy's `.cargo/config.toml` outranked
+  both `CARGO_HOME`'s configuration and `CARGO_SOURCE_*` variables, so the reviewer's build
+  resolved the commit's directory, not the vendored tree. The cargo home now holds `bin/cargo`, a
+  shim that runs the cargo found on the session's `PATH` with the home's `config.toml` passed as
+  `--config`, which outranks every config file; a rustup `+toolchain` argument stays first. The
+  shim's folder comes first on the session's `PATH`, and the probe runs with it in place. The
+  vendored source's name now has a random suffix per launch, so the commit cannot name it to
+  redefine it or chain it to another source. A cargo called by its absolute path skips the shim.
 - **A Claude reviewer's answer comes from structured output, and an unreadable answer leaves
   evidence (issue #248).** `launcher.py review` now passes the request's answer schema to
   `claude -p` as `--json-schema` and reads the answer from the `structured_output` field of

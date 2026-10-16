@@ -40,6 +40,107 @@ it by running the code in subprocesses with different `PYTHONHASHSEED` values an
 Give a tool anything that scales with the machine (timeouts, thread counts) as a fixed value, and
 let the repository's own config win. A text fallback needs a reason for every token it admits:
 filter language keywords and very short tokens before searching the repository for them.
+### Cargo takes source replacement from a config file, not from CARGO_SOURCE_* variables
+
+**Evidence.** Issue #262, measured on cargo 1.98.1 (Homebrew) on 2026-10-16. A crate with one
+crates.io dependency (`itoa`), vendored with `cargo vendor --locked`, then built offline:
+`CARGO_SOURCE_CRATES_IO_REPLACE_WITH=saga-vendored` with
+`CARGO_SOURCE_SAGA_VENDORED_DIRECTORY=<vendor>` failed with "no matching package named `itoa`
+found"; the same two keys in `$CARGO_HOME/config.toml` built and tested, with and without a
+`Cargo.lock`, and with both that home and the vendored tree `chmod a-w`. A `build.rs` that writes
+a marker left none after `generate-lockfile` and `vendor`, and wrote it on the first build
+(`test_live_cargo_resolves_and_vendors_without_running_a_build_script`). Live, ripgrep 3fce3b5
+vendored 52 crates (70 MB) in prepare; a Haiku reviewer through `launcher.py review` wrote a test
+and ran `cargo test --offline -p ignore --test hidden_single_dot_test` in its sandbox, and finish's
+seatbelt re-run built the same test offline in 4.2 s. Code: `plugins/saga/scripts/review_dependencies.py`,
+`reviewer_cargo_home` in `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`.
+
+**Mechanism.** Cargo reads environment variables for keys it already knows to look up, but it
+discovers the tables under `[source]` only by reading config files, so a source named only in the
+environment does not exist. An offline build from a directory source writes nothing to
+`CARGO_HOME` (no registry cache, no lock), which is why a read-only home works.
+
+**Generalizable rule.** To point a sandboxed cargo at vendored sources, write a `config.toml` into
+a cargo home you own and set `CARGO_HOME`; never rely on `CARGO_SOURCE_*` variables. When the
+project may carry its own cargo configuration, pass that file as `--config` too (next entry).
+
+### A project's own cargo source replacement outranks CARGO_HOME and the environment
+
+**Evidence.** Issue #262's code review (Grok, on 2b906f0), then measured on cargo 1.98.1 on
+2026-10-16. A crate depends on `inertdep`. A vendored tree holds a copy returning 2; the project's
+`.cargo/config.toml` replaces crates.io with a `planted` directory returning 99. With the saga
+cargo home alone, `cargo run --offline` printed 99. Adding
+`CARGO_SOURCE_CRATES_IO_REPLACE_WITH` and `CARGO_SOURCE_SAGA_VENDORED_DIRECTORY` still printed 99.
+`cargo --config <home>/config.toml run` printed 2. A project config that adds `replace-with` to a
+source named `saga-vendored` chained it to its own directory (77) even past `--config`; with a
+random source name the build failed instead of resolving the planted crate. On ripgrep, with the same `replace-with` committed and no
+`planted/` folder, plain cargo failed with exit 101 and the shim built; a live Haiku reviewer
+then ran `cargo test -p ignore --test hidden_repro --offline` in its sandbox and reproduced the
+planted defect ($0.02, 58 s). Tests: `test_live_the_shim_outranks_a_commit_s_own_source_replacement`
+and `test_live_a_commit_s_own_source_replacement_cannot_outrank_the_rerun_s`.
+
+**Mechanism.** Cargo's precedence is `--config` on the command line, then environment variables,
+then config files from the deepest directory up to `CARGO_HOME`, which comes last. Source tables
+are discovered from files only, so an environment variable cannot override a source entry a file
+defines. Source definitions merge across files key by key, so a later file can add `replace-with`
+to a source an earlier one named.
+
+**Generalizable rule.** To make cargo use your sources whatever the project configures, pass them
+with `--config` (a shim on `PATH` when you do not control the command line), and give the source a
+name the project cannot know.
+
+### A rustup proxy given a fresh HOME picks no toolchain, and passing tests prove nothing about it
+
+**Evidence.** PR #265, CI job 38954956090 on c7f888c: two live shim tests failed with "rustup
+could not choose a version of cargo to run, because one wasn't specified explicitly, and no
+default is configured". They passed on this machine, whose cargo is Homebrew's. Reproduced
+locally by installing rustup (checksummed `rustup-init`, minimal profile) into a fake home in the
+scratch folder and running the suites with that home as `HOME` and its `.cargo/bin` first on
+`PATH`: five tests failed, including the three seatbelt re-run tests CI skips on Linux. With
+`RUSTUP_HOME` passed and `~/.cargo/bin`, `toolchains` and `settings.toml` read and mapped, a
+rustup cargo ran under finish's real seatbelt profile with that home denied
+(`review_dependencies.rustup_env`, `toolchain_paths`; `reviewer_rustup_paths` in launcher.py).
+
+**Mechanism.** A rustup proxy finds its toolchains and default through `RUSTUP_HOME`, which
+defaults to `$HOME/.rustup`. Every confined cargo here runs with a `HOME` that is not the
+operator's, and the sandboxes deny the real home, so the proxy finds nothing unless both the
+variable and the read are given back. The proxy itself sits in `~/.cargo/bin`, beside cargo's
+credentials file.
+
+**Generalizable rule.** Any code that runs cargo with its own `HOME` passes `RUSTUP_HOME` and
+`RUSTUP_TOOLCHAIN`, and its tests run once against a rustup proxy, not only the machine's own
+cargo.
+
+### `cargo vendor` with nothing to vendor writes no folder
+
+**Evidence.** Issue #262, cargo 1.98.1: `cargo vendor --locked <dir>` on a crate with no
+dependencies exits 0 and `<dir>` does not exist. `_fetch_rust` in
+`plugins/saga/scripts/review_dependencies.py` records `no-dependencies` for that case instead of
+"cargo vendor wrote no directory".
+
+**Mechanism.** Cargo creates the destination only when it copies a package into it.
+
+**Generalizable rule.** After `cargo vendor`, treat a missing folder plus an empty lock as
+"nothing to fetch", not as a failure.
+
+### A reproduced Rust finding still fails finish's match on the test id and the panic line
+
+**Evidence.** Issue #262's live check (above). The reviewer's finding was `reproduced` with
+`proof.test` `crates/ignore/tests/hidden_single_dot_test.rs::single_dot_file_is_skipped_as_hidden`,
+and finish graded it `traced`, although its confined re-run exited 101 with the same assertion.
+`_matches` in `plugins/saga/scripts/review_command.py` requires a test id containing `::` to appear
+verbatim in the output; cargo prints `test single_dot_file_is_skipped_as_hidden ... FAILED`, never
+the file path form. The recorded output also carried the reviewer's `<pid>` in place of the
+temporary directory's process id, and Rust's panic line now includes a per-run thread id
+(`thread 'single_dot_file_is_skipped_as_hidden' (130502963) panicked at ...`).
+
+**Mechanism.** The match rule was written against pytest, whose node ids are `path::name` and
+appear in its output. Cargo's test ids are module paths without the file, and its panic header
+changes on every run, so a Rust reproduction can only match when the reviewer happens to record a
+stable assertion line and a bare test name.
+
+**Generalizable rule.** A re-run matcher must be checked against each test runner's real output
+before a language's reproductions are counted; one live run per language finds it.
 
 ### A check that reads the copy must read only what git tracks, because earlier tools write into it
 
