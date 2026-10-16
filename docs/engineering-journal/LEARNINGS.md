@@ -2,6 +2,47 @@
 
 ## 2026-10-16
 
+### A reviewer's stray guard test is a warning, never a reason to discard its findings
+
+**Evidence.** Issue #250. In the saga-review-corpus pilot (on 6b459e7) a Claude reviewer reported
+a planted hardcoded GitHub token as `evidence: traced` and also left a 10-line guard test,
+`crates/ignore/tests/test_no_credentials.rs`, in its scratch copy without citing it. `review_command.py
+finish` refused the whole answer with `scratch.changes: ... (added) is not a reproduction test`; the
+same case's reviewer had added a test file in an earlier run too. Fixed in
+`plugins/saga/scripts/reviewer_answer.py` (`_check_scratch`, `check(warnings=)`) and
+`plugins/saga/scripts/review_command.py` (`_finish`, `_copy_shared_tests`). Tests:
+`test_an_added_test_file_no_reproduction_names_is_a_warning_not_a_refusal`,
+`test_every_other_uncited_scratch_change_is_still_refused`,
+`test_finish_accepts_an_uncited_test_file_with_a_warning_and_grades_the_findings`,
+`test_an_uncited_test_file_is_never_laid_over_the_rerun_tree`.
+
+**Mechanism.** The scratch check treats every change outside a reproduced finding's `proof.test` as
+tampering, so one harmless extra test refused every finding in an answer that had already been paid
+for. The check's real job is to keep unvetted files out of evidence, and a test that nothing cites
+is not evidence, so it can be recorded and ignored. That only holds if the file really is ignored:
+`_copy_shared_tests` laid every test-looking added file over the re-run tree, so an accepted
+uncited test would have run under a reproduced finding's broad command. The cited set has to be
+read from the answers before any re-run, not from the findings: a downgrade to `traced` replaces a
+finding's whole `proof`, so by the final round `proof.test` is gone (the first attempt read it from
+the findings and failed `test_reproduced_rerun_final_round_reruns_blocking_commands`). Relaxing a refusal means
+auditing every later reader of the thing it used to keep out, and when two checks must agree about which file is meant, they have to share one comparison. The warning travels as a degraded
+input (`reason: uncited-test-file`) because that is the one field the lens grade and the run
+record already carry; it does not change the letter grade.
+
+Code review of 3cc1c60 found the first warning path too loose in two ways. `looks_like_a_test`
+strips leading `.` and `/` and reads a backslash as a separator, so `.tests/payload.py`,
+`.test_payload.py`, `notatest\\test_secret.py`, `../tests/payload.py` and `tests/../src/app.py` all
+passed as warned tests instead of refused non-tests; the warning now requires
+`is_plain_test_path`, which reads the path exactly as written and refuses absolute paths,
+backslashes and empty, `.` or `..` components. And the cited-set comparison was case-sensitive
+while the re-run copy opens files through the filesystem, so on a case-insensitive volume
+`tests/test_Changed.py` was warned as uncited and then copied as the cited `tests/test_changed.py`.
+The warning and the copy now both decide through one `path_key` (Unicode and case folded).
+
+**Generalizable rule.** When a gate refuses on something harmless, downgrade it to a recorded
+warning only for the narrow harmless case, keep every other case refused, and then find each
+consumer that relied on the refusal and make it ignore the thing explicitly.
+
 ### A prompt line is not an output contract: ask the CLI to validate the answer, and keep what it said when it will not
 
 **Evidence.** Issue #248. In the saga-review-corpus pilot, one of the first six Claude reviews

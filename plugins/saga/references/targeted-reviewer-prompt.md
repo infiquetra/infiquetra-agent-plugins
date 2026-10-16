@@ -63,6 +63,10 @@ When you believe a finding, try to show it with a test:
 1. Write a test in the scratch copy, in a test file: under a `test`, `tests`, `spec` or `__tests__`
    directory, or named `test_*`, `*_test.*`, `*.test.*` or `*.spec.*`. Only test files may change.
    Editing the code under test, even to add a print, gets the answer refused.
+   Any test you write must be named by a `reproduced` finding's `proof.test`, or deleted before you
+   answer. A test file you leave behind that no `reproduced` finding names is ignored as evidence
+   and recorded as a warning, so a guard test is never a finding: report the problem as a
+   `traced` finding instead.
 2. Run it there, from the scratch copy.
 3. Record the test (its file and test name), the exact command you ran, and its failing output.
 

@@ -123,6 +123,7 @@ def test_prompt_requires_every_item_answered() -> None:
 def test_prompt_requires_a_sandboxed_reproduction_with_test_command_and_output() -> None:
     text = _section("Reproduce what you believe")
     assert "scratch copy" in text and "Only test files may change" in text
+    assert "named by a `reproduced` finding's `proof.test`, or deleted before you" in text
     assert "the exact command you ran" in text and "failing output" in text
     for denied in ("writes outside the scratch\ncopy", "every network\nconnection", "credentials"):
         assert denied.replace("\n", " ") in text.replace("\n", " ")
@@ -443,10 +444,110 @@ def test_a_scratch_copy_changed_outside_the_tests_is_refused() -> None:
     )
 
 
-def test_a_test_file_no_reproduction_names_is_refused() -> None:
+def test_an_added_test_file_no_reproduction_names_is_a_warning_not_a_refusal() -> None:
+    result = copy.deepcopy(RESULT)
+    result["scratch"]["changes"]["added"].append("crates/ignore/tests/test_no_credentials.rs")
+    warnings: list[str] = []
+    assert A.check(ANSWER, ITEMS, result=result, warnings=warnings) == []
+    assert warnings == [
+        "scratch.changes: crates/ignore/tests/test_no_credentials.rs (added) "
+        "is a test file no reproduced finding names; it is not evidence and was ignored"
+    ]
+    # A caller that passes no list still gets an accepted answer.
+    assert A.check(ANSWER, ITEMS, result=result) == []
+
+
+def test_a_cited_reproduction_test_is_accepted_without_a_warning() -> None:
+    warnings: list[str] = []
+    assert A.check(ANSWER, ITEMS, result=RESULT, warnings=warnings) == []
+    assert warnings == []
+
+
+@pytest.mark.parametrize(
+    ("kind", "path"),
+    [
+        ("added", "src/billing/helper.py"),
+        ("added", "docs/notes.md"),
+        ("modified", "tests/test_unrelated.py"),
+        ("deleted", "tests/test_unrelated.py"),
+        ("added", ".claude/tests/test_x.py"),
+        ("added", ".mcp.json"),
+    ],
+)
+def test_every_other_uncited_scratch_change_is_still_refused(kind: str, path: str) -> None:
+    result = copy.deepcopy(RESULT)
+    result["scratch"]["changes"][kind] = [*result["scratch"]["changes"].get(kind, []), path]
+    warnings: list[str] = []
+    problems = A.check(ANSWER, ITEMS, result=result, warnings=warnings)
+    assert any(line.startswith("scratch.changes: ") and path in line for line in problems)
+    assert warnings == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".tests/payload.py",
+        ".test_payload.py",
+        "notatest\\test_secret.py",
+        "../tests/payload.py",
+        "tests/../src/app.py",
+        "/tmp/tests/payload.py",
+        "./tests/payload.py",
+        "tests//payload.py",
+        "C:/tests/payload.py",
+    ],
+)
+def test_a_path_that_only_looks_like_a_test_after_normalising_is_refused(path: str) -> None:
+    result = copy.deepcopy(RESULT)
+    result["scratch"]["changes"]["added"].append(path)
+    warnings: list[str] = []
+    problems = A.check(ANSWER, ITEMS, result=result, warnings=warnings)
+    assert f"scratch.changes: {path} (added) is not a reproduction test" in problems
+    assert warnings == []
+    assert not A.is_plain_test_path(path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["tests/test_Charge_Retry.py", "tests/TEST_CHARGE_RETRY.py", "tests/test_charge_retry.py"],
+)
+def test_a_case_only_spelling_of_a_cited_test_is_that_cited_test(path: str) -> None:
+    result = copy.deepcopy(RESULT)
+    result["scratch"]["changes"]["added"] = [path]
+    warnings: list[str] = []
+    assert A.check(ANSWER, ITEMS, result=result, warnings=warnings) == []
+    assert warnings == []
+
+
+def test_a_case_spelling_that_stops_looking_like_a_test_is_refused_not_warned() -> None:
+    result = copy.deepcopy(RESULT)
+    result["scratch"]["changes"]["added"] = ["TESTS/TEST_CHARGE_RETRY.PY"]
+    warnings: list[str] = []
+    problems = A.check(ANSWER, ITEMS, result=result, warnings=warnings)
+    assert "scratch.changes: TESTS/TEST_CHARGE_RETRY.PY (added) is not a reproduction test" in problems
+    assert warnings == []
+
+
+def test_the_warning_and_the_re_run_copy_never_pick_the_same_file() -> None:
+    cited = A.cited_keys(ANSWER)
+    for path in ("tests/test_charge_retry.py", "tests/Test_Charge_Retry.py", "tests/test_other.py"):
+        result = copy.deepcopy(RESULT)
+        result["scratch"]["changes"]["added"] = [path]
+        warnings: list[str] = []
+        A.check(ANSWER, ITEMS, result=result, warnings=warnings)
+        assert bool(warnings) is (A.path_key(path) not in cited)
+
+
+def test_an_uncited_test_warning_does_not_hide_a_refusal_beside_it() -> None:
     result = copy.deepcopy(RESULT)
     result["scratch"]["changes"]["added"].append("tests/test_unrelated.py")
-    assert "scratch.changes" in fields(A.check(ANSWER, ITEMS, result=result))
+    result["scratch"]["changes"]["modified"] = ["src/billing/charge.py"]
+    warnings: list[str] = []
+    problems = A.check(ANSWER, ITEMS, result=result, warnings=warnings)
+    assert problems == [
+        "scratch.changes: src/billing/charge.py (modified) is not a reproduction test"
+    ]
+    assert len(warnings) == 1 and "tests/test_unrelated.py" in warnings[0]
 
 
 def test_a_symlink_the_session_made_is_refused() -> None:

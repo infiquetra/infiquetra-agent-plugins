@@ -542,15 +542,20 @@ def _finish(
     if not isinstance(items, list):
         raise CommandFailure(2, "where-to-look.json: must be a JSON array")
     problems: list[str] = []
+    warnings: list[str] = []
     for index, (answer, result) in enumerate(zip(answers, results, strict=True)):
+        noted: list[str] = []
         problems.extend(
             f"answers.{index}.{line}" if not line.startswith("scratch") else line
             for line in reviewer_answer.check(
-                answer, items, open_search_cap=cap, result=result,
+                answer, items, open_search_cap=cap, result=result, warnings=noted,
             )
         )
+        warnings.extend(noted)
     if problems:
         raise CommandFailure(1, "\n".join(problems))
+    for line in warnings:
+        print(f"warning: {line}", file=sys.stderr)
     change = _read_json(packet / "change.json", "change")
     if not isinstance(change, Mapping):
         raise CommandFailure(2, "change.json: must be a JSON object")
@@ -570,11 +575,15 @@ def _finish(
         except reviewer_answer.AnswerRefused as exc:
             raise CommandFailure(1, "\n".join(exc.problems)) from exc
     degraded = list(_read_json(packet / "degraded.json", "degraded"))
+    degraded.extend(_uncited_test_inputs(warnings))
     available = reproduction_available(home, confine)
-    for produced, result in zip(converted, results, strict=True):
+    # The answers name their reproduction tests; a re-run downgrade later replaces a finding's
+    # proof, so the cited files are read here, before any re-run.
+    cited = [reviewer_answer.cited_keys(answer) for answer in answers]
+    for position, (produced, result) in enumerate(zip(converted, results, strict=True)):
         degraded.extend(_rerun_findings(
             produced["findings"], result, repo, str(change.get("head") or ""),
-            home, runner, confine, available,
+            home, runner, confine, available, cited[position],
         ))
     findings, owners = _merge_findings(converted, _read_json(packet / "findings.json", "findings"))
     where = _merge_where([produced["where_to_look"] for produced in converted])
@@ -582,7 +591,7 @@ def _finish(
     if args.final:
         degraded.extend(_final_round(
             findings, owners, results, repo, str(change.get("head") or ""), home, runner, confine,
-            available,
+            available, cited,
         ))
     may_block = _bools_from_packet(packet)
     reviewers, usage_specs, usage_totals = _reviewers_and_usage(
@@ -618,6 +627,18 @@ def _finish(
         _store_run(store, int(args.issue), unit, run, usage_specs["add"])
     _write_json(packet / "review-run.json", run)
     _post_trace(run, results, repo, store, args.issue, home, trace_opener)
+
+
+def _uncited_test_inputs(warnings: Sequence[str]) -> list[dict[str, str]]:
+    """One degraded input per uncited test file, so the grades and the run record show it."""
+    suffix = f" (added) {reviewer_answer.UNCITED_TEST}"
+    return [
+        _degraded(
+            "correctness", "none", line.removeprefix("scratch.changes: ").removesuffix(suffix),
+            "review-command", "uncited-test-file",
+        )
+        for line in warnings
+    ]
 
 
 def _post_trace(
@@ -681,6 +702,7 @@ def _rerun_findings(
     runner: Process,
     confine: Confine | None,
     available: bool,
+    cited: set[str],
 ) -> list[dict[str, str]]:
     reproduced = [finding for finding in findings if finding.get("evidence") == "reproduced"]
     if not reproduced:
@@ -711,7 +733,7 @@ def _rerun_findings(
                 reproduced[0].get("lens") or "correctness", "none", "head", "review-command",
                 "head-export",
             )]
-        _copy_shared_tests(source, scratch, result)
+        _copy_shared_tests(source, scratch, result, cited)
         for finding in reproduced:
             degraded.extend(_rerun_one(
                 finding, source, scratch, home, runner, confine,
@@ -798,6 +820,7 @@ def _final_round(
     runner: Process,
     confine: Confine | None,
     available: bool,
+    cited: Sequence[set[str]],
 ) -> list[dict[str, str]]:
     try:
         graded = review_formula.compute({"findings": findings})
@@ -837,7 +860,7 @@ def _final_round(
                     "correctness", "none", "scratch", "review-command", "bad-scratch",
                 ))
                 continue
-            _copy_shared_tests(source, path, result)
+            _copy_shared_tests(source, path, result, cited[owner])
             degraded.extend(_rerun_one(finding, source, path, home, runner, confine))
     finally:
         _remove_worktree(runner, repo, path, hooks)
@@ -1147,7 +1170,9 @@ def _scratch_source(result: Mapping[str, Any], repo: Path) -> Path | None:
     return path
 
 
-def _copy_shared_tests(source: Path, dest: Path, result: Mapping[str, Any]) -> None:
+def _copy_shared_tests(
+    source: Path, dest: Path, result: Mapping[str, Any], cited: set[str],
+) -> None:
     scratch = result.get("scratch") if isinstance(result.get("scratch"), Mapping) else None
     changes = scratch.get("changes") if isinstance(scratch, Mapping) else None
     if not isinstance(changes, Mapping):
@@ -1155,7 +1180,7 @@ def _copy_shared_tests(source: Path, dest: Path, result: Mapping[str, Any]) -> N
     for kind in ("added", "modified"):
         for raw in changes.get(kind) or []:
             text = str(raw).lstrip("./")
-            if reviewer_answer.looks_like_a_test(text):
+            if reviewer_answer.path_key(text) in cited and reviewer_answer.looks_like_a_test(text):
                 _copy_one(source, dest, text)
 
 

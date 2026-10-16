@@ -12,7 +12,8 @@ This module does three things with an answer, and the review command (card C10a)
 * ``check`` refuses an answer by naming each problem: a skipped or twice-answered item, a finding
   missing a location, statement or closed-list label, a reproduction without its test, command and
   output, any severity, too many open-search findings, or a scratch copy changed outside the
-  reproduction tests.
+  reproduction tests. One exception is a warning, not a refusal: an added test file that no
+  reproduced finding names. The file is never evidence, and the answer's findings stand.
 * ``records`` turns an accepted answer into review_records.v1 findings and answered where-to-look
   records. It first replaces known secret formats in every free-text string a record stores (each
   finding's statement, dispute text, location and proof, and each cleared item's reason) with a
@@ -249,6 +250,32 @@ def looks_like_a_test(path: str) -> bool:
     return bool(_TEST_DIR.search(normal) or _TEST_NAME.search(name))
 
 
+def path_key(path: str) -> str:
+    """The one comparison for a cited test and a scratch change: Unicode-folded, case-folded.
+
+    A volume that ignores case opens ``tests/test_Changed.py`` for ``tests/test_changed.py``, so
+    the two spellings are one file. Warning about the file and copying it into a re-run tree must
+    both decide through this key, so the file a warning names is never the file that is copied.
+    """
+    return unicodedata.normalize("NFKC", str(path).lstrip("./")).casefold()
+
+
+def is_plain_test_path(path: str) -> bool:
+    """Whether *path* is a relative path as written that names a test, with nothing normalised.
+
+    Unlike ``looks_like_a_test``, which forgives a leading ``./`` and reads a backslash as a
+    separator, this refuses an absolute path, a backslash, and any empty, ``.`` or ``..``
+    component, and reads the path exactly as written. ``.tests/x.py``, ``notatest\\test_x.py``,
+    ``../tests/x.py`` and ``tests/../src/x.py`` are not tests.
+    """
+    text = str(path)
+    if not text or "\\" in text or text.startswith("/") or re.match(r"[A-Za-z]:", text):
+        return False
+    if any(part in ("", ".", "..") for part in text.split("/")):
+        return False
+    return bool(_TEST_DIR.search(text) or _TEST_NAME.search(text.rsplit("/", 1)[-1]))
+
+
 def _describe(item: Any) -> str:
     """``file:start-end`` for an item, from its C1 location; the file alone for whole-project."""
     location = item.get("location") if isinstance(item, Mapping) else None
@@ -436,14 +463,28 @@ def reproduction_tests(answer: Mapping[str, Any]) -> set[str]:
     return tests
 
 
-def _check_scratch(check: records._Check, answer: Mapping[str, Any], result: Any) -> None:
-    """The scratch copy differs from the head only by the reproduction tests."""
+def cited_keys(answer: Mapping[str, Any]) -> set[str]:
+    """``path_key`` of each test file the answer's reproduced findings name."""
+    return {path_key(test) for test in reproduction_tests(answer)}
+
+
+UNCITED_TEST = "is a test file no reproduced finding names; it is not evidence and was ignored"
+
+
+def _check_scratch(
+    check: records._Check, answer: Mapping[str, Any], result: Any, warnings: list[str],
+) -> None:
+    """The scratch copy differs from the head only by the reproduction tests.
+
+    An added test file that no reproduced finding names is the one exception: it goes to
+    *warnings*, because refusing it would throw away every finding in an otherwise good answer.
+    """
     scratch = result.get("scratch") if isinstance(result, Mapping) else None
     changes = scratch.get("changes") if isinstance(scratch, Mapping) else None
     if not isinstance(changes, Mapping):
         check.add("scratch.changes", "the launch result does not list the scratch copy's changes")
         return
-    allowed = reproduction_tests(answer)
+    allowed = cited_keys(answer)
     for path in changes.get("links") or ():
         check.add("scratch.changes", f"{path} (symlink) is a link the session made, never a test")
     for kind in ("added", "modified", "deleted"):
@@ -453,9 +494,13 @@ def _check_scratch(check: records._Check, answer: Mapping[str, Any], result: Any
                     "scratch.changes", f"{path} ({kind}) is Claude configuration, never a test"
                 )
                 continue
-            normal = str(path).lstrip("./")
-            if kind == "deleted" or normal not in allowed or not looks_like_a_test(normal):
-                check.add("scratch.changes", f"{path} ({kind}) is not a reproduction test")
+            cited = path_key(str(path)) in allowed
+            if kind != "deleted" and cited and looks_like_a_test(str(path).lstrip("./")):
+                continue
+            if kind == "added" and not cited and is_plain_test_path(str(path)):
+                warnings.append(f"scratch.changes: {path} (added) {UNCITED_TEST}")
+                continue
+            check.add("scratch.changes", f"{path} ({kind}) is not a reproduction test")
 
 
 def check(
@@ -464,8 +509,12 @@ def check(
     *,
     open_search_cap: int = OPEN_SEARCH_CAP,
     result: Any = None,
+    warnings: list[str] | None = None,
 ) -> list[str]:
-    """Every problem with *answer* against *items*; empty when the answer is accepted."""
+    """Every problem with *answer* against *items*; empty when the answer is accepted.
+
+    A warning is not a problem: when *warnings* is a list, each one is appended to it.
+    """
     problems = records._Check()
     if not isinstance(answer, Mapping):
         problems.add("answer", "must be a JSON object")
@@ -524,7 +573,7 @@ def check(
             OPEN_SEARCH, f"{open_search} findings, the cap is {open_search_cap}"
         )
     if result is not None:
-        _check_scratch(problems, answer, result)
+        _check_scratch(problems, answer, result, warnings if warnings is not None else [])
     return problems.problems
 
 
